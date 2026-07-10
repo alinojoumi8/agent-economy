@@ -66,6 +66,8 @@ export function CostPanel({ cost, readiness }) {
         {cost?.by_model?.length ? <div className="space-y-2">{cost.by_model.map(row => <div key={row.model} className="grid grid-cols-[1fr_auto_auto] gap-3 border-t border-mint-300/10 pt-2 text-xs first:border-0"><span className="truncate text-slate-300">{row.model}</span><span className="tabular text-slate-500">{row.calls} calls</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></div>)}</div> : <Empty>No provider calls recorded.</Empty>}
         <h3 className="mb-2 mt-5 text-[10px] uppercase tracking-wider text-slate-500">By purpose</h3>
         <div className="flex flex-wrap gap-1.5">{cost?.by_purpose?.map(row => <Badge key={row.purpose}>{row.purpose} · {row.calls}</Badge>)}</div>
+        <h3 className="mb-2 mt-5 text-[10px] uppercase tracking-wider text-slate-500">Top agents</h3>
+        {cost?.by_agent?.length ? <div className="space-y-2">{cost.by_agent.slice(0, 6).map((row, index) => <div key={`${row.agent_id ?? "shared"}-${row.role}-${index}`} className="grid grid-cols-[1fr_auto_auto] gap-3 border-t border-mint-300/10 pt-2 text-xs first:border-0"><span className="truncate text-slate-300">{row.agent_name}<small className="ml-1 text-slate-600">{row.role}</small></span><span className="tabular text-slate-500">{row.calls}</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></div>)}</div> : <Empty>No agent-level costs recorded.</Empty>}
       </div>
     </Panel>
   );

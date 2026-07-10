@@ -14,7 +14,7 @@ bank runs are *real* within the sim. See [PRD.md](PRD.md) and
 ```bash
 pip install -r requirements.txt
 
-# Observatory: dashboard + world in one process (world starts paused — press ▶ Run)
+# Offline deterministic observatory (world starts paused — press ▶ Run)
 python run.py --config runs/base.yaml
 # → http://127.0.0.1:8000
 
@@ -43,7 +43,7 @@ Local API keys belong in `.env`, which is excluded from Git. Copy
 `.env.example` when configuring the production provider profile; `runs/base.yaml`
 remains fully offline and needs no key.
 
-**No API key needed.** The default config routes every role to the built-in
+**No API key is needed for the explicit offline profile.** `runs/base.yaml` routes every role to the built-in
 `scripted` provider — deterministic policy agents that shop, work, lend, reprice,
 spread rumors, and run on banks. The whole system (dashboard, Oracle, shocks,
 reports, replay) works offline and reproducibly. Same seed ⇒ identical event log.
@@ -79,14 +79,18 @@ and [Kimi API overview](https://platform.kimi.ai/docs/api/overview).
 ```bash
 copy .env.example .env
 # Fill MINIMAX_API_KEY and MOONSHOT_API_KEY in .env, then validate without inference:
-python run.py --config runs/production.yaml --preflight
+python run.py --preflight
 
 # Optional live authentication/model-list check. This calls /models, not chat completion:
-python run.py --config runs/production.yaml --preflight-live
+python run.py --preflight-live
 
 # Start the approximately 100-agent production world:
-python run.py --config runs/production.yaml
+python run.py
 ```
+
+The no-argument entrypoint intentionally selects `runs/production.yaml`, the
+locked PRD profile. Use `--config runs/base.yaml` whenever an offline scripted
+run is desired; production never silently falls back when keys are absent.
 
 Provider/model names are validated before genesis. A missing key, unknown route,
 or unavailable model produces a clear preflight failure; it never silently falls

@@ -41,6 +41,11 @@ class ActionExecutor:
         atype = (action or {}).get("type")
         if atype not in VALID_TYPES:
             return self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
+        actor = self._agent(actor_id)
+        if not actor:
+            return self._reject(tick, actor_id, action, "actor missing", phase)
+        if not actor["alive"]:
+            return self._reject(tick, actor_id, action, "actor not alive", phase)
         handler = getattr(self, f"_do_{atype}", None)
         if handler is None:
             return self._reject(tick, actor_id, action, f"unhandled action: {atype}", phase)
@@ -83,17 +88,9 @@ class ActionExecutor:
         qty = int(action.get("qty", 0))
         if qty <= 0:
             return {"ok": False, "reason": "qty must be positive"}
-        res = self.e.firms.buy_goods(tick, actor_id, firm_id, qty)
-        if not res.get("ok") and res.get("reason") == "out of stock":
-            # Shelves emptied since the agent decided — substitute deterministically
-            # with the cheapest firm still stocked (shoppers don't go home empty).
-            alt = self.store.query_one(
-                "SELECT id FROM firms WHERE status IN ('private','listed') AND inventory>0 "
-                "AND id<>? ORDER BY json_extract(product_json,'$.unit_price_cents'), id LIMIT 1",
-                (firm_id,))
-            if alt:
-                res = self.e.firms.buy_goods(tick, actor_id, int(alt["id"]), qty)
-        return res
+        # Execute the counterparty the agent selected. The engine must not replace
+        # a rejected decision with a different trade of its own invention.
+        return self.e.firms.buy_goods(tick, actor_id, firm_id, qty)
 
     def _do_set_price(self, tick, actor_id, action, phase) -> dict:
         firm_id = int(action.get("firm_id", 0)) or self._owned_firm(actor_id)
@@ -115,9 +112,12 @@ class ActionExecutor:
         from_acct = self.e.ledger.agent_checking_id(actor_id)
         if from_acct is None:
             return {"ok": False, "reason": "no source account"}
-        dest = self.store.query_one("SELECT id FROM accounts WHERE id=?", (to_acct,))
+        dest = self.store.query_one(
+            "SELECT id, owner_type, owner_id FROM accounts WHERE id=?", (to_acct,))
         if not dest:
             return {"ok": False, "reason": "destination account missing"}
+        if dest["owner_type"] == "agent" and not self._alive(int(dest["owner_id"] or 0)):
+            return {"ok": False, "reason": "destination agent not alive"}
         if self.e.ledger.balance(from_acct) < amount:
             return {"ok": False, "reason": "insufficient funds"}
         self.e.ledger.transfer(tick, from_acct, to_acct, amount, kind="transfer",
@@ -225,6 +225,12 @@ class ActionExecutor:
             return {"ok": False, "reason": "company needs a name"}
         sector = str(action.get("sector", "services"))[:40]
         capital = int(action.get("opening_capital", 0))
+        if capital < 0:
+            return {"ok": False, "reason": "opening capital must be nonnegative"}
+        if capital:
+            founder_acct = self.e.ledger.agent_checking_id(actor_id)
+            if founder_acct is None or self.e.ledger.balance(founder_acct) < capital:
+                return {"ok": False, "reason": "insufficient opening capital"}
         product = action.get("product") if isinstance(action.get("product"), dict) else None
         firm_id = self.e.firms.found_firm(tick, actor_id, name, sector, product=product,
                                           opening_capital_cents=capital)
@@ -232,6 +238,8 @@ class ActionExecutor:
 
     # ── equity ───────────────────────────────────────────────────────────────
     def _do_place_order(self, tick, actor_id, action, phase) -> dict:
+        if phase != "EXECUTION":
+            return {"ok": False, "reason": "market orders may only be placed during EXECUTION"}
         firm_id = int(action.get("firm_id", 0))
         side = str(action.get("side", "")).lower()
         qty = int(action.get("qty", 0))
@@ -272,14 +280,17 @@ class ActionExecutor:
         bank = self.store.query_one("SELECT status FROM banks WHERE id=?", (bank_id,))
         if not bank or bank["status"] != "open":
             return {"ok": False, "reason": "bank unavailable"}
-        # One application per bank per week per borrower (validator rule §5).
-        recent = self.store.query_one(
-            "SELECT id FROM loan_applications WHERE bank_id=? AND borrower_type='agent' "
-            "AND borrower_id=? AND tick > ? AND status='pending'", (bank_id, actor_id, tick - 7))
-        if recent:
-            return {"ok": False, "reason": "duplicate application within a week"}
         borrower_type = "firm" if action.get("as_firm") else "agent"
         borrower_id = int(action.get("firm_id", actor_id)) if action.get("as_firm") else actor_id
+        if borrower_type == "firm" and not self._controls_firm(actor_id, borrower_id):
+            return {"ok": False, "reason": "actor does not control borrowing firm"}
+        # One application per bank per week per borrower (validator rule §5),
+        # regardless of whether the earlier application is still pending.
+        recent = self.store.query_one(
+            "SELECT id FROM loan_applications WHERE bank_id=? AND borrower_type=? "
+            "AND borrower_id=? AND tick > ?", (bank_id, borrower_type, borrower_id, tick - 7))
+        if recent:
+            return {"ok": False, "reason": "duplicate application within a week"}
         app_id = self.store.insert(
             "loan_applications", tick=tick, bank_id=bank_id, borrower_type=borrower_type,
             borrower_id=borrower_id, amount_cents=amount,

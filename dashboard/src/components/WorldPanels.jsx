@@ -22,8 +22,13 @@ export function BanksPanel({ banks }) {
 }
 
 export function FirmsPanel({ firms }) {
+  const ticker = firms.filter(firm => firm.status === "listed" && firm.last_stock_price != null);
   return (
     <Panel title="Firms & exchange" eyebrow="Production · payroll · price discovery" className="col-span-full lg:col-span-5">
+      <div className="flex min-h-10 items-center gap-2 overflow-x-auto border-b border-mint-300/10 bg-ink-950/35 px-4 py-2" aria-label="Live stock ticker">
+        <span className="shrink-0 text-[10px] uppercase tracking-widest text-slate-500">Ticker</span>
+        {ticker.length ? ticker.map(firm => <span key={firm.id} className="shrink-0 rounded-full border border-mint-300/10 px-2.5 py-1 text-[10px]"><strong className="mr-1.5 text-slate-300">{firm.name}</strong><span className="tabular text-mint-300">{money(firm.last_stock_price, false)}</span></span>) : <span className="text-[10px] text-slate-600">Awaiting the first agent-priced trade</span>}
+      </div>
       <div className="scrollbar max-h-[430px] overflow-auto">
         {firms.length ? <table className="data-table">
           <thead><tr><th>Firm</th><th>Status</th><th>Team</th><th>Goods</th><th>Stock</th><th>Cash</th></tr></thead>

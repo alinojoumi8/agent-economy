@@ -8,7 +8,7 @@ overrides:
   population: {size: 24}          # small, fast worlds — scale up for real studies
   firms: {count: 5, listed: 2}
   checkpoint_every: 0
-seeds: [1, 2, 3]
+seeds: [1, 2, 3, 4, 5]
 ticks: 30
 control: true
 shocks:

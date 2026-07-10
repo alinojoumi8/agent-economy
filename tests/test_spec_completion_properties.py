@@ -1,0 +1,339 @@
+"""Property-style and hard-rule evidence for TECH-SPEC sections 5, 8, 9, and 14."""
+from __future__ import annotations
+
+import asyncio
+import json
+import random
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agents.policies import credit_officer_decision, founder_decision
+from engine.actions import ActionExecutor
+from engine.credit import LoanTerms
+from llm.adapters import AdapterResult
+from llm.gateway import Gateway, LLMRequest
+from run import DEFAULT_CONFIG
+from server.app import create_app
+from tests.conftest import make_agent, make_bank
+from world.loop import World
+from world.shocks import Shocks
+
+
+def _listed_firm(economy, founder: int, name: str = "ListedCo") -> int:
+    firm_id = economy.firms.found_firm(0, founder, name, "tech")
+    economy.store.update("firms", firm_id, status="listed")
+    return firm_id
+
+
+def test_actions_require_living_actor_and_counterparty(economy):
+    bank = make_bank(economy)
+    sender, _ = make_agent(economy, bank, "Sender", 10_000)
+    recipient, recipient_acct = make_agent(economy, bank, "Recipient", 10_000)
+    executor = ActionExecutor(economy)
+
+    economy.store.update("agents", sender, alive=0)
+    dead_actor = executor.execute_action(1, sender, {"type": "do_nothing"})
+    assert not dead_actor["ok"] and dead_actor["reason"] == "actor not alive"
+
+    economy.store.update("agents", sender, alive=1)
+    economy.store.update("agents", recipient, alive=0)
+    dead_counterparty = executor.execute_action(
+        1, sender, {"type": "transfer", "to_account": recipient_acct, "amount": 100})
+    assert not dead_counterparty["ok"] and "not alive" in dead_counterparty["reason"]
+
+    missing = executor.execute_action(1, 999_999, {"type": "do_nothing"})
+    assert not missing["ok"] and missing["reason"] == "actor missing"
+
+
+def test_engine_does_not_rewrite_counterparty_or_invent_market_price(economy):
+    bank = make_bank(economy)
+    buyer, _ = make_agent(economy, bank, "Buyer", 100_000)
+    seller, _ = make_agent(economy, bank, "Seller", 100_000)
+    alternative_owner, _ = make_agent(economy, bank, "Alternative", 100_000)
+    empty_firm = economy.firms.found_firm(0, seller, "Empty", "retail")
+    stocked_firm = economy.firms.found_firm(0, alternative_owner, "Stocked", "retail")
+    economy.store.update("firms", stocked_firm, inventory=20)
+    executor = ActionExecutor(economy)
+
+    rejected = executor.execute_action(
+        1, buyer, {"type": "buy_goods", "firm_id": empty_firm, "qty": 1})
+    assert not rejected["ok"] and rejected["reason"] == "out of stock"
+    assert economy.firms.get(stocked_firm)["inventory"] == 20
+
+    listed = _listed_firm(economy, seller)
+    economy.exchange.place_order(1, buyer, listed, "buy", 1, None, "market")
+    economy.exchange.place_order(1, seller, listed, "sell", 1, None, "market")
+    assert economy.exchange.match_firm(1, listed) == []
+    assert economy.exchange.last_price(listed) is None
+    assert economy.store.scalar("SELECT COUNT(*) FROM trades", default=0) == 0
+
+
+def test_founding_order_phase_and_weekly_loan_rules(economy):
+    bank = make_bank(economy)
+    founder, _ = make_agent(economy, bank, "Founder", 1_000)
+    lawyer, _ = make_agent(economy, bank, "Lawyer", 0, occupation="lawyer")
+    executor = ActionExecutor(economy)
+
+    before = economy.store.scalar("SELECT COUNT(*) FROM firms", default=0)
+    rejected = executor.execute_action(1, founder, {
+        "type": "found_company", "lawyer_agent_id": lawyer, "name": "TooRich",
+        "opening_capital": 2_000,
+    })
+    assert not rejected["ok"] and rejected["reason"] == "insufficient opening capital"
+    assert economy.store.scalar("SELECT COUNT(*) FROM firms", default=0) == before
+
+    firm = _listed_firm(economy, founder)
+    wrong_phase = executor.execute_action(1, founder, {
+        "type": "place_order", "firm_id": firm, "side": "sell", "qty": 1,
+        "limit_price": 500,
+    }, phase="MARKET")
+    assert not wrong_phase["ok"] and "EXECUTION" in wrong_phase["reason"]
+
+    first = executor.execute_action(
+        1, founder, {"type": "apply_loan", "bank_id": bank, "amount": 500})
+    assert first["ok"]
+    economy.store.update("loan_applications", first["application_id"], status="denied")
+    duplicate = executor.execute_action(
+        2, founder, {"type": "apply_loan", "bank_id": bank, "amount": 500})
+    assert not duplicate["ok"] and "within a week" in duplicate["reason"]
+
+    firm_first = executor.execute_action(1, founder, {
+        "type": "apply_loan", "bank_id": bank, "amount": 500,
+        "as_firm": True, "firm_id": firm,
+    })
+    assert firm_first["ok"]
+    economy.store.update("loan_applications", firm_first["application_id"], status="approved")
+    firm_duplicate = executor.execute_action(2, founder, {
+        "type": "apply_loan", "bank_id": bank, "amount": 500,
+        "as_firm": True, "firm_id": firm,
+    })
+    assert not firm_duplicate["ok"] and "within a week" in firm_duplicate["reason"]
+
+
+@pytest.mark.parametrize("seed", [3, 17, 101])
+def test_random_valid_action_sequences_always_reconcile(economy, seed):
+    """Seeded generated action sequences exercise conservation as a property."""
+    rng = random.Random(seed)
+    bank = make_bank(economy, reserves=100_000_000)
+    people = [make_agent(economy, bank, f"P{i}", 2_000_000)[0] for i in range(8)]
+    owner = people[0]
+    shop = economy.firms.found_firm(
+        0, owner, "Property Shop", "retail", opening_capital_cents=500_000)
+    economy.store.update("firms", shop, inventory=1_000)
+    economy.firms.set_price(0, shop, 100)
+    executor = ActionExecutor(economy)
+
+    for tick in range(1, 121):
+        actor = rng.choice(people)
+        if rng.random() < 0.7:
+            recipient = rng.choice([p for p in people if p != actor])
+            destination = economy.ledger.agent_checking_id(recipient)
+            result = executor.execute_action(tick, actor, {
+                "type": "transfer", "to_account": destination,
+                "amount": rng.randint(1, 2_000),
+            })
+        else:
+            result = executor.execute_action(
+                tick, actor, {"type": "buy_goods", "firm_id": shop, "qty": 1})
+        assert result["ok"], result
+        ok, diagnostic = economy.ledger.reconcile()
+        assert ok, diagnostic
+
+
+@pytest.mark.parametrize("seed", [5, 23, 71])
+def test_random_lifecycle_event_storms_always_reconcile(economy, seed):
+    """Random death/health ordering with loans and heirs never corrupts money."""
+    rng = random.Random(seed)
+    bank = make_bank(economy, reserves=500_000_000)
+    people = [make_agent(
+        economy, bank, f"Life{i}", rng.randint(20_000, 100_000), age=rng.randint(18, 95))[0]
+        for i in range(36)]
+    for left, right in zip(people, people[1:]):
+        economy.store.insert(
+            "social_ties", agent_a=left, agent_b=right, weight=rng.random())
+    for borrower in rng.sample(people, 12):
+        economy.bank.disburse_loan(
+            0, bank, "agent", borrower, LoanTerms(rng.randint(1_000, 10_000), 800, 360, 30))
+
+    deaths = rng.sample(people, 28)
+    for tick, agent_id in enumerate(deaths, start=1):
+        health = rng.choice(["healthy", "sick", "critical"])
+        economy.store.update("agents", agent_id, health=health)
+        economy.lifecycle.settle_death(tick, agent_id, cause=f"storm:{health}")
+        ok, diagnostic = economy.ledger.reconcile()
+        assert ok, diagnostic
+
+
+def test_oil_and_rate_shocks_produce_downstream_agent_decisions(economy):
+    """The shock changes context; an agent, not the engine, chooses the outcome."""
+    bank = make_bank(economy, reserves=500_000_000)
+    founder, _ = make_agent(economy, bank, "Founder", 1_000_000)
+    firm = economy.firms.found_firm(
+        0, founder, "AdaptiveCo", "manufacturing", opening_capital_cents=500_000)
+    economy.store.update("firms", firm, inventory=20)
+    executor = ActionExecutor(economy)
+    shocks = Shocks(economy, {})
+
+    def founder_context():
+        row = economy.firms.get(firm)
+        product = economy.firms.product(row)
+        return {
+            "my_firm": {
+                "firm_id": firm, "name": row["name"], "inventory": int(row["inventory"]),
+                "price": int(product["unit_price_cents"]),
+                "unit_cost": int(product["base_input_cost_cents"] * economy.firms.commodity_index()),
+                "cash": economy.ledger.balance(int(row["account_id"])),
+                "employees": 1, "payroll": 0, "recent_sales": 10,
+                "target_headcount": 1, "has_pending_loan": False,
+                "has_pending_pitch": False, "is_private": True,
+            },
+            "agent": {"id": founder, "health": "healthy"},
+            "state": {"checking_balance": 500_000},
+        }
+
+    baseline_action = next(
+        action for action in founder_decision(founder_context())["actions"]
+        if action["type"] == "set_price")
+    oil_id = shocks.schedule(
+        "oil", "shock", {"tick": 1}, params={"multiplier": 2.0}, label="oil proof")
+    shocks.evaluate(1)
+    oil_action = next(
+        action for action in founder_decision(founder_context())["actions"]
+        if action["type"] == "set_price")
+    assert oil_action["price"] > baseline_action["price"]
+    assert executor.execute_action(2, founder, oil_action)["ok"]
+    assert economy.store.metric_latest("commodity_index") == pytest.approx(2.0)
+    assert economy.firms.product(economy.firms.get(firm))["unit_price_cents"] == oil_action["price"]
+    assert economy.store.query_one(
+        "SELECT id FROM events WHERE kind='shock_fired' "
+        "AND json_extract(payload_json,'$.shock_id')=?", (oil_id,))
+
+    borrower, _ = make_agent(economy, bank, "Borrower", 100_000)
+    officer, _ = make_agent(
+        economy, bank, "Officer", 0, role="credit_officer", employer_id=bank)
+    application = executor.execute_action(
+        3, borrower, {"type": "apply_loan", "bank_id": bank, "amount": 5_000})
+    assert application["ok"]
+    pending = [{
+        "id": application["application_id"], "amount_cents": 5_000,
+        "borrower_income_cents": 10_000, "borrower_net_worth_cents": 100_000,
+    }]
+    low_quote = credit_officer_decision(
+        {"policy_rate_bps": 500, "pending_loan_apps": pending})["actions"][0]
+    rate_id = shocks.schedule(
+        "policy_rate", "shock", {"tick": 4}, params={"rate_bps": 900}, label="rate proof")
+    shocks.evaluate(4)
+    high_quote = credit_officer_decision(
+        {"policy_rate_bps": economy.policy_rate_bps(), "pending_loan_apps": pending})["actions"][0]
+    assert high_quote["rate_bps"] - low_quote["rate_bps"] == 400
+    approved = executor.execute_action(5, officer, high_quote)
+    assert approved["ok"]
+    loan_rate = economy.store.scalar("SELECT rate_bps FROM loans WHERE id=?", (approved["loan_id"],))
+    assert loan_rate == high_quote["rate_bps"]
+    rate_event = economy.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='policy_rate_set' "
+        "AND json_extract(payload_json,'$.via')='shock' ORDER BY id DESC LIMIT 1")
+    payload = json.loads(rate_event["payload_json"])
+    assert payload["old_bps"] != payload["new_bps"] == 900
+    assert rate_id
+
+
+def test_budget_transitions_are_durable_and_cost_has_agent_breakdown(tmp_path):
+    config = {
+        "seed": 1,
+        "population": {"size": 2},
+        "banks": {"count": 1},
+        "firms": {"count": 1, "listed": 0},
+        "budget": {"cap_usd": 1.0, "oracle_reserve_usd": 0.1,
+                   "conversation_pairs": 15, "thresholds": [0.60, 0.80, 0.95]},
+        "llm": {"default_route": {"provider": "scripted", "model": "scripted"},
+                "routes": {}},
+        "checkpoint_every": 0,
+        "outlets": [],
+    }
+    from engine.store import Store
+    store = Store(str(tmp_path / "budget.db"))
+    store.init_run_meta("budget", 1, config)
+    world = World(store, config)
+    world.initialize()
+    gateway: Gateway = world.gateway
+    agent_id = int(store.scalar("SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+    req = LLMRequest(role="citizen", purpose="decision", agent_id=agent_id, tick=1)
+    result = AdapterResult(text='{"actions":[]}', in_tokens=10, out_tokens=10)
+
+    for cost in (0.54, 0.18, 0.135, 0.045):
+        gateway._log_call(req, "synthetic", "synthetic", f"k-{cost}", result, cost, False, 1)
+
+    transitions = store.query(
+        "SELECT payload_json FROM events WHERE kind='budget_degradation' ORDER BY id")
+    assert [json.loads(row["payload_json"])["to_level"] for row in transitions] == [1, 2, 3, 4]
+    assert gateway.governor.should_pause()
+    assert gateway.governor.total_spend() == pytest.approx(0.9)
+    assert gateway._estimate_cost(
+        LLMRequest(role="citizen", purpose="decision", system="é", user="x", max_tokens=10),
+        {"in": 1.0, "out": 1.0, "cache": 0.1}) >= (259 + 10) * 2 / 1_000_000
+
+    app = create_app(world)
+    with TestClient(app) as client:
+        body = client.get("/api/cost").json()
+    assert body["by_agent"]
+    assert body["by_agent"][0]["agent_id"] == agent_id
+    assert body["by_agent"][0]["cost_usd"] == pytest.approx(0.9)
+    store.close()
+
+
+def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "REPAIR_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "repair-test"},
+            "routes": {},
+            "pricing": {"repair-test": {"in": 1.0, "out": 2.0, "cache": 0.1}},
+        },
+    }
+    store = Store(str(tmp_path / "repair.db"))
+    store.init_run_meta("repair", 1, config)
+    monkeypatch.setenv("REPAIR_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+
+    class InvalidThenValid:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AdapterResult(
+                    text="not json", in_tokens=100, out_tokens=20,
+                    cached_in_tokens=40, raw={"attempt": 1})
+            return AdapterResult(
+                text='{"reasoning":"fixed","actions":[]}',
+                in_tokens=120, out_tokens=30, cached_in_tokens=60,
+                raw={"attempt": 2})
+
+    adapter = InvalidThenValid()
+    gateway.adapters["network"] = adapter
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="decision", system="stable", user="dynamic")))
+
+    assert adapter.calls == 2 and response.ok
+    assert response.in_tokens == 220 and response.out_tokens == 50
+    expected_cost = (120 / 1_000_000) * 1.0 + (100 / 1_000_000) * 0.1 \
+        + (50 / 1_000_000) * 2.0
+    assert response.cost_usd == pytest.approx(expected_cost)
+    row = store.query_one("SELECT * FROM llm_calls")
+    payload = json.loads(row["response_json"])
+    assert payload["raw"]["provider_calls"] == 2
+    assert row["in_tokens"] == 220 and row["out_tokens"] == 50
+    store.close()
+
+
+def test_no_argument_runtime_uses_locked_production_profile():
+    assert DEFAULT_CONFIG == "runs/production.yaml"

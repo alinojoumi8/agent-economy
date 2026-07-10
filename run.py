@@ -30,6 +30,7 @@ from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
 
 DATA_DIR = Path("data/runs")
+DEFAULT_CONFIG = "runs/production.yaml"
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -161,7 +162,8 @@ async def headless(world: World, ticks: int) -> None:
 def main() -> None:
     load_dotenv()
     ap = argparse.ArgumentParser(description="Agent Economy")
-    ap.add_argument("--config", default="runs/base.yaml")
+    ap.add_argument("--config", default=DEFAULT_CONFIG,
+                    help="world config (default: locked MiniMax/Kimi production profile)")
     ap.add_argument("--ticks", type=int, default=None, help="run N ticks headless then exit")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")

@@ -106,9 +106,10 @@ class Shocks:
     def _apply_policy_rate(self, tick: int, s, params: dict, initial: bool) -> None:
         """Override the policy rate directly (bypasses the banker, still logged)."""
         target = int(params.get("rate_bps", 500))
+        old = self.e.policy_rate_bps()
         self.store.record_metric(tick, "policy_rate", target)
         self.store.log_event(tick, "policy_rate_set", {
-            "old_bps": self.e.policy_rate_bps(), "requested_bps": target, "new_bps": target,
+            "old_bps": old, "requested_bps": target, "new_bps": target,
             "via": "shock"}, phase="NIGHT_CLOSE", importance=3.0)
 
     def _apply_oil(self, tick: int, s, params: dict, initial: bool) -> None:

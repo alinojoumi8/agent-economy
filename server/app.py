@@ -284,8 +284,15 @@ def create_app(world: World) -> FastAPI:
         by_purpose = [dict(r) for r in store.query(
             "SELECT purpose, COUNT(*) AS calls, SUM(cost_usd) AS cost_usd "
             "FROM llm_calls GROUP BY purpose")]
+        by_agent = [dict(r) for r in store.query(
+            "SELECT c.agent_id, COALESCE(a.name, 'Shared / system') AS agent_name, "
+            "COALESCE(c.role, 'shared') AS role, COUNT(*) AS calls, "
+            "SUM(c.in_tokens) AS in_tokens, SUM(c.out_tokens) AS out_tokens, "
+            "SUM(c.cost_usd) AS cost_usd FROM llm_calls c "
+            "LEFT JOIN agents a ON a.id=c.agent_id "
+            "GROUP BY c.agent_id, a.name, c.role ORDER BY cost_usd DESC, calls DESC LIMIT 12")]
         return {"governor": world.gateway.governor.status(), "by_model": by_model,
-                "by_purpose": by_purpose}
+                "by_purpose": by_purpose, "by_agent": by_agent}
 
     # ── Oracle (PRD R6) ──────────────────────────────────────────────────────
     @app.post("/api/oracle/ask")

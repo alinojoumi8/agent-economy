@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .adapters import Adapter, build_adapters
+from .adapters import Adapter, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
@@ -100,33 +100,73 @@ class Governor:
         self.oracle_reserve_usd = float(budget_cfg.get("oracle_reserve_usd", 10.0))
         self.thresholds = budget_cfg.get("thresholds", [0.60, 0.80, 0.95])
         self.base_conversation_pairs = int(budget_cfg.get("conversation_pairs", 15))
-        self._level = 0
+        self._last_call_id = 0
+        self._total_spend_usd = 0.0
+        self._oracle_spend_usd = 0.0
+        self._world_spend_usd = 0.0
+        self._refresh_spend()
+        self._level = self._calculate_level()
 
-    # spend is read from the durable llm_calls log so it survives resume.
+    # Spend is backed by the durable append-only llm_calls log so it survives
+    # resume. Runtime inserts update the cache in O(1); a cheap MAX(id) check
+    # notices direct test/tool inserts and refreshes the aggregates when needed.
+    def _refresh_spend(self) -> None:
+        row = self.store.query_one(
+            "SELECT COALESCE(MAX(id),0) AS last_id, "
+            "COALESCE(SUM(cost_usd),0) AS total, "
+            "COALESCE(SUM(CASE WHEN purpose='oracle' THEN cost_usd ELSE 0 END),0) AS oracle "
+            "FROM llm_calls")
+        self._last_call_id = int(row["last_id"] if row else 0)
+        self._total_spend_usd = float(row["total"] if row else 0.0)
+        self._oracle_spend_usd = float(row["oracle"] if row else 0.0)
+        self._world_spend_usd = self._total_spend_usd - self._oracle_spend_usd
+
+    def _ensure_current(self) -> None:
+        last_id = int(self.store.scalar(
+            "SELECT COALESCE(MAX(id),0) FROM llm_calls", default=0))
+        if last_id != self._last_call_id:
+            self._refresh_spend()
+
+    def record_cost(self, call_id: int, cost_usd: float, purpose: str) -> None:
+        """Advance cached totals after the gateway appends one durable call row."""
+        cost = float(cost_usd)
+        self._last_call_id = max(self._last_call_id, int(call_id))
+        self._total_spend_usd += cost
+        if purpose == "oracle":
+            self._oracle_spend_usd += cost
+        else:
+            self._world_spend_usd += cost
+
     def total_spend(self) -> float:
-        return float(self.store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
+        self._ensure_current()
+        return self._total_spend_usd
 
     def oracle_spend(self) -> float:
-        return float(self.store.scalar(
-            "SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls WHERE purpose='oracle'", default=0.0))
+        self._ensure_current()
+        return self._oracle_spend_usd
 
     def world_spend(self) -> float:
-        return float(self.store.scalar(
-            "SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls WHERE purpose<>'oracle'", default=0.0))
+        self._ensure_current()
+        return self._world_spend_usd
 
     @property
     def world_budget(self) -> float:
         return max(0.01, self.cap_usd - self.oracle_reserve_usd)
 
-    def level(self) -> int:
-        frac = self.world_spend() / self.world_budget
+    def _calculate_level(self) -> int:
+        frac = self._world_spend_usd / self.world_budget
         lvl = 0
         for i, t in enumerate(self.thresholds):
-            if frac >= t:
+            if frac + 1e-12 >= t:
                 lvl = i + 1
-        if self.world_spend() >= self.world_budget:
+        if self._world_spend_usd + 1e-12 >= self.world_budget:
             lvl = len(self.thresholds) + 1  # pause level
         return lvl
+
+    def level(self) -> int:
+        self._ensure_current()
+        self._level = self._calculate_level()
+        return self._level
 
     # knobs the world reads each tick ----------------------------------------
     def conversation_pairs(self) -> int:
@@ -142,21 +182,23 @@ class Governor:
         return self.level() >= len(self.thresholds) + 1
 
     def can_spend(self, est_cost: float, purpose: str) -> bool:
+        self._ensure_current()
         if purpose == "oracle":
-            return self.oracle_spend() + est_cost <= self.oracle_reserve_usd \
-                and self.total_spend() + est_cost <= self.cap_usd
-        return self.total_spend() + est_cost <= self.cap_usd
+            return self._oracle_spend_usd + est_cost <= self.oracle_reserve_usd \
+                and self._total_spend_usd + est_cost <= self.cap_usd
+        return self._total_spend_usd + est_cost <= self.cap_usd
 
     def status(self) -> dict:
+        self._ensure_current()
         return {
             "cap_usd": self.cap_usd, "oracle_reserve_usd": self.oracle_reserve_usd,
-            "total_spend_usd": round(self.total_spend(), 4),
-            "world_spend_usd": round(self.world_spend(), 4),
-            "oracle_spend_usd": round(self.oracle_spend(), 4),
+            "total_spend_usd": round(self._total_spend_usd, 4),
+            "world_spend_usd": round(self._world_spend_usd, 4),
+            "oracle_spend_usd": round(self._oracle_spend_usd, 4),
             "level": self.level(), "conversation_pairs": self.conversation_pairs(),
             "cadence_multiplier": self.cadence_multiplier(),
             "citizens_enabled": self.citizens_enabled(),
-            "fraction": round(self.total_spend() / self.cap_usd, 4) if self.cap_usd else 0,
+            "fraction": round(self._total_spend_usd / self.cap_usd, 4) if self.cap_usd else 0,
         }
 
 
@@ -269,13 +311,14 @@ class Gateway:
         parsed, ok = self._parse(result.text)
         if not ok and provider not in ("scripted", "mock"):
             # One repair retry with the parse error appended (TECH-SPEC §8 failure policy).
+            initial_result = result
             repair = LLMRequest(
                 role=req.role, purpose=req.purpose, system=req.system,
                 user=req.user + "\n\nYour previous reply was not valid JSON. Reply ONLY with the JSON envelope.",
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
             try:
-                result, repair_attempts = await self._call_adapter(
+                repaired_result, repair_attempts = await self._call_adapter(
                     adapter, model, repair, repair.messages(), 0.2, provider_cache_key)
                 attempts += repair_attempts
             except Exception as exc:
@@ -286,6 +329,18 @@ class Gateway:
                 self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                      phase="LLM", importance=5.0)
                 raise failure from exc
+            # Persist the final usable text but meter both billable completions.
+            # This stays one logical gateway record, so exact replay returns the
+            # repaired envelope while reproducing the complete provider cost.
+            result = AdapterResult(
+                text=repaired_result.text,
+                in_tokens=initial_result.in_tokens + repaired_result.in_tokens,
+                out_tokens=initial_result.out_tokens + repaired_result.out_tokens,
+                cached_in_tokens=(initial_result.cached_in_tokens
+                                  + repaired_result.cached_in_tokens),
+                raw={"provider_calls": 2, "repair": {
+                    "initial": initial_result.raw, "final": repaired_result.raw}},
+            )
             parsed, ok = self._parse(result.text)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
@@ -349,9 +404,14 @@ class Gateway:
         return cached, round(cost, 8)
 
     def _estimate_cost(self, req: LLMRequest, pricing: dict) -> float:
-        in_tok = max(1, (len(req.system) + len(req.user)) // 4)
-        out_tok = req.max_tokens
-        return (in_tok / 1e6) * pricing["in"] + (out_tok / 1e6) * pricing["out"]
+        # UTF-8 bytes are a conservative tokenizer-independent upper bound for
+        # normal byte/BPE tokenizers. Include message framing and reserve a second
+        # full call because invalid JSON may trigger one repair completion.
+        prompt_bytes = len(req.system.encode("utf-8")) + len(req.user.encode("utf-8"))
+        in_tok = max(1, prompt_bytes + 256)
+        one_call = (in_tok / 1e6) * pricing["in"] \
+            + (max(0, req.max_tokens) / 1e6) * pricing["out"]
+        return one_call * 2
 
     def _cache_key(self, req: LLMRequest, provider: str, model: str) -> str:
         blob = json.dumps({"t": req.tick, "a": req.agent_id, "p": req.purpose,
@@ -379,7 +439,8 @@ class Gateway:
 
     def _log_replay_call(self, req: LLMRequest, cache_key: str, row) -> None:
         """Copy original accounting so governor stages and scheduling replay exactly."""
-        self.store.insert(
+        level_before = self.governor.level()
+        call_id = self.store.insert(
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role,
             provider=row["provider"], model=row["model"], purpose=req.purpose,
             cache_key=cache_key, request_json=row["request_json"],
@@ -387,10 +448,13 @@ class Gateway:
             out_tokens=int(row["out_tokens"]), cached=int(row["cached"]),
             cost_usd=float(row["cost_usd"]), latency_ms=int(row["latency_ms"] or 0),
             created_at=row["created_at"] or datetime.now(timezone.utc).isoformat())
+        self.governor.record_cost(call_id, float(row["cost_usd"]), req.purpose)
+        self._log_governor_transitions(req.tick, level_before)
 
     def _log_call(self, req: LLMRequest, provider: str, model: str, cache_key: str,
                   result, cost: float, cached: bool, latency_ms: int) -> None:
-        self.store.insert(
+        level_before = self.governor.level()
+        call_id = self.store.insert(
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role, provider=provider,
             model=model, purpose=req.purpose, cache_key=cache_key,
             request_json=json.dumps({"system": req.system, "user": req.user, "context": req.context}),
@@ -399,3 +463,23 @@ class Gateway:
             in_tokens=result.in_tokens, out_tokens=result.out_tokens, cached=1 if cached else 0,
             cost_usd=cost, latency_ms=latency_ms,
             created_at=datetime.now(timezone.utc).isoformat())
+        self.governor.record_cost(call_id, cost, req.purpose)
+        self._log_governor_transitions(req.tick, level_before)
+
+    def _log_governor_transitions(self, tick: int, level_before: int) -> None:
+        """Persist every newly crossed budget stage for UI visibility and replay."""
+        level_after = self.governor.level()
+        for level in range(level_before + 1, level_after + 1):
+            threshold = (self.governor.thresholds[level - 1]
+                         if level <= len(self.governor.thresholds) else 1.0)
+            self.store.log_event(tick, "budget_degradation", {
+                "from_level": level - 1,
+                "to_level": level,
+                "threshold": threshold,
+                "world_fraction": round(
+                    self.governor.world_spend() / self.governor.world_budget, 6),
+                "conversation_pairs": self.governor.conversation_pairs(),
+                "cadence_multiplier": self.governor.cadence_multiplier(),
+                "citizens_enabled": self.governor.citizens_enabled(),
+                "paused": self.governor.should_pause(),
+            }, phase="LLM", importance=3.0)

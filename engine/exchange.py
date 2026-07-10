@@ -108,7 +108,8 @@ class Exchange:
                 break
 
             # Trade price = the resting (earlier) order's limit; market orders take
-            # the counterparty's price. If both market, fall back to last/ref price.
+            # the counterparty's price. Two market orders may use a prior close,
+            # but the engine never invents an initial reference price.
             if best_buy["seq"] < best_sell["seq"]:
                 resting, aggressor = best_buy, best_sell
             else:
@@ -117,7 +118,11 @@ class Exchange:
             if price is None:
                 price = aggressor["limit_price_cents"]
             if price is None:
-                price = self.last_price(firm_id) or 10000  # both market, no history: $100 ref
+                price = self.last_price(firm_id)
+            if price is None:
+                # No agent has expressed a price yet. Leave both orders on the book
+                # for a priced counterparty; expire_session closes them later.
+                break
             price = int(price)
             if price <= 0:
                 # cannot trade at non-positive price; drop the offending market order
