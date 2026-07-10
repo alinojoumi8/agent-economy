@@ -269,6 +269,10 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
     world = _world(tmp_path, "report.db")
     app = create_app(world)
     with TestClient(app) as client:
+        speed = client.post("/api/run/speed", json={"delay_s": 1.0})
+        assert speed.status_code == 200
+        assert speed.json()["delay_s"] == 1.0
+        assert client.get("/api/run/status").json()["speed_delay_s"] == 1.0
         response = client.post("/api/run/stop")
         assert response.status_code == 200
         body = response.json()

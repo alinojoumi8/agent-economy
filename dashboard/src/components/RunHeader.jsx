@@ -38,7 +38,7 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
           <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
           <button className="button button-danger" disabled={loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
-          <select id="run-speed" className="field !w-auto !py-2" defaultValue="0" onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
             <option value="0.25">0.25 s/day</option>
             <option value="1">1 s/day</option>

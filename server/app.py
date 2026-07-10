@@ -166,6 +166,7 @@ def create_app(world: World) -> FastAPI:
         return {"run_id": meta["run_id"], "status": world.status, "tick": store.tick,
                 "seed": meta["seed"], "governor": world.gateway.governor.status(),
                 "running": bool(run_task["task"] and not run_task["task"].done()),
+                "speed_delay_s": world.speed_delay_s,
                 "provider_readiness": world.gateway.readiness(),
                 "pause_reason": world.last_pause_reason,
                 "report_path": world.last_report_path}
