@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "observatory",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run.py", "--config", "runs/base.yaml", "--port", "8321"],
+      "port": 8321
+    }
+  ]
+}

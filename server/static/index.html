@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Economy — Observatory</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏦</text></svg>">
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#10141d; --panel2:#161c28; --panel3:#1b2330; --border:#242c3d;
+    --text:#dde3ee; --dim:#8b95a9; --faint:#5d6779; --accent:#59b8ff; --accent2:#0f3450;
+    --green:#42c25c; --red:#ff5d55; --amber:#e3a53a; --purple:#c393ff; --teal:#39c6b5; --pink:#ff8bc2;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html{scrollbar-color:#2a3347 var(--bg)}
+  body{background:var(--bg); color:var(--text); font:13.5px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif}
+  ::-webkit-scrollbar{width:9px;height:9px} ::-webkit-scrollbar-thumb{background:#2a3347;border-radius:5px}
+  a{color:var(--accent)}
+
+  /* ── header ─────────────────────────────────────────────────────────── */
+  header{display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid var(--border);
+         background:linear-gradient(180deg,#111624,#0e1220); position:sticky; top:0; z-index:20; flex-wrap:wrap}
+  header h1{font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); white-space:nowrap}
+  header h1 small{color:var(--faint); letter-spacing:.06em; font-weight:400; text-transform:none; margin-left:6px}
+  .pill{display:inline-flex; align-items:center; gap:7px; padding:4px 12px; border:1px solid var(--border);
+        border-radius:999px; color:var(--dim); font-size:12px; background:var(--panel)}
+  .pill b{color:var(--text); font-variant-numeric:tabular-nums}
+  .ctrl-group{display:flex; gap:6px; align-items:center; padding:3px; border:1px solid var(--border);
+              border-radius:10px; background:var(--panel)}
+  button{background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px;
+         padding:6px 13px; cursor:pointer; font-size:12.5px; transition:border-color .15s, color .15s, background .15s}
+  button:hover{border-color:var(--accent); color:var(--accent)}
+  button.primary{background:var(--accent); color:#04121d; border-color:var(--accent); font-weight:700}
+  button.primary:hover{background:#7ec9ff; color:#04121d}
+  button.ghost{background:transparent; border-color:transparent; color:var(--dim)}
+  button.ghost:hover{color:var(--accent)}
+  input,select,textarea{background:var(--panel2); border:1px solid var(--border); color:var(--text);
+        border-radius:8px; padding:6px 9px; font-size:12.5px; outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+  .statusdot{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--dim); flex:none}
+  .statusdot.running{background:var(--green); box-shadow:0 0 8px var(--green); animation:pulse 1.6s infinite}
+  .statusdot.paused{background:var(--amber)} .statusdot.halted{background:var(--red); box-shadow:0 0 8px var(--red)}
+  @keyframes pulse{50%{opacity:.45}}
+  .budget{min-width:210px}
+  .costbar{height:6px; background:var(--panel3); border-radius:4px; overflow:hidden; margin-top:5px}
+  .costbar div{height:100%; background:linear-gradient(90deg,var(--green),var(--amber) 70%,var(--red)); transition:width .4s}
+
+  /* ── quick start ────────────────────────────────────────────────────── */
+  #quickstart{margin:12px 14px 0; padding:12px 16px; border:1px solid #2a4a6b; border-radius:12px;
+      background:linear-gradient(135deg,#122236,#101a2c); display:flex; gap:14px; align-items:center; flex-wrap:wrap}
+  #quickstart .steps{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  #quickstart .step{display:flex; gap:7px; align-items:center; color:var(--dim); font-size:12.5px}
+  #quickstart .n{width:20px;height:20px;border-radius:50%;background:var(--accent2);color:var(--accent);
+      display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11px; flex:none}
+
+  /* ── layout ─────────────────────────────────────────────────────────── */
+  main{display:grid; grid-template-columns:repeat(12,1fr); gap:12px; padding:12px 14px 40px; max-width:1900px; margin:0 auto}
+  .sectionbar{grid-column:span 12; display:flex; align-items:baseline; gap:12px; margin-top:10px; padding:0 2px}
+  .sectionbar:first-child{margin-top:0}
+  .sectionbar h3{font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); white-space:nowrap}
+  .sectionbar p{color:var(--faint); font-size:12px}
+  .sectionbar .line{flex:1; height:1px; background:var(--border); align-self:center}
+  section{background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+          display:flex; flex-direction:column; min-width:0}
+  section h2{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); padding:9px 14px;
+             border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px}
+  .body{padding:10px 14px; overflow-y:auto; flex:1}
+  .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
+  @media (max-width:1150px){.c8,.c6,.c4{grid-column:span 12} .sectionbar p{display:none}}
+  .empty{color:var(--faint); font-size:12.5px; padding:10px 4px; line-height:1.6}
+
+  /* ── metrics ────────────────────────────────────────────────────────── */
+  .metric-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:10px}
+  .metric{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:10px 12px; cursor:help;
+          transition:border-color .15s}
+  .metric:hover{border-color:#33405a}
+  .metric .name{color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.09em; display:flex; justify-content:space-between}
+  .metric .name span:last-child{color:var(--faint)}
+  .metric .val{font-size:18px; font-weight:650; font-variant-numeric:tabular-nums; margin-top:3px; display:flex; align-items:baseline; gap:7px}
+  .metric .delta{font-size:11px; font-weight:600}
+  .metric svg{display:block; margin-top:5px; width:100%; height:26px; opacity:.9}
+
+  /* ── ticker / tables / feeds ────────────────────────────────────────── */
+  .ticker{display:flex; gap:18px; overflow-x:auto; white-space:nowrap; padding:8px 14px; border-bottom:1px solid var(--border);
+          background:var(--panel2); font-variant-numeric:tabular-nums; font-size:12.5px}
+  .ticker span{color:var(--dim)} .ticker b{color:var(--text); margin-left:6px; font-weight:600}
+  .up{color:var(--green)} .down{color:var(--red)}
+  table{width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums}
+  th{font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); text-align:left; padding:5px 7px; border-bottom:1px solid var(--border)}
+  td{padding:5px 7px; border-bottom:1px solid #1a2130; font-size:12.5px}
+  tbody tr:hover td{background:var(--panel2)}
+  tr.click{cursor:pointer}
+  .trustbar{display:inline-block; width:44px; height:6px; background:var(--panel3); border-radius:3px; overflow:hidden; vertical-align:middle; margin-right:6px}
+  .trustbar div{height:100%}
+  .feed-item{padding:7px 0; border-bottom:1px dashed #1c2434}
+  .feed-item .meta{color:var(--faint); font-size:11px; margin-top:1px}
+  .headline{font-weight:600; line-height:1.35}
+  .tone-neg{color:#ff8d87} .tone-pos{color:#7fd694}
+  .outlet-chip{font-size:10px; padding:1px 8px; border-radius:8px; background:var(--panel3); color:var(--dim); margin-right:6px}
+  .badge{font-size:10px; padding:2px 8px; border-radius:9px; border:1px solid var(--border); color:var(--dim); white-space:nowrap}
+  .chip{font-size:10px; font-weight:700; padding:1px 7px; border-radius:7px; flex:none; letter-spacing:.03em}
+  .k-market{background:#2a1e42; color:var(--purple)} .k-credit{background:#122b45; color:var(--accent)}
+  .k-info{background:#3a2c12; color:var(--amber)} .k-life{background:#12321c; color:var(--green)}
+  .k-gov{background:#0e3330; color:var(--teal)} .k-vc{background:#3b1b2c; color:var(--pink)}
+  .k-sys{background:#242c3d; color:var(--dim)} .k-bad{background:#3d1512; color:var(--red)}
+  .ev{display:flex; gap:8px; padding:5px 0; border-bottom:1px dotted #182031; font-size:12.5px; align-items:baseline}
+  .ev .t{color:var(--faint); font-size:11px; font-variant-numeric:tabular-nums; flex:none; width:34px}
+  .ev .txt{min-width:0}
+  .conv{margin-bottom:12px; border-left:2px solid var(--border); padding-left:10px}
+  .conv .who{color:var(--accent); font-weight:600}
+  .conv .meta{color:var(--faint); font-size:11px; margin-bottom:2px}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:3px 14px; font-size:12.5px}
+  .kv div:nth-child(odd){color:var(--dim); white-space:nowrap}
+  .subhead{border:none; padding:12px 0 4px; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim)}
+  pre{background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:9px; overflow-x:auto; font-size:11px; margin:6px 0}
+  .log-line{font-family:Consolas,monospace; font-size:11.5px; padding:2px 0; border-bottom:1px dotted #1a2030}
+  .log-line .k{color:var(--accent)}
+
+  /* ── oracle chat ────────────────────────────────────────────────────── */
+  .chat{display:flex; flex-direction:column; gap:9px}
+  .chat .q{align-self:flex-end; background:#17405c; border-radius:11px 11px 3px 11px; padding:7px 12px; max-width:82%}
+  .chat .a{align-self:flex-start; background:var(--panel2); border:1px solid var(--border); border-radius:11px 11px 11px 3px; padding:8px 12px; max-width:92%}
+  .chat .a .p{font-size:22px; font-weight:750; color:var(--purple)}
+  .chips{display:flex; gap:6px; flex-wrap:wrap; padding:8px 14px 2px}
+  .chips button{font-size:11px; padding:3px 10px; border-radius:999px; color:var(--dim)}
+  .row{display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+  .grow{flex:1}
+
+  /* ── dialogs / toasts ───────────────────────────────────────────────── */
+  dialog{background:var(--panel); color:var(--text); border:1px solid #2c3a52; border-radius:14px;
+         max-width:860px; width:94%; max-height:88vh; padding:0; box-shadow:0 24px 80px rgba(0,0,0,.6)}
+  dialog::backdrop{background:rgba(4,7,12,.72); backdrop-filter:blur(2px)}
+  dialog h2{padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;
+            font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border)}
+  dialog .body{max-height:74vh; padding:12px 16px}
+  .phases{display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 4px}
+  .phase{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:8px 10px; flex:1; min-width:145px}
+  .phase b{display:block; font-size:12px; color:var(--accent); margin-bottom:2px}
+  .phase span{color:var(--dim); font-size:11.5px; line-height:1.4; display:block}
+  .rule{border:1px solid #2a4a6b; background:#101d30; border-radius:10px; padding:10px 14px; margin:10px 0; font-size:13px}
+  .shockkinds{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; margin-bottom:10px}
+  .shockkind{border:1px solid var(--border); border-radius:10px; padding:9px 11px; cursor:pointer; background:var(--panel2)}
+  .shockkind:hover{border-color:var(--accent)}
+  .shockkind.sel{border-color:var(--accent); background:var(--accent2)}
+  .shockkind b{display:block; font-size:12.5px; margin-bottom:2px}
+  .shockkind span{color:var(--dim); font-size:11px; line-height:1.35; display:block}
+  .field{display:flex; flex-direction:column; gap:4px; margin:8px 0}
+  .field label{color:var(--dim); font-size:11.5px}
+  details.adv{margin-top:10px} details.adv summary{color:var(--faint); font-size:11.5px; cursor:pointer}
+  #toasts{position:fixed; right:16px; bottom:16px; display:flex; flex-direction:column; gap:8px; z-index:99}
+  .toast{background:var(--panel3); border:1px solid #2c3a52; border-left:3px solid var(--accent); border-radius:10px;
+         padding:10px 14px; max-width:380px; font-size:12.5px; box-shadow:0 12px 40px rgba(0,0,0,.5); animation:slidein .2s}
+  @keyframes slidein{from{transform:translateX(30px); opacity:0}}
+  .metric-help{color:var(--faint); font-size:11px; margin-top:8px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agent Economy <small>observatory</small></h1>
+  <span class="pill"><span id="dot" class="statusdot"></span> <b id="status">—</b></span>
+  <span class="pill" title="1 tick = 1 simulated day">day <b id="tick">0</b></span>
+  <div class="ctrl-group">
+    <button id="btnStart" class="primary" title="Start life: agents wake, work, shop, talk">▶ Run</button>
+    <button id="btnStep" title="Advance exactly one day">Step</button>
+    <button id="btnPause" title="Pause cleanly between days">⏸ Pause</button>
+    <select id="speed" title="Wall-clock speed per simulated day">
+      <option value="0">max speed</option><option value="0.25">fast</option>
+      <option value="1" selected>1s / day</option><option value="3">slow</option>
+    </select>
+  </div>
+  <div class="grow"></div>
+  <button id="btnHelp" title="What is this and how does it work?">❓ How it works</button>
+  <button id="btnReplay" title="Re-watch any stored run day by day">⏪ Replay</button>
+  <button id="btnReport" title="Generate the end-of-run report (narrative, charts, Oracle scorecard)">📄 Report</button>
+  <span class="pill budget" title="Every AI call is metered. The governor degrades activity before the cap is ever exceeded.">
+    <span>API budget <b id="spend">$0.00</b> / <b id="cap">$200</b> <span class="badge" id="govlevel">L0</span>
+    <span class="costbar"><span style="display:block" ><div id="costfill" style="width:0%"></div></span></span></span>
+  </span>
+</header>
+
+<div id="quickstart" hidden>
+  <b style="white-space:nowrap">🌱 Day 0 — the world is ready.</b>
+  <div class="steps">
+    <span class="step"><span class="n">1</span> Press <b>▶ Run</b> and watch agents work, shop and talk</span>
+    <span class="step"><span class="n">2</span> <button id="qsShock" style="padding:3px 10px">⚡ Inject a rumor</button> about a bank</span>
+    <span class="step"><span class="n">3</span> Watch <b>trust</b> fall, then <b>deposits</b> flee</span>
+    <span class="step"><span class="n">4</span> Ask the <b>Oracle</b> if a bank run is coming</span>
+  </div>
+  <div class="grow"></div>
+  <button class="ghost" id="qsClose" title="Hide">✕</button>
+</div>
+
+<main>
+  <!-- ═══ 1 · ECONOMY ═══ -->
+  <div class="sectionbar"><h3>1 · The economy at a glance</h3><div class="line"></div>
+    <p>Computed by the deterministic engine every night — never by an AI. Hover any card for what it means.</p></div>
+  <section class="c12">
+    <div class="body"><div class="metric-grid" id="metrics"></div></div>
+  </section>
+
+  <!-- ═══ 2 · MARKETS & INSTITUTIONS ═══ -->
+  <div class="sectionbar"><h3>2 · Markets &amp; institutions</h3><div class="line"></div>
+    <p>Prices emerge only from agent orders — the engine just matches and settles them.</p></div>
+
+  <section class="c4" style="min-height:300px">
+    <h2>Banks <span class="badge" title="Average of every agent's trust:bank belief (0–1). When trust collapses, deposits follow.">trust = belief</span></h2>
+    <div class="body">
+      <table id="banks"><thead><tr><th>Bank</th><th title="Sum of customer checking+savings">Deposits</th>
+        <th title="Cash at the central bank; drains during a run">Reserves</th><th>Trust</th><th>Status</th></tr></thead><tbody></tbody></table>
+      <div class="metric-help">A bank below its required reserves borrows interbank, then from the central bank — or fails with a depositor haircut.</div>
+    </div>
+  </section>
+
+  <section class="c4" style="min-height:300px">
+    <div class="ticker" id="ticker">— listed firms appear here once the exchange has trades —</div>
+    <h2>Firms</h2>
+    <div class="body"><table id="firms"><thead><tr><th>Firm</th><th>Status</th><th title="Employees on payroll">👥</th>
+      <th title="Posted goods price">Goods</th><th title="Last traded share price">Stock</th><th>Cash</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="c4" style="min-height:300px">
+    <h2>Government · VC · Health</h2>
+    <div class="body" id="institutions"><div class="empty">loading…</div></div>
+  </section>
+
+  <!-- ═══ 3 · INFORMATION LAYER ═══ -->
+  <div class="sectionbar"><h3>3 · The information layer</h3><div class="line"></div>
+    <p>What agents read and hear changes what they believe — and then what they do. This is the experiment surface: inject a rumor and trace it here.</p></div>
+
+  <section class="c4" style="min-height:330px">
+    <h2>News <span class="badge" title="Two outlets with different editorial slants. Reporters draft from true events; editors frame them.">2 outlets, 2 slants</span></h2>
+    <div class="body" id="news"><div class="empty">Stories publish in the <b>newsroom phase</b> each day once something newsworthy happens. Each agent only reads the outlets in its media diet.</div></div>
+  </section>
+
+  <section class="c4" style="min-height:330px">
+    <h2>Conversations</h2>
+    <div class="body" id="convs"><div class="empty">In the <b>evening phase</b>, socially-connected agents talk. Lines heard become memories and shift beliefs — this is how rumors travel.</div></div>
+  </section>
+
+  <section class="c4" style="min-height:330px">
+    <h2>Live events
+      <span class="row">
+        <label class="badge" style="cursor:pointer" title="Show raw JSON payloads"><input type="checkbox" id="rawToggle" style="vertical-align:-2px"> raw</label>
+        <button id="btnShock" style="font-size:11px">⚡ Inject shock</button>
+      </span>
+    </h2>
+    <div class="body" id="events"><div class="empty">Everything that happens lands here — trades, loans, illnesses, elections. If it's not an event, it didn't happen.</div></div>
+  </section>
+
+  <!-- ═══ 4 · THE ORACLE ═══ -->
+  <div class="sectionbar"><h3>4 · The Oracle</h3><div class="line"></div>
+    <p>A read-only analyst: it sees everything, touches nothing. Every forecast gets a machine-checkable rule and is auto-scored when its deadline passes.</p></div>
+
+  <section class="c8" style="min-height:320px">
+    <h2>Ask the Oracle <span><span class="badge" id="oracleScore">no predictions yet</span>
+      <button id="btnCalib" style="font-size:11px">📏 Calibration</button></span></h2>
+    <div class="body chat" id="oracleChat">
+      <div class="empty">Ask a probability question about the world's future. The Oracle answers with a number, its drivers, and a resolution rule — then the resolver scores it (Brier) when the deadline arrives. Unanswerable questions get an honest <i>“insufficient data”</i>.</div>
+    </div>
+    <div class="chips" id="oracleChips"></div>
+    <div class="row" style="padding:8px 14px 12px">
+      <input id="oracleQ" class="grow" placeholder="e.g. What is the probability of a bank run within 30 ticks?"/>
+      <button id="oracleAsk" class="primary">Ask</button>
+    </div>
+  </section>
+
+  <section class="c4" style="min-height:320px">
+    <h2>API spend</h2>
+    <div class="body" id="cost"><div class="empty">Cost accounting per model and purpose appears once AI calls happen. Offline (scripted) runs cost $0.</div></div>
+  </section>
+
+  <!-- ═══ 5 · PEOPLE ═══ -->
+  <div class="sectionbar"><h3>5 · The people</h3><div class="line"></div>
+    <p>Click anyone to audit them: balance sheet, beliefs, memories — and the exact prompt behind every decision.</p></div>
+
+  <section class="c12" style="min-height:320px">
+    <h2>Agents <input id="agentFilter" placeholder="filter by name, job, role…" style="font-size:11.5px; width:220px"></h2>
+    <div class="body"><table id="agents"><thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Role</th>
+      <th>Age</th><th>Health</th><th>Status</th></tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+
+<!-- ═══ dialogs ═══ -->
+<dialog id="helpDlg">
+  <h2>How this world works <button class="ghost" onclick="helpDlg.close()">✕</button></h2>
+  <div class="body">
+    <p><b>This is a laboratory, not a game.</b> ~100 AI agents — teachers, bankers, founders, journalists —
+    live inside a miniature US-style economy. Each one reads news, holds beliefs, earns, spends, borrows and talks.
+    You observe, inject shocks, and interrogate the world while it runs.</p>
+
+    <div class="rule">⚖️ <b>The one rule:</b> AI agents <i>propose</i> actions; the deterministic engine <i>validates and executes</i> them.
+    Every dollar is double-entry ledger money — conserved to the cent. The books reconcile every night, or the run halts.
+    That's what makes crashes and bank runs <i>real</i> here rather than hallucinated.</p>
+
+    <h3 class="subhead">One tick = one simulated day</h3>
+    <div class="phases">
+      <div class="phase"><b>☀️ Morning</b><span>Scheduled agents read their news diet, recall memories, and decide (the only place AI chooses).</span></div>
+      <div class="phase"><b>⚙️ Execution</b><span>The engine validates every action — money exists? shares exist? — and applies or rejects it.</span></div>
+      <div class="phase"><b>📈 Market</b><span>The order book matches trades; goods and labor settle.</span></div>
+      <div class="phase"><b>📰 Newsroom</b><span>Reporters draft from true events; editors pick &amp; frame per outlet slant.</span></div>
+      <div class="phase"><b>🗣 Evening</b><span>Connected agents converse. Rumors spread here.</span></div>
+      <div class="phase"><b>🌙 Night</b><span>Interest, payroll &amp; taxes, health &amp; lifecycle draws, benefits, metrics, ledger audit.</span></div>
+    </div>
+
+    <h3 class="subhead">Run an experiment in 4 steps</h3>
+    <ol style="margin-left:18px; line-height:1.9">
+      <li><b>▶ Run</b> the world for a few weeks to establish a baseline.</li>
+      <li><b>⚡ Inject a shock</b> — e.g. a false rumor about a bank (purely information, no money touched).</li>
+      <li><b>Trace the causal chain</b>: conversations → trust beliefs (Banks panel) → deposit moves (events) → reserves.</li>
+      <li><b>🔮 Ask the Oracle</b> for a probability, and let the resolver score it later. <b>📄 Report</b> wraps the run up.</li>
+    </ol>
+
+    <h3 class="subhead">Reading the panels</h3>
+    <div class="kv">
+      <div>Economy</div><div>Engine-computed macro series. Emergence shows up here (inflation after money growth, runs after trust collapse…).</div>
+      <div>Banks · trust</div><div>The average <i>belief</i> agents hold about each bank next to its actual reserves — narrative vs fundamentals, side by side.</div>
+      <div>Information layer</div><div>The news and gossip agents actually consume. It's the transmission medium for every narrative shock.</div>
+      <div>Oracle</div><div>Read-only analyst with a scored track record (📏 calibration: reliability + Brier decomposition).</div>
+      <div>Agents</div><div>Click a row: accounts, loans, beliefs, memories, and each decision's exact prompt + JSON reply.</div>
+    </div>
+
+    <h3 class="subhead">Power tools (CLI)</h3>
+    <pre>python run.py --config runs/base.yaml --ticks 365     # headless year
+python run.py --experiment runs/experiments/rumor_vs_control.yaml   # N seeds × treatment/control
+python run.py --config runs/base.yaml --fork RUNID@TICK             # what-if branch from a checkpoint
+python run.py --config runs/base.yaml --replay RUNID                # exact re-run, zero API cost</pre>
+    <p style="color:var(--dim); font-size:12px; margin-top:8px">Budget: every AI call is metered against the cap in the header.
+    At 60/80/95% the governor trims conversations, stretches decision cadences, then pauses cleanly at 100%. Offline scripted mode costs $0.</p>
+  </div>
+</dialog>
+
+<dialog id="inspector">
+  <h2>Agent inspector <button class="ghost" onclick="inspector.close()">✕</button></h2>
+  <div class="body" id="inspectorBody"></div>
+</dialog>
+
+<dialog id="shockDlg" style="max-width:760px">
+  <h2>⚡ Inject a shock <button class="ghost" onclick="shockDlg.close()">✕</button></h2>
+  <div class="body">
+    <div class="shockkinds" id="shockKinds"></div>
+    <div id="shockFields"></div>
+    <div class="field"><label>When should it fire?</label>
+      <div class="row">
+        <select id="shockTrigger">
+          <option value="shock">now (next day)</option>
+          <option value="at">at a specific day…</option>
+          <option value="trend">as a trend over several days…</option>
+          <option value="conditional">when a metric crosses a threshold…</option>
+        </select>
+        <input id="shockTick" type="number" min="1" placeholder="day #" style="width:90px" hidden>
+        <input id="shockDuration" type="number" min="1" placeholder="duration (days)" style="width:130px" hidden>
+        <select id="condMetric" hidden>
+          <option value="unemployment">unemployment</option><option value="cpi">cpi</option>
+          <option value="index">index</option><option value="sentiment">sentiment</option>
+          <option value="money_supply">money_supply</option><option value="gini">gini</option>
+        </select>
+        <select id="condOp" hidden><option>&gt;</option><option>&lt;</option></select>
+        <input id="condThreshold" type="number" step="any" placeholder="threshold" style="width:100px" hidden>
+      </div>
+    </div>
+    <details class="adv"><summary>Advanced: raw params JSON</summary>
+      <textarea id="shockParams" rows="3" style="width:100%; font-family:Consolas,monospace; margin-top:6px"></textarea>
+    </details>
+    <div class="row" style="margin-top:12px">
+      <span id="shockHint" style="color:var(--faint); font-size:11.5px"></span>
+      <div class="grow"></div>
+      <button id="shockGo" class="primary">Schedule shock</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="calibDlg">
+  <h2>📏 Oracle calibration <button class="ghost" onclick="calibDlg.close()">✕</button></h2>
+  <div class="body" id="calibBody"><div class="empty">loading…</div></div>
+</dialog>
+
+<dialog id="replayDlg" style="max-width:1150px">
+  <h2><span>⏪ Replay a stored run</span>
+    <span class="row grow" style="justify-content:flex-end">
+      <select id="replayRun" style="max-width:250px"></select>
+      <button id="replayPlay">▶</button>
+      <input id="replaySlider" type="range" min="1" max="1" value="1" class="grow" style="min-width:180px">
+      <span class="pill">day <b id="replayTickLabel">—</b></span>
+      <button class="ghost" onclick="replayStop(); replayDlg.close()">✕</button>
+    </span></h2>
+  <div class="body">
+    <p style="color:var(--faint); font-size:12px; margin-bottom:8px">Every run is one portable SQLite file — scrub through its history without re-running a single AI call. (For exact re-execution use <code>--replay</code>; to branch a what-if from a checkpoint use <code>--fork RUNID@TICK</code>.)</p>
+    <div class="ticker" id="replayTicker" style="border:1px solid var(--border); border-radius:8px; margin-bottom:10px">—</div>
+    <div class="metric-grid" id="replayMetrics" style="margin-bottom:12px"></div>
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px">
+      <div><h3 class="subhead">Events</h3><div id="replayEvents" style="max-height:270px; overflow-y:auto"></div></div>
+      <div><h3 class="subhead">News</h3><div id="replayNews" style="max-height:270px; overflow-y:auto"></div></div>
+      <div><h3 class="subhead">Conversations</h3><div id="replayConvs" style="max-height:270px; overflow-y:auto"></div></div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => (s??"").toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt$ = c => (c==null) ? "—" : (c<0?"-":"") + "$" + (Math.abs(c)/100).toLocaleString(undefined,{maximumFractionDigits:0});
+const fmt  = (v,d=2) => (v==null||isNaN(v)) ? "—" : (+v).toLocaleString(undefined,{maximumFractionDigits:d});
+
+async function api(path, opts){ const r=await fetch(path,opts); return r.json(); }
+async function post(path, body){ return api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined}); }
+
+function toast(html, ms=6000){
+  const el=document.createElement("div"); el.className="toast"; el.innerHTML=html;
+  $("#toasts").appendChild(el); setTimeout(()=>el.remove(), ms);
+}
+
+// ── name lookups (fed by refreshTables; used to humanize events) ──────────
+const names = {agent:{}, firm:{}, bank:{}};
+const nameOf = (kind,id) => names[kind][id] || (kind+" "+id);
+
+// ── metrics ────────────────────────────────────────────────────────────────
+const series = {};
+const METRICS = [
+  ["gdp_proxy","GDP proxy / day", v=>"$"+fmt(v,0), "Yesterday's goods sales + wages paid. The daily pulse of activity."],
+  ["cpi","CPI", v=>fmt(v,1), "Price level of the goods basket (100 = day 0). Rising = inflation."],
+  ["unemployment","Unemployment", v=>fmt(v*100,1)+"%", "Working-age citizens without a job or a firm of their own."],
+  ["index","Stock index", v=>fmt(v,1), "Cap-weighted index of listed firms. Moves only when agents trade."],
+  ["policy_rate","Policy rate", v=>fmt(v/100,2)+"%", "Central bank benchmark. Moves ±50bps per meeting inside Taylor-rule guardrails."],
+  ["money_supply","Money supply", v=>"$"+fmt(v,0), "All checking + savings deposits across both banks."],
+  ["gini","Gini", v=>fmt(v,3), "Wealth inequality: 0 = everyone equal, 1 = one agent owns it all."],
+  ["sentiment","Sentiment", v=>fmt(v,2), "Average mood belief (−1…+1). News tone and conversations move it — and it moves spending and trading."],
+];
+
+function spark(vals){
+  if(!vals || vals.length<2) return "";
+  const w=150,h=26, min=Math.min(...vals), max=Math.max(...vals), span=(max-min)||1;
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1))*w},${h-2-((v-min)/span)*(h-4)}`).join(" ");
+  const up = vals[vals.length-1] >= vals[0];
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline fill="none" stroke="${up?'#42c25c':'#ff5d55'}" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+
+function renderMetrics(latest){
+  const grid = $("#metrics"); grid.innerHTML="";
+  for(const [key,label,f,help] of METRICS){
+    if(!(key in series)) series[key]=[];
+    if(latest && latest[key]!=null) series[key].push(latest[key]);
+    if(series[key].length>150) series[key]=series[key].slice(-150);
+    const vals=series[key]; const v=vals[vals.length-1]; const prev=vals[vals.length-2];
+    let delta="";
+    if(v!=null && prev!=null && prev!==0){
+      const pct=(v-prev)/Math.abs(prev)*100;
+      if(Math.abs(pct)>=0.05) delta=`<span class="delta ${pct>=0?'up':'down'}">${pct>0?"▲":"▼"} ${fmt(Math.abs(pct),1)}%</span>`;
+    }
+    grid.insertAdjacentHTML("beforeend",
+      `<div class="metric" title="${esc(help)}"><div class="name"><span>${label}</span><span>ⓘ</span></div>
+       <div class="val">${v!=null?f(v):"—"} ${delta}</div>${spark(vals)}</div>`);
+  }
+}
+
+// ── ticker ─────────────────────────────────────────────────────────────────
+let lastPrices = {};
+function renderTicker(ticker){
+  if(!ticker || !ticker.length) return;
+  $("#ticker").innerHTML = ticker.map(t=>{
+    const prev = lastPrices[t.firm_id]; lastPrices[t.firm_id]=t.price_cents;
+    const cls = prev==null?"":(t.price_cents>=prev?"up":"down");
+    const arrow = prev==null?"":(t.price_cents>prev?"▲":(t.price_cents<prev?"▼":"·"));
+    return `<span>${esc(t.name)}<b class="${cls}">${fmt$(t.price_cents)} ${arrow}</b></span>`;
+  }).join("");
+}
+
+// ── humanized event feed ───────────────────────────────────────────────────
+const EV_CAT = k => (
+  /trade|ipo|circuit|order/.test(k) ? ["market","k-market"] :
+  /loan|bank|lolr|interbank|deposit/.test(k) ? ["credit","k-credit"] :
+  /rumor|news|slant|scandal|statement/.test(k) ? ["info","k-info"] :
+  /death|birth|illness|recovery|retire|arrival|policy_bought|policy_lapsed|insurance/.test(k) ? ["life","k-life"] :
+  /election|benefit|tax|escheat/.test(k) ? ["gov","k-gov"] :
+  /pitch|vc_/.test(k) ? ["vc","k-vc"] :
+  /failure|bankrupt|halt|reconcil/.test(k) ? ["alert","k-bad"] : ["world","k-sys"]);
+
+function describeEvent(e){
+  const p=e.payload||{};
+  const A=id=>esc(nameOf('agent',id)), F=id=>esc(nameOf('firm',id)), B=id=>esc(nameOf('bank',id));
+  switch(e.kind){
+    case "genesis": return `🌱 World created — ${p.agents} agents, ${p.firms} firms, ${p.banks} banks`;
+    case "shock_fired": return `⚡ Shock fired: <b>${esc(p.kind)}</b>${p.label&&p.label!==p.kind?` (${esc(p.label)})`:""}`;
+    case "rumor": return `🗣 False rumor about <b>${B(p.bank_id)}</b> planted — ${p.n_agents} agents heard it`;
+    case "news_published": return `📰 ${esc(p.outlet)}: “${esc(p.headline)}”`;
+    case "slant_directive": return `🧾 Editorial directive to outlet ${p.outlet_id} until day ${p.until_tick}`;
+    case "firm_scandal": return `🕵️ Scandal at <b>${esc(p.firm_name||F(p.firm_id))}</b>: ${esc(p.description||"")}`;
+    case "public_statement": return `📢 ${A(p.actor_id)}: “${esc(p.text)}”`;
+    case "policy_rate_set": return `🏛 Policy rate ${fmt(p.old_bps/100,2)}% → <b>${fmt(p.new_bps/100,2)}%</b>${p.via==="shock"?" (override)":""}`;
+    case "loan_application": return `📋 Loan application to ${B(p.bank_id)} for ${fmt$(p.amount_cents)} (${esc(p.purpose||"loan")})`;
+    case "loan_originated": return `🏦 ${B(p.bank_id)} lent <b>${fmt$(p.amount_cents)}</b> to ${p.borrower_type==="firm"?F(p.borrower_id):A(p.borrower_id)} at ${fmt(p.rate_bps/100,1)}%`;
+    case "loan_denied": return `🚫 Loan application #${p.application_id} denied${p.reason?": "+esc(p.reason):""}`;
+    case "loan_arrears": return `⚠️ Missed loan payment (${p.missed_payments}× on loan #${p.loan_id})`;
+    case "loan_default": return `💥 Loan #${p.loan_id} defaulted — ${B(p.bank_id)} wrote off ${fmt$(p.charged_off_cents)}`;
+    case "loan_paid": return `✅ Loan #${p.loan_id} fully repaid`;
+    case "deposit_move": return `🏃 ${A(p.agent_id)} moved <b>${fmt$(p.amount_cents)}</b> from ${B(p.from_bank)} to ${B(p.to_bank)}`;
+    case "interbank_loan": return `🔄 ${B(p.from_bank)} lent ${B(p.to_bank)} ${fmt$(p.amount_cents)} overnight`;
+    case "lolr_granted": return `🛟 Central bank rescued ${B(p.bank_id)} with ${fmt$(p.amount_cents)} (lender of last resort)`;
+    case "lolr_denied": return `🚨 Central bank refused to rescue ${B(p.bank_id)}`;
+    case "bank_failure": return `☠️ <b>${B(p.bank_id)} FAILED</b> — depositors took a ${fmt((p.haircut_rate||0)*100,0)}% haircut`;
+    case "trade": return `📈 ${p.qty} sh ${F(p.firm_id)} @ ${fmt$(p.price_cents)} (${A(p.buyer)} ← ${A(p.seller)})`;
+    case "circuit_breaker": return `🛑 Trading halted in <b>${F(p.firm_id)}</b> — down ${fmt((p.drop||0)*100,0)}% intraday`;
+    case "ipo": return `🔔 <b>${esc(p.name||F(p.firm_id))}</b> listed on the exchange at ${fmt$(p.ipo_price_cents)}`;
+    case "company_founded": return `🏢 ${A(p.founder_agent_id)} founded <b>${esc(p.name)}</b> (${esc(p.sector)})`;
+    case "bankruptcy": return `💀 <b>${esc(p.name||F(p.firm_id))}</b> went bankrupt (${esc(p.reason||"insolvency")})`;
+    case "wage_missed": return `🪙 ${F(p.firm_id)} couldn't pay ${A(p.agent_id)}'s wages`;
+    case "death": return `🕯 ${esc(p.name||A(p.agent_id))} died (${esc(p.cause)})${p.heir_id?" — estate to "+A(p.heir_id):""}`;
+    case "birth": return `👶 A child joined ${A(p.agent_id)}'s household`;
+    case "illness_onset": return `🤒 ${A(p.agent_id)} fell ill`;
+    case "illness_critical": return `🏥 ${A(p.agent_id)} is critically ill`;
+    case "recovery": return `💚 ${A(p.agent_id)} recovered`;
+    case "retirement": return `🌅 ${A(p.agent_id)} retired`;
+    case "arrival": return `🧳 ${esc(p.name)} moved to town (${esc(p.occupation)})`;
+    case "benefit_paid": return `🤝 Unemployment benefit ${fmt$(p.amount_cents)} → ${A(p.agent_id)}`;
+    case "benefits_paid": return `🏛 Benefits paid to ${p.recipients} unemployed (${fmt$(p.total_cents)}); treasury ${fmt$(p.treasury_cents)}`;
+    case "election_held": return `🗳 <b>Election:</b> ${esc(p.direction).toUpperCase()} wins ${p.expand_votes}–${p.austerity_votes} → tax ${fmt(p.new_tax_bps/100,1)}%, benefit ${fmt$(p.new_benefit_cents)}`;
+    case "pitch_made": return `🎤 ${esc(p.firm_name||F(p.firm_id))} pitched the VC for ${fmt$(p.ask_cents)}${p.follow_on?" (follow-on)":""}`;
+    case "vc_funded": return `💸 VC funded <b>${esc(p.firm_name||F(p.firm_id))}</b>: ${fmt$(p.amount_cents)} for ${fmt(p.equity_bps/100,1)}%`;
+    case "pitch_declined": return `🙅 VC passed on pitch #${p.pitch_id}${p.reason?" — "+esc(p.reason):""}`;
+    case "vc_writeoff": return `🧾 VC wrote off ${esc(p.firm_name||F(p.firm_id))} (${fmt$(p.invested_cents)} invested)`;
+    case "policy_bought": return `🛡 ${A(p.agent_id)} bought health insurance (${fmt$(p.premium_cents)}/cycle)`;
+    case "policy_lapsed": return `📉 ${A(p.agent_id)}'s health insurance lapsed`;
+    case "insurance_claim": return `🧾 Insurance covered ${fmt$(p.covered_cents)} of ${A(p.agent_id)}'s ${fmt$(p.bill_cents)} bill`;
+    case "epidemic_started": return `🦠 <b>Epidemic began</b> — illness risk ×${fmt(p.multiplier,0)} for ${p.duration_ticks||"?"} days`;
+    case "epidemic_ended": return `🌤 The epidemic subsided`;
+    case "oracle_prediction": return `🔮 Oracle: “${esc(p.question)}” → ${fmt((p.p||0)*100,0)}% by day ${p.deadline_tick}`;
+    case "prediction_resolved": return `⚖️ Prediction #${p.prediction_id} resolved <b>${p.outcome?"YES":"NO"}</b> (Brier ${fmt(p.brier,3)})`;
+    case "budget_pause": return `🧯 Budget cap reached — world paused cleanly`;
+    case "reconciliation_failure": return `🚨 LEDGER FAILED TO RECONCILE — run halted with diagnostics`;
+    case "fork": return `🌿 Forked from run ${esc(p.parent_run_id)} @ day ${p.fork_tick}`;
+    case "wage_paid": return `💰 ${F(p.firm_id)} paid ${A(p.agent_id)} ${fmt$(p.net_cents??p.wage_cents)}${p.tax_cents?` (+${fmt$(p.tax_cents)} tax)`:""}`;
+    case "goods_sale": return `🛒 ${A(p.buyer_id)} bought ${p.qty} from ${F(p.firm_id)} for ${fmt$(p.total_cents)}`;
+    default: return `<span class="log-line" style="border:none"><span class="k">${esc(e.kind)}</span> ${esc(JSON.stringify(p).slice(0,90))}</span>`;
+  }
+}
+
+let firstEvent = true;
+function renderEvents(evts){
+  if(!evts||!evts.length) return;
+  const el=$("#events");
+  if(firstEvent){ el.innerHTML=""; firstEvent=false; }
+  const raw = $("#rawToggle").checked;
+  for(const e of evts.slice().reverse()){
+    const [cat,cls]=EV_CAT(e.kind);
+    const body = raw
+      ? `<span class="log-line" style="border:none">t${e.tick} <span class="k">${esc(e.kind)}</span> ${esc(JSON.stringify(e.payload||{}).slice(0,140))}</span>`
+      : describeEvent(e);
+    el.insertAdjacentHTML("afterbegin",
+      `<div class="ev" title="${esc(e.kind)} — day ${e.tick}"><span class="t">d${e.tick}</span><span class="chip ${cls}">${cat}</span><span class="txt">${body}</span></div>`);
+  }
+  while(el.children.length>200) el.lastChild.remove();
+}
+
+let firstNews = true;
+function renderNews(items){
+  if(!items||!items.length) return;
+  const el=$("#news");
+  if(firstNews){ el.innerHTML=""; firstNews=false; }
+  for(const n of items.slice().reverse()){
+    const cls=n.tone<-0.15?"tone-neg":(n.tone>0.15?"tone-pos":"");
+    el.insertAdjacentHTML("afterbegin",
+      `<div class="feed-item"><div class="headline ${cls}">${esc(n.headline)}</div>
+       <div class="meta"><span class="outlet-chip">${esc(n.outlet||"")}</span>tone ${fmt(n.tone,2)}</div></div>`);
+  }
+  while(el.children.length>60) el.lastChild.remove();
+}
+
+function setGov(g){
+  if(!g) return;
+  $("#spend").textContent="$"+fmt(g.total_spend_usd,2);
+  $("#cap").textContent="$"+fmt(g.cap_usd,0);
+  const lv=$("#govlevel"); lv.textContent="L"+g.level;
+  lv.title = ["Full activity","60%: fewer conversations","80%: stretched cadences","95%: institutions only","Cap reached: paused"][g.level] || "";
+  $("#costfill").style.width=Math.min(100,(g.fraction*100))+"%";
+}
+function setStatus(s,tick){
+  $("#status").textContent=s; $("#tick").textContent=tick;
+  $("#dot").className="statusdot "+(s==="running"?"running":(s==="halted"?"halted":"paused"));
+  $("#quickstart").hidden = !(+tick===0 && localStorage.qsDismissed!=="1");
+}
+
+// ── tables ─────────────────────────────────────────────────────────────────
+async function refreshTables(){
+  const [banks,firms,agents,convs,cost,st,inst] = await Promise.all([
+    api("/api/banks"), api("/api/firms"), api("/api/agents"),
+    api("/api/conversations?limit=8"), api("/api/cost"), api("/api/run/status"),
+    api("/api/institutions")]);
+  setStatus(st.running ? "running" : st.status, st.tick);
+  window._outlets = inst.outlets||[];
+  banks.forEach(b=>names.bank[b.id]=b.name);
+  firms.forEach(f=>names.firm[f.id]=f.name);
+  agents.forEach(a=>names.agent[a.id]=a.name);
+  window._banksList=banks; window._firmsList=firms; window._agents=agents;
+
+  $("#banks tbody").innerHTML = banks.map(b=>{
+    const t=b.avg_trust;
+    const tcol = t==null?"var(--dim)":(t<0.35?"var(--red)":(t<0.5?"var(--amber)":"var(--green)"));
+    return `<tr><td>${esc(b.name)}</td><td>${fmt$(b.deposits_cents)}</td><td>${fmt$(b.reserves_cents)}</td>
+     <td title="average trust belief across agents (deposits flee below ~0.35)">
+       <span class="trustbar"><div style="width:${(t||0)*100}%; background:${tcol}"></div></span>${t==null?"—":fmt(t,2)}</td>
+     <td class="${b.status==='open'?'up':'down'}">${b.status}</td></tr>`;}).join("");
+
+  $("#firms tbody").innerHTML = firms.map(f=>
+    `<tr><td title="${esc(f.sector||"")}">${esc(f.name)}</td><td>${f.status==='bankrupt'?'<span class="down">bankrupt</span>':f.status}</td>
+     <td>${f.employees??"—"}</td><td>${fmt$(f.price_cents)}</td>
+     <td>${f.last_stock_price?fmt$(f.last_stock_price):"—"}</td><td>${fmt$(f.cash_cents)}</td></tr>`).join("");
+
+  renderAgents();
+  renderInstitutions(inst);
+
+  $("#convs").innerHTML = convs.map(c=>
+    `<div class="conv"><div class="meta">day ${c.tick}</div>`+
+    c.messages.map(m=>`<div><span class="who">${esc(m.name||("#"+m.agent_id))}:</span> ${esc(m.text)}</div>`).join("")+
+    `</div>`).join("") || `<div class="empty">In the <b>evening phase</b>, socially-connected agents talk. Lines heard become memories and shift beliefs — this is how rumors travel.</div>`;
+
+  setGov(cost.governor);
+  if(cost.by_model && cost.by_model.length){
+    $("#cost").innerHTML =
+      `<div class="kv">${cost.by_model.map(m=>`<div>${esc(m.model)}</div><div>${m.calls} calls · $${fmt(m.cost_usd,4)}</div>`).join("")}</div>
+       <h3 class="subhead">By purpose</h3>
+       <div class="kv">${cost.by_purpose.map(p=>`<div>${esc(p.purpose)}</div><div>${p.calls} calls · $${fmt(p.cost_usd,4)}</div>`).join("")}</div>`;
+  }
+}
+
+function renderInstitutions(inst){
+  if(!inst) return;
+  const g=inst.government||{}, vc=inst.vc||{}, h=inst.health||{};
+  let html="";
+  if(g.enabled){
+    const el=g.last_election;
+    html+=`<div class="kv">
+      <div title="Withheld from every wage payment; funds benefits">Income tax</div><div><b>${fmt(g.tax_rate_bps/100,1)}%</b> flat on wages</div>
+      <div>Unemployment benefit</div><div><b>${fmt$(g.unemployment_benefit_cents)}</b> per cycle</div>
+      <div title="sys:gov account — negative = deficit spending">Treasury</div><div class="${g.treasury_cents<0?'down':'up'}">${fmt$(g.treasury_cents)}${g.treasury_cents<0?" (deficit)":""}</div>
+      <div title="Agents vote from their beliefs and lived economy; outcome shifts tax + benefits within bounds">Last election</div>
+      <div>${el?`day ${el.tick}: <b>${esc(el.direction)}</b> won ${el.expand_votes}–${el.austerity_votes}`:"none yet"}</div>
+    </div>`;
+  } else html+=`<div class="empty">No government configured in this run.</div>`;
+  if(vc.exists){
+    const port=vc.portfolio||[];
+    const invested=port.reduce((s,p)=>s+(p.invested_cents||0),0);
+    const dead=port.filter(p=>p.status==="written_off").length;
+    html+=`<h3 class="subhead">Venture fund</h3><div class="kv">
+      <div>Dry powder</div><div><b>${fmt$(vc.fund_cents)}</b></div>
+      <div>Portfolio</div><div>${port.length?`${port.length} deal(s) · ${fmt$(invested)} deployed${dead?` · <span class="down">${dead} written off</span>`:""}`:"no deals yet — firms pitch when bank credit runs thin"}</div></div>`;
+    if(port.length) html+=port.map(p=>`<div class="ev"><span class="chip k-vc">deal</span><span class="txt">${esc(p.firm_name)} — ${fmt$(p.invested_cents)} for ${fmt(p.equity_bps/100,1)}% · <span class="${p.status==='written_off'?'down':'up'}">${esc(p.status)}</span></span></div>`).join("");
+  }
+  const epi=h.epidemic_multiplier>1.01;
+  html+=`<h3 class="subhead">Health economy</h3><div class="kv">
+    <div>Hospital</div><div>${h.hospital?`${esc(h.hospital.name)} <span class="${h.hospital.status==='bankrupt'?'down':'up'}">${esc(h.hospital.status)}</span>`:"—"}</div>
+    <div>Insurer</div><div>${h.insurer?`${esc(h.insurer.name)} <span class="${h.insurer.status==='bankrupt'?'down':'up'}">${esc(h.insurer.status)}</span>`:"—"}</div>
+    <div title="Sick agents pay the hospital; insurance covers most of the bill while the insurer stays liquid">Insured</div><div><b>${h.insured_count}</b> active policies</div>
+    <div>Epidemic</div><div class="${epi?'down':''}">${epi?`⚠ illness risk ×${fmt(h.epidemic_multiplier,1)}`:"none"}</div>
+  </div>`;
+  $("#institutions").innerHTML=html;
+}
+
+function renderAgents(){
+  const q=($("#agentFilter").value||"").toLowerCase();
+  const rows=(window._agents||[]).filter(a=>!q || (a.name+" "+(a.occupation||"")+" "+(a.role||"")).toLowerCase().includes(q));
+  $("#agents tbody").innerHTML = rows.map(a=>
+    `<tr class="click" onclick="inspect(${a.id})" title="Click to inspect ${esc(a.name)}"><td>${a.id}</td><td>${esc(a.name)}</td><td>${esc(a.occupation||"")}</td>
+     <td>${a.role?`<span class="badge">${esc(a.role)}</span>`:""}</td><td>${a.age}</td>
+     <td>${a.health==="healthy"?"healthy":`<span class="${a.health==='critical'?'down':'tone-neg'}">${a.health}</span>`}</td>
+     <td>${a.alive?(a.retired?"retired":"active"):"<span class='down'>deceased</span>"}</td></tr>`).join("");
+}
+$("#agentFilter").addEventListener("input", renderAgents);
+
+async function inspect(id){
+  const d = await api("/api/agents/"+id);
+  const a=d.agent;
+  $("#inspectorBody").innerHTML = `
+    <div class="kv">
+      <div>Who</div><div><b>${esc(a.name)}</b> (#${a.id}) — ${esc(a.occupation||"")} ${a.role?`<span class="badge">${esc(a.role)}</span>`:""}</div>
+      <div>Age / health</div><div>${a.age} · ${a.health} ${a.alive?"":"· <span class='down'>DECEASED</span>"}</div>
+      <div>Accounts</div><div>${d.accounts.map(x=>`${x.kind}@${esc(nameOf('bank',x.bank_id))}: <b>${fmt$(x.balance_cents)}</b>`).join(" · ")||"—"}</div>
+      <div>Loans</div><div>${d.loans.map(l=>`#${l.id} ${fmt$(l.outstanding_cents)} @${(l.rate_bps/100).toFixed(1)}% (${l.status})`).join(" · ")||"—"}</div>
+      <div>Shares</div><div>${d.shares.map(s=>`${esc(nameOf('firm',s.firm_id))} ×${s.qty}`).join(" · ")||"—"}</div>
+      <div title="Numeric beliefs drive behaviour: trust below ~0.35 triggers deposit flight">Beliefs</div>
+      <div>${Object.entries(d.beliefs).map(([k,v])=>`${esc(k)}=<b>${fmt(v,3)}</b>`).join(" · ")||"—"}</div>
+    </div>
+    <h3 class="subhead">Recent memories</h3>
+    ${d.memories.map(m=>`<div class="ev"><span class="t">d${m.tick}</span><span class="chip k-sys">${esc(m.kind)}</span><span class="txt">${esc(m.text)} <span style="color:var(--faint)">(importance ${fmt(m.importance,1)})</span></span></div>`).join("")||"<div class='empty'>none yet</div>"}
+    <h3 class="subhead">Recent decisions — the exact prompt and the returned actions</h3>
+    ${d.recent_decisions.map(c=>`<details><summary style="cursor:pointer; color:var(--dim)">day ${c.tick} · ${esc(c.model||"scripted")} · $${fmt(c.cost_usd,5)}</summary>
+      <pre>${esc(JSON.stringify(c.request,null,1).slice(0,4000))}</pre>
+      <pre>${esc(JSON.stringify(c.response,null,1).slice(0,3000))}</pre></details>`).join("")||"<div class='empty'>no decisions logged yet — they appear after this agent's next wakeup</div>"}`;
+  inspector.showModal();
+}
+window.inspect = inspect;
+
+// ── Oracle ─────────────────────────────────────────────────────────────────
+const ORACLE_EXAMPLES = [
+  "What is the probability of a bank run within 30 ticks?",
+  "Probability of a market crash within 30 ticks?",
+  "Will unemployment exceed 8% within 60 ticks?",
+];
+$("#oracleChips").innerHTML = ORACLE_EXAMPLES.map(q=>`<button onclick="askOracle('${q.replace(/'/g,"\\'")}')">${q}</button>`).join("");
+
+async function askOracle(q){
+  if(!q) return;
+  $("#oracleQ").value="";
+  const chat=$("#oracleChat");
+  if(chat.querySelector(".empty")) chat.innerHTML="";
+  chat.insertAdjacentHTML("beforeend",`<div class="q">${esc(q)}</div>`);
+  chat.insertAdjacentHTML("beforeend",`<div class="a" id="oraclePending"><i style="color:var(--dim)">consulting the world state…</i></div>`);
+  chat.scrollTop=chat.scrollHeight;
+  const ans = await post("/api/oracle/ask",{question:q});
+  const el=$("#oraclePending"); el.removeAttribute("id");
+  if(ans.insufficient_data){
+    el.innerHTML=`<b style="color:var(--amber)">insufficient data</b> — the Oracle refuses to invent a number.<br><span style="color:var(--dim)">${esc(ans.reason||"")}</span>`;
+  } else {
+    el.innerHTML=`<span class="p">${(ans.p*100).toFixed(0)}%</span> <span class="badge">${esc(ans.confidence)} confidence</span>
+      <span class="badge" title="The resolver auto-scores this when the deadline passes">auto-resolves by day ${ans.deadline_tick}</span>
+      <div style="margin-top:5px">${(ans.drivers||[]).map(d=>`• ${esc(d)}`).join("<br>")}</div>
+      <div style="color:var(--dim); margin-top:5px">${esc(ans.reasoning||"")}</div>`;
+  }
+  chat.scrollTop=chat.scrollHeight;
+  refreshOracleScore();
+}
+window.askOracle = askOracle;
+$("#oracleAsk").onclick = ()=>askOracle($("#oracleQ").value.trim());
+$("#oracleQ").addEventListener("keydown",e=>{if(e.key==="Enter")askOracle($("#oracleQ").value.trim())});
+async function refreshOracleScore(){
+  const d=await api("/api/oracle/predictions");
+  const s=d.scorecard;
+  $("#oracleScore").textContent = s.resolved
+    ? `Brier ${s.mean_brier} vs naive ${s.naive_brier} · ${s.resolved} resolved · ${s.open} open`
+    : (s.total ? `${s.total} prediction(s), none resolved yet` : "no predictions yet");
+}
+
+$("#btnCalib").onclick = async ()=>{
+  calibDlg.showModal();
+  const [run, all] = await Promise.all([
+    api("/api/oracle/calibration?scope=run"), api("/api/oracle/calibration?scope=all")]);
+  const block = (title,c)=>{
+    if(!c || !c.n) return `<h3 class="subhead">${title}</h3><div class="empty">No resolved predictions yet — ask questions and let their deadlines pass.</div>`;
+    const rows=c.bins.map(b=>{
+      const gap=Math.abs(b.mean_forecast-b.observed);
+      return `<tr><td>${b.bin}</td><td>${b.n}</td><td>${(b.mean_forecast*100).toFixed(0)}%</td>
+        <td>${(b.observed*100).toFixed(0)}%</td>
+        <td><span class="${gap<0.15?'up':'down'}">${gap<0.15?"✓ close":"Δ "+(gap*100).toFixed(0)+"pp"}</span></td></tr>`;
+    }).join("");
+    return `<h3 class="subhead">${title}</h3>
+      <div class="kv" style="margin-bottom:8px">
+        <div>Brier score</div><div><b>${c.brier}</b> vs always-guess-50% ${c.naive_brier} ${c.beats_naive?'<span class="up">— beats the baseline</span>':''}</div>
+        <div title="brier = reliability − resolution + uncertainty">Decomposition</div><div>reliability ${c.reliability} − resolution ${c.resolution} + uncertainty ${c.uncertainty}</div>
+        <div>Sample</div><div>${c.n} resolved${c.runs?` across ${c.runs} runs`:""} · base rate ${(c.base_rate*100).toFixed(0)}%</div>
+      </div>
+      <table><thead><tr><th>When it says…</th><th>N</th><th>Mean forecast</th><th>It happened</th><th>Fit</th></tr></thead><tbody>${rows}</tbody></table>`;
+  };
+  $("#calibBody").innerHTML =
+    `<p style="color:var(--dim); font-size:12px; margin-bottom:6px">A calibrated analyst's “70%” events happen ~70% of the time. Lower Brier = better; beating the naive 0.5 baseline means the Oracle actually sees ahead.</p>`
+    + block("This run", run) + block("All runs pooled", all);
+};
+
+// ── shock console ──────────────────────────────────────────────────────────
+const SHOCK_DEFS = {
+  rumor:   {icon:"🗣", name:"False rumor", desc:"Purely informational: N agents 'hear' a bank is failing. No money touched — watch beliefs do the damage.",
+            fields:[{k:"bank_id",label:"Target bank",type:"bank"},{k:"n_agents",label:"How many agents hear it",type:"number",def:12}],
+            hint:"The classic experiment: rumor → trust ↓ → deposit flight → reserves drain."},
+  policy_rate:{icon:"🏛", name:"Policy-rate override", desc:"Force the central bank's rate, bypassing the banker (still logged as an override).",
+            fields:[{k:"rate_bps",label:"New rate (basis points, 700 = 7%)",type:"number",def:700}],
+            hint:"Transmission: savings interest, loan pricing, firm borrowing."},
+  oil:     {icon:"🛢", name:"Commodity / oil shock", desc:"Scales every firm's input costs through the global commodity index.",
+            fields:[{k:"multiplier",label:"Cost multiplier",type:"number",def:1.6,step:0.1}],
+            hint:"Use a trend over ~10 days for a realistic squeeze → prices → CPI."},
+  slant:   {icon:"🧾", name:"Slanted-news directive", desc:"One outlet gets a framing instruction for N days. Readers of that outlet drift first.",
+            fields:[{k:"outlet_id",label:"Outlet",type:"outlet"},{k:"directive",label:"Directive",type:"text",def:"Frame today's coverage as alarming for financial stability."}],
+            hint:"Compare belief drift between the two outlets' readerships."},
+  scandal: {icon:"🕵", name:"Firm scandal", desc:"Injects a TRUE negative event about a firm; the newsroom picks it up naturally.",
+            fields:[{k:"firm_id",label:"Firm",type:"firm"},{k:"description",label:"What happened",type:"text",def:"Regulators opened an investigation into accounting irregularities."}],
+            hint:"Watch its stock, then its credit access."},
+  epidemic:{icon:"🦠", name:"Epidemic", desc:"Multiplies the illness hazard for a while: lost wages, medical bills, insurance claims, hospital revenue.",
+            fields:[{k:"multiplier",label:"Illness risk multiplier",type:"number",def:6}],
+            hint:"Best as a trend with a duration (e.g. 20 days). It subsides when the duration ends."},
+};
+let shockSel = "rumor";
+function renderShockKinds(){
+  $("#shockKinds").innerHTML = Object.entries(SHOCK_DEFS).map(([k,d])=>
+    `<div class="shockkind ${k===shockSel?'sel':''}" onclick="pickShock('${k}')"><b>${d.icon} ${d.name}</b><span>${d.desc}</span></div>`).join("");
+  const d=SHOCK_DEFS[shockSel];
+  $("#shockHint").textContent = d.hint||"";
+  $("#shockFields").innerHTML = d.fields.map(f=>{
+    if(f.type==="bank") return `<div class="field"><label>${f.label}</label><select data-k="${f.k}">${(window._banksList||[]).filter(b=>b.status==='open').map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select></div>`;
+    if(f.type==="firm") return `<div class="field"><label>${f.label}</label><select data-k="${f.k}">${(window._firmsList||[]).filter(x=>x.status!=='bankrupt').map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>`;
+    if(f.type==="outlet") return `<div class="field"><label>${f.label}</label><select data-k="${f.k}">${(window._outlets||[]).map(o=>`<option value="${o.id}">${esc(o.name)} (${esc(o.slant)})</option>`).join("")}</select></div>`;
+    if(f.type==="text") return `<div class="field"><label>${f.label}</label><input data-k="${f.k}" value="${esc(f.def||"")}"></div>`;
+    return `<div class="field"><label>${f.label}</label><input data-k="${f.k}" type="number" step="${f.step||1}" value="${f.def}"></div>`;
+  }).join("");
+  if(shockSel==="epidemic" && $("#shockTrigger").value==="shock"){ $("#shockTrigger").value="trend"; $("#shockTrigger").onchange(); }
+}
+window.pickShock = k=>{ shockSel=k; renderShockKinds(); };
+$("#btnShock").onclick = ()=>{ renderShockKinds(); $("#shockTrigger").onchange(); shockDlg.showModal(); };
+$("#qsShock").onclick = ()=>{ shockSel="rumor"; renderShockKinds(); shockDlg.showModal(); };
+$("#shockTrigger").onchange = ()=>{
+  const t=$("#shockTrigger").value;
+  $("#shockTick").hidden = t!=="at";
+  $("#shockDuration").hidden = t!=="trend";
+  $("#condMetric").hidden = $("#condOp").hidden = $("#condThreshold").hidden = t!=="conditional";
+};
+$("#shockGo").onclick = async ()=>{
+  const params={};
+  document.querySelectorAll("#shockFields [data-k]").forEach(el=>{
+    const v = el.type==="number" ? +el.value : el.value;
+    params[el.dataset.k] = el.tagName==="SELECT" ? +el.value : v;
+  });
+  try{ Object.assign(params, JSON.parse($("#shockParams").value||"{}")); }catch(e){ toast("⚠️ Advanced params must be valid JSON"); return; }
+  const t=$("#shockTrigger").value;
+  const body={kind:shockSel, trigger_type:(t==="at"?"shock":t), params, label:shockSel, duration_ticks:0, trigger:{}};
+  if(t==="at") body.trigger={tick:+($("#shockTick").value||1)};
+  if(t==="trend") body.duration_ticks=+($("#shockDuration").value|| (shockSel==="epidemic"?20:10));
+  if(t==="conditional") body.trigger={metric:$("#condMetric").value, op:$("#condOp").value, threshold:+($("#condThreshold").value||0)};
+  const r = await post("/api/shocks", body);
+  shockDlg.close();
+  toast(r.shock_id ? `⚡ <b>${SHOCK_DEFS[shockSel].name}</b> scheduled (#${r.shock_id}). Watch the event feed and the information layer.` : "⚠️ "+esc(JSON.stringify(r)));
+};
+
+// ── run controls / report / help / quickstart ─────────────────────────────
+$("#btnStart").onclick = async ()=>{ await post("/api/run/start"); toast("▶ World running — agents are waking up. Slow it down with the speed selector."); };
+$("#btnPause").onclick = ()=>post("/api/run/pause");
+$("#btnStep").onclick  = async ()=>{ await post("/api/run/step"); refreshTables(); };
+$("#speed").onchange   = e=>post("/api/run/speed",{delay_s:+e.target.value});
+$("#btnHelp").onclick  = ()=>helpDlg.showModal();
+$("#qsClose").onclick  = ()=>{ localStorage.qsDismissed="1"; $("#quickstart").hidden=true; };
+$("#btnReport").onclick = async ()=>{
+  toast("📄 Generating the end-of-run report…");
+  const r = await post("/api/report");
+  const fn = (r.path||"").split(/[\\/]/).pop();
+  toast(`📄 Report ready: <a href="/reports/${esc(fn)}" target="_blank">open ${esc(fn)}</a>`, 12000);
+};
+
+// ── replay viewer ──────────────────────────────────────────────────────────
+const replay = {id:null, max:1, timer:null};
+$("#btnReplay").onclick = async ()=>{
+  const runs = await api("/api/replay/runs");
+  const sel = $("#replayRun");
+  sel.innerHTML = runs.map(r=>`<option value="${esc(r.file)}">${esc(r.run_id)} · ${r.ticks} days · ${esc(r.status)}</option>`).join("")
+    || "<option value=''>no stored runs yet</option>";
+  replayDlg.showModal();
+  if(runs.length){ sel.value = runs[runs.length-1].file; replayLoad(sel.value); }
+};
+$("#replayRun").onchange = e=>replayLoad(e.target.value);
+async function replayLoad(runId){
+  replayStop();
+  if(!runId) return;
+  const s = await api(`/api/replay/${runId}/summary`);
+  replay.id = runId; replay.max = Math.max(1, s.ticks);
+  const sl = $("#replaySlider"); sl.max = replay.max; sl.value = Math.min(1, replay.max);
+  replayShow(+sl.value);
+}
+$("#replaySlider").oninput = e=>{ replayStop(); replayShow(+e.target.value); };
+$("#replayPlay").onclick = ()=>{
+  if(replay.timer){ replayStop(); return; }
+  $("#replayPlay").textContent="⏸";
+  replay.timer = setInterval(()=>{
+    const sl=$("#replaySlider");
+    if(+sl.value >= replay.max){ replayStop(); return; }
+    sl.value = +sl.value + 1; replayShow(+sl.value);
+  }, 700);
+};
+function replayStop(){ clearInterval(replay.timer); replay.timer=null; $("#replayPlay").textContent="▶"; }
+window.replayStop = replayStop;
+async function replayShow(t){
+  if(!replay.id) return;
+  $("#replayTickLabel").textContent = t + " / " + replay.max;
+  const v = await api(`/api/replay/${replay.id}/tick/${t}`);
+  $("#replayTicker").innerHTML = (v.ticker||[]).map(x=>`<span>${esc(x.name)}<b>${fmt$(x.price_cents)}</b></span>`).join("") || "—";
+  $("#replayMetrics").innerHTML = METRICS.map(([key,label,f])=>
+    `<div class="metric"><div class="name"><span>${label}</span></div><div class="val">${v.metrics&&v.metrics[key]!=null?f(v.metrics[key]):"—"}</div></div>`).join("");
+  $("#replayEvents").innerHTML = (v.events||[]).map(e=>{
+    const [cat,cls]=EV_CAT(e.kind);
+    return `<div class="ev"><span class="chip ${cls}">${cat}</span><span class="txt">${describeEvent(e)}</span></div>`;
+  }).join("") || "<div class='empty'>a quiet day</div>";
+  $("#replayNews").innerHTML = (v.news||[]).map(n=>
+    `<div class="feed-item"><div class="headline ${n.tone<-0.15?'tone-neg':(n.tone>0.15?'tone-pos':'')}">${esc(n.headline)}</div><div class="meta">${esc(n.outlet||"")}</div></div>`).join("") || "<div class='empty'>no stories that day</div>";
+  $("#replayConvs").innerHTML = (v.conversations||[]).map(c=>
+    `<div class="conv">`+c.messages.map(m=>`<div><span class="who">${esc(m.name||"?")}:</span> ${esc(m.text)}</div>`).join("")+`</div>`).join("") || "<div class='empty'>no conversations that day</div>";
+}
+
+// ── WebSocket live feed ────────────────────────────────────────────────────
+function connectWS(){
+  const ws = new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
+  ws.onmessage = ev=>{
+    const m=JSON.parse(ev.data);
+    if(m.type==="tick"){
+      setStatus(m.status||"running", m.tick);
+      renderMetrics(m.metrics); renderTicker(m.ticker);
+      renderEvents(m.events); renderNews(m.news); setGov(m.governor);
+      if(m.tick % 3 === 0) refreshTables();
+    } else if(m.type==="halt"){
+      setStatus("halted",$("#tick").textContent);
+      toast("🚨 <b>Run halted:</b> "+esc(m.reason), 15000);
+    } else if(m.type==="oracle"){
+      refreshOracleScore();
+    }
+  };
+  ws.onclose = ()=>setTimeout(connectWS, 1500);
+}
+connectWS();
+
+// ── initial load ───────────────────────────────────────────────────────────
+(async ()=>{
+  const st = await api("/api/run/status");
+  setStatus(st.status, st.tick); setGov(st.governor);
+  const hist = await api("/api/metrics?names=" + METRICS.map(m=>m[0]).join(","));
+  for(const [name,points] of Object.entries(hist)){
+    series[name]=(points||[]).map(p=>p.value).slice(-150);
+  }
+  renderMetrics(null);
+  await refreshTables();
+  refreshOracleScore();
+  // Backfill the event feed from history (API returns newest-first, which is
+  // exactly the shape renderEvents expects) so the page never starts blank.
+  const past = await api("/api/events?limit=40&min_importance=1.5");
+  if(past.length) renderEvents(past);
+  if(localStorage.helpSeen!=="1"){ helpDlg.showModal(); localStorage.helpSeen="1"; }
+})();
+setInterval(refreshTables, 10000);
+</script>
+</body>
+</html>

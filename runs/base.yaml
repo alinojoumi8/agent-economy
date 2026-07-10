@@ -1,0 +1,120 @@
+# Agent Economy — default world configuration (reproducibility = this file + seed + code version)
+seed: 42
+
+population:
+  size: 70                      # citizens (staff + founders come on top → ~100 agents)
+
+banks:
+  count: 2
+  names: ["First Bank", "Union Bank"]
+  initial_reserve_ratio: 0.6    # reserves endowed at genesis as a fraction of deposits
+  reserve_requirement_bps: 1000 # 10% — below this the liquidity sweep triggers support
+  risk_policy:
+    min_rate_bps: 300
+    max_rate_bps: 3000
+    default_rate_bps: 900
+
+firms:
+  count: 12
+  listed: 3                     # firms floated on the exchange at genesis
+  target_headcount: 3
+  pay_interval_ticks: 30
+
+exchange:
+  circuit_breaker_drop: 0.20    # halt a symbol −20% intraday (TECH-SPEC §9; comment out to disable)
+
+central_bank:
+  neutral_rate_bps: 500
+  max_step_bps: 50              # Taylor-rule guardrails: ±50bps per move
+  min_rate_bps: 0
+  max_rate_bps: 2000
+  target_inflation: 0.02
+  natural_unemployment: 0.05
+
+lifecycle:
+  retirement_age: 65
+  medical_cost_cents: 5000
+  population_mode: stable        # each death schedules a replacement arrival
+
+# ── P1 R12: fiscal layer. Remove this section to run a government-free world. ──
+government:
+  tax_rate_bps: 1500             # 15% flat income tax withheld from wages
+  unemployment_benefit_cents: 120000
+  benefit_interval_ticks: 30
+  election_interval_ticks: 180   # a vote every ~6 sim-months shifts policy in steps
+  tax_step_bps: 300
+  benefit_step_cents: 40000
+  min_tax_bps: 500
+  max_tax_bps: 3000
+  min_benefit_cents: 0
+  max_benefit_cents: 400000
+
+# ── P1 R13: venture capital. The partner's checking account is the fund. ──
+vc:
+  fund_cents: 10000000           # $100k of dry powder at genesis
+
+# ── P1 R17: health economy. Remove to fall back to the sys:medical sink. ──
+health:
+  hospital: true                 # medical spending becomes hospital revenue
+  insurer: true                  # premium-funded coverage of medical bills
+  premium_cents: 3000            # per 30 ticks
+  coverage_bps: 8000             # insurer pays 80% of bills while it stays liquid
+  premium_interval_ticks: 30
+  hospital_capital_cents: 3000000
+  insurer_capital_cents: 5000000
+
+behavior:
+  act_every: 3                  # citizen base cadence (ticks between wakeups)
+  run_threshold: 0.35           # trust below this → move deposits (the bank-run channel)
+  event_wake_importance: 2.0
+
+conversations:
+  turns: 3
+
+budget:
+  cap_usd: 200.0                # hard cap — never exceeded (PRD R7)
+  oracle_reserve_usd: 10.0      # carve-out so questions never starve the world
+  conversation_pairs: 15        # evening pairs at governor level 0
+  thresholds: [0.60, 0.80, 0.95]
+
+oracle:
+  default_horizon_ticks: 30
+
+# ── LLM routing: role → {provider, model}. Default = scripted (free, offline). ──
+# To use real models, define providers and point roles at them, e.g.:
+#   providers:
+#     minimax: {kind: openai_compat, base_url: "https://api.minimax.io/v1", api_key_env: MINIMAX_API_KEY}
+#     kimi:    {kind: openai_compat, base_url: "https://api.moonshot.ai/v1", api_key_env: MOONSHOT_API_KEY}
+#     anthropic: {kind: anthropic, api_key_env: ANTHROPIC_API_KEY}
+#     claude_cli: {kind: cli, command: claude}          # Oracle/dev ONLY (enforced in code)
+#   routes:
+#     citizen:        {provider: minimax, model: minimax-m3}
+#     founder:        {provider: minimax, model: minimax-m3}
+#     conversation:   {provider: minimax, model: minimax-m3}
+#     memory:         {provider: minimax, model: minimax-m3}
+#     central_banker: {provider: kimi, model: kimi-k2.7}
+#     credit_officer: {provider: kimi, model: kimi-k2.7}
+#     editor:         {provider: kimi, model: kimi-k2.7}
+#     oracle:         {provider: kimi, model: kimi-k2.7}
+llm:
+  concurrency: 8
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+checkpoint_every: 10
+checkpoint_dir: data/checkpoints
+speed_delay_s: 0.0
+
+outlets:
+  - {id: 1, name: "The Ledger",       slant: "pro-market-sensational"}
+  - {id: 2, name: "Commons Dispatch", slant: "cautious-pro-labor"}
+
+# ── scheduled shocks (also fireable live from the dashboard) ──
+shocks: []
+# examples:
+#  - {kind: rumor, trigger: shock, trigger_params: {tick: 20}, params: {bank_id: 1, n_agents: 12}}
+#  - {kind: oil, trigger: trend, trigger_params: {start: 30}, duration_ticks: 10, params: {multiplier: 1.6}}
+#  - {kind: policy_rate, trigger: conditional, trigger_params: {metric: unemployment, op: ">", threshold: 0.08},
+#     params: {rate_bps: 300}}
+#  - {kind: epidemic, trigger: trend, trigger_params: {start: 40}, duration_ticks: 25,
+#     params: {multiplier: 6.0}}   # illness hazard ×6 for 25 ticks, then subsides

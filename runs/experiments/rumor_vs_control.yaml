@@ -1,0 +1,18 @@
+# Experiment (P1 R14): does a false rumor about Bank 1 cause a deposit run?
+# Treatment injects the rumor at tick 10; control runs the identical seed without
+# it. Effect = treatment − control across seeds.
+#   python run.py --experiment runs/experiments/rumor_vs_control.yaml
+name: rumor_vs_control
+base_config: runs/base.yaml
+overrides:
+  population: {size: 24}          # small, fast worlds — scale up for real studies
+  firms: {count: 5, listed: 2}
+  checkpoint_every: 0
+seeds: [1, 2, 3]
+ticks: 30
+control: true
+shocks:
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 10},
+     params: {bank_id: 1, n_agents: 14}}
+metrics: ["bank_deposits:1", "bank_reserve_ratio:1", "sentiment", "index", "unemployment"]
+event_outcomes: [bank_failure, deposit_move, lolr_granted]

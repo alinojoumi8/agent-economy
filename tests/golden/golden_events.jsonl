@@ -1,0 +1,283 @@
+{"k":"institution_created","p":{"agent_id":1,"kind":"central_bank"},"ph":"NIGHT_CLOSE","t":0}
+{"k":"company_founded","p":{"firm_id":1,"founder_agent_id":25,"name":"Food Co 1","sector":"food"},"ph":"EXECUTION","t":0}
+{"k":"ipo","p":{"firm_id":1,"float_shares":500,"ipo_price_cents":748,"name":"Food Co 1"},"ph":"MARKET","t":0}
+{"k":"company_founded","p":{"firm_id":2,"founder_agent_id":16,"name":"Retail Co 2","sector":"retail"},"ph":"EXECUTION","t":0}
+{"k":"company_founded","p":{"firm_id":3,"founder_agent_id":15,"name":"Manufacturing Co 3","sector":"manufacturing"},"ph":"EXECUTION","t":0}
+{"k":"company_founded","p":{"firm_id":4,"founder_agent_id":26,"name":"General Hospital","sector":"health"},"ph":"EXECUTION","t":0}
+{"k":"company_founded","p":{"firm_id":5,"founder_agent_id":27,"name":"Aegis Mutual","sector":"insurance"},"ph":"EXECUTION","t":0}
+{"k":"genesis","p":{"agents":27,"banks":2,"firms":5},"ph":"NIGHT_CLOSE","t":0}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":1}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":1}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":1}
+{"k":"birthday","p":{"age":59,"agent_id":1},"ph":"NIGHT_CLOSE","t":1}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"policy_bought","p":{"agent_id":4,"coverage_bps":8000,"policy_id":1,"premium_cents":3000},"ph":"EXECUTION","t":1}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":2,"qty":8,"total_cents":2888,"unit_price_cents":361},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":1}
+{"k":"goods_sale","p":{"buyer_id":13,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":1}
+{"k":"policy_bought","p":{"agent_id":13,"coverage_bps":8000,"policy_id":2,"premium_cents":3000},"ph":"EXECUTION","t":1}
+{"k":"price_set","p":{"firm_id":2,"new_cents":342,"old_cents":361,"product":"retail_good"},"ph":"EXECUTION","t":1}
+{"k":"goods_sale","p":{"buyer_id":19,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":1}
+{"k":"policy_bought","p":{"agent_id":19,"coverage_bps":8000,"policy_id":3,"premium_cents":3000},"ph":"EXECUTION","t":1}
+{"k":"goods_sale","p":{"buyer_id":22,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":1}
+{"k":"policy_bought","p":{"agent_id":22,"coverage_bps":8000,"policy_id":4,"premium_cents":3000},"ph":"EXECUTION","t":1}
+{"k":"price_set","p":{"firm_id":1,"new_cents":710,"old_cents":748,"product":"food_good"},"ph":"EXECUTION","t":1}
+{"k":"price_set","p":{"firm_id":5,"new_cents":3150,"old_cents":3000,"product":"coverage"},"ph":"EXECUTION","t":1}
+{"k":"conversation","p":{"conv_id":1,"participants":[8,13],"turns":3},"ph":"EVENING","t":1}
+{"k":"conversation","p":{"conv_id":2,"participants":[16,20],"turns":3},"ph":"EVENING","t":1}
+{"k":"conversation","p":{"conv_id":3,"participants":[9,22],"turns":3},"ph":"EVENING","t":1}
+{"k":"conversation","p":{"conv_id":4,"participants":[11,14],"turns":3},"ph":"EVENING","t":1}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":2}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":2}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":2}
+{"k":"birthday","p":{"age":48,"agent_id":2},"ph":"NIGHT_CLOSE","t":2}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":3,"qty":5,"total_cents":2715,"unit_price_cents":543},"ph":"MARKET","t":2}
+{"k":"goods_sale","p":{"buyer_id":14,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":2}
+{"k":"policy_bought","p":{"agent_id":14,"coverage_bps":8000,"policy_id":5,"premium_cents":3000},"ph":"EXECUTION","t":2}
+{"k":"goods_sale","p":{"buyer_id":17,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":2}
+{"k":"policy_bought","p":{"agent_id":17,"coverage_bps":8000,"policy_id":6,"premium_cents":3000},"ph":"EXECUTION","t":2}
+{"k":"goods_sale","p":{"buyer_id":20,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":2}
+{"k":"policy_bought","p":{"agent_id":20,"coverage_bps":8000,"policy_id":7,"premium_cents":3000},"ph":"EXECUTION","t":2}
+{"k":"goods_sale","p":{"buyer_id":23,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":2}
+{"k":"price_set","p":{"firm_id":4,"new_cents":5250,"old_cents":5000,"product":"care"},"ph":"EXECUTION","t":2}
+{"k":"conversation","p":{"conv_id":5,"participants":[10,15],"turns":3},"ph":"EVENING","t":2}
+{"k":"conversation","p":{"conv_id":6,"participants":[7,13],"turns":3},"ph":"EVENING","t":2}
+{"k":"conversation","p":{"conv_id":7,"participants":[19,22],"turns":3},"ph":"EVENING","t":2}
+{"k":"conversation","p":{"conv_id":8,"participants":[3,24],"turns":3},"ph":"EVENING","t":2}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":3}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":3}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":3}
+{"k":"birthday","p":{"age":43,"agent_id":3},"ph":"NIGHT_CLOSE","t":3}
+{"k":"epidemic_started","p":{"duration_ticks":2,"multiplier":300.0},"ph":"NIGHT_CLOSE","t":3}
+{"k":"shock_fired","p":{"duration_ticks":2,"kind":"epidemic","label":"epidemic","params":{"multiplier":300.0},"shock_id":1,"trigger_type":"trend"},"ph":"NIGHT_CLOSE","t":3}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":4344,"unit_price_cents":543},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":2172,"unit_price_cents":543},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"goods_sale","p":{"buyer_id":12,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"policy_bought","p":{"agent_id":12,"coverage_bps":8000,"policy_id":8,"premium_cents":3000},"ph":"EXECUTION","t":3}
+{"k":"price_set","p":{"firm_id":3,"new_cents":347,"old_cents":543,"product":"manufacturing_good"},"ph":"EXECUTION","t":3}
+{"k":"goods_sale","p":{"buyer_id":18,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"policy_bought","p":{"agent_id":18,"coverage_bps":8000,"policy_id":9,"premium_cents":3000},"ph":"EXECUTION","t":3}
+{"k":"goods_sale","p":{"buyer_id":21,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"policy_bought","p":{"agent_id":21,"coverage_bps":8000,"policy_id":10,"premium_cents":3000},"ph":"EXECUTION","t":3}
+{"k":"goods_sale","p":{"buyer_id":24,"firm_id":1,"qty":8,"total_cents":5680,"unit_price_cents":710},"ph":"MARKET","t":3}
+{"k":"price_set","p":{"firm_id":1,"new_cents":674,"old_cents":710,"product":"food_good"},"ph":"EXECUTION","t":3}
+{"k":"price_set","p":{"firm_id":5,"new_cents":3307,"old_cents":3150,"product":"coverage"},"ph":"EXECUTION","t":3}
+{"k":"news_published","p":{"article_id":1,"headline":"ILLNESS SWEEPS THE TOWN \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.7},"ph":"NEWSROOM","t":3}
+{"k":"news_published","p":{"article_id":2,"headline":"Illness Sweeps the Town (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":-0.4},"ph":"NEWSROOM","t":3}
+{"k":"conversation","p":{"conv_id":9,"participants":[21,26],"turns":3},"ph":"EVENING","t":3}
+{"k":"conversation","p":{"conv_id":10,"participants":[3,24],"turns":3},"ph":"EVENING","t":3}
+{"k":"conversation","p":{"conv_id":11,"participants":[1,14],"turns":3},"ph":"EVENING","t":3}
+{"k":"conversation","p":{"conv_id":12,"participants":[9,17],"turns":3},"ph":"EVENING","t":3}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":4}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":4}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":4}
+{"k":"birthday","p":{"age":57,"agent_id":4},"ph":"NIGHT_CLOSE","t":4}
+{"k":"illness_onset","p":{"agent_id":16},"ph":"NIGHT_CLOSE","t":4}
+{"k":"illness_onset","p":{"agent_id":19},"ph":"NIGHT_CLOSE","t":4}
+{"k":"insurance_claim","p":{"agent_id":19,"bill_cents":5000,"covered_cents":4000,"policy_id":3},"ph":"NIGHT_CLOSE","t":4}
+{"k":"illness_onset","p":{"agent_id":22},"ph":"NIGHT_CLOSE","t":4}
+{"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":4}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":2736,"unit_price_cents":342},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":5392,"unit_price_cents":674},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":5392,"unit_price_cents":674},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":13,"firm_id":1,"qty":8,"total_cents":5392,"unit_price_cents":674},"ph":"MARKET","t":4}
+{"k":"price_set","p":{"firm_id":2,"new_cents":230,"old_cents":342,"product":"retail_good"},"ph":"EXECUTION","t":4}
+{"k":"goods_sale","p":{"buyer_id":19,"firm_id":1,"qty":8,"total_cents":5392,"unit_price_cents":674},"ph":"MARKET","t":4}
+{"k":"goods_sale","p":{"buyer_id":22,"firm_id":1,"qty":8,"total_cents":5392,"unit_price_cents":674},"ph":"MARKET","t":4}
+{"k":"price_set","p":{"firm_id":1,"new_cents":640,"old_cents":674,"product":"food_good"},"ph":"EXECUTION","t":4}
+{"k":"price_set","p":{"firm_id":4,"new_cents":5512,"old_cents":5250,"product":"care"},"ph":"EXECUTION","t":4}
+{"k":"news_published","p":{"article_id":3,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":4}
+{"k":"news_published","p":{"article_id":4,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":4}
+{"k":"conversation","p":{"conv_id":13,"participants":[5,23],"turns":3},"ph":"EVENING","t":4}
+{"k":"conversation","p":{"conv_id":14,"participants":[11,16],"turns":3},"ph":"EVENING","t":4}
+{"k":"conversation","p":{"conv_id":15,"participants":[14,18],"turns":3},"ph":"EVENING","t":4}
+{"k":"conversation","p":{"conv_id":16,"participants":[21,26],"turns":3},"ph":"EVENING","t":4}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":5}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":5}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":5}
+{"k":"birthday","p":{"age":33,"agent_id":5},"ph":"NIGHT_CLOSE","t":5}
+{"k":"illness_onset","p":{"agent_id":6},"ph":"NIGHT_CLOSE","t":5}
+{"k":"insurance_claim","p":{"agent_id":19,"bill_cents":5000,"covered_cents":4000,"policy_id":3},"ph":"NIGHT_CLOSE","t":5}
+{"k":"recovery","p":{"agent_id":19},"ph":"NIGHT_CLOSE","t":5}
+{"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":5}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":5120,"unit_price_cents":640},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":5120,"unit_price_cents":640},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":14,"firm_id":1,"qty":8,"total_cents":5120,"unit_price_cents":640},"ph":"MARKET","t":5}
+{"k":"goods_sale","p":{"buyer_id":17,"firm_id":1,"qty":7,"total_cents":4480,"unit_price_cents":640},"ph":"MARKET","t":5}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":20,"reason":"out of stock"},"ph":"EXECUTION","t":5}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":23,"reason":"out of stock"},"ph":"EXECUTION","t":5}
+{"k":"price_set","p":{"firm_id":1,"new_cents":478,"old_cents":640,"product":"food_good"},"ph":"EXECUTION","t":5}
+{"k":"price_set","p":{"firm_id":5,"new_cents":3472,"old_cents":3307,"product":"coverage"},"ph":"EXECUTION","t":5}
+{"k":"news_published","p":{"article_id":5,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":5}
+{"k":"news_published","p":{"article_id":6,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":5}
+{"k":"conversation","p":{"conv_id":17,"participants":[3,6],"turns":3},"ph":"EVENING","t":5}
+{"k":"conversation","p":{"conv_id":18,"participants":[16,23],"turns":3},"ph":"EVENING","t":5}
+{"k":"conversation","p":{"conv_id":19,"participants":[19,27],"turns":3},"ph":"EVENING","t":5}
+{"k":"conversation","p":{"conv_id":20,"participants":[7,26],"turns":3},"ph":"EVENING","t":5}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":6}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":6}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":6}
+{"k":"birthday","p":{"age":43,"agent_id":6},"ph":"NIGHT_CLOSE","t":6}
+{"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":6}
+{"k":"epidemic_ended","p":{"shock_id":1},"ph":"NIGHT_CLOSE","t":6}
+{"k":"rumor","p":{"bank_id":1,"n_agents":8,"text":"A friend of a friend says bank 1 is about to go under \u2014 people are quietly pulling out.","truthful":false},"ph":"NIGHT_CLOSE","t":6}
+{"k":"shock_fired","p":{"duration_ticks":0,"kind":"rumor","label":"rumor","params":{"bank_id":1,"n_agents":8},"shock_id":2,"trigger_type":"shock"},"ph":"NIGHT_CLOSE","t":6}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":6}
+{"k":"goods_sale","p":{"buyer_id":12,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":14,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":15,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":16,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":18,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":20,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":21,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":23,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":24,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":25,"reason":"out of stock"},"ph":"EXECUTION","t":6}
+{"k":"policy_bought","p":{"agent_id":25,"coverage_bps":8000,"policy_id":11,"premium_cents":3000},"ph":"EXECUTION","t":6}
+{"k":"price_set","p":{"firm_id":4,"new_cents":5787,"old_cents":5512,"product":"care"},"ph":"EXECUTION","t":6}
+{"k":"news_published","p":{"article_id":7,"headline":"QUESTIONS SWIRL AROUND A LENDER \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.7},"ph":"NEWSROOM","t":6}
+{"k":"news_published","p":{"article_id":8,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":6}
+{"k":"conversation","p":{"conv_id":21,"participants":[2,16],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":22,"participants":[1,13],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":23,"participants":[8,24],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":24,"participants":[15,25],"turns":3},"ph":"EVENING","t":6}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":7}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":7}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":7}
+{"k":"birthday","p":{"age":41,"agent_id":7},"ph":"NIGHT_CLOSE","t":7}
+{"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":7}
+{"k":"policy_rate_set","p":{"new_bps":550,"old_bps":500,"requested_bps":550},"ph":"EXECUTION","t":7}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":7}
+{"k":"goods_sale","p":{"buyer_id":13,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":7}
+{"k":"deposit_move","p":{"agent_id":14,"amount_cents":2343460,"from_bank":1,"to_bank":2},"ph":"EXECUTION","t":7}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":15,"reason":"out of stock"},"ph":"EXECUTION","t":7}
+{"k":"deposit_move","p":{"agent_id":16,"amount_cents":10412030,"from_bank":1,"to_bank":2},"ph":"EXECUTION","t":7}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":19,"reason":"out of stock"},"ph":"EXECUTION","t":7}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":20,"reason":"out of stock"},"ph":"EXECUTION","t":7}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":21,"reason":"out of stock"},"ph":"EXECUTION","t":7}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":7}
+{"k":"deposit_move","p":{"agent_id":23,"amount_cents":9713820,"from_bank":1,"to_bank":2},"ph":"EXECUTION","t":7}
+{"k":"deposit_move","p":{"agent_id":24,"amount_cents":991889,"from_bank":1,"to_bank":2},"ph":"EXECUTION","t":7}
+{"k":"deposit_move","p":{"agent_id":25,"amount_cents":30421029,"from_bank":1,"to_bank":2},"ph":"EXECUTION","t":7}
+{"k":"price_set","p":{"firm_id":5,"new_cents":3645,"old_cents":3472,"product":"coverage"},"ph":"EXECUTION","t":7}
+{"k":"news_published","p":{"article_id":9,"headline":"CENTRAL BANK MOVES RATES \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":7}
+{"k":"news_published","p":{"article_id":10,"headline":"Central Bank Moves Rates (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":7}
+{"k":"conversation","p":{"conv_id":25,"participants":[6,22],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":26,"participants":[1,7],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":27,"participants":[13,21],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":28,"participants":[20,24],"turns":3},"ph":"EVENING","t":7}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":8}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":8}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":8}
+{"k":"birthday","p":{"age":55,"agent_id":8},"ph":"NIGHT_CLOSE","t":8}
+{"k":"illness_critical","p":{"agent_id":16},"ph":"NIGHT_CLOSE","t":8}
+{"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":8}
+{"k":"recovery","p":{"agent_id":22},"ph":"NIGHT_CLOSE","t":8}
+{"k":"election_held","p":{"austerity_votes":11,"direction":"expand","expand_votes":16,"new_benefit_cents":100000,"new_tax_bps":1800,"old_benefit_cents":60000,"old_tax_bps":1500,"tick":8,"treasury_cents":0,"turnout":27},"ph":"NIGHT_CLOSE","t":8}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":8}
+{"k":"goods_sale","p":{"buyer_id":13,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":14,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":17,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":20,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":21,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":23,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":24,"reason":"out of stock"},"ph":"EXECUTION","t":8}
+{"k":"price_set","p":{"firm_id":4,"new_cents":6076,"old_cents":5787,"product":"care"},"ph":"EXECUTION","t":8}
+{"k":"news_published","p":{"article_id":11,"headline":"VOTERS DELIVER A FISCAL VERDICT \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":8}
+{"k":"news_published","p":{"article_id":12,"headline":"Voters Deliver a Fiscal Verdict (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":8}
+{"k":"conversation","p":{"conv_id":29,"participants":[5,8],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":30,"participants":[1,13],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":31,"participants":[21,26],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":32,"participants":[16,22],"turns":3},"ph":"EVENING","t":8}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":9}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":16},"ph":"NIGHT_CLOSE","t":9}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":9}
+{"k":"recovery","p":{"agent_id":6},"ph":"NIGHT_CLOSE","t":9}
+{"k":"birthday","p":{"age":44,"agent_id":9},"ph":"NIGHT_CLOSE","t":9}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":9}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":12,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":13,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":15,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":18,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":21,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":24,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":25,"reason":"out of stock"},"ph":"EXECUTION","t":9}
+{"k":"price_set","p":{"firm_id":4,"new_cents":6379,"old_cents":6076,"product":"care"},"ph":"EXECUTION","t":9}
+{"k":"price_set","p":{"firm_id":5,"new_cents":3827,"old_cents":3645,"product":"coverage"},"ph":"EXECUTION","t":9}
+{"k":"conversation","p":{"conv_id":33,"participants":[21,27],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":34,"participants":[8,13],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":35,"participants":[9,10],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":36,"participants":[3,19],"turns":3},"ph":"EVENING","t":9}
+{"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":10}
+{"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":16},"ph":"NIGHT_CLOSE","t":10}
+{"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":10}
+{"k":"birthday","p":{"age":48,"agent_id":10},"ph":"NIGHT_CLOSE","t":10}
+{"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":6,"firm_id":3,"qty":8,"total_cents":2776,"unit_price_cents":347},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":7,"firm_id":3,"qty":4,"total_cents":1388,"unit_price_cents":347},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":9,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":10,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":10}
+{"k":"goods_sale","p":{"buyer_id":11,"firm_id":1,"qty":8,"total_cents":3824,"unit_price_cents":478},"ph":"MARKET","t":10}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":13,"reason":"out of stock"},"ph":"EXECUTION","t":10}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":19,"reason":"out of stock"},"ph":"EXECUTION","t":10}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":21,"reason":"out of stock"},"ph":"EXECUTION","t":10}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":10}
+{"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":25,"reason":"out of stock"},"ph":"EXECUTION","t":10}
+{"k":"price_set","p":{"firm_id":4,"new_cents":6697,"old_cents":6379,"product":"care"},"ph":"EXECUTION","t":10}
+{"k":"price_set","p":{"firm_id":5,"new_cents":4018,"old_cents":3827,"product":"coverage"},"ph":"EXECUTION","t":10}
+{"k":"conversation","p":{"conv_id":37,"participants":[12,15],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":38,"participants":[3,19],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":39,"participants":[8,24],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":40,"participants":[21,26],"turns":3},"ph":"EVENING","t":10}
