@@ -8,4 +8,4 @@ PyYAML>=6
 httpx>=0.27
 pydantic>=2
 # dev / test
-pytest>=8
+pytest>=9.1.1
