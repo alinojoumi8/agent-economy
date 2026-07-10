@@ -46,6 +46,12 @@ def _open_world(db: Path, run_id: str, config: dict, seed: int) -> tuple[Store, 
         if str(meta["run_id"]) != run_id or int(meta["seed"]) != seed:
             store.close()
             raise RuntimeError(f"acceptance database metadata mismatch: {db}")
+        stored_config = json.loads(meta["config_json"])
+        if stored_config != config:
+            store.close()
+            raise RuntimeError(
+                f"acceptance database configuration mismatch: {db}; "
+                "use a new campaign name or remove the stale acceptance data")
         if str(meta["status"]) == "running":
             interrupted_tick = int(meta["tick"])
             checkpoint = store.query_one(
@@ -66,7 +72,6 @@ def _open_world(db: Path, run_id: str, config: dict, seed: int) -> tuple[Store, 
                 }, phase="ACCEPTANCE", importance=2.0)
             store.commit()
             meta = store.get_meta()
-        stored_config = json.loads(meta["config_json"])
         world = World(store, stored_config)
         world.restore_prng_state()
         return store, world
@@ -157,7 +162,8 @@ async def _run_long_campaign(spec: dict, config: dict, root: Path) -> dict:
             "database": str(db),
             "report": report_path,
             "long_run": long_run_evidence(
-                store, target_ticks=target_ticks, max_spend_usd=max_spend),
+                store, target_ticks=target_ticks, max_spend_usd=max_spend,
+                required_llm_calls=list(settings.get("required_llm_calls", []))),
             "oracle": oracle_evidence(
                 store, expected_questions=questions,
                 max_p90_s=float(settings.get("oracle_max_p90_s", 60.0))),
@@ -271,7 +277,14 @@ def run_campaign(spec_path: str | Path, *, phase: str = "all") -> dict:
             raise RuntimeError("acceptance provider preflight failed: "
                                + json.dumps(preflight.get("errors", preflight)))
 
-    evidence: dict[str, Any] = {"campaign": spec["name"], "preflight": preflight}
+    json_path = Path(spec["report_dir"]) / f"acceptance_{spec['name']}.json"
+    evidence: dict[str, Any] = {}
+    if phase in {"long", "rumor"} and json_path.exists():
+        previous = json.loads(json_path.read_text(encoding="utf-8"))
+        if previous.get("campaign") != spec["name"]:
+            raise RuntimeError(f"acceptance report campaign mismatch: {json_path}")
+        evidence.update(previous)
+    evidence.update({"campaign": spec["name"], "preflight": preflight})
     if phase in {"all", "long"}:
         evidence["long"] = asyncio.run(_run_long_campaign(spec, config, root))
     if phase in {"all", "rumor"}:

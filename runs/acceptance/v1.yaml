@@ -11,6 +11,9 @@ long_run:
   oracle_tick: 1
   oracle_max_p90_s: 60.0
   minimum_resolved_predictions: 10
+  required_llm_calls:
+    - {provider: minimax, model: MiniMax-M3, min_calls: 1}
+    - {provider: kimi, model: kimi-k2.6, purpose: oracle, min_calls: 10}
   rate_probe_tick: 20
   rate_probe_bank_id: 1
   rate_probe_amount_cents: 100000

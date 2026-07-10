@@ -138,7 +138,9 @@ def oracle_evidence(store, *, expected_questions: int, max_p90_s: float = 60.0) 
 
 
 def long_run_evidence(store, *, target_ticks: int = 365,
-                      max_spend_usd: float = 200.0) -> dict[str, Any]:
+                      max_spend_usd: float = 200.0,
+                      required_llm_calls: list[dict[str, Any]] | None = None
+                      ) -> dict[str, Any]:
     meta = store.get_meta()
     spend = float(store.scalar(
         "SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
@@ -146,12 +148,28 @@ def long_run_evidence(store, *, target_ticks: int = 365,
     provider_failures = int(store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind IN "
         "('provider_failure','provider_pause','report_failed')", default=0))
+    call_rows = store.query(
+        "SELECT provider, model, purpose, COUNT(*) AS calls "
+        "FROM llm_calls GROUP BY provider, model, purpose "
+        "ORDER BY provider, model, purpose")
+    observed_calls = [dict(row) for row in call_rows]
+    required_calls = []
+    for requirement in required_llm_calls or []:
+        minimum = int(requirement.get("min_calls", 1))
+        count = sum(
+            int(row["calls"]) for row in observed_calls
+            if all(str(row.get(key)) == str(value)
+                   for key, value in requirement.items()
+                   if key in {"provider", "model", "purpose"}))
+        required_calls.append({**requirement, "observed_calls": count,
+                               "passes": count >= minimum})
     checks = {
         "target_ticks": int(meta["tick"]) >= target_ticks,
         "budget": spend <= max_spend_usd,
         "ledger": reconciled,
         "not_halted": str(meta["status"]) != "halted",
         "provider_failures": provider_failures == 0,
+        "required_llm_calls": all(item["passes"] for item in required_calls),
     }
     return {
         "passes": all(checks.values()),
@@ -161,6 +179,8 @@ def long_run_evidence(store, *, target_ticks: int = 365,
         "spend_usd": round(spend, 6),
         "max_spend_usd": max_spend_usd,
         "provider_failures": provider_failures,
+        "observed_llm_calls": observed_calls,
+        "required_llm_calls": required_calls,
         "ledger": diagnostics,
         "checks": checks,
     }

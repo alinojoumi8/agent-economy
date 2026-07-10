@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from agents.policies import oracle_answer
 from acceptance.campaigns import (
     _open_world,
@@ -84,9 +86,13 @@ def test_oracle_long_run_and_calibration_evidence_are_machine_readable(tmp_path)
     assert oracle["passes"]
     assert oracle["p90_s"] < 60
 
-    long_run = long_run_evidence(store)
+    long_run = long_run_evidence(store, required_llm_calls=[
+        {"provider": "kimi", "model": "kimi-k2.6", "purpose": "oracle",
+         "min_calls": 10},
+    ])
     assert long_run["passes"]
     assert long_run["ledger"]["grand_sum_cents"] == 0
+    assert long_run["required_llm_calls"][0]["observed_calls"] == 10
 
     calibration = calibration_evidence(store)
     assert calibration["passes"]
@@ -166,6 +172,18 @@ def test_interrupted_campaign_recovers_from_last_durable_checkpoint(tmp_path):
         recovered_store.close()
 
 
+def test_campaign_refuses_to_resume_with_a_different_resolved_config(tmp_path):
+    db = tmp_path / "acceptance.db"
+    config = _campaign_config()
+    store, _ = _open_world(db, "acceptance-config", config, 1)
+    store.close()
+
+    changed = json.loads(json.dumps(config))
+    changed["llm"]["default_route"]["model"] = "different-model"
+    with pytest.raises(RuntimeError, match="configuration mismatch"):
+        _open_world(db, "acceptance-config", changed, 1)
+
+
 def test_rumor_campaign_measures_actual_rumor_conversations(tmp_path):
     spec = {
         "name": "rumor-campaign", "report_dir": str(tmp_path / "reports"),
@@ -194,3 +212,34 @@ def test_report_phase_reuses_existing_evidence(tmp_path):
     assert rendered["passes"]
     assert (report_dir / "acceptance_report-test.md").exists()
     assert (report_dir / "acceptance_report-test.html").exists()
+
+
+def test_separate_campaign_phases_merge_into_one_final_report(tmp_path, monkeypatch):
+    report_dir = tmp_path / "reports"
+    spec = tmp_path / "campaign.yaml"
+    spec.write_text(
+        "name: phase-test\nbase_config: runs/base.yaml\n"
+        f"data_root: {tmp_path / 'data'}\nreport_dir: {report_dir}\n",
+        encoding="utf-8")
+
+    async def ready(*_args, **_kwargs):
+        return {"ready": True, "live_ready": True}
+
+    async def long(*_args, **_kwargs):
+        return {"long_run": {"passes": True}, "oracle": {"passes": True},
+                "calibration": {"passes": True},
+                "causal_phenomena": {"passes": True}}
+
+    monkeypatch.setattr("acceptance.campaigns.provider_preflight", ready)
+    monkeypatch.setattr("acceptance.campaigns._run_long_campaign", long)
+    monkeypatch.setattr("acceptance.campaigns._run_rumor_campaign",
+                        lambda *_args, **_kwargs: {"passes": True})
+
+    first = run_campaign(spec, phase="long")
+    assert "long" in first and "rumor" not in first
+    final = run_campaign(spec, phase="rumor")
+    assert final["passes"]
+    assert "long" in final and "rumor" in final
+    persisted = json.loads(
+        (report_dir / "acceptance_phase-test.json").read_text(encoding="utf-8"))
+    assert "long" in persisted and "rumor" in persisted
