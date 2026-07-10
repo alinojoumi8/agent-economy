@@ -1,5 +1,6 @@
-# PRD production profile. Inherits deterministic world mechanics from base.yaml
-# while replacing the offline scripted route with current official provider IDs.
+# PRD production profile: MiniMax M3 Token Plan + Kimi K2.6 API Platform.
+# Kimi Code membership keys cannot select K2.6; use production-kimi-code.yaml
+# when only a Kimi Code key is available.
 extends: base.yaml
 
 population:
@@ -25,24 +26,22 @@ llm:
         max_completion_tokens: 4096
     kimi:
       kind: openai_compat
-      # The configured key is a Kimi Code membership key (sk-kimi-*), not a
-      # Moonshot pay-as-you-go key. These key families are not interchangeable.
-      base_url: https://api.kimi.com/coding/v1
-      api_key_env: MOONSHOT_API_KEY
+      base_url: https://api.moonshot.ai/v1
+      api_key_env: KIMI_API_KEY
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_tokens
       request_defaults:
-        reasoning_effort: medium
+        thinking: {type: enabled}
         temperature: 1.0
         max_tokens: 4096
   default_route: {provider: minimax, model: MiniMax-M3}
   routes:
     citizen:        {provider: minimax, model: MiniMax-M3}
     founder:        {provider: minimax, model: MiniMax-M3}
-    central_banker: {provider: kimi, model: kimi-for-coding}
-    credit_officer: {provider: kimi, model: kimi-for-coding}
-    reporter:       {provider: kimi, model: kimi-for-coding}
-    editor:         {provider: kimi, model: kimi-for-coding}
-    vc_partner:     {provider: kimi, model: kimi-for-coding}
-    oracle:         {provider: kimi, model: kimi-for-coding}
+    central_banker: {provider: kimi, model: kimi-k2.6}
+    credit_officer: {provider: kimi, model: kimi-k2.6}
+    reporter:       {provider: kimi, model: kimi-k2.6}
+    editor:         {provider: kimi, model: kimi-k2.6}
+    vc_partner:     {provider: kimi, model: kimi-k2.6}
+    oracle:         {provider: kimi, model: kimi-k2.6}

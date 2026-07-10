@@ -1,0 +1,37 @@
+name: v1-m3-k26
+base_config: runs/production.yaml
+data_root: data/acceptance/v1-m3-k26
+report_dir: reports/out
+
+long_run:
+  seed: 42
+  ticks: 365
+  max_spend_usd: 200.0
+  checkpoint_every: 1
+  oracle_tick: 1
+  oracle_max_p90_s: 60.0
+  minimum_resolved_predictions: 10
+  rate_probe_tick: 20
+  rate_probe_bank_id: 1
+  rate_probe_amount_cents: 100000
+  shocks:
+    - {kind: oil, trigger: shock, trigger_params: {tick: 10}, params: {multiplier: 2.0}}
+    - {kind: policy_rate, trigger: shock, trigger_params: {tick: 20}, params: {rate_bps: 900}}
+  oracle_questions:
+    - What is the probability of a bank run within 30 ticks?
+    - What is the probability that any bank fails within 30 ticks?
+    - What is the probability that the market index falls at least 20 percent within 30 ticks?
+    - What is the probability that unemployment exceeds 8 percent within 30 ticks?
+    - What is the probability that CPI exceeds 110 within 30 ticks?
+    - What is the probability that any firm goes bankrupt within 30 ticks?
+    - What is the probability that policy_rate rises above 8 percent within 30 ticks?
+    - What is the probability that sentiment falls below -0.2 within 30 ticks?
+    - What is the probability that bank_deposits:1 falls below half its current level within 30 ticks?
+    - What is the probability that epidemic_multiplier rises above 1 within 30 ticks?
+
+rumor:
+  seeds: [1, 2, 3, 4, 5]
+  ticks: 13
+  shock_tick: 4
+  bank_id: 1
+  n_agents: 25

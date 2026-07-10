@@ -12,6 +12,7 @@ data/runs/*.db-wal
 data/runs/*.db-shm
 data/checkpoints/
 data/experiments/
+data/acceptance/
 reports/out/
 .venv/
 node_modules/

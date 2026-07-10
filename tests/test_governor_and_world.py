@@ -98,6 +98,7 @@ def test_same_seed_same_event_log(tmp_path):
 
 # ── rumor pilot (R5 acceptance, scripted scale-down) ─────────────────────────
 def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
+    from acceptance.evidence import rumor_pilot_evidence
     w = _fresh_world(tmp_path, "rumor.db")
     target_bank = 1
 
@@ -135,9 +136,14 @@ def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
         if pre_trust[agent_id] - current >= 0.2:
             dropped += 1
 
-    conversations = int(w.store.scalar(
-        "SELECT COUNT(*) FROM conversations WHERE tick BETWEEN ? AND ?",
-        (rumor_start, rumor_start + 9), default=0))
+    rumor_conversations = {
+        int(payload["conv_id"])
+        for row in w.store.query(
+            "SELECT payload_json FROM events WHERE kind='conversation' "
+            "AND tick BETWEEN ? AND ?", (rumor_start, rumor_start + 9))
+        for payload in [json.loads(row["payload_json"])]
+        if target_bank in payload.get("rumor_banks", [])
+    }
     post_outflow = sum(
         int(json.loads(r["payload_json"])["amount_cents"])
         for r in w.store.query(
@@ -145,10 +151,13 @@ def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
             "AND tick BETWEEN ? AND ?", (rumor_start, rumor_start + 9))
         if int(json.loads(r["payload_json"])["from_bank"]) == target_bank)
 
-    assert conversations >= 5
+    assert len(rumor_conversations) >= 5
     assert dropped / len(exposed) >= 0.25
     assert post_outflow > 2 * (baseline_outflow / 3.0 * 10.0)
     assert post_deposits < pre_deposits
+    evidence = rumor_pilot_evidence(w.store)
+    assert evidence["passes"]
+    assert evidence["rumor_conversations"] == len(rumor_conversations)
     ok, diag = w.economy.ledger.reconcile()
     assert ok, diag
 

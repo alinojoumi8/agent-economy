@@ -183,6 +183,7 @@ class Conversations:
                  for aid in (a_id, b_id)}
         rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
         shared_topic = self._shared_topic(tick)
+        shared_rumor_banks: set[int] = set()
         seq = 0
         for turn in range(self.turns):
             speaker, listener = (a_id, b_id) if turn % 2 == 0 else (b_id, a_id)
@@ -214,15 +215,18 @@ class Conversations:
             rumor_bank = env.get("rumor_bank")
             importance = 1.0
             if rumor_bank is not None:
-                ents.append(f"rumor_bank:{int(rumor_bank)}")
-                ents.append(f"bank:{int(rumor_bank)}")
+                rumor_id = int(rumor_bank)
+                ents.append(f"rumor_bank:{rumor_id}")
+                ents.append(f"bank:{rumor_id}")
                 importance = 3.0
-                rumors[listener] = int(rumor_bank)  # they may pass it on next turn
+                rumors[listener] = rumor_id  # they may pass it on next turn
+                shared_rumor_banks.add(rumor_id)
             self.mem.observe(listener, tick, f"{names[speaker]} said: {text}",
                              importance=importance, entities=ents)
-        self.store.log_event(tick, "conversation", {
-            "conv_id": conv_id, "participants": [a_id, b_id], "turns": seq},
-            phase="EVENING", importance=0.5)
+        payload = {"conv_id": conv_id, "participants": [a_id, b_id], "turns": seq}
+        if shared_rumor_banks:
+            payload["rumor_banks"] = sorted(shared_rumor_banks)
+        self.store.log_event(tick, "conversation", payload, phase="EVENING", importance=0.5)
 
     def _rumor_held(self, agent_id: int, tick: int) -> Optional[int]:
         rows = self.store.query(

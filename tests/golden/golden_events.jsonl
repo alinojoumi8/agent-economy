@@ -144,7 +144,7 @@
 {"k":"birthday","p":{"age":43,"agent_id":6},"ph":"NIGHT_CLOSE","t":6}
 {"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":6}
 {"k":"epidemic_ended","p":{"shock_id":1},"ph":"NIGHT_CLOSE","t":6}
-{"k":"rumor","p":{"bank_id":1,"n_agents":8,"target_agent_ids":[20,14,25,22,16,21,23,24],"text":"A friend of a friend says bank 1 is about to go under \u2014 people are quietly pulling out.","truthful":false},"ph":"NIGHT_CLOSE","t":6}
+{"k":"rumor","p":{"bank_id":1,"baseline_outflow_cents":0,"baseline_trust":{"14":0.6,"16":0.6,"20":0.6,"21":0.6,"22":0.6,"23":0.6,"24":0.6,"25":0.6},"baseline_window_ticks":3,"n_agents":8,"pre_deposits_cents":99890581,"target_agent_ids":[20,14,25,22,16,21,23,24],"text":"A friend of a friend says bank 1 is about to go under \u2014 people are quietly pulling out.","truthful":false},"ph":"NIGHT_CLOSE","t":6}
 {"k":"shock_fired","p":{"duration_ticks":0,"kind":"rumor","label":"rumor","params":{"bank_id":1,"n_agents":8},"shock_id":2,"trigger_type":"shock"},"ph":"NIGHT_CLOSE","t":6}
 {"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":6}
 {"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":6}
@@ -167,10 +167,10 @@
 {"k":"price_set","p":{"firm_id":4,"new_cents":5787,"old_cents":5512,"product":"care"},"ph":"EXECUTION","t":6}
 {"k":"news_published","p":{"article_id":7,"headline":"QUESTIONS SWIRL AROUND A LENDER \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.7},"ph":"NEWSROOM","t":6}
 {"k":"news_published","p":{"article_id":8,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":6}
-{"k":"conversation","p":{"conv_id":21,"participants":[2,16],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":21,"participants":[2,16],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":6}
 {"k":"conversation","p":{"conv_id":22,"participants":[1,13],"turns":3},"ph":"EVENING","t":6}
-{"k":"conversation","p":{"conv_id":23,"participants":[8,24],"turns":3},"ph":"EVENING","t":6}
-{"k":"conversation","p":{"conv_id":24,"participants":[15,25],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":23,"participants":[8,24],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":6}
+{"k":"conversation","p":{"conv_id":24,"participants":[15,25],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":6}
 {"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":7}
 {"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":7}
 {"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":7}
@@ -198,10 +198,10 @@
 {"k":"price_set","p":{"firm_id":5,"new_cents":3645,"old_cents":3472,"product":"coverage"},"ph":"EXECUTION","t":7}
 {"k":"news_published","p":{"article_id":9,"headline":"CENTRAL BANK MOVES RATES \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":7}
 {"k":"news_published","p":{"article_id":10,"headline":"Central Bank Moves Rates (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":7}
-{"k":"conversation","p":{"conv_id":25,"participants":[6,22],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":25,"participants":[6,22],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":7}
 {"k":"conversation","p":{"conv_id":26,"participants":[1,7],"turns":3},"ph":"EVENING","t":7}
-{"k":"conversation","p":{"conv_id":27,"participants":[13,21],"turns":3},"ph":"EVENING","t":7}
-{"k":"conversation","p":{"conv_id":28,"participants":[20,24],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":27,"participants":[13,21],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":7}
+{"k":"conversation","p":{"conv_id":28,"participants":[20,24],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":7}
 {"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":8}
 {"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":24},"ph":"NIGHT_CLOSE","t":8}
 {"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":8}
@@ -228,10 +228,10 @@
 {"k":"price_set","p":{"firm_id":4,"new_cents":6076,"old_cents":5787,"product":"care"},"ph":"EXECUTION","t":8}
 {"k":"news_published","p":{"article_id":11,"headline":"VOTERS DELIVER A FISCAL VERDICT \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":8}
 {"k":"news_published","p":{"article_id":12,"headline":"Voters Deliver a Fiscal Verdict (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":8}
-{"k":"conversation","p":{"conv_id":29,"participants":[4,23],"turns":3},"ph":"EVENING","t":8}
-{"k":"conversation","p":{"conv_id":30,"participants":[1,13],"turns":3},"ph":"EVENING","t":8}
-{"k":"conversation","p":{"conv_id":31,"participants":[21,26],"turns":3},"ph":"EVENING","t":8}
-{"k":"conversation","p":{"conv_id":32,"participants":[16,17],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":29,"participants":[4,23],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":30,"participants":[1,13],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":31,"participants":[21,26],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":8}
+{"k":"conversation","p":{"conv_id":32,"participants":[16,17],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":8}
 {"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":9}
 {"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":16},"ph":"NIGHT_CLOSE","t":9}
 {"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":9}
@@ -257,10 +257,10 @@
 {"k":"price_set","p":{"firm_id":5,"new_cents":3827,"old_cents":3645,"product":"coverage"},"ph":"EXECUTION","t":9}
 {"k":"news_published","p":{"article_id":13,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":9}
 {"k":"news_published","p":{"article_id":14,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":9}
-{"k":"conversation","p":{"conv_id":33,"participants":[21,27],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":33,"participants":[21,27],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":9}
 {"k":"conversation","p":{"conv_id":34,"participants":[10,11],"turns":3},"ph":"EVENING","t":9}
-{"k":"conversation","p":{"conv_id":35,"participants":[13,15],"turns":3},"ph":"EVENING","t":9}
-{"k":"conversation","p":{"conv_id":36,"participants":[2,16],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":35,"participants":[13,15],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":9}
+{"k":"conversation","p":{"conv_id":36,"participants":[2,16],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":9}
 {"k":"production","p":{"firm_id":1,"unit_cost_cents":299,"units":24},"ph":"NIGHT_CLOSE","t":10}
 {"k":"production","p":{"firm_id":2,"unit_cost_cents":144,"units":16},"ph":"NIGHT_CLOSE","t":10}
 {"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":10}
@@ -280,7 +280,7 @@
 {"k":"price_set","p":{"firm_id":1,"new_cents":494,"old_cents":520,"product":"food_good"},"ph":"EXECUTION","t":10}
 {"k":"price_set","p":{"firm_id":4,"new_cents":6697,"old_cents":6379,"product":"care"},"ph":"EXECUTION","t":10}
 {"k":"price_set","p":{"firm_id":5,"new_cents":4018,"old_cents":3827,"product":"coverage"},"ph":"EXECUTION","t":10}
-{"k":"conversation","p":{"conv_id":37,"participants":[8,27],"turns":3},"ph":"EVENING","t":10}
-{"k":"conversation","p":{"conv_id":38,"participants":[21,26],"turns":3},"ph":"EVENING","t":10}
-{"k":"conversation","p":{"conv_id":39,"participants":[2,16],"turns":3},"ph":"EVENING","t":10}
-{"k":"conversation","p":{"conv_id":40,"participants":[13,23],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":37,"participants":[8,27],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":38,"participants":[21,26],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":39,"participants":[2,16],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":10}
+{"k":"conversation","p":{"conv_id":40,"participants":[13,23],"rumor_banks":[1],"turns":3},"ph":"EVENING","t":10}

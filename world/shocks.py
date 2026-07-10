@@ -140,6 +140,22 @@ class Shocks:
         ids = [int(r["id"]) for r in agents]
         self.e.prng.shuffle(ids)
         targets = ids[:n]
+        baseline_window = 3
+        baseline_start = max(0, tick - baseline_window)
+        baseline_outflow = 0
+        for row in self.store.query(
+                "SELECT payload_json FROM events WHERE kind='deposit_move' "
+                "AND tick>=? AND tick<?", (baseline_start, tick)):
+            payload = json.loads(row["payload_json"])
+            if int(payload.get("from_bank", -1)) == bank_id:
+                baseline_outflow += int(payload.get("amount_cents", 0))
+        baseline_trust = {}
+        for aid in targets:
+            value = self.store.scalar(
+                "SELECT value FROM beliefs WHERE agent_id=? AND key=?",
+                (aid, f"trust:bank:{bank_id}"), default=None)
+            baseline_trust[str(aid)] = 0.6 if value is None else float(value)
+        pre_deposits = int(self.e.bank.deposits(bank_id))
         for aid in targets:
             self.store.insert(
                 "memories", agent_id=aid, tick=tick, kind="observation",
@@ -148,7 +164,11 @@ class Shocks:
                 last_accessed_tick=tick, demoted=0)
         self.store.log_event(tick, "rumor", {
             "bank_id": bank_id, "n_agents": len(targets), "target_agent_ids": targets,
-            "text": text, "truthful": False},
+            "text": text, "truthful": False,
+            "baseline_window_ticks": baseline_window,
+            "baseline_outflow_cents": baseline_outflow,
+            "baseline_trust": baseline_trust,
+            "pre_deposits_cents": pre_deposits},
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
 
     def _apply_slant(self, tick: int, s, params: dict, initial: bool) -> None:

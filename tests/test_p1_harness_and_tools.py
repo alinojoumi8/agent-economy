@@ -2,7 +2,7 @@
 import asyncio
 
 from engine.store import Store
-from experiments.harness import run_experiment
+from experiments.harness import load_spec, run_experiment
 from oracle.calibration import calibration_from_pairs
 from server.replay import ReplayReader
 from world.loop import World
@@ -59,6 +59,32 @@ def test_experiment_harness_treatment_vs_control(tmp_path):
     # Same-seed arms differ ONLY by the shock: run dbs are per-arm.
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_treatment.db").exists()
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_control.db").exists()
+
+
+def test_experiment_harness_loads_inherited_configs_and_resumes(tmp_path):
+    inherited = load_spec({
+        "name": "production_shape", "base_config": "runs/production.yaml",
+        "seeds": [1], "ticks": 1, "control": False,
+    })
+    assert inherited["config"]["banks"]["count"] == 2
+    assert inherited["config"]["llm"]["routes"]["oracle"] == {
+        "provider": "kimi", "model": "kimi-k2.6"}
+
+    spec = {
+        "name": "resumable", "config": _tiny_config(), "seeds": [1],
+        "ticks": 2, "control": False, "resume": True,
+        "metrics": ["unemployment"], "event_outcomes": [],
+    }
+    first = run_experiment(spec, out_dir=str(tmp_path / "out"),
+                           data_root=str(tmp_path / "data"), quiet=True)
+    assert first["results"][0]["ticks"] == 2
+
+    spec["ticks"] = 3
+    resumed = run_experiment(spec, out_dir=str(tmp_path / "out"),
+                             data_root=str(tmp_path / "data"), quiet=True)
+    assert resumed["results"][0]["ticks"] == 3
+    assert resumed["results"][0]["complete"]
+    assert (tmp_path / "data" / "resumable" / "results.json").exists()
 
 
 # ── R15: Murphy decomposition sanity ─────────────────────────────────────────

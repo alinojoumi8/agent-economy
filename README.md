@@ -70,19 +70,19 @@ application with one command and no Node.js runtime.
 
 ## Using real LLMs
 
-The production profile is [runs/production.yaml](runs/production.yaml). It keeps
-the PRD's cheap-citizen/strong-seat split while using the providers' current
-official model IDs: Token Plan `MiniMax-M3` and Kimi Code's stable `kimi-for-coding`
-alias (currently K2.7 Code when Thinking is enabled).
-See the official [MiniMax Token Plan](https://platform.minimax.io/subscribe/token-plan)
-and [Kimi Code API](https://www.kimi.com/code/docs/en/) documentation. The
-secret-safe results of the authenticated 100-agent smoke run are recorded in
-[docs/live-provider-validation.md](docs/live-provider-validation.md).
+The default [runs/production.yaml](runs/production.yaml) keeps the PRD's
+cheap-citizen/strong-seat split and pins Token Plan `MiniMax-M3` plus Kimi API
+Platform `kimi-k2.6`. Kimi Code membership cannot select K2.6; the separate
+[runs/production-kimi-code.yaml](runs/production-kimi-code.yaml) retains its
+stable `kimi-for-coding` compatibility route. See the official
+[MiniMax Token Plan](https://platform.minimax.io/subscribe/token-plan),
+[Kimi K2.6 API](https://platform.moonshot.ai/docs/guide/kimi-k2-6-quickstart),
+and [Kimi Code API](https://www.kimi.com/code/docs/en/) documentation.
 
 ```bash
 copy .env.example .env
-# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and MOONSHOT_API_KEY
-# with a Kimi Code membership key (sk-kimi-*), then validate without inference:
+# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and KIMI_API_KEY
+# with a Kimi API Platform key, then validate without inference:
 python run.py --preflight
 
 # Optional live authentication/model-list check. This calls /models, not chat completion:
@@ -90,11 +90,15 @@ python run.py --preflight-live
 
 # Start the approximately 100-agent production world:
 python run.py
+
+# Existing Kimi Code membership users can run its stable latest-model alias:
+python run.py --config runs/production-kimi-code.yaml
 ```
 
 The no-argument entrypoint intentionally selects `runs/production.yaml`, the
-locked PRD profile. Use `--config runs/base.yaml` whenever an offline scripted
-run is desired; production never silently falls back when keys are absent.
+locked M3/K2.6 profile. Use `--config runs/base.yaml` for offline scripted runs;
+production never silently falls back when keys are absent or from Kimi Platform
+to Kimi Code.
 
 Provider/model names are validated before genesis. A missing key, unknown route,
 or unavailable model produces a clear preflight failure; it never silently falls
@@ -142,7 +146,7 @@ bank's deposits roughly in half within 10 ticks.
 ```
 run.py                  entrypoint
 runs/base.yaml          world config (population, models, budget, shocks, seed)
-runs/production.yaml    current MiniMax/Kimi production routing (~100 agents)
+runs/production.yaml    MiniMax M3 + Kimi K2.6 production routing (~100 agents)
 engine/                 deterministic core: ledger, exchange, credit, firms, labor, lifecycle, actions
 agents/                 personas (vendored census-based gen), memory, scheduler, prompts, scripted policies
 llm/                    gateway: routing, budget governor, adapters (scripted/openai_compat/anthropic/cli)

@@ -47,7 +47,7 @@ This document is written to be handed to an AI coding agent (or a developer) and
 | Simulation kernel | Plain Python, single process, `asyncio` | 100 agents ≪ needing distribution. Async matters only for parallel LLM calls, not compute. |
 | API | **FastAPI** + WebSocket | Standard, minimal boilerplate, async-native. |
 | Store | **SQLite (WAL mode)**, one file per run | Zero-ops, transactional, a whole run is one portable file you can archive or share. Revisit Postgres only at 1,000+ agents (P2). |
-| LLM | **Provider-agnostic gateway.** Adapters: OpenAI-compatible (covers Kimi/Moonshot and MiniMax — both expose OpenAI-style APIs), Anthropic, and a restricted CLI adapter (Oracle/dev only). Defaults: citizens/conversations/memory → `minimax-m3`; strong seats + Oracle → `kimi-k2.7`. Routing is `role → {provider, model}` in `run.yaml`, not code. | Per PRD decision: Ali holds Kimi + MiniMax API keys; swapping providers per role is config, and enables model-vs-model economy experiments. |
+| LLM | **Provider-agnostic gateway.** Adapters: OpenAI-compatible (covers Kimi/Moonshot and MiniMax — both expose OpenAI-style APIs), Anthropic, and a restricted CLI adapter (Oracle/dev only). Defaults: citizens/conversations/memory → `MiniMax-M3`; strong seats + Oracle → `kimi-k2.6` through `https://api.moonshot.ai/v1`. Routing is `role → {provider, model}` in `run.yaml`, not code. | The production profile uses separate MiniMax Token Plan and Kimi API Platform credentials. Kimi Code membership is available through a compatibility profile but its stable alias cannot pin K2.6. |
 | Dashboard | **React + Vite + Tailwind**, Recharts for charts | Standard; easy for AI-assisted iteration. Served statically by FastAPI — one process to run. |
 | Config | Single `run.yaml` per run (population, models, budget, cadences, shock schedule, seed) | Reproducibility = config + seed + code version. |
 
@@ -179,7 +179,7 @@ Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/enti
 
 Single chokepoint through which every call flows. Responsibilities:
 
-- **Routing**: `role → {provider, model}` from `run.yaml`. Default strong seats (≈8, matching the cost model in §12): central banker (1), credit officers (2–3), editors + lead reporters (3), VC partner (1), plus the Oracle → `kimi-k2.7`. All other institutional staff and all citizens → `minimax-m3`.
+- **Routing**: `role → {provider, model}` from `run.yaml`. Default strong seats (≈8, matching the cost model in §12): central banker (1), credit officers (2–3), editors + lead reporters (3), VC partner (1), plus the Oracle → `kimi-k2.6`. All other institutional staff and all citizens → `MiniMax-M3`.
 - **Adapters**: one interface (`complete(request) → response`), three implementations:
   - `openai_compat` — Kimi (Moonshot) and MiniMax endpoints; also covers OpenRouter/vLLM/Ollama for free, since they all speak the OpenAI wire format.
   - `anthropic` — optional tier if Ali adds an Anthropic API key.
@@ -190,7 +190,7 @@ Single chokepoint through which every call flows. Responsibilities:
   - 95%: institutional agents only; citizens act on event-triggered wakeups only
   - 100%: clean pause + checkpoint + dashboard alert. **The cap is never exceeded.**
 - **Prompt caching**: shared system prefix (schema + world rules) marked cacheable — biggest single cost saver since it's identical across ~100 agents.
-- **Concurrency**: `asyncio.Semaphore(8)` on API calls; agents within a phase run concurrently (their actions queue; execution order is deterministic afterward, so concurrency doesn't break replay).
+- **Concurrency**: a configured `asyncio.Semaphore`; the production profiles use `3` to stay within MiniMax Token Plan concurrency, while offline scripted runs may use `8`. Agents within a phase run concurrently, then deterministic execution order preserves replay.
 - **Failure policy**: 1 retry on malformed JSON with the validator error appended; then `do_nothing` + logged event. An LLM outage pauses the sim rather than skipping agents silently.
 
 ## 9. Market mechanics (all deterministic)
@@ -220,21 +220,21 @@ Single chokepoint through which every call flows. Responsibilities:
 
 ## 11. The Oracle
 
-- **Read-only analyst** (strong model — default `kimi-k2.7`; optionally routed through the Claude CLI adapter to use Ali's subscription, since Oracle volume is a handful of calls per session) exposed as dashboard chat. Tools: `query_metrics(sql)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`. It cannot write anything.
+- **Read-only analyst** (strong model — default `kimi-k2.6`; optionally routed through the Claude CLI adapter for development-only use, since Oracle volume is a handful of calls per session) exposed as dashboard chat. Tools: `query_metrics(sql)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`. It cannot write anything.
 - Answer contract: `{p: 0.xx, drivers: [...], confidence: low|med|high, resolution_rule, deadline_tick}`. The resolution rule must be machine-checkable against world state (e.g. `bank_run := any bank loses >30% deposits within any 5-tick window before deadline`). If the question can't be given a checkable rule, the Oracle returns `insufficient_data` and says why.
 - A resolver job checks open predictions each tick; on resolution, Brier score = `(p − outcome)²` written to `predictions`. Dashboard shows running calibration.
 - Oracle spend is a **reserved carve-out inside the run cap** (default: $10 of the $200) so asking questions never starves the world — and total run spend still never exceeds the cap (PRD R7).
 
 ## 12. Cost model (why $200 works)
 
-Pricing (verified July 2026): MiniMax M3 ≈ $0.30/M input + $1.20/M output (cache read $0.06/M); Kimi K2.7 ≈ $0.95/M + $4.00/M (cache read $0.19/M).
+Price-equivalent governor rates (verified July 2026): MiniMax M3 ≈ $0.30/M input + $1.20/M output (cache read $0.06/M); Kimi K2.6 ≈ $0.95/M + $4.00/M (cache read $0.16/M). Token-plan quota consumption is recorded separately from this modeled pay-as-you-go equivalent.
 
 Per tick, default config (steady state):
 | Item | Calls | Tokens (in/out) | Cost |
 |---|---|---|---|
 | Citizen decisions (~35 wakeups/tick with cadences, M3) | 35 | 1,500 / 300 | ≈ $0.03 |
-| Institutional decisions (K2.7) | 8 | 2,000 / 400 | ≈ $0.03 |
-| Newsroom (K2.7) | 4 | 2,500 / 600 | ≈ $0.02 |
+| Institutional decisions (K2.6) | 8 | 2,000 / 400 | ≈ $0.03 |
+| Newsroom (K2.6) | 4 | 2,500 / 600 | ≈ $0.02 |
 | Conversations (15 pairs × 3 turns, M3) | 90 | 700 / 150 | ≈ $0.04 |
 | Memory compression (M3) | ~45 | 900 / 200 | ≈ $0.02 |
 | Lifecycle (engine-side; ~1 persona-gen call per arrival, a few per sim-year) | ~0 | — | ≈ $0.00 |

@@ -1,0 +1,42 @@
+# Compatibility profile for a Kimi Code membership key. Kimi Code exposes the
+# stable kimi-for-coding alias and does not permit pinning the older K2.6 model.
+extends: base.yaml
+
+population:
+  size: 87
+
+llm:
+  concurrency: 3
+  provider_retries: 1
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      timeout_s: 180
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        max_completion_tokens: 4096
+    kimi:
+      kind: openai_compat
+      base_url: https://api.kimi.com/coding/v1
+      api_key_env: MOONSHOT_API_KEY
+      timeout_s: 180
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        reasoning_effort: medium
+        temperature: 1.0
+        max_tokens: 4096
+  default_route: {provider: minimax, model: MiniMax-M3}
+  routes:
+    citizen:        {provider: minimax, model: MiniMax-M3}
+    founder:        {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: kimi, model: kimi-for-coding}
+    credit_officer: {provider: kimi, model: kimi-for-coding}
+    reporter:       {provider: kimi, model: kimi-for-coding}
+    editor:         {provider: kimi, model: kimi-for-coding}
+    vc_partner:     {provider: kimi, model: kimi-for-coding}
+    oracle:         {provider: kimi, model: kimi-for-coding}

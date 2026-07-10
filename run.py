@@ -9,6 +9,7 @@
   python run.py --config runs/base.yaml --fork RUNID@TICK   # what-if branch from a checkpoint
   python run.py --report RUNID                          # generate report for a stored run
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
+  python run.py --acceptance runs/acceptance/v1.yaml    # resumable PRD-v1 production campaigns
 
 One process: FastAPI serves the static dashboard and drives the world loop.
 """
@@ -172,6 +173,10 @@ def main() -> None:
     ap.add_argument("--report", default=None, help="generate end-of-run report for run id and exit")
     ap.add_argument("--experiment", default=None,
                     help="run a multi-seed experiment from a spec yaml (P1 R14) and exit")
+    ap.add_argument("--acceptance", default=None,
+                    help="run resumable PRD-v1 production acceptance campaigns")
+    ap.add_argument("--acceptance-phase", choices=("all", "long", "rumor", "report"),
+                    default="all", help="acceptance campaign phase")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--serve", action="store_true", help="serve dashboard even with --ticks")
@@ -184,6 +189,13 @@ def main() -> None:
     if args.experiment:
         from experiments.harness import run_experiment
         run_experiment(args.experiment)
+        return
+
+    if args.acceptance:
+        from acceptance.campaigns import run_campaign
+        evidence = run_campaign(args.acceptance, phase=args.acceptance_phase)
+        if args.acceptance_phase != "report" and not evidence["passes"]:
+            raise SystemExit(5)
         return
 
     if args.report:

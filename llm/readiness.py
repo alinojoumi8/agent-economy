@@ -90,21 +90,34 @@ def validate_llm_config(
         elif key_required and require_secrets and not key_present:
             errors.append(f"provider '{provider}' is missing environment variable {key_env}")
 
-        # Kimi Code membership keys and Moonshot pay-as-you-go keys use
-        # different services. Catch the otherwise opaque 401 before startup
-        # without returning or logging any part of the credential.
-        if key_value.lower().startswith("sk-kimi-"):
-            expected_base = "https://api.kimi.com/coding/v1"
-            if base_url.rstrip("/") != expected_base:
-                errors.append(
-                    f"provider '{provider}' uses a Kimi Code key and must use "
-                    f"base_url {expected_base}")
+        normalized_base = base_url.rstrip("/")
+        kimi_code_base = "https://api.kimi.com/coding/v1"
+        kimi_platform_base = "https://api.moonshot.ai/v1"
+
+        # Service/model compatibility is knowable without inspecting a secret.
+        # Kimi Code exposes stable membership aliases; K2.6 is an API Platform
+        # model and cannot be selected through the membership endpoint.
+        if normalized_base == kimi_code_base:
             invalid_models = [m for m in models
                               if m not in {"kimi-for-coding", "kimi-for-coding-highspeed"}]
             if invalid_models:
                 errors.append(
-                    f"provider '{provider}' uses a Kimi Code key and must route "
+                    f"provider '{provider}' uses the Kimi Code endpoint and must route "
                     "to model kimi-for-coding (or kimi-for-coding-highspeed)")
+        if "kimi-k2.6" in models and normalized_base != kimi_platform_base:
+            errors.append(
+                f"provider '{provider}' routes kimi-k2.6 and must use "
+                f"base_url {kimi_platform_base}")
+
+        # Kimi Code membership keys and Moonshot pay-as-you-go keys use
+        # different services. Catch the otherwise opaque 401 before startup
+        # without returning or logging any part of the credential.
+        if key_value.lower().startswith("sk-kimi-"):
+            expected_base = kimi_code_base
+            if normalized_base != expected_base:
+                errors.append(
+                    f"provider '{provider}' uses a Kimi Code key and must use "
+                    f"base_url {expected_base}")
 
         if key_value.lower().startswith("sk-cp-"):
             expected_base = "https://api.minimax.io/v1"

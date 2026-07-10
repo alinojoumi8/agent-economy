@@ -34,8 +34,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 from engine.store import Store
+from llm.readiness import validate_llm_config
 from world.loop import World
 
 
@@ -58,14 +60,18 @@ def load_spec(path_or_dict) -> dict:
             spec = yaml.safe_load(f) or {}
     if "config" not in spec:
         base = spec.get("base_config", "runs/base.yaml")
-        with open(base, "r", encoding="utf-8") as f:
-            spec["config"] = yaml.safe_load(f) or {}
+        # Use the runtime loader so production experiments honor `extends`
+        # exactly like normal runs instead of silently dropping the world config.
+        from run import load_config
+        spec["config"] = load_config(str(base))
     spec["config"] = _deep_merge(spec["config"], spec.get("overrides", {}))
     if not spec.get("seeds"):
         spec["seeds"] = list(range(1, int(spec.get("n_seeds", 3)) + 1))
     spec.setdefault("name", "experiment")
     spec.setdefault("ticks", 30)
     spec.setdefault("control", True)
+    spec.setdefault("resume", False)
+    spec.setdefault("preflight_live", False)
     spec.setdefault("metrics", ["unemployment", "cpi", "index", "gdp_proxy"])
     spec.setdefault("event_outcomes", ["bank_failure", "bankruptcy", "death"])
     return spec
@@ -75,24 +81,43 @@ def load_spec(path_or_dict) -> dict:
 def _run_arm(spec: dict, seed: int, arm: str, data_dir: Path) -> dict:
     cfg = json.loads(json.dumps(spec["config"]))   # deep copy
     cfg["seed"] = seed
-    cfg["checkpoint_every"] = 0
+    cfg["checkpoint_every"] = int(cfg.get("checkpoint_every", 10)) \
+        if spec.get("resume") else 0
     cfg["speed_delay_s"] = 0.0
     cfg["shocks"] = spec.get("shocks", []) if arm == "treatment" else []
     run_id = f"{spec['name']}_s{seed}_{arm}"
     db = data_dir / f"{run_id}.db"
-    if db.exists():
-        db.unlink()   # experiments are derived artifacts; a re-run replaces them
-    store = Store(str(db))
-    store.init_run_meta(run_id, seed, cfg)
-    world = World(store, cfg)
-    world.initialize()
+    if db.exists() and spec.get("resume"):
+        store = Store(str(db))
+        meta = store.get_meta()
+        if str(meta["run_id"]) != run_id or int(meta["seed"]) != seed:
+            store.close()
+            raise RuntimeError(f"resume database metadata does not match {run_id}")
+        stored_cfg = json.loads(meta["config_json"])
+        world = World(store, stored_cfg)
+        world.restore_prng_state()
+    else:
+        if db.exists():
+            db.unlink()   # experiments are derived artifacts; a re-run replaces them
+        store = Store(str(db))
+        store.init_run_meta(run_id, seed, cfg)
+        world = World(store, cfg)
+        world.initialize()
 
     async def go():
-        await world.run(max_ticks=int(spec["ticks"]))
+        remaining = max(0, int(spec["ticks"]) - store.tick)
+        if remaining:
+            await world.run(max_ticks=remaining)
     asyncio.run(go())
+    if world.last_pause_reason:
+        reason = world.last_pause_reason.get("reason", "provider")
+        detail = str(world.last_pause_reason.get("detail", ""))[:300]
+        store.close()
+        raise RuntimeError(f"experiment arm {run_id} paused: {reason}: {detail}")
 
     ok, diag = world.economy.ledger.reconcile()
     result = {"run_id": run_id, "seed": seed, "arm": arm, "ticks": store.tick,
+              "complete": store.tick >= int(spec["ticks"]),
               "reconciled": ok, "metrics": {}, "series": {}, "events": {}}
     for name in spec["metrics"]:
         series = store.metric_series(name)
@@ -110,7 +135,18 @@ def _run_arm(spec: dict, seed: int, arm: str, data_dir: Path) -> dict:
 # ── the experiment ───────────────────────────────────────────────────────────
 def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
                    data_root: str = "data/experiments", quiet: bool = False) -> dict:
+    load_dotenv()
     spec = load_spec(spec_path_or_dict)
+    readiness = validate_llm_config(spec["config"], raise_on_error=False)
+    if not readiness["ready"]:
+        raise RuntimeError("experiment provider preflight failed: "
+                           + "; ".join(readiness["errors"]))
+    if spec.get("preflight_live"):
+        from run import provider_preflight
+        live = asyncio.run(provider_preflight(spec["config"], live=True))
+        if not live.get("live_ready", False):
+            raise RuntimeError("experiment live provider preflight failed: "
+                               + json.dumps(live.get("providers", [])))
     data_dir = Path(data_root) / spec["name"]
     data_dir.mkdir(parents=True, exist_ok=True)
     arms = ["treatment"] + (["control"] if spec["control"] else [])
@@ -121,6 +157,9 @@ def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
             if not quiet:
                 print(f"[experiment {spec['name']}] seed {seed} · {arm} · {spec['ticks']} ticks")
             results.append(_run_arm(spec, seed, arm, data_dir))
+            (data_dir / "results.json").write_text(
+                json.dumps({"name": spec["name"], "target_ticks": spec["ticks"],
+                            "results": results}, indent=2), encoding="utf-8")
 
     summary = _summarize(spec, results)
     report_path = _write_report(spec, results, summary, out_dir)
