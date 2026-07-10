@@ -30,7 +30,7 @@ def test_experiment_harness_treatment_vs_control(tmp_path):
     spec = {
         "name": "mini_rumor",
         "config": _tiny_config(),
-        "seeds": [1, 2],
+        "seeds": [1, 2, 3, 4, 5],
         "ticks": 8,
         "control": True,
         "shocks": [{"kind": "rumor", "trigger": "shock", "trigger_params": {"tick": 2},
@@ -42,13 +42,13 @@ def test_experiment_harness_treatment_vs_control(tmp_path):
                          data_root=str(tmp_path / "data"), quiet=True)
 
     results = out["results"]
-    assert len(results) == 4                                  # 2 seeds × 2 arms
+    assert len(results) == 10                                 # 5 seeds × 2 arms
     assert {r["arm"] for r in results} == {"treatment", "control"}
     assert all(r["reconciled"] for r in results)
     assert all(r["ticks"] == 8 for r in results)
     # Summary carries distributions + a treatment−control effect per metric.
     m = out["summary"]["metrics"]["bank_deposits:1"]
-    assert m["treatment"]["n"] == 2 and m["control"]["n"] == 2
+    assert m["treatment"]["n"] == 5 and m["control"]["n"] == 5
     assert "effect_mean" in m
     # The rumor arm moved deposits; the control arm has strictly fewer moves.
     ev = out["summary"]["events"]["deposit_move"]

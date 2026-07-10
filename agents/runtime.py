@@ -14,7 +14,7 @@ from typing import Optional
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest, BudgetExceeded
+from llm.gateway import Gateway, LLMRequest, BudgetExceeded, ProviderUnavailable
 from .memory import Memory
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
@@ -43,7 +43,7 @@ class AgentRuntime:
         decisions = []
         errors = 0
         for a, res in zip(agents, results):
-            if isinstance(res, BudgetExceeded):
+            if isinstance(res, (BudgetExceeded, ProviderUnavailable)):
                 raise res
             if isinstance(res, Exception):
                 errors += 1
@@ -158,7 +158,6 @@ class AgentRuntime:
 
     # ── MEMORY: nightly compression + belief extraction ──────────────────────
     async def compress_memories(self, tick: int) -> None:
-        gov = self.gw.governor
         # Only agents with observations today need compressing.
         rows = self.store.query(
             "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation'", (tick,))
@@ -168,7 +167,19 @@ class AgentRuntime:
         for aid, res in zip(agent_ids, results):
             if isinstance(res, BudgetExceeded):
                 raise res
-            self.mem.weekly_rollup(aid, tick)
+            if isinstance(res, Exception):
+                raise res
+
+        if tick % 7 == 0:
+            weekly_ids = [int(r["agent_id"]) for r in self.store.query(
+                "SELECT DISTINCT agent_id FROM memories WHERE kind='summary' AND demoted=0 "
+                "AND tick BETWEEN ? AND ? ORDER BY agent_id", (tick - 6, tick))]
+            weekly_results = await asyncio.gather(
+                *(self._rollup_week(tick, aid) for aid in weekly_ids),
+                return_exceptions=True)
+            for res in weekly_results:
+                if isinstance(res, Exception):
+                    raise res
 
     async def _compress_one(self, tick: int, agent_id: int) -> None:
         obs = self.mem.todays_observations(agent_id, tick)
@@ -182,3 +193,27 @@ class AgentRuntime:
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         self.mem.write_summary(agent_id, tick, env.get("summary", ""), float(env.get("importance", 1.0)))
         self.mem.apply_belief_updates(agent_id, env.get("belief_updates", []), tick)
+
+    async def _rollup_week(self, tick: int, agent_id: int) -> None:
+        rows = self.store.query(
+            "SELECT tick, text, importance FROM memories WHERE agent_id=? "
+            "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? ORDER BY tick, id",
+            (agent_id, tick - 6, tick))
+        if not rows:
+            return
+        daily = [{"tick": int(r["tick"]), "text": r["text"],
+                  "importance": float(r["importance"])} for r in rows]
+        context = {"weekly_summaries": daily, "tick": tick,
+                   "rng_seed": agent_id * 701 + tick}
+        req = LLMRequest(
+            role="citizen", purpose="memory",
+            system="Synthesize the seven daily summaries into one concise weekly memory as JSON.",
+            user=json.dumps(daily)[:4000], context=context,
+            agent_id=agent_id, tick=tick, max_tokens=240)
+        resp = await self.gw.complete(req)
+        env = resp.parsed if isinstance(resp.parsed, dict) else {}
+        summary = str(env.get("summary", "")).strip()
+        if not summary:
+            summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]
+        importance = float(env.get("importance", max(r["importance"] for r in daily)))
+        self.mem.weekly_rollup(agent_id, tick, summary, importance)

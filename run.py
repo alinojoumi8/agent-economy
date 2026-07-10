@@ -2,6 +2,8 @@
 
   python run.py --config runs/base.yaml                 # serve dashboard + world (paused)
   python run.py --config runs/base.yaml --ticks 30      # headless: run 30 ticks, report, exit
+  python run.py --config runs/production.yaml --preflight       # validate real-provider config
+  python run.py --config runs/production.yaml --preflight-live  # authenticate + confirm models
   python run.py --config runs/base.yaml --resume RUNID  # resume an existing run db
   python run.py --config runs/base.yaml --replay RUNID  # exact replay from stored LLM calls
   python run.py --config runs/base.yaml --fork RUNID@TICK   # what-if branch from a checkpoint
@@ -17,35 +19,93 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 import yaml
+from dotenv import load_dotenv
 
 from engine.store import Store
+from llm.gateway import Gateway
+from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
 
 DATA_DIR = Path("data/runs")
+DEFAULT_CONFIG = "runs/production.yaml"
 
 
-def load_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+def _deep_merge(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
-def open_run(config: dict, resume: str | None, replay: str | None) -> tuple[Store, World, str]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if resume or replay:
-        run_id = resume or replay
-        db = DATA_DIR / f"{run_id}.db"
+def load_config(path: str, _seen: Optional[set[Path]] = None) -> dict:
+    cfg_path = Path(path).resolve()
+    seen = set() if _seen is None else _seen
+    if cfg_path in seen:
+        raise ValueError(f"config inheritance cycle at {cfg_path}")
+    seen.add(cfg_path)
+    with cfg_path.open("r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+    parent = config.pop("extends", None)
+    if parent:
+        parent_path = (cfg_path.parent / str(parent)).resolve()
+        config = _deep_merge(load_config(str(parent_path), seen), config)
+    return config
+
+
+async def provider_preflight(config: dict, *, live: bool = False) -> dict:
+    report = validate_llm_config(config, raise_on_error=False)
+    if not report["ready"] or not live:
+        return {**report, "live_checked": False}
+    store = Store(":memory:")
+    store.init_run_meta("preflight", int(config.get("seed", 42)), config)
+    return await Gateway(store, config).preflight(live=True)
+
+
+def open_run(config: dict, resume: str | None, replay: str | None, *,
+             data_dir: Path = DATA_DIR) -> tuple[Store, World, str]:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if resume:
+        run_id = resume
+        db = data_dir / f"{run_id}.db"
         if not db.exists():
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         stored_cfg = json.loads(store.get_meta()["config_json"])
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
-        world = World(store, stored_cfg, replay=bool(replay))
+        world = World(store, stored_cfg)
         world.restore_prng_state()
         return store, world, run_id
+    if replay:
+        source_db = data_dir / f"{replay}.db"
+        if not source_db.exists():
+            sys.exit(f"run database not found: {source_db}")
+        source_store = Store(str(source_db))
+        source_meta = source_store.get_meta()
+        replay_cfg = json.loads(source_meta["config_json"])
+        source_tick = int(source_meta["tick"])
+        source_seed = int(source_meta["seed"])
+        source_store.close()
+        replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        replay_cfg.update({
+            "seed": source_seed,
+            "replay_source_path": str(source_db.resolve()),
+            "replay_source_run_id": replay,
+            "replay_source_tick": source_tick,
+        })
+        run_id = f"replay-{replay}-{new_run_id()}"
+        store = Store(str(data_dir / f"{run_id}.db"))
+        store.init_run_meta(run_id, source_seed, replay_cfg, parent_run_id=replay, fork_tick=0)
+        world = World(store, replay_cfg, replay=True)
+        world.initialize()
+        return store, world, run_id
     run_id = new_run_id()
-    store = Store(str(DATA_DIR / f"{run_id}.db"))
+    store = Store(str(data_dir / f"{run_id}.db"))
     store.init_run_meta(run_id, int(config.get("seed", 42)), config)
     world = World(store, config)
     world.initialize()
@@ -100,8 +160,10 @@ async def headless(world: World, ticks: int) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     ap = argparse.ArgumentParser(description="Agent Economy")
-    ap.add_argument("--config", default="runs/base.yaml")
+    ap.add_argument("--config", default=DEFAULT_CONFIG,
+                    help="world config (default: locked MiniMax/Kimi production profile)")
     ap.add_argument("--ticks", type=int, default=None, help="run N ticks headless then exit")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
@@ -113,6 +175,10 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--serve", action="store_true", help="serve dashboard even with --ticks")
+    ap.add_argument("--preflight", action="store_true",
+                    help="validate provider routes and required environment variables, then exit")
+    ap.add_argument("--preflight-live", action="store_true",
+                    help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
 
     if args.experiment:
@@ -130,16 +196,34 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    if args.preflight or args.preflight_live:
+        report = asyncio.run(provider_preflight(config, live=args.preflight_live))
+        print(json.dumps(report, indent=2))
+        ready = report.get("ready", False)
+        live_ready = report.get("live_ready", True) if args.preflight_live else True
+        if not (ready and live_ready):
+            raise SystemExit(2)
+        return
     if args.fork:
         args.resume = fork_run(args.fork)
     store, world, run_id = open_run(config, args.resume, args.replay)
     print(f"[agent-economy] run {run_id} @ tick {store.tick} "
           f"(seed {store.get_meta()['seed']}, {'replay' if args.replay else 'live'})")
 
-    if args.ticks is not None and not args.serve:
-        asyncio.run(headless(world, args.ticks))
+    replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
+    ticks = args.ticks if args.ticks is not None else replay_ticks
+    if ticks is not None and not args.serve:
+        asyncio.run(headless(world, ticks))
+        if args.replay:
+            from world.replay_verify import verify_replay
+            source = Path(str(world.config["replay_source_path"]))
+            proof = verify_replay(source, store.path)
+            print(json.dumps(proof, indent=2))
+            if not proof["exact"]:
+                raise SystemExit(3)
         from reports.generate import generate_report
-        path = generate_report(store, world)
+        path = generate_report(
+            store, world, out_dir=str(config.get("report_dir", "reports/out")))
         gov = world.gateway.governor.status()
         print(f"[agent-economy] done @ tick {store.tick} · spend ${gov['total_spend_usd']:.2f} "
               f"· report: {path}")

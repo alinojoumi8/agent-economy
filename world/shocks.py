@@ -106,9 +106,10 @@ class Shocks:
     def _apply_policy_rate(self, tick: int, s, params: dict, initial: bool) -> None:
         """Override the policy rate directly (bypasses the banker, still logged)."""
         target = int(params.get("rate_bps", 500))
+        old = self.e.policy_rate_bps()
         self.store.record_metric(tick, "policy_rate", target)
         self.store.log_event(tick, "policy_rate_set", {
-            "old_bps": self.e.policy_rate_bps(), "requested_bps": target, "new_bps": target,
+            "old_bps": old, "requested_bps": target, "new_bps": target,
             "via": "shock"}, phase="NIGHT_CLOSE", importance=3.0)
 
     def _apply_oil(self, tick: int, s, params: dict, initial: bool) -> None:
@@ -146,7 +147,8 @@ class Shocks:
                 entities_json=json.dumps([f"bank:{bank_id}", f"rumor_bank:{bank_id}"]),
                 last_accessed_tick=tick, demoted=0)
         self.store.log_event(tick, "rumor", {
-            "bank_id": bank_id, "n_agents": len(targets), "text": text, "truthful": False},
+            "bank_id": bank_id, "n_agents": len(targets), "target_agent_ids": targets,
+            "text": text, "truthful": False},
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
 
     def _apply_slant(self, tick: int, s, params: dict, initial: bool) -> None:

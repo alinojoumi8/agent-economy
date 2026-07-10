@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Agent Economy — PRD Gap Assessment</title>
+<style>
+:root{--bg:#f4f6f3;--paper:#fff;--ink:#17211d;--muted:#647169;--line:#dfe5e0;--green:#167555;--green2:#dff2e8;--amber:#9a6500;--amber2:#fff1cc;--red:#a6372f;--red2:#fde7e4;--blue:#245a84;--shadow:0 16px 50px rgba(20,40,31,.08)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--blue)}.wrap{width:min(1460px,calc(100% - 32px));margin:auto}.hero{padding:54px 0 36px;background:linear-gradient(125deg,#0a2119,#133b2d 64%,#625015);color:#f3f8f5}.kicker{font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#83dbb6}.hero h1{max-width:950px;margin:10px 0 12px;font-size:clamp(28px,5vw,56px);line-height:1.04;letter-spacing:-.04em}.hero p{max-width:920px;margin:0;color:#c4d7ce;font-size:16px}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.chip,.status{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}.chip{border:1px solid #537466;color:#cfe1d8}.status.complete{background:var(--green2);color:var(--green)}.status.substantial{background:var(--amber2);color:var(--amber)}.status.deferred{background:#e8ece9;color:#536159}.main{padding:24px 0 70px}.verdict{display:grid;grid-template-columns:1.5fr repeat(3,1fr);gap:12px}.card{background:var(--paper);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.verdict-copy{padding:22px}.verdict-copy h2{margin:4px 0 8px;font-size:23px;letter-spacing:-.02em}.verdict-copy p{margin:0;color:var(--muted)}.score{padding:20px;position:relative;overflow:hidden}.score:after{content:"";position:absolute;inset:auto -30px -50px auto;width:130px;height:130px;border-radius:50%;background:var(--green2)}.score .n{position:relative;z-index:1;font-size:44px;line-height:1;font-weight:850;letter-spacing:-.06em}.score .label{position:relative;z-index:1;margin-top:7px;font-weight:750}.score small{position:relative;z-index:1;color:var(--muted)}h2.section{margin:34px 0 12px;font-size:22px;letter-spacing:-.025em}.phase-grid,.gap-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.phase,.gap{padding:17px}.phase b,.gap b{display:block;margin-bottom:5px}.phase p,.gap p{margin:0;color:var(--muted);font-size:12px}.phase .bar{height:6px;margin-top:13px;border-radius:9px;background:#edf0ed;overflow:hidden}.phase .bar i{display:block;height:100%;background:var(--green)}.gap.high{border-top:4px solid var(--red)}.gap.medium{border-top:4px solid var(--amber)}.filters{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.filters button{border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--muted);padding:7px 12px;font-weight:700;cursor:pointer}.filters button.active{border-color:var(--green);background:var(--green2);color:var(--green)}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--paper);box-shadow:var(--shadow)}table{width:100%;border-collapse:collapse;min-width:1080px}th{position:sticky;top:0;z-index:1;background:#eef2ef;color:#536159;text-align:left;padding:10px 12px;font-size:10px;letter-spacing:.1em;text-transform:uppercase}td{padding:12px;vertical-align:top;border-top:1px solid var(--line);font-size:12px}tbody tr:hover{background:#f8faf8}.req{min-width:230px}.req strong{display:block;font-size:13px}.evidence a{white-space:nowrap}.roadmap{counter-reset:step;display:grid;gap:9px}.roadmap article{counter-increment:step;display:grid;grid-template-columns:42px 1fr;gap:12px;padding:15px}.roadmap article:before{content:counter(step);display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--green2);color:var(--green);font-weight:850}.roadmap h3{margin:0 0 4px;font-size:14px}.roadmap p{margin:0;color:var(--muted);font-size:12px}.verification{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.verification div{padding:15px}.verification b{display:block;margin-bottom:4px}.verification span{color:var(--muted);font-size:12px}footer{padding:24px 0 40px;color:var(--muted);font-size:12px}.hide{display:none}
+@media(max-width:1000px){.verdict{grid-template-columns:1fr 1fr}.verdict-copy{grid-column:1/-1}.phase-grid,.gap-grid,.verification{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.wrap{width:min(100% - 20px,1460px)}.hero{padding:34px 0 26px}.verdict,.phase-grid,.gap-grid,.verification{grid-template-columns:1fr}.score .n{font-size:38px}.main{padding-top:12px}}
+@media(prefers-color-scheme:dark){:root{--bg:#09100d;--paper:#101914;--ink:#e2ece6;--muted:#93a39a;--line:#27342d;--green2:#123c2c;--amber2:#3c3012;--red2:#3e1f1c}.filters button.active{background:#123c2c}.phase .bar{background:#29362f}th{background:#17231d}tbody tr:hover{background:#142019}}
+@media print{body{background:#fff;color:#111;font-size:10px}.hero{padding:20px 0;background:#fff;color:#111;border-bottom:2px solid #111}.hero p,.kicker{color:#333}.card,.table-wrap{box-shadow:none}.filters{display:none}.verdict{grid-template-columns:1.5fr repeat(3,1fr)}.score .n{font-size:30px}.main{padding:10px 0}.phase-grid,.gap-grid{grid-template-columns:repeat(4,1fr)}h2.section{break-after:avoid}tr,.card{break-inside:avoid}.hide{display:table-row!important}footer{padding-bottom:0}}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap"><div class="kicker">Implementation status · PRD v1.0</div><h1>Feature complete. Production acceptance remains conditional.</h1><p>The strict deterministic economy, exact replay, randomized and long-run acceptance tests, measured five-seed experiment, provider controls, and specified React observatory are built. Remaining work is real-provider operating evidence, not another major subsystem.</p><div class="meta"><span class="chip">Assessment 2026-07-10</span><span class="chip">Code 0754b57</span><span class="chip">66 tests passed</span><span class="chip">P2 excluded</span></div></div></header>
+
+<main class="main wrap">
+<section class="verdict">
+  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>PRD-v1 code complete; paid production proof outstanding.</h2><p>All P0/P1 feature surfaces have substantive implementation. Four proof areas remain at “substantial”: live routed-role samples, Oracle p90 latency, the 365-day cost/cache envelope, and meaningful cross-run calibration data.</p></article>
+  <article class="card score"><div class="n">100%</div><div class="label">Feature coverage</div><small>17.00 / 17</small></article>
+  <article class="card score"><div class="n">94%</div><div class="label">Acceptance proof</div><small>16.00 / 17</small></article>
+  <article class="card score"><div class="n">96%</div><div class="label">Technical fidelity</div><small>13.50 / 14</small></article>
+</section>
+
+<h2 class="section">Phase progress</h2>
+<section class="phase-grid">
+  <article class="card phase"><b>Kernel & accounting</b><p>Ledger invariants, diagnostics, checkpoints, and active-failure halt are complete.</p><div class="bar"><i style="width:100%"></i></div></article>
+  <article class="card phase"><b>Agents & economy</b><p>Mechanics are complete; authenticated routed-role evidence is pending.</p><div class="bar"><i style="width:95%"></i></div></article>
+  <article class="card phase"><b>Information & UI</b><p>Exact pilots, React observatory, shocks, Oracle, and reports are complete.</p><div class="bar"><i style="width:96%"></i></div></article>
+  <article class="card phase"><b>P1 systems</b><p>Government, VC, five-seed experiments, replay, calibration, and health exist.</p><div class="bar"><i style="width:96%"></i></div></article>
+</section>
+
+<h2 class="section">Requirement assessment</h2>
+<div class="filters" aria-label="Requirement filters"><button class="active" data-filter="all">All</button><button data-filter="p0">P0</button><button data-filter="p1">P1</button><button data-filter="open">Needs production evidence</button></div>
+<div class="table-wrap"><table id="requirements"><thead><tr><th>Requirement</th><th>Priority</th><th>Implementation</th><th>Acceptance</th><th>Evidence</th><th>Remaining gap</th><th>Completion evidence</th></tr></thead><tbody>
+<tr data-priority="p0"><td class="req"><strong>R1 — Conserved double-entry ledger</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_ledger.py">Ledger tests</a>; active corruption halt/checkpoint.</td><td>None for v1.</td><td>Preserve invariant and failure-path tests.</td></tr>
+<tr data-priority="p0" data-open="true"><td class="req"><strong>R2 — LLM runtime, persona, memory, inspector</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../runs/production.yaml">Production profile</a>; weekly memory and inspector tests.</td><td>No archived authenticated MiniMax/Kimi role sample.</td><td>Run every routed role and retain secret-safe prompt/response/latency proof.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R3 — Banks, firms, labor, company lifecycle</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_prd_completion.py">Lawyer-to-bankruptcy acceptance</a>.</td><td>None for v1 mechanics.</td><td>Preserve regression.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R4 — Order book, IPO, market index</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_spec_completion_properties.py">No-invented-price property</a>; price-time, IPO, index, breaker.</td><td>None for v1.</td><td>Preserve exchange/property coverage.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R5 — News, conversations, rumor pilot</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="experiments/rumor-vs-control.md">Measured N=5 study</a>; exact threshold pilot.</td><td>Real-agent emergence confirmation pending.</td><td>Repeat the three causal signatures with live providers.</td></tr>
+<tr data-priority="p0" data-open="true"><td class="req"><strong>R6 — Oracle prediction, resolution, Brier</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../oracle/analyst.py">Oracle</a>; exact 30-tick resolver tests.</td><td>Real-provider p90 below 60 seconds unproven.</td><td>Publish representative p50/p90 and persisted predictions.</td></tr>
+<tr data-priority="p0" data-open="true"><td class="req"><strong>R7 — Run control, governor, cap</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../llm/gateway.py">Gateway</a>; durable stages, repair/cache billing, conservative reservation, per-agent costs.</td><td>365-day live cost/cache proof missing.</td><td>Export costs by model/agent/purpose/cache and prove ≤$200.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R8 — Live observatory dashboard</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../dashboard/src">React source</a>; ticker, per-agent costs, WebSocket, desktop/~355px and keyboard checks.</td><td>No v1 blocker.</td><td>Add visual regression as the UI grows.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R9 — Shock catalogue and effects</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../world/shocks.py">Shock engine</a>; all required downstream effects tested.</td><td>None for v1.</td><td>Preserve scenarios.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R10 — Automatic end-of-run report</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../reports/generate.py">Report generator</a>; paused/running Stop tests and browser smoke.</td><td>None for v1.</td><td>Preserve the content contract.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R11 — Two-year lifecycle acceptance</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence">730-tick death, estate, arrival, housing, job, reconciliation test.</td><td>None for v1.</td><td>Keep the long test in CI.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R12 — Government and elections</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_p1_features.py">Tax, benefit, election integration</a>.</td><td>None for v1.</td><td>Future calibration only.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R13 — Venture capital</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence">Pitch, cap table, decline, follow-on, write-off tests.</td><td>None for v1.</td><td>Future portfolio calibration only.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R14 — Experiment harness</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="experiments/rumor-vs-control.md">Five seeds × two arms measured write-up</a>.</td><td>None for harness acceptance.</td><td>Archive a live production-scale experiment.</td></tr>
+<tr data-priority="p1" data-open="true"><td class="req"><strong>R15 — Oracle calibration dashboard</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../oracle/calibration.py">Calibration</a>; API, dashboard, report scorecard.</td><td>No meaningful resolved live prediction corpus.</td><td>Publish bins, Brier, reliability, resolution, uncertainty.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R16 — Replay UI and exact replay</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../world/replay_verify.py">Canonical verifier</a>; fresh genesis and missing-response tests.</td><td>No engine blocker.</td><td>Repeat on the first live run.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R17 — Health economy</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence">Hospital, insurer, premium, claim, lapse, epidemic, lifecycle tests.</td><td>No v1 mechanics blocker.</td><td>Future actuarial calibration only.</td></tr>
+</tbody></table></div>
+
+<h2 class="section">Technical-spec fidelity · 96%</h2>
+<div class="table-wrap"><table><thead><tr><th>Commitment</th><th>Status</th><th>Weight</th><th>Evidence / qualification</th></tr></thead><tbody>
+<tr><td>Layered dashboard/API/kernel/provider/store architecture</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Separate React, FastAPI, engine, gateway, and SQLite layers.</td></tr>
+<tr><td>Python, FastAPI, SQLite WAL</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Implemented; current lifespan API used.</td></tr>
+<tr><td>Ordered tick phases and cadence</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Deterministic order and scheduling tested.</td></tr>
+<tr><td>Persisted data model</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>All specified world/control state persists.</td></tr>
+<tr><td>Structured actions and validation</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Living actors/counterparties, funds, ownership, phase, capital, and weekly loan rules; no substitutions or invented prices.</td></tr>
+<tr><td>Short, daily, weekly memory</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Weekly synthesis precedes source demotion.</td></tr>
+<tr><td>Routing, retry, caching, budget, logging</td><td><span class="status substantial">Substantial</span></td><td>.75</td><td>Live provider cache-hit evidence pending.</td></tr>
+<tr><td>Cheap/strong real-provider role mix</td><td><span class="status substantial">Substantial</span></td><td>.75</td><td>Current official equivalents configured; live authentication pending.</td></tr>
+<tr><td>Deterministic market mechanics</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Full company and market path tested.</td></tr>
+<tr><td>Seeded lifecycle mechanics</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Two-year acceptance passes.</td></tr>
+<tr><td>React, Vite, Tailwind, Recharts</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Modular source and local committed build.</td></tr>
+<tr><td>Unit, acceptance, golden, property/cost strategy</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>66 tests include randomized actions/lifecycle storms, budget stages, repair billing, golden and long-run acceptance.</td></tr>
+<tr><td>Determinism, checkpoints, replay, forks</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Canonical full-state replay hashes match.</td></tr>
+<tr><td>Repository layout and phased build</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Specified backend, P1, and dashboard packages exist.</td></tr>
+</tbody></table></div>
+
+<h2 class="section">Remaining gaps</h2>
+<section class="gap-grid">
+  <article class="card gap high"><b>Paid production envelope</b><p>Keys are absent and no paid inference was attempted. The 365-day ≤$200 target, live cache rate, and provider latency remain unproven.</p></article>
+  <article class="card gap medium"><b>Provider identifier governance</b><p>The code uses current official MiniMax-M2.7 and kimi-k2.6 rather than historical names in the specification.</p></article>
+  <article class="card gap medium"><b>Lagging calibration data</b><p>Calibration code is complete, but quality requires many resolved live predictions across runs.</p></article>
+  <article class="card gap medium"><b>Production emergence</b><p>Three causal chains and an N=5 offline study are documented; MiniMax/Kimi confirmation still requires keys and spend approval.</p></article>
+</section>
+
+<h2 class="section">Prioritized roadmap</h2>
+<section class="roadmap">
+  <article class="card"><div><h3>Authorize and preflight the production profile</h3><p>Load keys locally, validate secret-safe configuration, authenticate, and confirm every routed model.</p></div></article>
+  <article class="card"><div><h3>Prove the operating envelope</h3><p>Measure Oracle p50/p90, actual cached tokens, retries/failures, and the 365-day total under $200.</p></div></article>
+  <article class="card"><div><h3>Archive production acceptance</h3><p>Retain config, seed, report, costs, and canonical replay proof; confirm three causal signatures and run a five-seed live experiment if authorized.</p></div></article>
+  <article class="card"><div><h3>Update specification governance</h3><p>Record the current official model equivalents and link final production evidence into this report.</p></div></article>
+</section>
+
+<h2 class="section">Verification snapshot</h2>
+<section class="verification">
+  <div class="card"><b>Python</b><span>66 passed in 78.49 seconds; randomized properties, compile-all, and whitespace checks passed.</span></div>
+  <div class="card"><b>Frontend</b><span>npm audit clean; deterministic Vite build; local assets only.</span></div>
+  <div class="card"><b>Browser</b><span>Desktop/~355px, ticker, per-agent cost after Step, internal scrolling, local assets only; no console errors.</span></div>
+  <div class="card"><b>Replay</b><span>27 deterministic tables and 150 stored calls; total SHA-256 <code>05c34257…00fc</code>.</span></div>
+  <div class="card"><b>Baseline</b><span>feature/prd-completion code commit 0754b57.</span></div>
+  <div class="card"><b>CI</b><span>GitHub Actions run <code>29095018792</code> passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows.</span></div>
+</section>
+
+<h2 class="section">Deferred P2 · excluded from scores</h2>
+<div class="table-wrap"><table><thead><tr><th>Future requirement</th><th>Disposition</th><th>Assessment</th></tr></thead><tbody>
+<tr><td><strong>R18 — Participant mode</strong></td><td><span class="status deferred">Deferred</span></td><td>Observer-only integrity preserved.</td></tr>
+<tr><td><strong>R19 — Approximately 1,000 agents</strong></td><td><span class="status deferred">Deferred</span></td><td>Current launch target remains approximately 100.</td></tr>
+<tr><td><strong>R20 — Regions and foreign exchange</strong></td><td><span class="status deferred">Deferred</span></td><td>Not required for v1.</td></tr>
+<tr><td><strong>R21 — Real-data calibration</strong></td><td><span class="status deferred">Deferred</span></td><td>Future inputs must be versioned and provenance-aware.</td></tr>
+<tr><td><strong>R22 — Hosted multi-user service</strong></td><td><span class="status deferred">Deferred</span></td><td>V1 remains a local single-process observatory.</td></tr>
+</tbody></table></div>
+</main>
+
+<footer class="wrap">Markdown is the canonical source. Generated databases corroborate findings but do not outrank committed code and tests. Scripted runs prove mechanics and offline causal signatures; they do not replace live emergence, budget, latency, caching, or calibration evidence.</footer>
+<script>
+const buttons=[...document.querySelectorAll('[data-filter]')];const rows=[...document.querySelectorAll('#requirements tbody tr')];buttons.forEach(button=>button.addEventListener('click',()=>{buttons.forEach(item=>item.classList.toggle('active',item===button));const filter=button.dataset.filter;rows.forEach(row=>row.classList.toggle('hide',filter!=='all'&&(filter==='open'?row.dataset.open!=='true':row.dataset.priority!==filter)));}));
+</script>
+</body>
+</html>

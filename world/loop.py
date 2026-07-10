@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
-from engine.ledger import ReconciliationError, SYS_INFLOW
+from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.store import Store, load_json
-from llm.gateway import Gateway, BudgetExceeded
+from llm.gateway import Gateway, BudgetExceeded, ProviderUnavailable
 from agents.runtime import AgentRuntime
 from agents.personas.vendor.persona_gen import sample_persona
 from .genesis import Genesis
@@ -64,6 +64,8 @@ class World:
         self.checkpoint_every = int(config.get("checkpoint_every", 10))
         self._pause_requested = False
         self._stop_requested = False
+        self.last_report_path: Optional[str] = None
+        self.last_pause_reason: Optional[dict] = None
         self.on_tick: Optional[Callable[[int, dict], None]] = None  # dashboard hook
         self.on_event: Optional[Callable[[dict], None]] = None
 
@@ -92,7 +94,9 @@ class World:
                     break
                 if self._pause_requested:
                     break
-                await self.step()
+                summary = await self.step()
+                if summary.get("paused"):
+                    break
                 if self.speed_delay_s > 0:
                     await asyncio.sleep(self.speed_delay_s)
         finally:
@@ -102,8 +106,21 @@ class World:
             self.status = new_status
             self.store.set_meta(status=new_status)
             self._save_prng_state()
-            self.checkpoint(self.store.tick, reason="pause")
             self.store.commit()
+            self.checkpoint(
+                self.store.tick,
+                reason="stop" if self._stop_requested else "pause")
+            if self._stop_requested:
+                try:
+                    from reports.generate import generate_report
+                    self.last_report_path = generate_report(
+                        self.store, self,
+                        out_dir=str(self.config.get("report_dir", "reports/out")))
+                except Exception as exc:
+                    self.store.log_event(
+                        self.store.tick, "report_failed", {"error": str(exc)[:500]},
+                        importance=3.0)
+                    self.store.commit()
             self._pause_requested = False
 
     def request_pause(self) -> None:
@@ -116,57 +133,94 @@ class World:
     async def step(self) -> dict:
         tick = self.store.tick + 1
         t0 = time.time()
-
-        # 1 NIGHT_CLOSE (accrual, lifecycle, shocks, metrics, reconciliation)
-        self._phase_night_close(tick)
-
-        # Budget check — a clean pause, never a dead run.
-        if self.gateway.governor.should_pause():
-            self.store.log_event(tick, "budget_pause", self.gateway.governor.status(),
-                                 phase="NIGHT_CLOSE", importance=4.0)
-            self._pause_requested = True
-            self.store.set_meta(tick=tick)
-            self.store.commit()
-            return {"tick": tick, "paused": "budget"}
-
-        # 2 MORNING + 3 EXECUTION
+        phase = "NIGHT_CLOSE"
         try:
+            # 1 NIGHT_CLOSE (accrual, lifecycle, shocks, metrics, reconciliation)
+            self._phase_night_close(tick)
+
+            # Budget check — a clean pause, never a dead run.
+            if self.gateway.governor.should_pause():
+                raise BudgetExceeded("world budget exhausted before MORNING")
+
+            # 2 MORNING + 3 EXECUTION
+            phase = "MORNING"
             decisions = await self.runtime.decide_all(tick)
-        except BudgetExceeded:
-            self._pause_requested = True
-            self.store.log_event(tick, "budget_pause", self.gateway.governor.status(),
-                                 phase="MORNING", importance=4.0)
-            self.store.set_meta(tick=tick)
+            phase = "EXECUTION"
+            self.runtime.execute_decisions(tick, decisions)
+
+            # 4 MARKET
+            phase = "MARKET"
+            self._phase_market(tick)
+
+            # 5 NEWSROOM
+            phase = "NEWSROOM"
+            await self.newsroom.publish(tick)
+
+            # 6 EVENING
+            phase = "EVENING"
+            await self.conversations.evening(tick)
+
+            # 7 MEMORY
+            phase = "MEMORY"
+            self.runtime.capture_event_observations(tick)
+            await self.runtime.compress_memories(tick)
+
+            # bookkeeping
+            self.store.set_meta(tick=tick, phase="MEMORY")
+            if self.checkpoint_every and tick % self.checkpoint_every == 0:
+                self.checkpoint(tick)
             self.store.commit()
-            return {"tick": tick, "paused": "budget"}
-        self.runtime.execute_decisions(tick, decisions)
 
-        # 4 MARKET
-        self._phase_market(tick)
+            summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
+                       "decisions": len(decisions), "governor": self.gateway.governor.status()}
+            self._notify_tick(tick, summary)
+            return summary
+        except BudgetExceeded as exc:
+            return self._pause_safely(
+                tick, phase, "budget", self.gateway.governor.status(), t0,
+                detail=str(exc))
+        except ProviderUnavailable as exc:
+            return self._pause_safely(
+                tick, phase, "provider", exc.as_dict(), t0,
+                detail=str(exc))
 
-        # 5 NEWSROOM
-        await self.newsroom.publish(tick)
-
-        # 6 EVENING
-        await self.conversations.evening(tick)
-
-        # 7 MEMORY
-        self.runtime.capture_event_observations(tick)
-        await self.runtime.compress_memories(tick)
-
-        # bookkeeping
-        self.store.set_meta(tick=tick, phase="MEMORY")
-        if self.checkpoint_every and tick % self.checkpoint_every == 0:
-            self.checkpoint(tick)
-        self.store.commit()
-
-        summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
-                   "decisions": len(decisions), "governor": self.gateway.governor.status()}
+    def _notify_tick(self, tick: int, summary: dict) -> None:
         if self.on_tick:
             try:
                 self.on_tick(tick, summary)
             except Exception:
                 pass
+
+    def _pause_safely(self, tick: int, phase: str, reason: str, payload: dict,
+                      started_at: float, *, detail: str = "") -> dict:
+        """Commit a consistent partial tick and a durable, resumable pause record."""
+        ok, diag = self.economy.ledger.reconcile()
+        if not ok:
+            self.status = "halted"
+            self.store.log_event(tick, "reconciliation_failure", diag,
+                                 phase=phase, importance=5.0)
+            self.store.set_meta(status="halted", tick=tick, phase=phase)
+            self.store.commit()
+            self.checkpoint(tick, reason="halt")
+            raise ReconciliationError(
+                f"tick {tick}: books failed while pausing after {reason}: {diag}")
+
+        event_kind = "budget_pause" if reason == "budget" else "provider_pause"
+        event_payload = {**payload, "phase": phase, "detail": detail[:500]}
+        self.status = "paused"
+        self._pause_requested = True
+        self.last_pause_reason = {"reason": reason, **event_payload}
+        self.store.log_event(tick, event_kind, event_payload, phase=phase, importance=4.5)
+        self.store.set_meta(status="paused", tick=tick, phase=phase)
+        self.store.commit()
+        self.checkpoint(tick, reason=event_kind)
+        summary = {
+            "tick": tick, "wall_s": round(time.time() - started_at, 3),
+            "decisions": 0, "paused": reason, "phase": phase,
+            "pause_reason": self.last_pause_reason,
+            "governor": self.gateway.governor.status(),
+        }
+        self._notify_tick(tick, summary)
         return summary
 
     # ── phases ───────────────────────────────────────────────────────────────
@@ -277,6 +331,21 @@ class World:
                 label=f"agent:{agent_id}:checking", opening_cents=int(p.wealth_cents * 0.6),
                 funding_label=SYS_INFLOW, tick=tick)
             self.store.update("agents", agent_id, checking_account_id=chk)
+            # A new adult immediately takes on a visible move-in/rent cost. The
+            # system housing account keeps the payment conserved and auditable.
+            housing_cost = max(0, int(self.config.get("lifecycle", {}).get(
+                "housing_cost_cents", 75_000)))
+            housing_paid = min(housing_cost, self.economy.ledger.balance(chk))
+            if housing_paid:
+                self.economy.ledger.transfer(
+                    tick, chk, self.economy.ledger.system_account(SYS_HOUSING),
+                    housing_paid, kind="housing_cost", memo="arrival move-in and rent")
+                self.store.log_event(
+                    tick, "housing_cost", {"agent_id": agent_id,
+                                           "amount_cents": housing_paid,
+                                           "reason": "arrival"},
+                    phase="NIGHT_CLOSE", subject_type="agent",
+                    subject_id=agent_id, importance=1.5)
             # Social ties to a few residents + starting beliefs.
             residents = [int(r["id"]) for r in self.store.query(
                 "SELECT id FROM agents WHERE alive=1 AND id<>? ORDER BY id", (agent_id,))]
@@ -290,6 +359,10 @@ class World:
             self.runtime.mem.observe(agent_id, tick,
                                      "I just moved to town. I need to find work and settle in.",
                                      importance=3.0, entities=["self", "arrival"])
+            self.store.log_event(
+                tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
+                phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
+                importance=1.5)
             self.store.log_event(tick, "arrival", {
                 "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
                 "schedule_event_id": sched_id}, phase="NIGHT_CLOSE",
@@ -299,6 +372,9 @@ class World:
     def checkpoint(self, tick: int, reason: str = "interval") -> Optional[str]:
         try:
             self._save_prng_state()
+            # SQLite backup only sees committed pages from its separate source
+            # connection. Commit status/events/PRNG before taking the snapshot.
+            self.store.commit()
             ckpt_dir = Path(self.config.get("checkpoint_dir", "data/checkpoints"))
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             run_id = self.store.get_meta()["run_id"]
@@ -311,6 +387,7 @@ class World:
             self.store.insert("checkpoints", tick=tick, path=str(dest),
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())
+            self.store.commit()
             return str(dest)
         except Exception as exc:
             self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)

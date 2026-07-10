@@ -64,11 +64,21 @@ class Memory:
             return
         self.observe(agent_id, tick, summary, importance=importance, kind="summary")
 
-    def weekly_rollup(self, agent_id: int, tick: int) -> None:
-        """Demote daily summaries older than a week (still queryable, rarely retrieved)."""
+    def weekly_rollup(self, agent_id: int, tick: int, summary: str,
+                      importance: float = 1.0) -> None:
+        """Persist one weekly synthesis, then demote the daily source summaries."""
+        if not summary:
+            return
+        existing = self.store.query_one(
+            "SELECT id FROM memories WHERE agent_id=? AND kind='weekly_summary' AND tick=?",
+            (agent_id, tick))
+        if existing:
+            return
+        self.observe(agent_id, tick, summary, importance=importance, kind="weekly_summary")
         self.store.execute(
-            "UPDATE memories SET demoted=1 WHERE agent_id=? AND kind='summary' AND tick < ? AND demoted=0",
-            (agent_id, tick - 7))
+            "UPDATE memories SET demoted=1 WHERE agent_id=? AND kind='summary' "
+            "AND tick BETWEEN ? AND ? AND demoted=0",
+            (agent_id, tick - 6, tick))
 
     # ── beliefs ──────────────────────────────────────────────────────────────
     def get_beliefs(self, agent_id: int) -> dict[str, float]:
