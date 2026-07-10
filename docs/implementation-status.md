@@ -148,7 +148,7 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 | Browser | Desktop and approximately 355px content widths, live ticker, per-agent costs after Step, internal table/ticker scrolling, and console diagnostics verified; no console errors |
 | Replay CLI | One-day source/replay: 27 deterministic tables, 150 stored calls, identical total hash `05c3425749367afe268ae388dbf3525491c26ab1bdb383df49d5a1fc6a4100fc` |
 | Network assets | Production HTML references only committed `/static/assets/*`; no CDN dependency |
-| CI | Workflow now builds/verifies the dashboard and runs the Python matrix; branch run is pending push |
+| CI | GitHub Actions run `29095018792` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |
 
 ## Deferred P2 work — excluded from scores
 
