@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -176,6 +177,15 @@ class Gateway:
         self.provider_retries = max(0, int(llm_cfg.get("provider_retries", 1)))
         meta = store.get_meta()
         self.run_id = str(meta["run_id"]) if meta else "uninitialized"
+        self.replay_conn: Optional[sqlite3.Connection] = None
+        self._replay_positions: dict[str, int] = {}
+        if self.replay:
+            source = str(config.get("replay_source_path", "")).strip()
+            if not source:
+                raise ProviderConfigurationError(["replay_source_path is required for exact replay"])
+            source_uri = f"file:{source.replace(chr(92), '/')}?mode=ro"
+            self.replay_conn = sqlite3.connect(source_uri, uri=True, check_same_thread=False)
+            self.replay_conn.row_factory = sqlite3.Row
 
     @property
     def scripted(self):
@@ -228,7 +238,9 @@ class Gateway:
         if self.replay:
             replayed = self._replay_lookup(cache_key)
             if replayed is not None:
-                return replayed
+                response, source_row = replayed
+                self._log_replay_call(req, cache_key, source_row)
+                return response
             raise ProviderUnavailable(
                 "replay", model, req.purpose,
                 f"stored response missing for cache key {cache_key}", attempts=0)
@@ -346,16 +358,35 @@ class Gateway:
                            "m": model, "msgs": req.messages()}, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
-    def _replay_lookup(self, cache_key: str) -> Optional[LLMResponse]:
-        row = self.store.query_one(
-            "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1", (cache_key,))
+    def _replay_lookup(self, cache_key: str):
+        if self.replay_conn is None:
+            return None
+        position = self._replay_positions.get(cache_key, 0)
+        row = self.replay_conn.execute(
+            "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
+            (cache_key, position)).fetchone()
         if not row:
             return None
+        self._replay_positions[cache_key] = position + 1
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
-        return LLMResponse(text=resp.get("text", ""), parsed=parsed, provider=row["provider"],
-                           model=row["model"], in_tokens=int(row["in_tokens"]),
-                           out_tokens=int(row["out_tokens"]), cost_usd=0.0, cached=True, ok=ok)
+        response = LLMResponse(
+            text=resp.get("text", ""), parsed=parsed, provider=row["provider"],
+            model=row["model"], in_tokens=int(row["in_tokens"]),
+            out_tokens=int(row["out_tokens"]), cost_usd=float(row["cost_usd"]),
+            cached=bool(row["cached"]), ok=ok)
+        return response, row
+
+    def _log_replay_call(self, req: LLMRequest, cache_key: str, row) -> None:
+        """Copy original accounting so governor stages and scheduling replay exactly."""
+        self.store.insert(
+            "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role,
+            provider=row["provider"], model=row["model"], purpose=req.purpose,
+            cache_key=cache_key, request_json=row["request_json"],
+            response_json=row["response_json"], in_tokens=int(row["in_tokens"]),
+            out_tokens=int(row["out_tokens"]), cached=int(row["cached"]),
+            cost_usd=float(row["cost_usd"]), latency_ms=int(row["latency_ms"] or 0),
+            created_at=row["created_at"] or datetime.now(timezone.utc).isoformat())
 
     def _log_call(self, req: LLMRequest, provider: str, model: str, cache_key: str,
                   result, cost: float, cached: bool, latency_ms: int) -> None:

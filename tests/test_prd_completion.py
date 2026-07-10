@@ -15,9 +15,10 @@ from engine.store import Store, load_json
 from llm.adapters import AdapterResult
 from llm.gateway import Gateway, LLMRequest
 from llm.readiness import validate_llm_config
-from run import load_config
+from run import load_config, open_run
 from server.app import create_app
 from world.loop import World
+from world.replay_verify import verify_replay
 
 
 def _config(tmp_path: Path, **over) -> dict:
@@ -49,6 +50,54 @@ def _world(tmp_path: Path, name: str = "acceptance.db", **over) -> World:
     world = World(store, cfg)
     world.initialize()
     return world
+
+
+def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
+    cfg = _config(tmp_path)
+    source_store, source_world, source_id = open_run(
+        cfg, None, None, data_dir=tmp_path)
+    asyncio.run(source_world.run(max_ticks=4))
+
+    replay_store, replay_world, replay_id = open_run(
+        {}, None, source_id, data_dir=tmp_path)
+    assert replay_id != source_id
+    assert replay_store.tick == 0
+    assert replay_world.gateway.replay
+    asyncio.run(replay_world.run(max_ticks=4))
+
+    proof = verify_replay(source_store.path, replay_store.path)
+    assert proof["exact"], proof["differences"]
+    assert proof["source_tick"] == proof["replay_tick"] == 4
+    assert proof["source_hash"] == proof["replay_hash"]
+    assert {table["table"] for table in proof["tables"]} >= {
+        "accounts", "agents", "events", "ledger_entries", "llm_calls", "metrics"}
+
+    replay_store.execute("UPDATE accounts SET balance_cents=balance_cents+1 WHERE id=1")
+    replay_store.commit()
+    changed = verify_replay(source_store.path, replay_store.path)
+    assert not changed["exact"]
+    assert "accounts" in changed["differences"]
+
+
+def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
+    cfg = _config(tmp_path)
+    source_store, source_world, source_id = open_run(
+        cfg, None, None, data_dir=tmp_path)
+    asyncio.run(source_world.run(max_ticks=1))
+    source_store.execute("DELETE FROM llm_calls WHERE id=(SELECT MIN(id) FROM llm_calls)")
+    source_store.commit()
+
+    replay_store, replay_world, _ = open_run({}, None, source_id, data_dir=tmp_path)
+
+    class MustNotRun:
+        async def complete(self, *args, **kwargs):
+            raise AssertionError("replay attempted a live provider call")
+
+    replay_world.gateway.adapters["scripted"] = MustNotRun()
+    result = asyncio.run(replay_world.step())
+    assert result["paused"] == "provider"
+    assert replay_store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
 
 
 def test_production_config_inherits_world_and_requires_both_keys():
@@ -260,9 +309,24 @@ def test_websocket_payload_is_emitted_within_two_seconds(tmp_path):
             assert initial["tick"] == 0
             response = client.post("/api/run/step")
             assert response.status_code == 200
+            assert client.get("/api/run/status").json()["status"] == "paused"
             payload = ws.receive_json()
             assert payload["tick"] == 1
             assert int(time.time() * 1000) - payload["emitted_at_ms"] < 2_000
+
+
+def test_react_dashboard_bundle_is_local_and_current():
+    package = json.loads(Path("dashboard/package.json").read_text(encoding="utf-8"))
+    assert {"react", "react-dom", "recharts"} <= package["dependencies"].keys()
+    assert {"vite", "tailwindcss", "@tailwindcss/vite"} <= package["devDependencies"].keys()
+
+    html = Path("server/static/index.html").read_text(encoding="utf-8")
+    assert 'id="root"' in html
+    assert 'src="/static/assets/' in html
+    assert 'href="/static/assets/' in html
+    assert "https://" not in html and "http://" not in html
+    for relative in set(part.split('"')[0] for part in html.split("/static/")[1:]):
+        assert (Path("server/static") / relative).is_file(), relative
 
 
 def test_each_required_shock_has_a_logged_downstream_effect(tmp_path):

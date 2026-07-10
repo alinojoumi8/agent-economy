@@ -21,7 +21,7 @@ python run.py --config runs/base.yaml
 # Headless: run N ticks, emit an end-of-run report, exit
 python run.py --config runs/base.yaml --ticks 30
 
-# Resume a paused/checkpointed run · exact replay (no API cost)
+# Resume a paused/checkpointed run; or prove an exact replay (no API cost)
 python run.py --resume <RUN_ID>
 python run.py --replay <RUN_ID>
 
@@ -47,6 +47,26 @@ remains fully offline and needs no key.
 `scripted` provider — deterministic policy agents that shop, work, lend, reprice,
 spread rumors, and run on banks. The whole system (dashboard, Oracle, shocks,
 reports, replay) works offline and reproducibly. Same seed ⇒ identical event log.
+
+Replay never mutates the source run. It creates a fresh `replay-*.db`, rebuilds
+genesis, re-executes every tick against the source run's stored LLM responses,
+and prints table-by-table SHA-256 proof. A missing response pauses the replay and
+exits without contacting any live provider; a state mismatch exits with status 3.
+
+The dashboard source lives in `dashboard/` and builds into `server/static/`.
+For frontend development, run the FastAPI process on port 8000 and the Vite dev
+server in a second terminal:
+
+```bash
+cd dashboard
+npm ci
+npm run dev
+# production bundle: npm run build
+```
+
+Vite proxies `/api`, `/ws`, and `/reports` to FastAPI during development. The
+production bundle is committed so normal Python users still start the complete
+application with one command and no Node.js runtime.
 
 ## Using real LLMs
 
@@ -120,13 +140,13 @@ agents/                 personas (vendored census-based gen), memory, scheduler,
 llm/                    gateway: routing, budget governor, adapters (scripted/openai_compat/anthropic/cli)
 world/                  genesis, tick loop, metrics, shocks, newsroom, conversations
 oracle/                 analyst, resolution rules, resolver, Brier scoring
-server/                 FastAPI + WebSocket + static dashboard (zero build step)
+dashboard/              React + Vite + Tailwind + Recharts dashboard source
+server/                 FastAPI + WebSocket + committed production dashboard bundle
 reports/                end-of-run HTML/Markdown generator
 tests/                  engine invariants, scripted bank run, governor, determinism, rumor pilot
 data/runs/<id>.db       one SQLite file per run (the whole run is one portable file)
 ```
 
-One major stack deviation remains: the dashboard is a zero-build static page
-instead of React+Vite. The REST/WS API is UI-agnostic, so the specified client can
-replace it without changing the simulation engine. Scripted policies remain an
-intentional offline/test profile; the production profile uses real providers.
+The dashboard follows the locked React/Vite/Tailwind/Recharts stack. Scripted
+policies remain the intentional offline/test profile; the production profile
+uses the current real-provider routes after key and live-model preflight.

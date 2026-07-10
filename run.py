@@ -66,21 +66,45 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
     return await Gateway(store, config).preflight(live=True)
 
 
-def open_run(config: dict, resume: str | None, replay: str | None) -> tuple[Store, World, str]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if resume or replay:
-        run_id = resume or replay
-        db = DATA_DIR / f"{run_id}.db"
+def open_run(config: dict, resume: str | None, replay: str | None, *,
+             data_dir: Path = DATA_DIR) -> tuple[Store, World, str]:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if resume:
+        run_id = resume
+        db = data_dir / f"{run_id}.db"
         if not db.exists():
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         stored_cfg = json.loads(store.get_meta()["config_json"])
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
-        world = World(store, stored_cfg, replay=bool(replay))
+        world = World(store, stored_cfg)
         world.restore_prng_state()
         return store, world, run_id
+    if replay:
+        source_db = data_dir / f"{replay}.db"
+        if not source_db.exists():
+            sys.exit(f"run database not found: {source_db}")
+        source_store = Store(str(source_db))
+        source_meta = source_store.get_meta()
+        replay_cfg = json.loads(source_meta["config_json"])
+        source_tick = int(source_meta["tick"])
+        source_seed = int(source_meta["seed"])
+        source_store.close()
+        replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        replay_cfg.update({
+            "seed": source_seed,
+            "replay_source_path": str(source_db.resolve()),
+            "replay_source_run_id": replay,
+            "replay_source_tick": source_tick,
+        })
+        run_id = f"replay-{replay}-{new_run_id()}"
+        store = Store(str(data_dir / f"{run_id}.db"))
+        store.init_run_meta(run_id, source_seed, replay_cfg, parent_run_id=replay, fork_tick=0)
+        world = World(store, replay_cfg, replay=True)
+        world.initialize()
+        return store, world, run_id
     run_id = new_run_id()
-    store = Store(str(DATA_DIR / f"{run_id}.db"))
+    store = Store(str(data_dir / f"{run_id}.db"))
     store.init_run_meta(run_id, int(config.get("seed", 42)), config)
     world = World(store, config)
     world.initialize()
@@ -184,8 +208,17 @@ def main() -> None:
     print(f"[agent-economy] run {run_id} @ tick {store.tick} "
           f"(seed {store.get_meta()['seed']}, {'replay' if args.replay else 'live'})")
 
-    if args.ticks is not None and not args.serve:
-        asyncio.run(headless(world, args.ticks))
+    replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
+    ticks = args.ticks if args.ticks is not None else replay_ticks
+    if ticks is not None and not args.serve:
+        asyncio.run(headless(world, ticks))
+        if args.replay:
+            from world.replay_verify import verify_replay
+            source = Path(str(world.config["replay_source_path"]))
+            proof = verify_replay(source, store.path)
+            print(json.dumps(proof, indent=2))
+            if not proof["exact"]:
+                raise SystemExit(3)
         from reports.generate import generate_report
         path = generate_report(
             store, world, out_dir=str(config.get("report_dir", "reports/out")))

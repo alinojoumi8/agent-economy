@@ -1,0 +1,66 @@
+import { useState } from "react";
+import { number } from "../api";
+import { Badge } from "./ui";
+
+export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
+  const [busy, setBusy] = useState("");
+  const running = Boolean(status?.running || status?.status === "running");
+  const spend = Number(status?.governor?.total_spend_usd || 0);
+  const cap = Number(status?.governor?.cap_usd || 200);
+  const fraction = cap ? Math.min(100, spend / cap * 100) : 0;
+
+  async function action(name, path, body) {
+    setBusy(name);
+    try { await act(path, body); } finally { setBusy(""); }
+  }
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-mint-300/10 bg-ink-950/90 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 px-3 py-2.5 sm:px-5">
+        <div className="mr-2 min-w-[180px]">
+          <div className="eyebrow">Agent Economy</div>
+          <div className="mt-0.5 flex items-center gap-2 text-sm font-semibold tracking-wide">
+            Live observatory
+            <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-mint-300 shadow-[0_0_10px_#79e6bd]" : "bg-coral-300"}`} aria-label={connected ? "Live connection" : "Connection offline"} />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 rounded-xl border border-mint-300/10 bg-ink-850 px-3 py-1.5">
+          <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
+          <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
+          <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+        </div>
+
+        <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
+          <button className="button button-primary" disabled={loading || running || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={loading || running || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
+          <button className="button button-danger" disabled={loading || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
+          <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
+          <select id="run-speed" className="field !w-auto !py-2" defaultValue="0" onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+            <option value="0">Max speed</option>
+            <option value="0.25">0.25 s/day</option>
+            <option value="1">1 s/day</option>
+            <option value="3">3 s/day</option>
+          </select>
+        </nav>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <button className="button hidden sm:inline-flex" onClick={onReplay}>Replay viewer</button>
+          <button className="button" onClick={onShock}>Inject shock</button>
+          <button className="button hidden md:inline-flex" disabled={busy} onClick={() => action("report", "/api/report")}>Generate report</button>
+        </div>
+
+        <div className="w-full min-w-[200px] sm:ml-auto sm:w-64">
+          <div className="mb-1 flex justify-between text-[10px] uppercase tracking-wider text-slate-500">
+            <span>Provider budget · L{status?.governor?.level ?? 0}</span>
+            <span className="tabular">${number(spend, 2)} / ${number(cap, 0)}</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label="Provider budget used" aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
+            <div className="h-full rounded-full bg-gradient-to-r from-mint-400 via-gold-300 to-coral-300 transition-[width]" style={{ width: `${fraction}%` }} />
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}

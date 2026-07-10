@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -65,12 +66,18 @@ class SpeedBody(BaseModel):
 
 
 def create_app(world: World) -> FastAPI:
-    app = FastAPI(title="Agent Economy Observatory")
     hub = Hub()
     store = world.store
     run_task: dict[str, Optional[asyncio.Task]] = {"task": None}
 
     loop_holder: dict[str, Optional[asyncio.AbstractEventLoop]] = {"loop": None}
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        loop_holder["loop"] = asyncio.get_running_loop()
+        yield
+
+    app = FastAPI(title="Agent Economy Observatory", lifespan=lifespan)
 
     def on_tick(tick: int, summary: dict):
         loop = loop_holder["loop"]
@@ -80,10 +87,6 @@ def create_app(world: World) -> FastAPI:
         asyncio.run_coroutine_threadsafe(hub.broadcast(payload), loop) if loop.is_running() else None
 
     world.on_tick = on_tick
-
-    @app.on_event("startup")
-    async def _startup():
-        loop_holder["loop"] = asyncio.get_running_loop()
 
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
@@ -137,6 +140,10 @@ def create_app(world: World) -> FastAPI:
         if run_task["task"] and not run_task["task"].done():
             return {"status": "already_running"}
         summary = await world.step()
+        if not summary.get("paused") and world.status != "halted":
+            world.status = "paused"
+            store.set_meta(status="paused")
+            store.commit()
         await hub.broadcast(_tick_payload(world, summary["tick"], summary))
         return summary
 
