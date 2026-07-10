@@ -2,7 +2,7 @@
 
 > **Assessment date:** 2026-07-10
 >
-> **Code baseline:** `fix/provider-live-readiness` at `b2b25c0`
+> **Code baseline:** `release/v1-acceptance` at `10e6e0f`
 >
 > **Product baseline:** [PRD v1.0](../PRD.md)
 >
@@ -12,14 +12,14 @@
 
 ## Executive verdict
 
-**The repository is feature-complete for the PRD-v1 P0/P1 scope and its current MiniMax/Kimi subscription routes have now been authenticated in a fresh 100-agent run.** The deterministic economy, strict action contract, provider routing and failure handling, exact stored-response replay, two-year lifecycle proof, measured five-seed experiment, randomized property tests, report automation, weekly memory, and specified React dashboard are implemented and tested. Remaining production acceptance work is narrower: measure Oracle-specific latency, prove the 365-day cost envelope, accumulate calibration data, and repeat the documented causal signatures in a live-provider experiment.
+**The repository is feature-complete for the PRD-v1 P0/P1 scope, and production acceptance is now executable through a resumable, database-scored campaign.** The previous MiniMax M3/Kimi Code compatibility profile was authenticated in a fresh 100-agent run; the newly locked MiniMax M3/Kimi K2.6 API Platform profile still requires its separate Kimi Platform credential and live campaign. Remaining work is evidence generation: authenticate K2.6, measure Oracle-specific latency, prove the 365-day cost envelope, accumulate calibration data, and repeat the documented causal signatures with real providers.
 
 The three scores measure different qualities and should not be combined.
 
 | Score | Result | Calculation | Meaning |
 |---|---:|---:|---|
 | **Feature coverage** | **100%** | 17.00 / 17 = 100.0% | All P0/P1 capability surfaces have substantive implementation. |
-| **Acceptance proof** | **96%** | 16.25 / 17 = 95.6% | All deterministic gates and routed-role provider proof are complete; three long-run or lagging-evidence gates remain substantial. |
+| **Acceptance proof** | **94%** | 16.00 / 17 = 94.1% | Deterministic gates are complete; the newly selected K2.6 route and three long-run/lagging-evidence gates remain substantial. |
 | **Technical-spec fidelity** | **100%** | 14.00 / 14 = 100.0% | The locked architecture, provider mix, validation rules, test strategy, and frontend stack are implemented and exercised. |
 
 ### Scoring method
@@ -39,7 +39,7 @@ Evidence labels:
 |---|---|---|---|
 | Economy kernel | Conserved double-entry ledger, deterministic tick phases, action validation, reconciliation, diagnostics, metrics, checkpoints, resume, and forks. | [Ledger](../engine/ledger.py), [world loop](../world/loop.py), [ledger tests](../tests/test_ledger.py) | Tested |
 | Agents and memory | Persona generation, role routing, cadence, context, short/daily/weekly memory synthesis, beliefs, decisions, and full inspector data. | [Runtime](../agents/runtime.py), [memory](../agents/memory.py), [completion tests](../tests/test_prd_completion.py) | Tested |
-| Provider runtime | MiniMax/Kimi production profile, key/model preflight, concurrency, retry, structured parsing/repair, complete repair-call accounting, provider-reported cache accounting, conservative cap reservation, durable budget-stage events, safe provider pause, and secret-safe diagnostics. | [Production profile](../runs/production.yaml), [gateway](../llm/gateway.py), [readiness](../llm/readiness.py), [live validation](live-provider-validation.md) | Tested and authenticated live |
+| Provider runtime | Separate K2.6 Platform and Kimi Code profiles, service/model/key preflight, concurrency, retry, structured parsing/repair, complete repair-call accounting, provider-reported cache accounting, conservative cap reservation, durable budget-stage events, safe provider pause, and secret-safe diagnostics. | [Production profile](../runs/production.yaml), [gateway](../llm/gateway.py), [readiness](../llm/readiness.py), [historical Kimi Code validation](live-provider-validation.md) | Tested; Kimi Code authenticated, K2.6 pending |
 | Banks, credit, firms, labor | Deposits/reserves, cross-bank settlement, loans/default, liquidity support, firm formation, lawyer validation, hiring, payroll, production, revenue, and bankruptcy. | [Credit](../engine/credit.py), [firms](../engine/firms.py), [company lifecycle acceptance](../tests/test_prd_completion.py) | Tested |
 | Securities market | IPOs, holdings enforcement, price-time priority, partial fills, trade-derived prices, index, and circuit breakers. | [Exchange](../engine/exchange.py), [exchange tests](../tests/test_exchange.py) | Tested |
 | Information economy | Reporter/editor newsroom, slanted outlets, conversations, memories, rumor exposure, trust movement, and bank-run transmission. | [Newsroom](../world/newsroom.py), [exact rumor pilot](../tests/test_governor_and_world.py) | Tested |
@@ -57,7 +57,7 @@ Evidence labels:
 | Requirement | Priority | Implementation | Acceptance proof | Repository/test evidence | Remaining gap | Required completion evidence |
 |---|---|---|---|---|---|---|
 | **R1 — Conserved double-entry ledger** | P0 | Complete (1.00) | Complete (1.00) | Ledger invariant/tamper tests plus active-run corruption halt, diagnostic, reconciliation, and checkpoint acceptance. | None for v1. | Preserve invariant and active-failure tests. |
-| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Complete (1.00) | Complete (1.00) | Production routing/key validation, 100-agent profile, weekly synthesis, stored prompts/responses, browser-inspected agent audit, and an authenticated [MiniMax/Kimi validation run](live-provider-validation.md). | None for v1 runtime acceptance. | Preserve the secret-safe live validation and routed-role regression evidence. |
+| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Complete (1.00) | Substantial (0.75) | Production routing/key validation, 100-agent profile, weekly synthesis, stored prompts/responses, browser-inspected agent audit, and an authenticated [MiniMax/Kimi Code compatibility run](live-provider-validation.md). | The newly locked `kimi-k2.6` Platform route has not authenticated because `KIMI_API_KEY` is not yet supplied. | Authenticate every K2.6 routed role and retain the campaign database, latency, cost, and exact-replay proof. |
 | **R3 — Banks, firms, labor, goods, complete company lifecycle** | P0 | Complete (1.00) | Complete (1.00) | Deterministic lawyer → formation → firm loan → hire → production → revenue → bankruptcy acceptance with ledger reconciliation. | None for v1 mechanics. | Preserve lifecycle regression. |
 | **R4 — Order book, IPO, and market index** | P0 | Complete (1.00) | Complete (1.00) | Price-time, partial-fill, ownership, IPO, index, circuit-breaker, and no-invented-price property tests; two unpriced market orders cannot establish a first price. | None for v1. | Preserve exchange and property tests. |
 | **R5 — News, conversations, and rumor pilot** | P0 | Complete (1.00) | Complete (1.00) | Exact pilot asserts at least five conversations, ≥0.2 trust loss for ≥25% exposed agents, and normalized outflow above 2× baseline within ten ticks; the committed N=5 study measures 16.8 treatment deposit moves versus zero controls. | None for deterministic acceptance; real-agent emergence remains a production gate. | Repeat all three [causal signatures](emergent-phenomena.md) under the real-provider profile. |
@@ -77,8 +77,8 @@ Evidence labels:
 ### Totals
 
 - Feature weights: `17.00 / 17 = 100.0%`, reported as **100%**.
-- Acceptance weights: `16.25 / 17 = 95.6%`, rounded to **96%**.
-- The 0.75-point proof gap consists of three 0.25 deductions: Oracle-specific live latency, 365-day cost proof, and accumulated calibration data.
+- Acceptance weights: `16.00 / 17 = 94.1%`, rounded to **94%**.
+- The one-point proof gap consists of four 0.25 deductions: K2.6 routed-role evidence, Oracle-specific live latency, 365-day cost proof, and accumulated calibration data.
 
 ## Technical-spec fidelity
 
@@ -91,11 +91,11 @@ Evidence labels:
 | T5 — Structured actions and validation | Complete | 1.00 | Provider output is parsed to envelopes; living actors/counterparties, funds, ownership, market phase, formation capital, and weekly loan limits are enforced. The engine neither substitutes a counterparty nor invents a first market price. |
 | T6 — Short, daily, consolidated weekly memory | Complete | 1.00 | Weekly summaries are synthesized before their daily source summaries are demoted. |
 | T7 — Routing, concurrency, retry, caching, budget, logging | Complete | 1.00 | Mechanics are tested and the live run recorded provider-reported cache hits, latency, costs, repairs, and zero provider failures. |
-| T8 — Locked cheap/strong real-provider role mix | Complete | 1.00 | The authenticated production profile routes default roles to `MiniMax-M3` and institutional roles to K2.7 via the stable `kimi-for-coding` alias. |
+| T8 — Locked cheap/strong real-provider role mix | Complete | 1.00 | The default profile routes citizens to `MiniMax-M3` and institutional roles to Kimi Platform `kimi-k2.6`; Kimi Code remains a separate compatibility profile with no silent fallback. |
 | T9 — Deterministic market mechanics | Complete | 1.00 | Banking, firms, labor, exchange, settlement, and bankruptcy are tested end to end. |
 | T10 — Seeded lifecycle mechanics | Complete | 1.00 | Biology is PRNG-owned and the exact two-year integration test passes. |
 | T11 — React, Vite, Tailwind, Recharts | Complete | 1.00 | Modular source, committed local bundle, CI build, responsive browser pass, and no CDN runtime. |
-| T12 — Unit, acceptance, golden, property/cost strategy | Complete | 1.00 | 69 tests include seeded randomized valid-action sequences, randomized lifecycle storms, exact budget transitions, repair accounting, golden output, long runs, and requirement-level acceptance. |
+| T12 — Unit, acceptance, golden, property/cost strategy | Complete | 1.00 | 74 tests include seeded randomized valid-action sequences, randomized lifecycle storms, exact budget transitions, repair accounting, resumable production campaigns, exact rumor evidence, golden output, long runs, and requirement-level acceptance. |
 | T13 — Determinism, checkpoint, resume, replay, forks | Complete | 1.00 | Same-seed, golden, checkpoints, resume, parent-safe forks, and canonical full-state replay hashes are tested. |
 | T14 — Repository layout and phased build | Complete | 1.00 | All specified packages and P1 surfaces, including the dashboard package, are present. |
 
@@ -106,7 +106,7 @@ Technical total: `14.00 / 14 = 100.0%`, reported as **100%**.
 | Phase | Verdict | Evidence | Exit condition |
 |---|---|---|---|
 | Kernel and accounting | Complete | Ledger invariants, active failure halt, diagnostics, and checkpoints. | Met. |
-| Agents, banking, firms, markets | Complete | Full deterministic mechanics plus an authenticated 100-agent MiniMax/Kimi run. | Met for v1 runtime acceptance. |
+| Agents, banking, firms, markets | Code complete; K2.6 proof pending | Full deterministic mechanics plus an authenticated Kimi Code compatibility run and a validated K2.6 profile. | Supply the Platform key and execute the campaign. |
 | Information, Oracle, observatory, shocks, reports | Code complete; latency proof pending | Exact pilots, new frontend, two-second WebSocket proof, shock suite, report automation. | Measure live Oracle p90. |
 | Government, VC, experiments, calibration, replay, health | Code complete; lagging data pending | Five-seed harness, exact replay, government/VC/health integration. | Accumulate real prediction calibration evidence. |
 
@@ -114,11 +114,11 @@ Technical total: `14.00 / 14 = 100.0%`, reported as **100%**.
 
 ### High — full-year production envelope is not yet proven
 
-The subscription credentials authenticated successfully and the fresh one-tick run measured real calls, caching, latency, and modeled price-equivalent cost. A 365-day live run has not been attempted; it may consume meaningful plan quota and requires explicit authorization.
+The prior Kimi Code compatibility credentials authenticated successfully and the fresh one-tick run measured real calls, caching, latency, and modeled price-equivalent cost. The new K2.6 default needs a Kimi API Platform key before the resumable 365-day campaign can start.
 
-### Medium — subscription plans are not hosted-product entitlements
+### High — Kimi K2.6 requires a separate service credential
 
-The configured MiniMax Token Plan and Kimi Code membership routes are appropriate for local development and agent-style evaluation. Before exposing a hosted or multi-user product, confirm commercial terms, rate limits, concurrency, and migrate to pay-as-you-go/product APIs where required.
+The authenticated `sk-kimi-*` membership key exposes only `kimi-for-coding` and its high-speed alias. The locked `kimi-k2.6` model is served by `https://api.moonshot.ai/v1`; the runtime now rejects attempts to mix these services instead of failing opaquely at inference time.
 
 ### Medium — calibration is a lagging outcome
 
@@ -130,10 +130,10 @@ Three causal chains are documented and mechanically tested: credibility shock �
 
 ## Prioritized completion roadmap
 
-1. **Prove the remaining operating envelope.** Run a representative Oracle question set, then an explicitly authorized long run that demonstrates a 365-day total at or below $200.
-2. **Confirm live-provider emergence.** Repeat the three documented causal signatures and the five-seed experiment with the authenticated provider profile if quota permits.
-3. **Accumulate calibration evidence.** Resolve enough live Oracle predictions to publish meaningful bins, Brier score, reliability, resolution, and uncertainty.
-4. **Prepare hosted expansion separately.** Confirm provider commercial terms and concurrency limits before using these subscription endpoints in a multi-user deployment.
+1. **Authenticate K2.6.** Supply `KIMI_API_KEY`, run secret-safe model-catalog preflight, and execute a fresh 100-agent tick.
+2. **Run the resumable v1 campaign.** Execute `python run.py --acceptance runs/acceptance/v1.yaml`; it checkpoints every tick and scores Oracle latency/resolution, 365-day spend, calibration, and oil/rate causal evidence from the database.
+3. **Confirm live rumor emergence.** Complete all five treatment/control seeds and require every treatment run to meet the exact conversation, trust, and outflow thresholds.
+4. **Prepare hosted expansion separately.** Confirm provider commercial terms and concurrency limits before multi-user deployment.
 
 No speculative calendar estimate is assigned; completion depends primarily on credential and spend authorization.
 
@@ -141,12 +141,12 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 
 | Check | Result |
 |---|---|
-| Code baseline | `b2b25c0` on `fix/provider-live-readiness` |
-| Python suite | **69 passed** in 77.02 seconds with `python -m pytest tests/ -q` |
+| Code baseline | `10e6e0f` on `release/v1-acceptance` |
+| Python suite | **74 passed** in 75.61 seconds with `python -m pytest tests/ -q` |
 | Frontend | `npm ci`, zero audit vulnerabilities, production build passed, repeated build produced identical hashes |
 | Compile and hygiene | Python compile-all passed; `git diff --check` passed |
 | Browser | Desktop and approximately 355px content widths, live ticker, per-agent costs after Step, internal table/ticker scrolling, and console diagnostics verified; no console errors |
-| Live provider run | Run `3478260d9e`: 100 agents, 170 logical calls, 45/45 conversation messages, 71/71 daily summaries, zero provider failures, zero contract failures, and modeled price-equivalent cost $0.112542 |
+| Historical live provider run | Kimi Code compatibility run `3478260d9e`: 100 agents, 170 logical calls, zero provider/contract failures, and modeled price-equivalent cost $0.112542; not K2.6 evidence |
 | Replay CLI | Live source/replay: 27 deterministic tables, no live fallback, identical total hash `405b1d5ae37e58b7ab2c8a8baf6ac44a0c17ca134427a075e170fead4a9ce6c8` |
 | Network assets | Production HTML references only committed `/static/assets/*`; no CDN dependency |
 | CI | GitHub Actions run `29105715999` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |

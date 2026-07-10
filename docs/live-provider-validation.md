@@ -1,5 +1,9 @@
 # Live Provider Validation
 
+> **Historical scope:** This report validates the Kimi Code compatibility profile
+> (`runs/production-kimi-code.yaml`). The default production profile now pins
+> Kimi API Platform `kimi-k2.6` and requires separate validation with `KIMI_API_KEY`.
+
 > **Assessment date:** 2026-07-10
 >
 > **Code baseline:** `b2b25c0` on `fix/provider-live-readiness`
