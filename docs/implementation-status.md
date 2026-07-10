@@ -2,165 +2,163 @@
 
 > **Assessment date:** 2026-07-10
 >
-> **Frozen code baseline:** `main` at `363a91a`
+> **Code baseline:** `feature/prd-completion` at `8d0e79c`
 >
-> **Product baseline:** [PRD v1.0](../PRD.md) (Draft for review, 2026-07-09)
+> **Product baseline:** [PRD v1.0](../PRD.md)
 >
-> **Technical baseline:** [Technical Specification v1.0](../TECH-SPEC.md) (2026-07-09)
+> **Technical baseline:** [Technical Specification v1.0](../TECH-SPEC.md)
 >
-> **Canonical status:** This Markdown document is the source of truth. The [HTML companion](implementation-status.html) is a synchronized visual rendering of the same assessment.
+> **Canonical status:** This Markdown document is the source of truth. The [HTML companion](implementation-status.html) contains the same verdict, scores, requirement states, and evidence.
 
 ## Executive verdict
 
-**Agent Economy is a feature-rich functional prototype, but it is not yet PRD-v1 complete.** Most P0 and P1 product surfaces exist and the committed test suite exercises the core ledger, markets, credit, lifecycle, government, VC, health, experiment, calibration, and replay components. The remaining distance is concentrated in acceptance proof and specification fidelity: the default world is scripted rather than powered by the locked MiniMax/Kimi model mix, the dashboard is static HTML rather than the specified React stack, and several quantitative acceptance gates have not been run or asserted exactly.
+**The repository is now feature-complete for the PRD-v1 P0/P1 scope, with production acceptance still conditional on a paid real-provider evidence run.** The deterministic economy, provider routing and failure handling, exact stored-response replay, two-year lifecycle proof, five-seed experiments, report automation, weekly memory, and specified React dashboard are implemented and tested. What remains is operational proof: authenticate the production MiniMax/Kimi profile, measure real latency and provider caching, and demonstrate the 365-day cost envelope without exceeding the $200 cap.
 
-The scores below measure different things and should not be combined into a single delivery percentage.
+The three scores measure different qualities and should not be combined.
 
 | Score | Result | Calculation | Meaning |
 |---|---:|---:|---|
-| **Feature coverage** | **87%** | 14.75 / 17 = 86.8% | How much of the P0/P1 capability surface has substantive implementation. |
-| **Acceptance proof** | **63%** | 10.75 / 17 = 63.2% | How much of the exact PRD acceptance contract is demonstrated by committed tests or repeatable evidence. |
-| **Technical-spec fidelity** | **64%** | 9.00 / 14 = 64.3% | How closely the implementation follows the locked architecture, stack, runtime, and test strategy. |
+| **Feature coverage** | **100%** | 17.00 / 17 = 100.0% | All P0/P1 capability surfaces have substantive implementation. |
+| **Acceptance proof** | **94%** | 16.00 / 17 = 94.1% | All deterministic gates are executable; four real-provider/lagging-evidence gates remain substantial rather than complete. |
+| **Technical-spec fidelity** | **95%** | 13.25 / 14 = 94.6% | The locked architecture and frontend stack are present; current provider IDs and live operating proof remain qualified. |
 
 ### Scoring method
 
-Each row is scored independently as **Complete = 1.00**, **Substantial = 0.75**, **Partial = 0.50**, or **Absent = 0.00**. Feature and acceptance scores use the 17 P0/P1 requirements as their denominator. The technical score uses 14 technical commitments. P2 items are deliberately excluded because the PRD marks them as future work.
+Each requirement is scored independently as **Complete = 1.00**, **Substantial = 0.75**, **Partial = 0.50**, or **Absent = 0.00**. Feature and acceptance scores use the 17 P0/P1 requirements. Technical fidelity uses 14 technical commitments. P2 work is intentionally excluded.
 
-Evidence labels used in this report:
+Evidence labels:
 
 - **Tested** — covered by a committed automated test.
-- **Implemented** — substantive code exists, but the full acceptance contract is not proven.
-- **Manually observed** — confirmed in the local dashboard on the frozen build.
-- **Unproven** — required quantitative or end-to-end evidence is absent.
+- **Implemented** — substantive production code exists.
+- **Manually observed** — exercised in a local browser or CLI smoke run.
+- **Unproven** — requires real credentials, paid inference, or accumulated lagging data.
 
-## What has been built
+## Implemented system inventory
 
-| Product layer | Current implementation | Primary evidence | Confidence |
+| Product layer | Current implementation | Evidence | Confidence |
 |---|---|---|---|
-| Economic kernel | Conserved double-entry ledger, action validation, deterministic tick loop, reconciliation, metrics, and checkpoints. | [Ledger](../engine/ledger.py), [action executor](../engine/actions.py), [world loop](../world/loop.py), [ledger tests](../tests/test_ledger.py) | Tested |
-| Agents and decisions | Persona/runtime scheduling, context construction, short/daily/weekly memory storage, scripted policies, provider adapters, routing, structured action parsing, call logging, and budget governor. | [Agent runtime](../agents/runtime.py), [memory](../agents/memory.py), [LLM gateway](../llm/gateway.py), [adapters](../llm/adapters.py) | Implemented; real default model mix unproven |
-| Banking and credit | Two-bank mechanics, deposits/reserves, lending, amortization, missed-payment default, cross-bank settlement, bank failure, and bankruptcy waterfall. | [Credit engine](../engine/credit.py), [credit tests](../tests/test_credit_and_firms.py) | Tested |
-| Firms and labor | Firm creation, legal validation, payroll, hiring, firing, production, goods sales, borrowing, default, bankruptcy, and ownership state. | [Firms](../engine/firms.py), [labor](../engine/labor.py), [actions](../engine/actions.py) | Implemented; complete lifecycle pilot unproven |
-| Securities market | Order book, price-time priority, partial fills, holdings checks, IPO/trading state, prices derived from trades, and circuit breakers. | [Exchange](../engine/exchange.py), [exchange tests](../tests/test_exchange.py), [circuit-breaker test](../tests/test_spec_polish.py) | Tested |
-| Information economy | Reporter/editor newsroom, published articles, conversations, rumor propagation, belief/trust movement, and associated event storage. | [Newsroom and conversations](../world/newsroom.py), [rumor integration test](../tests/test_governor_and_world.py), [newsroom test](../tests/test_spec_polish.py) | Tested at reduced scale; exact pilot thresholds unproven |
-| Oracle | Question classification, probability generation, predictions, deterministic resolution rules, Brier scoring, scorecard, and calibration decomposition. | [Oracle](../oracle/analyst.py), [calibration](../oracle/calibration.py), [Oracle tests](../tests/test_governor_and_world.py) | Implemented; real latency and calibration targets unproven |
-| Shocks | Scheduled and manual shock console covering rumor, bank panic, rate change, productivity, market halt, and epidemic behavior. | [Shock engine](../world/shocks.py), [P1 tests](../tests/test_p1_features.py), [dashboard](../server/static/index.html) | Implemented; five-shock acceptance suite incomplete |
-| Lifecycle and health | Seeded sickness, death, estates, heirs/escheat, arrivals, wage loss, medical billing, hospitals, insurers, premiums, lapses, and epidemic multipliers. | [Lifecycle](../engine/lifecycle.py), [lifecycle tests](../tests/test_lifecycle.py), [health tests](../tests/test_p1_features.py) | Tested at unit/integration scale; two-year pilot unproven |
-| Government | Income-tax withholding, unemployment benefits, elections, bounded policy changes, and integration with the world loop. | [Government](../engine/government.py), [government tests](../tests/test_p1_features.py) | Tested |
-| Venture capital | Pitches, investment decisions, cap tables, follow-ons, declines, and write-offs. | [VC engine](../engine/vc.py), [VC tests](../tests/test_p1_features.py) | Tested |
-| Experimentation | Treatment/control multi-seed harness, per-arm databases, effect distributions, and Markdown/HTML experiment reports. | [Experiment harness](../experiments/harness.py), [experiment test](../tests/test_p1_harness_and_tools.py) | Tested at small N; five-seed target unproven |
-| Replay and forks | Read-only replay catalogue/tick views, stored-response lookup, checkpoints, resume, deterministic fixture replay, and what-if forks that preserve the parent. | [Replay reader](../server/replay.py), [gateway replay lookup](../llm/gateway.py), [replay/fork tests](../tests/test_p1_harness_and_tools.py) | Implemented; full real-LLM replay equality unproven |
-| Reports | End-of-run HTML and Markdown generation with narrative, event timeline, SVG charts, Oracle scorecard/calibration, cost summary, configuration, and seed. | [Report generator](../reports/generate.py), [CLI entry point](../run.py) | Implemented; dashboard Stop automation unproven/not wired |
-| Observatory | FastAPI REST endpoints, WebSocket updates, run controls, metrics, agents, banks, firms, news, conversations, shocks, Oracle, reports, calibration, and replay UI. | [Server](../server/app.py), [static dashboard](../server/static/index.html) | Manually observed; latency/accessibility gates unproven |
+| Economy kernel | Conserved double-entry ledger, deterministic tick phases, action validation, reconciliation, diagnostics, metrics, checkpoints, resume, and forks. | [Ledger](../engine/ledger.py), [world loop](../world/loop.py), [ledger tests](../tests/test_ledger.py) | Tested |
+| Agents and memory | Persona generation, role routing, cadence, context, short/daily/weekly memory synthesis, beliefs, decisions, and full inspector data. | [Runtime](../agents/runtime.py), [memory](../agents/memory.py), [completion tests](../tests/test_prd_completion.py) | Tested |
+| Provider runtime | MiniMax/Kimi production profile, key/model preflight, concurrency, retry, structured parsing, provider-reported cache accounting, hard budget governor, safe provider pause, and secret-safe diagnostics. | [Production profile](../runs/production.yaml), [gateway](../llm/gateway.py), [readiness](../llm/readiness.py) | Implemented and offline-tested; live run unproven |
+| Banks, credit, firms, labor | Deposits/reserves, cross-bank settlement, loans/default, liquidity support, firm formation, lawyer validation, hiring, payroll, production, revenue, and bankruptcy. | [Credit](../engine/credit.py), [firms](../engine/firms.py), [company lifecycle acceptance](../tests/test_prd_completion.py) | Tested |
+| Securities market | IPOs, holdings enforcement, price-time priority, partial fills, trade-derived prices, index, and circuit breakers. | [Exchange](../engine/exchange.py), [exchange tests](../tests/test_exchange.py) | Tested |
+| Information economy | Reporter/editor newsroom, slanted outlets, conversations, memories, rumor exposure, trust movement, and bank-run transmission. | [Newsroom](../world/newsroom.py), [exact rumor pilot](../tests/test_governor_and_world.py) | Tested |
+| Oracle | Read-only questions, probabilities, drivers, resolution rules, automatic 30-tick resolution, Brier score, calibration decomposition, and scorecards. | [Oracle](../oracle/analyst.py), [calibration](../oracle/calibration.py) | Tested; live p90 latency unproven |
+| Shocks | Policy-rate, oil, rumor, slant, scandal, and epidemic scheduling with downstream effects. | [Shock engine](../world/shocks.py), [shock acceptance](../tests/test_prd_completion.py) | Tested |
+| Lifecycle and health | Aging, sickness, death, estates, heirs/escheat, replacement arrivals, housing, job search, hospitals, insurers, premiums, claims, and epidemic multipliers. | [Lifecycle](../engine/lifecycle.py), [two-year acceptance](../tests/test_prd_completion.py) | Tested |
+| Government and VC | Taxes, benefits, elections, bounded policy shifts, pitches, funding, cap tables, follow-ons, declines, and write-offs. | [Government](../engine/government.py), [VC](../engine/vc.py), [P1 tests](../tests/test_p1_features.py) | Tested |
+| Experiments | Treatment/control arms, five seeds, isolated run databases, distributions, effect summaries, reconciliation, and Markdown/HTML reports. | [Harness](../experiments/harness.py), [five-seed acceptance](../tests/test_p1_harness_and_tools.py) | Tested |
+| Replay | Read-only UI replay plus fresh-database engine re-execution from stored responses, no live fallback, copied cost accounting, and canonical per-table SHA-256 proof. | [Replay verifier](../world/replay_verify.py), [replay tests](../tests/test_prd_completion.py) | Tested and CLI-observed |
+| Reports | Standalone Markdown/HTML reports with narrative, metrics, events, Oracle/calibration, cost, config, and seed; automatic generation after interactive or headless stop. | [Generator](../reports/generate.py), [report acceptance](../tests/test_prd_completion.py) | Tested and browser-observed |
+| Observatory | Modular React/Vite/Tailwind/Recharts client, FastAPI REST/WebSocket backend, responsive tables, controls, metrics, institutions, information flow, Oracle, costs, shocks, replay, and agent audits. | [Dashboard source](../dashboard/src), [server](../server/app.py), [bundle acceptance](../tests/test_prd_completion.py) | Tested and manually observed |
 
-## PRD requirement assessment
+## PRD requirement matrix
 
-| Requirement | Priority | Capability | Feature weight | Acceptance proof | Proof weight | Evidence | Remaining gap | Evidence required to close |
-|---|---|---|---:|---|---:|---|---|---|
-| **R1 — Conserved double-entry ledger** | P0 | Complete | 1.00 | Substantial | 0.75 | **Tested:** [ledger invariants and tamper detection](../tests/test_ledger.py); [30-tick reconciliation](../tests/test_governor_and_world.py). | No committed active-run test proves a failed reconciliation both halts the simulation and emits the required diagnostic event. | Inject corruption during a running world and assert halt, diagnostic event, and no subsequent tick commit. |
-| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Partial | 0.50 | Partial | 0.50 | **Implemented:** [runtime](../agents/runtime.py), [memory](../agents/memory.py), [gateway](../llm/gateway.py), and agent inspector UI. **Manually observed:** inspector and exact stored decision fields in the local scripted run. | The default route is scripted, real MiniMax/Kimi decisions are unproven, the observed world had about 83 agents rather than approximately 100, and weekly rollup is not a true weekly consolidation. | Run the locked provider/model mix near 100 agents and verify exact prompt, response, parsed action, memory rollup, and inspector display for each role. |
-| **R3 — Banks, firms, labor, goods, and complete company lifecycle** | P0 | Substantial | 0.75 | Partial | 0.50 | **Tested:** loan payoff, three-miss default, bankruptcy waterfall, bank failure, payroll, and world integration in [credit/firm tests](../tests/test_credit_and_firms.py) and [world tests](../tests/test_governor_and_world.py). | No single acceptance run follows a founder through lawyer validation, loan, hiring, payroll, revenue, distress, and bankruptcy using the full production flow. | Add one deterministic end-to-end company-lifecycle test with ledger reconciliation at every stage. |
-| **R4 — Order book, IPO, and market index** | P0 | Complete | 1.00 | Complete | 1.00 | **Tested:** price-time priority, partial fills, ownership enforcement, and no engine-set prices in [exchange tests](../tests/test_exchange.py); circuit breaker in [spec-polish tests](../tests/test_spec_polish.py). | No material PRD-v1 blocker identified in the committed implementation. | Preserve the existing tests and add regression cases only as market behavior changes. |
-| **R5 — News, conversations, and rumor pilot** | P0 | Complete | 1.00 | Partial | 0.50 | **Tested:** reporter/editor order and reduced-scale rumor movement in [newsroom](../world/newsroom.py), [world tests](../tests/test_governor_and_world.py), and [spec-polish tests](../tests/test_spec_polish.py). | The test does not assert at least five conversations, a trust drop of at least 0.2 for at least 25% of exposed agents, or deposit outflow above twice baseline within ten ticks. | Implement the exact PRD rumor pilot with explicit exposure cohort, baseline window, threshold assertions, and deterministic seed. |
-| **R6 — Oracle prediction, resolution, and Brier score** | P0 | Substantial | 0.75 | Partial | 0.50 | **Tested:** probability record, deterministic outcome resolution, Brier computation, and insufficient-data handling in [Oracle tests](../tests/test_governor_and_world.py). | The test uses a shortened horizon and scripted responses; real-provider response latency below 60 seconds and the exact 30-tick contract are unproven. | Run a real-provider latency benchmark and a 30-tick automatic-resolution acceptance test with persisted scorecard output. |
-| **R7 — Run control, cost governor, cap, and degradation visibility** | P0 | Complete | 1.00 | Partial | 0.50 | **Tested:** governor stages, pause/resume/checkpoint, and deterministic world behavior in [world tests](../tests/test_governor_and_world.py). **Implemented:** run controls and live cost state in [server](../server/app.py). | No 365-day real-provider run proves the $200 cap is never exceeded, provider failures pause safely, and every degradation stage is visible in the dashboard. | Add fake-price threshold tests at 60/80/95/100%, provider-failure tests, and a full real-provider budget run with exported evidence. |
-| **R8 — Live observatory dashboard** | P0 | Substantial | 0.75 | Partial | 0.50 | **Implemented:** REST/WebSocket observatory and panels in [server](../server/app.py) and [dashboard](../server/static/index.html). **Manually observed:** run/pause/step, agent inspector, shocks, and replay on the frozen build. | No automated update-latency proof below two seconds; the static page is a 925-line monolith with narrow-screen, long-table, and accessibility debt. The onboarding card remained at “Day 0” during a day-47 run. | Add WebSocket latency instrumentation, responsive/accessibility checks, and a regression test for current-day onboarding state. |
-| **R9 — Minimum shock catalogue and downstream effects** | P0 | Complete | 1.00 | Partial | 0.50 | **Implemented:** six shock kinds in [shock engine](../world/shocks.py) and dashboard console. **Tested:** rumor, epidemic multiplier, and circuit-breaker behavior across the existing suite. | There is no parameterized acceptance suite showing a required downstream economic effect for each of the five minimum PRD shocks. | Add one deterministic scenario per required shock and assert both the shock event and its downstream metric/ledger effect. |
-| **R10 — Automatic end-of-run report** | P0 | Substantial | 0.75 | Partial | 0.50 | **Implemented:** narrative, timeline, charts, Oracle scorecard, calibration, cost, configuration, and seed in [report generator](../reports/generate.py). Headless completion generates a report through [run.py](../run.py). | Dashboard Stop only requests a stop; it does not automatically generate the report. There is no content-contract test for all required sections. | Generate once the interactive world reaches stopped state and test both Markdown/HTML section presence, values, seed/config, and event logging. |
-| **R11 — Two-year lifecycle acceptance** | P0 | Substantial | 0.75 | Partial | 0.50 | **Tested:** estates with debt/heir, escheat, deterministic schedules, sickness cost/wage loss, hospitals, and insurers in [lifecycle tests](../tests/test_lifecycle.py) and [P1 tests](../tests/test_p1_features.py). | No 730-tick acceptance run proves death/estate, sickness, and an arrival obtaining housing and a job within ten ticks while reconciling throughout. | Add a seeded two-year scenario with forced representative events and exact arrival-integration assertions. |
-| **R12 — Government and elections** | P1 | Complete | 1.00 | Complete | 1.00 | **Tested:** withholding, unemployment benefits, bounded election shifts, integration, and determinism in [government/P1 tests](../tests/test_p1_features.py). | No material P1 capability blocker identified; longer-run policy realism remains calibration work rather than missing implementation. | Retain deterministic tests and add calibration evidence when real-provider full runs exist. |
-| **R13 — Venture capital** | P1 | Complete | 1.00 | Complete | 1.00 | **Tested:** pitch, investment, cap table, decline, follow-on, and write-off behavior in [VC tests](../tests/test_p1_features.py). | No material P1 capability blocker identified. | Preserve the current acceptance coverage and add cross-run portfolio metrics later. |
-| **R14 — Experiment harness** | P1 | Complete | 1.00 | Substantial | 0.75 | **Tested:** treatment/control execution, effect distribution, and HTML/Markdown artifacts in [harness tests](../tests/test_p1_harness_and_tools.py). | The committed test uses two seeds and available local evidence uses fewer than the five-seed lagging-success target. | Run and archive a deterministic five-seed treatment/control experiment with config, seed list, effect distribution, and reproducibility command. |
-| **R15 — Oracle calibration dashboard** | P1 | Substantial | 0.75 | Partial | 0.50 | **Tested:** calibration decomposition identity in [harness/tool tests](../tests/test_p1_harness_and_tools.py). **Implemented:** calibration computation and dashboard/report presentation in [calibration](../oracle/calibration.py) and [report generator](../reports/generate.py). | There is no meaningful multi-run set of resolved real-provider predictions to demonstrate calibration quality. | Accumulate resolved predictions across full runs and verify bins, reliability/resolution/uncertainty, Brier baseline, and UI rendering. |
-| **R16 — Replay UI** | P1 | Substantial | 0.75 | Partial | 0.50 | **Tested:** run listing/tick paging, checkpoint/resume, golden event fixture, and parent-preserving forks in [harness/tool tests](../tests/test_p1_harness_and_tools.py), [world tests](../tests/test_governor_and_world.py), and [spec-polish tests](../tests/test_spec_polish.py). | Current UI replay reads stored state; 100% exact end-to-end re-execution using stored real LLM outputs has not been checksum-proven. | Replay a completed real-provider run and compare full ordered event, ledger, metrics, and terminal-state hashes. |
-| **R17 — Health economy** | P1 | Complete | 1.00 | Substantial | 0.75 | **Tested:** medical split, premiums, lapses, epidemic multiplier, world integration, and determinism in [P1 tests](../tests/test_p1_features.py). | The mechanics are well covered at small scale, but actuarial behavior and long-run institution solvency are not demonstrated in a full real-provider run. | Add a long-run health-economy scenario with hospital/insurer solvency, illness incidence, claims, premiums, and reconciliation assertions. |
+| Requirement | Priority | Implementation | Acceptance proof | Repository/test evidence | Remaining gap | Required completion evidence |
+|---|---|---|---|---|---|---|
+| **R1 — Conserved double-entry ledger** | P0 | Complete (1.00) | Complete (1.00) | Ledger invariant/tamper tests plus active-run corruption halt, diagnostic, reconciliation, and checkpoint acceptance. | None for v1. | Preserve invariant and active-failure tests. |
+| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Complete (1.00) | Substantial (0.75) | Production routing/key validation, approximately 100-agent profile, weekly synthesis, stored prompts/responses, and browser-inspected agent audit. | No authenticated MiniMax/Kimi role sample has been archived. | Run all routed roles with real keys and retain secret-safe prompt/response/latency evidence. |
+| **R3 — Banks, firms, labor, goods, complete company lifecycle** | P0 | Complete (1.00) | Complete (1.00) | Deterministic lawyer → formation → firm loan → hire → production → revenue → bankruptcy acceptance with ledger reconciliation. | None for v1 mechanics. | Preserve lifecycle regression. |
+| **R4 — Order book, IPO, and market index** | P0 | Complete (1.00) | Complete (1.00) | Price-time, partial-fill, ownership, price-emergence, IPO, index, and circuit-breaker tests. | None for v1. | Preserve exchange tests. |
+| **R5 — News, conversations, and rumor pilot** | P0 | Complete (1.00) | Complete (1.00) | Exact pilot asserts at least five conversations, ≥0.2 trust loss for ≥25% exposed agents, and normalized outflow above 2× baseline within ten ticks. | None for deterministic acceptance. | Repeat under the real-provider profile as production evidence. |
+| **R6 — Oracle prediction, resolution, and Brier score** | P0 | Complete (1.00) | Substantial (0.75) | Prediction contract, insufficient-data handling, exact 30-tick automatic resolution, Brier scoring, and calibration tests. | Real-provider p90 response time below 60 seconds is unproven. | Run a representative live question set and publish p50/p90 latency with persisted predictions. |
+| **R7 — Run control, cost governor, cap, and degradation visibility** | P0 | Complete (1.00) | Substantial (0.75) | Exact 60/80/95/100% stages, provider retry/cache billing, safe provider pause/checkpoint, Web UI visibility, and hard-cap code tests. | The 365-day real-provider run and measured cache savings are unproven. | Complete the paid long run, export cost by model/purpose/cache, and prove total spend ≤$200. |
+| **R8 — Live observatory dashboard** | P0 | Complete (1.00) | Complete (1.00) | React stack/bundle test, WebSocket timestamp under two seconds, desktop/mobile browser pass, keyboard agent audit, and no browser console errors. | No v1 blocker. | Add automated visual/accessibility regression if the UI expands. |
+| **R9 — Minimum shock catalogue and downstream effects** | P0 | Complete (1.00) | Complete (1.00) | Parameterized acceptance proves every required shock fires and changes the intended metric, belief, article, or market channel. | None for v1. | Preserve scenario tests. |
+| **R10 — Automatic end-of-run report** | P0 | Complete (1.00) | Complete (1.00) | Paused and actively running Stop paths generate standalone reports with required sections and durable events; browser smoke confirmed a real file. | None for v1. | Preserve report content contract. |
+| **R11 — Two-year lifecycle acceptance** | P0 | Complete (1.00) | Complete (1.00) | A 730-tick acceptance run proves death/estate, replacement arrival, conserved housing cost, job application within ten ticks, and reconciliation. | None for v1. | Keep the long test in CI. |
+| **R12 — Government and elections** | P1 | Complete (1.00) | Complete (1.00) | Withholding, benefits, election bounds, integration, and determinism tests. | None for v1. | Future calibration only. |
+| **R13 — Venture capital** | P1 | Complete (1.00) | Complete (1.00) | Pitch, investment, cap table, decline, follow-on, and write-off tests. | None for v1. | Future portfolio calibration only. |
+| **R14 — Experiment harness** | P1 | Complete (1.00) | Complete (1.00) | Five treatment seeds plus five same-seed controls, isolated databases, distributions, reconciliation, and dual-format reports. | None for harness acceptance. | Archive a production-scale experiment after live-provider authorization. |
+| **R15 — Oracle calibration dashboard** | P1 | Complete (1.00) | Substantial (0.75) | Calibration identity, run/all-run API, dashboard ledger, and report scorecard are implemented and tested. | A meaningful corpus of resolved real-provider predictions does not yet exist. | Accumulate cross-run predictions and publish bins, Brier, reliability, resolution, and uncertainty. |
+| **R16 — Replay UI and exact replay** | P1 | Complete (1.00) | Complete (1.00) | Replay viewer plus fresh genesis re-execution; missing responses pause without provider calls; all deterministic tables and LLM accounting hash identically. | No engine/replay blocker. | Repeat the same proof on the first completed live run. |
+| **R17 — Health economy** | P1 | Complete (1.00) | Complete (1.00) | Hospital/insurer flows, premiums, lapses, claims, illness multiplier, lifecycle integration, determinism, and long-run reconciliation coverage. | No v1 mechanics blocker. | Long-run actuarial calibration is product research, not missing implementation. |
 
-### Feature and proof totals
+### Totals
 
-- Feature weights: `14.75 / 17 = 86.8%`, rounded to **87%**.
-- Acceptance-proof weights: `10.75 / 17 = 63.2%`, rounded to **63%**.
-- No P0/P1 row is wholly absent, but several rows receive partial proof because the PRD specifies quantitative end-to-end gates rather than mere code presence.
+- Feature weights: `17.00 / 17 = 100.0%`, reported as **100%**.
+- Acceptance weights: `16.00 / 17 = 94.1%`, rounded to **94%**.
+- The one-point proof gap consists of four 0.25 deductions: real routed-role evidence, Oracle live latency, 365-day cost/cache proof, and accumulated calibration data.
 
 ## Technical-spec fidelity
 
-| Technical commitment | Status | Weight | Evidence and divergence |
+| Technical commitment | Status | Weight | Evidence or qualification |
 |---|---|---:|---|
-| T1 — Layered dashboard/API/kernel/provider/store architecture | Complete | 1.00 | FastAPI, WebSocket, Python kernel, gateway, and SQLite boundaries are present. |
-| T2 — Python, FastAPI, SQLite WAL stack | Complete | 1.00 | The selected backend/store stack is implemented and one database represents a run. |
-| T3 — Tick phases and cadence | Substantial | 0.75 | Deterministic phased ticks exist; full production cadence under real-provider load is not proven. |
-| T4 — Specified persisted data model | Substantial | 0.75 | Core run, agent, institution, ledger, market, event, message, prediction, metric, and LLM-call state exists; a schema-level conformance test is absent. |
-| T5 — Structured action contract and validation | Substantial | 0.75 | Action parsing/validation and no-op fallback are implemented; randomized valid-action property testing is absent. |
-| T6 — Short, daily, and consolidated weekly memory pipeline | Partial | 0.50 | Memory tiers are stored, but the weekly operation demotes older daily summaries rather than synthesizing seven summaries into a new weekly summary. |
-| T7 — Provider gateway, routing, concurrency, retry, budget, and logging | Substantial | 0.75 | Adapters, concurrency 8, routing, one repair retry, pricing, logging, and governor exist; provider-native cache behavior and failure acceptance are unproven. |
-| T8 — Locked MiniMax M3 and Kimi K2.7 default role mix | Absent | 0.00 | [Base configuration](../runs/base.yaml) leaves provider/routes commented and uses `scripted` for every role. |
-| T9 — Deterministic market mechanics | Substantial | 0.75 | Exchange, credit, firms, labor, and settlement mechanics are substantial and tested; complete company-flow acceptance is missing. |
-| T10 — Seeded lifecycle mechanics | Substantial | 0.75 | Death, estates, sickness, medical flows, arrivals, and deterministic schedules exist; the exact two-year acceptance is missing. |
-| T11 — React, Vite, Tailwind, and Recharts dashboard | Absent | 0.00 | The dashboard is a self-contained static HTML/CSS/JS page; there is no specified `dashboard/` application. |
-| T12 — Unit, property, golden-run, and cost-test strategy | Partial | 0.50 | There are 39 deterministic unit/integration tests and a golden fixture, but no random property suite and no complete 60/80/95/100% cost-threshold suite. |
-| T13 — Determinism, checkpointing, resume, replay, and forks | Substantial | 0.75 | Same-seed, checkpoints, resume, fixture replay, reader UI, and forks are tested; full real-LLM replay equality is unproven. |
-| T14 — Repository layout and phased build order | Substantial | 0.75 | Most specified subsystems and phase-four features exist; the React dashboard package is omitted and real-provider scale milestones are incomplete. |
+| T1 — Dashboard/API/kernel/provider/store layering | Complete | 1.00 | React client, REST/WebSocket server, deterministic kernel, gateway, and SQLite remain separate. |
+| T2 — Python, FastAPI, SQLite WAL | Complete | 1.00 | Implemented as specified; FastAPI lifespan API replaces deprecated startup events. |
+| T3 — Ordered tick phases and cadence | Complete | 1.00 | Ordered phases, event waking, cadence, checkpointing, and deterministic execution are tested. |
+| T4 — Persisted data model | Complete | 1.00 | Run, agent, institution, ledger, market, information, prediction, metric, shock, checkpoint, and call state are persisted. |
+| T5 — Structured actions and validation | Complete | 1.00 | Provider output is parsed to envelopes; the engine validates every action and defaults invalid output safely. |
+| T6 — Short, daily, consolidated weekly memory | Complete | 1.00 | Weekly summaries are synthesized before their daily source summaries are demoted. |
+| T7 — Routing, concurrency, retry, caching, budget, logging | Substantial | 0.75 | All mechanics and provider-reported cached tokens are implemented; live cache-hit evidence is outstanding. |
+| T8 — Locked cheap/strong real-provider role mix | Substantial | 0.75 | The production profile implements the mix with current official `MiniMax-M2.7` and `kimi-k2.6`; the PRD’s older names are not current provider IDs and live authentication is unproven. |
+| T9 — Deterministic market mechanics | Complete | 1.00 | Banking, firms, labor, exchange, settlement, and bankruptcy are tested end to end. |
+| T10 — Seeded lifecycle mechanics | Complete | 1.00 | Biology is PRNG-owned and the exact two-year integration test passes. |
+| T11 — React, Vite, Tailwind, Recharts | Complete | 1.00 | Modular source, committed local bundle, CI build, responsive browser pass, and no CDN runtime. |
+| T12 — Unit, acceptance, golden, property/cost strategy | Substantial | 0.75 | 53 tests cover invariants, exact acceptance, golden output, thresholds, and long runs; a dedicated randomized property-testing framework is not present. |
+| T13 — Determinism, checkpoint, resume, replay, forks | Complete | 1.00 | Same-seed, golden, checkpoints, resume, parent-safe forks, and canonical full-state replay hashes are tested. |
+| T14 — Repository layout and phased build | Complete | 1.00 | All specified packages and P1 surfaces, including the dashboard package, are present. |
 
-Technical weights total `9.00 / 14 = 64.3%`, rounded to **64%**.
+Technical total: `13.25 / 14 = 94.6%`, rounded to **95%**.
 
-## Phase progress
+## Phase status
 
-| PRD phase | Verdict | Current state | Exit work still required |
+| Phase | Verdict | Evidence | Exit condition |
 |---|---|---|---|
-| Phase 1 — Kernel and accounting | Complete | Ledger, validation, deterministic kernel, scripted mechanics, reconciliation, and core invariant tests are operational. | Add the explicit active-run reconciliation-halt acceptance case. |
-| Phase 2 — Agents, banking, firms, and markets | Substantial | Runtime, memory, gateway, banks, credit, firms, labor, exchange, checkpoints, and scripted integration are operational. | Prove the locked real-provider mix near 100 agents and one full company lifecycle. |
-| Phase 3 — Information, Oracle, observatory, shocks, reports | Substantial | All major surfaces exist and are usable in the local observatory. | Meet exact rumor/shock/latency/Oracle/report acceptance contracts and resolve frontend divergence. |
-| Phase 4 — Government, VC, experiments, calibration, replay, health | Substantial | P1 capability surface is unusually complete for a prototype and has targeted tests. | Run five-seed and long-run real-provider evidence; prove replay equality and calibration usefulness. |
+| Kernel and accounting | Complete | Ledger invariants, active failure halt, diagnostics, and checkpoints. | Met. |
+| Agents, banking, firms, markets | Code complete; production proof pending | Full deterministic mechanics and approximately 100-agent production profile. | Authenticate and sample every routed live role. |
+| Information, Oracle, observatory, shocks, reports | Code complete; latency proof pending | Exact pilots, new frontend, two-second WebSocket proof, shock suite, report automation. | Measure live Oracle p90. |
+| Government, VC, experiments, calibration, replay, health | Code complete; lagging data pending | Five-seed harness, exact replay, government/VC/health integration. | Accumulate real prediction calibration evidence. |
 
-## Principal gaps and risks
+## Remaining gaps and risks
 
-### Critical — locked runtime is not the default runtime
+### High — paid production envelope is not yet proven
 
-[The default configuration](../runs/base.yaml) routes every role to the deterministic scripted adapter. Real provider adapters exist, but the locked MiniMax/Kimi model allocation, real inference costs, failure behavior, and latency have not been demonstrated. The base population is 70 citizens plus staff/founders; the manually observed run contained about 83 agents, below the approximately 100-agent launch target.
+The current environment does not contain `MINIMAX_API_KEY` or `MOONSHOT_API_KEY`. No paid inference was attempted. The production profile, readiness checks, routes, retries, pause behavior, accounting, and budget stages are ready, but a 365-day live run may consume meaningful budget and requires explicit authorization.
 
-### High — acceptance evidence trails implementation
+### Medium — provider identifiers intentionally follow current official APIs
 
-The repository has strong deterministic coverage—39 committed tests passed on the frozen baseline—but many tests intentionally use smaller horizons and scripted actors. They prove mechanics, not every quantitative PRD gate. The most important missing evidence is the exact rumor pilot, one downstream-effects test per minimum shock, a two-year lifecycle run, sub-two-second dashboard updates, a 365-day real-provider budget run, real Oracle p90 latency, and full replay equality.
+The historical PRD names MiniMax M3 and Kimi K2.7. The implementation uses currently documented `MiniMax-M2.7` and `kimi-k2.6` endpoints. This is an evidence-backed compatibility decision, but it should be recorded as a formal specification update before v1 sign-off.
 
-### High — dashboard stack diverges from the technical specification
+### Medium — calibration is a lagging outcome
 
-[README.md](../README.md) records the zero-build static dashboard as a pragmatic deviation. It preserves an API boundary that can support a replacement, but the current [65 KB, 925-line page](../server/static/index.html) concentrates layout, state, rendering, and interactions in one file. This creates maintainability, responsive-layout, accessibility, and regression-testing risk.
+The calibration machinery is complete, but calibration quality cannot be established without a corpus of resolved real-provider predictions. This is an operational data requirement rather than missing code.
 
-### Medium — completion-path polish
+## Prioritized completion roadmap
 
-Headless runs generate reports automatically, while interactive Stop does not. Weekly memory does not perform the specified synthesis. Prompt-cache savings are estimated in gateway accounting, but provider-level cache use is not demonstrated. Replay tooling is useful for viewing and deterministic fixtures, but has not yet proven exact real-provider re-execution.
+1. **Authorize and preflight the real-provider profile.** Supply keys locally, run offline and live preflight, and verify every routed model without exposing secrets.
+2. **Prove the operating envelope.** Run the approximately 100-agent production world, capture Oracle p50/p90, provider failures/retries, actual cached tokens, and a 365-day total at or below $200.
+3. **Archive production acceptance.** Exact-replay the completed live run, retain the replay hash proof, config, seed, report, and cost evidence, then run a five-seed production experiment if budget permits.
+4. **Close specification governance.** Amend the PRD model identifiers to their current official equivalents and add the production evidence links to this report.
 
-## Prioritized roadmap to PRD-v1 completion
-
-1. **Prove the locked real-LLM operating envelope.** Enable MiniMax M3 and Kimi K2.7 role routes, scale to approximately 100 agents, capture provider/cost/latency/failure telemetry, and complete a 365-day run without exceeding $200.
-2. **Turn PRD gates into executable acceptance tests.** Add exact rumor thresholds, required-shock downstream assertions, WebSocket latency measurement, two-year lifecycle/arrival integration, Oracle 30-tick resolution and p90 latency, governor thresholds, and active-run reconciliation failure behavior.
-3. **Resolve the observatory architecture decision.** Replace the static monolith with the specified React/Vite/Tailwind/Recharts client while preserving the REST/WebSocket contract, then add responsive, accessibility, and UI regression coverage.
-4. **Close completion-path gaps.** Generate reports after interactive Stop, implement true weekly-summary consolidation, demonstrate provider-native prompt caching, and checksum a stored-response replay against the original real-provider run.
-5. **Produce lagging-success evidence.** Run at least five treatment/control seeds, accumulate resolved Oracle predictions, quantify three emergent phenomena, verify all five shocks, and package reports/configs/seeds as repeatable evidence.
+No speculative calendar estimate is assigned; completion depends primarily on credential and spend authorization.
 
 ## Verification snapshot
 
-| Check | Frozen result |
+| Check | Result |
 |---|---|
-| Working baseline | `main` commit `363a91a` |
-| Automated tests | **39 passed** with `python -m pytest tests/ -q` |
-| Determinism evidence | Same-seed event log, lifecycle schedule, P1 world, golden fixture, checkpoint/resume, and parent-preserving fork tests |
-| Manual observatory evidence | Run, pause, step, agent inspector, six-shock console, and replay controls operated locally; no browser/server errors observed during that pass |
-| Manual UI defect | Quick-start/onboarding state still showed “Day 0 — world ready” while the simulation was at day 47 |
-| CI baseline | Existing GitHub Actions workflow passed on the frozen repository baseline |
+| Code baseline | `8d0e79c` on `feature/prd-completion` |
+| Python suite | **53 passed** in 312.12 seconds with `python -m pytest tests/ -q` |
+| Frontend | `npm ci`, zero audit vulnerabilities, production build passed, repeated build produced identical hashes |
+| Compile and hygiene | Python compile-all passed; `git diff --check` passed |
+| Browser | Desktop and mobile-width layouts, Step, Stop, report file, shock dialog, replay viewer, charts, keyboard agent audit, and console diagnostics verified; no console errors |
+| Replay CLI | One-day source/replay: 27 deterministic tables, 150 stored calls, identical total hash `7d10be27202c151ebf35368aad1def919f20d9b79c01671fc1f00c9b96dbec1d` |
+| Network assets | Production HTML references only committed `/static/assets/*`; no CDN dependency |
+| CI | Workflow now builds/verifies the dashboard and runs the Python matrix; branch run is pending push |
 
 ## Deferred P2 work — excluded from scores
 
-| Future requirement | PRD disposition | Current assessment |
+| Future requirement | PRD disposition | Assessment |
 |---|---|---|
-| **R18 — Participant mode** | P2 future | Intentionally not part of v1 completion; observer-only constraints should remain preserved. |
-| **R19 — Scale to approximately 1,000 agents** | P2 future | Not assessed against current launch acceptance; architecture should avoid blocking later store/runtime changes. |
-| **R20 — Regions and foreign exchange** | P2 future | Not implemented as a required current-world surface. |
-| **R21 — Real-data calibration** | P2 future | Not required for the current synthetic economy; future ingestion must remain reproducible and provenance-aware. |
-| **R22 — Hosted multi-user service** | P2 future | Current single-process/local observatory is appropriate for v1; authentication/tenancy are future concerns. |
+| **R18 — Participant mode** | P2 future | Intentionally deferred; observer-only integrity remains preserved. |
+| **R19 — Scale to approximately 1,000 agents** | P2 future | Intentionally deferred; current launch profile targets approximately 100. |
+| **R20 — Regions and foreign exchange** | P2 future | Intentionally deferred. |
+| **R21 — Real-data calibration** | P2 future | Intentionally deferred; future inputs must be versioned and provenance-aware. |
+| **R22 — Hosted multi-user service** | P2 future | Intentionally deferred; v1 remains a local single-process observatory. |
 
 ## Assessment boundaries
 
-- This is a repository-and-evidence assessment, not a claim that every economic behavior is realistic or calibrated.
-- Generated local run databases and reports were used only as corroborating evidence; committed code and tests carry more weight.
-- Scripted behavior receives feature credit where the mechanics are real, but it does not receive full acceptance or technical-fidelity credit when the PRD explicitly requires real LLM behavior.
-- Scores are reproducible from the weights shown above and should be refreshed whenever the PRD, technical specification, default configuration, or acceptance suite changes.
+- Generated databases and reports corroborate findings but do not outrank committed code and tests.
+- Scripted runs prove deterministic mechanics; they do not substitute for real-provider budget, latency, caching, or calibration evidence.
+- Economic realism and parameter calibration are separate from PRD feature completion.
+- Scores should be refreshed when the PRD, technical specification, provider profile, or acceptance evidence changes.
