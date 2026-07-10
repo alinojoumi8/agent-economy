@@ -149,7 +149,7 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 | Live provider run | Run `3478260d9e`: 100 agents, 170 logical calls, 45/45 conversation messages, 71/71 daily summaries, zero provider failures, zero contract failures, and modeled price-equivalent cost $0.112542 |
 | Replay CLI | Live source/replay: 27 deterministic tables, no live fallback, identical total hash `405b1d5ae37e58b7ab2c8a8baf6ac44a0c17ca134427a075e170fead4a9ce6c8` |
 | Network assets | Production HTML references only committed `/static/assets/*`; no CDN dependency |
-| CI | GitHub Actions run `29095018792` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |
+| CI | GitHub Actions run `29105715999` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |
 
 ## Deferred P2 work — excluded from scores
 
