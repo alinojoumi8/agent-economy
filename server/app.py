@@ -91,6 +91,10 @@ def create_app(world: World) -> FastAPI:
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
     async def start_run(max_ticks: Optional[int] = None):
+        if world.status in {"finished", "halted"}:
+            return JSONResponse(
+                {"error": f"run is {world.status}; start a new run or use replay"},
+                status_code=409)
         if run_task["task"] and not run_task["task"].done():
             return {"status": "already_running"}
         world._pause_requested = False
@@ -137,6 +141,10 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/run/step")
     async def step_once():
+        if world.status in {"finished", "halted"}:
+            return JSONResponse(
+                {"error": f"run is {world.status}; start a new run or use replay"},
+                status_code=409)
         if run_task["task"] and not run_task["task"].done():
             return {"status": "already_running"}
         summary = await world.step()
@@ -383,6 +391,10 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/shocks")
     async def fire_shock(body: ShockBody):
+        if world.status in {"finished", "halted"}:
+            return JSONResponse(
+                {"error": f"run is {world.status}; shocks require an active run"},
+                status_code=409)
         if body.kind not in SHOCK_KINDS:
             return JSONResponse({"error": f"unknown kind {body.kind}"}, status_code=400)
         trigger = body.trigger or {"tick": store.tick + 1}

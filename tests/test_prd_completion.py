@@ -272,6 +272,13 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
         response = client.post("/api/run/stop")
         assert response.status_code == 200
         body = response.json()
+        finished_tick = world.store.tick
+        assert client.post("/api/run/start").status_code == 409
+        assert client.post("/api/run/step").status_code == 409
+        assert client.post("/api/shocks", json={
+            "kind": "oil", "trigger_type": "shock", "params": {"multiplier": 2.0},
+        }).status_code == 409
+        assert world.store.tick == finished_tick
 
     assert body["status"] == "finished"
     html_path = Path(body["report_path"])

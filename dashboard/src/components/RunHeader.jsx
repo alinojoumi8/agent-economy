@@ -5,6 +5,7 @@ import { Badge } from "./ui";
 export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
+  const terminal = status?.status === "finished" || status?.status === "halted";
   const spend = Number(status?.governor?.total_spend_usd || 0);
   const cap = Number(status?.governor?.cap_usd || 200);
   const fraction = cap ? Math.min(100, spend / cap * 100) : 0;
@@ -32,10 +33,10 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={loading || running || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={loading || running || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button button-primary" disabled={loading || running || terminal || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={loading || running || terminal || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
           <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={loading || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
+          <button className="button button-danger" disabled={loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
           <select id="run-speed" className="field !w-auto !py-2" defaultValue="0" onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
@@ -47,7 +48,7 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
 
         <div className="ml-auto flex items-center gap-1.5">
           <button className="button hidden sm:inline-flex" onClick={onReplay}>Replay viewer</button>
-          <button className="button" onClick={onShock}>Inject shock</button>
+          <button className="button" disabled={terminal} onClick={onShock}>Inject shock</button>
           <button className="button hidden md:inline-flex" disabled={busy} onClick={() => action("report", "/api/report")}>Generate report</button>
         </div>
 
