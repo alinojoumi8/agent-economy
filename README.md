@@ -74,8 +74,10 @@ The production profile is [runs/production.yaml](runs/production.yaml). It keeps
 the PRD's cheap-citizen/strong-seat split while using the providers' current
 official model IDs: Token Plan `MiniMax-M3` and Kimi Code's stable `kimi-for-coding`
 alias (currently K2.7 Code when Thinking is enabled).
-See the official [MiniMax OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api)
-and [Kimi API overview](https://platform.kimi.ai/docs/api/overview).
+See the official [MiniMax Token Plan](https://platform.minimax.io/subscribe/token-plan)
+and [Kimi Code API](https://www.kimi.com/code/docs/en/) documentation. The
+secret-safe results of the authenticated 100-agent smoke run are recorded in
+[docs/live-provider-validation.md](docs/live-provider-validation.md).
 
 ```bash
 copy .env.example .env

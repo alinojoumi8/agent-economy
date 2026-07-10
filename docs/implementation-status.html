@@ -15,20 +15,20 @@
 </style>
 </head>
 <body>
-<header class="hero"><div class="wrap"><div class="kicker">Implementation status · PRD v1.0</div><h1>Feature complete. Production acceptance remains conditional.</h1><p>The strict deterministic economy, exact replay, randomized and long-run acceptance tests, measured five-seed experiment, provider controls, and specified React observatory are built. Remaining work is real-provider operating evidence, not another major subsystem.</p><div class="meta"><span class="chip">Assessment 2026-07-10</span><span class="chip">Code 0754b57</span><span class="chip">66 tests passed</span><span class="chip">P2 excluded</span></div></div></header>
+<header class="hero"><div class="wrap"><div class="kicker">Implementation status · PRD v1.0</div><h1>Feature complete. Production acceptance is close.</h1><p>The strict deterministic economy, authenticated MiniMax/Kimi routes, exact live-run replay, randomized and long-run acceptance tests, measured five-seed experiment, and specified React observatory are built. Remaining work is long-run operating and calibration evidence, not another major subsystem.</p><div class="meta"><span class="chip">Assessment 2026-07-10</span><span class="chip">Code b2b25c0</span><span class="chip">69 tests passed</span><span class="chip">P2 excluded</span></div></div></header>
 
 <main class="main wrap">
 <section class="verdict">
-  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>PRD-v1 code complete; paid production proof outstanding.</h2><p>All P0/P1 feature surfaces have substantive implementation. Four proof areas remain at “substantial”: live routed-role samples, Oracle p90 latency, the 365-day cost/cache envelope, and meaningful cross-run calibration data.</p></article>
+  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>PRD-v1 code complete; provider runtime authenticated.</h2><p>All P0/P1 feature surfaces have substantive implementation. Three proof areas remain at “substantial”: Oracle-specific p90 latency, the 365-day cost envelope, and meaningful cross-run calibration data.</p></article>
   <article class="card score"><div class="n">100%</div><div class="label">Feature coverage</div><small>17.00 / 17</small></article>
-  <article class="card score"><div class="n">94%</div><div class="label">Acceptance proof</div><small>16.00 / 17</small></article>
-  <article class="card score"><div class="n">96%</div><div class="label">Technical fidelity</div><small>13.50 / 14</small></article>
+  <article class="card score"><div class="n">96%</div><div class="label">Acceptance proof</div><small>16.25 / 17</small></article>
+  <article class="card score"><div class="n">100%</div><div class="label">Technical fidelity</div><small>14.00 / 14</small></article>
 </section>
 
 <h2 class="section">Phase progress</h2>
 <section class="phase-grid">
   <article class="card phase"><b>Kernel & accounting</b><p>Ledger invariants, diagnostics, checkpoints, and active-failure halt are complete.</p><div class="bar"><i style="width:100%"></i></div></article>
-  <article class="card phase"><b>Agents & economy</b><p>Mechanics are complete; authenticated routed-role evidence is pending.</p><div class="bar"><i style="width:95%"></i></div></article>
+  <article class="card phase"><b>Agents & economy</b><p>Mechanics and the authenticated 100-agent routed-role run are complete.</p><div class="bar"><i style="width:100%"></i></div></article>
   <article class="card phase"><b>Information & UI</b><p>Exact pilots, React observatory, shocks, Oracle, and reports are complete.</p><div class="bar"><i style="width:96%"></i></div></article>
   <article class="card phase"><b>P1 systems</b><p>Government, VC, five-seed experiments, replay, calibration, and health exist.</p><div class="bar"><i style="width:96%"></i></div></article>
 </section>
@@ -37,12 +37,12 @@
 <div class="filters" aria-label="Requirement filters"><button class="active" data-filter="all">All</button><button data-filter="p0">P0</button><button data-filter="p1">P1</button><button data-filter="open">Needs production evidence</button></div>
 <div class="table-wrap"><table id="requirements"><thead><tr><th>Requirement</th><th>Priority</th><th>Implementation</th><th>Acceptance</th><th>Evidence</th><th>Remaining gap</th><th>Completion evidence</th></tr></thead><tbody>
 <tr data-priority="p0"><td class="req"><strong>R1 — Conserved double-entry ledger</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_ledger.py">Ledger tests</a>; active corruption halt/checkpoint.</td><td>None for v1.</td><td>Preserve invariant and failure-path tests.</td></tr>
-<tr data-priority="p0" data-open="true"><td class="req"><strong>R2 — LLM runtime, persona, memory, inspector</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../runs/production.yaml">Production profile</a>; weekly memory and inspector tests.</td><td>No archived authenticated MiniMax/Kimi role sample.</td><td>Run every routed role and retain secret-safe prompt/response/latency proof.</td></tr>
+<tr data-priority="p0"><td class="req"><strong>R2 — LLM runtime, persona, memory, inspector</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../runs/production.yaml">Production profile</a>; <a href="live-provider-validation.md">authenticated 100-agent validation run</a>.</td><td>None for v1 runtime acceptance.</td><td>Preserve secret-safe live routed-role evidence.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R3 — Banks, firms, labor, company lifecycle</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_prd_completion.py">Lawyer-to-bankruptcy acceptance</a>.</td><td>None for v1 mechanics.</td><td>Preserve regression.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R4 — Order book, IPO, market index</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../tests/test_spec_completion_properties.py">No-invented-price property</a>; price-time, IPO, index, breaker.</td><td>None for v1.</td><td>Preserve exchange/property coverage.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R5 — News, conversations, rumor pilot</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="experiments/rumor-vs-control.md">Measured N=5 study</a>; exact threshold pilot.</td><td>Real-agent emergence confirmation pending.</td><td>Repeat the three causal signatures with live providers.</td></tr>
-<tr data-priority="p0" data-open="true"><td class="req"><strong>R6 — Oracle prediction, resolution, Brier</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../oracle/analyst.py">Oracle</a>; exact 30-tick resolver tests.</td><td>Real-provider p90 below 60 seconds unproven.</td><td>Publish representative p50/p90 and persisted predictions.</td></tr>
-<tr data-priority="p0" data-open="true"><td class="req"><strong>R7 — Run control, governor, cap</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../llm/gateway.py">Gateway</a>; durable stages, repair/cache billing, conservative reservation, per-agent costs.</td><td>365-day live cost/cache proof missing.</td><td>Export costs by model/agent/purpose/cache and prove ≤$200.</td></tr>
+<tr data-priority="p0" data-open="true"><td class="req"><strong>R6 — Oracle prediction, resolution, Brier</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../oracle/analyst.py">Oracle</a>; exact 30-tick resolver tests; live institutional-route p90 23.228s.</td><td>Oracle-specific representative p90 set remains unproven.</td><td>Publish Oracle p50/p90 and persisted predictions.</td></tr>
+<tr data-priority="p0" data-open="true"><td class="req"><strong>R7 — Run control, governor, cap</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../llm/gateway.py">Gateway</a>; <a href="live-provider-validation.md">live cache/cost evidence</a>.</td><td>365-day live cost proof missing.</td><td>Export costs by model/agent/purpose/cache and prove ≤$200.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R8 — Live observatory dashboard</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../dashboard/src">React source</a>; ticker, per-agent costs, WebSocket, desktop/~355px and keyboard checks.</td><td>No v1 blocker.</td><td>Add visual regression as the UI grows.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R9 — Shock catalogue and effects</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../world/shocks.py">Shock engine</a>; all required downstream effects tested.</td><td>None for v1.</td><td>Preserve scenarios.</td></tr>
 <tr data-priority="p0"><td class="req"><strong>R10 — Automatic end-of-run report</strong></td><td>P0</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../reports/generate.py">Report generator</a>; paused/running Stop tests and browser smoke.</td><td>None for v1.</td><td>Preserve the content contract.</td></tr>
@@ -51,11 +51,11 @@
 <tr data-priority="p1"><td class="req"><strong>R13 — Venture capital</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence">Pitch, cap table, decline, follow-on, write-off tests.</td><td>None for v1.</td><td>Future portfolio calibration only.</td></tr>
 <tr data-priority="p1"><td class="req"><strong>R14 — Experiment harness</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="experiments/rumor-vs-control.md">Five seeds × two arms measured write-up</a>.</td><td>None for harness acceptance.</td><td>Archive a live production-scale experiment.</td></tr>
 <tr data-priority="p1" data-open="true"><td class="req"><strong>R15 — Oracle calibration dashboard</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status substantial">Substantial · .75</span></td><td class="evidence"><a href="../oracle/calibration.py">Calibration</a>; API, dashboard, report scorecard.</td><td>No meaningful resolved live prediction corpus.</td><td>Publish bins, Brier, reliability, resolution, uncertainty.</td></tr>
-<tr data-priority="p1"><td class="req"><strong>R16 — Replay UI and exact replay</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../world/replay_verify.py">Canonical verifier</a>; fresh genesis and missing-response tests.</td><td>No engine blocker.</td><td>Repeat on the first live run.</td></tr>
+<tr data-priority="p1"><td class="req"><strong>R16 — Replay UI and exact replay</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence"><a href="../world/replay_verify.py">Canonical verifier</a>; <a href="live-provider-validation.md">27-table live-run hash proof</a>.</td><td>None for v1 replay acceptance.</td><td>Preserve live canonical replay regression.</td></tr>
 <tr data-priority="p1"><td class="req"><strong>R17 — Health economy</strong></td><td>P1</td><td><span class="status complete">Complete · 1.00</span></td><td><span class="status complete">Complete · 1.00</span></td><td class="evidence">Hospital, insurer, premium, claim, lapse, epidemic, lifecycle tests.</td><td>No v1 mechanics blocker.</td><td>Future actuarial calibration only.</td></tr>
 </tbody></table></div>
 
-<h2 class="section">Technical-spec fidelity · 96%</h2>
+<h2 class="section">Technical-spec fidelity · 100%</h2>
 <div class="table-wrap"><table><thead><tr><th>Commitment</th><th>Status</th><th>Weight</th><th>Evidence / qualification</th></tr></thead><tbody>
 <tr><td>Layered dashboard/API/kernel/provider/store architecture</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Separate React, FastAPI, engine, gateway, and SQLite layers.</td></tr>
 <tr><td>Python, FastAPI, SQLite WAL</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Implemented; current lifespan API used.</td></tr>
@@ -63,39 +63,39 @@
 <tr><td>Persisted data model</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>All specified world/control state persists.</td></tr>
 <tr><td>Structured actions and validation</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Living actors/counterparties, funds, ownership, phase, capital, and weekly loan rules; no substitutions or invented prices.</td></tr>
 <tr><td>Short, daily, weekly memory</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Weekly synthesis precedes source demotion.</td></tr>
-<tr><td>Routing, retry, caching, budget, logging</td><td><span class="status substantial">Substantial</span></td><td>.75</td><td>Live provider cache-hit evidence pending.</td></tr>
-<tr><td>Cheap/strong real-provider role mix</td><td><span class="status substantial">Substantial</span></td><td>.75</td><td>Current official equivalents configured; live authentication pending.</td></tr>
+<tr><td>Routing, retry, caching, budget, logging</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Live run recorded cache hits, latency, costs, repairs, and zero provider failures.</td></tr>
+<tr><td>Cheap/strong real-provider role mix</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Authenticated MiniMax-M3 and K2.7 via the stable kimi-for-coding alias.</td></tr>
 <tr><td>Deterministic market mechanics</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Full company and market path tested.</td></tr>
 <tr><td>Seeded lifecycle mechanics</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Two-year acceptance passes.</td></tr>
 <tr><td>React, Vite, Tailwind, Recharts</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Modular source and local committed build.</td></tr>
-<tr><td>Unit, acceptance, golden, property/cost strategy</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>66 tests include randomized actions/lifecycle storms, budget stages, repair billing, golden and long-run acceptance.</td></tr>
+<tr><td>Unit, acceptance, golden, property/cost strategy</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>69 tests include randomized actions/lifecycle storms, budget stages, repair billing, golden and long-run acceptance.</td></tr>
 <tr><td>Determinism, checkpoints, replay, forks</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Canonical full-state replay hashes match.</td></tr>
 <tr><td>Repository layout and phased build</td><td><span class="status complete">Complete</span></td><td>1.00</td><td>Specified backend, P1, and dashboard packages exist.</td></tr>
 </tbody></table></div>
 
 <h2 class="section">Remaining gaps</h2>
 <section class="gap-grid">
-  <article class="card gap high"><b>Paid production envelope</b><p>Keys are absent and no paid inference was attempted. The 365-day ≤$200 target, live cache rate, and provider latency remain unproven.</p></article>
-  <article class="card gap medium"><b>Provider identifier governance</b><p>The code uses current official MiniMax-M2.7 and kimi-k2.6 rather than historical names in the specification.</p></article>
+  <article class="card gap high"><b>Full-year production envelope</b><p>The one-tick live run proved calls, caching, and cost accounting; the 365-day ≤$200 target remains unproven.</p></article>
+  <article class="card gap medium"><b>Hosted-product entitlement</b><p>Token Plan and Kimi Code routes suit local agent evaluation; hosted expansion needs separate commercial/rate-limit confirmation.</p></article>
   <article class="card gap medium"><b>Lagging calibration data</b><p>Calibration code is complete, but quality requires many resolved live predictions across runs.</p></article>
-  <article class="card gap medium"><b>Production emergence</b><p>Three causal chains and an N=5 offline study are documented; MiniMax/Kimi confirmation still requires keys and spend approval.</p></article>
+  <article class="card gap medium"><b>Production emergence</b><p>Three causal chains and an N=5 offline study are documented; a live-provider treatment/control study remains outstanding.</p></article>
 </section>
 
 <h2 class="section">Prioritized roadmap</h2>
 <section class="roadmap">
-  <article class="card"><div><h3>Authorize and preflight the production profile</h3><p>Load keys locally, validate secret-safe configuration, authenticate, and confirm every routed model.</p></div></article>
-  <article class="card"><div><h3>Prove the operating envelope</h3><p>Measure Oracle p50/p90, actual cached tokens, retries/failures, and the 365-day total under $200.</p></div></article>
-  <article class="card"><div><h3>Archive production acceptance</h3><p>Retain config, seed, report, costs, and canonical replay proof; confirm three causal signatures and run a five-seed live experiment if authorized.</p></div></article>
-  <article class="card"><div><h3>Update specification governance</h3><p>Record the current official model equivalents and link final production evidence into this report.</p></div></article>
+  <article class="card"><div><h3>Prove the remaining operating envelope</h3><p>Measure an Oracle-specific p50/p90 set and an explicitly authorized 365-day total under $200.</p></div></article>
+  <article class="card"><div><h3>Confirm live-provider emergence</h3><p>Repeat the three causal signatures and five-seed experiment with the authenticated production profile if quota permits.</p></div></article>
+  <article class="card"><div><h3>Accumulate calibration evidence</h3><p>Resolve enough live predictions to publish bins, Brier score, reliability, resolution, and uncertainty.</p></div></article>
+  <article class="card"><div><h3>Prepare hosted expansion separately</h3><p>Confirm provider commercial terms, rate limits, and concurrency before multi-user deployment.</p></div></article>
 </section>
 
 <h2 class="section">Verification snapshot</h2>
 <section class="verification">
-  <div class="card"><b>Python</b><span>66 passed in 78.49 seconds; randomized properties, compile-all, and whitespace checks passed.</span></div>
+  <div class="card"><b>Python</b><span>69 passed in 77.02 seconds; randomized properties, compile-all, and whitespace checks passed.</span></div>
   <div class="card"><b>Frontend</b><span>npm audit clean; deterministic Vite build; local assets only.</span></div>
   <div class="card"><b>Browser</b><span>Desktop/~355px, ticker, per-agent cost after Step, internal scrolling, local assets only; no console errors.</span></div>
-  <div class="card"><b>Replay</b><span>27 deterministic tables and 150 stored calls; total SHA-256 <code>05c34257…00fc</code>.</span></div>
-  <div class="card"><b>Baseline</b><span>feature/prd-completion code commit 0754b57.</span></div>
+  <div class="card"><b>Live run and replay</b><span>Run <code>3478260d9e</code>: 100 agents, 170 logical calls, zero provider/contract failures; 27-table SHA-256 <code>405b1d5a…e6c8</code>.</span></div>
+  <div class="card"><b>Baseline</b><span>fix/provider-live-readiness code commit b2b25c0.</span></div>
   <div class="card"><b>CI</b><span>GitHub Actions run <code>29095018792</code> passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows.</span></div>
 </section>
 
@@ -109,7 +109,7 @@
 </tbody></table></div>
 </main>
 
-<footer class="wrap">Markdown is the canonical source. Generated databases corroborate findings but do not outrank committed code and tests. Scripted runs prove mechanics and offline causal signatures; they do not replace live emergence, budget, latency, caching, or calibration evidence.</footer>
+<footer class="wrap">Markdown is the canonical source. Generated databases corroborate findings but do not outrank committed code and tests. The authenticated one-tick run proves runtime integration, caching, cost accounting, and replay; it does not replace a full-year budget run, Oracle-specific latency set, live emergence experiment, or calibration corpus.</footer>
 <script>
 const buttons=[...document.querySelectorAll('[data-filter]')];const rows=[...document.querySelectorAll('#requirements tbody tr')];buttons.forEach(button=>button.addEventListener('click',()=>{buttons.forEach(item=>item.classList.toggle('active',item===button));const filter=button.dataset.filter;rows.forEach(row=>row.classList.toggle('hide',filter!=='all'&&(filter==='open'?row.dataset.open!=='true':row.dataset.priority!==filter)));}));
 </script>
