@@ -35,6 +35,9 @@ set_price{firm_id,price}, hire{application_id}, fire{employment_id},
 found_company{name,sector,lawyer_agent_id}, transfer{to_account,amount,memo},
 move_deposits{to_bank_id}, pitch_vc{firm_id,ask,summary}, buy_insurance{},
 cancel_insurance{}, say_public{text}, do_nothing.
+Every field ending in _id, plus to_account, MUST be a JSON integer copied exactly from the
+provided context. Never emit labels such as "firm7", "job2", names, titles, or composite strings
+where an integer ID is required.
 You are never obligated to act. Money is in cents. Stay in character."""
 
 
@@ -358,11 +361,12 @@ class ContextBuilder:
             lines.append("[HEARD]\n- " + "\n- ".join(h["text"] for h in heard[:5]))
         prices = context.get("prices", [])
         if prices:
-            lines.append("[PRICES] " + ", ".join(
-                f"firm{p['firm_id']}:{p['product']}@{p['price']}c(inv {p['inventory']})" for p in prices[:8]))
+            lines.append("[PRICES — COPY firm_id AS AN INTEGER] "
+                         + json.dumps(prices[:8], separators=(",", ":")))
         jobs = context.get("jobs", [])
         if jobs:
-            lines.append("[JOBS] " + ", ".join(f"job{j['job_id']}@{j['wage']}c" for j in jobs[:6]))
+            lines.append("[JOBS — COPY job_id AS AN INTEGER] "
+                         + json.dumps(jobs[:6], separators=(",", ":")))
         if context.get("my_firm"):
             f = context["my_firm"]
             lines.append(f"[YOUR FIRM] {f['name']} cash {f['cash']}c inv {f['inventory']} "

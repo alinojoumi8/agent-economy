@@ -117,9 +117,26 @@ class OpenAICompatAdapter(Adapter):
             body["prompt_cache_key"] = cache_key
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=body)
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = resp.text.strip().replace("\n", " ")[:500]
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from {self.base_url}: {detail}") from exc
             data = resp.json()
-        text = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "".join(
+                str(part.get("text", "")) for part in content
+                if isinstance(part, dict))
+        else:
+            text = str(content or "")
+        if not text.strip():
+            raise ValueError(
+                "provider response contained no assistant content "
+                f"(finish_reason={choice.get('finish_reason')!r})")
         usage = data.get("usage", {})
         details = usage.get("prompt_tokens_details", {}) or {}
         cached_in = int(details.get("cached_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0)
@@ -135,7 +152,12 @@ class OpenAICompatAdapter(Adapter):
         headers = {"Authorization": f"Bearer {self.api_key}"}
         async with httpx.AsyncClient(timeout=min(self.timeout, 15.0)) as client:
             resp = await client.get(f"{self.base_url}{self.healthcheck_path}", headers=headers)
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = resp.text.strip().replace("\n", " ")[:500]
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from {self.base_url}: {detail}") from exc
             data = resp.json()
         model_ids = {str(row.get("id")) for row in data.get("data", []) if isinstance(row, dict)}
         return {"ok": model in model_ids, "model": model, "model_available": model in model_ids,

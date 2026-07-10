@@ -191,10 +191,17 @@ class Conversations:
                        "speaker_rumor_bank": rumors[speaker],
                        "shared_topic": shared_topic,
                        "rng_seed": tick * 1009 + speaker * 13 + turn}
-            req = LLMRequest(role="citizen", purpose="conversation", system="",
-                             user=json.dumps(context)[:800], context=context,
-                             agent_id=speaker, tick=tick, max_tokens=120)
-            resp = await self.gw.complete(req)
+            schema = '{"text":"brief natural sentence","rumor_bank":null}'
+            req = LLMRequest(
+                role="citizen", purpose="conversation",
+                system=(
+                    "Write one brief in-world conversational sentence from the speaker "
+                    "to the named partner. Respond ONLY with JSON matching " + schema
+                    + ". Set rumor_bank to an integer from speaker_rumor_bank only when "
+                      "the speaker shares that rumor; otherwise use null."),
+                user=json.dumps(context)[:800], context=context,
+                agent_id=speaker, tick=tick, max_tokens=120)
+            resp = await self.gw.complete(req, schema_hint=schema)
             env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
             if not text:

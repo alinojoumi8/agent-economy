@@ -21,6 +21,19 @@ from .policies import register_scripted_policies
 from .scheduler import Scheduler
 
 
+async def _gather_fail_fast(coroutines):
+    """Preserve input ordering while cancelling queued work after a failure."""
+    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 class AgentRuntime:
     def __init__(self, economy: Economy, gateway: Gateway, config: dict):
         self.e = economy
@@ -38,8 +51,8 @@ class AgentRuntime:
         gov = self.gw.governor
         agents = self.scheduler.scheduled_agents(
             tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
-        tasks = [self._decide_one(tick, a) for a in agents]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [self._decide_guarded(tick, a) for a in agents]
+        results = await _gather_fail_fast(tasks)
         decisions = []
         errors = 0
         for a, res in zip(agents, results):
@@ -59,6 +72,14 @@ class AgentRuntime:
         # deterministic execution order
         decisions.sort(key=lambda d: d["agent_id"])
         return decisions
+
+    async def _decide_guarded(self, tick: int, agent):
+        try:
+            return await self._decide_one(tick, agent)
+        except (BudgetExceeded, ProviderUnavailable):
+            raise
+        except Exception as exc:
+            return exc
 
     async def _decide_one(self, tick: int, a) -> Optional[dict]:
         context = self.ctx.build(a, tick)
@@ -160,60 +181,90 @@ class AgentRuntime:
     async def compress_memories(self, tick: int) -> None:
         # Only agents with observations today need compressing.
         rows = self.store.query(
-            "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation'", (tick,))
+            "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation' "
+            "ORDER BY agent_id", (tick,))
         agent_ids = [int(r["agent_id"]) for r in rows]
         sem_tasks = [self._compress_one(tick, aid) for aid in agent_ids]
-        results = await asyncio.gather(*sem_tasks, return_exceptions=True)
+        results = await _gather_fail_fast(sem_tasks)
         for aid, res in zip(agent_ids, results):
             if isinstance(res, BudgetExceeded):
                 raise res
             if isinstance(res, Exception):
                 raise res
+            if res is None:
+                continue
+            summary, importance, belief_updates = res
+            self.mem.write_summary(aid, tick, summary, importance)
+            self.mem.apply_belief_updates(aid, belief_updates, tick)
 
         if tick % 7 == 0:
             weekly_ids = [int(r["agent_id"]) for r in self.store.query(
                 "SELECT DISTINCT agent_id FROM memories WHERE kind='summary' AND demoted=0 "
                 "AND tick BETWEEN ? AND ? ORDER BY agent_id", (tick - 6, tick))]
-            weekly_results = await asyncio.gather(
-                *(self._rollup_week(tick, aid) for aid in weekly_ids),
-                return_exceptions=True)
-            for res in weekly_results:
+            weekly_results = await _gather_fail_fast(
+                self._rollup_week(tick, aid) for aid in weekly_ids)
+            for aid, res in zip(weekly_ids, weekly_results):
                 if isinstance(res, Exception):
                     raise res
+                if res is None:
+                    continue
+                summary, importance = res
+                self.mem.weekly_rollup(aid, tick, summary, importance)
 
-    async def _compress_one(self, tick: int, agent_id: int) -> None:
+    async def _compress_one(
+        self, tick: int, agent_id: int,
+    ) -> Optional[tuple[str, float, list[dict]]]:
         obs = self.mem.todays_observations(agent_id, tick)
         if not obs:
             return
         context = {"observations": obs, "tick": tick, "rng_seed": agent_id * 7 + tick,
                    "infl_hint": self.store.metric_latest("cpi_yoy", 0.02)}
-        req = LLMRequest(role="citizen", purpose="memory", system="", user=json.dumps(obs)[:2000],
-                         context=context, agent_id=agent_id, tick=tick, max_tokens=200)
-        resp = await self.gw.complete(req)
+        schema = '{"summary":"concise memory","importance":1.0,"belief_updates":[]}'
+        req = LLMRequest(
+            role="citizen", purpose="memory",
+            system=(
+                "Compress today's observations into one concise first-person memory. "
+                "Respond ONLY with JSON matching " + schema
+                + ". importance must be a number from 0 to 5. belief_updates must "
+                  "contain only objects with key and numeric value fields."),
+            user=json.dumps(context)[:4000], context=context,
+            agent_id=agent_id, tick=tick, max_tokens=200)
+        resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
-        self.mem.write_summary(agent_id, tick, env.get("summary", ""), float(env.get("importance", 1.0)))
-        self.mem.apply_belief_updates(agent_id, env.get("belief_updates", []), tick)
+        summary = str(env.get("summary", "")).strip()
+        if not summary:
+            summary = " | ".join(str(item.get("text", item)) for item in obs)[:1800]
+        try:
+            importance = float(env.get("importance", 1.0))
+        except (TypeError, ValueError):
+            importance = 1.0
+        updates = env.get("belief_updates", [])
+        return summary, importance, updates if isinstance(updates, list) else []
 
-    async def _rollup_week(self, tick: int, agent_id: int) -> None:
+    async def _rollup_week(
+        self, tick: int, agent_id: int,
+    ) -> Optional[tuple[str, float]]:
         rows = self.store.query(
             "SELECT tick, text, importance FROM memories WHERE agent_id=? "
             "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? ORDER BY tick, id",
             (agent_id, tick - 6, tick))
         if not rows:
-            return
+            return None
         daily = [{"tick": int(r["tick"]), "text": r["text"],
                   "importance": float(r["importance"])} for r in rows]
         context = {"weekly_summaries": daily, "tick": tick,
                    "rng_seed": agent_id * 701 + tick}
+        schema = '{"summary":"concise weekly memory","importance":1.0}'
         req = LLMRequest(
             role="citizen", purpose="memory",
-            system="Synthesize the seven daily summaries into one concise weekly memory as JSON.",
+            system=("Synthesize the daily summaries into one concise weekly memory. "
+                    "Respond ONLY with JSON matching " + schema + "."),
             user=json.dumps(daily)[:4000], context=context,
             agent_id=agent_id, tick=tick, max_tokens=240)
-        resp = await self.gw.complete(req)
+        resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         summary = str(env.get("summary", "")).strip()
         if not summary:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]
         importance = float(env.get("importance", max(r["importance"] for r in daily)))
-        self.mem.weekly_rollup(agent_id, tick, summary, importance)
+        return summary, importance

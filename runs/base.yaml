@@ -85,18 +85,18 @@ oracle:
 # To use real models, define providers and point roles at them, e.g.:
 #   providers:
 #     minimax: {kind: openai_compat, base_url: "https://api.minimax.io/v1", api_key_env: MINIMAX_API_KEY}
-#     kimi:    {kind: openai_compat, base_url: "https://api.moonshot.ai/v1", api_key_env: MOONSHOT_API_KEY}
+#     kimi:    {kind: openai_compat, base_url: "https://api.kimi.com/coding/v1", api_key_env: MOONSHOT_API_KEY}
 #     anthropic: {kind: anthropic, api_key_env: ANTHROPIC_API_KEY}
 #     claude_cli: {kind: cli, command: claude}          # Oracle/dev ONLY (enforced in code)
 #   routes:
-#     citizen:        {provider: minimax, model: MiniMax-M2.7}
-#     founder:        {provider: minimax, model: MiniMax-M2.7}
-#     conversation:   {provider: minimax, model: MiniMax-M2.7}
-#     memory:         {provider: minimax, model: MiniMax-M2.7}
-#     central_banker: {provider: kimi, model: kimi-k2.6}
-#     credit_officer: {provider: kimi, model: kimi-k2.6}
-#     editor:         {provider: kimi, model: kimi-k2.6}
-#     oracle:         {provider: kimi, model: kimi-k2.6}
+#     citizen:        {provider: minimax, model: MiniMax-M3}
+#     founder:        {provider: minimax, model: MiniMax-M3}
+#     conversation:   {provider: minimax, model: MiniMax-M3}
+#     memory:         {provider: minimax, model: MiniMax-M3}
+#     central_banker: {provider: kimi, model: kimi-for-coding}
+#     credit_officer: {provider: kimi, model: kimi-for-coding}
+#     editor:         {provider: kimi, model: kimi-for-coding}
+#     oracle:         {provider: kimi, model: kimi-for-coding}
 llm:
   concurrency: 8
   default_route: {provider: scripted, model: scripted}

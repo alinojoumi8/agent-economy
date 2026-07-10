@@ -72,13 +72,15 @@ application with one command and no Node.js runtime.
 
 The production profile is [runs/production.yaml](runs/production.yaml). It keeps
 the PRD's cheap-citizen/strong-seat split while using the providers' current
-official model IDs: `MiniMax-M2.7` and `kimi-k2.6`.
+official model IDs: Token Plan `MiniMax-M3` and Kimi Code's stable `kimi-for-coding`
+alias (currently K2.7 Code when Thinking is enabled).
 See the official [MiniMax OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api)
 and [Kimi API overview](https://platform.kimi.ai/docs/api/overview).
 
 ```bash
 copy .env.example .env
-# Fill MINIMAX_API_KEY and MOONSHOT_API_KEY in .env, then validate without inference:
+# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and MOONSHOT_API_KEY
+# with a Kimi Code membership key (sk-kimi-*), then validate without inference:
 python run.py --preflight
 
 # Optional live authentication/model-list check. This calls /models, not chat completion:

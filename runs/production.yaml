@@ -6,34 +6,43 @@ population:
   size: 87  # citizens + institutional staff/founders = approximately 100 agents
 
 llm:
-  concurrency: 8
+  # Safe for the Token Plan's documented 3-4 concurrent-agent entry tier.
+  concurrency: 3
   provider_retries: 1
   providers:
     minimax:
       kind: openai_compat
+      # Token Plan keys (sk-cp-*) use the standard international OpenAI-compatible URL.
       base_url: https://api.minimax.io/v1
       api_key_env: MINIMAX_API_KEY
+      timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_completion_tokens
       request_defaults:
         reasoning_split: true
+        # M3 may spend most of a 700-token ceiling on reasoning and truncate
+        # before emitting its JSON action envelope.
+        max_completion_tokens: 4096
     kimi:
       kind: openai_compat
-      base_url: https://api.moonshot.ai/v1
+      # The configured key is a Kimi Code membership key (sk-kimi-*), not a
+      # Moonshot pay-as-you-go key. These key families are not interchangeable.
+      base_url: https://api.kimi.com/coding/v1
       api_key_env: MOONSHOT_API_KEY
+      timeout_s: 180
       healthcheck_path: /models
-      max_tokens_field: max_completion_tokens
-      prompt_cache_key: true
+      max_tokens_field: max_tokens
       request_defaults:
-        thinking: {type: disabled}
-        temperature: 0.6
-  default_route: {provider: minimax, model: MiniMax-M2.7}
+        reasoning_effort: medium
+        temperature: 1.0
+        max_tokens: 4096
+  default_route: {provider: minimax, model: MiniMax-M3}
   routes:
-    citizen:        {provider: minimax, model: MiniMax-M2.7}
-    founder:        {provider: minimax, model: MiniMax-M2.7}
-    central_banker: {provider: kimi, model: kimi-k2.6}
-    credit_officer: {provider: kimi, model: kimi-k2.6}
-    reporter:       {provider: kimi, model: kimi-k2.6}
-    editor:         {provider: kimi, model: kimi-k2.6}
-    vc_partner:     {provider: kimi, model: kimi-k2.6}
-    oracle:         {provider: kimi, model: kimi-k2.6}
+    citizen:        {provider: minimax, model: MiniMax-M3}
+    founder:        {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: kimi, model: kimi-for-coding}
+    credit_officer: {provider: kimi, model: kimi-for-coding}
+    reporter:       {provider: kimi, model: kimi-for-coding}
+    editor:         {provider: kimi, model: kimi-for-coding}
+    vc_partner:     {provider: kimi, model: kimi-for-coding}
+    oracle:         {provider: kimi, model: kimi-for-coding}

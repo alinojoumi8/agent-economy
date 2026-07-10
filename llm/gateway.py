@@ -20,7 +20,9 @@ from .readiness import ProviderConfigurationError, validate_llm_config
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
 DEFAULT_PRICING = {
     "minimax-m3": {"in": 0.30, "out": 1.20, "cache": 0.06},
+    "MiniMax-M3": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "kimi-k2.7": {"in": 0.95, "out": 4.00, "cache": 0.19},
+    "kimi-for-coding": {"in": 0.95, "out": 4.00, "cache": 0.19},
     "MiniMax-M2.7": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "kimi-k2.6": {"in": 0.95, "out": 4.00, "cache": 0.16},
     "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00, "cache": 0.10},
@@ -278,7 +280,7 @@ class Gateway:
         provider_cache_key = f"{self.run_id}:{req.role}:{req.purpose}:{req.agent_id or 'shared'}"
 
         if self.replay:
-            replayed = self._replay_lookup(cache_key)
+            replayed = self._replay_lookup(cache_key, schema_hint)
             if replayed is not None:
                 response, source_row = replayed
                 self._log_replay_call(req, cache_key, source_row)
@@ -309,12 +311,17 @@ class Gateway:
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
         parsed, ok = self._parse(result.text)
+        if ok and schema_hint:
+            ok = self._matches_schema(parsed, schema_hint)
         if not ok and provider not in ("scripted", "mock"):
             # One repair retry with the parse error appended (TECH-SPEC §8 failure policy).
             initial_result = result
             repair = LLMRequest(
                 role=req.role, purpose=req.purpose, system=req.system,
-                user=req.user + "\n\nYour previous reply was not valid JSON. Reply ONLY with the JSON envelope.",
+                user=(req.user
+                      + "\n\nYour previous reply did not match the required JSON contract. "
+                        "Reply ONLY with the JSON object."
+                      + (f" Required shape: {schema_hint}" if schema_hint else "")),
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
             try:
@@ -342,6 +349,8 @@ class Gateway:
                     "initial": initial_result.raw, "final": repaired_result.raw}},
             )
             parsed, ok = self._parse(result.text)
+            if ok and schema_hint:
+                ok = self._matches_schema(parsed, schema_hint)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
 
@@ -393,6 +402,17 @@ class Gateway:
                 return {}, False
         return {}, False
 
+    @staticmethod
+    def _matches_schema(parsed: dict, schema_hint: str) -> bool:
+        """Validate required top-level keys from a JSON example schema hint."""
+        try:
+            expected = json.loads(schema_hint)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return True
+        if not isinstance(expected, dict) or not isinstance(parsed, dict):
+            return False
+        return all(key in parsed for key in expected)
+
     # ── caching + cost ───────────────────────────────────────────────────────
     def _price(self, model: str, in_tok: int, out_tok: int, cached_in: int,
                pricing: dict) -> tuple[bool, float]:
@@ -418,7 +438,7 @@ class Gateway:
                            "m": model, "msgs": req.messages()}, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
-    def _replay_lookup(self, cache_key: str):
+    def _replay_lookup(self, cache_key: str, schema_hint: str = ""):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
@@ -430,6 +450,11 @@ class Gateway:
         self._replay_positions[cache_key] = position + 1
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
+        if ok and schema_hint:
+            ok = self._matches_schema(parsed, schema_hint)
+        if not ok:
+            parsed = {"reasoning": "unparseable output; no-op",
+                      "actions": [{"type": "do_nothing"}]}
         response = LLMResponse(
             text=resp.get("text", ""), parsed=parsed, provider=row["provider"],
             model=row["model"], in_tokens=int(row["in_tokens"]),
