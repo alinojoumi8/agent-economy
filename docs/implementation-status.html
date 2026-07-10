@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Agent Economy — Implementation Status &amp; PRD Gap Assessment</title>
+  <style>
+    :root {
+      --ink: #172133;
+      --muted: #5c6678;
+      --line: #dce2ec;
+      --paper: #ffffff;
+      --canvas: #f3f6fb;
+      --navy: #172b4d;
+      --blue: #2156d8;
+      --blue-soft: #e9f0ff;
+      --green: #147a54;
+      --green-soft: #e8f7f0;
+      --amber: #9b5d00;
+      --amber-soft: #fff4d8;
+      --red: #b42335;
+      --red-soft: #ffeaed;
+      --slate-soft: #edf1f6;
+      --shadow: 0 16px 40px rgba(25, 42, 74, .09);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 15px/1.6 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); text-underline-offset: 2px; }
+    a:hover { text-decoration-thickness: 2px; }
+    code {
+      padding: .08rem .35rem;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #f7f9fc;
+      font: .9em ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .skip {
+      position: absolute;
+      left: -9999px;
+      top: 8px;
+      z-index: 10;
+      padding: 8px 12px;
+      background: var(--paper);
+    }
+    .skip:focus { left: 8px; }
+    .hero {
+      color: #fff;
+      background:
+        radial-gradient(circle at 88% 15%, rgba(80, 152, 255, .38), transparent 30%),
+        linear-gradient(135deg, #10213d 0%, #1e3765 58%, #234f9d 100%);
+      border-bottom: 1px solid rgba(255,255,255,.12);
+    }
+    .hero-inner, main, .nav-inner {
+      width: min(1500px, calc(100% - 40px));
+      margin-inline: auto;
+    }
+    .hero-inner { padding: 64px 0 42px; }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: #bcd2ff;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 1.04;
+      letter-spacing: -.035em;
+    }
+    .verdict {
+      max-width: 980px;
+      margin: 22px 0 0;
+      color: #e7efff;
+      font-size: clamp(17px, 2vw, 21px);
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin-top: 28px;
+      color: #c9d8f5;
+      font-size: 13px;
+    }
+    .meta a { color: #fff; }
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(14px);
+    }
+    .nav-inner {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      padding: 8px 0;
+      scrollbar-width: thin;
+    }
+    .topnav a {
+      flex: 0 0 auto;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: var(--navy);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .topnav a:hover { background: var(--blue-soft); color: var(--blue); }
+    main { padding: 34px 0 70px; }
+    section { scroll-margin-top: 76px; margin-top: 34px; }
+    .panel {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .panel-body { padding: 26px; }
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    h2 {
+      margin: 0;
+      color: var(--navy);
+      font-size: clamp(24px, 3vw, 34px);
+      letter-spacing: -.025em;
+    }
+    h3 { margin: 0 0 8px; color: var(--navy); font-size: 18px; }
+    p { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    .score-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .score-card {
+      position: relative;
+      overflow: hidden;
+      min-height: 185px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .score-card::after {
+      content: "";
+      position: absolute;
+      right: -30px;
+      bottom: -55px;
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: var(--blue-soft);
+    }
+    .score-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .score-value {
+      position: relative;
+      z-index: 1;
+      margin: 8px 0 2px;
+      color: var(--navy);
+      font-size: 58px;
+      font-weight: 850;
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+    .score-calc { position: relative; z-index: 1; color: var(--muted); font-size: 13px; }
+    .score-copy { position: relative; z-index: 1; margin-top: 14px; font-size: 14px; }
+    .method {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 20px;
+      margin-top: 18px;
+      padding: 20px 22px;
+      border: 1px solid #c9d8f8;
+      border-radius: 14px;
+      background: #f4f7ff;
+    }
+    .legend { display: flex; flex-wrap: wrap; align-content: start; gap: 8px; }
+    .pill, .status, .severity {
+      display: inline-block;
+      white-space: nowrap;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .pill, .status { padding: 7px 9px; }
+    .severity { padding: 6px 8px; }
+    .complete { background: var(--green-soft); color: var(--green); }
+    .substantial { background: var(--blue-soft); color: var(--blue); }
+    .partial { background: var(--amber-soft); color: var(--amber); }
+    .absent { background: var(--red-soft); color: var(--red); }
+    .critical { background: #8f1730; color: #fff; }
+    .high { background: var(--red-soft); color: var(--red); }
+    .medium { background: var(--amber-soft); color: var(--amber); }
+    .none { background: var(--green-soft); color: var(--green); }
+    .inventory-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .inventory-card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fbfcfe;
+    }
+    .inventory-card p { margin: 6px 0 10px; color: var(--muted); font-size: 13px; }
+    .inventory-card .proof { color: var(--ink); font-size: 12px; font-weight: 750; }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #f9fbfe;
+    }
+    button, input {
+      font: inherit;
+    }
+    .filter-button {
+      padding: 8px 12px;
+      border: 1px solid #cbd4e3;
+      border-radius: 9px;
+      color: var(--navy);
+      background: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .filter-button:hover, .filter-button.active {
+      border-color: var(--blue);
+      color: #fff;
+      background: var(--blue);
+    }
+    .filter-search {
+      min-width: min(330px, 100%);
+      margin-left: auto;
+      padding: 8px 11px;
+      border: 1px solid #cbd4e3;
+      border-radius: 9px;
+      background: #fff;
+    }
+    .filter-search:focus, .filter-button:focus-visible {
+      outline: 3px solid rgba(33,86,216,.22);
+      outline-offset: 2px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .requirements { min-width: 1500px; }
+    .tech-table { min-width: 850px; }
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      color: #41506a;
+      background: #f2f5fa;
+      font-size: 11px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    tbody tr:hover { background: #f9fbff; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.requirement { min-width: 230px; }
+    td.evidence, td.gap, td.close { min-width: 260px; }
+    .weight { color: var(--muted); font-size: 11px; }
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .phase {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #fff;
+    }
+    .phase-num {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .track {
+      height: 8px;
+      margin: 12px 0;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #e8edf5;
+    }
+    .track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2156d8, #43a2ff); }
+    .phase p { color: var(--muted); font-size: 13px; }
+    .gap-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .gap-card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--amber);
+      border-radius: 12px;
+      background: #fff;
+    }
+    .gap-card.critical-card { border-left-color: var(--red); }
+    .gap-card p { color: var(--muted); }
+    .roadmap {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: road;
+    }
+    .roadmap li {
+      counter-increment: road;
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 15px;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .roadmap li:last-child { border-bottom: 0; }
+    .roadmap li::before {
+      content: counter(road);
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border-radius: 12px;
+      color: #fff;
+      background: var(--navy);
+      font-size: 17px;
+      font-weight: 850;
+    }
+    .roadmap strong { display: block; margin-bottom: 3px; color: var(--navy); font-size: 16px; }
+    .snapshot {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .snapshot > div {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+    }
+    .snapshot dt {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .snapshot dd { margin: 5px 0 0; font-weight: 750; }
+    .callout {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-left: 4px solid var(--blue);
+      border-radius: 8px;
+      background: var(--blue-soft);
+    }
+    footer {
+      padding: 28px 20px 45px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+    [hidden] { display: none !important; }
+    @media (max-width: 1000px) {
+      .score-grid, .inventory-grid, .phase-grid, .snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .method { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 680px) {
+      .hero-inner, main, .nav-inner { width: min(100% - 24px, 1500px); }
+      .hero-inner { padding: 44px 0 34px; }
+      .score-grid, .inventory-grid, .phase-grid, .gap-grid, .snapshot { grid-template-columns: 1fr; }
+      .panel-body { padding: 19px; }
+      .filter-search { width: 100%; margin-left: 0; }
+      .section-head { align-items: start; flex-direction: column; }
+    }
+    @media print {
+      @page { margin: 14mm; size: landscape; }
+      body { background: #fff; color: #000; font-size: 10pt; }
+      .hero { color: #000; background: #fff; border-bottom: 2px solid #000; }
+      .hero-inner { padding: 0 0 16px; }
+      .eyebrow, .verdict, .meta { color: #000; }
+      .topnav, .filters, .skip { display: none !important; }
+      main { width: 100%; padding: 0; }
+      section { margin-top: 18px; break-inside: avoid; }
+      .panel, .score-card { box-shadow: none; }
+      .score-grid { grid-template-columns: repeat(3, 1fr); }
+      .inventory-grid { grid-template-columns: repeat(3, 1fr); }
+      .phase-grid { grid-template-columns: repeat(4, 1fr); }
+      .gap-grid { grid-template-columns: repeat(2, 1fr); }
+      .table-wrap { overflow: visible; }
+      .requirements, .tech-table { min-width: 0; font-size: 7pt; }
+      th, td { padding: 5px; }
+      thead th { position: static; }
+      tr[hidden] { display: table-row !important; }
+      a { color: #000; text-decoration: none; }
+      footer { padding: 16px 0 0; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to assessment</a>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Frozen implementation assessment</p>
+      <h1>Agent Economy<br>PRD gap assessment</h1>
+      <p class="verdict"><strong>A feature-rich functional prototype, but not yet PRD-v1 complete.</strong> Core P0/P1 construction is advanced; real-provider validation, exact acceptance gates, and locked stack fidelity remain the critical path.</p>
+      <div class="meta">
+        <span>Assessed 2026-07-10</span>
+        <span>Baseline <code>main@363a91a</code></span>
+        <span><a href="../PRD.md">PRD v1.0</a> · Draft for review</span>
+        <span><a href="../TECH-SPEC.md">Technical Specification v1.0</a></span>
+        <span><a href="implementation-status.md">Canonical Markdown</a></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="topnav" aria-label="Report sections">
+    <div class="nav-inner">
+      <a href="#scorecard">Scorecard</a>
+      <a href="#inventory">Built</a>
+      <a href="#requirements">Requirements</a>
+      <a href="#technical">Spec fidelity</a>
+      <a href="#phases">Phases</a>
+      <a href="#gaps">Gaps</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#verification">Verification</a>
+      <a href="#p2">P2 deferred</a>
+    </div>
+  </nav>
+
+  <main id="content">
+    <section id="scorecard" aria-labelledby="scorecard-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color:var(--blue)">Three independent lenses</p>
+          <h2 id="scorecard-title">Implementation scorecard</h2>
+        </div>
+        <p class="muted">Calculated from the weighted rows below.</p>
+      </div>
+      <div class="score-grid">
+        <article class="score-card">
+          <div class="score-label">Feature coverage</div>
+          <div class="score-value" id="feature-score">87%</div>
+          <div class="score-calc" id="feature-calc">14.75 / 17 = 86.8%</div>
+          <p class="score-copy">How much of the P0/P1 capability surface has substantive implementation.</p>
+        </article>
+        <article class="score-card">
+          <div class="score-label">Acceptance proof</div>
+          <div class="score-value" id="proof-score">63%</div>
+          <div class="score-calc" id="proof-calc">10.75 / 17 = 63.2%</div>
+          <p class="score-copy">How much of the exact PRD acceptance contract has repeatable evidence.</p>
+        </article>
+        <article class="score-card">
+          <div class="score-label">Technical-spec fidelity</div>
+          <div class="score-value" id="tech-score">64%</div>
+          <div class="score-calc" id="tech-calc">9.00 / 14 = 64.3%</div>
+          <p class="score-copy">How closely implementation follows the locked stack, runtime, and test strategy.</p>
+        </article>
+      </div>
+      <div class="method">
+        <div>
+          <h3>Method</h3>
+          <p>Each row is scored independently. Feature and proof scores use the 17 P0/P1 requirements; technical fidelity uses 14 commitments. P2 is intentionally excluded. These scores should not be combined into one delivery percentage.</p>
+        </div>
+        <div class="legend" aria-label="Scoring legend">
+          <span class="pill complete">Complete · 1.00</span>
+          <span class="pill substantial">Substantial · 0.75</span>
+          <span class="pill partial">Partial · 0.50</span>
+          <span class="pill absent">Absent · 0.00</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="inventory" aria-labelledby="inventory-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color:var(--blue)">Current product surface</p>
+          <h2 id="inventory-title">What has been built</h2>
+        </div>
+      </div>
+      <div class="inventory-grid">
+        <article class="inventory-card"><h3>Economic kernel</h3><p>Double-entry ledger, action validation, tick loop, reconciliation, metrics, and checkpoints.</p><div class="proof">Tested · <a href="../engine/ledger.py">ledger</a> · <a href="../tests/test_ledger.py">tests</a></div></article>
+        <article class="inventory-card"><h3>Agents &amp; LLM gateway</h3><p>Runtime, personas, context, memory tiers, scripted policies, adapters, routing, parsing, logging, and governor.</p><div class="proof">Implemented · <a href="../agents/runtime.py">runtime</a> · <a href="../llm/gateway.py">gateway</a></div></article>
+        <article class="inventory-card"><h3>Banks &amp; credit</h3><p>Deposits, reserves, loans, amortization, defaults, settlement, bank failure, and bankruptcy waterfall.</p><div class="proof">Tested · <a href="../engine/credit.py">engine</a> · <a href="../tests/test_credit_and_firms.py">tests</a></div></article>
+        <article class="inventory-card"><h3>Firms &amp; labor</h3><p>Founding/legal checks, payroll, hiring, firing, production, sales, borrowing, distress, and ownership.</p><div class="proof">Implemented · <a href="../engine/firms.py">firms</a> · <a href="../engine/labor.py">labor</a></div></article>
+        <article class="inventory-card"><h3>Securities market</h3><p>Order book, price-time priority, partial fills, holdings checks, trades, and circuit breakers.</p><div class="proof">Tested · <a href="../engine/exchange.py">exchange</a> · <a href="../tests/test_exchange.py">tests</a></div></article>
+        <article class="inventory-card"><h3>Information economy</h3><p>Reporter/editor newsroom, articles, conversations, rumors, belief/trust changes, and event storage.</p><div class="proof">Reduced-scale tested · <a href="../world/newsroom.py">newsroom</a></div></article>
+        <article class="inventory-card"><h3>Oracle</h3><p>Questions, forecasts, deterministic resolution, Brier scoring, scorecard, and calibration decomposition.</p><div class="proof">Implemented/tested · <a href="../oracle/analyst.py">analyst</a></div></article>
+        <article class="inventory-card"><h3>Shocks</h3><p>Rumor, bank panic, rate change, productivity, market halt, and epidemic controls.</p><div class="proof">Implemented · <a href="../world/shocks.py">shock engine</a></div></article>
+        <article class="inventory-card"><h3>Lifecycle &amp; health</h3><p>Sickness, death, estates, arrivals, medical billing, hospitals, insurers, premiums, and epidemics.</p><div class="proof">Tested · <a href="../engine/lifecycle.py">lifecycle</a></div></article>
+        <article class="inventory-card"><h3>Government &amp; VC</h3><p>Tax, benefits, elections, policy shifts, pitches, cap tables, follow-ons, and write-offs.</p><div class="proof">Tested · <a href="../tests/test_p1_features.py">P1 suite</a></div></article>
+        <article class="inventory-card"><h3>Experiments &amp; replay</h3><p>Treatment/control harness, effect reports, replay catalogue/ticks, checkpoints, resume, and forks.</p><div class="proof">Tested at small N · <a href="../experiments/harness.py">harness</a></div></article>
+        <article class="inventory-card"><h3>Reports &amp; observatory</h3><p>Markdown/HTML reports plus FastAPI, WebSocket, live panels, controls, shocks, Oracle, and replay UI.</p><div class="proof">Implemented/manually observed · <a href="../server/app.py">server</a></div></article>
+      </div>
+    </section>
+
+    <section id="requirements" aria-labelledby="requirements-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color:var(--blue)">P0 and P1</p>
+          <h2 id="requirements-title">Requirement-by-requirement assessment</h2>
+        </div>
+        <p class="muted" id="visible-count" aria-live="polite">Showing 17 of 17</p>
+      </div>
+      <div class="panel">
+        <div class="filters" aria-label="Requirement filters">
+          <button type="button" class="filter-button active" data-filter="all">All</button>
+          <button type="button" class="filter-button" data-filter="p0">P0 only</button>
+          <button type="button" class="filter-button" data-filter="p1">P1 only</button>
+          <button type="button" class="filter-button" data-filter="gaps">Open gaps</button>
+          <label for="requirement-search" class="skip">Search requirements</label>
+          <input id="requirement-search" class="filter-search" type="search" placeholder="Search requirement, evidence, or gap">
+        </div>
+        <div class="table-wrap">
+          <table class="requirements">
+            <thead>
+              <tr>
+                <th scope="col">ID</th>
+                <th scope="col">Priority</th>
+                <th scope="col">Requirement</th>
+                <th scope="col">Feature</th>
+                <th scope="col">Proof</th>
+                <th scope="col">Evidence</th>
+                <th scope="col">Remaining gap</th>
+                <th scope="col">Evidence required to close</th>
+                <th scope="col">Severity</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-priority="p0" data-feature="1" data-proof=".75" data-open="true">
+                <td><strong>R1</strong></td><td>P0</td><td class="requirement"><strong>Conserved double-entry ledger</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td class="evidence"><strong>Tested:</strong> <a href="../tests/test_ledger.py">invariants/tamper</a> and <a href="../tests/test_governor_and_world.py">30-tick reconciliation</a>.</td>
+                <td class="gap">No active-run test proves that failed reconciliation both halts and emits the required diagnostic.</td>
+                <td class="close">Inject corruption during a running world; assert halt, diagnostic event, and no later tick commit.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".5" data-proof=".5" data-open="true">
+                <td><strong>R2</strong></td><td>P0</td><td class="requirement"><strong>LLM runtime, persona, memory, decisions, inspector</strong></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Implemented:</strong> <a href="../agents/runtime.py">runtime</a>, <a href="../agents/memory.py">memory</a>, <a href="../llm/gateway.py">gateway</a>, and inspector. <strong>Observed:</strong> scripted decision fields.</td>
+                <td class="gap">Default is scripted; real MiniMax/Kimi decisions and near-100 population are unproven. Weekly rollup is not true consolidation.</td>
+                <td class="close">Run locked routes near 100 agents; verify prompt, response, action, memory rollup, and inspector for each role.</td>
+                <td><span class="severity critical">Critical</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R3</strong></td><td>P0</td><td class="requirement"><strong>Banks, firms, labor, goods, complete company lifecycle</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> loan payoff/default, bankruptcy, bank failure, payroll, and world integration in <a href="../tests/test_credit_and_firms.py">credit/firm tests</a>.</td>
+                <td class="gap">No single production-flow test covers lawyer, loan, hiring, payroll, revenue, distress, and bankruptcy.</td>
+                <td class="close">Add one deterministic end-to-end company lifecycle with reconciliation at every stage.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature="1" data-proof="1" data-open="false">
+                <td><strong>R4</strong></td><td>P0</td><td class="requirement"><strong>Order book, IPO, market index</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td class="evidence"><strong>Tested:</strong> price-time priority, partial fills, ownership, trade-derived prices, and circuit breaking in <a href="../tests/test_exchange.py">exchange tests</a>.</td>
+                <td class="gap">No material PRD-v1 blocker identified.</td>
+                <td class="close">Preserve existing regression coverage as market behavior changes.</td>
+                <td><span class="severity none">None</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature="1" data-proof=".5" data-open="true">
+                <td><strong>R5</strong></td><td>P0</td><td class="requirement"><strong>News, conversations, rumor pilot</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> reporter/editor order and reduced-scale rumor movement in <a href="../tests/test_governor_and_world.py">world tests</a>.</td>
+                <td class="gap">Exact five-conversation, trust-cohort, 0.2-drop, 25%-exposure, and two-times-outflow gates are not asserted.</td>
+                <td class="close">Implement the exact pilot with exposure cohort, baseline window, thresholds, and deterministic seed.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R6</strong></td><td>P0</td><td class="requirement"><strong>Oracle prediction, resolution, Brier score</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> prediction record, resolution, Brier, and insufficient-data handling in <a href="../tests/test_governor_and_world.py">Oracle tests</a>.</td>
+                <td class="gap">Shortened scripted horizon does not prove real response below 60 seconds or exact 30-tick resolution.</td>
+                <td class="close">Run a real-provider latency benchmark and 30-tick automatic-resolution acceptance test.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature="1" data-proof=".5" data-open="true">
+                <td><strong>R7</strong></td><td>P0</td><td class="requirement"><strong>Run control, governor, cap, visible degradation</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> governor stages, checkpoint/resume, and deterministic world. <strong>Implemented:</strong> controls and live cost state.</td>
+                <td class="gap">No 365-day real-provider proof for the $200 cap, safe provider-failure pause, and visible degradation stages.</td>
+                <td class="close">Add 60/80/95/100% fake-cost tests, failure tests, and a full real-provider budget run.</td>
+                <td><span class="severity critical">Critical</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R8</strong></td><td>P0</td><td class="requirement"><strong>Live observatory dashboard</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Implemented/observed:</strong> REST/WebSocket panels, controls, inspector, shocks, and replay in <a href="../server/static/index.html">dashboard</a>.</td>
+                <td class="gap">No sub-two-second proof; 925-line monolith has responsive/accessibility debt. Onboarding remained “Day 0” at day 47.</td>
+                <td class="close">Instrument WebSocket latency; add responsive/accessibility checks and onboarding-state regression.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature="1" data-proof=".5" data-open="true">
+                <td><strong>R9</strong></td><td>P0</td><td class="requirement"><strong>Minimum shock catalogue and downstream effects</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Implemented:</strong> six shock kinds. <strong>Tested:</strong> rumor, epidemic multiplier, and circuit breaker across the suite.</td>
+                <td class="gap">No parameterized acceptance suite proves a downstream economic effect for each minimum PRD shock.</td>
+                <td class="close">Add one deterministic scenario per required shock with event and metric/ledger assertions.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R10</strong></td><td>P0</td><td class="requirement"><strong>Automatic end-of-run report</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Implemented:</strong> narrative, timeline, charts, Oracle, cost, config, and seed in <a href="../reports/generate.py">report generator</a>; headless auto-generation.</td>
+                <td class="gap">Interactive Stop does not auto-generate; no test validates the complete report contract.</td>
+                <td class="close">Generate after stopped state and test all required Markdown/HTML sections and values.</td>
+                <td><span class="severity medium">Medium</span></td>
+              </tr>
+              <tr data-priority="p0" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R11</strong></td><td>P0</td><td class="requirement"><strong>Two-year lifecycle acceptance</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> estates, debts, heir/escheat, deterministic schedules, sickness, wage loss, hospitals, and insurers.</td>
+                <td class="gap">No 730-tick run proves representative lifecycle events and arrival housing/job integration within ten ticks.</td>
+                <td class="close">Add a seeded two-year scenario with forced events, exact arrival integration, and continuous reconciliation.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature="1" data-proof="1" data-open="false">
+                <td><strong>R12</strong></td><td>P1</td><td class="requirement"><strong>Government and elections</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td class="evidence"><strong>Tested:</strong> withholding, benefits, bounded election shifts, integration, and determinism in <a href="../tests/test_p1_features.py">P1 tests</a>.</td>
+                <td class="gap">No material P1 capability blocker; long-run realism is calibration work.</td>
+                <td class="close">Preserve tests and add calibration evidence when full real-provider runs exist.</td>
+                <td><span class="severity none">None</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature="1" data-proof="1" data-open="false">
+                <td><strong>R13</strong></td><td>P1</td><td class="requirement"><strong>Venture capital</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td class="evidence"><strong>Tested:</strong> pitch, investment, cap table, decline, follow-on, and write-off in <a href="../tests/test_p1_features.py">P1 tests</a>.</td>
+                <td class="gap">No material P1 capability blocker.</td>
+                <td class="close">Preserve current coverage and add cross-run portfolio metrics later.</td>
+                <td><span class="severity none">None</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature="1" data-proof=".75" data-open="true">
+                <td><strong>R14</strong></td><td>P1</td><td class="requirement"><strong>Experiment harness</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td class="evidence"><strong>Tested:</strong> treatment/control, effect distribution, and report artifacts in <a href="../tests/test_p1_harness_and_tools.py">harness tests</a>.</td>
+                <td class="gap">Committed evidence does not reach the five-seed lagging-success target.</td>
+                <td class="close">Archive a deterministic five-seed experiment with config, seeds, distribution, and reproduction command.</td>
+                <td><span class="severity medium">Medium</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R15</strong></td><td>P1</td><td class="requirement"><strong>Oracle calibration dashboard</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> decomposition identity. <strong>Implemented:</strong> calibration calculation and dashboard/report presentation.</td>
+                <td class="gap">No meaningful multi-run set of resolved real-provider predictions demonstrates calibration quality.</td>
+                <td class="close">Accumulate full-run predictions and verify bins, decomposition, baseline, and rendering.</td>
+                <td><span class="severity medium">Medium</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature=".75" data-proof=".5" data-open="true">
+                <td><strong>R16</strong></td><td>P1</td><td class="requirement"><strong>Replay UI</strong></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td><span class="status partial">Partial</span><div class="weight">0.50</div></td>
+                <td class="evidence"><strong>Tested:</strong> list/tick paging, checkpoint/resume, golden fixture, and parent-preserving forks in <a href="../tests/test_p1_harness_and_tools.py">tool tests</a>.</td>
+                <td class="gap">State viewing works; 100% exact re-execution using stored real LLM outputs is not checksum-proven.</td>
+                <td class="close">Replay a real run; compare ordered event, ledger, metric, and terminal-state hashes.</td>
+                <td><span class="severity high">High</span></td>
+              </tr>
+              <tr data-priority="p1" data-feature="1" data-proof=".75" data-open="true">
+                <td><strong>R17</strong></td><td>P1</td><td class="requirement"><strong>Health economy</strong></td>
+                <td><span class="status complete">Complete</span><div class="weight">1.00</div></td>
+                <td><span class="status substantial">Substantial</span><div class="weight">0.75</div></td>
+                <td class="evidence"><strong>Tested:</strong> medical split, premiums, lapses, epidemic multiplier, world integration, and determinism in <a href="../tests/test_p1_features.py">P1 tests</a>.</td>
+                <td class="gap">Long-run actuarial behavior and institution solvency are unproven in a full real-provider economy.</td>
+                <td class="close">Add a long-run scenario with solvency, incidence, claims, premiums, and reconciliation assertions.</td>
+                <td><span class="severity medium">Medium</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="technical" aria-labelledby="technical-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color:var(--blue)">Fourteen audited commitments</p>
+          <h2 id="technical-title">Technical-spec fidelity</h2>
+        </div>
+      </div>
+      <div class="panel table-wrap">
+        <table class="tech-table">
+          <thead><tr><th scope="col">Commitment</th><th scope="col">Status</th><th scope="col">Weight</th><th scope="col">Evidence and divergence</th></tr></thead>
+          <tbody id="technical-rows">
+            <tr data-weight="1"><td><strong>T1 — Layered dashboard/API/kernel/provider/store architecture</strong></td><td><span class="status complete">Complete</span></td><td>1.00</td><td>FastAPI, WebSocket, Python kernel, gateway, and SQLite boundaries are present.</td></tr>
+            <tr data-weight="1"><td><strong>T2 — Python, FastAPI, SQLite WAL stack</strong></td><td><span class="status complete">Complete</span></td><td>1.00</td><td>The selected backend/store stack is implemented; one database represents a run.</td></tr>
+            <tr data-weight=".75"><td><strong>T3 — Tick phases and cadence</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Deterministic phased ticks exist; full production cadence under real-provider load is unproven.</td></tr>
+            <tr data-weight=".75"><td><strong>T4 — Persisted data model</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Core entities exist; schema-level conformance testing is absent.</td></tr>
+            <tr data-weight=".75"><td><strong>T5 — Structured action contract and validation</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Parsing/validation and no-op fallback exist; randomized valid-action property tests do not.</td></tr>
+            <tr data-weight=".5"><td><strong>T6 — Short, daily, consolidated weekly memory</strong></td><td><span class="status partial">Partial</span></td><td>0.50</td><td>Memory tiers exist, but weekly handling demotes old daily summaries instead of synthesizing a new weekly summary.</td></tr>
+            <tr data-weight=".75"><td><strong>T7 — Gateway routing, concurrency, retry, budget, logging</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Adapters, concurrency 8, one repair retry, pricing, logging, and governor exist; native caching/failure proof is absent.</td></tr>
+            <tr data-weight="0"><td><strong>T8 — Locked MiniMax M3/Kimi K2.7 default mix</strong></td><td><span class="status absent">Absent</span></td><td>0.00</td><td><a href="../runs/base.yaml">Base config</a> comments out providers/routes and defaults every role to scripted.</td></tr>
+            <tr data-weight=".75"><td><strong>T9 — Deterministic market mechanics</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Exchange, credit, firms, labor, and settlement are substantial; complete company-flow acceptance is missing.</td></tr>
+            <tr data-weight=".75"><td><strong>T10 — Seeded lifecycle mechanics</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Death, estates, sickness, medical flows, arrivals, and schedules exist; exact two-year acceptance is missing.</td></tr>
+            <tr data-weight="0"><td><strong>T11 — React, Vite, Tailwind, Recharts dashboard</strong></td><td><span class="status absent">Absent</span></td><td>0.00</td><td>Current dashboard is static HTML/CSS/JS; no specified dashboard application exists.</td></tr>
+            <tr data-weight=".5"><td><strong>T12 — Unit, property, golden-run, cost strategy</strong></td><td><span class="status partial">Partial</span></td><td>0.50</td><td>39 deterministic tests and a golden fixture exist; random property and complete cost-threshold suites do not.</td></tr>
+            <tr data-weight=".75"><td><strong>T13 — Determinism, checkpoints, resume, replay, forks</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Core mechanisms are tested; full real-LLM replay equality is unproven.</td></tr>
+            <tr data-weight=".75"><td><strong>T14 — Repository layout and phased build order</strong></td><td><span class="status substantial">Substantial</span></td><td>0.75</td><td>Most subsystems and phase-four features exist; React package and real-provider scale milestones are incomplete.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="phases" aria-labelledby="phases-title">
+      <div class="section-head"><div><p class="eyebrow" style="color:var(--blue)">Milestone view</p><h2 id="phases-title">Phase progress</h2></div></div>
+      <div class="phase-grid">
+        <article class="phase"><div class="phase-num">Phase 1 · Complete</div><h3>Kernel &amp; accounting</h3><div class="track"><span style="width:100%"></span></div><p>Ledger, validation, deterministic kernel, scripted mechanics, reconciliation, and invariants work. Add the active-run halt proof.</p></article>
+        <article class="phase"><div class="phase-num">Phase 2 · Substantial</div><h3>Agents &amp; markets</h3><div class="track"><span style="width:75%"></span></div><p>Runtime, memory, gateway, banks, firms, labor, exchange, and checkpoints work. Prove real routes near 100 agents.</p></article>
+        <article class="phase"><div class="phase-num">Phase 3 · Substantial</div><h3>Information &amp; observatory</h3><div class="track"><span style="width:75%"></span></div><p>News, conversations, Oracle, shocks, reports, and dashboard exist. Meet exact quantitative gates and frontend spec.</p></article>
+        <article class="phase"><div class="phase-num">Phase 4 · Substantial</div><h3>P1 expansion</h3><div class="track"><span style="width:75%"></span></div><p>Government, VC, experiments, calibration, replay, and health are unusually complete. Long-run evidence remains.</p></article>
+      </div>
+    </section>
+
+    <section id="gaps" aria-labelledby="gaps-title">
+      <div class="section-head"><div><p class="eyebrow" style="color:var(--blue)">Distance to PRD-v1</p><h2 id="gaps-title">Principal gaps and risks</h2></div></div>
+      <div class="gap-grid">
+        <article class="gap-card critical-card"><span class="severity critical">Critical</span><h3 style="margin-top:10px">Locked runtime is not the default runtime</h3><p>The default routes every role to scripted behavior. Real MiniMax/Kimi cost, latency, failure handling, and the approximately 100-agent operating envelope remain unproven; the observed local run had about 83 agents.</p></article>
+        <article class="gap-card critical-card"><span class="severity high">High</span><h3 style="margin-top:10px">Acceptance evidence trails implementation</h3><p>The 39 deterministic tests prove mechanics, but shortened scripted scenarios do not establish the exact rumor, shocks, two-year lifecycle, dashboard latency, 365-day budget, Oracle latency, and replay gates.</p></article>
+        <article class="gap-card"><span class="severity high">High</span><h3 style="margin-top:10px">Dashboard stack diverges</h3><p>The API boundary is replaceable, but the current 65 KB, 925-line static page combines layout, state, rendering, and interaction. This increases maintainability, responsive, accessibility, and UI regression risk.</p></article>
+        <article class="gap-card"><span class="severity medium">Medium</span><h3 style="margin-top:10px">Completion-path polish</h3><p>Interactive Stop does not auto-generate a report; weekly summaries are not synthesized; provider-native caching is unproven; and exact real-provider replay is not checksum-verified.</p></article>
+      </div>
+    </section>
+
+    <section id="roadmap" aria-labelledby="roadmap-title">
+      <div class="section-head"><div><p class="eyebrow" style="color:var(--blue)">Ordered by PRD impact</p><h2 id="roadmap-title">Roadmap to PRD-v1 completion</h2></div></div>
+      <div class="panel panel-body">
+        <ol class="roadmap">
+          <li><div><strong>Prove the locked real-LLM operating envelope.</strong>Enable MiniMax M3 and Kimi K2.7 role routes, scale near 100 agents, capture cost/latency/failure telemetry, and finish 365 days under $200.</div></li>
+          <li><div><strong>Turn PRD gates into executable acceptance tests.</strong>Add exact rumor, shock effects, WebSocket latency, two-year lifecycle/arrival, Oracle, governor, and reconciliation-halt cases.</div></li>
+          <li><div><strong>Resolve the observatory architecture decision.</strong>Build the specified React/Vite/Tailwind/Recharts client against the existing REST/WebSocket contract with responsive, accessibility, and UI regression coverage.</div></li>
+          <li><div><strong>Close completion-path gaps.</strong>Generate reports after interactive Stop, synthesize weekly memory, prove native prompt caching, and checksum real stored-response replay.</div></li>
+          <li><div><strong>Produce lagging-success evidence.</strong>Run at least five experiment seeds, accumulate resolved Oracle forecasts, quantify emergent phenomena, verify all five shocks, and package reproducible reports/configs.</div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="verification" aria-labelledby="verification-title">
+      <div class="section-head"><div><p class="eyebrow" style="color:var(--blue)">Frozen evidence</p><h2 id="verification-title">Verification snapshot</h2></div></div>
+      <div class="panel panel-body">
+        <dl class="snapshot">
+          <div><dt>Baseline</dt><dd><code>main@363a91a</code></dd></div>
+          <div><dt>Automated suite</dt><dd>39 tests passed</dd></div>
+          <div><dt>Command</dt><dd><code>python -m pytest tests/ -q</code></dd></div>
+          <div><dt>Determinism</dt><dd>Same-seed, lifecycle, P1, golden fixture, resume, fork</dd></div>
+          <div><dt>Manual observatory</dt><dd>Run/pause/step, inspector, six shocks, replay</dd></div>
+          <div><dt>Manual UI defect</dt><dd>“Day 0” onboarding persisted at day 47</dd></div>
+        </dl>
+        <div class="callout"><strong>Evidence policy:</strong> committed code and tests carry more weight than generated local run databases and reports. Scripted behavior earns feature credit where mechanics are real, but not full proof where the PRD explicitly requires real LLM behavior.</div>
+      </div>
+    </section>
+
+    <section id="p2" aria-labelledby="p2-title">
+      <div class="section-head"><div><p class="eyebrow" style="color:var(--blue)">Not in the denominator</p><h2 id="p2-title">Deferred P2 work</h2></div></div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th scope="col">Future requirement</th><th scope="col">Current assessment</th></tr></thead>
+          <tbody>
+            <tr><td><strong>R18 — Participant mode</strong></td><td>Intentionally outside v1 completion; preserve observer-only constraints.</td></tr>
+            <tr><td><strong>R19 — Approximately 1,000 agents</strong></td><td>Not assessed against launch acceptance; avoid blocking later store/runtime scaling.</td></tr>
+            <tr><td><strong>R20 — Regions and foreign exchange</strong></td><td>Not a required current-world surface.</td></tr>
+            <tr><td><strong>R21 — Real-data calibration</strong></td><td>Future ingestion should be reproducible and provenance-aware.</td></tr>
+            <tr><td><strong>R22 — Hosted multi-user service</strong></td><td>Current local observatory is appropriate for v1; auth/tenancy remain future concerns.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Canonical source: <a href="implementation-status.md">implementation-status.md</a> · Frozen against PRD v1.0, Technical Specification v1.0, and <code>363a91a</code>.
+  </footer>
+
+  <script>
+    (function () {
+      "use strict";
+      var rows = Array.prototype.slice.call(document.querySelectorAll("#requirements tbody tr"));
+      var techRows = Array.prototype.slice.call(document.querySelectorAll("#technical-rows tr"));
+      var buttons = Array.prototype.slice.call(document.querySelectorAll(".filter-button"));
+      var search = document.getElementById("requirement-search");
+      var activeFilter = "all";
+
+      function sum(items, attribute) {
+        return items.reduce(function (total, row) {
+          return total + Number(row.getAttribute(attribute) || 0);
+        }, 0);
+      }
+
+      function setScore(valueId, calcId, total, denominator) {
+        var raw = total / denominator * 100;
+        document.getElementById(valueId).textContent = Math.round(raw) + "%";
+        document.getElementById(calcId).textContent =
+          total.toFixed(2) + " / " + denominator + " = " + raw.toFixed(1) + "%";
+      }
+
+      setScore("feature-score", "feature-calc", sum(rows, "data-feature"), rows.length);
+      setScore("proof-score", "proof-calc", sum(rows, "data-proof"), rows.length);
+      setScore("tech-score", "tech-calc", sum(techRows, "data-weight"), techRows.length);
+
+      function applyFilters() {
+        var query = search.value.trim().toLowerCase();
+        var visible = 0;
+        rows.forEach(function (row) {
+          var matchesGroup =
+            activeFilter === "all" ||
+            row.getAttribute("data-priority") === activeFilter ||
+            (activeFilter === "gaps" && row.getAttribute("data-open") === "true");
+          var matchesSearch = !query || row.textContent.toLowerCase().indexOf(query) !== -1;
+          row.hidden = !(matchesGroup && matchesSearch);
+          if (!row.hidden) visible += 1;
+        });
+        document.getElementById("visible-count").textContent =
+          "Showing " + visible + " of " + rows.length;
+      }
+
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          activeFilter = button.getAttribute("data-filter");
+          buttons.forEach(function (item) {
+            item.classList.toggle("active", item === button);
+          });
+          applyFilters();
+        });
+      });
+      search.addEventListener("input", applyFilters);
+    }());
+  </script>
+</body>
+</html>
