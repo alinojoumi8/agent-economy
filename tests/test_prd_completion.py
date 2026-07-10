@@ -79,6 +79,24 @@ def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
     assert "accounts" in changed["differences"]
 
 
+def test_resume_restores_persisted_run_status(tmp_path):
+    cfg = _config(tmp_path)
+    store, world, run_id = open_run(cfg, None, None, data_dir=tmp_path)
+    world.status = "finished"
+    store.set_meta(status="finished")
+    store.commit()
+    store.close()
+
+    resumed_store, resumed_world, resumed_id = open_run(
+        cfg, run_id, None, data_dir=tmp_path)
+    try:
+        assert resumed_id == run_id
+        assert resumed_world.status == "finished"
+        assert resumed_store.get_meta()["status"] == "finished"
+    finally:
+        resumed_store.close()
+
+
 def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
     cfg = _config(tmp_path)
     source_store, source_world, source_id = open_run(
@@ -172,12 +190,12 @@ def test_kimi_code_compatibility_profile_uses_only_membership_aliases():
     assert cfg["llm"]["providers"]["kimi"]["base_url"] == \
         "https://api.kimi.com/coding/v1"
     assert cfg["llm"]["providers"]["kimi"]["api_key_env"] == \
-        "MOONSHOT_API_KEY"
+        "KIMI_API_KEY"
     assert cfg["llm"]["routes"]["oracle"] == {
         "provider": "kimi", "model": "kimi-for-coding"}
     ready = validate_llm_config(
         cfg, environ={"MINIMAX_API_KEY": "sk-cp-present",
-                      "MOONSHOT_API_KEY": "sk-kimi-membership"},
+                      "KIMI_API_KEY": "sk-kimi-membership"},
         raise_on_error=False)
     assert ready["ready"]
 
@@ -275,16 +293,21 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
         assert client.get("/api/run/status").json()["speed_delay_s"] == 1.0
         response = client.post("/api/run/stop")
         assert response.status_code == 200
-        body = response.json()
+        first_body = response.json()
         finished_tick = world.store.tick
-        assert client.post("/api/run/start").status_code == 409
-        assert client.post("/api/run/step").status_code == 409
+        assert client.post("/api/run/step").status_code == 200
+        assert world.store.tick == finished_tick + 1
+        assert world.status == "paused"
+        assert world.last_report_path is None
         assert client.post("/api/shocks", json={
             "kind": "oil", "trigger_type": "shock", "params": {"multiplier": 2.0},
-        }).status_code == 409
-        assert world.store.tick == finished_tick
+        }).status_code == 200
+        response = client.post("/api/run/stop")
+        assert response.status_code == 200
+        body = response.json()
 
     assert body["status"] == "finished"
+    assert first_body["report_path"] != body["report_path"]
     html_path = Path(body["report_path"])
     md_path = html_path.with_suffix(".md")
     assert html_path.exists() and md_path.exists()
@@ -292,7 +315,7 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
     for section in ("Narrative", "Timeline of key events", "Metrics", "Oracle scorecard",
                     "Cost summary", "Reproduction"):
         assert section in html
-    assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 1
+    assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 2
 
 
 def test_running_world_stop_finishes_with_report(tmp_path):

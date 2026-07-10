@@ -81,8 +81,9 @@ and [Kimi Code API](https://www.kimi.com/code/docs/en/) documentation.
 
 ```bash
 copy .env.example .env
-# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and KIMI_API_KEY
-# with a Kimi API Platform key, then validate without inference:
+# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*). For KIMI_API_KEY,
+# use a Platform key with production.yaml or an sk-kimi-* membership key with
+# production-kimi-code.yaml; the two credential types are not interchangeable.
 python run.py --preflight
 
 # Optional live authentication/model-list check. This calls /models, not chat completion:
@@ -91,7 +92,8 @@ python run.py --preflight-live
 # Start the approximately 100-agent production world:
 python run.py
 
-# Existing Kimi Code membership users can run its stable latest-model alias:
+# Kimi Code membership users validate and run its stable latest-model alias:
+python run.py --config runs/production-kimi-code.yaml --preflight-live
 python run.py --config runs/production-kimi-code.yaml
 ```
 

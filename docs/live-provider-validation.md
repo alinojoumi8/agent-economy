@@ -56,6 +56,27 @@ Both authenticated `/models` checks passed. MiniMax returned eight available mod
 
 The generated database and report are intentionally ignored by Git. This document records reproducible, secret-safe summary evidence; committed tests and code remain the primary proof.
 
+## Browser live smoke after conversation and resume hardening
+
+On 2026-07-10, run `19a2657e3e` exercised the compatibility profile through
+the visible dashboard with a deliberately small 21-agent, 5-firm, 2-bank world:
+
+| Check | Result |
+|---|---|
+| Completed ticks | 2, including Stop + report followed by Run and safe Pause |
+| Total live calls | 62 |
+| MiniMax M3 | 47 calls across decisions, founders, conversations, and memory |
+| Kimi Code | 15 calls across institutional decisions, credit, VC, and Oracle |
+| Oracle | Structured 15% bank-run forecast with four world-grounded drivers |
+| Provider failures / pauses | 0 / 0 |
+| Modeled equivalent usage cost | $0.090654 |
+| Conversation diversity | 4/4 live messages distinct and context-specific |
+| Browser console | No warnings or errors |
+
+The Kimi response and model catalog both report `kimi-for-coding`. A Kimi Code
+membership key does not expose or permit selecting `kimi-k2.6`; exact K2.6
+validation still requires a separate Kimi API Platform credential.
+
 ## Exact replay
 
 The CLI replay `replay-3478260d9e-a5a809d9f2` used stored responses only and matched all 27 deterministic tables:

@@ -361,16 +361,51 @@ def _apply_slant(headline: str, body: str, tone: float, slant: str, n_related: i
 
 def conversation_turn(context: dict) -> dict:
     """One short conversational line. Spreads salient rumors the speaker holds."""
+    rng = _rng(context)
     rumor = context.get("speaker_rumor_bank")
     partner = context.get("partner_name", "a neighbor")
+    occupation = str(context.get("speaker_occupation") or "resident").replace("_", " ")
+    tick = int(context.get("tick", 0))
+    prior = context.get("prior_lines") or []
+    memory = next((str(item) for item in context.get("recent_memories", []) if item), "")
     if rumor is not None:
-        return {"text": f"Did you hear? People are pulling money out of bank {rumor}. I'm worried.",
+        lines = [
+            f"On day {tick}, I'm hearing depositors are leaving bank {rumor}; I may move my savings, {partner}.",
+            f"Bank {rumor} feels shaky on day {tick}—have you heard about the withdrawals, {partner}?",
+            f"I can't verify today's talk, but people say bank {rumor} is losing deposits fast, {partner}.",
+            f"As a {occupation} on day {tick}, the talk about bank {rumor} makes me want cash on hand.",
+        ]
+        return {"text": rng.choice(lines),
                 "rumor_bank": rumor}
     topic = context.get("shared_topic")
+    if prior:
+        previous = str(prior[-1]).strip().rstrip(".?!")[:72]
+        lines = [
+            f"On day {tick}, your point about '{previous}' tracks with what I'm seeing as a {occupation}.",
+            f"I'm less certain on day {tick}, {partner}; from my {occupation} work, the pressure looks uneven.",
+            f"That may be true on day {tick}, but what would change your mind, {partner}?",
+            f"Today I see that signal differently, {partner}—my {occupation} experience suggests a lag.",
+        ]
+        return {"text": rng.choice(lines), "rumor_bank": None}
     if topic:
-        return {"text": f"Quite something about {topic}, isn't it, {partner}?",
+        lines = [
+            f"As a {occupation} on day {tick}, I think {topic} will hit household budgets first.",
+            f"On day {tick}, the part of {topic} I keep watching is whether jobs or prices move first, {partner}.",
+            f"Do you expect {topic} to change your work after day {tick}, {partner}?",
+            f"My day-{tick} read on {topic} is cautious; the headline misses who bears the cost.",
+        ]
+        return {"text": rng.choice(lines),
                 "rumor_bank": None}
-    return {"text": f"Good to see you, {partner}. How's business?",
+    if memory:
+        return {"text": f"On day {tick}, I've been thinking about {memory[:80].rstrip('.?!')}; what are you seeing, {partner}?",
+                "rumor_bank": None}
+    lines = [
+        f"Work as a {occupation} feels different on day {tick}—what changed for you, {partner}?",
+        f"On day {tick}, I'm weighing prices against job security; which worries you more, {partner}?",
+        f"People around me sound more cautious on day {tick}—are you hearing that too, {partner}?",
+        f"What economic change has affected you most by day {tick}, {partner}?",
+    ]
+    return {"text": rng.choice(lines),
             "rumor_bank": None}
 
 

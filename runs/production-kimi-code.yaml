@@ -22,7 +22,7 @@ llm:
     kimi:
       kind: openai_compat
       base_url: https://api.kimi.com/coding/v1
-      api_key_env: MOONSHOT_API_KEY
+      api_key_env: KIMI_API_KEY
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_tokens

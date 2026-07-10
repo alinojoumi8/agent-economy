@@ -91,7 +91,7 @@ def create_app(world: World) -> FastAPI:
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
     async def start_run(max_ticks: Optional[int] = None):
-        if world.status in {"finished", "halted"}:
+        if world.status == "halted":
             return JSONResponse(
                 {"error": f"run is {world.status}; start a new run or use replay"},
                 status_code=409)
@@ -99,6 +99,8 @@ def create_app(world: World) -> FastAPI:
             return {"status": "already_running"}
         world._pause_requested = False
         world._stop_requested = False
+        if world.status == "finished":
+            world.last_report_path = None
 
         async def _runner():
             try:
@@ -141,12 +143,15 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/run/step")
     async def step_once():
-        if world.status in {"finished", "halted"}:
+        if world.status == "halted":
             return JSONResponse(
                 {"error": f"run is {world.status}; start a new run or use replay"},
                 status_code=409)
         if run_task["task"] and not run_task["task"].done():
             return {"status": "already_running"}
+        if world.status == "finished":
+            world._stop_requested = False
+            world.last_report_path = None
         summary = await world.step()
         if not summary.get("paused") and world.status != "halted":
             world.status = "paused"
@@ -392,7 +397,7 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/shocks")
     async def fire_shock(body: ShockBody):
-        if world.status in {"finished", "halted"}:
+        if world.status == "halted":
             return JSONResponse(
                 {"error": f"run is {world.status}; shocks require an active run"},
                 status_code=409)

@@ -177,31 +177,62 @@ class Conversations:
         return chosen
 
     async def _converse(self, tick: int, a_id: int, b_id: int) -> None:
-        conv_id = self.store.insert("conversations", tick=tick,
-                                    participant_ids=json.dumps([a_id, b_id]), topic=None)
-        names = {aid: self.store.scalar("SELECT name FROM agents WHERE id=?", (aid,), default="?")
-                 for aid in (a_id, b_id)}
-        rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
         shared_topic = self._shared_topic(tick)
+        conv_id = self.store.insert("conversations", tick=tick,
+                                    participant_ids=json.dumps([a_id, b_id]), topic=shared_topic)
+        profiles = {}
+        for aid in (a_id, b_id):
+            row = self.store.query_one(
+                "SELECT name, occupation, role, personality_json FROM agents WHERE id=?", (aid,))
+            personality = load_json(row["personality_json"], {}) if row else {}
+            profiles[aid] = {
+                "name": row["name"] if row else "?",
+                "occupation": row["occupation"] if row else "unknown",
+                "role": row["role"] if row else None,
+                "personality": personality if isinstance(personality, dict) else {},
+                "recent_memories": [str(item["text"])[:180] for item in self.store.query(
+                    "SELECT text FROM memories WHERE agent_id=? ORDER BY id DESC LIMIT 2", (aid,))],
+            }
+        names = {aid: profiles[aid]["name"] for aid in (a_id, b_id)}
+        rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
         shared_rumor_banks: set[int] = set()
+        transcript: list[str] = []
+        speech_modes = (
+            "skeptical and concrete", "warm but specific", "dry and analytical",
+            "cautiously optimistic", "direct and practical", "curious and probing",
+        )
         seq = 0
         for turn in range(self.turns):
             speaker, listener = (a_id, b_id) if turn % 2 == 0 else (b_id, a_id)
+            rng_seed = tick * 1009 + speaker * 13 + turn
             context = {"tick": tick, "speaker_id": speaker,
+                       "speaker_name": names[speaker],
+                       "speaker_occupation": profiles[speaker]["occupation"],
+                       "speaker_role": profiles[speaker]["role"],
+                       "speaker_personality": profiles[speaker]["personality"],
                        "partner_name": names[listener],
+                       "partner_occupation": profiles[listener]["occupation"],
                        "speaker_rumor_bank": rumors[speaker],
                        "shared_topic": shared_topic,
-                       "rng_seed": tick * 1009 + speaker * 13 + turn}
+                       "recent_memories": profiles[speaker]["recent_memories"],
+                       "prior_lines": transcript[-2:],
+                       "speech_mode": speech_modes[rng_seed % len(speech_modes)],
+                       "turn_index": turn,
+                       "rng_seed": rng_seed}
             schema = '{"text":"brief natural sentence","rumor_bank":null}'
             req = LLMRequest(
                 role="citizen", purpose="conversation",
                 system=(
-                    "Write one brief in-world conversational sentence from the speaker "
-                    "to the named partner. Respond ONLY with JSON matching " + schema
+                    "Write one brief, natural in-world conversational sentence from the speaker "
+                    "to the named partner. Ground it in the speaker's occupation, personality, "
+                    "recent memory, shared topic, and the prior lines. Reply to the prior line when "
+                    "one exists and add new information or a distinct reaction. Never use stock "
+                    "greetings or repeat wording already in prior_lines. Follow speech_mode. "
+                    "Respond ONLY with JSON matching " + schema
                     + ". Set rumor_bank to an integer from speaker_rumor_bank only when "
                       "the speaker shares that rumor; otherwise use null."),
-                user=json.dumps(context)[:800], context=context,
-                agent_id=speaker, tick=tick, max_tokens=120)
+                user=json.dumps(context)[:2400], context=context,
+                agent_id=speaker, tick=tick, max_tokens=160, temperature=0.9)
             resp = await self.gw.complete(req, schema_hint=schema)
             env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
@@ -209,6 +240,7 @@ class Conversations:
                 continue
             self.store.insert("messages", conv_id=conv_id, tick=tick, agent_id=speaker,
                               text=text, seq=seq)
+            transcript.append(text)
             seq += 1
             # The listener hears the line → observation (rumor propagation medium).
             ents = ["conversation", f"agent:{speaker}"]

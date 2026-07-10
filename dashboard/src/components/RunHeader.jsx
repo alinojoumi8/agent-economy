@@ -5,7 +5,7 @@ import { Badge } from "./ui";
 export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
-  const terminal = status?.status === "finished" || status?.status === "halted";
+  const terminal = status?.status === "halted";
   const spend = Number(status?.governor?.total_spend_usd || 0);
   const cap = Number(status?.governor?.cap_usd || 200);
   const fraction = cap ? Math.min(100, spend / cap * 100) : 0;

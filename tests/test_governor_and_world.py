@@ -77,6 +77,10 @@ def test_world_runs_and_reconciles_30_ticks(tmp_path):
     assert w.store.scalar("SELECT COUNT(*) FROM events WHERE kind='wage_paid'") > 0
     assert w.store.scalar("SELECT COUNT(*) FROM news_articles") > 0
     assert w.store.scalar("SELECT COUNT(*) FROM conversations") > 0
+    messages = int(w.store.scalar("SELECT COUNT(*) FROM messages", default=0))
+    distinct = int(w.store.scalar("SELECT COUNT(DISTINCT text) FROM messages", default=0))
+    assert messages > 0
+    assert distinct / messages >= 0.65
 
 
 # ── determinism: same seed ⇒ identical event log (scripted) ─────────────────

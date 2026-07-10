@@ -77,9 +77,15 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         if not db.exists():
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
-        stored_cfg = json.loads(store.get_meta()["config_json"])
+        meta = store.get_meta()
+        stored_cfg = json.loads(meta["config_json"])
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         world = World(store, stored_cfg)
+        stored_status = str(meta["status"] or "paused")
+        world.status = "paused" if stored_status == "running" else stored_status
+        if stored_status == "running":
+            store.set_meta(status="paused")
+            store.commit()
         world.restore_prng_state()
         return store, world, run_id
     if replay:
