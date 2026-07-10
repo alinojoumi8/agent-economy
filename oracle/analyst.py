@@ -30,8 +30,16 @@ Valid resolution_rule types (machine-checkable):
   {"type":"firm_bankruptcy","firm_id":K}                         — that firm (or any, if omitted) goes bankrupt before deadline
   {"type":"metric_above","metric":"name","threshold":X}          — named metric exceeds threshold before deadline
   {"type":"metric_below","metric":"name","threshold":X}
+Metric units are: policy_rate in basis points (500 means 5 percent), cpi as an
+index, unemployment as a fraction, sentiment from -1 to 1, and bank deposits as
+bank_deposits:ID in currency units. Use only metrics present in the supplied digest.
 If the question cannot be given a checkable rule from world state, reply
 {"insufficient_data": true, "reason": "..."} instead. Never fabricate."""
+
+RESOLUTION_RULE_TYPES = {
+    "bank_run", "bank_failure", "index_drop", "unemployment_above",
+    "cpi_above", "firm_bankruptcy", "metric_above", "metric_below",
+}
 
 
 class Oracle:
@@ -68,7 +76,7 @@ class Oracle:
             p = float(ans["p"])
             assert 0.0 <= p <= 1.0
             rule = ans.get("resolution_rule") or {}
-            assert isinstance(rule, dict) and rule.get("type")
+            assert isinstance(rule, dict) and rule.get("type") in RESOLUTION_RULE_TYPES
             deadline = int(ans.get("deadline_tick") or (tick + self.default_horizon))
             assert deadline > tick
         except (KeyError, AssertionError, TypeError, ValueError):
@@ -96,7 +104,7 @@ class Oracle:
     def _world_digest(self, tick: int) -> dict:
         m = {n: self.store.metric_latest(n, 0.0) for n in
              ("gdp_proxy", "cpi", "cpi_yoy", "unemployment", "index", "index_change_10",
-              "money_supply", "gini", "sentiment", "policy_rate")}
+              "money_supply", "gini", "sentiment", "policy_rate", "epidemic_multiplier")}
         banks = []
         min_ratio, min_trust = 1.0, 1.0
         for b in self.store.query("SELECT * FROM banks"):

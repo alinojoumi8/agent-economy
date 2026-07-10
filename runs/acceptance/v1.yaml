@@ -24,7 +24,7 @@ long_run:
     - What is the probability that unemployment exceeds 8 percent within 30 ticks?
     - What is the probability that CPI exceeds 110 within 30 ticks?
     - What is the probability that any firm goes bankrupt within 30 ticks?
-    - What is the probability that policy_rate rises above 8 percent within 30 ticks?
+    - What is the probability that policy_rate rises above 800 basis points within 30 ticks?
     - What is the probability that sentiment falls below -0.2 within 30 ticks?
     - What is the probability that bank_deposits:1 falls below half its current level within 30 ticks?
     - What is the probability that epidemic_multiplier rises above 1 within 30 ticks?

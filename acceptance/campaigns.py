@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import html
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,26 @@ def _open_world(db: Path, run_id: str, config: dict, seed: int) -> tuple[Store, 
         if str(meta["run_id"]) != run_id or int(meta["seed"]) != seed:
             store.close()
             raise RuntimeError(f"acceptance database metadata mismatch: {db}")
+        if str(meta["status"]) == "running":
+            interrupted_tick = int(meta["tick"])
+            checkpoint = store.query_one(
+                "SELECT tick, path FROM checkpoints ORDER BY tick DESC, id DESC LIMIT 1")
+            store.close()
+            if not checkpoint or not Path(str(checkpoint["path"])).exists():
+                raise RuntimeError(
+                    f"interrupted acceptance run at tick {interrupted_tick} has no checkpoint")
+            checkpoint_path = Path(str(checkpoint["path"])).resolve()
+            shutil.copy2(checkpoint_path, db)
+            store = Store(str(db))
+            store.set_meta(status="paused")
+            store.log_event(
+                int(checkpoint["tick"]), "acceptance_recovered", {
+                    "interrupted_tick": interrupted_tick,
+                    "checkpoint_tick": int(checkpoint["tick"]),
+                    "checkpoint_path": str(checkpoint_path),
+                }, phase="ACCEPTANCE", importance=2.0)
+            store.commit()
+            meta = store.get_meta()
         stored_config = json.loads(meta["config_json"])
         world = World(store, stored_config)
         world.restore_prng_state()
@@ -233,13 +254,22 @@ def run_campaign(spec_path: str | Path, *, phase: str = "all") -> dict:
     root.mkdir(parents=True, exist_ok=True)
     config = load_config(spec["base_config"])
 
+    if phase == "report":
+        json_path = Path(spec["report_dir"]) / f"acceptance_{spec['name']}.json"
+        if not json_path.exists():
+            raise RuntimeError(f"acceptance evidence does not exist: {json_path}")
+        evidence = json.loads(json_path.read_text(encoding="utf-8"))
+        md_path, html_path = _write_campaign_report(spec, evidence)
+        evidence["markdown_report"] = md_path
+        evidence["html_report"] = html_path
+        print(json.dumps(evidence, indent=2))
+        return evidence
+
     if phase != "report":
         preflight = asyncio.run(provider_preflight(config, live=True))
         if not preflight.get("ready") or not preflight.get("live_ready"):
             raise RuntimeError("acceptance provider preflight failed: "
                                + json.dumps(preflight.get("errors", preflight)))
-    else:
-        preflight = {"skipped": True}
 
     evidence: dict[str, Any] = {"campaign": spec["name"], "preflight": preflight}
     if phase in {"all", "long"}:

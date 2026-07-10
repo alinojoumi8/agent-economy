@@ -405,7 +405,23 @@ def oracle_answer(context: dict) -> dict:
     if match:
         horizon = max(1, int(match.group(1)))
     drivers = []
-    if "bank run" in q or "bank" in q:
+    def probability(value: float, threshold: float, above: bool = True) -> float:
+        scale = max(abs(threshold), 1.0)
+        distance = (value - threshold) / scale
+        if not above:
+            distance = -distance
+        return max(0.02, min(0.95, 0.5 + distance))
+
+    if "bank fail" in q:
+        min_ratio = context.get("min_reserve_ratio", 1.0)
+        p = max(0.02, min(0.95, 0.6 * (1 - min_ratio)))
+        drivers = [f"lowest reserve ratio {min_ratio:.2f}"]
+        rule = {"type": "bank_failure"}
+    elif "firm" in q and "bankrupt" in q:
+        p = max(0.02, min(0.95, float(m.get("unemployment", 0.05)) * 2))
+        drivers = [f"unemployment {float(m.get('unemployment', 0.05)):.1%}"]
+        rule = {"type": "firm_bankruptcy"}
+    elif "bank run" in q:
         min_ratio = context.get("min_reserve_ratio", 1.0)
         trust = context.get("min_bank_trust", 0.6)
         p = max(0.02, min(0.95, 0.5 * (1 - min_ratio) + 0.6 * (0.6 - trust)))
@@ -421,6 +437,43 @@ def oracle_answer(context: dict) -> dict:
         p = max(0.02, min(0.95, unemp * 4))
         drivers = [f"unemployment {unemp:.1%}"]
         rule = {"type": "unemployment_above", "threshold": 0.08, "window": horizon}
+    elif "cpi" in q:
+        value = float(m.get("cpi", 100.0))
+        threshold = 110.0
+        p = probability(value, threshold)
+        drivers = [f"CPI {value:.2f}"]
+        rule = {"type": "cpi_above", "threshold": threshold}
+    elif "policy_rate" in q or "policy rate" in q:
+        value = float(m.get("policy_rate", 500.0))
+        threshold = 800.0
+        p = probability(value, threshold)
+        drivers = [f"policy rate {value:.0f} basis points"]
+        rule = {"type": "metric_above", "metric": "policy_rate", "threshold": threshold}
+    elif "sentiment" in q:
+        value = float(m.get("sentiment", 0.0))
+        threshold = -0.2
+        p = probability(value, threshold, above=False)
+        drivers = [f"sentiment {value:.3f}"]
+        rule = {"type": "metric_below", "metric": "sentiment", "threshold": threshold}
+    elif "bank_deposits:" in q or "bank deposits" in q:
+        bank_match = re.search(r"bank_deposits:(\d+)", q)
+        bank_id = int(bank_match.group(1)) if bank_match else 1
+        bank = next((b for b in context.get("banks", []) if int(b.get("id", 0)) == bank_id), None)
+        if not bank:
+            return {"insufficient_data": True, "reason": f"Bank {bank_id} is unavailable."}
+        current = float(bank.get("deposits_cents", 0)) / 100.0
+        threshold = current / 2.0
+        p = 0.1
+        drivers = [f"bank {bank_id} deposits {current:.2f}"]
+        rule = {"type": "metric_below", "metric": f"bank_deposits:{bank_id}",
+                "threshold": threshold}
+    elif "epidemic_multiplier" in q or "epidemic multiplier" in q:
+        value = float(m.get("epidemic_multiplier", 1.0))
+        threshold = 1.0
+        p = probability(value, threshold)
+        drivers = [f"epidemic multiplier {value:.2f}"]
+        rule = {"type": "metric_above", "metric": "epidemic_multiplier",
+                "threshold": threshold}
     else:
         return {"insufficient_data": True,
                 "reason": "No machine-checkable resolution rule can be derived from world state."}

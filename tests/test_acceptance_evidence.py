@@ -1,6 +1,13 @@
 import asyncio
+import json
 
-from acceptance.campaigns import _run_long_campaign, _run_rumor_campaign
+from agents.policies import oracle_answer
+from acceptance.campaigns import (
+    _open_world,
+    _run_long_campaign,
+    _run_rumor_campaign,
+    run_campaign,
+)
 from acceptance.evidence import (
     calibration_evidence,
     causal_phenomena_evidence,
@@ -26,6 +33,32 @@ def _campaign_config():
         "checkpoint_every": 1,
         "outlets": [{"id": 1, "name": "A", "slant": "pro-market-sensational"},
                     {"id": 2, "name": "B", "slant": "cautious-pro-labor"}],
+    }
+
+
+def test_scripted_oracle_supports_every_acceptance_question():
+    context = {
+        "tick": 1, "default_horizon": 30, "min_reserve_ratio": 0.6,
+        "min_bank_trust": 0.6,
+        "metrics": {"index_change_10": 0.0, "unemployment": 0.05,
+                    "cpi": 100.0, "policy_rate": 500.0, "sentiment": 0.0,
+                    "epidemic_multiplier": 1.0},
+        "banks": [{"id": 1, "deposits_cents": 100_000}],
+    }
+    questions = [
+        "bank run within 30 ticks", "any bank fails within 30 ticks",
+        "market index falls within 30 ticks", "unemployment exceeds within 30 ticks",
+        "CPI exceeds 110 within 30 ticks", "any firm goes bankrupt within 30 ticks",
+        "policy_rate above 800 basis points within 30 ticks",
+        "sentiment below -0.2 within 30 ticks",
+        "bank_deposits:1 below half its current level within 30 ticks",
+        "epidemic_multiplier above 1 within 30 ticks",
+    ]
+    answers = [oracle_answer({**context, "question": question}) for question in questions]
+    assert all("resolution_rule" in answer for answer in answers)
+    assert {answer["resolution_rule"]["type"] for answer in answers} == {
+        "bank_run", "bank_failure", "index_drop", "unemployment_above",
+        "cpi_above", "firm_bankruptcy", "metric_above", "metric_below",
     }
 
 
@@ -104,6 +137,35 @@ def test_resumable_long_campaign_drives_oracle_and_shock_evidence(tmp_path):
     assert resumed["long_run"]["tick"] == 31
 
 
+def test_interrupted_campaign_recovers_from_last_durable_checkpoint(tmp_path):
+    db = tmp_path / "acceptance.db"
+    config = _campaign_config()
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world = _open_world(db, "acceptance-recovery", config, 1)
+    checkpoint_path = world.checkpoint(0, reason="acceptance-test")
+    assert checkpoint_path
+
+    # Simulate a process dying after the database advanced beyond its checkpoint.
+    store.set_meta(tick=3, status="running")
+    store.log_event(3, "uncommitted_campaign_progress", {})
+    store.commit()
+    store.close()
+
+    recovered_store, recovered_world = _open_world(
+        db, "acceptance-recovery", config, 1)
+    try:
+        assert recovered_world.store.tick == 0
+        assert recovered_store.get_meta()["status"] == "paused"
+        recovery = recovered_store.query_one(
+            "SELECT payload_json FROM events WHERE kind='acceptance_recovered'")
+        assert recovery is not None
+        assert '"interrupted_tick": 3' in recovery["payload_json"]
+        assert recovered_store.query_one(
+            "SELECT id FROM events WHERE kind='uncommitted_campaign_progress'") is None
+    finally:
+        recovered_store.close()
+
+
 def test_rumor_campaign_measures_actual_rumor_conversations(tmp_path):
     spec = {
         "name": "rumor-campaign", "report_dir": str(tmp_path / "reports"),
@@ -113,3 +175,22 @@ def test_rumor_campaign_measures_actual_rumor_conversations(tmp_path):
     result = _run_rumor_campaign(spec, _campaign_config(), tmp_path / "data")
     assert result["passes"]
     assert result["seeds"][0]["rumor_conversations"] >= 5
+
+
+def test_report_phase_reuses_existing_evidence(tmp_path):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    evidence = {"campaign": "report-test", "preflight": {"ready": True},
+                "passes": True, "long": {"long_run": {"passes": True}}}
+    (report_dir / "acceptance_report-test.json").write_text(
+        json.dumps(evidence), encoding="utf-8")
+    spec = tmp_path / "campaign.yaml"
+    spec.write_text(
+        "name: report-test\nbase_config: runs/base.yaml\n"
+        f"data_root: {tmp_path / 'data'}\nreport_dir: {report_dir}\n",
+        encoding="utf-8")
+
+    rendered = run_campaign(spec, phase="report")
+    assert rendered["passes"]
+    assert (report_dir / "acceptance_report-test.md").exists()
+    assert (report_dir / "acceptance_report-test.html").exists()
