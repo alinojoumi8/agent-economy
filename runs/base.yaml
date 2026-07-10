@@ -34,6 +34,7 @@ central_bank:
 lifecycle:
   retirement_age: 65
   medical_cost_cents: 5000
+  housing_cost_cents: 75000      # arrival move-in/rent charge, conserved via sys:housing
   population_mode: stable        # each death schedules a replacement arrival
 
 # ── P1 R12: fiscal layer. Remove this section to run a government-free world. ──

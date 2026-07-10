@@ -1,6 +1,7 @@
 """Governor thresholds (60/80/95/100), world determinism + reconciliation property
 test, checkpoint/resume, rumor pilot (PRD R5/R7, §14)."""
 import asyncio
+import json
 import random
 
 import pytest
@@ -47,13 +48,13 @@ def test_governor_stages(tmp_path):
                  in_tokens=0, out_tokens=0, cached=0)
 
     assert gov.level() == 0 and gov.conversation_pairs() == 15
-    spend(0.61 * 90)   # 60% of world budget (cap 100 - 10 oracle = 90)
+    spend(0.60 * 90)   # exact 60% of world budget (cap 100 - 10 oracle = 90)
     assert gov.level() == 1 and gov.conversation_pairs() == 8
-    spend((0.81 - 0.61) * 90)
+    spend(0.20 * 90)   # exact 80%
     assert gov.level() == 2 and gov.conversation_pairs() == 4 and gov.cadence_multiplier() == 2
-    spend((0.96 - 0.81) * 90)
+    spend(0.15 * 90)   # exact 95%
     assert gov.level() == 3 and not gov.citizens_enabled()
-    spend((1.01 - 0.96) * 90)
+    spend(0.05 * 90)   # exact 100%
     assert gov.should_pause()
     # Oracle carve-out: oracle can still spend if within its reserve.
     assert gov.can_spend(1.0, "oracle")
@@ -103,28 +104,51 @@ def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
     async def go():
         for _ in range(3):
             await w.step()
+        baseline_start = w.store.tick - 2
         pre_deposits = w.economy.bank.deposits(target_bank)
-        pre_trust = w.store.scalar(
-            "SELECT AVG(value) FROM beliefs WHERE key=?", (f"trust:bank:{target_bank}",))
+        pre_trust = {int(r["agent_id"]): float(r["value"]) for r in w.store.query(
+            "SELECT agent_id, value FROM beliefs WHERE key=?",
+            (f"trust:bank:{target_bank}",))}
+        baseline_outflow = sum(
+            int(json.loads(r["payload_json"])["amount_cents"])
+            for r in w.store.query(
+                "SELECT payload_json FROM events WHERE kind='deposit_move' "
+                "AND tick BETWEEN ? AND ?", (baseline_start, w.store.tick))
+            if int(json.loads(r["payload_json"])["from_bank"]) == target_bank)
         w.shocks.schedule("rumor", "shock", {"tick": w.store.tick + 1},
                           params={"bank_id": target_bank, "n_agents": 14})
+        rumor_start = w.store.tick + 1
         for _ in range(10):
             await w.step()
-        return pre_deposits, float(pre_trust)
+        return pre_deposits, pre_trust, baseline_outflow, rumor_start
 
-    pre_deposits, pre_trust = asyncio.run(go())
-    post_trust = float(w.store.scalar(
-        "SELECT AVG(value) FROM beliefs WHERE key=?", (f"trust:bank:{target_bank}",)))
+    pre_deposits, pre_trust, baseline_outflow, rumor_start = asyncio.run(go())
     post_deposits = w.economy.bank.deposits(target_bank)
+    rumor_event = w.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='rumor' ORDER BY id DESC LIMIT 1")
+    exposed = json.loads(rumor_event["payload_json"])["target_agent_ids"]
+    dropped = 0
+    for agent_id in exposed:
+        current = float(w.store.scalar(
+            "SELECT value FROM beliefs WHERE agent_id=? AND key=?",
+            (agent_id, f"trust:bank:{target_bank}")))
+        if pre_trust[agent_id] - current >= 0.2:
+            dropped += 1
 
-    # Belief moved down and deposits flowed out (or the bank failed outright).
-    bank_status = w.store.query_one("SELECT status FROM banks WHERE id=?", (target_bank,))["status"]
-    assert post_trust < pre_trust
-    assert post_deposits < pre_deposits or bank_status == "failed"
-    # The rumor reached conversations.
-    rumor_msgs = w.store.scalar(
-        "SELECT COUNT(*) FROM messages WHERE text LIKE '%pulling money%' OR text LIKE '%worried%'")
-    assert rumor_msgs > 0
+    conversations = int(w.store.scalar(
+        "SELECT COUNT(*) FROM conversations WHERE tick BETWEEN ? AND ?",
+        (rumor_start, rumor_start + 9), default=0))
+    post_outflow = sum(
+        int(json.loads(r["payload_json"])["amount_cents"])
+        for r in w.store.query(
+            "SELECT payload_json FROM events WHERE kind='deposit_move' "
+            "AND tick BETWEEN ? AND ?", (rumor_start, rumor_start + 9))
+        if int(json.loads(r["payload_json"])["from_bank"]) == target_bank)
+
+    assert conversations >= 5
+    assert dropped / len(exposed) >= 0.25
+    assert post_outflow > 2 * (baseline_outflow / 3.0 * 10.0)
+    assert post_deposits < pre_deposits
     ok, diag = w.economy.ledger.reconcile()
     assert ok, diag
 
@@ -163,10 +187,11 @@ def test_oracle_prediction_and_resolution(tmp_path):
     async def go():
         for _ in range(2):
             await w.step()
-        ans = await w.oracle.ask("What is the probability of a bank run within 5 ticks?")
+        asked_tick = w.store.tick
+        ans = await w.oracle.ask("What is the probability of a bank run within 30 ticks?")
         assert "p" in ans and 0 <= ans["p"] <= 1
-        assert ans["deadline_tick"] > w.store.tick
-        for _ in range(8):
+        assert ans["deadline_tick"] == asked_tick + 30
+        for _ in range(31):
             await w.step()
         return ans
     ans = asyncio.run(go())

@@ -41,6 +41,7 @@ SYS_INFLOW = "sys:population_inflow"   # mints arrival starting savings (PRD R11
 SYS_LOSS = "sys:loss"                  # destroyed wealth (bank-failure haircuts, write-offs)
 SYS_MEDICAL = "sys:medical"            # out-of-pocket medical costs leave here
 SYS_GOV = "sys:gov"                    # government treasury (P1 fiscal)
+SYS_HOUSING = "sys:housing"            # rent/move-in costs paid by households
 
 
 class Ledger:

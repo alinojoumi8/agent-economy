@@ -146,7 +146,8 @@ class Shocks:
                 entities_json=json.dumps([f"bank:{bank_id}", f"rumor_bank:{bank_id}"]),
                 last_accessed_tick=tick, demoted=0)
         self.store.log_event(tick, "rumor", {
-            "bank_id": bank_id, "n_agents": len(targets), "text": text, "truthful": False},
+            "bank_id": bank_id, "n_agents": len(targets), "target_agent_ids": targets,
+            "text": text, "truthful": False},
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
 
     def _apply_slant(self, tick: int, s, params: dict, initial: bool) -> None:

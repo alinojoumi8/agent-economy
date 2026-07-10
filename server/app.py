@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -97,8 +98,13 @@ def create_app(world: World) -> FastAPI:
                 await world.run(max_ticks=max_ticks)
             except ReconciliationError as exc:
                 await hub.broadcast({"type": "halt", "reason": str(exc)})
-            except Exception as exc:  # LLM outage etc. → world paused with checkpoint
-                await hub.broadcast({"type": "halt", "reason": f"run paused: {exc}"})
+            except Exception as exc:
+                world.status = "paused"
+                store.set_meta(status="paused")
+                store.log_event(store.tick, "run_exception", {"error": str(exc)[:500]},
+                                importance=5.0)
+                store.commit()
+                await hub.broadcast({"type": "pause", "reason": f"run paused: {exc}"})
 
         run_task["task"] = asyncio.create_task(_runner())
         return {"status": "running", "tick": store.tick}
@@ -111,7 +117,20 @@ def create_app(world: World) -> FastAPI:
     @app.post("/api/run/stop")
     async def stop_run():
         world.request_stop()
-        return {"status": "stopping", "tick": store.tick}
+        running = bool(run_task["task"] and not run_task["task"].done())
+        if running:
+            return {"status": "stopping", "tick": store.tick}
+        world.status = "finished"
+        store.set_meta(status="finished")
+        store.commit()
+        world.checkpoint(store.tick, reason="stop")
+        if not world.last_report_path:
+            from reports.generate import generate_report as gen
+            world.last_report_path = gen(
+                store, world,
+                out_dir=str(world.config.get("report_dir", "reports/out")))
+        return {"status": "finished", "tick": store.tick,
+                "report_path": world.last_report_path}
 
     @app.post("/api/run/step")
     async def step_once():
@@ -131,7 +150,10 @@ def create_app(world: World) -> FastAPI:
         meta = store.get_meta()
         return {"run_id": meta["run_id"], "status": world.status, "tick": store.tick,
                 "seed": meta["seed"], "governor": world.gateway.governor.status(),
-                "running": bool(run_task["task"] and not run_task["task"].done())}
+                "running": bool(run_task["task"] and not run_task["task"].done()),
+                "provider_readiness": world.gateway.readiness(),
+                "pause_reason": world.last_pause_reason,
+                "report_path": world.last_report_path}
 
     # ── world queries (dashboard panels, PRD R8) ─────────────────────────────
     @app.get("/api/metrics")
@@ -359,7 +381,7 @@ def create_app(world: World) -> FastAPI:
     @app.post("/api/report")
     async def generate_report():
         from reports.generate import generate_report as gen
-        path = gen(store, world)
+        path = gen(store, world, out_dir=str(world.config.get("report_dir", "reports/out")))
         return {"path": path}
 
     # ── WebSocket ────────────────────────────────────────────────────────────
@@ -407,6 +429,8 @@ def _tick_payload(world: World, tick: int, summary: dict) -> dict:
         price = world.economy.exchange.last_price(int(f["id"]))
         if price is not None:
             ticker.append({"firm_id": int(f["id"]), "name": f["name"], "price_cents": price})
-    return {"type": "tick", "tick": tick, "summary": summary, "metrics": metrics,
+    return {"type": "tick", "tick": tick, "emitted_at_ms": int(time.time() * 1000),
+            "summary": summary, "metrics": metrics,
             "events": events, "news": news, "ticker": ticker,
-            "governor": world.gateway.governor.status(), "status": world.status}
+            "governor": world.gateway.governor.status(), "status": world.status,
+            "pause_reason": world.last_pause_reason, "report_path": world.last_report_path}

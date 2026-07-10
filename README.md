@@ -40,8 +40,8 @@ with Python 3.11 and 3.12. Dependabot checks Python and GitHub Actions
 dependencies weekly.
 
 Local API keys belong in `.env`, which is excluded from Git. Copy
-`.env.example` when configuring an optional real-model provider; the default
-scripted provider remains fully offline and needs no key.
+`.env.example` when configuring the production provider profile; `runs/base.yaml`
+remains fully offline and needs no key.
 
 **No API key needed.** The default config routes every role to the built-in
 `scripted` provider — deterministic policy agents that shop, work, lend, reprice,
@@ -50,11 +50,35 @@ reports, replay) works offline and reproducibly. Same seed ⇒ identical event l
 
 ## Using real LLMs
 
-Uncomment the `providers`/`routes` block in [runs/base.yaml](runs/base.yaml) and
-export the matching API keys (`MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, …). Routing
-is `role → {provider, model}` — citizens on a cheap model, the ~8 high-leverage
-seats (central banker, credit officers, editors, Oracle) on a strong one. The
-Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
+The production profile is [runs/production.yaml](runs/production.yaml). It keeps
+the PRD's cheap-citizen/strong-seat split while using the providers' current
+official model IDs: `MiniMax-M2.7` and `kimi-k2.6`.
+See the official [MiniMax OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api)
+and [Kimi API overview](https://platform.kimi.ai/docs/api/overview).
+
+```bash
+copy .env.example .env
+# Fill MINIMAX_API_KEY and MOONSHOT_API_KEY in .env, then validate without inference:
+python run.py --config runs/production.yaml --preflight
+
+# Optional live authentication/model-list check. This calls /models, not chat completion:
+python run.py --config runs/production.yaml --preflight-live
+
+# Start the approximately 100-agent production world:
+python run.py --config runs/production.yaml
+```
+
+Provider/model names are validated before genesis. A missing key, unknown route,
+or unavailable model produces a clear preflight failure; it never silently falls
+back to scripted behavior. During a run, network calls retry once. A continuing
+provider failure records a diagnostic, reconciles the ledger, checkpoints the
+partial tick, and pauses visibly. Kimi receives a stable `prompt_cache_key`, and
+cost accounting uses cache-hit tokens reported by the provider rather than an
+estimated local cache hit.
+
+Routing is `role → {provider, model}` — citizens on MiniMax, the high-leverage
+seats (central banker, credit officers, reporters/editors, VC partner, Oracle) on
+Kimi. The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
 
 Cost governance (PRD R7): a hard cap (default $200) with staged degradation at
 60/80/95% of the world budget (fewer conversations → stretched cadences →
@@ -90,6 +114,7 @@ bank's deposits roughly in half within 10 ticks.
 ```
 run.py                  entrypoint
 runs/base.yaml          world config (population, models, budget, shocks, seed)
+runs/production.yaml    current MiniMax/Kimi production routing (~100 agents)
 engine/                 deterministic core: ledger, exchange, credit, firms, labor, lifecycle, actions
 agents/                 personas (vendored census-based gen), memory, scheduler, prompts, scripted policies
 llm/                    gateway: routing, budget governor, adapters (scripted/openai_compat/anthropic/cli)
@@ -101,8 +126,7 @@ tests/                  engine invariants, scripted bank run, governor, determin
 data/runs/<id>.db       one SQLite file per run (the whole run is one portable file)
 ```
 
-Two pragmatic deviations from TECH-SPEC.md, both isolated: the dashboard is a
-zero-build static page instead of React+Vite (the REST/WS API is UI-agnostic, so a
-React app can replace it without server changes), and scripted policies stand in
-for LLM decisions until you configure providers (the spec's own build order:
-prove the economy's plumbing first).
+One major stack deviation remains: the dashboard is a zero-build static page
+instead of React+Vite. The REST/WS API is UI-agnostic, so the specified client can
+replace it without changing the simulation engine. Scripted policies remain an
+intentional offline/test profile; the production profile uses real providers.

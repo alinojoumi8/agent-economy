@@ -68,7 +68,7 @@ def citizen_decision(context: dict) -> dict:
     ran = False
     if my_bank is not None:
         trust = float(beliefs.get(f"trust:bank:{my_bank}", 0.6))
-        if trust < run_threshold and cash > 0:
+        if trust <= run_threshold and cash > 0:
             safe = _safest_other_bank(context, my_bank)
             if safe is not None:
                 actions.append({"type": "move_deposits", "to_bank_id": safe})
@@ -373,6 +373,12 @@ def conversation_turn(context: dict) -> dict:
 
 
 def memory_compress(context: dict) -> dict:
+    weekly = context.get("weekly_summaries", [])
+    if weekly:
+        importance = min(10.0, max(float(s.get("importance", 1.0)) for s in weekly) + 1.0)
+        highlights = "; ".join(str(s.get("text", ""))[:90] for s in weekly[:3])
+        return {"summary": f"Week summary: {len(weekly)} daily memories. {highlights}",
+                "importance": importance, "belief_updates": []}
     obs = context.get("observations", [])
     if not obs:
         return {"summary": "", "importance": 1.0, "belief_updates": []}

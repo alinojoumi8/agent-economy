@@ -14,11 +14,14 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .adapters import Adapter, build_adapters
+from .readiness import ProviderConfigurationError, validate_llm_config
 
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
 DEFAULT_PRICING = {
     "minimax-m3": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "kimi-k2.7": {"in": 0.95, "out": 4.00, "cache": 0.19},
+    "MiniMax-M2.7": {"in": 0.30, "out": 1.20, "cache": 0.06},
+    "kimi-k2.6": {"in": 0.95, "out": 4.00, "cache": 0.16},
     "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00, "cache": 0.10},
     "claude-sonnet-5": {"in": 3.00, "out": 15.00, "cache": 0.30},
     "scripted": {"in": 0.0, "out": 0.0, "cache": 0.0},
@@ -28,6 +31,26 @@ DEFAULT_PRICING = {
 
 class BudgetExceeded(Exception):
     """Raised when a call would breach the hard cap — the world pauses cleanly."""
+
+
+class ProviderUnavailable(Exception):
+    """A routed provider failed after retry; the world must pause visibly."""
+
+    def __init__(self, provider: str, model: str, purpose: str, message: str, *,
+                 latency_ms: int = 0, attempts: int = 1):
+        self.provider = provider
+        self.model = model
+        self.purpose = purpose
+        self.message = message[:500]
+        self.latency_ms = latency_ms
+        self.attempts = attempts
+        super().__init__(f"{provider}/{model} failed for {purpose}: {self.message}")
+
+    def as_dict(self) -> dict:
+        return {
+            "provider": self.provider, "model": self.model, "purpose": self.purpose,
+            "error": self.message, "latency_ms": self.latency_ms, "attempts": self.attempts,
+        }
 
 
 @dataclass
@@ -141,14 +164,18 @@ class Gateway:
         self.store = store
         self.config = config
         llm_cfg = config.get("llm", {})
+        self.replay = bool(config.get("replay", False))
+        self.readiness_report = validate_llm_config(
+            config, require_secrets=not self.replay, raise_on_error=True)
         self.routes: dict[str, dict] = llm_cfg.get("routes", {})
         self.default_route = llm_cfg.get("default_route", {"provider": "scripted", "model": "scripted"})
         self.pricing = {**DEFAULT_PRICING, **llm_cfg.get("pricing", {})}
         self.adapters: dict[str, Adapter] = build_adapters(llm_cfg)
         self.governor = Governor(store, config.get("budget", {}))
         self.semaphore = asyncio.Semaphore(int(llm_cfg.get("concurrency", 8)))
-        self.replay = bool(config.get("replay", False))
-        self._seen_prefixes: set[str] = set()
+        self.provider_retries = max(0, int(llm_cfg.get("provider_retries", 1)))
+        meta = store.get_meta()
+        self.run_id = str(meta["run_id"]) if meta else "uninitialized"
 
     @property
     def scripted(self):
@@ -159,16 +186,52 @@ class Gateway:
         r = self.routes.get(role) or self.routes.get(purpose) or self.default_route
         return r.get("provider", "scripted"), r.get("model", "scripted")
 
+    def readiness(self) -> dict:
+        return self.readiness_report
+
+    async def preflight(self, *, live: bool = False) -> dict:
+        """Return config readiness and optionally authenticate/list routed models."""
+        report = validate_llm_config(
+            self.config, require_secrets=not self.replay, raise_on_error=False)
+        if not live or not report["ready"]:
+            return {**report, "live_checked": False}
+
+        checks = []
+        seen: set[tuple[str, str]] = set()
+        routes = [self.default_route, *self.routes.values()]
+        for route in routes:
+            provider = str(route.get("provider", "scripted"))
+            model = str(route.get("model", "scripted"))
+            pair = (provider, model)
+            if pair in seen:
+                continue
+            seen.add(pair)
+            adapter = self.adapters[provider]
+            try:
+                result = await adapter.healthcheck(model)
+                checks.append({"provider": provider, **result})
+            except Exception as exc:
+                checks.append({"provider": provider, "model": model, "ok": False,
+                               "live": True, "error": str(exc)[:500]})
+        return {**report, "live_checked": True,
+                "live_ready": all(c["ok"] for c in checks), "checks": checks}
+
     # ── main entry ───────────────────────────────────────────────────────────
     async def complete(self, req: LLMRequest, *, schema_hint: str = "") -> LLMResponse:
         provider, model = self.route(req.role, req.purpose)
-        adapter = self.adapters.get(provider) or self.scripted
+        adapter = self.adapters.get(provider)
+        if adapter is None:
+            raise ProviderConfigurationError([f"routed provider '{provider}' is unavailable"])
         cache_key = self._cache_key(req, provider, model)
+        provider_cache_key = f"{self.run_id}:{req.role}:{req.purpose}:{req.agent_id or 'shared'}"
 
         if self.replay:
             replayed = self._replay_lookup(cache_key)
             if replayed is not None:
                 return replayed
+            raise ProviderUnavailable(
+                "replay", model, req.purpose,
+                f"stored response missing for cache key {cache_key}", attempts=0)
 
         # Budget pre-check (skip for free providers so offline runs never pause).
         pricing = self.pricing.get(model, {"in": 0, "out": 0, "cache": 0})
@@ -178,10 +241,17 @@ class Gateway:
                 f"call would breach cap (spend={self.governor.total_spend():.2f}, cap={self.governor.cap_usd})")
 
         started = datetime.now(timezone.utc)
-        async with self.semaphore:
-            result = await adapter.complete(
-                model, req.messages(), purpose=req.purpose, context=req.context,
-                max_tokens=req.max_tokens, temperature=req.temperature)
+        try:
+            result, attempts = await self._call_adapter(
+                adapter, model, req, req.messages(), req.temperature, provider_cache_key)
+        except Exception as exc:
+            latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            failure = ProviderUnavailable(
+                provider, model, req.purpose, f"{type(exc).__name__}: {exc}",
+                latency_ms=latency_ms, attempts=self.provider_retries + 1)
+            self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                 phase="LLM", importance=5.0)
+            raise failure from exc
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
         parsed, ok = self._parse(result.text)
@@ -192,20 +262,50 @@ class Gateway:
                 user=req.user + "\n\nYour previous reply was not valid JSON. Reply ONLY with the JSON envelope.",
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
-            async with self.semaphore:
-                result = await adapter.complete(model, repair.messages(), purpose=req.purpose,
-                                                context=req.context, max_tokens=req.max_tokens,
-                                                temperature=0.2)
+            try:
+                result, repair_attempts = await self._call_adapter(
+                    adapter, model, repair, repair.messages(), 0.2, provider_cache_key)
+                attempts += repair_attempts
+            except Exception as exc:
+                latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+                failure = ProviderUnavailable(
+                    provider, model, req.purpose, f"repair {type(exc).__name__}: {exc}",
+                    latency_ms=latency_ms, attempts=attempts + self.provider_retries + 1)
+                self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                     phase="LLM", importance=5.0)
+                raise failure from exc
             parsed, ok = self._parse(result.text)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
 
-        cached, cost = self._price(req, model, result.in_tokens, result.out_tokens, pricing)
+        cached, cost = self._price(
+            model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
         self._log_call(req, provider, model, cache_key, result, cost, cached, latency_ms)
 
         return LLMResponse(text=result.text, parsed=parsed, provider=provider, model=model,
                            in_tokens=result.in_tokens, out_tokens=result.out_tokens,
                            cost_usd=cost, cached=cached, ok=ok)
+
+    async def _call_adapter(self, adapter: Adapter, model: str, req: LLMRequest,
+                            messages: list[dict], temperature: float,
+                            provider_cache_key: str):
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.provider_retries + 2):
+            try:
+                async with self.semaphore:
+                    result = await adapter.complete(
+                        model, messages, purpose=req.purpose, context=req.context,
+                        max_tokens=req.max_tokens, temperature=temperature,
+                        cache_key=provider_cache_key)
+                return result, attempt
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                if attempt <= self.provider_retries:
+                    await asyncio.sleep(min(0.25 * (2 ** (attempt - 1)), 2.0))
+        assert last_error is not None
+        raise last_error
 
     # ── parsing ──────────────────────────────────────────────────────────────
     @staticmethod
@@ -227,12 +327,10 @@ class Gateway:
         return {}, False
 
     # ── caching + cost ───────────────────────────────────────────────────────
-    def _price(self, req: LLMRequest, model: str, in_tok: int, out_tok: int, pricing: dict) -> tuple[bool, float]:
-        prefix_key = hashlib.sha1((model + "|" + req.system).encode()).hexdigest()
-        prefix_tokens = max(1, len(req.system) // 4)
-        cached = prefix_key in self._seen_prefixes
-        self._seen_prefixes.add(prefix_key)
-        cached_in = min(prefix_tokens, in_tok) if cached else 0
+    def _price(self, model: str, in_tok: int, out_tok: int, cached_in: int,
+               pricing: dict) -> tuple[bool, float]:
+        cached_in = max(0, min(int(cached_in or 0), in_tok))
+        cached = cached_in > 0
         noncached_in = in_tok - cached_in
         cost = (noncached_in / 1e6) * pricing["in"] + (cached_in / 1e6) * pricing["cache"] \
             + (out_tok / 1e6) * pricing["out"]
@@ -265,7 +363,8 @@ class Gateway:
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role, provider=provider,
             model=model, purpose=req.purpose, cache_key=cache_key,
             request_json=json.dumps({"system": req.system, "user": req.user, "context": req.context}),
-            response_json=json.dumps({"text": result.text, "raw": result.raw}),
+            response_json=json.dumps({"text": result.text, "raw": result.raw,
+                                      "cached_in_tokens": result.cached_in_tokens}),
             in_tokens=result.in_tokens, out_tokens=result.out_tokens, cached=1 if cached else 0,
             cost_usd=cost, latency_ms=latency_ms,
             created_at=datetime.now(timezone.utc).isoformat())

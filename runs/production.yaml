@@ -1,0 +1,39 @@
+# PRD production profile. Inherits deterministic world mechanics from base.yaml
+# while replacing the offline scripted route with current official provider IDs.
+extends: base.yaml
+
+population:
+  size: 87  # citizens + institutional staff/founders = approximately 100 agents
+
+llm:
+  concurrency: 8
+  provider_retries: 1
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+    kimi:
+      kind: openai_compat
+      base_url: https://api.moonshot.ai/v1
+      api_key_env: MOONSHOT_API_KEY
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      prompt_cache_key: true
+      request_defaults:
+        thinking: {type: disabled}
+        temperature: 0.6
+  default_route: {provider: minimax, model: MiniMax-M2.7}
+  routes:
+    citizen:        {provider: minimax, model: MiniMax-M2.7}
+    founder:        {provider: minimax, model: MiniMax-M2.7}
+    central_banker: {provider: kimi, model: kimi-k2.6}
+    credit_officer: {provider: kimi, model: kimi-k2.6}
+    reporter:       {provider: kimi, model: kimi-k2.6}
+    editor:         {provider: kimi, model: kimi-k2.6}
+    vc_partner:     {provider: kimi, model: kimi-k2.6}
+    oracle:         {provider: kimi, model: kimi-k2.6}

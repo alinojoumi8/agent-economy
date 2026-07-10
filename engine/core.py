@@ -15,7 +15,7 @@ from .firms import Firms
 from .government import Government
 from .labor import Labor
 from .ledger import (Ledger, SYS_COMMODITY, SYS_EXTERNAL, SYS_GOV, SYS_INFLOW,
-                     SYS_LOSS, SYS_MEDICAL)
+                     SYS_HOUSING, SYS_LOSS, SYS_MEDICAL)
 from .lifecycle import Lifecycle
 from .store import Store
 from .vc import VentureCapital
@@ -42,7 +42,8 @@ class Economy:
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:
-        for label in (SYS_EXTERNAL, SYS_COMMODITY, SYS_INFLOW, SYS_LOSS, SYS_MEDICAL, SYS_GOV):
+        for label in (SYS_EXTERNAL, SYS_COMMODITY, SYS_INFLOW, SYS_LOSS,
+                      SYS_MEDICAL, SYS_GOV, SYS_HOUSING):
             self.ledger.ensure_system_account(label)
 
     # ── convenient references ────────────────────────────────────────────────

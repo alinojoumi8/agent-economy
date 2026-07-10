@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -26,6 +27,7 @@ class AdapterResult:
     text: str
     in_tokens: int = 0
     out_tokens: int = 0
+    cached_in_tokens: int = 0
     raw: dict = field(default_factory=dict)
 
 
@@ -38,8 +40,11 @@ class Adapter:
 
     async def complete(self, model: str, messages: list[dict], *, purpose: str = "",
                        context: Optional[dict] = None, max_tokens: int = 700,
-                       temperature: float = 0.7) -> AdapterResult:
+                       temperature: float = 0.7, cache_key: str = "") -> AdapterResult:
         raise NotImplementedError
+
+    async def healthcheck(self, model: str) -> dict:
+        return {"ok": True, "model": model, "live": False}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -56,7 +61,7 @@ class ScriptedAdapter(Adapter):
         self.policies[purpose] = fn
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
-                       temperature=0.7) -> AdapterResult:
+                       temperature=0.7, cache_key="") -> AdapterResult:
         fn = self.policies.get(purpose)
         context = context or {}
         if fn is None:
@@ -74,7 +79,7 @@ class MockAdapter(Adapter):
     name = "mock"
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
-                       temperature=0.7) -> AdapterResult:
+                       temperature=0.7, cache_key="") -> AdapterResult:
         payload = {"reasoning": "mock response", "actions": [{"type": "do_nothing"}]}
         text = json.dumps(payload)
         in_tok = sum(estimate_tokens(m.get("content", "")) for m in messages)
@@ -88,30 +93,53 @@ class MockAdapter(Adapter):
 class OpenAICompatAdapter(Adapter):
     name = "openai_compat"
 
-    def __init__(self, base_url: str, api_key_env: str, *, timeout: float = 60.0):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = os.environ.get(api_key_env, "")
-        self.timeout = timeout
+    def __init__(self, config: dict):
+        self.base_url = str(config["base_url"]).rstrip("/")
+        self.api_key_env = str(config.get("api_key_env", ""))
+        self.api_key = os.environ.get(self.api_key_env, "")
+        self.timeout = float(config.get("timeout_s", 60.0))
+        self.healthcheck_path = str(config.get("healthcheck_path", "/models"))
+        self.max_tokens_field = str(config.get("max_tokens_field", "max_tokens"))
+        self.request_defaults = dict(config.get("request_defaults", {}) or {})
+        self.prompt_cache_key = bool(config.get("prompt_cache_key", False))
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
-                       temperature=0.7) -> AdapterResult:
+                       temperature=0.7, cache_key="") -> AdapterResult:
         import httpx
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         body = {
-            "model": model, "messages": messages, "max_tokens": max_tokens,
+            "model": model, "messages": messages,
             "temperature": temperature, "response_format": {"type": "json_object"},
         }
+        body[self.max_tokens_field] = max_tokens
+        body.update(self.request_defaults)
+        if self.prompt_cache_key and cache_key:
+            body["prompt_cache_key"] = cache_key
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
         text = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
+        details = usage.get("prompt_tokens_details", {}) or {}
+        cached_in = int(details.get("cached_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0)
         return AdapterResult(
             text=text,
             in_tokens=int(usage.get("prompt_tokens", 0)) or sum(estimate_tokens(m["content"]) for m in messages),
             out_tokens=int(usage.get("completion_tokens", 0)) or estimate_tokens(text),
+            cached_in_tokens=cached_in,
             raw=data)
+
+    async def healthcheck(self, model: str) -> dict:
+        import httpx
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        async with httpx.AsyncClient(timeout=min(self.timeout, 15.0)) as client:
+            resp = await client.get(f"{self.base_url}{self.healthcheck_path}", headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        model_ids = {str(row.get("id")) for row in data.get("data", []) if isinstance(row, dict)}
+        return {"ok": model in model_ids, "model": model, "model_available": model in model_ids,
+                "live": True, "models_returned": len(model_ids)}
 
 
 class AnthropicAdapter(Adapter):
@@ -122,7 +150,7 @@ class AnthropicAdapter(Adapter):
         self.timeout = timeout
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
-                       temperature=0.7) -> AdapterResult:
+                       temperature=0.7, cache_key="") -> AdapterResult:
         import httpx
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         convo = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
@@ -136,8 +164,10 @@ class AnthropicAdapter(Adapter):
             data = resp.json()
         text = "".join(block.get("text", "") for block in data.get("content", []))
         usage = data.get("usage", {})
-        return AdapterResult(text=text, in_tokens=int(usage.get("input_tokens", 0)),
-                             out_tokens=int(usage.get("output_tokens", 0)), raw=data)
+        cached_in = int(usage.get("cache_read_input_tokens", 0) or 0)
+        return AdapterResult(text=text, in_tokens=int(usage.get("input_tokens", 0)) + cached_in,
+                             out_tokens=int(usage.get("output_tokens", 0)),
+                             cached_in_tokens=cached_in, raw=data)
 
 
 class CLIAdapter(Adapter):
@@ -149,7 +179,7 @@ class CLIAdapter(Adapter):
         self.command = command
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
-                       temperature=0.7) -> AdapterResult:
+                       temperature=0.7, cache_key="") -> AdapterResult:
         if purpose not in self.ALLOWED_PURPOSES:
             raise PermissionError(
                 f"CLI adapter is restricted to {self.ALLOWED_PURPOSES}; refused purpose='{purpose}'. "
@@ -166,6 +196,9 @@ class CLIAdapter(Adapter):
         return AdapterResult(text=text, in_tokens=estimate_tokens(prompt),
                              out_tokens=estimate_tokens(text), raw={"stderr": proc.stderr})
 
+    async def healthcheck(self, model: str) -> dict:
+        return {"ok": shutil.which(self.command) is not None, "model": model, "live": True}
+
 
 # Default provider registry factory ------------------------------------------------
 def build_adapters(config: dict) -> dict[str, Adapter]:
@@ -177,7 +210,7 @@ def build_adapters(config: dict) -> dict[str, Adapter]:
     for pname, pcfg in providers.items():
         kind = pcfg.get("kind")
         if kind == "openai_compat":
-            adapters[pname] = OpenAICompatAdapter(pcfg["base_url"], pcfg.get("api_key_env", ""))
+            adapters[pname] = OpenAICompatAdapter(pcfg)
         elif kind == "anthropic":
             adapters[pname] = AnthropicAdapter(pcfg.get("api_key_env", "ANTHROPIC_API_KEY"))
         elif kind == "cli":
