@@ -78,7 +78,8 @@ def validate_llm_config(
         key_env = str(pcfg.get("api_key_env", "")).strip()
         base_url = str(pcfg.get("base_url", "")).strip()
         key_required = kind in NETWORK_PROVIDER_KINDS
-        key_present = bool(key_env and env.get(key_env, "").strip())
+        key_value = str(env.get(key_env, "")).strip() if key_env else ""
+        key_present = bool(key_value)
 
         if kind not in KNOWN_PROVIDER_KINDS:
             errors.append(f"provider '{provider}' has unknown kind '{kind or '<empty>'}'")
@@ -88,6 +89,29 @@ def validate_llm_config(
             errors.append(f"provider '{provider}' requires api_key_env")
         elif key_required and require_secrets and not key_present:
             errors.append(f"provider '{provider}' is missing environment variable {key_env}")
+
+        # Kimi Code membership keys and Moonshot pay-as-you-go keys use
+        # different services. Catch the otherwise opaque 401 before startup
+        # without returning or logging any part of the credential.
+        if key_value.lower().startswith("sk-kimi-"):
+            expected_base = "https://api.kimi.com/coding/v1"
+            if base_url.rstrip("/") != expected_base:
+                errors.append(
+                    f"provider '{provider}' uses a Kimi Code key and must use "
+                    f"base_url {expected_base}")
+            invalid_models = [m for m in models
+                              if m not in {"kimi-for-coding", "kimi-for-coding-highspeed"}]
+            if invalid_models:
+                errors.append(
+                    f"provider '{provider}' uses a Kimi Code key and must route "
+                    "to model kimi-for-coding (or kimi-for-coding-highspeed)")
+
+        if key_value.lower().startswith("sk-cp-"):
+            expected_base = "https://api.minimax.io/v1"
+            if base_url.rstrip("/") != expected_base:
+                errors.append(
+                    f"provider '{provider}' uses a MiniMax Token Plan key and "
+                    f"must use base_url {expected_base}")
 
         provider_rows.append({
             "name": provider, "kind": kind or None, "models": models,

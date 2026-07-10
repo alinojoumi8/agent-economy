@@ -11,6 +11,8 @@ from typing import Any
 # Metadata and checkpoint paths are operational, not simulated world state.
 EXCLUDED_TABLES = {"run_meta", "checkpoints"}
 IGNORED_COLUMNS = {"created_at", "updated_at"}
+LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
+SURROGATE_ID_COLUMNS = {table: {"id"} for table in LOGICAL_ROW_TABLES}
 IGNORED_EVENT_KINDS = {"report_generated", "report_failed"}
 JSON_COLUMNS = {
     "participant_ids", "slant_tags", "source_event_ids",
@@ -49,7 +51,8 @@ def _canonical_value(column: str, value: Any) -> Any:
 
 def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
     columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
-    columns = [column for column in columns if column not in IGNORED_COLUMNS]
+    ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
+    columns = [column for column in columns if column not in ignored]
     where = ""
     params: tuple[Any, ...] = ()
     if table == "events":
@@ -59,12 +62,17 @@ def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
     order = " ORDER BY id" if "id" in columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()
-    digest = hashlib.sha256()
+    records = []
     for row in rows:
         record = {column: _canonical_value(column, row[column]) for column in columns}
-        digest.update(json.dumps(
+        records.append(json.dumps(
             record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False).encode("utf-8"))
+    if table in LOGICAL_ROW_TABLES:
+        records.sort()
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update(record)
         digest.update(b"\n")
     return len(rows), digest.hexdigest()
 

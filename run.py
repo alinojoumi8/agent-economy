@@ -225,6 +225,12 @@ def main() -> None:
         path = generate_report(
             store, world, out_dir=str(config.get("report_dir", "reports/out")))
         gov = world.gateway.governor.status()
+        if world.last_pause_reason:
+            reason = world.last_pause_reason.get("reason", "unknown")
+            detail = str(world.last_pause_reason.get("detail", ""))[:500]
+            print(f"[agent-economy] paused @ tick {store.tick} · {reason}: {detail} "
+                  f"· report: {path}")
+            raise SystemExit(4)
         print(f"[agent-economy] done @ tick {store.tick} · spend ${gov['total_spend_usd']:.2f} "
               f"· report: {path}")
         return

@@ -9,6 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.policies import credit_officer_decision, founder_decision
+from agents.prompts import ContextBuilder, SYSTEM_PREFIX
+from agents.runtime import _gather_fail_fast
 from engine.actions import ActionExecutor
 from engine.credit import LoanTerms
 from llm.adapters import AdapterResult
@@ -24,6 +26,44 @@ def _listed_firm(economy, founder: int, name: str = "ListedCo") -> int:
     firm_id = economy.firms.found_firm(0, founder, name, "tech")
     economy.store.update("firms", firm_id, status="listed")
     return firm_id
+
+
+def test_real_provider_prompt_exposes_counterparty_ids_as_json_integers():
+    context = {
+        "agent": {"name": "Buyer", "age": 30, "occupation": "teacher"},
+        "prices": [{"firm_id": 7, "product": "food_good", "price": 120,
+                    "inventory": 9}],
+        "jobs": [{"job_id": 2, "firm_id": 7, "title": "teacher", "wage": 500}],
+    }
+    system, user = ContextBuilder.__new__(ContextBuilder).render_prompt(context)
+
+    assert '"firm_id":7' in user
+    assert '"job_id":2' in user
+    assert "firm7:" not in user and "job2@" not in user
+    assert system == SYSTEM_PREFIX
+    assert "MUST be a JSON integer" in system
+
+
+def test_provider_batch_failure_cancels_outstanding_work():
+    state = {"cancelled": 0}
+
+    async def fail():
+        await asyncio.sleep(0.01)
+        raise RuntimeError("provider unavailable")
+
+    async def slow():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            state["cancelled"] += 1
+            raise
+
+    async def scenario():
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await _gather_fail_fast([fail(), slow(), slow()])
+
+    asyncio.run(scenario())
+    assert state["cancelled"] == 2
 
 
 def test_actions_require_living_actor_and_counterparty(economy):
@@ -332,6 +372,48 @@ def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatc
     payload = json.loads(row["response_json"])
     assert payload["raw"]["provider_calls"] == 2
     assert row["in_tokens"] == 220 and row["out_tokens"] == 50
+    store.close()
+
+
+def test_schema_hint_repairs_valid_json_with_the_wrong_contract(tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "SCHEMA_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "schema-test"},
+            "routes": {},
+        },
+    }
+    store = Store(str(tmp_path / "schema.db"))
+    store.init_run_meta("schema", 1, config)
+    monkeypatch.setenv("SCHEMA_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+
+    class WrongThenValid:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            text = ('{"observations":[]}' if self.calls == 1 else
+                    '{"summary":"fixed","importance":2,"belief_updates":[]}')
+            return AdapterResult(text=text, in_tokens=10, out_tokens=10, raw={})
+
+    adapter = WrongThenValid()
+    gateway.adapters["network"] = adapter
+    schema = '{"summary":"concise memory","importance":1.0,"belief_updates":[]}'
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="memory", user="observations"),
+        schema_hint=schema))
+
+    assert adapter.calls == 2
+    assert response.ok
+    assert response.parsed["summary"] == "fixed"
     store.close()
 
 

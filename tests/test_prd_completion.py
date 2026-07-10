@@ -105,9 +105,20 @@ def test_production_config_inherits_world_and_requires_both_keys():
     assert cfg["population"]["size"] == 87
     assert cfg["banks"]["count"] == 2
     assert cfg["llm"]["default_route"] == {
-        "provider": "minimax", "model": "MiniMax-M2.7"}
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert cfg["llm"]["concurrency"] == 3
+    assert cfg["llm"]["providers"]["minimax"]["timeout_s"] == 180
+    assert cfg["llm"]["providers"]["minimax"]["request_defaults"] == {
+        "reasoning_split": True, "max_completion_tokens": 4096}
     assert cfg["llm"]["routes"]["oracle"] == {
-        "provider": "kimi", "model": "kimi-k2.6"}
+        "provider": "kimi", "model": "kimi-for-coding"}
+    kimi = cfg["llm"]["providers"]["kimi"]
+    assert kimi["base_url"] == "https://api.kimi.com/coding/v1"
+    assert kimi["timeout_s"] == 180
+    assert kimi["max_tokens_field"] == "max_tokens"
+    assert kimi["request_defaults"] == {
+        "reasoning_effort": "medium", "temperature": 1.0,
+        "max_tokens": 4096}
 
     missing = validate_llm_config(cfg, environ={}, raise_on_error=False)
     assert not missing["ready"]
@@ -115,11 +126,35 @@ def test_production_config_inherits_world_and_requires_both_keys():
     assert any("MOONSHOT_API_KEY" in error for error in missing["errors"])
 
     ready = validate_llm_config(
-        cfg, environ={"MINIMAX_API_KEY": "present", "MOONSHOT_API_KEY": "present"},
+        cfg, environ={"MINIMAX_API_KEY": "sk-cp-present",
+                      "MOONSHOT_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert ready["ready"] and ready["mode"] == "network"
     assert {p["name"] for p in ready["providers"]} == {"minimax", "kimi"}
     assert all("api_key" not in p for p in ready["providers"])
+
+    wrong_service = load_config("runs/production.yaml")
+    wrong_service["llm"]["providers"]["kimi"]["base_url"] = \
+        "https://api.moonshot.ai/v1"
+    mismatch = validate_llm_config(
+        wrong_service,
+        environ={"MINIMAX_API_KEY": "sk-cp-present",
+                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+        raise_on_error=False)
+    assert not mismatch["ready"]
+    assert any("Kimi Code key" in error for error in mismatch["errors"])
+
+    wrong_minimax_service = load_config("runs/production.yaml")
+    wrong_minimax_service["llm"]["providers"]["minimax"]["base_url"] = \
+        "https://api.minimaxi.com/v1"
+    minimax_mismatch = validate_llm_config(
+        wrong_minimax_service,
+        environ={"MINIMAX_API_KEY": "sk-cp-present",
+                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+        raise_on_error=False)
+    assert not minimax_mismatch["ready"]
+    assert any("MiniMax Token Plan key" in error
+               for error in minimax_mismatch["errors"])
 
 
 def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path):

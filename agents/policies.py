@@ -368,8 +368,10 @@ def conversation_turn(context: dict) -> dict:
                 "rumor_bank": rumor}
     topic = context.get("shared_topic")
     if topic:
-        return {"text": f"Quite something about {topic}, isn't it, {partner}?"}
-    return {"text": f"Good to see you, {partner}. How's business?"}
+        return {"text": f"Quite something about {topic}, isn't it, {partner}?",
+                "rumor_bank": None}
+    return {"text": f"Good to see you, {partner}. How's business?",
+            "rumor_bank": None}
 
 
 def memory_compress(context: dict) -> dict:
