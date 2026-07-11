@@ -125,6 +125,9 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert rumor_trace["post_outflow_events"][0]["amount_cents"] == 300
     markdown = (tmp_path / "out" / "acceptance_acceptance-fixture.md").read_text()
     assert "Overall: **PASS**" in markdown and "Rumor pilot" in markdown
+    assert "## Shock traces" in markdown and "### Policy Rate" in markdown
+    assert "## Emergent phenomena" in markdown and "### phenomenon-1" in markdown
+    assert "Observed through agent decisions and transactions." in markdown
 
 
 def test_acceptance_package_fails_closed_without_reviewed_attachments(tmp_path):

@@ -280,7 +280,8 @@ def _phenomena_evidence(store: Store, path: str | Path | None) -> tuple[bool, di
         verified.append({
             "name": item.get("name"), "metric": metric, "start_tick": start_tick,
             "end_tick": end_tick, "direction": direction, "start": start,
-            "end": end, "delta": delta, "verified": valid,
+            "end": end, "delta": delta, "mechanism": item.get("mechanism"),
+            "supporting_evidence": item.get("evidence", {}), "verified": valid,
         })
     distinct = {
         (item["name"], item["metric"], item["start_tick"], item["end_tick"])
@@ -465,6 +466,34 @@ def write_acceptance_package(
     for check in receipt["checks"]:
         lines.append(f"- [{'x' if check['passed'] else ' '}] **{check['label']}** (`{check['id']}`)")
         lines.append(f"  - Evidence: `{json.dumps(check['evidence'], sort_keys=True)}`")
+
+    trace_check = next(check for check in receipt["checks"] if check["id"] == "shock_traces")
+    lines += ["", "## Shock traces", ""]
+    for kind in REQUIRED_SHOCKS:
+        trace = trace_check["evidence"].get(kind, {})
+        lines += [
+            f"### {kind.replace('_', ' ').title()}", "",
+            f"- Trace passed: **{'yes' if trace.get('passed') else 'no'}**",
+            f"- Source: `{json.dumps(trace.get('source'), sort_keys=True)}`",
+            f"- Downstream: `{json.dumps(trace.get('downstream'), sort_keys=True)}`", "",
+        ]
+
+    phenomena_check = next(
+        check for check in receipt["checks"] if check["id"] == "emergent_phenomena"
+    )
+    lines += ["## Emergent phenomena", ""]
+    for phenomenon in phenomena_check["evidence"].get("documented", []):
+        lines += [
+            f"### {phenomenon.get('name') or 'Unnamed phenomenon'}", "",
+            (f"- Metric: `{phenomenon.get('metric')}` from tick "
+             f"{phenomenon.get('start_tick')} to {phenomenon.get('end_tick')}"),
+            (f"- Observed change: {phenomenon.get('start')} -> {phenomenon.get('end')} "
+             f"(delta {phenomenon.get('delta')})"),
+            f"- Mechanism: {phenomenon.get('mechanism')}",
+            ("- Supporting evidence: `"
+             f"{json.dumps(phenomenon.get('supporting_evidence', {}), sort_keys=True)}`"),
+            f"- Verified: **{'yes' if phenomenon.get('verified') else 'no'}**", "",
+        ]
     lines += ["", "## Reproduction", "", f"Database: `{receipt['run']['database']}`",
               f"Receipt JSON: `{json_path}`"]
     md_path.write_text("\n".join(lines), encoding="utf-8")
