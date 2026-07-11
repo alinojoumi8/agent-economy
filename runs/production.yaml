@@ -5,6 +5,11 @@ extends: base.yaml
 population:
   size: 87  # citizens + institutional staff/founders = approximately 100 agents
 
+# Production inference is throughput-limited by the provider plans. Spend is
+# still recorded, but the governor does not degrade or pause on a dollar limit.
+budget:
+  cap_usd: null
+
 llm:
   # Safe for the Token Plan's documented 3-4 concurrent-agent entry tier.
   concurrency: 3

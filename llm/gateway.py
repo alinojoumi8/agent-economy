@@ -98,12 +98,14 @@ class Governor:
     """Real-time spend accounting with staged degradation (PRD R7, TECH-SPEC §8).
 
     Thresholds bite against the *world budget* (cap minus the Oracle carve-out) so
-    interrogation never starves the world; total spend still never exceeds the cap.
+    interrogation never starves a capped world. An explicit ``cap_usd: null``
+    disables degradation and budget pauses while retaining spend accounting.
     """
 
     def __init__(self, store, budget_cfg: dict):
         self.store = store
-        self.cap_usd = float(budget_cfg.get("cap_usd", 200.0))
+        cap = budget_cfg.get("cap_usd", 200.0)
+        self.cap_usd = None if cap is None else float(cap)
         self.oracle_reserve_usd = float(budget_cfg.get("oracle_reserve_usd", 10.0))
         self.thresholds = budget_cfg.get("thresholds", [0.60, 0.80, 0.95])
         self.base_conversation_pairs = int(budget_cfg.get("conversation_pairs", 15))
@@ -158,9 +160,13 @@ class Governor:
 
     @property
     def world_budget(self) -> float:
+        if self.cap_usd is None:
+            return float("inf")
         return max(0.01, self.cap_usd - self.oracle_reserve_usd)
 
     def _calculate_level(self) -> int:
+        if self.cap_usd is None:
+            return 0
         frac = self._world_spend_usd / self.world_budget
         lvl = 0
         for i, t in enumerate(self.thresholds):
@@ -190,6 +196,8 @@ class Governor:
 
     def can_spend(self, est_cost: float, purpose: str) -> bool:
         self._ensure_current()
+        if self.cap_usd is None:
+            return True
         if purpose == "oracle":
             return self._oracle_spend_usd + est_cost <= self.oracle_reserve_usd \
                 and self._total_spend_usd + est_cost <= self.cap_usd
@@ -205,7 +213,8 @@ class Governor:
             "level": self.level(), "conversation_pairs": self.conversation_pairs(),
             "cadence_multiplier": self.cadence_multiplier(),
             "citizens_enabled": self.citizens_enabled(),
-            "fraction": round(self._total_spend_usd / self.cap_usd, 4) if self.cap_usd else 0,
+            "fraction": (round(self._total_spend_usd / self.cap_usd, 4)
+                         if self.cap_usd else None),
         }
 
 

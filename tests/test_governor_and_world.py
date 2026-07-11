@@ -61,6 +61,25 @@ def test_governor_stages(tmp_path):
     assert not gov.can_spend(20.0, "decision") or gov.total_spend() + 20.0 <= gov.cap_usd
 
 
+def test_governor_supports_explicit_uncapped_runs(tmp_path):
+    store = Store(str(tmp_path / "uncapped.db"))
+    store.init_run_meta("uncapped", 1, {})
+    governor = Governor(store, {
+        "cap_usd": None, "oracle_reserve_usd": 10.0, "conversation_pairs": 15,
+    })
+    store.insert("llm_calls", tick=0, purpose="decision", cost_usd=10_000.0,
+                 in_tokens=0, out_tokens=0, cached=0)
+
+    assert governor.cap_usd is None
+    assert governor.level() == 0
+    assert governor.conversation_pairs() == 15
+    assert governor.cadence_multiplier() == 1
+    assert governor.citizens_enabled()
+    assert not governor.should_pause()
+    assert governor.can_spend(1_000_000.0, "oracle")
+    assert governor.status()["fraction"] is None
+
+
 # ── reconciliation property test over a real run ─────────────────────────────
 def test_world_runs_and_reconciles_30_ticks(tmp_path):
     w = _fresh_world(tmp_path)

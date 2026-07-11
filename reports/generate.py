@@ -117,6 +117,8 @@ def generate_report(store: Store, world=None, out_dir: str = "reports/out") -> s
         "SELECT model, COUNT(*) AS calls, SUM(in_tokens) AS ti, SUM(out_tokens) AS toks, "
         "SUM(cost_usd) AS cost FROM llm_calls GROUP BY model")
     total_cost = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
+    cap = config.get("budget", {}).get("cap_usd", 200)
+    cost_limit = "uncapped" if cap is None else f"${float(cap):.2f} cap"
 
     esc = html.escape
 
@@ -178,7 +180,7 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
 {cal_html}
 
 <h2>Cost summary</h2>
-<p>Total spend: <b>${total_cost:.2f}</b> of ${config.get('budget',{}).get('cap_usd',200)} cap.</p>
+<p>Total spend: <b>${total_cost:.2f}</b> · {cost_limit}.</p>
 <table><tr><th>Model</th><th>Calls</th><th>In tokens</th><th>Out tokens</th><th>Cost</th></tr>
 {"".join(f"<tr><td>{esc(str(r['model']))}</td><td>{r['calls']}</td><td>{r['ti'] or 0}</td><td>{r['toks'] or 0}</td><td>${(r['cost'] or 0):.4f}</td></tr>" for r in cost_rows)}
 </table>
@@ -199,7 +201,7 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
     md += ["", "## Oracle",
            f"{len(preds)} predictions, {len(resolved)} resolved, mean Brier "
            f"{f'{mean_brier:.3f}' if mean_brier is not None else '—'}",
-           "", "## Cost", f"Total ${total_cost:.2f}"]
+           "", "## Cost", f"Total ${total_cost:.2f} · {cost_limit}"]
     (out / f"run_{run_id}_t{tick}.md").write_text("\n".join(md), encoding="utf-8")
 
     store.log_event(tick, "report_generated", {"path": str(html_path)}, importance=1.0)

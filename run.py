@@ -158,8 +158,9 @@ def main() -> None:
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
     ap.add_argument("--acceptance-run", action="store_true",
                     help="execute the configured acceptance horizon and scheduled Oracle checks")
-    ap.add_argument("--approve-live-spend", action="store_true",
-                    help="explicitly authorize paid providers for --acceptance-run")
+    ap.add_argument("--approve-live-inference", "--approve-live-spend",
+                    dest="approve_live_inference", action="store_true",
+                    help="explicitly authorize real-provider inference for --acceptance-run")
     ap.add_argument("--experiment-evidence", default=None,
                     help="experiment JSON to attach to an acceptance receipt")
     ap.add_argument("--phenomena-evidence", default=None,
@@ -212,9 +213,9 @@ def main() -> None:
                     seed=config.get("seed", 42))
     if args.acceptance_run:
         from reports.acceptance import uses_paid_providers
-        if uses_paid_providers(config) and not args.approve_live_spend:
+        if uses_paid_providers(config) and not args.approve_live_inference:
             raise SystemExit(
-                "paid acceptance run requires explicit --approve-live-spend authorization"
+                "live acceptance run requires explicit --approve-live-inference authorization"
             )
     if args.preflight or args.preflight_live:
         report = asyncio.run(provider_preflight(config, live=args.preflight_live))

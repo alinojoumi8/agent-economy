@@ -241,7 +241,10 @@ def evaluate_acceptance(
         min_ticks = int(acceptance.get("min_ticks", 365))
         min_agents = int(acceptance.get("min_agents", 95))
         max_agents = int(acceptance.get("max_agents", 105))
-        max_spend = float(acceptance.get("max_spend_usd", 200.0))
+        max_spend_raw = acceptance.get("max_spend_usd", 200.0)
+        max_spend = None if max_spend_raw is None else float(max_spend_raw)
+        configured_cap_raw = config.get("budget", {}).get("cap_usd", 200.0)
+        configured_cap = None if configured_cap_raw is None else float(configured_cap_raw)
         oracle_p90_limit = int(acceptance.get("oracle_p90_ms", 60_000))
         tick = int(meta["tick"])
         status = str(meta["status"])
@@ -285,9 +288,12 @@ def evaluate_acceptance(
                    bool(real_providers) and not forbidden_providers,
                    {"providers": sorted(providers), "real": sorted(real_providers),
                     "forbidden": sorted(forbidden_providers)}),
-            _check("budget", "Total provider spend stayed within the hard cap",
-                   spend <= max_spend and spend <= float(config.get("budget", {}).get("cap_usd", max_spend)),
-                   {"spend_usd": round(spend, 6), "maximum_usd": max_spend}),
+            _check("budget", "Provider spend policy was satisfied",
+                   (max_spend is None or spend <= max_spend)
+                   and (configured_cap is None or spend <= configured_cap),
+                   {"spend_usd": round(spend, 6), "maximum_usd": max_spend,
+                    "configured_cap_usd": configured_cap,
+                    "uncapped": max_spend is None and configured_cap is None}),
             _check("ledger", "Double-entry ledger reconciles exactly", reconciled, ledger_diag),
             _check("failure_events", "No provider, budget, report, or reconciliation failure occurred",
                    not any(failures.values()) and status != "halted", failures),

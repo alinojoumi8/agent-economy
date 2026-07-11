@@ -112,6 +112,8 @@ python run.py
 The no-argument entrypoint intentionally selects `runs/production.yaml`, the
 locked PRD profile. Use `--config runs/base.yaml` whenever an offline scripted
 run is desired; production never silently falls back when keys are absent.
+The production profile records spend without a dollar ceiling; `runs/base.yaml`
+retains the $200 governor cap for deterministic capped-run development.
 
 Provider/model names are validated before genesis. A missing key, unknown route,
 or unavailable model produces a clear preflight failure; it never silently falls
@@ -124,7 +126,8 @@ estimated local cache hit.
 ### Production acceptance
 
 Production acceptance is a separate evidence-gated workflow. The live command
-uses paid providers and must not be started without explicit spend approval:
+uses an uncapped provider budget and must not start without explicit inference
+approval; provider rate limits control throughput and actual spend is recorded:
 
 ```bash
 # Free full-horizon rehearsal (all inherited routes are forced to scripted):
@@ -133,7 +136,7 @@ python run.py --config runs/acceptance/rehearsal.yaml --acceptance-run \
 
 # Paid production acceptance:
 python run.py --config runs/acceptance/production.yaml --preflight-live
-python run.py --config runs/acceptance/production.yaml --acceptance-run --approve-live-spend
+python run.py --config runs/acceptance/production.yaml --acceptance-run --approve-live-inference
 python run.py --experiment runs/experiments/rumor_vs_control.yaml
 python run.py --acceptance-report RUN_ID \
   --experiment-evidence reports/out/experiment_rumor_vs_control.json \
@@ -149,10 +152,10 @@ Routing is `role → {provider, model}` — citizens on MiniMax, the high-levera
 seats (central banker, credit officers, reporters/editors, VC partner, Oracle) on
 Kimi. The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
 
-Cost governance (PRD R7): a hard cap (default $200) with staged degradation at
-60/80/95% of the world budget (fewer conversations → stretched cadences →
-institutional-only) and a clean pause at 100%. The Oracle has a reserved
-carve-out so asking questions never starves the world.
+Capped profiles retain PRD R7's staged degradation at 60/80/95% of their world
+budget (fewer conversations → stretched cadences → institutional-only) and a
+clean pause at 100%. The production profile explicitly disables that dollar
+ceiling; its dashboard and reports show actual spend as uncapped.
 
 ## What you can do from the dashboard
 

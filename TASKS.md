@@ -1,9 +1,9 @@
 # PRD delivery tasks
 
 These tasks are strictly sequential. A task may start only after every gate on
-the preceding task has reproducible evidence. The production acceptance run is
-financially gated: tooling may be built and tested without approval, but no
-paid provider run starts until the operator explicitly approves that spend.
+the preceding task has reproducible evidence. Live inference requires explicit
+operator approval; the acceptance profile is uncapped and records actual spend
+while provider rate limits control throughput.
 
 ## Task 1 — Production acceptance run and evidence package
 
@@ -17,8 +17,8 @@ paid provider run starts until the operator explicitly approves that spend.
   reconciled comparison artifact.
 - [ ] Pass focused tests, the full Python suite, dashboard tests/build, live
   dashboard/API smoke, autoreview, and diff checks.
-- [ ] With explicit cost approval, pass live provider preflight and the paid
-  365-tick run with every evidence gate green.
+- [ ] With explicit live-inference approval, pass provider preflight and the
+  uncapped 365-tick run with every evidence gate green.
 
 ## Task 2 — R18 Participant Mode
 

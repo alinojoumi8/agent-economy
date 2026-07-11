@@ -1,10 +1,12 @@
 import asyncio
 import json
+from pathlib import Path
 
 import yaml
 
 from engine.store import Store
 from reports.acceptance import execute_acceptance_run, uses_paid_providers, write_acceptance_package
+from reports.generate import generate_report
 from run_config import load_config
 from world.loop import World
 
@@ -179,3 +181,36 @@ def test_rehearsal_inherits_acceptance_scope_but_routes_every_role_locally():
     routes = [config["llm"]["default_route"], *config["llm"]["routes"].values()]
     assert {route["provider"] for route in routes} == {"scripted"}
     assert not uses_paid_providers(config)
+
+
+def test_live_acceptance_profile_is_explicitly_uncapped():
+    config = load_config("runs/acceptance/production.yaml")
+
+    assert config["budget"]["cap_usd"] is None
+    assert config["acceptance"]["max_spend_usd"] is None
+
+
+def test_uncapped_policy_is_preserved_in_receipt_and_end_report(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    meta = store.get_meta()
+    config = json.loads(meta["config_json"])
+    config["budget"]["cap_usd"] = None
+    config["acceptance"]["max_spend_usd"] = None
+    store.init_run_meta(str(meta["run_id"]), int(meta["seed"]), config)
+    store.insert("llm_calls", tick=364, provider="minimax", model="MiniMax-M3",
+                 purpose="decision", latency_ms=100, cost_usd=25_000.0)
+    store.commit()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "out", experiment_json=experiment, phenomena_yaml=phenomena
+    )
+    budget = next(check for check in receipt["checks"] if check["id"] == "budget")
+    report_path = generate_report(store, out_dir=str(tmp_path / "out"))
+    report = Path(report_path).read_text(encoding="utf-8")
+    store.close()
+
+    assert budget["passed"]
+    assert budget["evidence"]["uncapped"]
+    assert budget["evidence"]["spend_usd"] > 25_000
+    assert "uncapped" in report

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { api } from "../src/api.js";
+import { api, budgetState } from "../src/api.js";
 import { clientLog, safeFields } from "../src/logging.js";
 
 
@@ -84,4 +84,14 @@ test("api logs malformed JSON instead of swallowing it silently", async () => {
   assert.equal(messages[0].event, "dashboard.api.invalid_json");
   assert.equal(messages[0].path, "/api/malformed");
   assert.equal(messages[0].status_code, 200);
+});
+
+
+test("budgetState distinguishes an uncapped run from the default cap", () => {
+  assert.deepEqual(budgetState({ total_spend_usd: 321.5, cap_usd: null }), {
+    spend: 321.5, cap: null, capped: false, fraction: 0,
+  });
+  assert.deepEqual(budgetState({ total_spend_usd: 50, cap_usd: 200 }), {
+    spend: 50, cap: 200, capped: true, fraction: 25,
+  });
 });

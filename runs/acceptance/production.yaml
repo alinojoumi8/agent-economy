@@ -1,11 +1,11 @@
-# Paid PRD acceptance profile. Do not execute without explicit spend approval.
+# Live PRD acceptance profile. Provider rate limits are the only throughput ceiling.
 extends: ../production.yaml
 
 acceptance:
   min_ticks: 365
   min_agents: 95
   max_agents: 105
-  max_spend_usd: 200.0
+  max_spend_usd: null
   oracle_p90_ms: 60000
   rumor_initial_trust: 0.6
   oracle_questions:

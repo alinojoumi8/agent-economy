@@ -76,7 +76,7 @@ def test_experiment_base_config_honors_recursive_inheritance():
 
     assert spec["config"]["population"]["size"] == 12
     assert spec["config"]["firms"]["count"] == 12
-    assert spec["config"]["budget"]["cap_usd"] == 200.0
+    assert spec["config"]["budget"]["cap_usd"] is None
     assert spec["config"]["llm"]["default_route"]["provider"] == "minimax"
 
 

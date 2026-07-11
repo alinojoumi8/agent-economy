@@ -1,14 +1,12 @@
 import { useState } from "react";
-import { number } from "../api";
+import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
 export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
-  const spend = Number(status?.governor?.total_spend_usd || 0);
-  const cap = Number(status?.governor?.cap_usd || 200);
-  const fraction = cap ? Math.min(100, spend / cap * 100) : 0;
+  const { spend, cap, capped, fraction } = budgetState(status?.governor);
 
   async function action(name, path, body) {
     setBusy(name);
@@ -63,9 +61,9 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
         <div className="w-full min-w-[200px] sm:ml-auto sm:w-64">
           <div className="mb-1 flex justify-between text-[10px] uppercase tracking-wider text-slate-500">
             <span>Provider budget · L{status?.governor?.level ?? 0}</span>
-            <span className="tabular">${number(spend, 2)} / ${number(cap, 0)}</span>
+            <span className="tabular">${number(spend, 2)} / {capped ? `$${number(cap, 0)}` : "uncapped"}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label="Provider budget used" aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label={capped ? "Provider budget used" : "Provider spend uncapped"} aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
             <div className="h-full rounded-full bg-gradient-to-r from-mint-400 via-gold-300 to-coral-300 transition-[width]" style={{ width: `${fraction}%` }} />
           </div>
         </div>

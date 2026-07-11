@@ -60,4 +60,13 @@ export const percent = (value, digits = 1) => {
   return `${(Number(value) * 100).toFixed(digits)}%`;
 };
 
+export const budgetState = (governor = {}) => {
+  const spend = Number(governor?.total_spend_usd || 0);
+  const rawCap = governor?.cap_usd;
+  const capped = rawCap !== null && rawCap !== undefined && Number.isFinite(Number(rawCap));
+  const cap = capped ? Number(rawCap) : null;
+  const fraction = capped && cap > 0 ? Math.min(100, spend / cap * 100) : 0;
+  return { spend, cap, capped, fraction };
+};
+
 export const shortKind = (kind = "") => kind.replaceAll("_", " ");
