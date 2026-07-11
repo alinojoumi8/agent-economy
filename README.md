@@ -127,6 +127,11 @@ Production acceptance is a separate evidence-gated workflow. The live command
 uses paid providers and must not be started without explicit spend approval:
 
 ```bash
+# Free full-horizon rehearsal (all inherited routes are forced to scripted):
+python run.py --config runs/acceptance/rehearsal.yaml --acceptance-run \
+  --experiment-evidence reports/out/experiment_rumor_vs_control.json
+
+# Paid production acceptance:
 python run.py --config runs/acceptance/production.yaml --preflight-live
 python run.py --config runs/acceptance/production.yaml --acceptance-run --approve-live-spend
 python run.py --experiment runs/experiments/rumor_vs_control.yaml

@@ -5,6 +5,7 @@ import yaml
 
 from engine.store import Store
 from reports.acceptance import execute_acceptance_run, uses_paid_providers, write_acceptance_package
+from run_config import load_config
 from world.loop import World
 
 
@@ -165,3 +166,16 @@ def test_paid_acceptance_detection_fails_safe_for_any_real_route():
         "oracle": {"provider": "kimi", "model": "kimi-for-coding"},
     }
     assert uses_paid_providers(config)
+
+
+def test_rehearsal_inherits_acceptance_scope_but_routes_every_role_locally():
+    config = load_config("runs/acceptance/rehearsal.yaml")
+
+    assert config["acceptance"]["min_ticks"] == 365
+    assert config["population"]["size"] == 87
+    assert {shock["kind"] for shock in config["shocks"]} == {
+        "policy_rate", "oil", "rumor", "slant", "scandal",
+    }
+    routes = [config["llm"]["default_route"], *config["llm"]["routes"].values()]
+    assert {route["provider"] for route in routes} == {"scripted"}
+    assert not uses_paid_providers(config)
