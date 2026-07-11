@@ -49,9 +49,11 @@ spread rumors, and run on banks. The whole system (dashboard, Oracle, shocks,
 reports, replay) works offline and reproducibly. Same seed ⇒ identical event log.
 
 Replay never mutates the source run. It creates a fresh `replay-*.db`, rebuilds
-genesis, re-executes every tick against the source run's stored LLM responses,
-and prints table-by-table SHA-256 proof. A missing response pauses the replay and
-exits without contacting any live provider; a state mismatch exits with status 3.
+genesis, re-executes every tick and recorded Oracle question against stored LLM
+responses, and prints table-by-table SHA-256 proof. Historical prompt changes
+reuse the source call's semantic identity and original request/cache key. A
+missing response pauses the replay and exits without contacting any live
+provider; a state mismatch exits with status 3.
 
 The dashboard source lives in `dashboard/` and builds into `server/static/`.
 For frontend development, run the FastAPI process on port 8000 and the Vite dev
@@ -172,7 +174,8 @@ ceiling; its dashboard and reports show actual spend as uncapped.
 - **Ask the Oracle**: "probability of a bank run within 30 ticks?" → probability +
   drivers + machine-checkable resolution rule; bounded read-only evidence is
   stored with the prediction, outcomes auto-resolve, and current/pooled
-  reliability curves plus Brier decomposition accumulate in the dashboard.
+  reliability curves plus Brier decomposition accumulate in the dashboard. A
+  rejected tool plan receives one constrained repair attempt.
 - **Inject shocks**: policy-rate override, oil/commodity shock, false rumor,
   slanted-news directive, firm scandal — instant, trend, or metric-conditional.
 - **Export**: the standalone HTML report embeds the complete charts and the

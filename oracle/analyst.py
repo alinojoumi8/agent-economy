@@ -22,7 +22,8 @@ PLANNER_SYSTEM = """You are the read-only query planner for an economic analyst.
 Choose only from the supplied tool definitions. Return JSON:
 {"queries":[{"tool":"tool_name","args":{...}}]}.
 Use at most 8 queries, request only evidence relevant to the question, and never
-request SQL, writes, mutations, shell access, secrets, or unlisted tools."""
+request SQL, writes, mutations, shell access, secrets, or unlisted tools.
+Every from_tick/to_tick must stay inside the supplied inclusive tick_range."""
 
 ANSWER_SYSTEM = """You are the Oracle: a rigorous, read-only economic analyst embedded in a simulated
 economy. You are given a digest of true world state. Answer the operator's question as JSON:
@@ -57,26 +58,43 @@ class Oracle:
         legacy_replay = self._legacy_replay_at(tick)
         evidence = []
         if not legacy_replay:
-            planning_context = {
+            base_planning_context = {
                 "question": question, "tick": tick,
                 "available_tools": self.tools.definitions,
+                "constraints": {
+                    "tick_range": {"minimum": 0, "maximum": tick},
+                    "maximum_queries": self.tools.MAX_QUERIES,
+                    "read_only": True,
+                },
             }
-            plan_req = LLMRequest(
-                role="oracle", purpose="oracle_plan", system=PLANNER_SYSTEM,
-                user=json.dumps(planning_context)[:5000], context=planning_context,
-                tick=tick, max_tokens=350, temperature=0.1)
-            plan_resp = await self.gw.complete(
-                plan_req, schema_hint='{"queries":[]}')
-            plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
-            queries = plan.get("queries", [])
-            try:
-                evidence = self.tools.execute_plan(queries)
-            except OracleToolError as exc:
-                evidence = [{"error": str(exc), "queries_rejected": True}]
-                self.store.log_event(
-                    tick, "oracle_tool_plan_rejected",
-                    {"question": question, "error": str(exc)[:500]},
-                    importance=1.5)
+            validation_error = None
+            attempts = self._planner_attempt_limit(tick, question)
+            for _attempt in range(attempts):
+                planning_context = dict(base_planning_context)
+                if validation_error:
+                    planning_context["previous_plan_error"] = validation_error
+                    planning_context["instruction"] = (
+                        "Return a corrected plan that satisfies every supplied constraint.")
+                plan_req = LLMRequest(
+                    role="oracle", purpose="oracle_plan", system=PLANNER_SYSTEM,
+                    user=json.dumps(planning_context)[:5000], context=planning_context,
+                    tick=tick, max_tokens=350, temperature=0.1)
+                plan_resp = await self.gw.complete(
+                    plan_req, schema_hint='{"queries":[]}')
+                plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
+                queries = plan.get("queries", [])
+                try:
+                    if not queries:
+                        raise OracleToolError("at least one evidence query is required")
+                    evidence = self.tools.execute_plan(queries)
+                    break
+                except OracleToolError as exc:
+                    validation_error = str(exc)
+                    evidence = [{"error": validation_error, "queries_rejected": True}]
+                    self.store.log_event(
+                        tick, "oracle_tool_plan_rejected",
+                        {"question": question, "error": validation_error[:500]},
+                        importance=1.5)
         context = {**digest, "question": question, "tick": tick,
                    "default_horizon": self.default_horizon}
         if not legacy_replay:
@@ -134,6 +152,21 @@ class Oracle:
                 "confidence": ans.get("confidence", "med"), "resolution_rule": rule,
                 "deadline_tick": deadline, "reasoning": ans.get("reasoning", ""),
                 "evidence": evidence}
+
+    def _planner_attempt_limit(self, tick: int, question: str) -> int:
+        if not self.gw.replay or self.gw.replay_conn is None:
+            return 2
+        matching = 0
+        rows = self.gw.replay_conn.execute(
+            "SELECT request_json FROM llm_calls "
+            "WHERE tick=? AND purpose='oracle_plan' ORDER BY id", (tick,)).fetchall()
+        for row in rows:
+            request = load_json(row["request_json"], {}) or {}
+            context = request.get("context", {}) if isinstance(request, dict) else {}
+            recorded = context.get("question") if isinstance(context, dict) else None
+            if recorded == question:
+                matching += 1
+        return max(1, matching)
 
     def _legacy_replay_at(self, tick: int) -> bool:
         if not self.gw.replay or self.gw.replay_conn is None:

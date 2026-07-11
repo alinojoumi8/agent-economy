@@ -161,6 +161,37 @@ def test_acceptance_runner_schedules_oracle_once_and_resumes(tmp_path):
     assert store.scalar("SELECT COUNT(*) FROM predictions") == 1
 
 
+def test_acceptance_repairs_a_prediction_with_only_rejected_evidence(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(acceptance={
+        "min_ticks": 2,
+        "oracle_questions": [{"at_tick": 1, "question": question}],
+    })
+    store = Store(str(tmp_path / "runner-repair.db"))
+    store.init_run_meta("runner-repair", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    store.insert(
+        "predictions", asked_tick=0, question=question, p=0.5,
+        reasoning="rejected evidence", status="open", deadline_tick=30,
+        resolution_rule_json=json.dumps({"type": "bank_failure"}),
+        evidence_json=json.dumps([{
+            "error": "invalid tick range", "queries_rejected": True,
+        }]),
+    )
+    store.commit()
+
+    asyncio.run(execute_acceptance_run(world, target_tick=2))
+
+    assert store.scalar(
+        "SELECT COUNT(*) FROM predictions WHERE question=?", (question,)) == 2
+    repaired = store.query_one(
+        "SELECT evidence_json FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
+        (question,))
+    evidence = json.loads(repaired["evidence_json"])
+    assert evidence and evidence[0]["tool"] == "query_metrics"
+
+
 def test_paid_acceptance_detection_fails_safe_for_any_real_route():
     assert not uses_paid_providers(_config())
     config = _config()

@@ -13,6 +13,8 @@ while provider rate limits control throughput.
   responses and resume without duplicated actions, news, conversations, or memory.
 - [x] Complete R6/R15 conformance with bounded Oracle evidence tools, persisted
   transcripts, and current-run/pooled calibration dashboard views.
+- [x] Repair one rejected Oracle tool plan within the same bounded read-only
+  contract, and replay recorded Oracle questions in exact historical replays.
 - [x] Align the HTML/Markdown report contract and production documentation.
 - [x] Treat explicit provider-overload responses (including MiniMax HTTP 529)
   as the same visible, interruptible, indefinite cooldown used for HTTP 429.

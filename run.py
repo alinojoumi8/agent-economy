@@ -140,6 +140,27 @@ async def headless(world: World, ticks: int) -> None:
     await world.run(max_ticks=ticks)
 
 
+async def replay_headless(world: World, target_tick: int) -> None:
+    """Replay world ticks plus externally requested Oracle predictions."""
+    source = world.gateway.replay_conn
+    if source is None:
+        await headless(world, target_tick)
+        return
+    predictions = source.execute(
+        "SELECT asked_tick, question FROM predictions WHERE asked_tick<=? "
+        "ORDER BY asked_tick, id", (target_tick,)).fetchall()
+    for prediction in predictions:
+        asked_tick = int(prediction["asked_tick"])
+        if world.store.tick < asked_tick:
+            await world.run(max_ticks=asked_tick - world.store.tick)
+        if world.store.tick != asked_tick:
+            raise RuntimeError(
+                f"replay paused at tick {world.store.tick} before Oracle tick {asked_tick}")
+        await world.oracle.ask(str(prediction["question"]))
+    if world.store.tick < target_tick:
+        await world.run(max_ticks=target_tick - world.store.tick)
+
+
 def main() -> None:
     load_dotenv()
     configure_logging()
@@ -262,7 +283,7 @@ def main() -> None:
     replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
     ticks = args.ticks if args.ticks is not None else replay_ticks
     if ticks is not None and not args.serve:
-        asyncio.run(headless(world, ticks))
+        asyncio.run(replay_headless(world, ticks) if args.replay else headless(world, ticks))
         if args.replay:
             from world.replay_verify import verify_replay
             source = Path(str(world.config["replay_source_path"]))

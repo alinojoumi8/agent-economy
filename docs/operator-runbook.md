@@ -88,8 +88,10 @@ Rebuild a run without provider calls and verify canonical table digests:
 python run.py --replay <RUN_ID>
 ```
 
-A missing stored response fails closed; replay never falls back to a live
-provider.
+Replay re-asks persisted Oracle questions at their original ticks. Historical
+prompt changes use the source call's semantic identity and copy its original
+request and cache key. A missing stored response fails closed; replay never
+falls back to a live provider.
 
 ## Experiments and acceptance-only evaluation
 

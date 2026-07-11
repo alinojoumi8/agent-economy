@@ -360,6 +360,18 @@ def write_acceptance_package(
     return {**receipt, "artifacts": {"json": str(json_path), "markdown": str(md_path)}}
 
 
+def _has_usable_oracle_evidence(store: Store, question: str) -> bool:
+    row = store.query_one(
+        "SELECT evidence_json FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
+        (question,))
+    evidence = load_json(row["evidence_json"], []) if row else []
+    return bool(
+        isinstance(evidence, list)
+        and any(isinstance(item, dict) and item.get("tool") and "result" in item
+                for item in evidence)
+    )
+
+
 async def execute_acceptance_run(world: "World", *, target_tick: int | None = None) -> None:
     """Advance a world to the acceptance horizon and ask scheduled Oracle questions."""
     acceptance = world.config.get("acceptance", {})
@@ -373,11 +385,11 @@ async def execute_acceptance_run(world: "World", *, target_tick: int | None = No
             await world.run(max_ticks=at_tick - world.store.tick)
             if world.store.tick < at_tick or world.last_pause_reason:
                 raise RuntimeError(f"acceptance run paused before Oracle checkpoint at tick {at_tick}")
+        question = str(item["question"])
         existing = world.store.scalar(
-            "SELECT COUNT(*) FROM predictions WHERE question=?", (str(item["question"]),), default=0
-        )
-        if not existing:
-            await world.oracle.ask(str(item["question"]))
+            "SELECT COUNT(*) FROM predictions WHERE question=?", (question,), default=0)
+        if not existing or not _has_usable_oracle_evidence(world.store, question):
+            await world.oracle.ask(question)
     if world.store.tick < horizon:
         await world.run(max_ticks=horizon - world.store.tick)
     if world.store.tick < horizon or world.last_pause_reason:

@@ -247,6 +247,7 @@ class Gateway:
         self.run_id = str(meta["run_id"]) if meta else "uninitialized"
         self.replay_conn: Optional[sqlite3.Connection] = None
         self._replay_positions: dict[str, int] = {}
+        self._replay_used_call_ids: set[int] = set()
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
@@ -396,7 +397,7 @@ class Gateway:
                         tick=req.tick, replay=self.replay)
 
         if self.replay:
-            replayed = self._replay_lookup(cache_key, schema_hint)
+            replayed = self._replay_lookup(cache_key, req, schema_hint)
             if replayed is not None:
                 response, source_row = replayed
                 self._log_replay_call(req, cache_key, source_row)
@@ -632,16 +633,45 @@ class Gateway:
                            "m": model, "msgs": req.messages()}, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
-    def _replay_lookup(self, cache_key: str, schema_hint: str = ""):
+    def _replay_lookup(self, cache_key: str, req: LLMRequest,
+                       schema_hint: str = ""):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
-        row = self.replay_conn.execute(
-            "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
-            (cache_key, position)).fetchone()
+        row = None
+        while True:
+            candidate = self.replay_conn.execute(
+                "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
+                (cache_key, position)).fetchone()
+            position += 1
+            if not candidate:
+                break
+            if int(candidate["id"]) not in self._replay_used_call_ids:
+                row = candidate
+                break
+        self._replay_positions[cache_key] = position
+        if row is None:
+            # Historical replay must survive prompt/context improvements. Fall
+            # back only to the next unused call with the same deterministic
+            # semantic identity; the source request, response, and cache key are
+            # copied verbatim into the replay database.
+            candidates = self.replay_conn.execute(
+                "SELECT * FROM llm_calls WHERE tick=? AND agent_id IS ? "
+                "AND role=? AND purpose=? ORDER BY id",
+                (req.tick, req.agent_id, req.role, req.purpose)).fetchall()
+            row = next(
+                (candidate for candidate in candidates
+                 if int(candidate["id"]) not in self._replay_used_call_ids),
+                None)
+            if row is not None:
+                operational_log(
+                    logger, logging.WARNING, "llm.replay.compatibility_fallback",
+                    run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
+                    role=req.role, purpose=req.purpose,
+                    source_call_id=int(row["id"]))
         if not row:
             return None
-        self._replay_positions[cache_key] = position + 1
+        self._replay_used_call_ids.add(int(row["id"]))
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
@@ -682,7 +712,7 @@ class Gateway:
         call_id = self.store.insert(
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role,
             provider=row["provider"], model=row["model"], purpose=req.purpose,
-            cache_key=cache_key, request_json=row["request_json"],
+            cache_key=row["cache_key"] or cache_key, request_json=row["request_json"],
             response_json=row["response_json"], in_tokens=int(row["in_tokens"]),
             out_tokens=int(row["out_tokens"]), cached=int(row["cached"]),
             cost_usd=float(row["cost_usd"]), latency_ms=int(row["latency_ms"] or 0),

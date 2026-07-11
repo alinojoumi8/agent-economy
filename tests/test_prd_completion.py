@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +17,7 @@ from engine.store import Store, load_json
 from llm.adapters import AdapterResult
 from llm.gateway import Gateway, LLMRequest
 from llm.readiness import validate_llm_config
-from run import load_config, open_run
+from run import load_config, open_run, replay_headless
 from server.app import create_app
 from server.controller import RunController
 from world.loop import World
@@ -335,6 +336,104 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
     with TestClient(create_app(world)) as client:
         payload = client.get("/api/oracle/predictions").json()
     assert payload["predictions"][0]["evidence"] == evidence
+
+
+def test_oracle_repairs_a_rejected_plan_before_answering(tmp_path):
+    world = _world(tmp_path, "oracle-plan-repair.db")
+    asyncio.run(world.step())
+
+    class RepairingGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, req, **_kwargs):
+            self.requests.append(req)
+            plans = [r for r in self.requests if r.purpose == "oracle_plan"]
+            if req.purpose == "oracle_plan" and len(plans) == 1:
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics", "args": {
+                        "names": ["gdp_proxy"], "from_tick": -1,
+                        "to_tick": world.store.tick, "limit": 10,
+                    },
+                }]})
+            if req.purpose == "oracle_plan":
+                assert req.context["previous_plan_error"] == "invalid tick range"
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics", "args": {
+                        "names": ["gdp_proxy"], "from_tick": 0,
+                        "to_tick": world.store.tick, "limit": 10,
+                    },
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.25, "drivers": ["stable output"], "confidence": "med",
+                "resolution_rule": {"type": "bank_failure"},
+                "deadline_tick": world.store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = RepairingGateway()
+    world.oracle.gw = gateway
+    answer = asyncio.run(world.oracle.ask("Will a bank fail within 30 ticks?"))
+
+    assert [req.purpose for req in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle"]
+    assert answer["evidence"][0]["tool"] == "query_metrics"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_tool_plan_rejected'") == 1
+
+
+def test_replay_falls_back_to_recorded_semantic_call_identity(tmp_path):
+    config = _config(tmp_path)
+    source_path = tmp_path / "compat-source.db"
+    source = Store(str(source_path))
+    source.init_run_meta("compat-source", config["seed"], config)
+    source_gateway = Gateway(source, config)
+    old_request = LLMRequest(
+        role="citizen", purpose="decision", system="old prompt",
+        user="old context", agent_id=1, tick=0)
+    asyncio.run(source_gateway.complete(old_request))
+    original = source.query_one("SELECT * FROM llm_calls")
+    source.close()
+
+    replay_config = {
+        **config, "replay": True,
+        "replay_source_path": str(source_path),
+    }
+    replay = Store(str(tmp_path / "compat-replay.db"))
+    replay.init_run_meta("compat-replay", config["seed"], replay_config)
+    replay_gateway = Gateway(replay, replay_config)
+    changed_request = LLMRequest(
+        role="citizen", purpose="decision", system="improved prompt",
+        user="new context", agent_id=1, tick=0)
+    response = asyncio.run(replay_gateway.complete(changed_request))
+    copied = replay.query_one("SELECT * FROM llm_calls")
+
+    assert response.text
+    assert copied["cache_key"] == original["cache_key"]
+    assert copied["request_json"] == original["request_json"]
+    assert replay.scalar("SELECT COUNT(*) FROM llm_calls") == 1
+
+
+def test_exact_replay_reasks_recorded_oracle_predictions(tmp_path):
+    config = _config(tmp_path)
+    source_store, source_world, source_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    asyncio.run(source_world.run(max_ticks=1))
+    asyncio.run(source_world.oracle.ask("Will a bank fail within 30 ticks?"))
+    asyncio.run(source_world.run(max_ticks=2))
+    source_tick = source_store.tick
+    source_store.close()
+
+    replay_store, replay_world, _ = open_run(
+        config, None, source_id, data_dir=tmp_path)
+    asyncio.run(replay_headless(replay_world, source_tick))
+    proof = verify_replay(tmp_path / f"{source_id}.db", replay_store.path)
+
+    assert replay_store.scalar("SELECT COUNT(*) FROM predictions") == 1
+    assert proof["exact"], proof["differences"]
 
 
 def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):
