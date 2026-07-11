@@ -1,0 +1,24 @@
+# Copy to a run-specific file after reviewing the generated metric charts.
+# A phenomenon passes only when its direction is confirmed from persisted data.
+phenomena:
+  - name: replace-with-observed-phenomenon-1
+    status: pending
+    mechanism: explain the agent-decision path; do not cite a direct engine mapping
+    metric: unemployment
+    start_tick: 0
+    end_tick: 1
+    direction: increase
+  - name: replace-with-observed-phenomenon-2
+    status: pending
+    mechanism: explain the agent-decision path; do not cite a direct engine mapping
+    metric: sentiment
+    start_tick: 0
+    end_tick: 1
+    direction: decrease
+  - name: replace-with-observed-phenomenon-3
+    status: pending
+    mechanism: explain the agent-decision path; do not cite a direct engine mapping
+    metric: index
+    start_tick: 0
+    end_tick: 1
+    direction: decrease

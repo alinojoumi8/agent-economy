@@ -1,0 +1,42 @@
+# Paid PRD acceptance profile. Do not execute without explicit spend approval.
+extends: ../production.yaml
+
+acceptance:
+  min_ticks: 365
+  min_agents: 95
+  max_agents: 105
+  max_spend_usd: 200.0
+  oracle_p90_ms: 60000
+  rumor_initial_trust: 0.6
+  oracle_questions:
+    - at_tick: 5
+      question: What is the probability of a bank run within 30 ticks?
+
+shocks:
+  - kind: policy_rate
+    trigger: shock
+    trigger_params: {tick: 15}
+    params: {rate_bps: 875}
+    label: acceptance-policy-rate
+  - kind: oil
+    trigger: trend
+    trigger_params: {start: 30}
+    duration_ticks: 10
+    params: {multiplier: 1.8}
+    label: acceptance-oil
+  - kind: rumor
+    trigger: shock
+    trigger_params: {tick: 60}
+    params: {bank_id: 1, n_agents: 40}
+    label: acceptance-bank-rumor
+  - kind: slant
+    trigger: shock
+    trigger_params: {tick: 100}
+    duration_ticks: 5
+    params: {outlet_id: 1, directive: Frame the downturn as an urgent market crisis.}
+    label: acceptance-slant
+  - kind: scandal
+    trigger: shock
+    trigger_params: {tick: 150}
+    params: {firm_id: 1, description: Accounting controls are under investigation.}
+    label: acceptance-scandal

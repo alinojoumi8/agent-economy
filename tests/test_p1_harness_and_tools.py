@@ -58,6 +58,7 @@ def test_experiment_harness_treatment_vs_control(tmp_path, caplog):
     # Report artifacts exist.
     assert (tmp_path / "out" / "experiment_mini_rumor.html").exists()
     assert (tmp_path / "out" / "experiment_mini_rumor.md").exists()
+    assert (tmp_path / "out" / "experiment_mini_rumor.json").exists()
     # Same-seed arms differ ONLY by the shock: run dbs are per-arm.
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_treatment.db").exists()
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_control.db").exists()

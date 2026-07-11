@@ -134,13 +134,17 @@ def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
     summary = _summarize(spec, results)
     report_path = _write_report(spec, results, summary, out_dir)
     summary["report_path"] = report_path
+    payload = {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",
+                                               "metrics", "event_outcomes")},
+               "results": results, "summary": summary}
+    json_path = Path(out_dir) / f"experiment_{spec['name']}.json"
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    summary["json_path"] = str(json_path)
     operational_log(logger, logging.INFO, "experiment.completed",
                     name=spec["name"], runs=len(results), report_path=report_path)
     if not quiet:
         print(f"[experiment {spec['name']}] report: {report_path}")
-    return {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",
-                                          "metrics", "event_outcomes")},
-            "results": results, "summary": summary}
+    return payload
 
 
 def _stats(values: list[float]) -> dict:

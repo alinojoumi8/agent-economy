@@ -9,6 +9,8 @@
   python run.py --config runs/base.yaml --fork RUNID@TICK   # what-if branch from a checkpoint
   python run.py --report RUNID                          # generate report for a stored run
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
+  python run.py --acceptance-report RUNID               # evaluate persisted production evidence
+  python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
 One process: FastAPI serves the static dashboard and drives the world loop.
 """
@@ -152,6 +154,16 @@ def main() -> None:
     ap.add_argument("--report", default=None, help="generate end-of-run report for run id and exit")
     ap.add_argument("--experiment", default=None,
                     help="run a multi-seed experiment from a spec yaml (P1 R14) and exit")
+    ap.add_argument("--acceptance-report", default=None,
+                    help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
+    ap.add_argument("--acceptance-run", action="store_true",
+                    help="execute the configured acceptance horizon and scheduled Oracle checks")
+    ap.add_argument("--approve-live-spend", action="store_true",
+                    help="explicitly authorize paid providers for --acceptance-run")
+    ap.add_argument("--experiment-evidence", default=None,
+                    help="experiment JSON to attach to an acceptance receipt")
+    ap.add_argument("--phenomena-evidence", default=None,
+                    help="reviewed phenomena YAML to attach to an acceptance receipt")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--serve", action="store_true", help="serve dashboard even with --ticks")
@@ -160,7 +172,9 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
-    mode = ("experiment" if args.experiment else "report" if args.report else
+    mode = ("experiment" if args.experiment else
+            "acceptance_report" if args.acceptance_report else
+            "acceptance_run" if args.acceptance_run else "report" if args.report else
             "preflight" if (args.preflight or args.preflight_live) else
             "fork" if args.fork else "replay" if args.replay else
             "resume" if args.resume else "run")
@@ -180,10 +194,28 @@ def main() -> None:
         print(generate_report(store))
         return
 
+    if args.acceptance_report:
+        from reports.acceptance import resolve_run_db, write_acceptance_package
+        receipt = write_acceptance_package(
+            resolve_run_db(args.acceptance_report),
+            experiment_json=args.experiment_evidence,
+            phenomena_yaml=args.phenomena_evidence,
+        )
+        print(json.dumps(receipt, indent=2))
+        if not receipt["passed"]:
+            raise SystemExit(5)
+        return
+
     config = load_config(args.config)
     operational_log(logger, logging.INFO, "config.loaded",
                     path=str(Path(args.config).resolve()), mode=mode,
                     seed=config.get("seed", 42))
+    if args.acceptance_run:
+        from reports.acceptance import uses_paid_providers
+        if uses_paid_providers(config) and not args.approve_live_spend:
+            raise SystemExit(
+                "paid acceptance run requires explicit --approve-live-spend authorization"
+            )
     if args.preflight or args.preflight_live:
         report = asyncio.run(provider_preflight(config, live=args.preflight_live))
         print(json.dumps(report, indent=2))
@@ -207,6 +239,24 @@ def main() -> None:
                     resumed=bool(args.resume))
     print(f"[agent-economy] run {run_id} @ tick {store.tick} "
           f"(seed {store.get_meta()['seed']}, {'replay' if args.replay else 'live'})")
+
+    if args.acceptance_run:
+        from reports.acceptance import execute_acceptance_run, write_acceptance_package
+        target_tick = args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365))
+        asyncio.run(execute_acceptance_run(world, target_tick=target_tick))
+        from reports.generate import generate_report
+        report_path = generate_report(store, world, out_dir=str(config.get("report_dir", "reports/out")))
+        receipt = write_acceptance_package(
+            store.path,
+            out_dir=str(config.get("report_dir", "reports/out")),
+            experiment_json=args.experiment_evidence,
+            phenomena_yaml=args.phenomena_evidence,
+        )
+        print(json.dumps({"run_id": run_id, "report": report_path,
+                          "acceptance": receipt["artifacts"], "passed": receipt["passed"]}, indent=2))
+        if not receipt["passed"]:
+            raise SystemExit(5)
+        return
 
     replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
     ticks = args.ticks if args.ticks is not None else replay_ticks

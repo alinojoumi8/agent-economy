@@ -121,6 +121,25 @@ partial tick, and pauses visibly. Kimi receives a stable `prompt_cache_key`, and
 cost accounting uses cache-hit tokens reported by the provider rather than an
 estimated local cache hit.
 
+### Production acceptance
+
+Production acceptance is a separate evidence-gated workflow. The live command
+uses paid providers and must not be started without explicit spend approval:
+
+```bash
+python run.py --config runs/acceptance/production.yaml --preflight-live
+python run.py --config runs/acceptance/production.yaml --acceptance-run --approve-live-spend
+python run.py --experiment runs/experiments/rumor_vs_control.yaml
+python run.py --acceptance-report RUN_ID \
+  --experiment-evidence reports/out/experiment_rumor_vs_control.json \
+  --phenomena-evidence runs/acceptance/phenomena.RUN_ID.yaml
+```
+
+The receipt is written as `reports/out/acceptance_RUN_ID.{json,md}`. Copy
+`runs/acceptance/phenomena.template.yaml` to a run-specific reviewed file and
+replace its pending examples with three phenomena actually visible in that
+run's persisted metrics.
+
 Routing is `role → {provider, model}` — citizens on MiniMax, the high-leverage
 seats (central banker, credit officers, reporters/editors, VC partner, Oracle) on
 Kimi. The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
