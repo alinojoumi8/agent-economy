@@ -176,10 +176,6 @@ class OpenAICompatAdapter(Adapter):
                 if isinstance(part, dict))
         else:
             text = str(content or "")
-        if not text.strip():
-            raise ValueError(
-                "provider response contained no assistant content "
-                f"(finish_reason={choice.get('finish_reason')!r})")
         usage = data.get("usage", {})
         details = usage.get("prompt_tokens_details", {}) or {}
         cached_in = int(details.get("cached_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0)

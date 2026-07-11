@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from agents.memory import Memory
 from engine.ledger import ReconciliationError
 from engine.store import Store, load_json
-from llm.adapters import AdapterResult
+from llm.adapters import AdapterResult, OpenAICompatAdapter
 from llm.gateway import Gateway, LLMRequest
 from llm.readiness import validate_llm_config
 from run import load_config, open_run, replay_headless
@@ -209,6 +209,47 @@ def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path,
                      if getattr(record, "event_name", "") == "llm.request.completed")
     assert completed.event_fields["attempts"] == 2
     assert completed.event_fields["cached_in_tokens"] == 80
+
+
+def test_openai_compat_returns_metered_empty_completion_for_contract_repair(monkeypatch):
+    import httpx
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+                "usage": {
+                    "prompt_tokens": 120, "completion_tokens": 4096,
+                    "prompt_tokens_details": {"cached_tokens": 80},
+                },
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    adapter = OpenAICompatAdapter({
+        "base_url": "https://provider.invalid/v1", "api_key_env": "TEST_KEY",
+    })
+    result = asyncio.run(adapter.complete("model", [{"role": "user", "content": "JSON"}]))
+
+    assert result.text == ""
+    assert result.in_tokens == 120 and result.out_tokens == 4096
+    assert result.cached_in_tokens == 80
+    assert result.raw["choices"][0]["finish_reason"] == "length"
 
 
 def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path, caplog):

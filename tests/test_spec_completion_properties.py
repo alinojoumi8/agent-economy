@@ -375,6 +375,54 @@ def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatc
     store.close()
 
 
+def test_empty_success_completions_are_metered_and_degrade_to_noop(tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "EMPTY_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "empty-test"},
+            "routes": {},
+            "pricing": {"empty-test": {"in": 1.0, "out": 2.0, "cache": 0.1}},
+        },
+    }
+    store = Store(str(tmp_path / "empty.db"))
+    store.init_run_meta("empty", 1, config)
+    monkeypatch.setenv("EMPTY_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+
+    class EmptyAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            return AdapterResult(
+                text="", in_tokens=100, out_tokens=4096,
+                cached_in_tokens=40, raw={"finish_reason": "length"})
+
+    adapter = EmptyAdapter()
+    gateway.adapters["network"] = adapter
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="decision", system="stable", user="dynamic")))
+
+    assert adapter.calls == 2
+    assert not response.ok
+    assert response.parsed["actions"] == [{"type": "do_nothing"}]
+    assert response.in_tokens == 200 and response.out_tokens == 8192
+    expected_cost = (120 * 1.0 + 80 * 0.1 + 8192 * 2.0) / 1_000_000
+    assert response.cost_usd == pytest.approx(expected_cost)
+    row = store.query_one("SELECT * FROM llm_calls")
+    assert row["in_tokens"] == 200 and row["out_tokens"] == 8192
+    assert row["cost_usd"] == pytest.approx(expected_cost)
+    assert store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_failure'") == 0
+    store.close()
+
+
 def test_schema_hint_repairs_valid_json_with_the_wrong_contract(tmp_path, monkeypatch):
     from engine.store import Store
     config = {
