@@ -6,7 +6,7 @@ as integer cents everywhere; a trigger enforces that every transaction's ledger
 entries sum to zero (double-entry / conservation of money, PRD R1).
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS run_meta (
     status        TEXT NOT NULL DEFAULT 'created',   -- created|running|paused|halted|finished
     tick          INTEGER NOT NULL DEFAULT 0,
     phase         TEXT,
+    active_tick   INTEGER,
+    next_phase    TEXT NOT NULL DEFAULT 'NIGHT_CLOSE',
+    phase_state_json TEXT NOT NULL DEFAULT '{}',
+    legacy_partial INTEGER NOT NULL DEFAULT 0,
     prng_state    TEXT,                              -- JSON of random.Random.getstate()
     lifecycle_prng_state TEXT,
     governor_json TEXT,                              -- degradation level, spend counters
@@ -451,4 +455,43 @@ CREATE TABLE IF NOT EXISTS shocks (
 def initialize_schema(conn) -> None:
     """Create all tables on a fresh connection (idempotent)."""
     conn.executescript(SCHEMA_SQL)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(run_meta)")}
+    additions = {
+        "active_tick": "INTEGER",
+        "next_phase": "TEXT NOT NULL DEFAULT 'NIGHT_CLOSE'",
+        "phase_state_json": "TEXT NOT NULL DEFAULT '{}'",
+        "legacy_partial": "INTEGER NOT NULL DEFAULT 0",
+    }
+    migrated = False
+    for name, declaration in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE run_meta ADD COLUMN {name} {declaration}")
+            migrated = True
+    if migrated:
+        _migrate_legacy_progress(conn)
+    conn.execute(
+        "UPDATE run_meta SET schema_version=? WHERE id=1 AND schema_version<?",
+        (SCHEMA_VERSION, SCHEMA_VERSION))
     conn.commit()
+
+
+def _migrate_legacy_progress(conn) -> None:
+    """Flag old provider/budget pauses whose stored tick may be incomplete."""
+    row = conn.execute(
+        "SELECT tick, phase, status FROM run_meta WHERE id=1").fetchone()
+    if not row or row[2] != "paused" or not row[0]:
+        return
+    pause = conn.execute(
+        "SELECT kind, payload_json FROM events "
+        "WHERE tick=? AND kind IN ('provider_pause','budget_pause') "
+        "ORDER BY id DESC LIMIT 1", (int(row[0]),)).fetchone()
+    if not pause:
+        return
+    import json
+    payload = json.loads(pause[1] or "{}")
+    phase = str(payload.get("phase") or row[1] or "NIGHT_CLOSE")
+    next_phase = "MORNING" if pause[0] == "budget_pause" and phase == "NIGHT_CLOSE" else phase
+    conn.execute(
+        "UPDATE run_meta SET tick=?, active_tick=?, next_phase=?, "
+        "phase_state_json='{}', legacy_partial=1 WHERE id=1",
+        (max(0, int(row[0]) - 1), int(row[0]), next_phase))

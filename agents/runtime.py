@@ -15,7 +15,9 @@ from typing import Optional
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest, BudgetExceeded, ProviderUnavailable
+from llm.gateway import (
+    BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
+)
 from .memory import Memory
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
@@ -61,7 +63,7 @@ class AgentRuntime:
         decisions = []
         errors = 0
         for a, res in zip(agents, results):
-            if isinstance(res, (BudgetExceeded, ProviderUnavailable)):
+            if isinstance(res, (BudgetExceeded, GatewayInterrupted, ProviderUnavailable)):
                 raise res
             if isinstance(res, Exception):
                 errors += 1
@@ -88,7 +90,7 @@ class AgentRuntime:
     async def _decide_guarded(self, tick: int, agent):
         try:
             return await self._decide_one(tick, agent)
-        except (BudgetExceeded, ProviderUnavailable):
+        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable):
             raise
         except Exception as exc:
             return exc
@@ -194,7 +196,9 @@ class AgentRuntime:
         # Only agents with observations today need compressing.
         rows = self.store.query(
             "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation' "
-            "ORDER BY agent_id", (tick,))
+            "AND agent_id NOT IN (SELECT agent_id FROM memories "
+            "WHERE tick=? AND kind='summary') "
+            "ORDER BY agent_id", (tick, tick))
         agent_ids = [int(r["agent_id"]) for r in rows]
         sem_tasks = [self._compress_one(tick, aid) for aid in agent_ids]
         results = await _gather_fail_fast(sem_tasks)
@@ -206,8 +210,8 @@ class AgentRuntime:
             if res is None:
                 continue
             summary, importance, belief_updates = res
-            self.mem.write_summary(aid, tick, summary, importance)
             self.mem.apply_belief_updates(aid, belief_updates, tick)
+            self.mem.write_summary(aid, tick, summary, importance)
 
         if tick % 7 == 0:
             weekly_ids = [int(r["agent_id"]) for r in self.store.query(

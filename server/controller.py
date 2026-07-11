@@ -179,6 +179,9 @@ class RunController:
         return {
             "run_id": meta["run_id"], "status": self.world.status,
             "tick": self.store.tick, "seed": meta["seed"],
+            "active_tick": meta["active_tick"],
+            "next_phase": meta["next_phase"],
+            "legacy_partial": bool(meta["legacy_partial"]),
             "governor": self.world.gateway.governor.status(),
             "running": self.is_running(),
             "provider_readiness": self.world.gateway.readiness(),

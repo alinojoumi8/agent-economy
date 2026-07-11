@@ -226,7 +226,9 @@ def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path, caplog):
 
     assert summary["paused"] == "provider"
     assert summary["phase"] == "MORNING"
-    assert world.status == "paused" and world.store.tick == 1
+    assert world.status == "paused" and world.store.tick == 0
+    assert world.store.active_tick == 1
+    assert world.store.next_phase == "MORNING"
     assert world.store.get_meta()["status"] == "paused"
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_failure'") > 0
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
@@ -237,6 +239,52 @@ def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path, caplog):
     assert checkpoint and Path(checkpoint["path"]).exists()
     ok, diag = world.economy.ledger.reconcile()
     assert ok, diag
+
+
+def test_provider_pause_resumes_same_phase_without_duplicate_calls(tmp_path):
+    world = _world(tmp_path, "provider-resume.db")
+    delegate = world.gateway.adapters["scripted"]
+
+    class FailOnceMidPhase:
+        def __init__(self):
+            self.calls = 0
+            self.failed = False
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 3 and not self.failed:
+                self.failed = True
+                raise RuntimeError("synthetic mid-phase outage")
+            return await delegate.complete(*args, **kwargs)
+
+        async def healthcheck(self, model):
+            return {"ok": True, "model": model, "live": False}
+
+    adapter = FailOnceMidPhase()
+    world.gateway.adapters["scripted"] = adapter
+    paused = asyncio.run(world.step())
+
+    assert paused["paused"] == "provider"
+    assert world.store.tick == 0
+    assert world.store.active_tick == 1
+    assert world.store.next_phase == "MORNING"
+    calls_before_resume = world.store.scalar("SELECT COUNT(*) FROM llm_calls")
+    assert calls_before_resume > 0
+
+    world._pause_requested = False
+    resumed = asyncio.run(world.step())
+
+    assert resumed["tick"] == 1
+    assert world.store.tick == 1
+    assert world.store.active_tick is None
+    assert world.store.next_phase == "NIGHT_CLOSE"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls") == world.store.scalar(
+            "SELECT COUNT(DISTINCT cache_key) FROM llm_calls")
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='cpi'") == 1
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
 
 
 def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):
@@ -253,7 +301,8 @@ def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):
     assert world.store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind='reconciliation_failure'") == 1
     assert list(tmp_path.glob("halt.halt_t1.json"))
-    assert world.store.scalar("SELECT COUNT(*) FROM checkpoints WHERE tick=1") == 1
+    assert world.store.active_tick == 1
+    assert world.store.scalar("SELECT COUNT(*) FROM checkpoints WHERE tick=0") == 1
 
 
 def test_interactive_stop_generates_complete_standalone_report(tmp_path):

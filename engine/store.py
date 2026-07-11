@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -69,6 +70,21 @@ class Store:
     def commit(self) -> None:
         self.conn.commit()
 
+    @contextmanager
+    def savepoint(self, name: str):
+        safe = "".join(ch for ch in name if ch.isalnum() or ch == "_")
+        if not safe:
+            raise ValueError("savepoint name must contain an alphanumeric character")
+        self.conn.execute(f"SAVEPOINT {safe}")
+        try:
+            yield
+        except BaseException:
+            self.conn.execute(f"ROLLBACK TO {safe}")
+            self.conn.execute(f"RELEASE {safe}")
+            raise
+        else:
+            self.conn.execute(f"RELEASE {safe}")
+
     def close(self) -> None:
         try:
             self.conn.commit()
@@ -105,6 +121,16 @@ class Store:
     @property
     def tick(self) -> int:
         return int(self.scalar("SELECT tick FROM run_meta WHERE id=1", default=0))
+
+    @property
+    def active_tick(self) -> Optional[int]:
+        value = self.scalar("SELECT active_tick FROM run_meta WHERE id=1", default=None)
+        return int(value) if value is not None else None
+
+    @property
+    def next_phase(self) -> str:
+        return str(self.scalar(
+            "SELECT next_phase FROM run_meta WHERE id=1", default="NIGHT_CLOSE"))
 
     # ── events: the append-only spine ────────────────────────────────────────
     def log_event(self, tick: int, kind: str, payload: dict | None = None, *,

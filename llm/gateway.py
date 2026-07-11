@@ -411,6 +411,15 @@ class Gateway:
                 "replay", model, req.purpose,
                 f"stored response missing for cache key {cache_key}", attempts=0)
 
+        resumed = self._durable_lookup(cache_key, schema_hint)
+        if resumed is not None:
+            operational_log(
+                logger, logging.INFO, "llm.resume.hit",
+                run_id=self.run_id, provider=resumed.provider, model=resumed.model,
+                role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                tick=req.tick)
+            return resumed
+
         # Budget pre-check (skip for free providers so offline runs never pause).
         pricing = self.pricing.get(model, {"in": 0, "out": 0, "cache": 0})
         est_cost = self._estimate_cost(req, pricing)
@@ -646,6 +655,26 @@ class Gateway:
             out_tokens=int(row["out_tokens"]), cost_usd=float(row["cost_usd"]),
             cached=bool(row["cached"]), ok=ok)
         return response, row
+
+    def _durable_lookup(self, cache_key: str, schema_hint: str = "") -> Optional[LLMResponse]:
+        """Reuse a completed same-run call when an interrupted phase is retried."""
+        row = self.store.query_one(
+            "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1",
+            (cache_key,))
+        if not row:
+            return None
+        resp = json.loads(row["response_json"]) if row["response_json"] else {}
+        parsed, ok = self._parse(resp.get("text", "{}"))
+        if ok and schema_hint:
+            ok = self._matches_schema(parsed, schema_hint)
+        if not ok:
+            parsed = {"reasoning": "unparseable output; no-op",
+                      "actions": [{"type": "do_nothing"}]}
+        return LLMResponse(
+            text=resp.get("text", ""), parsed=parsed,
+            provider=row["provider"], model=row["model"],
+            in_tokens=int(row["in_tokens"]), out_tokens=int(row["out_tokens"]),
+            cost_usd=float(row["cost_usd"]), cached=bool(row["cached"]), ok=ok)
 
     def _log_replay_call(self, req: LLMRequest, cache_key: str, row) -> None:
         """Copy original accounting so governor stages and scheduling replay exactly."""

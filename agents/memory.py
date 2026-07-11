@@ -72,9 +72,8 @@ class Memory:
         existing = self.store.query_one(
             "SELECT id FROM memories WHERE agent_id=? AND kind='weekly_summary' AND tick=?",
             (agent_id, tick))
-        if existing:
-            return
-        self.observe(agent_id, tick, summary, importance=importance, kind="weekly_summary")
+        if not existing:
+            self.observe(agent_id, tick, summary, importance=importance, kind="weekly_summary")
         self.store.execute(
             "UPDATE memories SET demoted=1 WHERE agent_id=? AND kind='summary' "
             "AND tick BETWEEN ? AND ? AND demoted=0",
