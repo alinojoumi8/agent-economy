@@ -18,6 +18,7 @@ from llm.gateway import Gateway, LLMRequest
 from llm.readiness import validate_llm_config
 from run import load_config, open_run
 from server.app import create_app
+from server.controller import RunController
 from world.loop import World
 from world.replay_verify import verify_replay
 
@@ -353,6 +354,9 @@ def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
     caplog.set_level(logging.DEBUG, logger="agent_economy.server")
     world = _world(tmp_path, "ws.db")
     app = create_app(world)
+    assert isinstance(app.state.run_controller, RunController)
+    assert app.state.run_controller.world is world
+    assert world.on_tick == app.state.run_controller.on_tick
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as ws:
             initial = ws.receive_json()
