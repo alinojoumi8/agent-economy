@@ -39,7 +39,7 @@ Evidence labels:
 |---|---|---|---|
 | Economy kernel | Conserved double-entry ledger, deterministic tick phases, action validation, reconciliation, diagnostics, metrics, checkpoints, resume, and forks. | [Ledger](../engine/ledger.py), [world loop](../world/loop.py), [ledger tests](../tests/test_ledger.py) | Tested |
 | Agents and memory | Persona generation, role routing, cadence, context, short/daily/weekly memory synthesis, beliefs, decisions, and full inspector data. | [Runtime](../agents/runtime.py), [memory](../agents/memory.py), [completion tests](../tests/test_prd_completion.py) | Tested |
-| Provider runtime | Separate K2.6 Platform and Kimi Code profiles, service/model/key preflight, concurrency, retry, structured parsing/repair, complete repair-call accounting, provider-reported cache accounting, conservative cap reservation, durable budget-stage events, safe provider pause, and secret-safe diagnostics. | [Production profile](../runs/production.yaml), [gateway](../llm/gateway.py), [readiness](../llm/readiness.py), [historical Kimi Code validation](live-provider-validation.md) | Tested; Kimi Code authenticated, K2.6 pending |
+| Provider runtime | Active MiniMax M3-only production routing plus separate opt-in K2.6 Platform and Kimi Code profiles, service/model/key preflight, concurrency, retry, structured parsing/repair, complete repair-call accounting, provider-reported cache accounting, conservative cap reservation, durable budget-stage events, safe provider pause, and secret-safe diagnostics. | [Active production profile](../runs/production.yaml), [K2.6 acceptance profile](../runs/production-k2.6.yaml), [gateway](../llm/gateway.py), [readiness](../llm/readiness.py), [historical Kimi Code validation](live-provider-validation.md) | Tested; MiniMax and Kimi Code authenticated, K2.6 pending |
 | Banks, credit, firms, labor | Deposits/reserves, cross-bank settlement, loans/default, liquidity support, firm formation, lawyer validation, hiring, payroll, production, revenue, and bankruptcy. | [Credit](../engine/credit.py), [firms](../engine/firms.py), [company lifecycle acceptance](../tests/test_prd_completion.py) | Tested |
 | Securities market | IPOs, holdings enforcement, price-time priority, partial fills, trade-derived prices, index, and circuit breakers. | [Exchange](../engine/exchange.py), [exchange tests](../tests/test_exchange.py) | Tested |
 | Information economy | Reporter/editor newsroom, slanted outlets, conversations, memories, rumor exposure, trust movement, and bank-run transmission. | [Newsroom](../world/newsroom.py), [exact rumor pilot](../tests/test_governor_and_world.py) | Tested |
@@ -57,7 +57,7 @@ Evidence labels:
 | Requirement | Priority | Implementation | Acceptance proof | Repository/test evidence | Remaining gap | Required completion evidence |
 |---|---|---|---|---|---|---|
 | **R1 — Conserved double-entry ledger** | P0 | Complete (1.00) | Complete (1.00) | Ledger invariant/tamper tests plus active-run corruption halt, diagnostic, reconciliation, and checkpoint acceptance. | None for v1. | Preserve invariant and active-failure tests. |
-| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Complete (1.00) | Substantial (0.75) | Production routing/key validation, 100-agent profile, weekly synthesis, stored prompts/responses, browser-inspected agent audit, and an authenticated [MiniMax/Kimi Code compatibility run](live-provider-validation.md). | The newly locked `kimi-k2.6` Platform route has not authenticated because `KIMI_API_KEY` is not yet supplied. | Authenticate every K2.6 routed role and retain the campaign database, latency, cost, and exact-replay proof. |
+| **R2 — LLM agent runtime, persona, memory, decisions, inspector** | P0 | Complete (1.00) | Substantial (0.75) | MiniMax-only active routing, explicit mixed-provider profiles, key validation, 100-agent profile, weekly synthesis, stored prompts/responses, browser-inspected agent audit, and an authenticated [MiniMax/Kimi Code compatibility run](live-provider-validation.md). | Kimi is intentionally disabled from the active runtime; the locked `kimi-k2.6` Platform route remains unauthenticated. | Validate the MiniMax-only runtime now, then authenticate every K2.6 routed role before claiming locked-spec completion. |
 | **R3 — Banks, firms, labor, goods, complete company lifecycle** | P0 | Complete (1.00) | Complete (1.00) | Deterministic lawyer → formation → firm loan → hire → production → revenue → bankruptcy acceptance with ledger reconciliation. | None for v1 mechanics. | Preserve lifecycle regression. |
 | **R4 — Order book, IPO, and market index** | P0 | Complete (1.00) | Complete (1.00) | Price-time, partial-fill, ownership, IPO, index, circuit-breaker, and no-invented-price property tests; two unpriced market orders cannot establish a first price. | None for v1. | Preserve exchange and property tests. |
 | **R5 — News, conversations, and rumor pilot** | P0 | Complete (1.00) | Complete (1.00) | Exact pilot asserts at least five conversations, ≥0.2 trust loss for ≥25% exposed agents, and normalized outflow above 2× baseline within ten ticks; the committed N=5 study measures 16.8 treatment deposit moves versus zero controls. | None for deterministic acceptance; real-agent emergence remains a production gate. | Repeat all three [causal signatures](emergent-phenomena.md) under the real-provider profile. |
@@ -91,7 +91,7 @@ Evidence labels:
 | T5 — Structured actions and validation | Complete | 1.00 | Provider output is parsed to envelopes; living actors/counterparties, funds, ownership, market phase, formation capital, and weekly loan limits are enforced. The engine neither substitutes a counterparty nor invents a first market price. |
 | T6 — Short, daily, consolidated weekly memory | Complete | 1.00 | Weekly summaries are synthesized before their daily source summaries are demoted. |
 | T7 — Routing, concurrency, retry, caching, budget, logging | Complete | 1.00 | Mechanics are tested and the live run recorded provider-reported cache hits, latency, costs, repairs, and zero provider failures. |
-| T8 — Locked cheap/strong real-provider role mix | Complete | 1.00 | The default profile routes citizens to `MiniMax-M3` and institutional roles to Kimi Platform `kimi-k2.6`; Kimi Code remains a separate compatibility profile with no silent fallback. |
+| T8 — Locked cheap/strong real-provider role mix | Complete | 1.00 | The target mix remains pinned in `runs/production-k2.6.yaml`; the active default temporarily routes every role to `MiniMax-M3`, and Kimi can only be enabled by explicitly selecting a Kimi profile. |
 | T9 — Deterministic market mechanics | Complete | 1.00 | Banking, firms, labor, exchange, settlement, and bankruptcy are tested end to end. |
 | T10 — Seeded lifecycle mechanics | Complete | 1.00 | Biology is PRNG-owned and the exact two-year integration test passes. |
 | T11 — React, Vite, Tailwind, Recharts | Complete | 1.00 | Modular source, committed local bundle, CI build, responsive browser pass, and no CDN runtime. |
@@ -114,7 +114,7 @@ Technical total: `14.00 / 14 = 100.0%`, reported as **100%**.
 
 ### High — full-year production envelope is not yet proven
 
-The prior Kimi Code compatibility credentials authenticated successfully and the fresh one-tick run measured real calls, caching, latency, and modeled price-equivalent cost. The new K2.6 default needs a Kimi API Platform key before the resumable 365-day campaign can start.
+The prior Kimi Code compatibility credentials authenticated successfully and the fresh one-tick run measured real calls, caching, latency, and modeled price-equivalent cost. Kimi is disabled from the active runtime for now. The separate K2.6 acceptance profile needs a Kimi API Platform key before the resumable 365-day campaign can start.
 
 ### High — Kimi K2.6 requires a separate service credential
 
@@ -130,10 +130,11 @@ Three causal chains are documented and mechanically tested: credibility shock �
 
 ## Prioritized completion roadmap
 
-1. **Authenticate K2.6.** Supply `KIMI_API_KEY`, run secret-safe model-catalog preflight, and execute a fresh 100-agent tick.
-2. **Run the resumable v1 campaign.** Execute `python run.py --acceptance runs/acceptance/v1.yaml`; it checkpoints every tick and scores Oracle latency/resolution, 365-day spend, calibration, and oil/rate causal evidence from the database.
-3. **Confirm live rumor emergence.** Complete all five treatment/control seeds and require every treatment run to meet the exact conversation, trust, and outflow thresholds.
-4. **Prepare hosted expansion separately.** Confirm provider commercial terms and concurrency limits before multi-user deployment.
+1. **Validate the active MiniMax-only runtime.** Retain a fresh run proving every recorded call uses `MiniMax-M3` and no Kimi route is active.
+2. **Authenticate K2.6 when re-enabled.** Supply a Platform `KIMI_API_KEY`, run secret-safe model-catalog preflight against the explicit K2.6 profile, and execute a fresh 100-agent tick.
+3. **Run the resumable v1 campaign.** Execute `python run.py --acceptance runs/acceptance/v1.yaml`; it checkpoints every tick and scores Oracle latency/resolution, 365-day spend, calibration, and oil/rate causal evidence from the database.
+4. **Confirm live rumor emergence.** Complete all five treatment/control seeds and require every treatment run to meet the exact conversation, trust, and outflow thresholds.
+5. **Prepare hosted expansion separately.** Confirm provider commercial terms and concurrency limits before multi-user deployment.
 
 No speculative calendar estimate is assigned; completion depends primarily on credential and spend authorization.
 

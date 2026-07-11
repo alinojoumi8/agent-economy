@@ -1,12 +1,32 @@
 # Live Provider Validation
 
 > **Historical scope:** This report validates the Kimi Code compatibility profile
-> (`runs/production-kimi-code.yaml`). The default production profile now pins
-> Kimi API Platform `kimi-k2.6` and requires separate validation with `KIMI_API_KEY`.
+> (`runs/production-kimi-code.yaml`). Kimi is currently disabled from the active
+> production runtime; the K2.6 target remains in the opt-in
+> `runs/production-k2.6.yaml` acceptance profile.
 
 > **Assessment date:** 2026-07-10
 >
 > **Code baseline:** `b2b25c0` on `fix/provider-live-readiness`
+
+## Active MiniMax-only validation
+
+Kimi is disabled from the active `runs/production.yaml` profile. A fresh bounded
+run on 2026-07-10 authenticated the MiniMax Token Plan model catalog and then
+completed one real simulation tick:
+
+| Check | Result |
+|---|---|
+| Run | `3f168fc2ff`, tick 1 |
+| Provider/model | `minimax` / `MiniMax-M3` only |
+| Recorded LLM calls | 55 |
+| Kimi calls | 0 |
+| Provider failures or pauses | 0 |
+| Recorded cost | $0.035041 |
+| Conversation diversity | 20/20 messages distinct |
+
+The visible development server at `http://127.0.0.1:8321/` was restarted from
+this run. Its readiness endpoint reports only the `minimax` routed provider.
 >
 > **Validated run:** `3478260d9e`, seed `42`, tick `1`
 >

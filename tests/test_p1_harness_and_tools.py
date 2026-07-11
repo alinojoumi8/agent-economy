@@ -68,7 +68,7 @@ def test_experiment_harness_loads_inherited_configs_and_resumes(tmp_path):
     })
     assert inherited["config"]["banks"]["count"] == 2
     assert inherited["config"]["llm"]["routes"]["oracle"] == {
-        "provider": "kimi", "model": "kimi-k2.6"}
+        "provider": "minimax", "model": "MiniMax-M3"}
 
     spec = {
         "name": "resumable", "config": _tiny_config(), "seeds": [1],

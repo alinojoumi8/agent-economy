@@ -1,6 +1,6 @@
-# PRD production profile: MiniMax M3 Token Plan + Kimi K2.6 API Platform.
-# Kimi Code membership keys cannot select K2.6; use production-kimi-code.yaml
-# when only a Kimi Code key is available.
+# Active production profile: MiniMax M3 Token Plan only.
+# Kimi is intentionally disabled. The mixed-provider profiles remain explicit
+# opt-ins in production-k2.6.yaml and production-kimi-code.yaml.
 extends: base.yaml
 
 population:
@@ -24,24 +24,15 @@ llm:
         # M3 may spend most of a 700-token ceiling on reasoning and truncate
         # before emitting its JSON action envelope.
         max_completion_tokens: 4096
-    kimi:
-      kind: openai_compat
-      base_url: https://api.moonshot.ai/v1
-      api_key_env: KIMI_API_KEY
-      timeout_s: 180
-      healthcheck_path: /models
-      max_tokens_field: max_tokens
-      request_defaults:
-        thinking: {type: enabled}
-        temperature: 1.0
-        max_tokens: 4096
   default_route: {provider: minimax, model: MiniMax-M3}
   routes:
     citizen:        {provider: minimax, model: MiniMax-M3}
     founder:        {provider: minimax, model: MiniMax-M3}
-    central_banker: {provider: kimi, model: kimi-k2.6}
-    credit_officer: {provider: kimi, model: kimi-k2.6}
-    reporter:       {provider: kimi, model: kimi-k2.6}
-    editor:         {provider: kimi, model: kimi-k2.6}
-    vc_partner:     {provider: kimi, model: kimi-k2.6}
-    oracle:         {provider: kimi, model: kimi-k2.6}
+    conversation:   {provider: minimax, model: MiniMax-M3}
+    memory:         {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: minimax, model: MiniMax-M3}
+    credit_officer: {provider: minimax, model: MiniMax-M3}
+    reporter:       {provider: minimax, model: MiniMax-M3}
+    editor:         {provider: minimax, model: MiniMax-M3}
+    vc_partner:     {provider: minimax, model: MiniMax-M3}
+    oracle:         {provider: minimax, model: MiniMax-M3}

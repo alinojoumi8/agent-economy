@@ -1,5 +1,5 @@
 name: v1-m3-k26
-base_config: runs/production.yaml
+base_config: runs/production-k2.6.yaml
 data_root: data/acceptance/v1-m3-k26
 report_dir: reports/out
 

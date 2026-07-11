@@ -118,7 +118,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
         "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
 
 
-def test_production_config_pins_minimax_m3_and_kimi_k26_platform():
+def test_production_config_routes_every_role_to_minimax_m3_only():
     cfg = load_config("runs/production.yaml")
     assert cfg["population"]["size"] == 87
     assert cfg["banks"]["count"] == 2
@@ -128,8 +128,37 @@ def test_production_config_pins_minimax_m3_and_kimi_k26_platform():
     assert cfg["llm"]["providers"]["minimax"]["timeout_s"] == 180
     assert cfg["llm"]["providers"]["minimax"]["request_defaults"] == {
         "reasoning_split": True, "max_completion_tokens": 4096}
-    assert cfg["llm"]["routes"]["oracle"] == {
-        "provider": "kimi", "model": "kimi-k2.6"}
+    assert set(cfg["llm"]["providers"]) == {"minimax"}
+    assert cfg["llm"]["routes"]
+    assert all(route == {"provider": "minimax", "model": "MiniMax-M3"}
+               for route in cfg["llm"]["routes"].values())
+
+    missing = validate_llm_config(cfg, environ={}, raise_on_error=False)
+    assert not missing["ready"]
+    assert any("MINIMAX_API_KEY" in error for error in missing["errors"])
+    assert not any("KIMI_API_KEY" in error for error in missing["errors"])
+
+    ready = validate_llm_config(
+        cfg, environ={"MINIMAX_API_KEY": "sk-cp-present"},
+        raise_on_error=False)
+    assert ready["ready"] and ready["mode"] == "network"
+    assert {p["name"] for p in ready["providers"]} == {"minimax"}
+    assert all("api_key" not in p for p in ready["providers"])
+
+    wrong_minimax_service = load_config("runs/production.yaml")
+    wrong_minimax_service["llm"]["providers"]["minimax"]["base_url"] = \
+        "https://api.minimaxi.com/v1"
+    minimax_mismatch = validate_llm_config(
+        wrong_minimax_service,
+        environ={"MINIMAX_API_KEY": "sk-cp-present"},
+        raise_on_error=False)
+    assert not minimax_mismatch["ready"]
+    assert any("MiniMax Token Plan key" in error
+               for error in minimax_mismatch["errors"])
+
+
+def test_kimi_k26_acceptance_profile_pins_platform_service():
+    cfg = load_config("runs/production-k2.6.yaml")
     kimi = cfg["llm"]["providers"]["kimi"]
     assert kimi["base_url"] == "https://api.moonshot.ai/v1"
     assert kimi["api_key_env"] == "KIMI_API_KEY"
@@ -152,7 +181,7 @@ def test_production_config_pins_minimax_m3_and_kimi_k26_platform():
     assert {p["name"] for p in ready["providers"]} == {"minimax", "kimi"}
     assert all("api_key" not in p for p in ready["providers"])
 
-    wrong_service = load_config("runs/production.yaml")
+    wrong_service = load_config("runs/production-k2.6.yaml")
     wrong_service["llm"]["providers"]["kimi"]["base_url"] = \
         "https://api.kimi.com/coding/v1"
     mismatch = validate_llm_config(
@@ -170,18 +199,6 @@ def test_production_config_pins_minimax_m3_and_kimi_k26_platform():
         raise_on_error=False)
     assert not code_key_on_platform["ready"]
     assert any("Kimi Code key" in error for error in code_key_on_platform["errors"])
-
-    wrong_minimax_service = load_config("runs/production.yaml")
-    wrong_minimax_service["llm"]["providers"]["minimax"]["base_url"] = \
-        "https://api.minimaxi.com/v1"
-    minimax_mismatch = validate_llm_config(
-        wrong_minimax_service,
-        environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "KIMI_API_KEY": "sk-platform-present"},
-        raise_on_error=False)
-    assert not minimax_mismatch["ready"]
-    assert any("MiniMax Token Plan key" in error
-               for error in minimax_mismatch["errors"])
 
 
 def test_kimi_code_compatibility_profile_uses_only_membership_aliases():
