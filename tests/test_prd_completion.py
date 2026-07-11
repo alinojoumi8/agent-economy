@@ -125,11 +125,11 @@ def test_production_config_inherits_world_and_requires_both_keys():
     missing = validate_llm_config(cfg, environ={}, raise_on_error=False)
     assert not missing["ready"]
     assert any("MINIMAX_API_KEY" in error for error in missing["errors"])
-    assert any("MOONSHOT_API_KEY" in error for error in missing["errors"])
+    assert any("KIMI_API_KEY" in error for error in missing["errors"])
 
     ready = validate_llm_config(
         cfg, environ={"MINIMAX_API_KEY": "sk-cp-present",
-                      "MOONSHOT_API_KEY": "sk-kimi-present"},
+                      "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert ready["ready"] and ready["mode"] == "network"
     assert {p["name"] for p in ready["providers"]} == {"minimax", "kimi"}
@@ -141,7 +141,7 @@ def test_production_config_inherits_world_and_requires_both_keys():
     mismatch = validate_llm_config(
         wrong_service,
         environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+                 "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert not mismatch["ready"]
     assert any("Kimi Code key" in error for error in mismatch["errors"])
@@ -152,7 +152,7 @@ def test_production_config_inherits_world_and_requires_both_keys():
     minimax_mismatch = validate_llm_config(
         wrong_minimax_service,
         environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+                 "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert not minimax_mismatch["ready"]
     assert any("MiniMax Token Plan key" in error

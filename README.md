@@ -98,7 +98,7 @@ secret-safe results of the authenticated 100-agent smoke run are recorded in
 
 ```bash
 copy .env.example .env
-# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and MOONSHOT_API_KEY
+# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and KIMI_API_KEY
 # with a Kimi Code membership key (sk-kimi-*), then validate without inference:
 python run.py --preflight
 

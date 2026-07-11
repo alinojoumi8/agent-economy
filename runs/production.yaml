@@ -28,7 +28,7 @@ llm:
       # The configured key is a Kimi Code membership key (sk-kimi-*), not a
       # Moonshot pay-as-you-go key. These key families are not interchangeable.
       base_url: https://api.kimi.com/coding/v1
-      api_key_env: MOONSHOT_API_KEY
+      api_key_env: KIMI_API_KEY
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_tokens
