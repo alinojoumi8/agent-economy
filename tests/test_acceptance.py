@@ -112,7 +112,17 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert receipt["passed"]
     assert all(check["passed"] for check in receipt["checks"])
     payload = json.loads((tmp_path / "out" / "acceptance_acceptance-fixture.json").read_text())
-    assert payload["passed"] and len(payload["checks"]) == 16
+    assert payload["passed"] and len(payload["checks"]) == 17
+    trace_check = next(check for check in payload["checks"] if check["id"] == "shock_traces")
+    assert set(trace_check["evidence"]) == {"policy_rate", "oil", "rumor", "slant", "scandal"}
+    assert all(
+        trace["source"] and trace["downstream"] and trace["passed"]
+        for trace in trace_check["evidence"].values()
+    )
+    rumor_trace = trace_check["evidence"]["rumor"]["downstream"]
+    assert len(rumor_trace["rumor_conversation_ids"]) == 5
+    assert rumor_trace["trust_drop_agent_ids"] == [1, 2, 3, 4]
+    assert rumor_trace["post_outflow_events"][0]["amount_cents"] == 300
     markdown = (tmp_path / "out" / "acceptance_acceptance-fixture.md").read_text()
     assert "Overall: **PASS**" in markdown and "Rumor pilot" in markdown
 
@@ -141,7 +151,7 @@ def test_acceptance_rejects_duplicate_phenomena_and_pre_shock_effects(tmp_path):
     )
     failed = {check["id"] for check in receipt["checks"] if not check["passed"]}
 
-    assert failed == {"policy_rate_effect", "emergent_phenomena"}
+    assert failed == {"policy_rate_effect", "shock_traces", "emergent_phenomena"}
 
 
 def test_acceptance_runner_schedules_oracle_once_and_resumes(tmp_path):

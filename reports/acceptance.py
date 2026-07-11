@@ -96,32 +96,70 @@ def _rumor_pilot(store: Store, initial_trust: float) -> tuple[bool, dict]:
             participant_conversations.add(int(row["id"]))
 
     trust_threshold = initial_trust - 0.2
-    dropped = 0
+    dropped_agents: list[int] = []
     for agent_id in exposed:
         value = store.scalar(
             "SELECT value FROM beliefs WHERE agent_id=? AND key=?",
             (agent_id, f"trust:bank:{bank_id}"), default=None,
         )
         if value is not None and float(value) <= trust_threshold + 1e-9:
-            dropped += 1
+            dropped_agents.append(agent_id)
+    dropped = len(dropped_agents)
     drop_share = dropped / len(exposed) if exposed else 0.0
     pre_outflow = _outflow(store, bank_id, max(0, rumor_tick - 10), rumor_tick - 1)
     post_outflow = _outflow(store, bank_id, rumor_tick, end_tick)
+    post_outflow_events = []
+    for row in store.query(
+        "SELECT id, tick, payload_json FROM events "
+        "WHERE kind='deposit_move' AND tick BETWEEN ? AND ? ORDER BY tick, id",
+        (rumor_tick, end_tick),
+    ):
+        move = load_json(row["payload_json"], {})
+        if int(move.get("from_bank", -1)) == bank_id:
+            post_outflow_events.append({
+                "event_id": int(row["id"]), "tick": int(row["tick"]),
+                "amount_cents": int(move.get("amount_cents", 0)),
+            })
     outflow_passed = post_outflow > 2 * pre_outflow if pre_outflow else post_outflow > 0
     evidence = {
         "rumor_tick": rumor_tick, "bank_id": bank_id, "exposed_agents": len(exposed),
         "rumor_conversations_10_ticks": len(participant_conversations),
+        "rumor_conversation_ids": sorted(participant_conversations)[:20],
         "trust_drop_agents": dropped, "trust_drop_share": round(drop_share, 4),
+        "trust_drop_agent_ids": sorted(dropped_agents)[:20],
         "initial_trust_assumption": initial_trust,
         "pre_outflow_cents_10_ticks": pre_outflow,
         "post_outflow_cents_10_ticks": post_outflow,
+        "post_outflow_events": post_outflow_events[:20],
     }
     passed = len(participant_conversations) >= 5 and drop_share >= 0.25 and outflow_passed
     return passed, evidence
 
 
 def _shock_effects(store: Store) -> tuple[dict[str, bool], dict[str, Any]]:
-    fired = {str(payload.get("kind")): tick for _, tick, payload in _event_payloads(store, "shock_fired")}
+    fired_events = {
+        str(payload.get("kind")): {
+            "event_id": event_id, "tick": tick, "kind": "shock_fired", "payload": payload,
+        }
+        for event_id, tick, payload in _event_payloads(store, "shock_fired")
+    }
+    fired = {kind: int(event["tick"]) for kind, event in fired_events.items()}
+
+    def downstream_events(kind: str, shock_kind: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "event_id": int(row["id"]), "tick": int(row["tick"]),
+                "kind": str(row["kind"]), "payload": load_json(row["payload_json"], {}),
+            }
+            for row in store.query(
+                "SELECT id, tick, kind, payload_json FROM events "
+                "WHERE kind=? AND tick>=? ORDER BY tick, id LIMIT 10",
+                (kind, fired.get(shock_kind, 10**9)),
+            )
+        ]
+
+    policy_trace = downstream_events("policy_rate_set", "policy_rate")
+    oil_trace = downstream_events("commodity_shock", "oil")
     policy_events = int(store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind='policy_rate_set' AND tick>=?",
         (fired.get("policy_rate", 10**9),), default=0,
@@ -130,28 +168,59 @@ def _shock_effects(store: Store) -> tuple[dict[str, bool], dict[str, Any]]:
         "SELECT COUNT(*) FROM events WHERE kind='commodity_shock' AND tick>=?",
         (fired.get("oil", 10**9),), default=0,
     ))
-    slant_articles = 0
-    scandal_articles = 0
+    directed_articles: list[dict[str, Any]] = []
+    scandal_citing_articles: list[dict[str, Any]] = []
     scandal_ids = {event_id for event_id, _, _ in _event_payloads(store, "firm_scandal")}
-    for row in store.query("SELECT tick, slant_tags, source_event_ids FROM news_articles"):
+    for row in store.query(
+        "SELECT id, tick, headline, slant_tags, source_event_ids FROM news_articles ORDER BY tick, id"
+    ):
         if (int(row["tick"]) >= fired.get("slant", 10**9)
                 and "directed" in load_json(row["slant_tags"], [])):
-            slant_articles += 1
+            directed_articles.append({
+                "article_id": int(row["id"]), "tick": int(row["tick"]),
+                "headline": str(row["headline"]),
+                "slant_tags": load_json(row["slant_tags"], []),
+            })
         sources = {int(value) for value in load_json(row["source_event_ids"], [])}
         if scandal_ids.intersection(sources):
-            scandal_articles += 1
+            scandal_citing_articles.append({
+                "article_id": int(row["id"]), "tick": int(row["tick"]),
+                "headline": str(row["headline"]), "source_event_ids": sorted(sources),
+            })
     effects = {
         "policy_rate": policy_events > 0,
         "oil": oil_events > 0,
-        "slant": slant_articles > 0,
-        "scandal": scandal_articles > 0,
+        "slant": bool(directed_articles),
+        "scandal": bool(scandal_citing_articles),
+    }
+    traces = {
+        "policy_rate": {
+            "source": fired_events.get("policy_rate"), "downstream": policy_trace,
+            "passed": effects["policy_rate"],
+        },
+        "oil": {
+            "source": fired_events.get("oil"), "downstream": oil_trace,
+            "passed": effects["oil"],
+        },
+        "rumor": {
+            "source": fired_events.get("rumor"), "downstream": None, "passed": False,
+        },
+        "slant": {
+            "source": fired_events.get("slant"), "downstream": directed_articles[:10],
+            "passed": effects["slant"],
+        },
+        "scandal": {
+            "source": fired_events.get("scandal"), "downstream": scandal_citing_articles[:10],
+            "passed": effects["scandal"],
+        },
     }
     evidence = {
         "fired_ticks": fired,
         "policy_rate_events_after_shock": policy_events,
         "commodity_shock_events_after_shock": oil_events,
-        "directed_articles": slant_articles,
-        "scandal_citing_articles": scandal_articles,
+        "directed_articles": len(directed_articles),
+        "scandal_citing_articles": len(scandal_citing_articles),
+        "traces": traces,
     }
     return effects, evidence
 
@@ -274,6 +343,16 @@ def evaluate_acceptance(
         rumor_ok, rumor_evidence = _rumor_pilot(
             store, float(acceptance.get("rumor_initial_trust", 0.6))
         )
+        effect_evidence["traces"]["rumor"].update({
+            "downstream": rumor_evidence, "passed": rumor_ok,
+        })
+        shock_traces_ok = (
+            set(effect_evidence["traces"]) == set(REQUIRED_SHOCKS)
+            and all(
+                trace.get("source") and trace.get("downstream") and trace.get("passed")
+                for trace in effect_evidence["traces"].values()
+            )
+        )
         experiment_ok, experiment_evidence = _experiment_evidence(experiment_json)
         phenomena_ok, phenomena_evidence = _phenomena_evidence(store, phenomena_yaml)
 
@@ -305,6 +384,8 @@ def evaluate_acceptance(
                    resolved_predictions > 0, {"resolved_predictions": resolved_predictions}),
             _check("required_shocks", "All five required shock types fired",
                    set(effect_evidence["fired_ticks"]) >= set(REQUIRED_SHOCKS), effect_evidence["fired_ticks"]),
+            _check("shock_traces", "All five shocks have explicit source-to-downstream traces",
+                   shock_traces_ok, effect_evidence["traces"]),
             _check("policy_rate_effect", "Policy-rate shock changed the policy-rate channel",
                    effects["policy_rate"], effect_evidence),
             _check("oil_effect", "Oil shock changed the commodity-price channel",
