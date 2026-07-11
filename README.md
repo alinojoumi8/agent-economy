@@ -117,8 +117,9 @@ retains the $200 governor cap for deterministic capped-run development.
 
 Provider/model names are validated before genesis. A missing key, unknown route,
 or unavailable model produces a clear preflight failure; it never silently falls
-back to scripted behavior. HTTP 429 responses create a visible provider-wide
-cooldown and retry until recovery or operator stop; other network failures use
+back to scripted behavior. HTTP 429 throttling and explicit provider-overload
+responses such as MiniMax HTTP 529 create a visible provider-wide cooldown and
+retry until recovery or operator stop; other network failures use
 the configured bounded retry count. A continuing non-rate-limit failure records
 a diagnostic, reconciles the ledger, checkpoints the last completed tick plus
 the active phase cursor, and pauses visibly. Kimi receives a stable

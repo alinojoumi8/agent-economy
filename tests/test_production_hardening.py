@@ -28,7 +28,9 @@ def _gateway(tmp_path, *, backoff=(0.01, 0.02, 0.03)) -> Gateway:
     return Gateway(store, config)
 
 
-def test_rate_limits_retry_until_success_as_one_logical_call(tmp_path, caplog):
+@pytest.mark.parametrize("status_code", [429, 529])
+def test_provider_throttling_retries_until_success_as_one_logical_call(
+        tmp_path, caplog, status_code):
     caplog.set_level(logging.INFO, logger="agent_economy.llm")
     gateway = _gateway(tmp_path)
 
@@ -40,7 +42,9 @@ def test_rate_limits_retry_until_success_as_one_logical_call(tmp_path, caplog):
             self.calls += 1
             if self.calls <= 2:
                 raise AdapterHTTPError(
-                    429, "https://provider.test/v1", "plan throughput reached")
+                    status_code, "https://provider.test/v1",
+                    "plan throughput reached" if status_code == 429
+                    else "provider cluster overloaded")
             return AdapterResult(
                 text='{"reasoning":"ok","actions":[{"type":"do_nothing"}]}',
                 in_tokens=100, out_tokens=10)

@@ -46,7 +46,11 @@ class AdapterHTTPError(RuntimeError):
 
     @property
     def rate_limited(self) -> bool:
-        return self.status_code == 429
+        # MiniMax uses the non-standard 529 status for an explicitly overloaded
+        # provider cluster. Operationally it is the same transient throughput
+        # condition as 429: wait provider-wide until capacity returns instead of
+        # pausing an unattended production run.
+        return self.status_code in {429, 529}
 
 
 def _retry_after_seconds(value: Optional[str]) -> Optional[float]:

@@ -14,13 +14,21 @@ while provider rate limits control throughput.
 - [x] Complete R6/R15 conformance with bounded Oracle evidence tools, persisted
   transcripts, and current-run/pooled calibration dashboard views.
 - [x] Align the HTML/Markdown report contract and production documentation.
+- [x] Treat explicit provider-overload responses (including MiniMax HTTP 529)
+  as the same visible, interruptible, indefinite cooldown used for HTTP 429.
+- [ ] Resume post-fix run `da8032da59` from active tick 1 and prove its stored
+  successful responses are reused without duplicate provider charges or writes.
+- [ ] Reconcile draft PR #10 without merging its competing acceptance stack:
+  port only current, non-duplicative campaign or handbook improvements.
+- [ ] Publish this hardened branch as the replacement PR and pass fresh CI on
+  the current Python/dashboard baseline.
 - [ ] Use one inherited production-acceptance config for 365 ticks, about 100
   agents, the five required shock types, and an automatically scored Oracle
   prediction.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
-- [ ] Run the five-seed rumor treatment/control experiment and attach its
+- [x] Run the five-seed rumor treatment/control experiment and attach its
   reconciled comparison artifact.
 - [ ] Pass focused tests, the full Python suite, dashboard tests/build, live
   dashboard/API smoke, autoreview, and diff checks.

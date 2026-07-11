@@ -195,7 +195,7 @@ Single chokepoint through which every call flows. Responsibilities:
   - `cap_usd: null`: no application spend ceiling or degradation; this is the production/acceptance profile, and actual spend remains visible.
 - **Prompt caching**: shared system prefix (schema + world rules) marked cacheable — biggest single cost saver since it's identical across ~100 agents.
 - **Concurrency**: configurable `asyncio.Semaphore(llm.concurrency)` on API calls (production currently uses 3); agents within a phase run concurrently and execution remains deterministic afterward.
-- **Failure policy**: HTTP failures preserve status and `Retry-After`. A 429 sets one provider-wide visible cooldown and retries until recovery or operator stop, using `Retry-After` or 15/30/60/120/300-second fallback intervals. Other failures receive the configured bounded retry count and then pause the active phase. Malformed JSON receives one repair completion; a second invalid result becomes a logged `do_nothing`.
+- **Failure policy**: HTTP failures preserve status and `Retry-After`. A 429, or an explicit provider-overload response such as MiniMax 529, sets one provider-wide visible cooldown and retries until recovery or operator stop, using `Retry-After` or 15/30/60/120/300-second fallback intervals. Other failures receive the configured bounded retry count and then pause the active phase. Malformed JSON receives one repair completion; a second invalid result becomes a logged `do_nothing`.
 
 ## 9. Market mechanics (all deterministic)
 

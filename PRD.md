@@ -150,7 +150,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
 - Real-time token/cost accounting per model, per agent, per subsystem; optional budget cap with staged degradation (reduce conversation count → stretch decision cadences → institutional-agents-only mode → clean pause with alert).
-- HTTP 429 responses create a visible provider-wide cooldown and retry until recovery or operator stop; other continuing provider failures pause on the active phase without advancing the completed tick.
+- HTTP 429 throttling and explicit provider-overload responses (including MiniMax HTTP 529) create a visible provider-wide cooldown and retry until recovery or operator stop; other continuing provider failures pause on the active phase without advancing the completed tick.
 - Acceptance: a capped $200 profile never exceeds it; uncapped production records actual spend; degradation, rate-limit, and resume state are visible.
 
 **R8. Live dashboard**
