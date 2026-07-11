@@ -154,6 +154,52 @@ def test_acceptance_rejects_duplicate_phenomena_and_pre_shock_effects(tmp_path):
     assert failed == {"policy_rate_effect", "shock_traces", "emergent_phenomena"}
 
 
+def test_acceptance_distinguishes_recovered_provider_incidents(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    store.log_event(1, "provider_failure", {"provider": "minimax"})
+    store.log_event(1, "provider_pause", {"provider": "minimax"})
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "recovered", experiment_json=experiment,
+        phenomena_yaml=phenomena,
+    )
+    check = next(check for check in receipt["checks"] if check["id"] == "failure_events")
+    assert check["passed"]
+    assert check["evidence"]["recovered_provider_incidents"] == 2
+    assert check["evidence"]["unrecovered_provider_incidents"] == 0
+
+    store = Store(str(db))
+    store.log_event(366, "provider_failure", {"provider": "minimax"})
+    store.commit()
+    store.close()
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "unrecovered", experiment_json=experiment,
+        phenomena_yaml=phenomena,
+    )
+    check = next(check for check in receipt["checks"] if check["id"] == "failure_events")
+    assert not check["passed"]
+    assert check["evidence"]["unrecovered_provider_incidents"] == 1
+
+
+def test_acceptance_never_waives_reconciliation_failure(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    store.log_event(1, "reconciliation_failure", {"grand_sum_cents": 1})
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "hard-failure", experiment_json=experiment,
+        phenomena_yaml=phenomena,
+    )
+    check = next(check for check in receipt["checks"] if check["id"] == "failure_events")
+    assert not check["passed"]
+    assert check["evidence"]["counts"]["reconciliation_failure"] == 1
+
+
 def test_acceptance_runner_schedules_oracle_once_and_resumes(tmp_path):
     config = _config(acceptance={
         "min_ticks": 3,

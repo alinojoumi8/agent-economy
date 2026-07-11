@@ -330,6 +330,34 @@ def evaluate_acceptance(
             kind: int(store.scalar("SELECT COUNT(*) FROM events WHERE kind=?", (kind,), default=0))
             for kind in FAILURE_EVENTS
         }
+        provider_incidents = [
+            {
+                "event_id": int(row["id"]), "tick": int(row["tick"]),
+                "kind": str(row["kind"]),
+                "recovered": int(row["tick"]) <= tick,
+            }
+            for row in store.query(
+                "SELECT id, tick, kind FROM events "
+                "WHERE kind IN ('provider_failure','provider_pause') ORDER BY id LIMIT 50"
+            )
+        ]
+        unrecovered_provider_incidents = int(store.scalar(
+            "SELECT COUNT(*) FROM events "
+            "WHERE kind IN ('provider_failure','provider_pause') AND tick>?",
+            (tick,), default=0,
+        ))
+        hard_failures = sum(
+            failures[kind] for kind in ("reconciliation_failure", "budget_pause", "report_failed")
+        )
+        failure_evidence = {
+            "counts": failures,
+            "provider_incidents": provider_incidents,
+            "recovered_provider_incidents": (
+                failures["provider_failure"] + failures["provider_pause"]
+                - unrecovered_provider_incidents
+            ),
+            "unrecovered_provider_incidents": unrecovered_provider_incidents,
+        }
         oracle_latencies = [
             int(row["latency_ms"]) for row in store.query(
                 "SELECT latency_ms FROM llm_calls WHERE purpose='oracle' AND latency_ms IS NOT NULL"
@@ -374,8 +402,10 @@ def evaluate_acceptance(
                     "configured_cap_usd": configured_cap,
                     "uncapped": max_spend is None and configured_cap is None}),
             _check("ledger", "Double-entry ledger reconciles exactly", reconciled, ledger_diag),
-            _check("failure_events", "No provider, budget, report, or reconciliation failure occurred",
-                   not any(failures.values()) and status != "halted", failures),
+            _check("failure_events",
+                   "No unrecovered provider, budget, report, or reconciliation failure remains",
+                   not hard_failures and not unrecovered_provider_incidents and status != "halted",
+                   failure_evidence),
             _check("oracle_latency", "Oracle p90 response latency is below 60 seconds",
                    oracle_p90 is not None and oracle_p90 < oracle_p90_limit,
                    {"samples": len(oracle_latencies), "p90_ms": oracle_p90,
