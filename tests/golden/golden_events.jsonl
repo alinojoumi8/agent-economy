@@ -176,7 +176,7 @@
 {"k":"production","p":{"firm_id":3,"unit_cost_cents":217,"units":12},"ph":"NIGHT_CLOSE","t":7}
 {"k":"birthday","p":{"age":41,"agent_id":7},"ph":"NIGHT_CLOSE","t":7}
 {"k":"insurance_claim","p":{"agent_id":22,"bill_cents":5000,"covered_cents":4000,"policy_id":4},"ph":"NIGHT_CLOSE","t":7}
-{"k":"policy_rate_set","p":{"new_bps":550,"old_bps":500,"requested_bps":550},"ph":"EXECUTION","t":7}
+{"k":"policy_rate_set","p":{"new_bps":450,"old_bps":500,"requested_bps":450},"ph":"EXECUTION","t":7}
 {"k":"goods_sale","p":{"buyer_id":4,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}
 {"k":"goods_sale","p":{"buyer_id":5,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}
 {"k":"goods_sale","p":{"buyer_id":6,"firm_id":2,"qty":8,"total_cents":1840,"unit_price_cents":230},"ph":"MARKET","t":7}

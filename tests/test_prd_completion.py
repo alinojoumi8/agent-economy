@@ -20,7 +20,7 @@ from llm.readiness import validate_llm_config
 from run import load_config, open_run, replay_headless
 from server.app import create_app
 from server.controller import RunController
-from world.loop import World
+from world.loop import LEGACY_PHASES, PHASES, World
 from world.replay_verify import verify_replay
 from oracle.tools import OracleToolError
 
@@ -54,6 +54,124 @@ def _world(tmp_path: Path, name: str = "acceptance.db", **over) -> World:
     world = World(store, cfg)
     world.initialize()
     return world
+
+
+def test_finalize_metrics_include_same_day_sales_and_are_idempotent(tmp_path):
+    world = _world(tmp_path, "finalize-metrics.db")
+    buyer_id = int(world.store.scalar(
+        "SELECT ag.id FROM agents ag JOIN accounts a ON a.id=ag.checking_account_id "
+        "WHERE ag.alive=1 ORDER BY a.balance_cents DESC, ag.id LIMIT 1"))
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+
+    async def no_decisions(tick):
+        return []
+
+    def buy_during_execution(tick, decisions):
+        result = world.economy.firms.buy_goods(tick, buyer_id, firm_id, 1)
+        assert result["ok"]
+
+    world.runtime.decide_all = no_decisions
+    world.runtime.execute_decisions = buy_during_execution
+    asyncio.run(world.step())
+
+    sale_cents = int(world.store.scalar(
+        "SELECT json_extract(payload_json,'$.total_cents') FROM events "
+        "WHERE tick=1 AND kind='goods_sale' LIMIT 1"))
+    assert world.store.metric_at_or_before("gdp_proxy", 1) == pytest.approx(sale_cents / 100)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='gdp_proxy'") == 1
+
+    world._phase_finalize(1)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='gdp_proxy'") == 1
+    world.store.close()
+
+
+def test_finalize_reconciliation_catches_execution_corruption(tmp_path):
+    world = _world(tmp_path, "finalize-reconcile.db")
+    account_id = int(world.store.scalar("SELECT id FROM accounts ORDER BY id LIMIT 1"))
+
+    async def no_decisions(tick):
+        return []
+
+    def corrupt_during_execution(tick, decisions):
+        world.store.execute(
+            "UPDATE accounts SET balance_cents=balance_cents+1 WHERE id=?", (account_id,))
+
+    world.runtime.decide_all = no_decisions
+    world.runtime.execute_decisions = corrupt_during_execution
+    with pytest.raises(ReconciliationError):
+        asyncio.run(world.step())
+
+    meta = world.store.get_meta()
+    assert meta["status"] == "halted"
+    assert meta["tick"] == 0 and meta["active_tick"] == 1
+    assert meta["next_phase"] == "FINALIZE"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='reconciliation_failure'") == 1
+    world.store.close()
+
+
+def test_cpi_uses_fixed_genesis_goods_basket(tmp_path):
+    world = _world(tmp_path, "fixed-cpi.db")
+    baseline = world.metrics._cpi()
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE founded_tick=0 "
+        "AND sector NOT IN ('health','insurance') ORDER BY id LIMIT 1"))
+    world.store.update("firms", firm_id, status="bankrupt", bankrupt_tick=1)
+    world.store.insert(
+        "firms", name="Diagnostic Hospital", sector="health", status="private",
+        product_json=json.dumps({"product": "care", "unit_price_cents": 999999}),
+        founded_tick=0)
+
+    assert world.metrics._cpi() == pytest.approx(baseline)
+    world.store.close()
+
+
+def test_goods_context_excludes_zero_inventory(tmp_path):
+    world = _world(tmp_path, "stocked-offers.db")
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+    world.store.update("firms", firm_id, inventory=0)
+    assert firm_id not in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
+    world.store.update("firms", firm_id, inventory=1)
+    assert firm_id in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
+    world.store.close()
+
+
+def test_engine_semantics_version_preserves_markerless_runs(tmp_path):
+    cfg = _config(tmp_path)
+    fresh_store, fresh_world, _ = open_run(cfg, None, None, data_dir=tmp_path)
+    persisted = json.loads(fresh_store.get_meta()["config_json"])
+    assert persisted["engine_semantics_version"] == 2
+    assert fresh_world.phases == PHASES
+    fresh_store.close()
+
+    legacy_id = "markerless-legacy"
+    legacy_store = Store(str(tmp_path / f"{legacy_id}.db"))
+    legacy_store.init_run_meta(legacy_id, int(cfg["seed"]), cfg)
+    legacy_store.close()
+
+    resumed_store, resumed_world, _ = open_run(
+        {}, legacy_id, None, data_dir=tmp_path)
+    assert resumed_world.engine_semantics_version == 1
+    assert resumed_world.phases == LEGACY_PHASES
+    resumed_world.initialize()
+    firm_id = int(resumed_store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+    resumed_store.update("firms", firm_id, inventory=0)
+    assert firm_id in {
+        offer["firm_id"] for offer in resumed_world.runtime.ctx._goods_offers()}
+    resumed_store.close()
+
+    replay_store, replay_world, _ = open_run(
+        {}, None, legacy_id, data_dir=tmp_path)
+    assert replay_world.engine_semantics_version == 1
+    assert replay_world.phases == LEGACY_PHASES
+    assert json.loads(replay_store.get_meta()["config_json"])[
+        "engine_semantics_version"] == 1
+    replay_store.close()
 
 
 def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):

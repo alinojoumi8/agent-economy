@@ -59,13 +59,16 @@ No Docker/Kubernetes/queues in v1. One `python run.py --config run.yaml` process
 
 | # | Phase | What happens | LLM? |
 |---|---|---|---|
-| 1 | `NIGHT_CLOSE` (previous day) | Interest accrual, loan payments due, payroll on paydays, **lifecycle draws** (illness onset/recovery, deaths + estate settlement, birthdays/aging, retirement transitions, arrival spawning), metrics snapshot, ledger reconciliation check | No |
+| 1 | `NIGHT_CLOSE` (previous day) | Interest accrual, loan payments due, payroll on paydays, **lifecycle draws** (illness onset/recovery, deaths + estate settlement, birthdays/aging, retirement transitions, arrival spawning), shocks, and a pre-decision reconciliation check | No |
 | 2 | `MORNING` | Agents scheduled to act today: perceive → decide. News from yesterday delivered per media diet | Yes (decisions) |
 | 3 | `EXECUTION` | Validator + engine apply all queued actions in deterministic order (sorted by agent id + action seq) | No |
 | 4 | `MARKET` | Exchange session: order book matches queued orders; goods purchases settle; labor offers/acceptances bind | No |
 | 5 | `NEWSROOM` | Reporters (strong model) scan the day's event log, write stories; editors pick and frame per outlet slant | Yes |
 | 6 | `EVENING` | Conversation pairing: K pairs sampled by social-graph weight + event salience; 2–4 exchange turns each | Yes |
 | 7 | `MEMORY` | Each active agent's day is compressed to a summary; importance scoring; belief updates extracted | Yes (cheap) |
+| 8 | `FINALIZE` | Idempotent completed-day metrics snapshot, Oracle resolution, and reconciliation after every settled action | No |
+
+`engine_semantics_version: 2` selects this completed-day contract. Markerless historical databases are resumed and replayed with the legacy seven-phase contract so already-completed runs retain byte-for-byte deterministic behavior.
 
 **Agent cadences (cost + realism):** every agent acts *only when scheduled* — shopping ~daily, portfolio review weekly, career decisions monthly, plus **event-triggered wakeups** (your bank is in the news, you got fired, someone told you something with high salience). Institutional agents act every tick. This is the single biggest cost lever (see §12).
 

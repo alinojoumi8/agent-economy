@@ -1,5 +1,6 @@
 # Agent Economy — default world configuration (reproducibility = this file + seed + code version)
 seed: 42
+engine_semantics_version: 2       # completed-day metrics/final reconciliation contract
 
 population:
   size: 70                      # citizens (staff + founders come on top → ~100 agents)

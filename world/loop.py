@@ -2,13 +2,14 @@
 
 Phase order per tick T (determinism requires ordered execution):
   1 NIGHT_CLOSE   interest, loan payments, payroll, production, lifecycle draws,
-                  shock evaluation, metrics snapshot, reconciliation check
+                  shock evaluation, pre-decision reconciliation check
   2 MORNING       scheduled agents perceive + decide (LLM, concurrent)
   3 EXECUTION     validator + engine apply queued actions (deterministic order)
   4 MARKET        order book matches; session closes
   5 NEWSROOM      outlets write stories from the day's true events
   6 EVENING       conversation pairs
   7 MEMORY        nightly compression, belief extraction
+  8 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
 
 A failed reconciliation halts the run with a diagnostic dump (PRD R1). The budget
 governor is consulted every tick; at 100% the run pauses cleanly (PRD R7).
@@ -38,7 +39,14 @@ from .shocks import Shocks
 from oracle.analyst import Oracle
 from observability import get_logger, log_event as operational_log
 
-PHASES = ("NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET", "NEWSROOM", "EVENING", "MEMORY")
+LEGACY_PHASES = (
+    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+    "NEWSROOM", "EVENING", "MEMORY",
+)
+PHASES = (
+    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+    "NEWSROOM", "EVENING", "MEMORY", "FINALIZE",
+)
 logger = get_logger("world")
 
 
@@ -46,6 +54,8 @@ class World:
     def __init__(self, store: Store, config: dict, *, replay: bool = False):
         self.store = store
         self.config = config
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
+        self.phases = PHASES if self.engine_semantics_version >= 2 else LEGACY_PHASES
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
         self.lifecycle_prng = random.Random(seed ^ 0x5F5E5F)
@@ -56,7 +66,8 @@ class World:
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
         self.gateway = Gateway(store, cfg)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
-        self.metrics = Metrics(self.economy)
+        self.metrics = Metrics(
+            self.economy, semantics_version=self.engine_semantics_version)
         self.shocks = Shocks(self.economy, config)
         self.newsroom = Newsroom(self.economy, self.gateway, config, self.shocks)
         self.conversations = Conversations(self.economy, self.gateway, config)
@@ -168,7 +179,7 @@ class World:
         meta = self.store.get_meta()
         tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
-        if phase not in PHASES:
+        if phase not in self.phases:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
         if meta["active_tick"] is None:
@@ -181,8 +192,8 @@ class World:
         t0 = time.time()
         decisions_count = len(state.get("decisions", []))
         try:
-            for index in range(PHASES.index(phase), len(PHASES)):
-                phase = PHASES[index]
+            for index in range(self.phases.index(phase), len(self.phases)):
+                phase = self.phases[index]
                 self._persist_phase(tick, phase, state)
                 if phase == "NIGHT_CLOSE":
                     try:
@@ -220,13 +231,21 @@ class World:
                         state["observations_captured"] = True
                         self._persist_phase(tick, phase, state)
                     await self.runtime.compress_memories(tick)
+                elif phase == "FINALIZE":
+                    try:
+                        with self.store.savepoint(f"tick_{tick}_finalize"):
+                            self._phase_finalize(tick)
+                    except ReconciliationError as exc:
+                        self._record_reconciliation_halt(
+                            tick, "FINALIZE", getattr(exc, "diagnostic", {}))
+                        raise
 
-                if index + 1 < len(PHASES):
-                    self._persist_phase(tick, PHASES[index + 1], state)
+                if index + 1 < len(self.phases):
+                    self._persist_phase(tick, self.phases[index + 1], state)
                 else:
                     self.store.set_meta(
                         tick=tick, active_tick=None, next_phase="NIGHT_CLOSE",
-                        phase="MEMORY", phase_state_json="{}", legacy_partial=0)
+                        phase=self.phases[-1], phase_state_json="{}", legacy_partial=0)
                     self._save_prng_state()
                     self.store.commit()
 
@@ -345,17 +364,28 @@ class World:
         self._bank_liquidity_sweep(tick)
         # Shock evaluation.
         self.shocks.evaluate(tick)
-        # Metrics snapshot.
+        if self.engine_semantics_version < 2:
+            # Markerless historical databases retain their original tick contract.
+            self.metrics.snapshot(tick)
+            self.oracle.resolve_open(tick)
+        # Reconcile scheduled/opening mechanics before any LLM decisions.
+        self._assert_reconciled(tick, "NIGHT_CLOSE")
+
+    def _phase_finalize(self, tick: int) -> None:
+        # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
-        # Oracle predictions: auto-resolve anything now determinable (PRD R6).
+        # Predictions resolve against completed-day state.
         self.oracle.resolve_open(tick)
-        # Reconciliation — the invariant that keeps the whole thing honest.
-        ok, diag = e.ledger.reconcile()
+        # The completed-tick invariant includes every action settled today.
+        self._assert_reconciled(tick, "FINALIZE")
+
+    def _assert_reconciled(self, tick: int, phase: str) -> None:
+        ok, diag = self.economy.ledger.reconcile()
         if not ok:
             dump_path = Path(self.store.path).with_suffix(f".halt_t{tick}.json")
             dump_path.write_text(json.dumps(diag, indent=2))
             exc = ReconciliationError(
-                f"tick {tick}: books do not reconcile → {dump_path}")
+                f"tick {tick} {phase}: books do not reconcile → {dump_path}")
             exc.diagnostic = diag
             raise exc
 

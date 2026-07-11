@@ -55,6 +55,9 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         stored_cfg = json.loads(store.get_meta()["config_json"])
+        # Markerless databases predate completed-day finalization and must keep
+        # their original phase/metric/prompt behavior for exact replay.
+        stored_cfg.setdefault("engine_semantics_version", 1)
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         world = World(store, stored_cfg)
         world.restore_prng_state()
@@ -66,6 +69,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         source_store = Store(str(source_db))
         source_meta = source_store.get_meta()
         replay_cfg = json.loads(source_meta["config_json"])
+        replay_cfg.setdefault("engine_semantics_version", 1)
         source_tick = int(source_meta["tick"])
         source_seed = int(source_meta["seed"])
         source_store.close()
@@ -82,6 +86,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         world = World(store, replay_cfg, replay=True)
         world.initialize()
         return store, world, run_id
+    config = dict(config)
+    config.setdefault("engine_semantics_version", 2)
     run_id = new_run_id()
     store = Store(str(data_dir / f"{run_id}.db"))
     store.init_run_meta(run_id, int(config.get("seed", 42)), config)

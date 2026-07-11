@@ -51,6 +51,7 @@ class ContextBuilder:
         self.store = economy.store
         self.mem = memory
         self.config = config
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
 
     # ── public: assemble per-role context ────────────────────────────────────
     def build(self, agent_row, tick: int) -> dict:
@@ -168,8 +169,10 @@ class ContextBuilder:
         return heard
 
     def _goods_offers(self) -> list[dict]:
+        inventory_clause = "inventory>0" if self.engine_semantics_version >= 2 else "inventory>=0"
         firms = self.store.query(
-            "SELECT id, product_json, inventory FROM firms WHERE status IN ('private','listed') AND inventory>=0")
+            "SELECT id, product_json, inventory FROM firms "
+            f"WHERE status IN ('private','listed') AND {inventory_clause}")
         out = []
         for f in firms:
             prod = load_json(f["product_json"], {}) or {}
