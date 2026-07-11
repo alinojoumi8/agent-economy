@@ -14,6 +14,7 @@ const INITIAL = {
   agents: [],
   cost: null,
   oracle: { predictions: [], scorecard: {} },
+  calibration: { run: null, all: null, errors: [] },
   shocks: { library: { kinds: [], trigger_types: [] }, scheduled: [] },
 };
 
@@ -29,16 +30,27 @@ export function useObservatory() {
     refreshing.current = true;
     if (!quiet) setLoading(true);
     try {
+      const calibrationErrors = [];
+      const safeCalibration = async (path, scope) => {
+        try { return await api(path); }
+        catch (reason) {
+          calibrationErrors.push(`${scope}: ${reason instanceof Error ? reason.message : String(reason)}`);
+          return null;
+        }
+      };
       const [status, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks] = await Promise.all([
+        events, agents, cost, oracle, shocks, calibrationRun, calibrationAll] = await Promise.all([
         api("/api/run/status"), api("/api/metrics"), api("/api/banks"),
         api("/api/firms"), api("/api/institutions"), api("/api/news?limit=24"),
         api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
         api("/api/agents"), api("/api/cost"), api("/api/oracle/predictions"),
         api("/api/shocks"),
+        safeCalibration("/api/oracle/calibration?scope=run", "run"),
+        safeCalibration("/api/oracle/calibration?scope=all", "all"),
       ]);
       setData({ status, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks });
+        events, agents, cost, oracle, shocks,
+        calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors } });
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
