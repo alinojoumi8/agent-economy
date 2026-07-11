@@ -16,6 +16,13 @@ from typing import Optional
 from engine.core import Economy
 from engine.store import load_json
 from llm.gateway import Gateway, LLMRequest
+from .tools import OracleToolError, OracleTools
+
+PLANNER_SYSTEM = """You are the read-only query planner for an economic analyst.
+Choose only from the supplied tool definitions. Return JSON:
+{"queries":[{"tool":"tool_name","args":{...}}]}.
+Use at most 8 queries, request only evidence relevant to the question, and never
+request SQL, writes, mutations, shell access, secrets, or unlisted tools."""
 
 ANSWER_SYSTEM = """You are the Oracle: a rigorous, read-only economic analyst embedded in a simulated
 economy. You are given a digest of true world state. Answer the operator's question as JSON:
@@ -40,16 +47,48 @@ class Oracle:
         self.store = economy.store
         self.gw = gateway
         self.config = config
+        self.tools = OracleTools(economy)
         self.default_horizon = int(config.get("oracle", {}).get("default_horizon_ticks", 30))
 
     # ── ask ──────────────────────────────────────────────────────────────────
     async def ask(self, question: str) -> dict:
         tick = self.store.tick
         digest = self._world_digest(tick)
+        legacy_replay = self._legacy_replay_at(tick)
+        evidence = []
+        if not legacy_replay:
+            planning_context = {
+                "question": question, "tick": tick,
+                "available_tools": self.tools.definitions,
+            }
+            plan_req = LLMRequest(
+                role="oracle", purpose="oracle_plan", system=PLANNER_SYSTEM,
+                user=json.dumps(planning_context)[:5000], context=planning_context,
+                tick=tick, max_tokens=350, temperature=0.1)
+            plan_resp = await self.gw.complete(
+                plan_req, schema_hint='{"queries":[]}')
+            plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
+            queries = plan.get("queries", [])
+            try:
+                evidence = self.tools.execute_plan(queries)
+            except OracleToolError as exc:
+                evidence = [{"error": str(exc), "queries_rejected": True}]
+                self.store.log_event(
+                    tick, "oracle_tool_plan_rejected",
+                    {"question": question, "error": str(exc)[:500]},
+                    importance=1.5)
         context = {**digest, "question": question, "tick": tick,
                    "default_horizon": self.default_horizon}
+        if not legacy_replay:
+            context["evidence"] = evidence
+        user_payload = (
+            json.dumps({"question": question, "world": digest})[:6000]
+            if legacy_replay else
+            json.dumps({
+                "question": question, "world": digest,
+                "read_only_evidence": evidence})[:12000])
         req = LLMRequest(role="oracle", purpose="oracle", system=ANSWER_SYSTEM,
-                         user=json.dumps({"question": question, "world": digest})[:6000],
+                         user=user_payload,
                          context=context, tick=tick, max_tokens=500, temperature=0.3)
         resp = await self.gw.complete(req)
         ans = resp.parsed if isinstance(resp.parsed, dict) else {}
@@ -57,11 +96,12 @@ class Oracle:
         if ans.get("insufficient_data"):
             pid = self.store.insert(
                 "predictions", asked_tick=tick, question=question, p=None,
-                reasoning=ans.get("reason", "insufficient data"), status="insufficient_data")
+                reasoning=ans.get("reason", "insufficient data"),
+                evidence_json=json.dumps(evidence), status="insufficient_data")
             self.store.log_event(tick, "oracle_insufficient", {
                 "prediction_id": pid, "question": question}, phase=None, importance=1.0)
             return {"insufficient_data": True, "reason": ans.get("reason", ""),
-                    "prediction_id": pid}
+                    "prediction_id": pid, "evidence": evidence}
 
         # Validate the contract; refuse rather than store garbage.
         try:
@@ -74,23 +114,34 @@ class Oracle:
         except (KeyError, AssertionError, TypeError, ValueError):
             pid = self.store.insert(
                 "predictions", asked_tick=tick, question=question, p=None,
-                reasoning="answer did not meet the contract", status="insufficient_data")
+                reasoning="answer did not meet the contract",
+                evidence_json=json.dumps(evidence), status="insufficient_data")
             return {"insufficient_data": True,
                     "reason": "The analyst could not produce a checkable prediction.",
-                    "prediction_id": pid}
+                    "prediction_id": pid, "evidence": evidence}
 
         pid = self.store.insert(
             "predictions", asked_tick=tick, question=question, p=p,
             reasoning=str(ans.get("reasoning", ""))[:2000],
             drivers_json=json.dumps(ans.get("drivers", [])),
             confidence=str(ans.get("confidence", "med")),
-            resolution_rule_json=json.dumps(rule), deadline_tick=deadline, status="open")
+            resolution_rule_json=json.dumps(rule), deadline_tick=deadline,
+            evidence_json=json.dumps(evidence), status="open")
         self.store.log_event(tick, "oracle_prediction", {
             "prediction_id": pid, "question": question, "p": p, "deadline_tick": deadline,
             "rule": rule}, importance=2.0)
         return {"prediction_id": pid, "p": p, "drivers": ans.get("drivers", []),
                 "confidence": ans.get("confidence", "med"), "resolution_rule": rule,
-                "deadline_tick": deadline, "reasoning": ans.get("reasoning", "")}
+                "deadline_tick": deadline, "reasoning": ans.get("reasoning", ""),
+                "evidence": evidence}
+
+    def _legacy_replay_at(self, tick: int) -> bool:
+        if not self.gw.replay or self.gw.replay_conn is None:
+            return False
+        row = self.gw.replay_conn.execute(
+            "SELECT 1 FROM llm_calls WHERE tick=? AND purpose='oracle_plan' LIMIT 1",
+            (tick,)).fetchone()
+        return row is None
 
     # ── world digest (read-only tools rolled into one) ───────────────────────
     def _world_digest(self, tick: int) -> dict:

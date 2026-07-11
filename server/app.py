@@ -249,6 +249,7 @@ def create_app(world: World) -> FastAPI:
             d = dict(r)
             d["resolution_rule"] = load_json(r["resolution_rule_json"], {})
             d["drivers"] = load_json(r["drivers_json"], [])
+            d["evidence"] = load_json(r["evidence_json"], [])
             preds.append(d)
         return {"predictions": preds, "scorecard": world.oracle.scorecard()}
 

@@ -21,6 +21,7 @@ from server.app import create_app
 from server.controller import RunController
 from world.loop import World
 from world.replay_verify import verify_replay
+from oracle.tools import OracleToolError
 
 
 def _config(tmp_path: Path, **over) -> dict:
@@ -285,6 +286,55 @@ def test_provider_pause_resumes_same_phase_without_duplicate_calls(tmp_path):
         "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='cpi'") == 1
     assert world.store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
+
+
+def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
+    world = _world(tmp_path, "oracle-tools.db")
+    asyncio.run(world.step())
+    tools = world.oracle.tools
+    changes_before_reads = world.store.conn.total_changes
+
+    metrics = tools.query_metrics(
+        ["cpi", "unemployment"], from_tick=0, to_tick=1, limit=20)
+    assert metrics["cpi"] and metrics["unemployment"]
+    assert tools.inspect_agent(1)["agent"]["id"] == 1
+    ledger_agent = int(world.store.scalar(
+        "SELECT owner_id FROM accounts WHERE owner_type='agent' "
+        "AND owner_id IS NOT NULL ORDER BY owner_id LIMIT 1"))
+    assert tools.get_ledger_summary("agent", ledger_agent)["accounts"]
+    assert isinstance(tools.read_news(from_tick=0, to_tick=1, limit=5), list)
+    assert isinstance(tools.sample_conversations(
+        from_tick=0, to_tick=1, limit=5), list)
+    assert isinstance(tools.read_order_book(depth=5), list)
+    assert world.store.conn.total_changes == changes_before_reads
+
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([{"tool": "execute_sql", "args": {
+            "sql": "DELETE FROM accounts"}}])
+    with pytest.raises(OracleToolError):
+        tools.read_order_book(depth=21)
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([
+            {"tool": "read_news", "args": {"limit": 1}}
+            for _ in range(9)])
+
+    answer = asyncio.run(world.oracle.ask(
+        "What is the probability of a bank run within 30 ticks?"))
+    assert answer["prediction_id"]
+    assert answer["evidence"]
+    prediction = world.store.query_one(
+        "SELECT * FROM predictions WHERE id=?", (answer["prediction_id"],))
+    evidence = load_json(prediction["evidence_json"], [])
+    assert {item["tool"] for item in evidence} >= {
+        "query_metrics", "read_news", "sample_conversations",
+        "get_ledger_summary"}
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='oracle_plan'") == 1
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='oracle'") == 1
+    with TestClient(create_app(world)) as client:
+        payload = client.get("/api/oracle/predictions").json()
+    assert payload["predictions"][0]["evidence"] == evidence
 
 
 def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):

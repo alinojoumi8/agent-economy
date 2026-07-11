@@ -429,6 +429,35 @@ def oracle_answer(context: dict) -> dict:
             "reasoning": "Estimated from current world state and simple structural drivers."}
 
 
+def oracle_plan(context: dict) -> dict:
+    """Choose bounded read tools for the offline Oracle planner."""
+    question = str(context.get("question", "")).lower()
+    tick = int(context.get("tick", 0))
+    start = max(0, tick - 30)
+    queries = [
+        {"tool": "query_metrics", "args": {
+            "names": ["gdp_proxy", "cpi", "unemployment", "index",
+                      "policy_rate", "sentiment"],
+            "from_tick": start, "to_tick": tick, "limit": 60}},
+        {"tool": "read_news", "args": {
+            "from_tick": start, "to_tick": tick, "limit": 8}},
+        {"tool": "sample_conversations", "args": {
+            "from_tick": start, "to_tick": tick, "limit": 8}},
+    ]
+    if "bank" in question:
+        queries.append({
+            "tool": "get_ledger_summary",
+            "args": {"entity_type": "bank", "entity_id": 1}})
+    if "market" in question or "crash" in question or "stock" in question:
+        queries.append({"tool": "read_order_book", "args": {"depth": 10}})
+    agent_match = re.search(r"agent\s+(\d+)", question)
+    if agent_match:
+        queries.append({
+            "tool": "inspect_agent",
+            "args": {"agent_id": int(agent_match.group(1))}})
+    return {"queries": queries}
+
+
 # Registry: purpose -> scripted policy. Registered onto the gateway's scripted adapter.
 POLICIES: dict[str, Callable[[dict], dict]] = {
     "decision": citizen_decision,
@@ -441,6 +470,7 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
     "newsroom": newsroom_policy,
     "conversation": conversation_turn,
     "memory": memory_compress,
+    "oracle_plan": oracle_plan,
     "oracle": oracle_answer,
 }
 

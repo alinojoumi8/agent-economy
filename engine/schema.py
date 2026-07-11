@@ -6,7 +6,7 @@ as integer cents everywhere; a trigger enforces that every transaction's ledger
 entries sum to zero (double-entry / conservation of money, PRD R1).
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
@@ -400,6 +400,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     resolved_tick  INTEGER,
     outcome        INTEGER,                          -- 0/1/NULL
     brier          REAL,
+    evidence_json  TEXT NOT NULL DEFAULT '[]',
     status         TEXT NOT NULL DEFAULT 'open'      -- open|resolved|insufficient_data
 );
 
@@ -469,6 +470,12 @@ def initialize_schema(conn) -> None:
             migrated = True
     if migrated:
         _migrate_legacy_progress(conn)
+    prediction_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(predictions)")}
+    if "evidence_json" not in prediction_columns:
+        conn.execute(
+            "ALTER TABLE predictions ADD COLUMN "
+            "evidence_json TEXT NOT NULL DEFAULT '[]'")
     conn.execute(
         "UPDATE run_meta SET schema_version=? WHERE id=1 AND schema_version<?",
         (SCHEMA_VERSION, SCHEMA_VERSION))
