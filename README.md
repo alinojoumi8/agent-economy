@@ -6,8 +6,9 @@ A living, miniature US-style economy populated by ~100 persona-driven agents —
 teachers, founders, bankers, journalists — who work, trade, borrow, gossip, and
 panic. **LLMs propose, a deterministic engine disposes**: every dollar flows
 through a double-entry ledger that reconciles to zero every tick, so crashes and
-bank runs are *real* within the sim. See [PRD.md](PRD.md) and
-[TECH-SPEC.md](TECH-SPEC.md) for the full design.
+bank runs are *real* within the sim. Start with the
+[documentation index](docs/README.md), or read [PRD.md](PRD.md) and
+[TECH-SPEC.md](TECH-SPEC.md) for the normative product and technical design.
 
 ## Quick start
 
@@ -114,9 +115,10 @@ partial tick, and pauses visibly. Kimi receives a stable `prompt_cache_key`, and
 cost accounting uses cache-hit tokens reported by the provider rather than an
 estimated local cache hit.
 
-Routing is `role → {provider, model}` — citizens on MiniMax, the high-leverage
-seats (central banker, credit officers, reporters/editors, VC partner, Oracle) on
-Kimi. The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
+Routing is `role → {provider, model}`. The active profile routes every role and
+purpose to MiniMax M3. The explicit K2.6 acceptance profile routes high-leverage
+seats to Kimi Platform, and the Kimi Code profile uses its membership alias.
+The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
 
 Cost governance (PRD R7): a hard cap (default $200) with staged degradation at
 60/80/95% of the world budget (fewer conversations → stretched cadences →
@@ -169,3 +171,12 @@ data/runs/<id>.db       one SQLite file per run (the whole run is one portable f
 The dashboard follows the locked React/Vite/Tailwind/Recharts stack. Scripted
 policies remain the intentional offline/test profile; the production profile
 uses the current real-provider routes after key and live-model preflight.
+
+## Documentation
+
+The maintained handbook covers [getting started](docs/getting-started.md),
+[architecture](docs/architecture.md), [configuration](docs/configuration.md),
+[operations](docs/operator-runbook.md), [API usage](docs/api-reference.md),
+[development](docs/development.md), and
+[troubleshooting](docs/troubleshooting.md). Contribution expectations are in
+[CONTRIBUTING.md](CONTRIBUTING.md).

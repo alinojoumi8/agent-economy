@@ -170,7 +170,7 @@ def main() -> None:
     load_dotenv()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
-                    help="world config (default: locked MiniMax/Kimi production profile)")
+                    help="world config (default: active MiniMax M3-only production profile)")
     ap.add_argument("--ticks", type=int, default=None, help="run N ticks headless then exit")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")

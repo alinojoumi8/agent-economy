@@ -2,7 +2,7 @@
 
 > **Assessment date:** 2026-07-10
 >
-> **Code baseline:** `release/v1-acceptance` at `10e6e0f`
+> **Code baseline:** `release/v1-acceptance` at `ca05690`
 >
 > **Product baseline:** [PRD v1.0](../PRD.md)
 >
@@ -142,15 +142,15 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 
 | Check | Result |
 |---|---|
-| Code baseline | `10e6e0f` on `release/v1-acceptance` |
-| Python suite | **74 passed** in 75.61 seconds with `python -m pytest tests/ -q` |
+| Code baseline | `ca05690` on `release/v1-acceptance` |
+| Python suite | **81 passed** in 64.97 seconds with `python -m pytest tests/ -q` |
 | Frontend | `npm ci`, zero audit vulnerabilities, production build passed, repeated build produced identical hashes |
 | Compile and hygiene | Python compile-all passed; `git diff --check` passed |
 | Browser | Desktop and approximately 355px content widths, live ticker, per-agent costs after Step, internal table/ticker scrolling, and console diagnostics verified; no console errors |
 | Historical live provider run | Kimi Code compatibility run `3478260d9e`: 100 agents, 170 logical calls, zero provider/contract failures, and modeled price-equivalent cost $0.112542; not K2.6 evidence |
 | Replay CLI | Live source/replay: 27 deterministic tables, no live fallback, identical total hash `405b1d5ae37e58b7ab2c8a8baf6ac44a0c17ca134427a075e170fead4a9ce6c8` |
 | Network assets | Production HTML references only committed `/static/assets/*`; no CDN dependency |
-| CI | GitHub Actions run `29105715999` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |
+| CI | GitHub Actions run `29132621638` passed: dashboard build plus Python 3.11/3.12 on Ubuntu and Windows |
 
 ## Deferred P2 work — excluded from scores
 

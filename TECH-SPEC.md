@@ -179,7 +179,7 @@ Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/enti
 
 Single chokepoint through which every call flows. Responsibilities:
 
-- **Routing**: `role → {provider, model}` from `run.yaml`. Default strong seats (≈8, matching the cost model in §12): central banker (1), credit officers (2–3), editors + lead reporters (3), VC partner (1), plus the Oracle → `kimi-k2.6`. All other institutional staff and all citizens → `MiniMax-M3`.
+- **Routing**: `role → {provider, model}` from `run.yaml`. The locked PRD target sends strong seats (≈8, matching the cost model in §12)—central banker, credit officers, editors + lead reporters, VC partner, and Oracle—to `kimi-k2.6`; all other staff and citizens use `MiniMax-M3`. The active production profile temporarily routes every role to MiniMax M3.
 - **Adapters**: one interface (`complete(request) → response`), three implementations:
   - `openai_compat` — Kimi (Moonshot) and MiniMax endpoints; also covers OpenRouter/vLLM/Ollama for free, since they all speak the OpenAI wire format.
   - `anthropic` — optional tier if Ali adds an Anthropic API key.
@@ -220,7 +220,7 @@ Single chokepoint through which every call flows. Responsibilities:
 
 ## 11. The Oracle
 
-- **Read-only analyst** (strong model — default `kimi-k2.6`; optionally routed through the Claude CLI adapter for development-only use, since Oracle volume is a handful of calls per session) exposed as dashboard chat. Tools: `query_metrics(sql)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`. It cannot write anything.
+- **Read-only analyst** (locked target `kimi-k2.6`; active production route `MiniMax-M3`; optionally routed through the Claude CLI adapter for development-only use, since Oracle volume is a handful of calls per session) exposed as dashboard chat. Tools: `query_metrics(sql)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`. It cannot write anything.
 - Answer contract: `{p: 0.xx, drivers: [...], confidence: low|med|high, resolution_rule, deadline_tick}`. The resolution rule must be machine-checkable against world state (e.g. `bank_run := any bank loses >30% deposits within any 5-tick window before deadline`). If the question can't be given a checkable rule, the Oracle returns `insufficient_data` and says why.
 - A resolver job checks open predictions each tick; on resolution, Brier score = `(p − outcome)²` written to `predictions`. Dashboard shows running calibration.
 - Oracle spend is a **reserved carve-out inside the run cap** (default: $10 of the $200) so asking questions never starves the world — and total run spend still never exceeds the cap (PRD R7).
