@@ -155,7 +155,10 @@ class Oracle:
 
     def _planner_attempt_limit(self, tick: int, question: str) -> int:
         if not self.gw.replay or self.gw.replay_conn is None:
-            return 2
+            # One initial plan plus two bounded corrections. Live acceptance
+            # showed that a first repair can fix schema shape while still
+            # guessing an entity that does not exist.
+            return 3
         matching = 0
         rows = self.gw.replay_conn.execute(
             "SELECT request_json FROM llm_calls "

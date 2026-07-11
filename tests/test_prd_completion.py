@@ -471,6 +471,11 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
     with pytest.raises(OracleToolError):
         tools.execute_plan([{"tool": "execute_sql", "args": {
             "sql": "DELETE FROM accounts"}}])
+    with pytest.raises(OracleToolError, match="invalid arguments"):
+        tools.execute_plan([{"tool": "get_ledger_summary", "args": {
+            "entity_type": "bank", "entity_id": 1,
+            "available_bank_ids": [1, 2],
+        }}])
     with pytest.raises(OracleToolError):
         tools.read_order_book(depth=21)
     with pytest.raises(OracleToolError):
@@ -542,6 +547,60 @@ def test_oracle_repairs_a_rejected_plan_before_answering(tmp_path):
     assert answer["evidence"][0]["tool"] == "query_metrics"
     assert world.store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind='oracle_tool_plan_rejected'") == 1
+
+
+def test_oracle_can_repair_a_schema_error_then_an_unknown_entity(tmp_path):
+    world = _world(tmp_path, "oracle-second-repair.db")
+    asyncio.run(world.step())
+    bank_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM banks ORDER BY id")]
+
+    class TwiceRepairingGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, req, **_kwargs):
+            self.requests.append(req)
+            plans = [r for r in self.requests if r.purpose == "oracle_plan"]
+            if req.purpose == "oracle_plan" and len(plans) == 1:
+                assert req.context["available_tools"][4][
+                    "available_entity_ids"]["bank"] == bank_ids
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": None},
+                }]})
+            if req.purpose == "oracle_plan" and len(plans) == 2:
+                assert req.context["previous_plan_error"] == "entity_id is required"
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": 99999},
+                }]})
+            if req.purpose == "oracle_plan":
+                assert req.context["previous_plan_error"] == (
+                    "entity ledger accounts not found")
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": bank_ids[0]},
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.2, "drivers": ["stable deposits"], "confidence": "med",
+                "resolution_rule": {"type": "bank_failure"},
+                "deadline_tick": world.store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = TwiceRepairingGateway()
+    world.oracle.gw = gateway
+    answer = asyncio.run(world.oracle.ask("Will a bank fail within 30 ticks?"))
+
+    assert [req.purpose for req in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle_plan", "oracle"]
+    assert answer["evidence"][0]["result"]["entity_id"] == bank_ids[0]
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_tool_plan_rejected'") == 2
 
 
 def test_replay_falls_back_to_recorded_semantic_call_identity(tmp_path):

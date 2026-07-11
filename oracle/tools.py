@@ -29,6 +29,8 @@ class OracleTools:
 
     @property
     def definitions(self) -> list[dict]:
+        bank_ids = [int(row["id"]) for row in self.store.query(
+            "SELECT id FROM banks ORDER BY id LIMIT 20")]
         return [
             {"name": "query_metrics", "args": {
                 "names": "list[str]", "from_tick": "int|null",
@@ -41,7 +43,10 @@ class OracleTools:
             {"name": "inspect_agent", "args": {"agent_id": "int"}},
             {"name": "get_ledger_summary", "args": {
                 "entity_type": "agent|firm|bank|gov|central_bank|system",
-                "entity_id": "int|null"}},
+                "entity_id": (
+                    "existing int required for agent|firm|bank; "
+                    "omit for gov|central_bank|system")},
+             "available_entity_ids": {"bank": bank_ids}},
             {"name": "read_order_book", "args": {
                 "firm_id": "int|null", "depth": "1..20"}},
         ]
@@ -62,7 +67,11 @@ class OracleTools:
                 raise OracleToolError(f"unknown or non-read-only Oracle tool: {name!r}")
             if not isinstance(args, dict):
                 raise OracleToolError("tool args must be an object")
-            result = self._tools[name](**args)
+            try:
+                result = self._tools[name](**args)
+            except TypeError as exc:
+                raise OracleToolError(
+                    f"invalid arguments for {name}: {exc}") from exc
             item = {"tool": name, "args": args, "result": result}
             total_chars += len(json.dumps(item, sort_keys=True))
             if total_chars > self.MAX_RESULT_CHARS:

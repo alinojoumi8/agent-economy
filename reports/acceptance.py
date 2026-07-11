@@ -530,6 +530,9 @@ async def execute_acceptance_run(world: "World", *, target_tick: int | None = No
             "SELECT COUNT(*) FROM predictions WHERE question=?", (question,), default=0)
         if not existing or not _has_usable_oracle_evidence(world.store, question):
             await world.oracle.ask(question)
+            if not _has_usable_oracle_evidence(world.store, question):
+                raise RuntimeError(
+                    f"Oracle checkpoint at tick {at_tick} produced no usable read evidence")
     if world.store.tick < horizon:
         await world.run(max_ticks=horizon - world.store.tick)
     if world.store.tick < horizon or world.last_pause_reason:

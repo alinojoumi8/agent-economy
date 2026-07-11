@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import yaml
+import pytest
 
 from engine.store import Store
 from reports.acceptance import execute_acceptance_run, uses_paid_providers, write_acceptance_package
@@ -249,6 +250,35 @@ def test_acceptance_repairs_a_prediction_with_only_rejected_evidence(tmp_path):
         (question,))
     evidence = json.loads(repaired["evidence_json"])
     assert evidence and evidence[0]["tool"] == "query_metrics"
+
+
+def test_acceptance_stops_at_checkpoint_without_usable_oracle_evidence(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(acceptance={
+        "min_ticks": 2,
+        "oracle_questions": [{"at_tick": 1, "question": question}],
+    })
+    store = Store(str(tmp_path / "runner-invalid-evidence.db"))
+    store.init_run_meta("runner-invalid-evidence", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    async def rejected_answer(_question):
+        store.insert(
+            "predictions", asked_tick=store.tick, question=question, p=0.5,
+            reasoning="rejected evidence", status="open", deadline_tick=30,
+            resolution_rule_json=json.dumps({"type": "bank_failure"}),
+            evidence_json=json.dumps([{
+                "error": "entity not found", "queries_rejected": True,
+            }]),
+        )
+        return {"prediction_id": 1}
+
+    world.oracle.ask = rejected_answer
+    with pytest.raises(RuntimeError, match="no usable read evidence"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+
+    assert store.tick == 1
 
 
 def test_paid_acceptance_detection_fails_safe_for_any_real_route():
