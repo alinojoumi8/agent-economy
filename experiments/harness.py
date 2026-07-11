@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import html as _html
 import json
+import logging
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,10 @@ import yaml
 
 from engine.store import Store
 from world.loop import World
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("experiments")
 
 
 # ── config plumbing ──────────────────────────────────────────────────────────
@@ -114,17 +119,33 @@ def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
     data_dir = Path(data_root) / spec["name"]
     data_dir.mkdir(parents=True, exist_ok=True)
     arms = ["treatment"] + (["control"] if spec["control"] else [])
+    operational_log(logger, logging.INFO, "experiment.started",
+                    name=spec["name"], seeds=len(spec["seeds"]), arms=arms,
+                    ticks=spec["ticks"])
 
     results: list[dict] = []
     for seed in spec["seeds"]:
         for arm in arms:
             if not quiet:
                 print(f"[experiment {spec['name']}] seed {seed} · {arm} · {spec['ticks']} ticks")
-            results.append(_run_arm(spec, seed, arm, data_dir))
+            try:
+                result = _run_arm(spec, seed, arm, data_dir)
+            except Exception as exc:
+                operational_log(logger, logging.ERROR, "experiment.arm.failed",
+                                name=spec["name"], seed=seed, arm=arm,
+                                error_type=type(exc).__name__, error=str(exc))
+                raise
+            results.append(result)
+            operational_log(logger, logging.INFO, "experiment.arm.completed",
+                            name=spec["name"], seed=seed, arm=arm,
+                            ticks=result["ticks"], reconciled=result["reconciled"],
+                            spend_usd=result["spend_usd"])
 
     summary = _summarize(spec, results)
     report_path = _write_report(spec, results, summary, out_dir)
     summary["report_path"] = report_path
+    operational_log(logger, logging.INFO, "experiment.completed",
+                    name=spec["name"], runs=len(results), report_path=report_path)
     if not quiet:
         print(f"[experiment {spec['name']}] report: {report_path}")
     return {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",

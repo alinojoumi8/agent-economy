@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import shutil
 import time
@@ -35,8 +36,10 @@ from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .shocks import Shocks
 from oracle.analyst import Oracle
+from observability import get_logger, log_event as operational_log
 
 PHASES = ("NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET", "NEWSROOM", "EVENING", "MEMORY")
+logger = get_logger("world")
 
 
 class World:
@@ -73,6 +76,8 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
+            operational_log(logger, logging.DEBUG, "world.initialize.skipped",
+                            run_id=self.gateway.run_id, tick=self.store.tick)
             return
         Genesis(self.economy, self.config, self.persona_prng).build()
         self.shocks.load_from_config()
@@ -82,12 +87,18 @@ class World:
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
         self.store.commit()
+        operational_log(logger, logging.INFO, "world.initialized",
+                        run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
+                        agents=self.store.scalar("SELECT COUNT(*) FROM agents", default=0))
 
     async def run(self, max_ticks: Optional[int] = None) -> None:
         self.status = "running"
         self.store.set_meta(status="running")
         start_tick = self.store.tick
         end_tick = (start_tick + max_ticks) if max_ticks else None
+        operational_log(logger, logging.INFO, "world.run.started",
+                        run_id=self.gateway.run_id, start_tick=start_tick,
+                        max_ticks=max_ticks, replay=self.gateway.replay)
         try:
             while not self._stop_requested:
                 if end_tick is not None and self.store.tick >= end_tick:
@@ -116,18 +127,32 @@ class World:
                     self.last_report_path = generate_report(
                         self.store, self,
                         out_dir=str(self.config.get("report_dir", "reports/out")))
+                    operational_log(logger, logging.INFO, "world.report.generated",
+                                    run_id=self.gateway.run_id, tick=self.store.tick,
+                                    path=self.last_report_path)
                 except Exception as exc:
                     self.store.log_event(
                         self.store.tick, "report_failed", {"error": str(exc)[:500]},
                         importance=3.0)
                     self.store.commit()
+                    operational_log(logger, logging.ERROR, "world.report.failed",
+                                    run_id=self.gateway.run_id, tick=self.store.tick,
+                                    error_type=type(exc).__name__, error=str(exc))
             self._pause_requested = False
+            operational_log(logger, logging.INFO, "world.run.finished",
+                            run_id=self.gateway.run_id, start_tick=start_tick,
+                            end_tick=self.store.tick, status=new_status,
+                            stop_requested=self._stop_requested)
 
     def request_pause(self) -> None:
         self._pause_requested = True
+        operational_log(logger, logging.INFO, "world.pause.requested",
+                        run_id=self.gateway.run_id, tick=self.store.tick)
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        operational_log(logger, logging.INFO, "world.stop.requested",
+                        run_id=self.gateway.run_id, tick=self.store.tick)
 
     # ── one tick ─────────────────────────────────────────────────────────────
     async def step(self) -> dict:
@@ -173,6 +198,9 @@ class World:
 
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": len(decisions), "governor": self.gateway.governor.status()}
+            operational_log(logger, logging.DEBUG, "world.tick.completed",
+                            run_id=self.gateway.run_id, tick=tick, phase=phase,
+                            wall_s=summary["wall_s"], decisions=len(decisions))
             self._notify_tick(tick, summary)
             return summary
         except BudgetExceeded as exc:
@@ -188,8 +216,10 @@ class World:
         if self.on_tick:
             try:
                 self.on_tick(tick, summary)
-            except Exception:
-                pass
+            except Exception as exc:
+                operational_log(logger, logging.WARNING, "world.tick_callback.failed",
+                                run_id=self.gateway.run_id, tick=tick,
+                                error_type=type(exc).__name__, error=str(exc))
 
     def _pause_safely(self, tick: int, phase: str, reason: str, payload: dict,
                       started_at: float, *, detail: str = "") -> dict:
@@ -202,6 +232,9 @@ class World:
             self.store.set_meta(status="halted", tick=tick, phase=phase)
             self.store.commit()
             self.checkpoint(tick, reason="halt")
+            operational_log(logger, logging.CRITICAL, "world.reconciliation.failed",
+                            run_id=self.gateway.run_id, tick=tick, phase=phase,
+                            pause_reason=reason, diagnostic=diag)
             raise ReconciliationError(
                 f"tick {tick}: books failed while pausing after {reason}: {diag}")
 
@@ -214,6 +247,9 @@ class World:
         self.store.set_meta(status="paused", tick=tick, phase=phase)
         self.store.commit()
         self.checkpoint(tick, reason=event_kind)
+        operational_log(logger, logging.WARNING, "world.pause.completed",
+                        run_id=self.gateway.run_id, tick=tick, phase=phase,
+                        reason=reason, detail=detail)
         summary = {
             "tick": tick, "wall_s": round(time.time() - started_at, 3),
             "decisions": 0, "paused": reason, "phase": phase,
@@ -388,9 +424,14 @@ class World:
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())
             self.store.commit()
+            operational_log(logger, logging.INFO, "world.checkpoint.created",
+                            run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)
         except Exception as exc:
             self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)
+            operational_log(logger, logging.ERROR, "world.checkpoint.failed",
+                            run_id=self.gateway.run_id, tick=tick, reason=reason,
+                            error_type=type(exc).__name__, error=str(exc))
             return None
 
     def _save_prng_state(self) -> None:

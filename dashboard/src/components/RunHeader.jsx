@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { number } from "../api";
+import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
 export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
@@ -11,7 +12,15 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
 
   async function action(name, path, body) {
     setBusy(name);
-    try { await act(path, body); } finally { setBusy(""); }
+    try {
+      await act(path, body);
+    } catch (reason) {
+      clientLog("dashboard.control.failed", {
+        control: name, path,
+        error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    } finally { setBusy(""); }
   }
 
   return (

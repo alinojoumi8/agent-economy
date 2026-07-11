@@ -1,8 +1,33 @@
+import { clientLog } from "./logging.js";
+
 export async function api(path, options = {}) {
-  const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({}));
+  const method = options.method || "GET";
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (reason) {
+    clientLog("dashboard.api.network_failed", {
+      path, method, error_type: reason?.constructor?.name || typeof reason,
+      error: reason instanceof Error ? reason.message : String(reason),
+    }, "error");
+    throw reason;
+  }
+  let body = {};
+  try {
+    body = await response.json();
+  } catch (reason) {
+    clientLog("dashboard.api.invalid_json", {
+      path, method, status_code: response.status,
+      error_type: reason?.constructor?.name || typeof reason,
+      error: reason instanceof Error ? reason.message : String(reason),
+    }, "warn");
+  }
   if (!response.ok) {
-    throw new Error(body.error || `${response.status} ${response.statusText}`);
+    const message = body.error || `${response.status} ${response.statusText}`;
+    clientLog("dashboard.api.http_failed", {
+      path, method, status_code: response.status, error: message,
+    }, "error");
+    throw new Error(message);
   }
   return body;
 }

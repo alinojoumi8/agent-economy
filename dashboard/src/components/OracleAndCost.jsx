@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { number } from "../api";
+import { clientLog } from "../logging.js";
 import { Badge, Empty, Panel } from "./ui";
 
 const SUGGESTIONS = [
@@ -19,6 +20,12 @@ export function OraclePanel({ oracle, act }) {
     if (!question.trim()) return;
     setAsking(true);
     try { setAnswer(await act("/api/oracle/ask", { question: question.trim() })); }
+    catch (reason) {
+      clientLog("dashboard.oracle.failed", {
+        error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    }
     finally { setAsking(false); }
   }
 

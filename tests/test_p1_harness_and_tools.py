@@ -1,5 +1,6 @@
 """P1 tooling: experiment harness (R14), Oracle calibration (R15), replay reader (R16)."""
 import asyncio
+import logging
 
 from engine.store import Store
 from experiments.harness import run_experiment
@@ -26,7 +27,8 @@ def _tiny_config(**over):
 
 
 # ── R14: experiment harness end-to-end ───────────────────────────────────────
-def test_experiment_harness_treatment_vs_control(tmp_path):
+def test_experiment_harness_treatment_vs_control(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.experiments")
     spec = {
         "name": "mini_rumor",
         "config": _tiny_config(),
@@ -59,6 +61,9 @@ def test_experiment_harness_treatment_vs_control(tmp_path):
     # Same-seed arms differ ONLY by the shock: run dbs are per-arm.
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_treatment.db").exists()
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_control.db").exists()
+    log_events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert log_events.count("experiment.arm.completed") == 10
+    assert "experiment.started" in log_events and "experiment.completed" in log_events
 
 
 # ── R15: Murphy decomposition sanity ─────────────────────────────────────────

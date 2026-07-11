@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,6 +17,10 @@ from typing import Any, Optional
 
 from .adapters import Adapter, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("llm")
 
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
 DEFAULT_PRICING = {
@@ -248,6 +253,10 @@ class Gateway:
         report = validate_llm_config(
             self.config, require_secrets=not self.replay, raise_on_error=False)
         if not live or not report["ready"]:
+            operational_log(logger, logging.INFO if report["ready"] else logging.WARNING,
+                            "llm.preflight.completed", run_id=self.run_id,
+                            live_requested=live, ready=report["ready"],
+                            live_checked=False, errors=report.get("errors", []))
             return {**report, "live_checked": False}
 
         checks = []
@@ -264,27 +273,52 @@ class Gateway:
             try:
                 result = await adapter.healthcheck(model)
                 checks.append({"provider": provider, **result})
+                operational_log(logger, logging.INFO, "llm.preflight.provider_completed",
+                                run_id=self.run_id, provider=provider, model=model,
+                                ok=result.get("ok", False))
             except Exception as exc:
                 checks.append({"provider": provider, "model": model, "ok": False,
                                "live": True, "error": str(exc)[:500]})
+                operational_log(logger, logging.ERROR, "llm.preflight.provider_failed",
+                                run_id=self.run_id, provider=provider, model=model,
+                                error_type=type(exc).__name__, error=str(exc))
+        live_ready = all(c["ok"] for c in checks)
+        operational_log(logger, logging.INFO if live_ready else logging.ERROR,
+                        "llm.preflight.completed", run_id=self.run_id,
+                        live_requested=True, ready=report["ready"],
+                        live_checked=True, live_ready=live_ready,
+                        providers_checked=len(checks))
         return {**report, "live_checked": True,
-                "live_ready": all(c["ok"] for c in checks), "checks": checks}
+                "live_ready": live_ready, "checks": checks}
 
     # ── main entry ───────────────────────────────────────────────────────────
     async def complete(self, req: LLMRequest, *, schema_hint: str = "") -> LLMResponse:
         provider, model = self.route(req.role, req.purpose)
         adapter = self.adapters.get(provider)
         if adapter is None:
+            operational_log(logger, logging.ERROR, "llm.route.unavailable",
+                            run_id=self.run_id, provider=provider, model=model,
+                            role=req.role, purpose=req.purpose, tick=req.tick)
             raise ProviderConfigurationError([f"routed provider '{provider}' is unavailable"])
         cache_key = self._cache_key(req, provider, model)
         provider_cache_key = f"{self.run_id}:{req.role}:{req.purpose}:{req.agent_id or 'shared'}"
+        operational_log(logger, logging.DEBUG, "llm.request.started",
+                        run_id=self.run_id, provider=provider, model=model,
+                        role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                        tick=req.tick, replay=self.replay)
 
         if self.replay:
             replayed = self._replay_lookup(cache_key, schema_hint)
             if replayed is not None:
                 response, source_row = replayed
                 self._log_replay_call(req, cache_key, source_row)
+                operational_log(logger, logging.INFO, "llm.replay.hit",
+                                run_id=self.run_id, model=model, role=req.role,
+                                purpose=req.purpose, agent_id=req.agent_id, tick=req.tick)
                 return response
+            operational_log(logger, logging.ERROR, "llm.replay.missing",
+                            run_id=self.run_id, model=model, role=req.role,
+                            purpose=req.purpose, agent_id=req.agent_id, tick=req.tick)
             raise ProviderUnavailable(
                 "replay", model, req.purpose,
                 f"stored response missing for cache key {cache_key}", attempts=0)
@@ -293,6 +327,11 @@ class Gateway:
         pricing = self.pricing.get(model, {"in": 0, "out": 0, "cache": 0})
         est_cost = self._estimate_cost(req, pricing)
         if est_cost > 0 and not self.governor.can_spend(est_cost, req.purpose):
+            operational_log(logger, logging.WARNING, "llm.budget.rejected",
+                            run_id=self.run_id, model=model, purpose=req.purpose,
+                            tick=req.tick, estimated_cost_usd=est_cost,
+                            spend_usd=self.governor.total_spend(),
+                            cap_usd=self.governor.cap_usd)
             raise BudgetExceeded(
                 f"call would breach cap (spend={self.governor.total_spend():.2f}, cap={self.governor.cap_usd})")
 
@@ -307,6 +346,12 @@ class Gateway:
                 latency_ms=latency_ms, attempts=self.provider_retries + 1)
             self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                  phase="LLM", importance=5.0)
+            operational_log(logger, logging.ERROR, "llm.request.failed",
+                            run_id=self.run_id, provider=provider, model=model,
+                            role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                            tick=req.tick, latency_ms=latency_ms,
+                            attempts=failure.attempts, error_type=type(exc).__name__,
+                            error=str(exc))
             raise failure from exc
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
@@ -315,6 +360,10 @@ class Gateway:
             ok = self._matches_schema(parsed, schema_hint)
         if not ok and provider not in ("scripted", "mock"):
             # One repair retry with the parse error appended (TECH-SPEC §8 failure policy).
+            operational_log(logger, logging.WARNING, "llm.repair.started",
+                            run_id=self.run_id, provider=provider, model=model,
+                            role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                            tick=req.tick)
             initial_result = result
             repair = LLMRequest(
                 role=req.role, purpose=req.purpose, system=req.system,
@@ -335,6 +384,12 @@ class Gateway:
                     latency_ms=latency_ms, attempts=attempts + self.provider_retries + 1)
                 self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                      phase="LLM", importance=5.0)
+                operational_log(logger, logging.ERROR, "llm.repair.failed",
+                                run_id=self.run_id, provider=provider, model=model,
+                                role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                                tick=req.tick, latency_ms=latency_ms,
+                                attempts=failure.attempts, error_type=type(exc).__name__,
+                                error=str(exc))
                 raise failure from exc
             # Persist the final usable text but meter both billable completions.
             # This stays one logical gateway record, so exact replay returns the
@@ -351,12 +406,27 @@ class Gateway:
             parsed, ok = self._parse(result.text)
             if ok and schema_hint:
                 ok = self._matches_schema(parsed, schema_hint)
+            operational_log(logger, logging.INFO, "llm.repair.completed",
+                            run_id=self.run_id, provider=provider, model=model,
+                            role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                            tick=req.tick, valid=ok)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
+            operational_log(logger, logging.WARNING, "llm.contract.invalid",
+                            run_id=self.run_id, provider=provider, model=model,
+                            role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                            tick=req.tick)
 
         cached, cost = self._price(
             model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
         self._log_call(req, provider, model, cache_key, result, cost, cached, latency_ms)
+        operational_log(logger, logging.INFO, "llm.request.completed",
+                        run_id=self.run_id, provider=provider, model=model,
+                        role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                        tick=req.tick, attempts=attempts, latency_ms=latency_ms,
+                        in_tokens=result.in_tokens, out_tokens=result.out_tokens,
+                        cached_in_tokens=result.cached_in_tokens, cost_usd=cost,
+                        valid=ok)
 
         return LLMResponse(text=result.text, parsed=parsed, provider=provider, model=model,
                            in_tokens=result.in_tokens, out_tokens=result.out_tokens,
@@ -379,6 +449,12 @@ class Gateway:
             except Exception as exc:
                 last_error = exc
                 if attempt <= self.provider_retries:
+                    operational_log(logger, logging.WARNING, "llm.request.retry",
+                                    run_id=self.run_id, model=model, role=req.role,
+                                    purpose=req.purpose, agent_id=req.agent_id,
+                                    tick=req.tick, attempt=attempt,
+                                    next_attempt=attempt + 1,
+                                    error_type=type(exc).__name__, error=str(exc))
                     await asyncio.sleep(min(0.25 * (2 ** (attempt - 1)), 2.0))
         assert last_error is not None
         raise last_error

@@ -60,6 +60,7 @@ server in a second terminal:
 ```bash
 cd dashboard
 npm ci
+npm test
 npm run dev
 # production bundle: npm run build
 ```
@@ -67,6 +68,22 @@ npm run dev
 Vite proxies `/api`, `/ws`, and `/reports` to FastAPI during development. The
 production bundle is committed so normal Python users still start the complete
 application with one command and no Node.js runtime.
+
+## Operational logging
+
+The Python process emits one JSON object per operational event to stderr, and
+the dashboard emits the same style of secret-safe diagnostics to the browser
+console. Stable event names cover CLI modes, server and HTTP/WebSocket lifecycle,
+run controls, provider preflight/retry/repair/failure/cost outcomes, checkpoints,
+safe pauses, reports, shocks, experiment arms, client fetch/action failures, and
+malformed WebSocket data. Records include bounded context such as run ID, tick,
+status, latency, path, and cost; prompts, responses, and credentials are not
+logged, and credential-shaped fields or values are redacted. Set
+`AGENT_ECONOMY_LOG_LEVEL=DEBUG` to include Python per-tick and request-start events.
+
+These logs complement rather than replace the SQLite `events` and `llm_calls`
+tables: stderr is for process operations, while the database remains the
+replayable scientific and economic audit trail.
 
 ## Using real LLMs
 

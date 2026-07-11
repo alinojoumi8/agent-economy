@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -157,7 +158,8 @@ def test_production_config_inherits_world_and_requires_both_keys():
                for error in minimax_mismatch["errors"])
 
 
-def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path):
+def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
     cfg = _config(tmp_path)
     cfg["llm"] = {
         "provider_retries": 1,
@@ -196,9 +198,18 @@ def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path)
     row = store.query_one("SELECT * FROM llm_calls ORDER BY id DESC LIMIT 1")
     assert row["cached"] == 1
     assert load_json(row["response_json"], {})["cached_in_tokens"] == 80
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "llm.request.retry" in events
+    assert "llm.request.completed" in events
+    completed = next(record for record in caplog.records
+                     if getattr(record, "event_name", "") == "llm.request.completed")
+    assert completed.event_fields["attempts"] == 2
+    assert completed.event_fields["cached_in_tokens"] == 80
 
 
-def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path):
+def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
+    caplog.set_level(logging.INFO, logger="agent_economy.world")
     world = _world(tmp_path, "provider.db")
 
     class AlwaysFail:
@@ -217,6 +228,9 @@ def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path):
     assert world.store.get_meta()["status"] == "paused"
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_failure'") > 0
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "llm.request.failed" in events
+    assert "world.pause.completed" in events
     checkpoint = world.store.query_one("SELECT path FROM checkpoints ORDER BY id DESC LIMIT 1")
     assert checkpoint and Path(checkpoint["path"]).exists()
     ok, diag = world.economy.ledger.reconcile()
@@ -335,7 +349,8 @@ def test_two_year_lifecycle_run_settles_death_and_integrates_arrival(tmp_path):
     assert ok, diag
 
 
-def test_websocket_payload_is_emitted_within_two_seconds(tmp_path):
+def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="agent_economy.server")
     world = _world(tmp_path, "ws.db")
     app = create_app(world)
     with TestClient(app) as client:
@@ -348,6 +363,26 @@ def test_websocket_payload_is_emitted_within_two_seconds(tmp_path):
             payload = ws.receive_json()
             assert payload["tick"] == 1
             assert int(time.time() * 1000) - payload["emitted_at_ms"] < 2_000
+        rejected = client.post("/api/shocks", json={"kind": "not-a-shock"})
+        assert rejected.status_code == 400
+
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "server.started" in events and "server.stopped" in events
+    assert "websocket.connected" in events and "websocket.disconnected" in events
+    assert "run.step.completed" in events
+    assert "shock.rejected" in events
+    started = [record for record in caplog.records
+               if getattr(record, "event_name", "") == "http.request.started"]
+    assert any(record.event_fields == {"method": "POST", "path": "/api/run/step"}
+               for record in started)
+    assert any(record.event_fields == {"method": "POST", "path": "/api/shocks"}
+               for record in started)
+    completed = [record for record in caplog.records
+                 if getattr(record, "event_name", "") == "http.request.completed"]
+    assert any(record.event_fields["path"] == "/api/run/step"
+               and record.event_fields["status_code"] == 200 for record in completed)
+    assert any(record.event_fields["path"] == "/api/shocks"
+               and record.event_fields["status_code"] == 400 for record in completed)
 
 
 def test_react_dashboard_bundle_is_local_and_current():

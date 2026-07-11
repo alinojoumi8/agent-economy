@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -22,6 +23,10 @@ from engine.store import Store, load_json
 from engine.ledger import ReconciliationError
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("server")
 
 
 class Hub:
@@ -33,17 +38,24 @@ class Hub:
     async def connect(self, ws: WebSocket):
         await ws.accept()
         self.clients.add(ws)
+        operational_log(logger, logging.INFO, "websocket.connected",
+                        clients=len(self.clients))
 
     def disconnect(self, ws: WebSocket):
         self.clients.discard(ws)
+        operational_log(logger, logging.INFO, "websocket.disconnected",
+                        clients=len(self.clients))
 
     async def broadcast(self, message: dict):
         dead = []
         for ws in list(self.clients):
             try:
                 await ws.send_text(json.dumps(message))
-            except Exception:
+            except Exception as exc:
                 dead.append(ws)
+                operational_log(logger, logging.WARNING, "websocket.broadcast.failed",
+                                clients=len(self.clients), error_type=type(exc).__name__,
+                                error=str(exc))
         for ws in dead:
             self.disconnect(ws)
 
@@ -75,9 +87,43 @@ def create_app(world: World) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         loop_holder["loop"] = asyncio.get_running_loop()
-        yield
+        operational_log(logger, logging.INFO, "server.started",
+                        run_id=world.gateway.run_id, tick=store.tick)
+        try:
+            yield
+        finally:
+            task = run_task["task"]
+            operational_log(logger, logging.INFO, "server.stopped",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            run_active=bool(task and not task.done()))
 
     app = FastAPI(title="Agent Economy Observatory", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def log_http_request(request: Request, call_next):
+        started = time.perf_counter()
+        operational_log(
+            logger, logging.DEBUG, "http.request.started",
+            method=request.method, path=request.url.path,
+        )
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            operational_log(
+                logger, logging.ERROR, "http.request.failed",
+                method=request.method, path=request.url.path,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                error_type=type(exc).__name__, error=str(exc),
+            )
+            raise
+        level = logging.WARNING if response.status_code >= 400 else logging.INFO
+        operational_log(
+            logger, level, "http.request.completed",
+            method=request.method, path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        return response
 
     def on_tick(tick: int, summary: dict):
         loop = loop_holder["loop"]
@@ -92,6 +138,9 @@ def create_app(world: World) -> FastAPI:
     @app.post("/api/run/start")
     async def start_run(max_ticks: Optional[int] = None):
         if run_task["task"] and not run_task["task"].done():
+            operational_log(logger, logging.INFO, "run.start.skipped",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            reason="already_running")
             return {"status": "already_running"}
         world._pause_requested = False
         world._stop_requested = False
@@ -100,6 +149,9 @@ def create_app(world: World) -> FastAPI:
             try:
                 await world.run(max_ticks=max_ticks)
             except ReconciliationError as exc:
+                operational_log(logger, logging.CRITICAL, "run.halted",
+                                run_id=world.gateway.run_id, tick=store.tick,
+                                error_type=type(exc).__name__, error=str(exc))
                 await hub.broadcast({"type": "halt", "reason": str(exc)})
             except Exception as exc:
                 world.status = "paused"
@@ -107,14 +159,22 @@ def create_app(world: World) -> FastAPI:
                 store.log_event(store.tick, "run_exception", {"error": str(exc)[:500]},
                                 importance=5.0)
                 store.commit()
+                operational_log(logger, logging.ERROR, "run.unhandled_exception",
+                                run_id=world.gateway.run_id, tick=store.tick,
+                                error_type=type(exc).__name__, error=str(exc))
                 await hub.broadcast({"type": "pause", "reason": f"run paused: {exc}"})
 
         run_task["task"] = asyncio.create_task(_runner())
+        operational_log(logger, logging.INFO, "run.start.accepted",
+                        run_id=world.gateway.run_id, tick=store.tick,
+                        max_ticks=max_ticks)
         return {"status": "running", "tick": store.tick}
 
     @app.post("/api/run/pause")
     async def pause_run():
         world.request_pause()
+        operational_log(logger, logging.INFO, "run.pause.accepted",
+                        run_id=world.gateway.run_id, tick=store.tick)
         return {"status": "pausing", "tick": store.tick}
 
     @app.post("/api/run/stop")
@@ -122,6 +182,9 @@ def create_app(world: World) -> FastAPI:
         world.request_stop()
         running = bool(run_task["task"] and not run_task["task"].done())
         if running:
+            operational_log(logger, logging.INFO, "run.stop.accepted",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            running=True)
             return {"status": "stopping", "tick": store.tick}
         world.status = "finished"
         store.set_meta(status="finished")
@@ -132,12 +195,18 @@ def create_app(world: World) -> FastAPI:
             world.last_report_path = gen(
                 store, world,
                 out_dir=str(world.config.get("report_dir", "reports/out")))
+        operational_log(logger, logging.INFO, "run.stop.completed",
+                        run_id=world.gateway.run_id, tick=store.tick,
+                        report_path=world.last_report_path)
         return {"status": "finished", "tick": store.tick,
                 "report_path": world.last_report_path}
 
     @app.post("/api/run/step")
     async def step_once():
         if run_task["task"] and not run_task["task"].done():
+            operational_log(logger, logging.INFO, "run.step.skipped",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            reason="already_running")
             return {"status": "already_running"}
         summary = await world.step()
         if not summary.get("paused") and world.status != "halted":
@@ -145,11 +214,17 @@ def create_app(world: World) -> FastAPI:
             store.set_meta(status="paused")
             store.commit()
         await hub.broadcast(_tick_payload(world, summary["tick"], summary))
+        operational_log(logger, logging.INFO, "run.step.completed",
+                        run_id=world.gateway.run_id, tick=summary["tick"],
+                        paused=summary.get("paused"))
         return summary
 
     @app.post("/api/run/speed")
     async def set_speed(body: SpeedBody):
         world.speed_delay_s = max(0.0, float(body.delay_s))
+        operational_log(logger, logging.INFO, "run.speed.changed",
+                        run_id=world.gateway.run_id, tick=store.tick,
+                        delay_s=world.speed_delay_s)
         return {"delay_s": world.speed_delay_s}
 
     @app.get("/api/run/status")
@@ -384,11 +459,18 @@ def create_app(world: World) -> FastAPI:
     @app.post("/api/shocks")
     async def fire_shock(body: ShockBody):
         if body.kind not in SHOCK_KINDS:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, reason="unknown_kind")
             return JSONResponse({"error": f"unknown kind {body.kind}"}, status_code=400)
         trigger = body.trigger or {"tick": store.tick + 1}
         sid = world.shocks.schedule(body.kind, body.trigger_type, trigger,
                                     duration_ticks=body.duration_ticks, params=body.params,
                                     label=body.label)
+        operational_log(logger, logging.INFO, "shock.scheduled",
+                        run_id=world.gateway.run_id, tick=store.tick,
+                        shock_id=sid, kind=body.kind,
+                        trigger_type=body.trigger_type)
         return {"shock_id": sid, "scheduled": True}
 
     # ── report (PRD R10) ─────────────────────────────────────────────────────
@@ -396,6 +478,8 @@ def create_app(world: World) -> FastAPI:
     async def generate_report():
         from reports.generate import generate_report as gen
         path = gen(store, world, out_dir=str(world.config.get("report_dir", "reports/out")))
+        operational_log(logger, logging.INFO, "report.generated",
+                        run_id=world.gateway.run_id, tick=store.tick, path=path)
         return {"path": path}
 
     # ── WebSocket ────────────────────────────────────────────────────────────
@@ -408,7 +492,10 @@ def create_app(world: World) -> FastAPI:
                 await ws.receive_text()   # keepalive; controls go over REST
         except WebSocketDisconnect:
             hub.disconnect(ws)
-        except Exception:
+        except Exception as exc:
+            operational_log(logger, logging.WARNING, "websocket.failed",
+                            run_id=world.gateway.run_id,
+                            error_type=type(exc).__name__, error=str(exc))
             hub.disconnect(ws)
 
     # ── static dashboard + generated reports ────────────────────────────────

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../api";
+import { clientLog } from "../logging.js";
 
 const INITIAL = {
   status: null,
@@ -40,7 +41,11 @@ export function useObservatory() {
         events, agents, cost, oracle, shocks });
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      clientLog("dashboard.refresh.failed", {
+        quiet, error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
     } finally {
       refreshing.current = false;
       setLoading(false);
@@ -56,6 +61,9 @@ export function useObservatory() {
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
+      clientLog("dashboard.action.failed", {
+        path, error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
       throw reason;
     }
   }, [refresh]);
@@ -65,9 +73,20 @@ export function useObservatory() {
     const timer = window.setInterval(() => refresh({ quiet: true }), 10_000);
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    socket.addEventListener("open", () => setConnected(true));
-    socket.addEventListener("close", () => setConnected(false));
-    socket.addEventListener("error", () => setConnected(false));
+    socket.addEventListener("open", () => {
+      setConnected(true);
+      clientLog("dashboard.websocket.connected");
+    });
+    socket.addEventListener("close", event => {
+      setConnected(false);
+      clientLog("dashboard.websocket.disconnected", {
+        code: event.code, clean: event.wasClean, reason: event.reason,
+      }, event.wasClean ? "info" : "warn");
+    });
+    socket.addEventListener("error", () => {
+      setConnected(false);
+      clientLog("dashboard.websocket.failed", {}, "error");
+    });
     socket.addEventListener("message", (event) => {
       try {
         const payload = JSON.parse(event.data);
@@ -85,7 +104,12 @@ export function useObservatory() {
           }));
           refresh({ quiet: true });
         }
-      } catch { /* malformed diagnostic frames should not break the dashboard */ }
+      } catch (reason) {
+        clientLog("dashboard.websocket.invalid_message", {
+          error_type: reason?.constructor?.name || typeof reason,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }, "warn");
+      }
     });
     const keepalive = window.setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send("ping");

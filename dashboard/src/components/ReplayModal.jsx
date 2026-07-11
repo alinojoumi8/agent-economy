@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, money, number, shortKind } from "../api";
+import { clientLog } from "../logging.js";
 import { Badge, Empty, Modal } from "./ui";
 
 export function ReplayModal({ onClose }) {
@@ -8,16 +9,34 @@ export function ReplayModal({ onClose }) {
   const [tick, setTick] = useState(0);
   const [view, setView] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const selected = useMemo(() => runs.find(run => run.file === runId || run.run_id === runId), [runs, runId]);
 
   useEffect(() => { api("/api/replay/runs").then(items => {
     setRuns(items);
     if (items.length) { setRunId(items[0].file); setTick(items[0].ticks); }
+  }).catch(reason => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    setError(message);
+    clientLog("dashboard.replay.catalog_failed", {
+      error_type: reason?.constructor?.name || typeof reason, error: message,
+    }, "error");
   }).finally(() => setLoading(false)); }, []);
 
   useEffect(() => {
     if (!runId || tick < 0) return;
-    const timer = window.setTimeout(() => api(`/api/replay/${encodeURIComponent(runId)}/tick/${tick}`).then(setView), 80);
+    const path = `/api/replay/${encodeURIComponent(runId)}/tick/${tick}`;
+    const timer = window.setTimeout(() => api(path).then(value => {
+      setView(value);
+      setError("");
+    }).catch(reason => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      clientLog("dashboard.replay.tick_failed", {
+        path, run_id: runId, tick,
+        error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
+    }), 80);
     return () => window.clearTimeout(timer);
   }, [runId, tick]);
 
@@ -28,6 +47,7 @@ export function ReplayModal({ onClose }) {
   }
 
   return <Modal title="Replay a stored run" onClose={onClose} wide>
+    {error && <div className="mb-3 rounded-lg border border-coral-300/30 bg-coral-300/10 px-3 py-2 text-xs text-coral-300" role="alert">{error}</div>}
     {loading ? <Empty>Loading run catalogue…</Empty> : !runs.length ? <Empty>No stored runs are available.</Empty> : <>
       <div className="mb-4 grid gap-3 rounded-xl border border-mint-300/10 bg-ink-950/40 p-3 md:grid-cols-[240px_1fr_auto] md:items-center">
         <label className="text-[10px] uppercase tracking-wider text-slate-500">Run<select className="field mt-1" value={runId} onChange={event => selectRun(event.target.value)}>{runs.map(run => <option key={run.file} value={run.file}>{run.run_id} · {run.ticks} days</option>)}</select></label>

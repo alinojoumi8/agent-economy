@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Optional
@@ -28,9 +29,11 @@ from engine.store import Store
 from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
+from observability import configure_logging, get_logger, log_event as operational_log
 
 DATA_DIR = Path("data/runs")
 DEFAULT_CONFIG = "runs/production.yaml"
+logger = get_logger("cli")
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -151,6 +154,9 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR) -> str:
         "new_run_id": new_id}, phase="NIGHT_CLOSE", importance=2.0)
     store.commit()
     store.close()
+    operational_log(logger, logging.INFO, "run.fork.created",
+                    parent_run_id=meta["run_id"], fork_tick=int(meta["tick"]),
+                    run_id=new_id)
     print(f"[agent-economy] forked {meta['run_id']} @ t{meta['tick']} -> {new_id}")
     return new_id
 
@@ -161,6 +167,7 @@ async def headless(world: World, ticks: int) -> None:
 
 def main() -> None:
     load_dotenv()
+    configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: locked MiniMax/Kimi production profile)")
@@ -180,6 +187,11 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
+    mode = ("experiment" if args.experiment else "report" if args.report else
+            "preflight" if (args.preflight or args.preflight_live) else
+            "fork" if args.fork else "replay" if args.replay else
+            "resume" if args.resume else "run")
+    operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
 
     if args.experiment:
         from experiments.harness import run_experiment
@@ -196,17 +208,30 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    operational_log(logger, logging.INFO, "config.loaded",
+                    path=str(Path(args.config).resolve()), mode=mode,
+                    seed=config.get("seed", 42))
     if args.preflight or args.preflight_live:
         report = asyncio.run(provider_preflight(config, live=args.preflight_live))
         print(json.dumps(report, indent=2))
         ready = report.get("ready", False)
         live_ready = report.get("live_ready", True) if args.preflight_live else True
         if not (ready and live_ready):
+            operational_log(logger, logging.ERROR, "provider.preflight.failed",
+                            live=args.preflight_live, ready=ready,
+                            live_ready=live_ready, errors=report.get("errors", []))
             raise SystemExit(2)
+        operational_log(logger, logging.INFO, "provider.preflight.completed",
+                        live=args.preflight_live, ready=ready,
+                        live_ready=live_ready)
         return
     if args.fork:
         args.resume = fork_run(args.fork)
     store, world, run_id = open_run(config, args.resume, args.replay)
+    operational_log(logger, logging.INFO, "run.opened",
+                    run_id=run_id, tick=store.tick,
+                    seed=store.get_meta()["seed"], replay=bool(args.replay),
+                    resumed=bool(args.resume))
     print(f"[agent-economy] run {run_id} @ tick {store.tick} "
           f"(seed {store.get_meta()['seed']}, {'replay' if args.replay else 'live'})")
 
@@ -220,7 +245,13 @@ def main() -> None:
             proof = verify_replay(source, store.path)
             print(json.dumps(proof, indent=2))
             if not proof["exact"]:
+                operational_log(logger, logging.ERROR, "replay.verification.failed",
+                                run_id=run_id, source_run_id=args.replay,
+                                differences=proof.get("differences"))
                 raise SystemExit(3)
+            operational_log(logger, logging.INFO, "replay.verification.completed",
+                            run_id=run_id, source_run_id=args.replay,
+                            tables=proof.get("tables"))
         from reports.generate import generate_report
         path = generate_report(
             store, world, out_dir=str(config.get("report_dir", "reports/out")))
@@ -230,17 +261,30 @@ def main() -> None:
             detail = str(world.last_pause_reason.get("detail", ""))[:500]
             print(f"[agent-economy] paused @ tick {store.tick} · {reason}: {detail} "
                   f"· report: {path}")
+            operational_log(logger, logging.WARNING, "headless.run.paused",
+                            run_id=run_id, tick=store.tick, reason=reason,
+                            detail=detail, report_path=path)
             raise SystemExit(4)
         print(f"[agent-economy] done @ tick {store.tick} · spend ${gov['total_spend_usd']:.2f} "
               f"· report: {path}")
+        operational_log(logger, logging.INFO, "headless.run.completed",
+                        run_id=run_id, tick=store.tick,
+                        spend_usd=gov["total_spend_usd"], report_path=path)
         return
 
     import uvicorn
     from server.app import create_app
     app = create_app(world)
+    operational_log(logger, logging.INFO, "server.starting",
+                    run_id=run_id, host=args.host, port=args.port)
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  (world starts paused - press Run)")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        operational_log(logger, logging.CRITICAL, "cli.command.failed",
+                        error_type=type(exc).__name__, error=str(exc))
+        raise

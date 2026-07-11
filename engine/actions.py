@@ -9,11 +9,17 @@ overspend is realistic behaviour), never a crash.
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Any, Optional
 
 from .core import Economy
 from .credit import LoanTerms
 from .ledger import Leg
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("engine.actions")
 
 VALID_TYPES = {
     "buy_goods", "place_order", "cancel_orders", "apply_loan", "approve_loan", "deny_loan",
@@ -52,6 +58,9 @@ class ActionExecutor:
         try:
             result = handler(tick, actor_id, action, phase)
         except Exception as exc:  # never let a bad action crash the tick
+            operational_log(logger, logging.ERROR, "action.execution.failed",
+                            tick=tick, actor_id=actor_id, action_type=atype,
+                            phase=phase, error_type=type(exc).__name__, error=str(exc))
             return self._reject(tick, actor_id, action, f"error: {exc}", phase)
         if not result.get("ok"):
             self._reject(tick, actor_id, action, result.get("reason", "rejected"), phase)

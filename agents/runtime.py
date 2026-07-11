@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Optional
 
 from engine.actions import ActionExecutor
@@ -19,6 +20,10 @@ from .memory import Memory
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
 from .scheduler import Scheduler
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("agents")
 
 
 async def _gather_fail_fast(coroutines):
@@ -62,11 +67,18 @@ class AgentRuntime:
                 errors += 1
                 self.store.log_event(tick, "decision_error", {
                     "agent_id": int(a["id"]), "error": str(res)}, phase="MORNING", importance=0.5)
+                operational_log(logger, logging.WARNING, "agent.decision.failed",
+                                run_id=self.gw.run_id, tick=tick, agent_id=int(a["id"]),
+                                role=a["role"] or "citizen",
+                                error_type=type(res).__name__, error=str(res))
                 continue
             if res is not None:
                 decisions.append(res)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
+            operational_log(logger, logging.ERROR, "agent.decision.outage_suspected",
+                            run_id=self.gw.run_id, tick=tick, errors=errors,
+                            scheduled_agents=len(agents))
             raise RuntimeError(
                 f"LLM outage suspected: {errors}/{len(agents)} decisions failed at tick {tick}")
         # deterministic execution order
