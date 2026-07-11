@@ -39,22 +39,13 @@ import yaml
 from engine.store import Store
 from world.loop import World
 from observability import get_logger, log_event as operational_log
+from run_config import deep_merge, load_config
 
 
 logger = get_logger("experiments")
 
 
 # ── config plumbing ──────────────────────────────────────────────────────────
-def _deep_merge(base: dict, over: dict) -> dict:
-    out = dict(base)
-    for k, v in (over or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
 def load_spec(path_or_dict) -> dict:
     if isinstance(path_or_dict, dict):
         spec = dict(path_or_dict)
@@ -63,9 +54,8 @@ def load_spec(path_or_dict) -> dict:
             spec = yaml.safe_load(f) or {}
     if "config" not in spec:
         base = spec.get("base_config", "runs/base.yaml")
-        with open(base, "r", encoding="utf-8") as f:
-            spec["config"] = yaml.safe_load(f) or {}
-    spec["config"] = _deep_merge(spec["config"], spec.get("overrides", {}))
+        spec["config"] = load_config(base)
+    spec["config"] = deep_merge(spec["config"], spec.get("overrides", {}))
     if not spec.get("seeds"):
         spec["seeds"] = list(range(1, int(spec.get("n_seeds", 3)) + 1))
     spec.setdefault("name", "experiment")

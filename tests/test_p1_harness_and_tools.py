@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 from engine.store import Store
-from experiments.harness import run_experiment
+from experiments.harness import load_spec, run_experiment
 from oracle.calibration import calibration_from_pairs
 from server.replay import ReplayReader
 from world.loop import World
@@ -64,6 +64,19 @@ def test_experiment_harness_treatment_vs_control(tmp_path, caplog):
     log_events = [getattr(record, "event_name", "") for record in caplog.records]
     assert log_events.count("experiment.arm.completed") == 10
     assert "experiment.started" in log_events and "experiment.completed" in log_events
+
+
+def test_experiment_base_config_honors_recursive_inheritance():
+    spec = load_spec({
+        "name": "production-derived",
+        "base_config": "runs/production.yaml",
+        "overrides": {"population": {"size": 12}},
+    })
+
+    assert spec["config"]["population"]["size"] == 12
+    assert spec["config"]["firms"]["count"] == 12
+    assert spec["config"]["budget"]["cap_usd"] == 200.0
+    assert spec["config"]["llm"]["default_route"]["provider"] == "minimax"
 
 
 # ── R15: Murphy decomposition sanity ─────────────────────────────────────────

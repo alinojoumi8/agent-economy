@@ -20,9 +20,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
-
-import yaml
 from dotenv import load_dotenv
 
 from engine.store import Store
@@ -30,35 +27,11 @@ from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
 from observability import configure_logging, get_logger, log_event as operational_log
+from run_config import load_config
 
 DATA_DIR = Path("data/runs")
 DEFAULT_CONFIG = "runs/production.yaml"
 logger = get_logger("cli")
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def load_config(path: str, _seen: Optional[set[Path]] = None) -> dict:
-    cfg_path = Path(path).resolve()
-    seen = set() if _seen is None else _seen
-    if cfg_path in seen:
-        raise ValueError(f"config inheritance cycle at {cfg_path}")
-    seen.add(cfg_path)
-    with cfg_path.open("r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-    parent = config.pop("extends", None)
-    if parent:
-        parent_path = (cfg_path.parent / str(parent)).resolve()
-        config = _deep_merge(load_config(str(parent_path), seen), config)
-    return config
 
 
 async def provider_preflight(config: dict, *, live: bool = False) -> dict:
