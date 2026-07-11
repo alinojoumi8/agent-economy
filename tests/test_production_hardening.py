@@ -105,7 +105,7 @@ def test_world_pause_during_cooldown_resumes_active_phase(tmp_path):
         "llm": {
             "default_route": {"provider": "scripted", "model": "scripted"},
             "routes": {}, "provider_retries": 0,
-            "rate_limit_backoff_s": [0.05],
+            "rate_limit_backoff_s": [30],
         },
         "checkpoint_every": 0,
         "checkpoint_dir": str(tmp_path / "checkpoints"),
@@ -128,7 +128,7 @@ def test_world_pause_during_cooldown_resumes_active_phase(tmp_path):
                 limited.set()
                 raise AdapterHTTPError(
                     429, "https://provider.test/v1", "short cooldown",
-                    retry_after_s=0.05)
+                    retry_after_s=30)
             return await delegate.complete(*args, **kwargs)
 
     world.gateway.adapters["scripted"] = LimitOnce()
@@ -144,7 +144,10 @@ def test_world_pause_during_cooldown_resumes_active_phase(tmp_path):
         assert store.active_tick == 1
         assert store.next_phase == "MORNING"
 
-        await asyncio.sleep(0.06)
+        # Advance the synthetic provider clock without making this test depend
+        # on scheduler speed. The long cooldown above guarantees pause wins the
+        # race even on slow Windows CI runners.
+        world.gateway._rate_limits["scripted"]["retry_at_epoch"] = 0
         world._pause_requested = False
         world.gateway.clear_interrupt()
         resumed = await world.step()
