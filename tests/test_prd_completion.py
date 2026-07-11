@@ -368,9 +368,13 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
     md_path = html_path.with_suffix(".md")
     assert html_path.exists() and md_path.exists()
     html = html_path.read_text(encoding="utf-8")
+    markdown = md_path.read_text(encoding="utf-8")
     for section in ("Narrative", "Timeline of key events", "Metrics", "Oracle scorecard",
                     "Cost summary", "Reproduction"):
         assert section in html
+    for section in ("Reviewer companion", "Metric snapshot", "Oracle", "Cost",
+                    "Reproduction", f"Seed: `{world.store.get_meta()['seed']}`"):
+        assert section in markdown
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 1
 
 

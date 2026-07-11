@@ -117,11 +117,13 @@ retains the $200 governor cap for deterministic capped-run development.
 
 Provider/model names are validated before genesis. A missing key, unknown route,
 or unavailable model produces a clear preflight failure; it never silently falls
-back to scripted behavior. During a run, network calls retry once. A continuing
-provider failure records a diagnostic, reconciles the ledger, checkpoints the
-partial tick, and pauses visibly. Kimi receives a stable `prompt_cache_key`, and
-cost accounting uses cache-hit tokens reported by the provider rather than an
-estimated local cache hit.
+back to scripted behavior. HTTP 429 responses create a visible provider-wide
+cooldown and retry until recovery or operator stop; other network failures use
+the configured bounded retry count. A continuing non-rate-limit failure records
+a diagnostic, reconciles the ledger, checkpoints the last completed tick plus
+the active phase cursor, and pauses visibly. Kimi receives a stable
+`prompt_cache_key`, and cost accounting uses cache-hit tokens reported by the
+provider rather than an estimated local cache hit.
 
 ### Production acceptance
 
@@ -159,17 +161,21 @@ ceiling; its dashboard and reports show actual spend as uncapped.
 
 ## What you can do from the dashboard
 
-- **Run controls**: start / pause / step / speed; automatic checkpoints.
+- **Run controls**: start / pause / step / speed; automatic checkpoints and
+  phase-aware restart from the exact interrupted phase.
 - **Watch**: macro metrics (GDP proxy, CPI, unemployment, index, money supply,
   Gini, sentiment), live stock ticker, news feed (two outlets with opposite
   slants), conversation stream, bank balance sheets, cost meter.
 - **Inspect**: click any agent → persona, accounts, loans, beliefs, memories, and
   the exact prompt/response behind each decision.
 - **Ask the Oracle**: "probability of a bank run within 30 ticks?" → probability +
-  drivers + machine-checkable resolution rule; predictions auto-resolve and Brier
-  scores accumulate (read-only — it can never influence the world).
+  drivers + machine-checkable resolution rule; bounded read-only evidence is
+  stored with the prediction, outcomes auto-resolve, and current/pooled
+  reliability curves plus Brier decomposition accumulate in the dashboard.
 - **Inject shocks**: policy-rate override, oil/commodity shock, false rumor,
   slanted-news directive, firm scandal — instant, trend, or metric-conditional.
+- **Export**: the standalone HTML report embeds the complete charts and the
+  Markdown reviewer companion carries metrics, calibration, costs, config, and seed.
 
 ## The rumor → bank run pipeline (the point of the whole thing)
 

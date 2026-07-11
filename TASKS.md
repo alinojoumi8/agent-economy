@@ -7,6 +7,13 @@ while provider rate limits control throughput.
 
 ## Task 1 — Production acceptance run and evidence package
 
+- [x] Harden production execution: typed HTTP errors, provider-wide 429
+  cooldown/retry, visible status, interruptible waits, and uncapped metering.
+- [x] Persist completed tick vs active tick/next phase; reuse successful LLM
+  responses and resume without duplicated actions, news, conversations, or memory.
+- [x] Complete R6/R15 conformance with bounded Oracle evidence tools, persisted
+  transcripts, and current-run/pooled calibration dashboard views.
+- [x] Align the HTML/Markdown report contract and production documentation.
 - [ ] Use one inherited production-acceptance config for 365 ticks, about 100
   agents, the five required shock types, and an automatically scored Oracle
   prediction.

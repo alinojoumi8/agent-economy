@@ -2,8 +2,8 @@
 
 One SQLite file per run (TECH-SPEC §2, §4). The `events` table is the append-only
 spine of the simulation — "anything not in events didn't happen". Money is stored
-as integer cents everywhere; a trigger enforces that every transaction's ledger
-entries sum to zero (double-entry / conservation of money, PRD R1).
+as integer cents everywhere; Ledger.post rejects unbalanced batches before
+insertion and tick reconciliation independently verifies every account (PRD R1).
 """
 
 SCHEMA_VERSION = 4

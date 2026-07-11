@@ -22,7 +22,7 @@ These were decided during scoping and constrain everything below.
 | User's role | **Observer only.** Ali does not play an agent in v1. He controls the world (start/pause/speed/shocks) and interrogates it (Oracle), but no in-world avatar. | Keeps the sim uncontaminated; participant mode is a P2. |
 | Interface | **Live web dashboard + end-of-run reports.** | Watch it unfold in real time, then get a written narrative + data appendix per run. |
 | Run length | **Open-ended.** A run continues until stopped, with checkpointing so it can pause/resume across days. | Long-horizon emergent effects (inequality drift, boom-bust cycles) need time. |
-| Budget | **≈ $200 per run, hard-capped.** A cost governor tracks spend in real time and degrades gracefully (fewer conversations, longer decision intervals) before ever exceeding cap. | At ~$0.13/simulated day on the MiniMax/Kimi default mix, $200 buys 3–4 simulated *years* — or richer activity (more conversations/wakeups) over a shorter horizon. |
+| Budget | **Fully metered; cap is profile-specific.** Safety-capped profiles degrade before their configured ceiling. The production/acceptance profile is uncapped, waits through provider rate limits, and records actual spend. | The $200 figure is a measured efficiency target, not a production stop condition. This keeps capped development safe without terminating long production experiments. |
 | Signature feature | **The Oracle** — a live analyst you can query mid-run ("probability of market crash within 30 days?"). It answers with a probability + reasoning, the prediction is logged, and the system later scores it against what actually happened. | This turns every run into an experiment and makes the sim's predictive value measurable (calibration/Brier scores). |
 
 ## 3. Problem statement
@@ -35,7 +35,7 @@ Real-world economic questions — "does misinformation cause bank runs?", "how d
 2. **Emergence, not scripting**: at least three macro phenomena arise without being hard-coded, each documented with the metric signature that identifies it (e.g. CPI rising after money-supply expansion, unemployment rising after a demand shock, deposit flight after a credibility shock) — "not hard-coded" means no engine rule maps the cause to the effect directly; the path runs through agent decisions.
 3. **Live interrogation**: the Oracle answers ad-hoc probability questions mid-run in under 60 seconds, and every prediction is scored against realized outcomes.
 4. **Repeatable experiments**: every run is exactly replayable from its stored LLM responses (no API cost); fresh re-runs with the same seed and shock schedule are statistically comparable but not identical, since LLM outputs vary — different seeds ⇒ distribution of outcomes for the same experiment.
-5. **Cost discipline**: no run exceeds its budget cap; a default run achieves ≥ 365 simulated days within $200 on the default provider mix.
+5. **Cost discipline**: capped profiles never exceed their configured ceiling; the uncapped production profile records actual spend and targets ≥ 365 simulated days within $200 on the default provider mix.
 
 ## 5. Non-goals (v1)
 
@@ -94,7 +94,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - As an operator, I want the run to checkpoint automatically so that I can stop tonight and resume tomorrow without losing state.
 - As an operator, I want a live dashboard showing macro metrics, the stock ticker, the news feed, and a stream of agent conversations so that I can follow the economy like a Bloomberg terminal for the sim.
 - As an operator, I want to click any agent and inspect its persona, balance sheet, memories, and recent decisions (with the LLM reasoning) so that I can audit *why* something happened.
-- As an operator, I want to see running API spend against the budget cap so that I'm never surprised by cost.
+- As an operator, I want to see running API spend and any configured cap so that I'm never surprised by cost.
 
 ### Experimenter
 - As an experimenter, I want to ask the Oracle free-form questions mid-run ("probability of a bank run within 30 days?") and get a probability with reasoning so that I can form hypotheses while the world runs.
@@ -105,7 +105,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 ### Edge cases
 - As an operator, I want the sim to halt gracefully (checkpoint + alert) if the ledger fails to reconcile, so that a bug never silently corrupts an experiment.
-- As an operator, I want the cost governor to degrade activity (fewer conversations per tick, stretched decision cadences) rather than kill the run when spend approaches the cap.
+- As an operator, I want capped profiles to degrade activity (fewer conversations per tick, stretched decision cadences) rather than kill the run when spend approaches the cap.
 - As an experimenter, I want the Oracle to refuse with "insufficient data" rather than fabricate a number when the question is unanswerable from world state.
 
 ---
@@ -148,9 +148,10 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
 
 **R7. Run control + cost governor**
-- Start/pause/resume/speed controls; automatic checkpoints every N ticks; resume from any checkpoint.
-- Real-time token/cost accounting per model, per agent, per subsystem; hard budget cap with staged degradation (reduce conversation count → stretch decision cadences → institutional-agents-only mode → clean pause with alert).
-- Acceptance: a run configured with a $200 cap never exceeds it; degradation events are visible in the dashboard log.
+- Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
+- Real-time token/cost accounting per model, per agent, per subsystem; optional budget cap with staged degradation (reduce conversation count → stretch decision cadences → institutional-agents-only mode → clean pause with alert).
+- HTTP 429 responses create a visible provider-wide cooldown and retry until recovery or operator stop; other continuing provider failures pause on the active phase without advancing the completed tick.
+- Acceptance: a capped $200 profile never exceeds it; uncapped production records actual spend; degradation, rate-limit, and resume state are visible.
 
 **R8. Live dashboard**
 - Panels: macro metrics time series (GDP proxy, CPI, unemployment, policy rate, money supply, Gini, sentiment index), stock ticker + index chart, live news feed, conversation stream, agent inspector, bank balance sheets, Oracle chat, event/shock log, cost meter.
@@ -164,7 +165,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 **R10. End-of-run report**
 - Generated on stop: narrative summary (LLM-written from the event log), timeline of key events, all metric charts, Oracle prediction scorecard, cost summary, config + seed for reproduction.
-- Acceptance: report is a standalone HTML/Markdown artifact saved per run.
+- Acceptance: the complete standalone HTML artifact is saved per run with embedded charts; a reviewer-oriented Markdown companion carries the narrative, metric snapshot, Oracle/calibration summary, cost table, config, and seed.
 
 **R11. Agent lifecycle: health, death, aging, population renewal**
 - **Biology is engine-side, reactions are LLM-side**: sickness, death, and aging are drawn from the seeded PRNG using age-weighted probability tables; the LLM never decides who gets sick or dies (this preserves replayability and prevents narrative-driven deaths).
@@ -236,7 +237,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 |---|---|---|
 | **Phase 1 — Kernel** (weeks 1–3) | Engine + ledger, 20 agents, 1 bank, labor + goods markets, CLI only, cost governor | 30 simulated days, money conserved, readable event log |
 | **Phase 2 — Markets & media** (weeks 4–6) | Stock exchange, 2nd bank, news outlets, conversations, 100 agents, lifecycle (health/death/arrivals), checkpointing | Rumor-propagation pilot passes (R5) + lifecycle mechanics verified (R11) |
-| **Phase 3 — Observatory** (weeks 7–9) | Dashboard, Oracle + prediction scoring, shock library, end-of-run reports | Full R6–R10 acceptance; first complete $200 run |
+| **Phase 3 — Observatory** (weeks 7–9) | Dashboard, Oracle + prediction scoring, shock library, end-of-run reports | Full R6–R10 acceptance; first complete metered production run |
 | **Phase 4 — P1 items** (weeks 10+) | Government + elections, VC track, experiment harness, replay | First multi-seed experiment written up |
 
 Timeline assumes part-time solo build with AI-assisted coding; phases are scope-gated, not date-gated.

@@ -83,7 +83,8 @@ firms          id, name, sector, founder_agent_id, status(private|listed|bankrup
 accounts       id, owner_type(agent|firm|bank|gov|central_bank), owner_id,
                bank_id, kind(checking|savings|reserve), balance_cents
 ledger_entries id, tick, txn_id, account_id, delta_cents, counter_account_id, memo
-               -- every txn writes ≥2 rows summing to zero; enforced by trigger
+               -- Ledger.post rejects unbalanced batches before insertion;
+               -- reconciliation recomputes every account after each tick
 loans          id, bank_id, borrower_id, principal, rate_bps, term_ticks,
                schedule_json, collateral_json, status(active|paid|default)
 shares         firm_id, holder_id, qty            -- cap table
@@ -100,12 +101,14 @@ events         id, tick, phase, kind, payload_json     -- append-only spine of t
 metrics        tick, name, value                       -- gdp_proxy, cpi, unemployment,
                                                        -- index, m2, gini, sentiment
 predictions    id, asked_tick, question, p REAL, reasoning, resolution_rule_json,
-               deadline_tick, resolved_tick, outcome BOOL, brier REAL
+               deadline_tick, resolved_tick, outcome BOOL, brier REAL, evidence_json
 llm_calls      id, tick, agent_id, model, purpose, request_json, response_json,
                in_tokens, out_tokens, cost_usd
                -- full request/response stored: powers the inspector (PRD R2),
                -- exact replay (§13), and prompt debugging
 checkpoints    tick, path, created_at
+run_meta       tick(last complete), active_tick, next_phase, phase_state_json,
+               prng_state, lifecycle_prng_state, legacy_partial
 shocks         id, kind, trigger_type(shock|trend|conditional), trigger_json,
                duration_ticks, params_json, fired BOOL
                -- shock: fires at tick N · trend: gradual effect over duration ·
@@ -184,14 +187,15 @@ Single chokepoint through which every call flows. Responsibilities:
   - `openai_compat` — Kimi (Moonshot) and MiniMax endpoints; also covers OpenRouter/vLLM/Ollama for free, since they all speak the OpenAI wire format.
   - `anthropic` — optional tier if Ali adds an Anthropic API key.
   - `cli` — wraps `claude -p --output-format json` (headless). **Hard-restricted in code to `purpose in {oracle, dev}`** — the gateway raises if a swarm role is configured onto it. Rationale: consumer-subscription rate limits stall a swarm mid-tick, and provider terms don't permit subscriptions as bulk-inference backends.
-- **Budget governor**: cumulative `llm_calls.cost_usd` per run checked before each call. Thresholds at 60/80/95% of cap trigger staged degradation:
+- **Budget governor**: cumulative `llm_calls.cost_usd` per run is always metered. When `cap_usd` is configured, thresholds at 60/80/95% trigger staged degradation:
   - 60%: evening conversations 15 → 8 pairs/tick
   - 80%: citizen cadences stretched ×2 (weekly → biweekly, etc.); conversations → 4 pairs
   - 95%: institutional agents only; citizens act on event-triggered wakeups only
-  - 100%: clean pause + checkpoint + dashboard alert. **The cap is never exceeded.**
+  - 100%: clean pause + checkpoint + dashboard alert. **A configured cap is never exceeded.**
+  - `cap_usd: null`: no application spend ceiling or degradation; this is the production/acceptance profile, and actual spend remains visible.
 - **Prompt caching**: shared system prefix (schema + world rules) marked cacheable — biggest single cost saver since it's identical across ~100 agents.
-- **Concurrency**: `asyncio.Semaphore(8)` on API calls; agents within a phase run concurrently (their actions queue; execution order is deterministic afterward, so concurrency doesn't break replay).
-- **Failure policy**: 1 retry on malformed JSON with the validator error appended; then `do_nothing` + logged event. An LLM outage pauses the sim rather than skipping agents silently.
+- **Concurrency**: configurable `asyncio.Semaphore(llm.concurrency)` on API calls (production currently uses 3); agents within a phase run concurrently and execution remains deterministic afterward.
+- **Failure policy**: HTTP failures preserve status and `Retry-After`. A 429 sets one provider-wide visible cooldown and retries until recovery or operator stop, using `Retry-After` or 15/30/60/120/300-second fallback intervals. Other failures receive the configured bounded retry count and then pause the active phase. Malformed JSON receives one repair completion; a second invalid result becomes a logged `do_nothing`.
 
 ## 9. Market mechanics (all deterministic)
 
@@ -220,10 +224,11 @@ Single chokepoint through which every call flows. Responsibilities:
 
 ## 11. The Oracle
 
-- **Read-only analyst** (strong model — default `kimi-k2.7`; optionally routed through the Claude CLI adapter to use Ali's subscription, since Oracle volume is a handful of calls per session) exposed as dashboard chat. Tools: `query_metrics(sql)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`. It cannot write anything.
+- **Read-only analyst** (strong model — default `kimi-k2.7`; optionally routed through the Claude CLI adapter to use Ali's subscription, since Oracle volume is a handful of calls per session) exposed as dashboard chat. A provider-neutral planner can request only bounded `query_metrics(names, range)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`, and `read_order_book(firm, depth)` calls. Arbitrary SQL, writes, unknown tools, oversized plans, and excessive results are rejected.
+- The executed read transcript is stored in `predictions.evidence_json`, returned by the API, and shown with the prediction for auditability.
 - Answer contract: `{p: 0.xx, drivers: [...], confidence: low|med|high, resolution_rule, deadline_tick}`. The resolution rule must be machine-checkable against world state (e.g. `bank_run := any bank loses >30% deposits within any 5-tick window before deadline`). If the question can't be given a checkable rule, the Oracle returns `insufficient_data` and says why.
 - A resolver job checks open predictions each tick; on resolution, Brier score = `(p − outcome)²` written to `predictions`. Dashboard shows running calibration.
-- Oracle spend is a **reserved carve-out inside the run cap** (default: $10 of the $200) so asking questions never starves the world — and total run spend still never exceeds the cap (PRD R7).
+- Capped profiles reserve an Oracle carve-out (default: $10 of $200) so questions never starve the world. The uncapped production profile meters Oracle spend without applying a ceiling.
 
 ## 12. Cost model (why $200 works)
 
@@ -245,8 +250,10 @@ Per tick, default config (steady state):
 ## 13. Determinism, checkpointing, replay
 
 - All engine randomness from one seeded PRNG. LLM outputs are *not* deterministic — so **replay uses stored outputs**: every LLM response is persisted in `llm_calls`; replay mode re-executes the engine against recorded responses, reproducing the run exactly without API cost (also = free debugging).
-- Checkpoint = SQLite backup + PRNG state + governor counters, every 10 ticks and on pause. Resume from any checkpoint (forks a new run id if diverging — enables "what if" branching from a crisis moment, which is a killer experiment feature that falls out of the design for free).
+- `run_meta.tick` is the last fully completed tick. `active_tick`, `next_phase`, and `phase_state_json` persist in-flight work; successful LLM responses are reused by request key, deterministic phases use SQLite savepoints, and newsroom/conversation/memory writes are idempotent. A rate limit, provider pause, operator stop, or process restart therefore resumes the active phase without advancing or duplicating it.
+- Checkpoint = SQLite backup + phase cursor + PRNG state + governor counters, every N completed ticks and on pause. Forking a checkpoint creates a new run id for what-if branches.
 - Reconciliation check every tick: `SUM(ledger deltas) == 0` and per-account recomputation matches stored balances; failure → halt + dump (PRD R1).
+- On stop, the complete standalone HTML report embeds all charts. A Markdown reviewer companion records the narrative, event timeline, metric snapshot, Oracle/calibration scorecard, cost table, config, and seed.
 
 ## 14. Testing
 
