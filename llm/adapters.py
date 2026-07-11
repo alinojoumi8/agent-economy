@@ -19,6 +19,8 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
 
@@ -29,6 +31,44 @@ class AdapterResult:
     out_tokens: int = 0
     cached_in_tokens: int = 0
     raw: dict = field(default_factory=dict)
+
+
+class AdapterHTTPError(RuntimeError):
+    """HTTP failure with machine-readable retry metadata for the gateway."""
+
+    def __init__(self, status_code: int, endpoint: str, detail: str, *,
+                 retry_after_s: Optional[float] = None):
+        self.status_code = int(status_code)
+        self.endpoint = endpoint
+        self.detail = detail[:500]
+        self.retry_after_s = retry_after_s
+        super().__init__(f"HTTP {self.status_code} from {endpoint}: {self.detail}")
+
+    @property
+    def rate_limited(self) -> bool:
+        return self.status_code == 429
+
+
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            target = parsedate_to_datetime(value)
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            return max(0.0, (target - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def _raise_http_error(resp, endpoint: str, exc: Exception) -> None:
+    detail = resp.text.strip().replace("\n", " ")[:500]
+    raise AdapterHTTPError(
+        resp.status_code, endpoint, detail,
+        retry_after_s=_retry_after_seconds(resp.headers.get("Retry-After"))) from exc
 
 
 def estimate_tokens(text: str) -> int:
@@ -116,13 +156,12 @@ class OpenAICompatAdapter(Adapter):
         if self.prompt_cache_key and cache_key:
             body["prompt_cache_key"] = cache_key
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=body)
+            endpoint = f"{self.base_url}/chat/completions"
+            resp = await client.post(endpoint, headers=headers, json=body)
             try:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                detail = resp.text.strip().replace("\n", " ")[:500]
-                raise RuntimeError(
-                    f"HTTP {resp.status_code} from {self.base_url}: {detail}") from exc
+                _raise_http_error(resp, self.base_url, exc)
             data = resp.json()
         choice = data["choices"][0]
         message = choice.get("message") or {}
@@ -155,9 +194,7 @@ class OpenAICompatAdapter(Adapter):
             try:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                detail = resp.text.strip().replace("\n", " ")[:500]
-                raise RuntimeError(
-                    f"HTTP {resp.status_code} from {self.base_url}: {detail}") from exc
+                _raise_http_error(resp, self.base_url, exc)
             data = resp.json()
         model_ids = {str(row.get("id")) for row in data.get("data", []) if isinstance(row, dict)}
         return {"ok": model in model_ids, "model": model, "model_available": model in model_ids,
@@ -181,8 +218,12 @@ class AnthropicAdapter(Adapter):
         body = {"model": model, "system": system, "messages": convo,
                 "max_tokens": max_tokens, "temperature": temperature}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
-            resp.raise_for_status()
+            endpoint = "https://api.anthropic.com/v1/messages"
+            resp = await client.post(endpoint, headers=headers, json=body)
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_http_error(resp, endpoint, exc)
             data = resp.json()
         text = "".join(block.get("text", "") for block in data.get("content", []))
         usage = data.get("usage", {})

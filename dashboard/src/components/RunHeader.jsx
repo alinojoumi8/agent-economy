@@ -36,6 +36,7 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
           <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+          {status?.rate_limit && <Badge tone="warn">rate limited · retry {Math.ceil(status.rate_limit.cooldown_remaining_s)}s</Badge>}
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">

@@ -115,6 +115,7 @@ class RunController:
             return {"status": "already_running"}
         self.world._pause_requested = False
         self.world._stop_requested = False
+        self.world.gateway.clear_interrupt()
         self.task = asyncio.create_task(self._run_world(max_ticks))
         operational_log(logger, logging.INFO, "run.start.accepted",
                         run_id=self.world.gateway.run_id, tick=self.store.tick,
@@ -181,6 +182,7 @@ class RunController:
             "governor": self.world.gateway.governor.status(),
             "running": self.is_running(),
             "provider_readiness": self.world.gateway.readiness(),
+            "rate_limit": self.world.gateway.rate_limit_status(),
             "pause_reason": self.world.last_pause_reason,
             "report_path": self.world.last_report_path,
         }

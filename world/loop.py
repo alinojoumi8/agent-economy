@@ -28,7 +28,7 @@ from typing import Callable, Optional
 from engine.core import Economy
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.store import Store, load_json
-from llm.gateway import Gateway, BudgetExceeded, ProviderUnavailable
+from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
 from agents.personas.vendor.persona_gen import sample_persona
 from .genesis import Genesis
@@ -146,11 +146,13 @@ class World:
 
     def request_pause(self) -> None:
         self._pause_requested = True
+        self.gateway.interrupt_pending()
         operational_log(logger, logging.INFO, "world.pause.requested",
                         run_id=self.gateway.run_id, tick=self.store.tick)
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        self.gateway.interrupt_pending()
         operational_log(logger, logging.INFO, "world.stop.requested",
                         run_id=self.gateway.run_id, tick=self.store.tick)
 
@@ -211,6 +213,17 @@ class World:
             return self._pause_safely(
                 tick, phase, "provider", exc.as_dict(), t0,
                 detail=str(exc))
+        except GatewayInterrupted as exc:
+            summary = {
+                "tick": self.store.tick,
+                "active_tick": tick,
+                "phase": phase,
+                "interrupted": "stop" if self._stop_requested else "pause",
+                "detail": str(exc),
+                "governor": self.gateway.governor.status(),
+            }
+            self._notify_tick(self.store.tick, summary)
+            return summary
 
     def _notify_tick(self, tick: int, summary: dict) -> None:
         if self.on_tick:

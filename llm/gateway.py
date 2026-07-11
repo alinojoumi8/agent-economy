@@ -11,11 +11,12 @@ import hashlib
 import json
 import logging
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .adapters import Adapter, AdapterResult, build_adapters
+from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log
 
@@ -59,6 +60,10 @@ class ProviderUnavailable(Exception):
             "provider": self.provider, "model": self.model, "purpose": self.purpose,
             "error": self.message, "latency_ms": self.latency_ms, "attempts": self.attempts,
         }
+
+
+class GatewayInterrupted(Exception):
+    """The operator interrupted an in-flight provider cooldown."""
 
 
 @dataclass
@@ -233,6 +238,11 @@ class Gateway:
         self.governor = Governor(store, config.get("budget", {}))
         self.semaphore = asyncio.Semaphore(int(llm_cfg.get("concurrency", 8)))
         self.provider_retries = max(0, int(llm_cfg.get("provider_retries", 1)))
+        raw_backoff = llm_cfg.get("rate_limit_backoff_s", [15, 30, 60, 120, 300])
+        self.rate_limit_backoff_s = tuple(
+            max(0.01, float(value)) for value in raw_backoff) or (15.0, 30.0, 60.0, 120.0, 300.0)
+        self._rate_limits: dict[str, dict] = {}
+        self._interrupt_event = asyncio.Event()
         meta = store.get_meta()
         self.run_id = str(meta["run_id"]) if meta else "uninitialized"
         self.replay_conn: Optional[sqlite3.Connection] = None
@@ -256,6 +266,75 @@ class Gateway:
 
     def readiness(self) -> dict:
         return self.readiness_report
+
+    def interrupt_pending(self) -> None:
+        self._interrupt_event.set()
+
+    def clear_interrupt(self) -> None:
+        self._interrupt_event.clear()
+
+    def rate_limit_status(self) -> Optional[dict]:
+        active = []
+        now = time.time()
+        for state in self._rate_limits.values():
+            remaining = max(0.0, float(state["retry_at_epoch"]) - now)
+            if remaining > 0:
+                active.append({**state, "cooldown_remaining_s": round(remaining, 3)})
+        if not active:
+            return None
+        return max(active, key=lambda item: item["retry_at_epoch"])
+
+    async def _wait_for_provider(self, provider: str) -> None:
+        state = self._rate_limits.get(provider)
+        if not state:
+            return
+        remaining = float(state["retry_at_epoch"]) - time.time()
+        if remaining <= 0:
+            return
+        try:
+            await asyncio.wait_for(self._interrupt_event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            return
+        raise GatewayInterrupted(f"operator interrupted {provider} rate-limit cooldown")
+
+    def _record_rate_limit(self, provider: str, model: str, req: LLMRequest,
+                           exc: AdapterHTTPError) -> dict:
+        previous = self._rate_limits.get(provider)
+        attempt = int(previous["attempts"]) + 1 if previous else 1
+        fallback = self.rate_limit_backoff_s[
+            min(attempt - 1, len(self.rate_limit_backoff_s) - 1)]
+        delay = float(exc.retry_after_s) if exc.retry_after_s is not None else fallback
+        retry_at_epoch = max(
+            float(previous["retry_at_epoch"]) if previous else 0.0,
+            time.time() + max(0.01, delay))
+        state = {
+            "provider": provider,
+            "model": model,
+            "attempts": attempt,
+            "cooldown_s": round(max(0.01, delay), 3),
+            "retry_at_epoch": retry_at_epoch,
+            "next_retry_at": datetime.fromtimestamp(
+                retry_at_epoch, timezone.utc).isoformat(),
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+        }
+        self._rate_limits[provider] = state
+        operational_log(
+            logger, logging.WARNING, "llm.rate_limit.waiting",
+            run_id=self.run_id, provider=provider, model=model,
+            role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+            tick=req.tick, attempts=attempt, cooldown_s=state["cooldown_s"],
+            next_retry_at=state["next_retry_at"])
+        return state
+
+    def _clear_rate_limit(self, provider: str, model: str, req: LLMRequest) -> None:
+        state = self._rate_limits.pop(provider, None)
+        if state:
+            operational_log(
+                logger, logging.INFO, "llm.rate_limit.recovered",
+                run_id=self.run_id, provider=provider, model=model,
+                role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                tick=req.tick, attempts=state["attempts"])
 
     async def preflight(self, *, live: bool = False) -> dict:
         """Return config readiness and optionally authenticate/list routed models."""
@@ -347,7 +426,10 @@ class Gateway:
         started = datetime.now(timezone.utc)
         try:
             result, attempts = await self._call_adapter(
-                adapter, model, req, req.messages(), req.temperature, provider_cache_key)
+                provider, adapter, model, req, req.messages(), req.temperature,
+                provider_cache_key)
+        except GatewayInterrupted:
+            raise
         except Exception as exc:
             latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
             failure = ProviderUnavailable(
@@ -384,8 +466,11 @@ class Gateway:
                 max_tokens=req.max_tokens, temperature=0.2)
             try:
                 repaired_result, repair_attempts = await self._call_adapter(
-                    adapter, model, repair, repair.messages(), 0.2, provider_cache_key)
+                    provider, adapter, model, repair, repair.messages(), 0.2,
+                    provider_cache_key)
                 attempts += repair_attempts
+            except GatewayInterrupted:
+                raise
             except Exception as exc:
                 latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
                 failure = ProviderUnavailable(
@@ -441,30 +526,45 @@ class Gateway:
                            in_tokens=result.in_tokens, out_tokens=result.out_tokens,
                            cost_usd=cost, cached=cached, ok=ok)
 
-    async def _call_adapter(self, adapter: Adapter, model: str, req: LLMRequest,
+    async def _call_adapter(self, provider: str, adapter: Adapter, model: str, req: LLMRequest,
                             messages: list[dict], temperature: float,
                             provider_cache_key: str):
         last_error: Optional[Exception] = None
-        for attempt in range(1, self.provider_retries + 2):
+        transient_attempt = 0
+        total_attempts = 0
+        while True:
+            await self._wait_for_provider(provider)
             try:
+                total_attempts += 1
                 async with self.semaphore:
                     result = await adapter.complete(
                         model, messages, purpose=req.purpose, context=req.context,
                         max_tokens=req.max_tokens, temperature=temperature,
                         cache_key=provider_cache_key)
-                return result, attempt
+                self._clear_rate_limit(provider, model, req)
+                return result, total_attempts
             except asyncio.CancelledError:
                 raise
+            except AdapterHTTPError as exc:
+                if exc.rate_limited:
+                    self._record_rate_limit(provider, model, req, exc)
+                    continue
+                last_error = exc
+                transient_attempt += 1
             except Exception as exc:
                 last_error = exc
-                if attempt <= self.provider_retries:
-                    operational_log(logger, logging.WARNING, "llm.request.retry",
-                                    run_id=self.run_id, model=model, role=req.role,
-                                    purpose=req.purpose, agent_id=req.agent_id,
-                                    tick=req.tick, attempt=attempt,
-                                    next_attempt=attempt + 1,
-                                    error_type=type(exc).__name__, error=str(exc))
-                    await asyncio.sleep(min(0.25 * (2 ** (attempt - 1)), 2.0))
+                transient_attempt += 1
+            if transient_attempt <= self.provider_retries:
+                operational_log(logger, logging.WARNING, "llm.request.retry",
+                                run_id=self.run_id, provider=provider, model=model,
+                                role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                                tick=req.tick, attempt=transient_attempt,
+                                next_attempt=transient_attempt + 1,
+                                error_type=type(last_error).__name__,
+                                error=str(last_error))
+                await asyncio.sleep(min(0.25 * (2 ** (transient_attempt - 1)), 2.0))
+                continue
+            break
         assert last_error is not None
         raise last_error
 
