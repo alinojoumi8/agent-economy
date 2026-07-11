@@ -16,9 +16,9 @@ while provider rate limits control throughput.
 - [x] Align the HTML/Markdown report contract and production documentation.
 - [x] Treat explicit provider-overload responses (including MiniMax HTTP 529)
   as the same visible, interruptible, indefinite cooldown used for HTTP 429.
-- [ ] Resume post-fix run `da8032da59` from active tick 1 and prove its stored
+- [x] Resume post-fix run `da8032da59` from active tick 1 and prove its stored
   successful responses are reused without duplicate provider charges or writes.
-- [ ] Reconcile draft PR #10 without merging its competing acceptance stack:
+- [x] Reconcile draft PR #10 without merging its competing acceptance stack:
   port only current, non-duplicative campaign or handbook improvements.
 - [ ] Publish this hardened branch as the replacement PR and pass fresh CI on
   the current Python/dashboard baseline.

@@ -395,6 +395,43 @@ def test_running_world_stop_finishes_with_report(tmp_path):
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 1
 
 
+def test_controller_reopens_reported_run_and_rejects_halted_mutations(tmp_path):
+    world = _world(tmp_path, "controller-transitions.db")
+    app = create_app(world)
+    with TestClient(app) as client:
+        speed = client.post("/api/run/speed", json={"delay_s": 1.0})
+        assert speed.status_code == 200
+        assert client.get("/api/run/status").json()["speed_delay_s"] == 1.0
+
+        stopped = client.post("/api/run/stop")
+        assert stopped.status_code == 200
+        report_path = stopped.json()["report_path"]
+        tick = world.store.tick
+
+        stepped = client.post("/api/run/step")
+        assert stepped.status_code == 200
+        assert world.store.tick == tick + 1
+        assert world.status == "paused"
+        assert world.last_report_path is None
+        assert report_path
+
+        world.status = "halted"
+        world.store.set_meta(status="halted")
+        world.store.commit()
+        mutations = (
+            client.post("/api/run/start"),
+            client.post("/api/run/step"),
+            client.post("/api/run/pause"),
+            client.post("/api/run/stop"),
+            client.post("/api/run/speed", json={"delay_s": 0.0}),
+            client.post("/api/shocks", json={
+                "kind": "oil", "trigger_type": "shock",
+                "params": {"multiplier": 2.0},
+            }),
+        )
+        assert all(response.status_code == 409 for response in mutations)
+
+
 def test_weekly_memory_is_synthesized_before_daily_sources_are_demoted(tmp_path):
     store = Store(str(tmp_path / "memory.db"))
     store.init_run_meta("memory", 42, {})

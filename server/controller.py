@@ -13,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket
 
 from engine.ledger import ReconciliationError
 from engine.store import load_json
@@ -69,6 +69,21 @@ class RunController:
     def is_running(self) -> bool:
         return bool(self.task and not self.task.done())
 
+    def _require_mutable(self, action: str) -> None:
+        if self.world.status == "halted":
+            raise HTTPException(
+                status_code=409,
+                detail=f"run is halted; {action} requires a new run or replay")
+
+    def _reopen_finished(self) -> None:
+        if self.world.status != "finished":
+            return
+        self.world._stop_requested = False
+        self.world.last_report_path = None
+        self.world.status = "paused"
+        self.store.set_meta(status="paused")
+        self.store.commit()
+
     @asynccontextmanager
     async def lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
         self.loop = asyncio.get_running_loop()
@@ -108,11 +123,13 @@ class RunController:
             await self.hub.broadcast({"type": "pause", "reason": f"run paused: {exc}"})
 
     async def start(self, max_ticks: int | None = None) -> dict:
+        self._require_mutable("start")
         if self.is_running():
             operational_log(logger, logging.INFO, "run.start.skipped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             reason="already_running")
             return {"status": "already_running"}
+        self._reopen_finished()
         self.world._pause_requested = False
         self.world._stop_requested = False
         self.world.gateway.clear_interrupt()
@@ -123,12 +140,14 @@ class RunController:
         return {"status": "running", "tick": self.store.tick}
 
     def pause(self) -> dict:
+        self._require_mutable("pause")
         self.world.request_pause()
         operational_log(logger, logging.INFO, "run.pause.accepted",
                         run_id=self.world.gateway.run_id, tick=self.store.tick)
         return {"status": "pausing", "tick": self.store.tick}
 
     async def stop(self) -> dict:
+        self._require_mutable("stop")
         self.world.request_stop()
         if self.is_running():
             operational_log(logger, logging.INFO, "run.stop.accepted",
@@ -151,11 +170,13 @@ class RunController:
                 "report_path": self.world.last_report_path}
 
     async def step(self) -> dict:
+        self._require_mutable("step")
         if self.is_running():
             operational_log(logger, logging.INFO, "run.step.skipped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             reason="already_running")
             return {"status": "already_running"}
+        self._reopen_finished()
         summary = await self.world.step()
         if not summary.get("paused") and self.world.status != "halted":
             self.world.status = "paused"
@@ -168,6 +189,7 @@ class RunController:
         return summary
 
     def set_speed(self, delay_s: float) -> dict:
+        self._require_mutable("speed change")
         self.world.speed_delay_s = max(0.0, float(delay_s))
         operational_log(logger, logging.INFO, "run.speed.changed",
                         run_id=self.world.gateway.run_id, tick=self.store.tick,
@@ -182,6 +204,7 @@ class RunController:
             "active_tick": meta["active_tick"],
             "next_phase": meta["next_phase"],
             "legacy_partial": bool(meta["legacy_partial"]),
+            "speed_delay_s": self.world.speed_delay_s,
             "governor": self.world.gateway.governor.status(),
             "running": self.is_running(),
             "provider_readiness": self.world.gateway.readiness(),

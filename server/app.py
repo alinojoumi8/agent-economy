@@ -324,6 +324,7 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/shocks")
     async def fire_shock(body: ShockBody):
+        controller._require_mutable("shock scheduling")
         if body.kind not in SHOCK_KINDS:
             operational_log(logger, logging.WARNING, "shock.rejected",
                             run_id=world.gateway.run_id, tick=store.tick,

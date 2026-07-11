@@ -190,6 +190,9 @@ bank's deposits roughly in half within 10 ticks.
 
 ## Layout
 
+Operational and recovery guidance starts in the
+[maintained handbook](docs/README.md).
+
 ```
 run.py                  entrypoint
 runs/base.yaml          world config (population, models, budget, shocks, seed)
