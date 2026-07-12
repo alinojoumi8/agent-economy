@@ -124,12 +124,15 @@ class Oracle:
         # Validate the contract; refuse rather than store garbage.
         try:
             p = float(ans["p"])
-            assert 0.0 <= p <= 1.0
+            if not 0.0 <= p <= 1.0:
+                raise ValueError("forecast probability must be between 0 and 1")
             rule = ans.get("resolution_rule") or {}
-            assert isinstance(rule, dict) and rule.get("type")
+            if not isinstance(rule, dict) or not rule.get("type"):
+                raise ValueError("resolution_rule.type is required")
             deadline = int(ans.get("deadline_tick") or (tick + self.default_horizon))
-            assert deadline > tick
-        except (KeyError, AssertionError, TypeError, ValueError):
+            if deadline <= tick:
+                raise ValueError("deadline_tick must be in the future")
+        except (KeyError, TypeError, ValueError):
             pid = self.store.insert(
                 "predictions", asked_tick=tick, question=question, p=None,
                 reasoning="answer did not meet the contract",

@@ -296,6 +296,7 @@ def create_app(world: World) -> FastAPI:
     # ── replay viewer (P1 R16): browse any stored run tick-by-tick ──────────
     from server.replay import ReplayReader
     reader = ReplayReader()
+    app.state.replay_reader = reader
 
     @app.get("/api/replay/runs")
     async def replay_runs():
@@ -330,6 +331,20 @@ def create_app(world: World) -> FastAPI:
                             run_id=world.gateway.run_id, tick=store.tick,
                             kind=body.kind, reason="unknown_kind")
             return JSONResponse({"error": f"unknown kind {body.kind}"}, status_code=400)
+        if body.trigger_type not in TRIGGER_TYPES:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, trigger_type=body.trigger_type,
+                            reason="unknown_trigger_type")
+            return JSONResponse(
+                {"error": f"unknown trigger type {body.trigger_type}"}, status_code=400)
+        if body.duration_ticks < 0:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, duration_ticks=body.duration_ticks,
+                            reason="negative_duration")
+            return JSONResponse(
+                {"error": "duration_ticks must be non-negative"}, status_code=400)
         trigger = body.trigger or {"tick": store.tick + 1}
         sid = world.shocks.schedule(body.kind, body.trigger_type, trigger,
                                     duration_ticks=body.duration_ticks, params=body.params,

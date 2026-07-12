@@ -903,6 +903,12 @@ def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
             assert int(time.time() * 1000) - payload["emitted_at_ms"] < 2_000
         rejected = client.post("/api/shocks", json={"kind": "not-a-shock"})
         assert rejected.status_code == 400
+        rejected_trigger = client.post("/api/shocks", json={
+            "kind": "oil", "trigger_type": "invalid-trigger"})
+        assert rejected_trigger.status_code == 400
+        rejected_duration = client.post("/api/shocks", json={
+            "kind": "oil", "duration_ticks": -1})
+        assert rejected_duration.status_code == 400
 
     events = [getattr(record, "event_name", "") for record in caplog.records]
     assert "server.started" in events and "server.stopped" in events

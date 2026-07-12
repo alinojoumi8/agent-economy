@@ -86,6 +86,26 @@ def test_actions_require_living_actor_and_counterparty(economy):
     assert not missing["ok"] and missing["reason"] == "actor missing"
 
 
+def test_action_handler_exception_rolls_back_partial_writes(economy, monkeypatch):
+    bank = make_bank(economy)
+    actor, _ = make_agent(economy, bank, "Atomic Actor", 10_000)
+    executor = ActionExecutor(economy)
+
+    def fail_after_write(tick, actor_id, action, phase):
+        economy.store.log_event(
+            tick, "partial_action_write", {"actor_id": actor_id}, phase=phase)
+        raise RuntimeError("handler failed after writing")
+
+    monkeypatch.setattr(executor, "_do_do_nothing", fail_after_write)
+    result = executor.execute_action(1, actor, {"type": "do_nothing"})
+
+    assert not result["ok"] and "handler failed after writing" in result["reason"]
+    assert economy.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='partial_action_write'", default=0) == 0
+    assert economy.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='action_rejected'", default=0) == 1
+
+
 def test_engine_does_not_rewrite_counterparty_or_invent_market_price(economy):
     bank = make_bank(economy)
     buyer, _ = make_agent(economy, bank, "Buyer", 100_000)

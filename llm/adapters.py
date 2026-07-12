@@ -14,10 +14,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -248,16 +248,28 @@ class CLIAdapter(Adapter):
                 f"CLI adapter is restricted to {self.ALLOWED_PURPOSES}; refused purpose='{purpose}'. "
                 "Consumer subscriptions may not back the agent swarm (TECH-SPEC §8).")
         prompt = "\n\n".join(f"[{m['role'].upper()}]\n{m['content']}" for m in messages)
-        proc = subprocess.run([self.command, "-p", prompt, "--output-format", "json"],
-                              capture_output=True, text=True, timeout=120)
-        out = proc.stdout.strip()
+        proc = await asyncio.create_subprocess_exec(
+            self.command, "-p", prompt, "--output-format", "json",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            proc.kill()
+            await proc.wait()
+            raise
+        out = stdout.decode("utf-8", errors="replace").strip()
+        error_text = stderr.decode("utf-8", errors="replace").strip()
+        if proc.returncode:
+            detail = error_text or "no stderr output"
+            raise RuntimeError(
+                f"CLI provider exited with code {proc.returncode}: {detail[:500]}")
         try:
             parsed = json.loads(out)
             text = parsed.get("result", out)
         except json.JSONDecodeError:
             text = out
         return AdapterResult(text=text, in_tokens=estimate_tokens(prompt),
-                             out_tokens=estimate_tokens(text), raw={"stderr": proc.stderr})
+                             out_tokens=estimate_tokens(text), raw={"stderr": error_text})
 
     async def healthcheck(self, model: str) -> dict:
         return {"ok": shutil.which(self.command) is not None, "model": model, "live": True}

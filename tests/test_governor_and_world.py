@@ -7,7 +7,7 @@ import random
 import pytest
 
 from engine.store import Store
-from llm.gateway import Governor
+from llm.gateway import GatewayInterrupted, Governor, LLMRequest
 from world.loop import World
 
 
@@ -35,6 +35,36 @@ def _fresh_world(tmp_path, name="w.db", **over) -> World:
     w = World(s, cfg)
     w.initialize()
     return w
+
+
+def test_provider_request_is_cancelled_when_operator_interrupts(tmp_path):
+    world = _fresh_world(tmp_path, "interrupt.db")
+
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class SlowAdapter:
+            async def complete(self, *args, **kwargs):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        world.gateway.adapters["scripted"] = SlowAdapter()
+        request = LLMRequest(
+            role="citizen", purpose="decision", system="system", user="user",
+            agent_id=1, tick=1)
+        task = asyncio.create_task(world.gateway.complete(request))
+        await asyncio.wait_for(started.wait(), timeout=0.5)
+        world.gateway.interrupt_pending()
+        with pytest.raises(GatewayInterrupted):
+            await asyncio.wait_for(task, timeout=0.5)
+        assert cancelled.is_set()
+
+    asyncio.run(scenario())
 
 
 # ── governor thresholds (cost test, §14) ─────────────────────────────────────
@@ -220,3 +250,13 @@ def test_oracle_prediction_and_resolution(tmp_path):
     # Unanswerable question refuses rather than fabricates.
     ans2 = asyncio.run(w.oracle.ask("Is the moon made of cheese?"))
     assert ans2.get("insufficient_data")
+    w.gateway.scripted.register("oracle", lambda _context: {
+        "p": 1.5, "reasoning": "invalid probability",
+        "deadline_tick": w.store.tick,
+        "resolution_rule": {},
+    })
+    invalid = asyncio.run(w.oracle.ask("Will this invalid forecast be stored?"))
+    assert invalid.get("insufficient_data")
+    stored = w.store.query_one(
+        "SELECT p, status FROM predictions WHERE id=?", (invalid["prediction_id"],))
+    assert stored["p"] is None and stored["status"] == "insufficient_data"

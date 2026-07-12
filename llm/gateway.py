@@ -243,6 +243,7 @@ class Gateway:
             max(0.01, float(value)) for value in raw_backoff) or (15.0, 30.0, 60.0, 120.0, 300.0)
         self._rate_limits: dict[str, dict] = {}
         self._interrupt_event = asyncio.Event()
+        self._active_adapter_tasks: set[asyncio.Task] = set()
         meta = store.get_meta()
         self.run_id = str(meta["run_id"]) if meta else "uninitialized"
         self.replay_conn: Optional[sqlite3.Connection] = None
@@ -270,6 +271,8 @@ class Gateway:
 
     def interrupt_pending(self) -> None:
         self._interrupt_event.set()
+        for task in tuple(self._active_adapter_tasks):
+            task.cancel()
 
     def clear_interrupt(self) -> None:
         self._interrupt_event.clear()
@@ -547,13 +550,26 @@ class Gateway:
             try:
                 total_attempts += 1
                 async with self.semaphore:
-                    result = await adapter.complete(
-                        model, messages, purpose=req.purpose, context=req.context,
-                        max_tokens=req.max_tokens, temperature=temperature,
-                        cache_key=provider_cache_key)
+                    if self._interrupt_event.is_set():
+                        raise GatewayInterrupted(
+                            f"operator interrupted {provider} request")
+                    active_task = asyncio.current_task()
+                    if active_task is not None:
+                        self._active_adapter_tasks.add(active_task)
+                    try:
+                        result = await adapter.complete(
+                            model, messages, purpose=req.purpose, context=req.context,
+                            max_tokens=req.max_tokens, temperature=temperature,
+                            cache_key=provider_cache_key)
+                    finally:
+                        if active_task is not None:
+                            self._active_adapter_tasks.discard(active_task)
                 self._clear_rate_limit(provider, model, req)
                 return result, total_attempts
             except asyncio.CancelledError:
+                if self._interrupt_event.is_set():
+                    raise GatewayInterrupted(
+                        f"operator interrupted {provider} request")
                 raise
             except AdapterHTTPError as exc:
                 if exc.rate_limited:
@@ -575,7 +591,8 @@ class Gateway:
                 await asyncio.sleep(min(0.25 * (2 ** (transient_attempt - 1)), 2.0))
                 continue
             break
-        assert last_error is not None
+        if last_error is None:
+            raise RuntimeError("provider retry loop ended without a result or error")
         raise last_error
 
     # ── parsing ──────────────────────────────────────────────────────────────

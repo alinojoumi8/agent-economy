@@ -92,6 +92,9 @@ class RunController:
         try:
             yield
         finally:
+            replay_reader = getattr(_app.state, "replay_reader", None)
+            if replay_reader is not None:
+                replay_reader.close()
             operational_log(logger, logging.INFO, "server.stopped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             run_active=self.is_running())
@@ -177,6 +180,9 @@ class RunController:
                             reason="already_running")
             return {"status": "already_running"}
         self._reopen_finished()
+        self.world._pause_requested = False
+        self.world._stop_requested = False
+        self.world.gateway.clear_interrupt()
         summary = await self.world.step()
         if not summary.get("paused") and self.world.status != "halted":
             self.world.status = "paused"

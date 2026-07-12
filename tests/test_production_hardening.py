@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from engine.store import Store
-from llm.adapters import AdapterHTTPError, AdapterResult
+from llm.adapters import AdapterHTTPError, AdapterResult, CLIAdapter
 from llm.gateway import Gateway, GatewayInterrupted, LLMRequest
 from world.loop import World
 
@@ -26,6 +26,57 @@ def _gateway(tmp_path, *, backoff=(0.01, 0.02, 0.03)) -> Gateway:
     store = Store(str(tmp_path / "hardening.db"))
     store.init_run_meta("hardening", 42, config)
     return Gateway(store, config)
+
+
+def test_cli_adapter_cancels_process_and_rejects_nonzero_exit(monkeypatch):
+    processes = []
+
+    class FakeProcess:
+        def __init__(self, returncode=0, stdout=b"", stderr=b""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+            self.block = False
+            self.killed = False
+
+        async def communicate(self):
+            if self.block:
+                await asyncio.Event().wait()
+            return self.stdout, self.stderr
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -1
+
+        async def wait(self):
+            return self.returncode
+
+    async def create_process(*args, **kwargs):
+        return processes.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    adapter = CLIAdapter("agent-cli")
+
+    failed = FakeProcess(returncode=2, stderr=b"authentication failed")
+    processes.append(failed)
+    with pytest.raises(RuntimeError, match="exited with code 2"):
+        asyncio.run(adapter.complete("model", [{"role": "user", "content": "hi"}],
+                                     purpose="oracle"))
+
+    blocked = FakeProcess()
+    blocked.block = True
+    processes.append(blocked)
+
+    async def cancel_request():
+        task = asyncio.create_task(adapter.complete(
+            "model", [{"role": "user", "content": "hi"}], purpose="oracle"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_request())
+    assert blocked.killed
 
 
 @pytest.mark.parametrize("status_code", [429, 529])

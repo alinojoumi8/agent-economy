@@ -56,7 +56,11 @@ class ActionExecutor:
         if handler is None:
             return self._reject(tick, actor_id, action, f"unhandled action: {atype}", phase)
         try:
-            result = handler(tick, actor_id, action, phase)
+            # A handler may perform several writes before an unexpected error.
+            # Keep the tick alive, but never retain a partially-applied action.
+            with self.store.savepoint(
+                    f"action_{tick}_{actor_id}_{phase}_{seq}"):
+                result = handler(tick, actor_id, action, phase)
         except Exception as exc:  # never let a bad action crash the tick
             operational_log(logger, logging.ERROR, "action.execution.failed",
                             tick=tick, actor_id=actor_id, action_type=atype,

@@ -36,8 +36,12 @@ class Shocks:
     def schedule(self, kind: str, trigger_type: str, trigger: dict, *,
                  duration_ticks: int = 0, params: Optional[dict] = None,
                  label: str = "") -> int:
-        assert kind in SHOCK_KINDS, f"unknown shock kind {kind}"
-        assert trigger_type in TRIGGER_TYPES, f"unknown trigger type {trigger_type}"
+        if kind not in SHOCK_KINDS:
+            raise ValueError(f"unknown shock kind {kind}")
+        if trigger_type not in TRIGGER_TYPES:
+            raise ValueError(f"unknown trigger type {trigger_type}")
+        if duration_ticks < 0:
+            raise ValueError("shock duration_ticks must be non-negative")
         return self.store.insert(
             "shocks", kind=kind, trigger_type=trigger_type, trigger_json=json.dumps(trigger),
             duration_ticks=duration_ticks, params_json=json.dumps(params or {}),
