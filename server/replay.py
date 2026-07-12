@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -30,16 +31,21 @@ def _load_json(v, default=None):
 
 
 class ReplayReader:
-    def __init__(self, runs_dir: str = "data/runs"):
+    def __init__(self, runs_dir: str = "data/runs", *, max_connections: int = 8):
+        if max_connections < 1:
+            raise ValueError("max_connections must be at least 1")
         self.runs_dir = Path(runs_dir)
-        self._conns: dict[str, sqlite3.Connection] = {}
+        self.max_connections = max_connections
+        self._conns: OrderedDict[str, sqlite3.Connection] = OrderedDict()
 
     # ── connections (read-only, cached) ──────────────────────────────────────
     def _conn(self, run_id: str) -> Optional[sqlite3.Connection]:
         if not _RUN_ID.match(run_id or ""):
             return None
         if run_id in self._conns:
-            return self._conns[run_id]
+            conn = self._conns.pop(run_id)
+            self._conns[run_id] = conn
+            return conn
         path = self.runs_dir / f"{run_id}.db"
         if not path.exists():
             return None
@@ -47,7 +53,15 @@ class ReplayReader:
                                check_same_thread=False)
         conn.row_factory = sqlite3.Row
         self._conns[run_id] = conn
+        while len(self._conns) > self.max_connections:
+            _, stale = self._conns.popitem(last=False)
+            stale.close()
         return conn
+
+    def close(self) -> None:
+        while self._conns:
+            _, conn = self._conns.popitem(last=False)
+            conn.close()
 
     # ── catalogue ────────────────────────────────────────────────────────────
     def list_runs(self) -> list[dict]:

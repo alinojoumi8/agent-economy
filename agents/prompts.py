@@ -35,6 +35,9 @@ set_price{firm_id,price}, hire{application_id}, fire{employment_id},
 found_company{name,sector,lawyer_agent_id}, transfer{to_account,amount,memo},
 move_deposits{to_bank_id}, pitch_vc{firm_id,ask,summary}, buy_insurance{},
 cancel_insurance{}, say_public{text}, do_nothing.
+Role actions: approve_loan{application_id,rate_bps,term_ticks},
+deny_loan{application_id,reason}, set_policy_rate{rate_bps},
+fund_pitch{pitch_id,amount,equity_bps}, decline_pitch{pitch_id,reason}.
 Every field ending in _id, plus to_account, MUST be a JSON integer copied exactly from the
 provided context. Never emit labels such as "firm7", "job2", names, titles, or composite strings
 where an integer ID is required.
@@ -51,6 +54,7 @@ class ContextBuilder:
         self.store = economy.store
         self.mem = memory
         self.config = config
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
 
     # ── public: assemble per-role context ────────────────────────────────────
     def build(self, agent_row, tick: int) -> dict:
@@ -100,6 +104,8 @@ class ContextBuilder:
         cadence = load_json(a["cadence_json"], {}) or {}
         portfolio_every = int(cadence.get("portfolio", 7))
         portfolio_day = (tick % max(1, portfolio_every)) == (agent_id % max(1, portfolio_every))
+        career_every = int(cadence.get("career", 30))
+        career_day = (tick % max(1, career_every)) == (agent_id % max(1, career_every))
 
         heard = self._heard(agent_id, tick)
         memories = self.mem.retrieve(agent_id, tick, k=6, query_entities=self._query_entities(bank_id))
@@ -125,7 +131,7 @@ class ContextBuilder:
             "beliefs": beliefs,
             "prices": self._goods_offers(),
             "jobs": self._open_jobs(),
-            "listed_firms": self._listed_firms(),
+            "listed_firms": self._listed_firms(tick),
             "banks": self._bank_views(),
             "news": self._news_for(a, tick),
             "heard": heard,
@@ -133,6 +139,7 @@ class ContextBuilder:
             "policy_rate_bps": self.e.policy_rate_bps(),
             "metrics": self._metrics_snapshot(tick),
             "portfolio_day": portfolio_day,
+            "career_day": career_day,
         }
 
     def _insurance_offer(self) -> Optional[dict]:
@@ -168,8 +175,11 @@ class ContextBuilder:
         return heard
 
     def _goods_offers(self) -> list[dict]:
+        inventory_clause = "inventory>0" if self.engine_semantics_version >= 2 else "inventory>=0"
         firms = self.store.query(
-            "SELECT id, product_json, inventory FROM firms WHERE status IN ('private','listed') AND inventory>=0")
+            "SELECT id, product_json, inventory FROM firms "
+            f"WHERE status IN ('private','listed') AND {inventory_clause} "
+            "ORDER BY inventory DESC, id")
         out = []
         for f in firms:
             prod = load_json(f["product_json"], {}) or {}
@@ -183,11 +193,30 @@ class ContextBuilder:
                  "wage": int(j["wage_cents"])}
                 for j in self.store.query("SELECT * FROM jobs WHERE status='open' ORDER BY wage_cents DESC LIMIT 20")]
 
-    def _listed_firms(self) -> list[dict]:
+    def _listed_firms(self, tick: int) -> list[dict]:
         out = []
-        for f in self.store.query("SELECT id, name FROM firms WHERE status='listed'"):
-            out.append({"firm_id": int(f["id"]), "name": f["name"],
-                        "last_price": self.e.exchange.last_price(int(f["id"]))})
+        for f in self.store.query(
+                "SELECT id,name,account_id,inventory,product_json FROM firms "
+                "WHERE status='listed' ORDER BY id"):
+            firm_id = int(f["id"])
+            product = load_json(f["product_json"], {}) or {}
+            shares = int(self.store.scalar(
+                "SELECT COALESCE(SUM(qty),0) FROM shares WHERE firm_id=?",
+                (firm_id,), default=0))
+            cash = self.e.ledger.balance(int(f["account_id"]))
+            revenue_7 = int(self.store.scalar(
+                "SELECT COALESCE(SUM(json_extract(payload_json,'$.total_cents')),0) "
+                "FROM events WHERE kind='goods_sale' AND tick>? "
+                "AND json_extract(payload_json,'$.firm_id')=?",
+                (tick - 7, firm_id), default=0))
+            out.append({
+                "firm_id": firm_id, "name": f["name"],
+                "last_price": self.e.exchange.last_price(firm_id),
+                "book_value_per_share": round(cash / shares) if shares else None,
+                "cash": cash, "inventory": int(f["inventory"]),
+                "goods_price": int(product.get("unit_price_cents", 500)),
+                "recent_revenue_7": revenue_7,
+            })
         return out
 
     def _bank_views(self) -> list[dict]:
@@ -219,9 +248,17 @@ class ContextBuilder:
     def _firm_view(self, firm, tick: int) -> dict:
         firm_id = int(firm["id"])
         prod = load_json(firm["product_json"], {}) or {}
-        employees = self.store.query(
+        employee_summary = self.store.query(
             "SELECT COALESCE(SUM(wage_cents),0) AS pay, COUNT(*) AS n FROM employments "
             "WHERE firm_id=? AND status='active'", (firm_id,))[0]
+        employee_roster = [{
+            "employment_id": int(row["employment_id"]),
+            "agent_id": int(row["agent_id"]), "occupation": row["occupation"],
+            "wage": int(row["wage_cents"]),
+        } for row in self.store.query(
+            "SELECT e.id AS employment_id,e.agent_id,e.wage_cents,a.occupation "
+            "FROM employments e JOIN agents a ON a.id=e.agent_id "
+            "WHERE e.firm_id=? AND e.status='active' ORDER BY e.id", (firm_id,))]
         sales = int(self.store.scalar(
             "SELECT COUNT(*) FROM events WHERE kind='goods_sale' AND tick>=? "
             "AND json_extract(payload_json,'$.firm_id')=?", (tick - 3, firm_id), default=0))
@@ -231,12 +268,14 @@ class ContextBuilder:
         pending_pitch = self.store.query_one(
             "SELECT 1 FROM pitches WHERE firm_id=? AND status='pending'", (firm_id,))
         return {
-            "firm_id": firm_id, "name": firm["name"],
+            "firm_id": firm_id, "name": firm["name"], "sector": firm["sector"],
             "inventory": int(firm["inventory"]),
             "price": int(prod.get("unit_price_cents", 500)),
             "unit_cost": int(prod.get("base_input_cost_cents", 180) * self.e.firms.commodity_index()),
             "cash": self.e.ledger.balance(int(firm["account_id"])),
-            "employees": int(employees["n"]), "payroll": int(employees["pay"]),
+            "employees": int(employee_summary["n"]),
+            "employee_roster": employee_roster,
+            "payroll": int(employee_summary["pay"]),
             "recent_sales": sales, "target_headcount": int(self.config.get("firms", {}).get("target_headcount", 3)),
             "has_pending_loan": pending_loan is not None,
             "has_pending_pitch": pending_pitch is not None,
@@ -245,10 +284,15 @@ class ContextBuilder:
 
     def _firm_applications(self, firm_id: int) -> list[dict]:
         rows = self.store.query(
-            "SELECT ap.id AS application_id, ap.agent_id AS agent_id FROM applications ap "
-            "JOIN jobs j ON j.id=ap.job_id WHERE j.firm_id=? AND ap.state='pending' ORDER BY ap.id",
+            "SELECT ap.id AS application_id, ap.agent_id AS agent_id, ap.job_id AS job_id, "
+            "a.occupation AS occupation, a.age AS age FROM applications ap "
+            "JOIN jobs j ON j.id=ap.job_id JOIN agents a ON a.id=ap.agent_id "
+            "WHERE j.firm_id=? AND ap.state='pending' ORDER BY ap.id",
             (firm_id,))
-        return [{"application_id": int(r["application_id"]), "agent_id": int(r["agent_id"])} for r in rows]
+        return [{"application_id": int(r["application_id"]),
+                 "agent_id": int(r["agent_id"]), "job_id": int(r["job_id"]),
+                 "occupation": r["occupation"], "age": int(r["age"])}
+                for r in rows]
 
     # ── institutional contexts ───────────────────────────────────────────────
     def _credit_officer_context(self, a, tick: int) -> dict:
@@ -359,20 +403,46 @@ class ContextBuilder:
         heard = context.get("heard", [])
         if heard:
             lines.append("[HEARD]\n- " + "\n- ".join(h["text"] for h in heard[:5]))
+        metrics = context.get("metrics", {})
+        if metrics:
+            lines.append("[MACRO — MOST RECENT COMPLETED DAY] "
+                         + json.dumps(metrics, separators=(",", ":")))
+        banks = context.get("banks", [])
+        if banks:
+            lines.append("[BANKS — COPY id AS bank_id/to_bank_id] "
+                         + json.dumps(banks, separators=(",", ":")))
         prices = context.get("prices", [])
         if prices:
-            lines.append("[PRICES — COPY firm_id AS AN INTEGER] "
-                         + json.dumps(prices[:8], separators=(",", ":")))
+            lines.append("[GOODS — inventory IS CURRENT STOCK; COPY firm_id; "
+                         "NEVER REQUEST qty ABOVE inventory] "
+                         + json.dumps(prices[:16], separators=(",", ":")))
         jobs = context.get("jobs", [])
         if jobs:
             lines.append("[JOBS — COPY job_id AS AN INTEGER] "
                          + json.dumps(jobs[:6], separators=(",", ":")))
+        listed = context.get("listed_firms", [])
+        if listed:
+            lines.append("[LISTED FIRMS — COPY firm_id; last_price IS HISTORICAL; "
+                         "VALUE YOUR limit_price FROM FUNDAMENTALS] "
+                         + json.dumps(listed[:12], separators=(",", ":")))
+        if context.get("portfolio_day"):
+            lines.append("[PORTFOLIO REVIEW DUE] If you hold listed shares, consider a "
+                         "sell limit; if you have cash, consider a buy limit. Choose your "
+                         "own valuation from fundamentals, or deliberately do nothing.")
+        if context.get("career_day"):
+            lines.append("[CAREER REVIEW DUE] Reassess employment and the available jobs; "
+                         "apply with a supplied job_id or deliberately stay put.")
         if context.get("my_firm"):
             f = context["my_firm"]
-            lines.append(f"[YOUR FIRM] {f['name']} cash {f['cash']}c inv {f['inventory']} "
-                         f"price {f['price']}c employees {f['employees']}")
+            lines.append("[YOUR FIRM — COPY firm_id] "
+                         + json.dumps(f, separators=(",", ":")))
+        if context.get("firm_applications"):
+            lines.append("[APPLICANTS — COPY application_id TO hire] "
+                         + json.dumps(context["firm_applications"][:20],
+                                      separators=(",", ":")))
         if context.get("pending_loan_apps"):
-            lines.append("[LOAN APPLICATIONS] " + json.dumps(context["pending_loan_apps"]))
+            lines.append("[LOAN APPLICATIONS — COPY id AS application_id] "
+                         + json.dumps(context["pending_loan_apps"], separators=(",", ":")))
         if context.get("pending_pitches"):
             lines.append(f"[FUND] cash {context.get('fund_cash',0)}c · "
                          f"portfolio {json.dumps(context.get('portfolio', []))[:400]}")
@@ -384,5 +454,31 @@ class ContextBuilder:
             lines.append(f"[INSURANCE] {o['insurer']} offers health coverage: "
                          f"{o['premium']}c per {o['interval_ticks']} ticks, covers "
                          f"{o['coverage_bps']/100:.0f}% of medical bills (buy_insurance).")
-        lines.append("[TASK] Decide what you do today. Reply with the JSON envelope only.")
+        purpose = context.get("purpose", "decision")
+        if purpose == "central_banker":
+            lines.append("[CENTRAL BANK] current_rate_bps="
+                         f"{context.get('policy_rate_bps')} neutral_rate_bps="
+                         f"{context.get('neutral_rate_bps')} target_inflation="
+                         f"{context.get('target_inflation')} natural_unemployment="
+                         f"{context.get('natural_unemployment')}")
+            lines.append("[TASK] Assess the macro data and use set_policy_rate{rate_bps} "
+                         "only if a change is warranted; otherwise do_nothing.")
+        elif purpose == "credit_officer":
+            lines.append("[TASK] Underwrite every pending application from its real income, "
+                         "net worth, requested amount, bank risk, and policy rate. Use "
+                         "approve_loan{application_id,rate_bps,term_ticks} or "
+                         "deny_loan{application_id,reason}; otherwise do_nothing.")
+        elif purpose == "founder":
+            lines.append("[TASK] Manage your firm from cash, unit cost, inventory, recent "
+                         "sales, payroll, employee_roster, target headcount, and applicants. "
+                         "Consider pricing, "
+                         "hiring, funding, or a deliberate do_nothing; copy every supplied ID. "
+                         "Normally change price by at most 10% per review and avoid pricing "
+                         "below unit cost unless you are deliberately liquidating inventory.")
+        elif purpose == "vc_partner":
+            lines.append("[TASK] Evaluate pending pitches or deliberately do_nothing. "
+                         "Reply with the JSON envelope only.")
+        else:
+            lines.append("[TASK] Decide what you do today from the available goods, jobs, "
+                         "banks, and—when due—listed securities. Reply with the JSON envelope only.")
         return SYSTEM_PREFIX, "\n\n".join(lines)

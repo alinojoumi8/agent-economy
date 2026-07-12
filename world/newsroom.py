@@ -34,14 +34,22 @@ class Newsroom:
         if not events:
             return []
         directives = self.shocks.active_slant_directives(tick) if self.shocks else {}
-        articles = []
+        pending = []
         for outlet in self.outlets:
+            if self.store.query_one(
+                    "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
+                    (tick, outlet["id"])):
+                continue
             # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4 candidate
             # stories from true events; the editor selects and frames per slant.
             drafts = await self._report_stories(tick, outlet, events)
             art = await self._write_story(tick, outlet, events, directives.get(outlet["id"]),
                                           drafts=drafts)
             if art and art.get("headline"):
+                pending.append((outlet, art))
+        articles = []
+        with self.store.savepoint(f"newsroom_{tick}"):
+            for outlet, art in pending:
                 aid = self.store.insert(
                     "news_articles", tick=tick, outlet_id=outlet["id"], outlet_name=outlet["name"],
                     headline=art["headline"][:200], body=art.get("body", "")[:2000],
@@ -128,8 +136,12 @@ class Conversations:
         self.mem = Memory(self.store)
         self.turns = int(config.get("conversations", {}).get("turns", 3))
 
-    async def evening(self, tick: int) -> int:
-        pairs = self._sample_pairs(tick, self.gw.governor.conversation_pairs())
+    def plan_pairs(self, tick: int) -> list[tuple[int, int]]:
+        return self._sample_pairs(tick, self.gw.governor.conversation_pairs())
+
+    async def evening(self, tick: int,
+                      pairs: Optional[list[tuple[int, int]]] = None) -> int:
+        pairs = self.plan_pairs(tick) if pairs is None else pairs
         count = 0
         for a, b in pairs:
             await self._converse(tick, a, b)
@@ -177,13 +189,16 @@ class Conversations:
         return chosen
 
     async def _converse(self, tick: int, a_id: int, b_id: int) -> None:
-        conv_id = self.store.insert("conversations", tick=tick,
-                                    participant_ids=json.dumps([a_id, b_id]), topic=None)
+        participant_ids = json.dumps([a_id, b_id])
+        if self.store.query_one(
+                "SELECT id FROM conversations WHERE tick=? AND participant_ids=?",
+                (tick, participant_ids)):
+            return
         names = {aid: self.store.scalar("SELECT name FROM agents WHERE id=?", (aid,), default="?")
                  for aid in (a_id, b_id)}
         rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
         shared_topic = self._shared_topic(tick)
-        seq = 0
+        transcript = []
         for turn in range(self.turns):
             speaker, listener = (a_id, b_id) if turn % 2 == 0 else (b_id, a_id)
             context = {"tick": tick, "speaker_id": speaker,
@@ -206,9 +221,6 @@ class Conversations:
             text = str(env.get("text", "")).strip()[:300]
             if not text:
                 continue
-            self.store.insert("messages", conv_id=conv_id, tick=tick, agent_id=speaker,
-                              text=text, seq=seq)
-            seq += 1
             # The listener hears the line → observation (rumor propagation medium).
             ents = ["conversation", f"agent:{speaker}"]
             rumor_bank = env.get("rumor_bank")
@@ -218,11 +230,26 @@ class Conversations:
                 ents.append(f"bank:{int(rumor_bank)}")
                 importance = 3.0
                 rumors[listener] = int(rumor_bank)  # they may pass it on next turn
-            self.mem.observe(listener, tick, f"{names[speaker]} said: {text}",
-                             importance=importance, entities=ents)
-        self.store.log_event(tick, "conversation", {
-            "conv_id": conv_id, "participants": [a_id, b_id], "turns": seq},
-            phase="EVENING", importance=0.5)
+            transcript.append({
+                "speaker": speaker, "listener": listener, "text": text,
+                "importance": importance, "entities": ents,
+            })
+        with self.store.savepoint(f"conversation_{tick}_{a_id}_{b_id}"):
+            conv_id = self.store.insert(
+                "conversations", tick=tick, participant_ids=participant_ids,
+                topic=shared_topic)
+            for seq, line in enumerate(transcript):
+                self.store.insert(
+                    "messages", conv_id=conv_id, tick=tick,
+                    agent_id=line["speaker"], text=line["text"], seq=seq)
+                self.mem.observe(
+                    line["listener"], tick,
+                    f"{names[line['speaker']]} said: {line['text']}",
+                    importance=line["importance"], entities=line["entities"])
+            self.store.log_event(tick, "conversation", {
+                "conv_id": conv_id, "participants": [a_id, b_id],
+                "turns": len(transcript)},
+                phase="EVENING", importance=0.5)
 
     def _rumor_held(self, agent_id: int, tick: int) -> Optional[int]:
         rows = self.store.query(

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,13 +14,15 @@ from fastapi.testclient import TestClient
 from agents.memory import Memory
 from engine.ledger import ReconciliationError
 from engine.store import Store, load_json
-from llm.adapters import AdapterResult
+from llm.adapters import AdapterResult, OpenAICompatAdapter
 from llm.gateway import Gateway, LLMRequest
 from llm.readiness import validate_llm_config
-from run import load_config, open_run
+from run import load_config, open_run, replay_headless
 from server.app import create_app
-from world.loop import World
+from server.controller import RunController
+from world.loop import LEGACY_PHASES, PHASES, World
 from world.replay_verify import verify_replay
+from oracle.tools import OracleToolError
 
 
 def _config(tmp_path: Path, **over) -> dict:
@@ -50,6 +54,200 @@ def _world(tmp_path: Path, name: str = "acceptance.db", **over) -> World:
     world = World(store, cfg)
     world.initialize()
     return world
+
+
+def test_finalize_metrics_include_same_day_sales_and_are_idempotent(tmp_path):
+    world = _world(tmp_path, "finalize-metrics.db")
+    buyer_id = int(world.store.scalar(
+        "SELECT ag.id FROM agents ag JOIN accounts a ON a.id=ag.checking_account_id "
+        "WHERE ag.alive=1 ORDER BY a.balance_cents DESC, ag.id LIMIT 1"))
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+
+    async def no_decisions(tick):
+        return []
+
+    def buy_during_execution(tick, decisions):
+        result = world.economy.firms.buy_goods(tick, buyer_id, firm_id, 1)
+        assert result["ok"]
+
+    world.runtime.decide_all = no_decisions
+    world.runtime.execute_decisions = buy_during_execution
+    asyncio.run(world.step())
+
+    sale_cents = int(world.store.scalar(
+        "SELECT json_extract(payload_json,'$.total_cents') FROM events "
+        "WHERE tick=1 AND kind='goods_sale' LIMIT 1"))
+    assert world.store.metric_at_or_before("gdp_proxy", 1) == pytest.approx(sale_cents / 100)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='gdp_proxy'") == 1
+
+    world._phase_finalize(1)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='gdp_proxy'") == 1
+    world.store.close()
+
+
+def test_finalize_reconciliation_catches_execution_corruption(tmp_path):
+    world = _world(tmp_path, "finalize-reconcile.db")
+    account_id = int(world.store.scalar("SELECT id FROM accounts ORDER BY id LIMIT 1"))
+
+    async def no_decisions(tick):
+        return []
+
+    def corrupt_during_execution(tick, decisions):
+        world.store.execute(
+            "UPDATE accounts SET balance_cents=balance_cents+1 WHERE id=?", (account_id,))
+
+    world.runtime.decide_all = no_decisions
+    world.runtime.execute_decisions = corrupt_during_execution
+    with pytest.raises(ReconciliationError):
+        asyncio.run(world.step())
+
+    meta = world.store.get_meta()
+    assert meta["status"] == "halted"
+    assert meta["tick"] == 0 and meta["active_tick"] == 1
+    assert meta["next_phase"] == "FINALIZE"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='reconciliation_failure'") == 1
+    world.store.close()
+
+
+def test_cpi_uses_fixed_genesis_goods_basket(tmp_path):
+    world = _world(tmp_path, "fixed-cpi.db")
+    baseline = world.metrics._cpi()
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE founded_tick=0 "
+        "AND sector NOT IN ('health','insurance') ORDER BY id LIMIT 1"))
+    world.store.update("firms", firm_id, status="bankrupt", bankrupt_tick=1)
+    world.store.insert(
+        "firms", name="Diagnostic Hospital", sector="health", status="private",
+        product_json=json.dumps({"product": "care", "unit_price_cents": 999999}),
+        founded_tick=0)
+
+    assert world.metrics._cpi() == pytest.approx(baseline)
+    world.store.close()
+
+
+def test_goods_context_excludes_zero_inventory(tmp_path):
+    world = _world(tmp_path, "stocked-offers.db")
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+    world.store.update("firms", firm_id, inventory=0)
+    assert firm_id not in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
+    world.store.update("firms", firm_id, inventory=1)
+    assert firm_id in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
+    world.store.close()
+
+
+def test_real_model_prompt_exposes_market_and_founder_decision_surfaces(tmp_path):
+    world = _world(
+        tmp_path, "rendered-market-context.db",
+        population={"size": 30},
+        firms={"count": 12, "listed": 3, "target_headcount": 3},
+    )
+    world.store.execute(
+        "UPDATE firms SET inventory=100 WHERE status IN ('private','listed')")
+    founder = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN firms f ON f.founder_agent_id=a.id "
+        "WHERE f.status IN ('private','listed') ORDER BY f.id LIMIT 1")
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE founder_agent_id=?", (founder["id"],)))
+    applicant_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' AND id<>? ORDER BY id DESC LIMIT 1",
+        (founder["id"],)))
+    job_id = world.economy.labor.post_job(0, firm_id, "Operator", 250000)
+    application_id = world.economy.labor.apply_job(0, applicant_id, job_id)
+
+    context = world.runtime.ctx.build(founder, 1)
+    context["portfolio_day"] = True
+    context["career_day"] = True
+    system, prompt = world.runtime.ctx.render_prompt(context)
+
+    assert "approve_loan{application_id,rate_bps,term_ticks}" in system
+    assert "[MACRO" in prompt and "[BANKS" in prompt
+    assert "[LISTED FIRMS" in prompt and "[PORTFOLIO REVIEW DUE]" in prompt
+    assert "VALUE YOUR limit_price FROM FUNDAMENTALS" in prompt
+    assert "[CAREER REVIEW DUE]" in prompt
+    assert '"book_value_per_share":' in prompt
+    assert '"recent_revenue_7":' in prompt
+    assert "[YOUR FIRM" in prompt and '"unit_cost":' in prompt
+    assert '"employee_roster":' in prompt and '"employment_id":' in prompt
+    assert '"target_headcount":3' in prompt
+    assert "[APPLICANTS" in prompt
+    assert f'"application_id":{application_id}' in prompt
+    assert f'"occupation":' in prompt
+    assert "Manage your firm" in prompt
+    assert "at most 10% per review" in prompt
+    visible_goods = context["prices"][:16]
+    assert len(visible_goods) == 12
+    assert all(f'"firm_id":{offer["firm_id"]}' in prompt for offer in visible_goods)
+
+    central_banker = world.store.query_one(
+        "SELECT * FROM agents WHERE role='central_banker' LIMIT 1")
+    cb_prompt = world.runtime.ctx.render_prompt(
+        world.runtime.ctx.build(central_banker, 1))[1]
+    assert "[CENTRAL BANK]" in cb_prompt
+    assert "set_policy_rate{rate_bps}" in cb_prompt
+    assert "natural_unemployment=" in cb_prompt
+
+    founder_id = int(founder["id"])
+    cadence = load_json(founder["cadence_json"], {})
+    portfolio_tick = founder_id % int(cadence["portfolio"])
+    career_tick = founder_id % int(cadence["career"])
+    assert world.runtime.scheduler._citizen_wakes(founder, portfolio_tick, 1)
+    assert world.runtime.scheduler._citizen_wakes(founder, career_tick, 1)
+
+    class CapturingGateway:
+        def __init__(self):
+            self.request = None
+
+        async def complete(self, request, **_kwargs):
+            self.request = request
+            return SimpleNamespace(parsed={
+                "reasoning": "wait", "actions": [{"type": "do_nothing"}],
+                "belief_updates": [],
+            })
+
+    gateway = CapturingGateway()
+    world.runtime.gw = gateway
+    asyncio.run(world.runtime._decide_one(1, founder))
+    assert gateway.request.max_tokens == 900
+    world.store.close()
+
+
+def test_engine_semantics_version_preserves_markerless_runs(tmp_path):
+    cfg = _config(tmp_path)
+    fresh_store, fresh_world, _ = open_run(cfg, None, None, data_dir=tmp_path)
+    persisted = json.loads(fresh_store.get_meta()["config_json"])
+    assert persisted["engine_semantics_version"] == 2
+    assert fresh_world.phases == PHASES
+    fresh_store.close()
+
+    legacy_id = "markerless-legacy"
+    legacy_store = Store(str(tmp_path / f"{legacy_id}.db"))
+    legacy_store.init_run_meta(legacy_id, int(cfg["seed"]), cfg)
+    legacy_store.close()
+
+    resumed_store, resumed_world, _ = open_run(
+        {}, legacy_id, None, data_dir=tmp_path)
+    assert resumed_world.engine_semantics_version == 1
+    assert resumed_world.phases == LEGACY_PHASES
+    resumed_world.initialize()
+    firm_id = int(resumed_store.scalar(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1"))
+    resumed_store.update("firms", firm_id, inventory=0)
+    assert firm_id in {
+        offer["firm_id"] for offer in resumed_world.runtime.ctx._goods_offers()}
+    resumed_store.close()
+
+    replay_store, replay_world, _ = open_run(
+        {}, None, legacy_id, data_dir=tmp_path)
+    assert replay_world.engine_semantics_version == 1
+    assert replay_world.phases == LEGACY_PHASES
+    assert json.loads(replay_store.get_meta()["config_json"])[
+        "engine_semantics_version"] == 1
+    replay_store.close()
 
 
 def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
@@ -102,6 +300,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
 
 def test_production_config_inherits_world_and_requires_both_keys():
     cfg = load_config("runs/production.yaml")
+    assert cfg["budget"]["cap_usd"] is None
     assert cfg["population"]["size"] == 87
     assert cfg["banks"]["count"] == 2
     assert cfg["llm"]["default_route"] == {
@@ -123,11 +322,11 @@ def test_production_config_inherits_world_and_requires_both_keys():
     missing = validate_llm_config(cfg, environ={}, raise_on_error=False)
     assert not missing["ready"]
     assert any("MINIMAX_API_KEY" in error for error in missing["errors"])
-    assert any("MOONSHOT_API_KEY" in error for error in missing["errors"])
+    assert any("KIMI_API_KEY" in error for error in missing["errors"])
 
     ready = validate_llm_config(
         cfg, environ={"MINIMAX_API_KEY": "sk-cp-present",
-                      "MOONSHOT_API_KEY": "sk-kimi-present"},
+                      "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert ready["ready"] and ready["mode"] == "network"
     assert {p["name"] for p in ready["providers"]} == {"minimax", "kimi"}
@@ -139,7 +338,7 @@ def test_production_config_inherits_world_and_requires_both_keys():
     mismatch = validate_llm_config(
         wrong_service,
         environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+                 "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert not mismatch["ready"]
     assert any("Kimi Code key" in error for error in mismatch["errors"])
@@ -150,14 +349,15 @@ def test_production_config_inherits_world_and_requires_both_keys():
     minimax_mismatch = validate_llm_config(
         wrong_minimax_service,
         environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "MOONSHOT_API_KEY": "sk-kimi-present"},
+                 "KIMI_API_KEY": "sk-kimi-present"},
         raise_on_error=False)
     assert not minimax_mismatch["ready"]
     assert any("MiniMax Token Plan key" in error
                for error in minimax_mismatch["errors"])
 
 
-def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path):
+def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
     cfg = _config(tmp_path)
     cfg["llm"] = {
         "provider_retries": 1,
@@ -196,9 +396,59 @@ def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path)
     row = store.query_one("SELECT * FROM llm_calls ORDER BY id DESC LIMIT 1")
     assert row["cached"] == 1
     assert load_json(row["response_json"], {})["cached_in_tokens"] == 80
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "llm.request.retry" in events
+    assert "llm.request.completed" in events
+    completed = next(record for record in caplog.records
+                     if getattr(record, "event_name", "") == "llm.request.completed")
+    assert completed.event_fields["attempts"] == 2
+    assert completed.event_fields["cached_in_tokens"] == 80
 
 
-def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path):
+def test_openai_compat_returns_metered_empty_completion_for_contract_repair(monkeypatch):
+    import httpx
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+                "usage": {
+                    "prompt_tokens": 120, "completion_tokens": 4096,
+                    "prompt_tokens_details": {"cached_tokens": 80},
+                },
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    adapter = OpenAICompatAdapter({
+        "base_url": "https://provider.invalid/v1", "api_key_env": "TEST_KEY",
+    })
+    result = asyncio.run(adapter.complete("model", [{"role": "user", "content": "JSON"}]))
+
+    assert result.text == ""
+    assert result.in_tokens == 120 and result.out_tokens == 4096
+    assert result.cached_in_tokens == 80
+    assert result.raw["choices"][0]["finish_reason"] == "length"
+
+
+def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
+    caplog.set_level(logging.INFO, logger="agent_economy.world")
     world = _world(tmp_path, "provider.db")
 
     class AlwaysFail:
@@ -213,14 +463,271 @@ def test_provider_failure_pauses_on_a_reconciled_checkpoint(tmp_path):
 
     assert summary["paused"] == "provider"
     assert summary["phase"] == "MORNING"
-    assert world.status == "paused" and world.store.tick == 1
+    assert world.status == "paused" and world.store.tick == 0
+    assert world.store.active_tick == 1
+    assert world.store.next_phase == "MORNING"
     assert world.store.get_meta()["status"] == "paused"
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_failure'") > 0
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "llm.request.failed" in events
+    assert "world.pause.completed" in events
     checkpoint = world.store.query_one("SELECT path FROM checkpoints ORDER BY id DESC LIMIT 1")
     assert checkpoint and Path(checkpoint["path"]).exists()
     ok, diag = world.economy.ledger.reconcile()
     assert ok, diag
+
+
+def test_provider_pause_resumes_same_phase_without_duplicate_calls(tmp_path):
+    world = _world(tmp_path, "provider-resume.db")
+    delegate = world.gateway.adapters["scripted"]
+
+    class FailOnceMidPhase:
+        def __init__(self):
+            self.calls = 0
+            self.failed = False
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 3 and not self.failed:
+                self.failed = True
+                raise RuntimeError("synthetic mid-phase outage")
+            return await delegate.complete(*args, **kwargs)
+
+        async def healthcheck(self, model):
+            return {"ok": True, "model": model, "live": False}
+
+    adapter = FailOnceMidPhase()
+    world.gateway.adapters["scripted"] = adapter
+    paused = asyncio.run(world.step())
+
+    assert paused["paused"] == "provider"
+    assert world.store.tick == 0
+    assert world.store.active_tick == 1
+    assert world.store.next_phase == "MORNING"
+    calls_before_resume = world.store.scalar("SELECT COUNT(*) FROM llm_calls")
+    assert calls_before_resume > 0
+
+    world._pause_requested = False
+    resumed = asyncio.run(world.step())
+
+    assert resumed["tick"] == 1
+    assert world.store.tick == 1
+    assert world.store.active_tick is None
+    assert world.store.next_phase == "NIGHT_CLOSE"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls") == world.store.scalar(
+            "SELECT COUNT(DISTINCT cache_key) FROM llm_calls")
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM metrics WHERE tick=1 AND name='cpi'") == 1
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
+
+
+def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
+    world = _world(tmp_path, "oracle-tools.db")
+    asyncio.run(world.step())
+    tools = world.oracle.tools
+    changes_before_reads = world.store.conn.total_changes
+
+    metrics = tools.query_metrics(
+        ["cpi", "unemployment"], from_tick=0, to_tick=1, limit=20)
+    assert metrics["cpi"] and metrics["unemployment"]
+    assert tools.inspect_agent(1)["agent"]["id"] == 1
+    ledger_agent = int(world.store.scalar(
+        "SELECT owner_id FROM accounts WHERE owner_type='agent' "
+        "AND owner_id IS NOT NULL ORDER BY owner_id LIMIT 1"))
+    assert tools.get_ledger_summary("agent", ledger_agent)["accounts"]
+    assert isinstance(tools.read_news(from_tick=0, to_tick=1, limit=5), list)
+    assert isinstance(tools.sample_conversations(
+        from_tick=0, to_tick=1, limit=5), list)
+    assert isinstance(tools.read_order_book(depth=5), list)
+    assert world.store.conn.total_changes == changes_before_reads
+
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([{"tool": "execute_sql", "args": {
+            "sql": "DELETE FROM accounts"}}])
+    with pytest.raises(OracleToolError, match="invalid arguments"):
+        tools.execute_plan([{"tool": "get_ledger_summary", "args": {
+            "entity_type": "bank", "entity_id": 1,
+            "available_bank_ids": [1, 2],
+        }}])
+    with pytest.raises(OracleToolError):
+        tools.read_order_book(depth=21)
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([
+            {"tool": "read_news", "args": {"limit": 1}}
+            for _ in range(9)])
+
+    answer = asyncio.run(world.oracle.ask(
+        "What is the probability of a bank run within 30 ticks?"))
+    assert answer["prediction_id"]
+    assert answer["evidence"]
+    prediction = world.store.query_one(
+        "SELECT * FROM predictions WHERE id=?", (answer["prediction_id"],))
+    evidence = load_json(prediction["evidence_json"], [])
+    assert {item["tool"] for item in evidence} >= {
+        "query_metrics", "read_news", "sample_conversations",
+        "get_ledger_summary"}
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='oracle_plan'") == 1
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='oracle'") == 1
+    with TestClient(create_app(world)) as client:
+        payload = client.get("/api/oracle/predictions").json()
+    assert payload["predictions"][0]["evidence"] == evidence
+
+
+def test_oracle_repairs_a_rejected_plan_before_answering(tmp_path):
+    world = _world(tmp_path, "oracle-plan-repair.db")
+    asyncio.run(world.step())
+
+    class RepairingGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, req, **_kwargs):
+            self.requests.append(req)
+            plans = [r for r in self.requests if r.purpose == "oracle_plan"]
+            if req.purpose == "oracle_plan" and len(plans) == 1:
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics", "args": {
+                        "names": ["gdp_proxy"], "from_tick": -1,
+                        "to_tick": world.store.tick, "limit": 10,
+                    },
+                }]})
+            if req.purpose == "oracle_plan":
+                assert req.context["previous_plan_error"] == "invalid tick range"
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics", "args": {
+                        "names": ["gdp_proxy"], "from_tick": 0,
+                        "to_tick": world.store.tick, "limit": 10,
+                    },
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.25, "drivers": ["stable output"], "confidence": "med",
+                "resolution_rule": {"type": "bank_failure"},
+                "deadline_tick": world.store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = RepairingGateway()
+    world.oracle.gw = gateway
+    answer = asyncio.run(world.oracle.ask("Will a bank fail within 30 ticks?"))
+
+    assert [req.purpose for req in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle"]
+    assert answer["evidence"][0]["tool"] == "query_metrics"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_tool_plan_rejected'") == 1
+
+
+def test_oracle_can_repair_a_schema_error_then_an_unknown_entity(tmp_path):
+    world = _world(tmp_path, "oracle-second-repair.db")
+    asyncio.run(world.step())
+    bank_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM banks ORDER BY id")]
+
+    class TwiceRepairingGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, req, **_kwargs):
+            self.requests.append(req)
+            plans = [r for r in self.requests if r.purpose == "oracle_plan"]
+            if req.purpose == "oracle_plan" and len(plans) == 1:
+                assert req.context["available_tools"][4][
+                    "available_entity_ids"]["bank"] == bank_ids
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": None},
+                }]})
+            if req.purpose == "oracle_plan" and len(plans) == 2:
+                assert req.context["previous_plan_error"] == "entity_id is required"
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": 99999},
+                }]})
+            if req.purpose == "oracle_plan":
+                assert req.context["previous_plan_error"] == (
+                    "entity ledger accounts not found")
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": bank_ids[0]},
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.2, "drivers": ["stable deposits"], "confidence": "med",
+                "resolution_rule": {"type": "bank_failure"},
+                "deadline_tick": world.store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = TwiceRepairingGateway()
+    world.oracle.gw = gateway
+    answer = asyncio.run(world.oracle.ask("Will a bank fail within 30 ticks?"))
+
+    assert [req.purpose for req in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle_plan", "oracle"]
+    assert answer["evidence"][0]["result"]["entity_id"] == bank_ids[0]
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_tool_plan_rejected'") == 2
+
+
+def test_replay_falls_back_to_recorded_semantic_call_identity(tmp_path):
+    config = _config(tmp_path)
+    source_path = tmp_path / "compat-source.db"
+    source = Store(str(source_path))
+    source.init_run_meta("compat-source", config["seed"], config)
+    source_gateway = Gateway(source, config)
+    old_request = LLMRequest(
+        role="citizen", purpose="decision", system="old prompt",
+        user="old context", agent_id=1, tick=0)
+    asyncio.run(source_gateway.complete(old_request))
+    original = source.query_one("SELECT * FROM llm_calls")
+    source.close()
+
+    replay_config = {
+        **config, "replay": True,
+        "replay_source_path": str(source_path),
+    }
+    replay = Store(str(tmp_path / "compat-replay.db"))
+    replay.init_run_meta("compat-replay", config["seed"], replay_config)
+    replay_gateway = Gateway(replay, replay_config)
+    changed_request = LLMRequest(
+        role="citizen", purpose="decision", system="improved prompt",
+        user="new context", agent_id=1, tick=0)
+    response = asyncio.run(replay_gateway.complete(changed_request))
+    copied = replay.query_one("SELECT * FROM llm_calls")
+
+    assert response.text
+    assert copied["cache_key"] == original["cache_key"]
+    assert copied["request_json"] == original["request_json"]
+    assert replay.scalar("SELECT COUNT(*) FROM llm_calls") == 1
+
+
+def test_exact_replay_reasks_recorded_oracle_predictions(tmp_path):
+    config = _config(tmp_path)
+    source_store, source_world, source_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    asyncio.run(source_world.run(max_ticks=1))
+    asyncio.run(source_world.oracle.ask("Will a bank fail within 30 ticks?"))
+    asyncio.run(source_world.run(max_ticks=2))
+    source_tick = source_store.tick
+    source_store.close()
+
+    replay_store, replay_world, _ = open_run(
+        config, None, source_id, data_dir=tmp_path)
+    asyncio.run(replay_headless(replay_world, source_tick))
+    proof = verify_replay(tmp_path / f"{source_id}.db", replay_store.path)
+
+    assert replay_store.scalar("SELECT COUNT(*) FROM predictions") == 1
+    assert proof["exact"], proof["differences"]
 
 
 def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):
@@ -237,7 +744,8 @@ def test_active_reconciliation_failure_halts_and_checkpoints(tmp_path):
     assert world.store.scalar(
         "SELECT COUNT(*) FROM events WHERE kind='reconciliation_failure'") == 1
     assert list(tmp_path.glob("halt.halt_t1.json"))
-    assert world.store.scalar("SELECT COUNT(*) FROM checkpoints WHERE tick=1") == 1
+    assert world.store.active_tick == 1
+    assert world.store.scalar("SELECT COUNT(*) FROM checkpoints WHERE tick=0") == 1
 
 
 def test_interactive_stop_generates_complete_standalone_report(tmp_path):
@@ -253,9 +761,13 @@ def test_interactive_stop_generates_complete_standalone_report(tmp_path):
     md_path = html_path.with_suffix(".md")
     assert html_path.exists() and md_path.exists()
     html = html_path.read_text(encoding="utf-8")
+    markdown = md_path.read_text(encoding="utf-8")
     for section in ("Narrative", "Timeline of key events", "Metrics", "Oracle scorecard",
                     "Cost summary", "Reproduction"):
         assert section in html
+    for section in ("Reviewer companion", "Metric snapshot", "Oracle", "Cost",
+                    "Reproduction", f"Seed: `{world.store.get_meta()['seed']}`"):
+        assert section in markdown
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 1
 
 
@@ -274,6 +786,43 @@ def test_running_world_stop_finishes_with_report(tmp_path):
     assert world.last_report_path and Path(world.last_report_path).exists()
     assert world.store.get_meta()["status"] == "finished"
     assert world.store.scalar("SELECT COUNT(*) FROM events WHERE kind='report_generated'") == 1
+
+
+def test_controller_reopens_reported_run_and_rejects_halted_mutations(tmp_path):
+    world = _world(tmp_path, "controller-transitions.db")
+    app = create_app(world)
+    with TestClient(app) as client:
+        speed = client.post("/api/run/speed", json={"delay_s": 1.0})
+        assert speed.status_code == 200
+        assert client.get("/api/run/status").json()["speed_delay_s"] == 1.0
+
+        stopped = client.post("/api/run/stop")
+        assert stopped.status_code == 200
+        report_path = stopped.json()["report_path"]
+        tick = world.store.tick
+
+        stepped = client.post("/api/run/step")
+        assert stepped.status_code == 200
+        assert world.store.tick == tick + 1
+        assert world.status == "paused"
+        assert world.last_report_path is None
+        assert report_path
+
+        world.status = "halted"
+        world.store.set_meta(status="halted")
+        world.store.commit()
+        mutations = (
+            client.post("/api/run/start"),
+            client.post("/api/run/step"),
+            client.post("/api/run/pause"),
+            client.post("/api/run/stop"),
+            client.post("/api/run/speed", json={"delay_s": 0.0}),
+            client.post("/api/shocks", json={
+                "kind": "oil", "trigger_type": "shock",
+                "params": {"multiplier": 2.0},
+            }),
+        )
+        assert all(response.status_code == 409 for response in mutations)
 
 
 def test_weekly_memory_is_synthesized_before_daily_sources_are_demoted(tmp_path):
@@ -335,9 +884,13 @@ def test_two_year_lifecycle_run_settles_death_and_integrates_arrival(tmp_path):
     assert ok, diag
 
 
-def test_websocket_payload_is_emitted_within_two_seconds(tmp_path):
+def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG, logger="agent_economy.server")
     world = _world(tmp_path, "ws.db")
     app = create_app(world)
+    assert isinstance(app.state.run_controller, RunController)
+    assert app.state.run_controller.world is world
+    assert world.on_tick == app.state.run_controller.on_tick
     with TestClient(app) as client:
         with client.websocket_connect("/ws") as ws:
             initial = ws.receive_json()
@@ -348,6 +901,32 @@ def test_websocket_payload_is_emitted_within_two_seconds(tmp_path):
             payload = ws.receive_json()
             assert payload["tick"] == 1
             assert int(time.time() * 1000) - payload["emitted_at_ms"] < 2_000
+        rejected = client.post("/api/shocks", json={"kind": "not-a-shock"})
+        assert rejected.status_code == 400
+        rejected_trigger = client.post("/api/shocks", json={
+            "kind": "oil", "trigger_type": "invalid-trigger"})
+        assert rejected_trigger.status_code == 400
+        rejected_duration = client.post("/api/shocks", json={
+            "kind": "oil", "duration_ticks": -1})
+        assert rejected_duration.status_code == 400
+
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "server.started" in events and "server.stopped" in events
+    assert "websocket.connected" in events and "websocket.disconnected" in events
+    assert "run.step.completed" in events
+    assert "shock.rejected" in events
+    started = [record for record in caplog.records
+               if getattr(record, "event_name", "") == "http.request.started"]
+    assert any(record.event_fields == {"method": "POST", "path": "/api/run/step"}
+               for record in started)
+    assert any(record.event_fields == {"method": "POST", "path": "/api/shocks"}
+               for record in started)
+    completed = [record for record in caplog.records
+                 if getattr(record, "event_name", "") == "http.request.completed"]
+    assert any(record.event_fields["path"] == "/api/run/step"
+               and record.event_fields["status_code"] == 200 for record in completed)
+    assert any(record.event_fields["path"] == "/api/shocks"
+               and record.event_fields["status_code"] == 400 for record in completed)
 
 
 def test_react_dashboard_bundle_is_local_and_current():

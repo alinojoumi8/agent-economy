@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { number } from "../api";
+import { calibrationView } from "../calibration.js";
+import { clientLog } from "../logging.js";
 import { Badge, Empty, Panel } from "./ui";
 
 const SUGGESTIONS = [
@@ -19,11 +21,17 @@ export function OraclePanel({ oracle, act }) {
     if (!question.trim()) return;
     setAsking(true);
     try { setAnswer(await act("/api/oracle/ask", { question: question.trim() })); }
+    catch (reason) {
+      clientLog("dashboard.oracle.failed", {
+        error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    }
     finally { setAsking(false); }
   }
 
   return (
-    <Panel title="Ask the Oracle" eyebrow="Read-only · resolved · scored" className="col-span-full xl:col-span-8" action={<Badge tone={score.n_resolved ? "good" : "neutral"}>{score.n_resolved || 0} resolved</Badge>}>
+    <Panel title="Ask the Oracle" eyebrow="Read-only · resolved · scored" className="col-span-full xl:col-span-8" action={<Badge tone={score.resolved ? "good" : "neutral"}>{score.resolved || 0} resolved</Badge>}>
       <div className="grid min-h-[330px] gap-0 md:grid-cols-[1fr_270px]">
         <div className="border-b border-mint-300/10 p-4 md:border-b-0 md:border-r">
           <div className="mb-4 min-h-32 rounded-xl border border-mint-300/10 bg-ink-950/50 p-4">
@@ -49,6 +57,67 @@ export function OraclePanel({ oracle, act }) {
           </article>) : <Empty>No predictions yet.</Empty>}
         </div>
       </div>
+    </Panel>
+  );
+}
+
+export function CalibrationPanel({ calibration }) {
+  const [scope, setScope] = useState("run");
+  const view = calibrationView(calibration?.[scope]);
+  const errors = calibration?.errors || [];
+
+  return (
+    <Panel title="Oracle calibration" eyebrow="Reliability · resolution · uncertainty" className="col-span-full">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-mint-300/10 px-4 py-3">
+        <div className="flex gap-1.5" role="group" aria-label="Calibration scope">
+          <button className={`button ${scope === "run" ? "button-primary" : ""}`} onClick={() => setScope("run")}>Current run</button>
+          <button className={`button ${scope === "all" ? "button-primary" : ""}`} onClick={() => setScope("all")}>All runs</button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge tone={view.beatsNaive ? "good" : view.beatsNaive === false ? "warn" : "neutral"}>
+            {view.beatsNaive === null ? "awaiting outcomes" : view.beatsNaive ? "beats p=0.5" : "below baseline"}
+          </Badge>
+          <Badge>{view.n} resolved</Badge>
+          {view.runs !== null && <Badge>{view.runs} runs scanned</Badge>}
+        </div>
+      </div>
+      {errors.length > 0 && <div className="border-b border-gold-300/15 bg-gold-300/[.04] px-4 py-2 text-xs text-gold-300">Calibration refresh warning: {errors.join(" · ")}</div>}
+      {view.empty ? <div className="p-5"><Empty>No resolved forecasts in this scope yet. Calibration appears after outcomes resolve.</Empty></div> :
+        <div className="grid gap-0 lg:grid-cols-[360px_1fr]">
+          <div className="border-b border-mint-300/10 p-4 lg:border-b-0 lg:border-r">
+            <svg viewBox="0 0 100 100" className="mx-auto aspect-square w-full max-w-[300px]" role="img" aria-label="Oracle forecast reliability curve">
+              <rect x="0" y="0" width="100" height="100" rx="4" className="fill-ink-950 stroke-mint-300/10" />
+              <line x1="0" y1="100" x2="100" y2="0" className="stroke-slate-600" strokeDasharray="3 3" />
+              {view.points.map(point => <g key={point.label}>
+                <line x1={point.forecast * 100} y1="100" x2={point.forecast * 100} y2={(1 - point.observed) * 100} className="stroke-mint-300/30" />
+                <circle cx={point.forecast * 100} cy={(1 - point.observed) * 100} r={Math.min(5, 2 + Math.sqrt(point.n))} className="fill-mint-300 stroke-ink-950" />
+              </g>)}
+              <text x="50" y="98" textAnchor="middle" className="fill-slate-500 text-[5px]">mean forecast probability</text>
+              <text x="3" y="50" transform="rotate(-90 3 50)" textAnchor="middle" className="fill-slate-500 text-[5px]">observed frequency</text>
+            </svg>
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {[
+                ["Brier", view.brier],
+                ["Naive p=0.5", view.naiveBrier],
+                ["Reliability", view.reliability],
+                ["Resolution", view.resolution],
+                ["Uncertainty", view.uncertainty],
+                ["Base rate", view.baseRate],
+              ].map(([label, value]) => <div key={label} className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+                <div className="tabular mt-1 text-xl text-mint-300">{number(value, 4)}</div>
+              </div>)}
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="pb-2">Bin</th><th>Forecast</th><th>Observed</th><th>N</th></tr></thead>
+                <tbody>{view.points.map(point => <tr key={point.label} className="border-t border-mint-300/10"><td className="py-2 text-slate-400">{point.label}</td><td className="tabular">{number(point.forecast, 3)}</td><td className="tabular">{number(point.observed, 3)}</td><td className="tabular">{point.n}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>}
     </Panel>
   );
 }

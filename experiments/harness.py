@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import html as _html
 import json
+import logging
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,19 +38,14 @@ import yaml
 
 from engine.store import Store
 from world.loop import World
+from observability import get_logger, log_event as operational_log
+from run_config import deep_merge, load_config
+
+
+logger = get_logger("experiments")
 
 
 # ── config plumbing ──────────────────────────────────────────────────────────
-def _deep_merge(base: dict, over: dict) -> dict:
-    out = dict(base)
-    for k, v in (over or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
 def load_spec(path_or_dict) -> dict:
     if isinstance(path_or_dict, dict):
         spec = dict(path_or_dict)
@@ -58,9 +54,8 @@ def load_spec(path_or_dict) -> dict:
             spec = yaml.safe_load(f) or {}
     if "config" not in spec:
         base = spec.get("base_config", "runs/base.yaml")
-        with open(base, "r", encoding="utf-8") as f:
-            spec["config"] = yaml.safe_load(f) or {}
-    spec["config"] = _deep_merge(spec["config"], spec.get("overrides", {}))
+        spec["config"] = load_config(base)
+    spec["config"] = deep_merge(spec["config"], spec.get("overrides", {}))
     if not spec.get("seeds"):
         spec["seeds"] = list(range(1, int(spec.get("n_seeds", 3)) + 1))
     spec.setdefault("name", "experiment")
@@ -114,22 +109,42 @@ def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
     data_dir = Path(data_root) / spec["name"]
     data_dir.mkdir(parents=True, exist_ok=True)
     arms = ["treatment"] + (["control"] if spec["control"] else [])
+    operational_log(logger, logging.INFO, "experiment.started",
+                    name=spec["name"], seeds=len(spec["seeds"]), arms=arms,
+                    ticks=spec["ticks"])
 
     results: list[dict] = []
     for seed in spec["seeds"]:
         for arm in arms:
             if not quiet:
                 print(f"[experiment {spec['name']}] seed {seed} · {arm} · {spec['ticks']} ticks")
-            results.append(_run_arm(spec, seed, arm, data_dir))
+            try:
+                result = _run_arm(spec, seed, arm, data_dir)
+            except Exception as exc:
+                operational_log(logger, logging.ERROR, "experiment.arm.failed",
+                                name=spec["name"], seed=seed, arm=arm,
+                                error_type=type(exc).__name__, error=str(exc))
+                raise
+            results.append(result)
+            operational_log(logger, logging.INFO, "experiment.arm.completed",
+                            name=spec["name"], seed=seed, arm=arm,
+                            ticks=result["ticks"], reconciled=result["reconciled"],
+                            spend_usd=result["spend_usd"])
 
     summary = _summarize(spec, results)
     report_path = _write_report(spec, results, summary, out_dir)
     summary["report_path"] = report_path
+    payload = {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",
+                                               "metrics", "event_outcomes")},
+               "results": results, "summary": summary}
+    json_path = Path(out_dir) / f"experiment_{spec['name']}.json"
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    summary["json_path"] = str(json_path)
+    operational_log(logger, logging.INFO, "experiment.completed",
+                    name=spec["name"], runs=len(results), report_path=report_path)
     if not quiet:
         print(f"[experiment {spec['name']}] report: {report_path}")
-    return {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",
-                                          "metrics", "event_outcomes")},
-            "results": results, "summary": summary}
+    return payload
 
 
 def _stats(values: list[float]) -> dict:

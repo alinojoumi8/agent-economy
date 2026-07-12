@@ -9,9 +9,10 @@ from engine.store import load_json
 
 
 class Metrics:
-    def __init__(self, economy: Economy):
+    def __init__(self, economy: Economy, *, semantics_version: int = 2):
         self.e = economy
         self.store = economy.store
+        self.semantics_version = semantics_version
 
     def snapshot(self, tick: int) -> dict:
         out = {}
@@ -40,6 +41,10 @@ class Metrics:
             "SELECT COUNT(*) FROM insurance_policies WHERE status='active'", default=0))
         out["epidemic_multiplier"] = self.store.metric_latest("epidemic_multiplier", 1.0)
         for name, value in out.items():
+            if self.semantics_version >= 2:
+                # FINALIZE may be safely replayed after an interrupted boundary.
+                self.store.execute(
+                    "DELETE FROM metrics WHERE tick=? AND name=?", (tick, name))
             self.store.record_metric(tick, name, float(value))
         return out
 
@@ -54,9 +59,15 @@ class Metrics:
         return (float(v) + float(w)) / 100.0
 
     def _cpi(self) -> float:
-        """Inventory-available, price-weighted goods basket (base 100 at genesis)."""
-        firms = self.store.query(
-            "SELECT product_json FROM firms WHERE status IN ('private','listed')")
+        """Fixed genesis-goods basket (base 100), immune to survivor bias."""
+        if self.semantics_version >= 2:
+            firms = self.store.query(
+                "SELECT product_json FROM firms WHERE founded_tick=0 "
+                "AND sector NOT IN ('health','insurance') ORDER BY id")
+        else:
+            firms = self.store.query(
+                "SELECT product_json FROM firms "
+                "WHERE status IN ('private','listed')")
         prices = []
         for f in firms:
             prod = load_json(f["product_json"], {}) or {}

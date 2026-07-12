@@ -9,16 +9,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Optional
 
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest, BudgetExceeded, ProviderUnavailable
+from llm.gateway import (
+    BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
+)
 from .memory import Memory
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
 from .scheduler import Scheduler
+from observability import get_logger, log_event as operational_log
+
+
+logger = get_logger("agents")
 
 
 async def _gather_fail_fast(coroutines):
@@ -56,17 +63,24 @@ class AgentRuntime:
         decisions = []
         errors = 0
         for a, res in zip(agents, results):
-            if isinstance(res, (BudgetExceeded, ProviderUnavailable)):
+            if isinstance(res, (BudgetExceeded, GatewayInterrupted, ProviderUnavailable)):
                 raise res
             if isinstance(res, Exception):
                 errors += 1
                 self.store.log_event(tick, "decision_error", {
                     "agent_id": int(a["id"]), "error": str(res)}, phase="MORNING", importance=0.5)
+                operational_log(logger, logging.WARNING, "agent.decision.failed",
+                                run_id=self.gw.run_id, tick=tick, agent_id=int(a["id"]),
+                                role=a["role"] or "citizen",
+                                error_type=type(res).__name__, error=str(res))
                 continue
             if res is not None:
                 decisions.append(res)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
+            operational_log(logger, logging.ERROR, "agent.decision.outage_suspected",
+                            run_id=self.gw.run_id, tick=tick, errors=errors,
+                            scheduled_agents=len(agents))
             raise RuntimeError(
                 f"LLM outage suspected: {errors}/{len(agents)} decisions failed at tick {tick}")
         # deterministic execution order
@@ -76,7 +90,7 @@ class AgentRuntime:
     async def _decide_guarded(self, tick: int, agent):
         try:
             return await self._decide_one(tick, agent)
-        except (BudgetExceeded, ProviderUnavailable):
+        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable):
             raise
         except Exception as exc:
             return exc
@@ -87,7 +101,9 @@ class AgentRuntime:
         role = a["role"] or "citizen"
         system, user = self.ctx.render_prompt(context)
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
-                         agent_id=int(a["id"]), tick=tick, max_tokens=500)
+                         agent_id=int(a["id"]), tick=tick,
+                         max_tokens=int(self.config.get("llm", {}).get(
+                             "decision_max_tokens", 900)))
         resp = await self.gw.complete(req)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
@@ -182,7 +198,9 @@ class AgentRuntime:
         # Only agents with observations today need compressing.
         rows = self.store.query(
             "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation' "
-            "ORDER BY agent_id", (tick,))
+            "AND agent_id NOT IN (SELECT agent_id FROM memories "
+            "WHERE tick=? AND kind='summary') "
+            "ORDER BY agent_id", (tick, tick))
         agent_ids = [int(r["agent_id"]) for r in rows]
         sem_tasks = [self._compress_one(tick, aid) for aid in agent_ids]
         results = await _gather_fail_fast(sem_tasks)
@@ -194,8 +212,8 @@ class AgentRuntime:
             if res is None:
                 continue
             summary, importance, belief_updates = res
-            self.mem.write_summary(aid, tick, summary, importance)
             self.mem.apply_belief_updates(aid, belief_updates, tick)
+            self.mem.write_summary(aid, tick, summary, importance)
 
         if tick % 7 == 0:
             weekly_ids = [int(r["agent_id"]) for r in self.store.query(

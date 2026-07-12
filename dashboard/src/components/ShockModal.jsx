@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "./ui";
+import { clientLog } from "../logging.js";
 
 const DEFAULTS = {
   policy_rate: { rate_bps: 750 },
@@ -40,7 +41,12 @@ export function ShockModal({ library, tick, act, onClose }) {
         params: parsed, label: `${kind} injected from observatory` });
       onClose();
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setFormError(message);
+      clientLog("dashboard.shock.submit_failed", {
+        kind, trigger_type: triggerType,
+        error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
     } finally { setSubmitting(false); }
   }
 

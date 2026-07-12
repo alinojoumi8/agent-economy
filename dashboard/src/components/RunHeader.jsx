@@ -1,17 +1,25 @@
 import { useState } from "react";
-import { number } from "../api";
+import { budgetState, number } from "../api";
+import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
 export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
-  const spend = Number(status?.governor?.total_spend_usd || 0);
-  const cap = Number(status?.governor?.cap_usd || 200);
-  const fraction = cap ? Math.min(100, spend / cap * 100) : 0;
+  const terminal = status?.status === "halted";
+  const { spend, cap, capped, fraction } = budgetState(status?.governor);
 
   async function action(name, path, body) {
     setBusy(name);
-    try { await act(path, body); } finally { setBusy(""); }
+    try {
+      await act(path, body);
+    } catch (reason) {
+      clientLog("dashboard.control.failed", {
+        control: name, path,
+        error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    } finally { setBusy(""); }
   }
 
   return (
@@ -29,15 +37,16 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
           <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+          {status?.rate_limit && <Badge tone="warn">rate limited · retry {Math.ceil(status.rate_limit.cooldown_remaining_s)}s</Badge>}
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={loading || running || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={loading || running || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button button-primary" disabled={loading || running || terminal || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={loading || running || terminal || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
           <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={loading || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
+          <button className="button button-danger" disabled={loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
-          <select id="run-speed" className="field !w-auto !py-2" defaultValue="0" onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
             <option value="0.25">0.25 s/day</option>
             <option value="1">1 s/day</option>
@@ -47,16 +56,16 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
 
         <div className="ml-auto flex items-center gap-1.5">
           <button className="button hidden sm:inline-flex" onClick={onReplay}>Replay viewer</button>
-          <button className="button" onClick={onShock}>Inject shock</button>
+          <button className="button" disabled={terminal} onClick={onShock}>Inject shock</button>
           <button className="button hidden md:inline-flex" disabled={busy} onClick={() => action("report", "/api/report")}>Generate report</button>
         </div>
 
         <div className="w-full min-w-[200px] sm:ml-auto sm:w-64">
           <div className="mb-1 flex justify-between text-[10px] uppercase tracking-wider text-slate-500">
             <span>Provider budget · L{status?.governor?.level ?? 0}</span>
-            <span className="tabular">${number(spend, 2)} / ${number(cap, 0)}</span>
+            <span className="tabular">${number(spend, 2)} / {capped ? `$${number(cap, 0)}` : "uncapped"}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label="Provider budget used" aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label={capped ? "Provider budget used" : "Provider spend uncapped"} aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
             <div className="h-full rounded-full bg-gradient-to-r from-mint-400 via-gold-300 to-coral-300 transition-[width]" style={{ width: `${fraction}%` }} />
           </div>
         </div>

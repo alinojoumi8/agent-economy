@@ -1,8 +1,12 @@
 """P1 tooling: experiment harness (R14), Oracle calibration (R15), replay reader (R16)."""
 import asyncio
+import logging
+import sqlite3
+
+import pytest
 
 from engine.store import Store
-from experiments.harness import run_experiment
+from experiments.harness import load_spec, run_experiment
 from oracle.calibration import calibration_from_pairs
 from server.replay import ReplayReader
 from world.loop import World
@@ -26,7 +30,8 @@ def _tiny_config(**over):
 
 
 # ── R14: experiment harness end-to-end ───────────────────────────────────────
-def test_experiment_harness_treatment_vs_control(tmp_path):
+def test_experiment_harness_treatment_vs_control(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.experiments")
     spec = {
         "name": "mini_rumor",
         "config": _tiny_config(),
@@ -56,9 +61,26 @@ def test_experiment_harness_treatment_vs_control(tmp_path):
     # Report artifacts exist.
     assert (tmp_path / "out" / "experiment_mini_rumor.html").exists()
     assert (tmp_path / "out" / "experiment_mini_rumor.md").exists()
+    assert (tmp_path / "out" / "experiment_mini_rumor.json").exists()
     # Same-seed arms differ ONLY by the shock: run dbs are per-arm.
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_treatment.db").exists()
     assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_control.db").exists()
+    log_events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert log_events.count("experiment.arm.completed") == 10
+    assert "experiment.started" in log_events and "experiment.completed" in log_events
+
+
+def test_experiment_base_config_honors_recursive_inheritance():
+    spec = load_spec({
+        "name": "production-derived",
+        "base_config": "runs/production.yaml",
+        "overrides": {"population": {"size": 12}},
+    })
+
+    assert spec["config"]["population"]["size"] == 12
+    assert spec["config"]["firms"]["count"] == 12
+    assert spec["config"]["budget"]["cap_usd"] is None
+    assert spec["config"]["llm"]["default_route"]["provider"] == "minimax"
 
 
 # ── R15: Murphy decomposition sanity ─────────────────────────────────────────
@@ -110,3 +132,20 @@ def test_replay_reader_lists_and_pages_ticks(tmp_path):
     # Unknown/invalid run ids are refused, not crashed.
     assert reader.tick_view("nope", 1) is None
     assert reader.tick_view("../etc/passwd", 1) is None
+
+
+def test_replay_reader_bounds_and_closes_cached_connections(tmp_path):
+    for index in range(4):
+        store = Store(str(tmp_path / f"run-{index}.db"))
+        store.init_run_meta(f"run-{index}", index, {})
+        store.close()
+
+    reader = ReplayReader(str(tmp_path), max_connections=2)
+    assert len(reader.list_runs()) == 4
+    assert len(reader._conns) == 2
+    cached = list(reader._conns.values())
+    reader.close()
+    assert not reader._conns
+    for conn in cached:
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")

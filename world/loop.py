@@ -2,13 +2,14 @@
 
 Phase order per tick T (determinism requires ordered execution):
   1 NIGHT_CLOSE   interest, loan payments, payroll, production, lifecycle draws,
-                  shock evaluation, metrics snapshot, reconciliation check
+                  shock evaluation, pre-decision reconciliation check
   2 MORNING       scheduled agents perceive + decide (LLM, concurrent)
   3 EXECUTION     validator + engine apply queued actions (deterministic order)
   4 MARKET        order book matches; session closes
   5 NEWSROOM      outlets write stories from the day's true events
   6 EVENING       conversation pairs
   7 MEMORY        nightly compression, belief extraction
+  8 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
 
 A failed reconciliation halts the run with a diagnostic dump (PRD R1). The budget
 governor is consulted every tick; at 100% the run pauses cleanly (PRD R7).
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import shutil
 import time
@@ -27,7 +29,7 @@ from typing import Callable, Optional
 from engine.core import Economy
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.store import Store, load_json
-from llm.gateway import Gateway, BudgetExceeded, ProviderUnavailable
+from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
 from agents.personas.vendor.persona_gen import sample_persona
 from .genesis import Genesis
@@ -35,14 +37,25 @@ from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .shocks import Shocks
 from oracle.analyst import Oracle
+from observability import get_logger, log_event as operational_log
 
-PHASES = ("NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET", "NEWSROOM", "EVENING", "MEMORY")
+LEGACY_PHASES = (
+    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+    "NEWSROOM", "EVENING", "MEMORY",
+)
+PHASES = (
+    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+    "NEWSROOM", "EVENING", "MEMORY", "FINALIZE",
+)
+logger = get_logger("world")
 
 
 class World:
     def __init__(self, store: Store, config: dict, *, replay: bool = False):
         self.store = store
         self.config = config
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
+        self.phases = PHASES if self.engine_semantics_version >= 2 else LEGACY_PHASES
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
         self.lifecycle_prng = random.Random(seed ^ 0x5F5E5F)
@@ -53,7 +66,8 @@ class World:
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
         self.gateway = Gateway(store, cfg)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
-        self.metrics = Metrics(self.economy)
+        self.metrics = Metrics(
+            self.economy, semantics_version=self.engine_semantics_version)
         self.shocks = Shocks(self.economy, config)
         self.newsroom = Newsroom(self.economy, self.gateway, config, self.shocks)
         self.conversations = Conversations(self.economy, self.gateway, config)
@@ -73,6 +87,8 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
+            operational_log(logger, logging.DEBUG, "world.initialize.skipped",
+                            run_id=self.gateway.run_id, tick=self.store.tick)
             return
         Genesis(self.economy, self.config, self.persona_prng).build()
         self.shocks.load_from_config()
@@ -82,12 +98,18 @@ class World:
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
         self.store.commit()
+        operational_log(logger, logging.INFO, "world.initialized",
+                        run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
+                        agents=self.store.scalar("SELECT COUNT(*) FROM agents", default=0))
 
     async def run(self, max_ticks: Optional[int] = None) -> None:
         self.status = "running"
         self.store.set_meta(status="running")
         start_tick = self.store.tick
         end_tick = (start_tick + max_ticks) if max_ticks else None
+        operational_log(logger, logging.INFO, "world.run.started",
+                        run_id=self.gateway.run_id, start_tick=start_tick,
+                        max_ticks=max_ticks, replay=self.gateway.replay)
         try:
             while not self._stop_requested:
                 if end_tick is not None and self.store.tick >= end_tick:
@@ -116,63 +138,126 @@ class World:
                     self.last_report_path = generate_report(
                         self.store, self,
                         out_dir=str(self.config.get("report_dir", "reports/out")))
+                    operational_log(logger, logging.INFO, "world.report.generated",
+                                    run_id=self.gateway.run_id, tick=self.store.tick,
+                                    path=self.last_report_path)
                 except Exception as exc:
                     self.store.log_event(
                         self.store.tick, "report_failed", {"error": str(exc)[:500]},
                         importance=3.0)
                     self.store.commit()
+                    operational_log(logger, logging.ERROR, "world.report.failed",
+                                    run_id=self.gateway.run_id, tick=self.store.tick,
+                                    error_type=type(exc).__name__, error=str(exc))
             self._pause_requested = False
+            operational_log(logger, logging.INFO, "world.run.finished",
+                            run_id=self.gateway.run_id, start_tick=start_tick,
+                            end_tick=self.store.tick, status=new_status,
+                            stop_requested=self._stop_requested)
 
     def request_pause(self) -> None:
         self._pause_requested = True
+        self.gateway.interrupt_pending()
+        operational_log(logger, logging.INFO, "world.pause.requested",
+                        run_id=self.gateway.run_id, tick=self.store.tick)
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        self.gateway.interrupt_pending()
+        operational_log(logger, logging.INFO, "world.stop.requested",
+                        run_id=self.gateway.run_id, tick=self.store.tick)
+
+    def _persist_phase(self, tick: int, next_phase: str, state: dict) -> None:
+        self.store.set_meta(
+            active_tick=tick, next_phase=next_phase, phase=next_phase,
+            phase_state_json=json.dumps(state), legacy_partial=0)
+        self._save_prng_state()
+        self.store.commit()
 
     # ── one tick ─────────────────────────────────────────────────────────────
     async def step(self) -> dict:
-        tick = self.store.tick + 1
+        meta = self.store.get_meta()
+        tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
+        phase = str(meta["next_phase"] or "NIGHT_CLOSE")
+        if phase not in self.phases:
+            phase = "NIGHT_CLOSE"
+        state = load_json(meta["phase_state_json"], {}) or {}
+        if meta["active_tick"] is None:
+            self._persist_phase(tick, phase, state)
+        elif meta["legacy_partial"] and phase == "MEMORY":
+            state["observations_captured"] = bool(self.store.scalar(
+                "SELECT COUNT(*) FROM memories WHERE tick=? AND kind='observation'",
+                (tick,), default=0))
+            self._persist_phase(tick, phase, state)
         t0 = time.time()
-        phase = "NIGHT_CLOSE"
+        decisions_count = len(state.get("decisions", []))
         try:
-            # 1 NIGHT_CLOSE (accrual, lifecycle, shocks, metrics, reconciliation)
-            self._phase_night_close(tick)
+            for index in range(self.phases.index(phase), len(self.phases)):
+                phase = self.phases[index]
+                self._persist_phase(tick, phase, state)
+                if phase == "NIGHT_CLOSE":
+                    try:
+                        with self.store.savepoint(f"tick_{tick}_night_close"):
+                            self._phase_night_close(tick)
+                    except ReconciliationError as exc:
+                        self._record_reconciliation_halt(
+                            tick, "NIGHT_CLOSE", getattr(exc, "diagnostic", {}))
+                        raise
+                elif phase == "MORNING":
+                    if self.gateway.governor.should_pause():
+                        raise BudgetExceeded("world budget exhausted before MORNING")
+                    decisions = await self.runtime.decide_all(tick)
+                    state["decisions"] = decisions
+                    decisions_count = len(decisions)
+                elif phase == "EXECUTION":
+                    with self.store.savepoint(f"tick_{tick}_execution"):
+                        self.runtime.execute_decisions(tick, state.get("decisions", []))
+                elif phase == "MARKET":
+                    with self.store.savepoint(f"tick_{tick}_market"):
+                        self._phase_market(tick)
+                elif phase == "NEWSROOM":
+                    await self.newsroom.publish(tick)
+                elif phase == "EVENING":
+                    if "conversation_pairs" not in state:
+                        state["conversation_pairs"] = [
+                            list(pair) for pair in self.conversations.plan_pairs(tick)]
+                        self._persist_phase(tick, phase, state)
+                    pairs = [tuple(pair) for pair in state["conversation_pairs"]]
+                    await self.conversations.evening(tick, pairs=pairs)
+                elif phase == "MEMORY":
+                    if not state.get("observations_captured"):
+                        with self.store.savepoint(f"tick_{tick}_observations"):
+                            self.runtime.capture_event_observations(tick)
+                        state["observations_captured"] = True
+                        self._persist_phase(tick, phase, state)
+                    await self.runtime.compress_memories(tick)
+                elif phase == "FINALIZE":
+                    try:
+                        with self.store.savepoint(f"tick_{tick}_finalize"):
+                            self._phase_finalize(tick)
+                    except ReconciliationError as exc:
+                        self._record_reconciliation_halt(
+                            tick, "FINALIZE", getattr(exc, "diagnostic", {}))
+                        raise
 
-            # Budget check — a clean pause, never a dead run.
-            if self.gateway.governor.should_pause():
-                raise BudgetExceeded("world budget exhausted before MORNING")
+                if index + 1 < len(self.phases):
+                    self._persist_phase(tick, self.phases[index + 1], state)
+                else:
+                    self.store.set_meta(
+                        tick=tick, active_tick=None, next_phase="NIGHT_CLOSE",
+                        phase=self.phases[-1], phase_state_json="{}", legacy_partial=0)
+                    self._save_prng_state()
+                    self.store.commit()
 
-            # 2 MORNING + 3 EXECUTION
-            phase = "MORNING"
-            decisions = await self.runtime.decide_all(tick)
-            phase = "EXECUTION"
-            self.runtime.execute_decisions(tick, decisions)
-
-            # 4 MARKET
-            phase = "MARKET"
-            self._phase_market(tick)
-
-            # 5 NEWSROOM
-            phase = "NEWSROOM"
-            await self.newsroom.publish(tick)
-
-            # 6 EVENING
-            phase = "EVENING"
-            await self.conversations.evening(tick)
-
-            # 7 MEMORY
-            phase = "MEMORY"
-            self.runtime.capture_event_observations(tick)
-            await self.runtime.compress_memories(tick)
-
-            # bookkeeping
-            self.store.set_meta(tick=tick, phase="MEMORY")
             if self.checkpoint_every and tick % self.checkpoint_every == 0:
                 self.checkpoint(tick)
-            self.store.commit()
 
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
-                       "decisions": len(decisions), "governor": self.gateway.governor.status()}
+                       "decisions": decisions_count,
+                       "governor": self.gateway.governor.status()}
+            operational_log(logger, logging.DEBUG, "world.tick.completed",
+                            run_id=self.gateway.run_id, tick=tick, phase=phase,
+                            wall_s=summary["wall_s"], decisions=decisions_count)
             self._notify_tick(tick, summary)
             return summary
         except BudgetExceeded as exc:
@@ -183,13 +268,26 @@ class World:
             return self._pause_safely(
                 tick, phase, "provider", exc.as_dict(), t0,
                 detail=str(exc))
+        except GatewayInterrupted as exc:
+            summary = {
+                "tick": self.store.tick,
+                "active_tick": tick,
+                "phase": phase,
+                "interrupted": "stop" if self._stop_requested else "pause",
+                "detail": str(exc),
+                "governor": self.gateway.governor.status(),
+            }
+            self._notify_tick(self.store.tick, summary)
+            return summary
 
     def _notify_tick(self, tick: int, summary: dict) -> None:
         if self.on_tick:
             try:
                 self.on_tick(tick, summary)
-            except Exception:
-                pass
+            except Exception as exc:
+                operational_log(logger, logging.WARNING, "world.tick_callback.failed",
+                                run_id=self.gateway.run_id, tick=tick,
+                                error_type=type(exc).__name__, error=str(exc))
 
     def _pause_safely(self, tick: int, phase: str, reason: str, payload: dict,
                       started_at: float, *, detail: str = "") -> dict:
@@ -199,9 +297,13 @@ class World:
             self.status = "halted"
             self.store.log_event(tick, "reconciliation_failure", diag,
                                  phase=phase, importance=5.0)
-            self.store.set_meta(status="halted", tick=tick, phase=phase)
+            self.store.set_meta(
+                status="halted", active_tick=tick, next_phase=phase, phase=phase)
             self.store.commit()
-            self.checkpoint(tick, reason="halt")
+            self.checkpoint(self.store.tick, reason="halt")
+            operational_log(logger, logging.CRITICAL, "world.reconciliation.failed",
+                            run_id=self.gateway.run_id, tick=tick, phase=phase,
+                            pause_reason=reason, diagnostic=diag)
             raise ReconciliationError(
                 f"tick {tick}: books failed while pausing after {reason}: {diag}")
 
@@ -211,19 +313,35 @@ class World:
         self._pause_requested = True
         self.last_pause_reason = {"reason": reason, **event_payload}
         self.store.log_event(tick, event_kind, event_payload, phase=phase, importance=4.5)
-        self.store.set_meta(status="paused", tick=tick, phase=phase)
+        self.store.set_meta(
+            status="paused", active_tick=tick, next_phase=phase, phase=phase)
         self.store.commit()
-        self.checkpoint(tick, reason=event_kind)
+        self.checkpoint(self.store.tick, reason=event_kind)
+        operational_log(logger, logging.WARNING, "world.pause.completed",
+                        run_id=self.gateway.run_id, tick=tick, phase=phase,
+                        reason=reason, detail=detail)
         summary = {
-            "tick": tick, "wall_s": round(time.time() - started_at, 3),
+            "tick": self.store.tick, "active_tick": tick,
+            "wall_s": round(time.time() - started_at, 3),
             "decisions": 0, "paused": reason, "phase": phase,
             "pause_reason": self.last_pause_reason,
             "governor": self.gateway.governor.status(),
         }
-        self._notify_tick(tick, summary)
+        self._notify_tick(self.store.tick, summary)
         return summary
 
     # ── phases ───────────────────────────────────────────────────────────────
+    def _record_reconciliation_halt(self, tick: int, phase: str, diag: dict) -> None:
+        self.status = "halted"
+        self.store.log_event(
+            tick, "reconciliation_failure", diag,
+            phase=phase, importance=5.0)
+        self.store.set_meta(
+            status="halted", active_tick=tick,
+            next_phase=phase, phase=phase)
+        self.store.commit()
+        self.checkpoint(self.store.tick, reason="halt")
+
     def _phase_night_close(self, tick: int) -> None:
         e = self.economy
         # Interest on savings (annual rate ≈ policy - 200bps, floored at 0).
@@ -246,22 +364,30 @@ class World:
         self._bank_liquidity_sweep(tick)
         # Shock evaluation.
         self.shocks.evaluate(tick)
-        # Metrics snapshot.
+        if self.engine_semantics_version < 2:
+            # Markerless historical databases retain their original tick contract.
+            self.metrics.snapshot(tick)
+            self.oracle.resolve_open(tick)
+        # Reconcile scheduled/opening mechanics before any LLM decisions.
+        self._assert_reconciled(tick, "NIGHT_CLOSE")
+
+    def _phase_finalize(self, tick: int) -> None:
+        # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
-        # Oracle predictions: auto-resolve anything now determinable (PRD R6).
+        # Predictions resolve against completed-day state.
         self.oracle.resolve_open(tick)
-        # Reconciliation — the invariant that keeps the whole thing honest.
-        ok, diag = e.ledger.reconcile()
+        # The completed-tick invariant includes every action settled today.
+        self._assert_reconciled(tick, "FINALIZE")
+
+    def _assert_reconciled(self, tick: int, phase: str) -> None:
+        ok, diag = self.economy.ledger.reconcile()
         if not ok:
-            self.status = "halted"
-            self.store.log_event(tick, "reconciliation_failure", diag,
-                                 phase="NIGHT_CLOSE", importance=5.0)
-            self.store.set_meta(status="halted", tick=tick)
             dump_path = Path(self.store.path).with_suffix(f".halt_t{tick}.json")
             dump_path.write_text(json.dumps(diag, indent=2))
-            self.checkpoint(tick, reason="halt")
-            self.store.commit()
-            raise ReconciliationError(f"tick {tick}: books do not reconcile → {dump_path}")
+            exc = ReconciliationError(
+                f"tick {tick} {phase}: books do not reconcile → {dump_path}")
+            exc.diagnostic = diag
+            raise exc
 
     def _accrue_savings_interest(self, tick: int) -> None:
         rate_bps = max(0, self.economy.policy_rate_bps() - 200)
@@ -388,9 +514,14 @@ class World:
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())
             self.store.commit()
+            operational_log(logger, logging.INFO, "world.checkpoint.created",
+                            run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)
         except Exception as exc:
             self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)
+            operational_log(logger, logging.ERROR, "world.checkpoint.failed",
+                            run_id=self.gateway.run_id, tick=tick, reason=reason,
+                            error_type=type(exc).__name__, error=str(exc))
             return None
 
     def _save_prng_state(self) -> None:

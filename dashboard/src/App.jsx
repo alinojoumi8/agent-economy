@@ -2,7 +2,7 @@ import { lazy, Suspense, useState } from "react";
 import { useObservatory } from "./hooks/useObservatory";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { ConversationsPanel, EventsPanel, NewsPanel } from "./components/InformationPanels";
-import { CostPanel, OraclePanel } from "./components/OracleAndCost";
+import { CalibrationPanel, CostPanel, OraclePanel } from "./components/OracleAndCost";
 import { ReplayModal } from "./components/ReplayModal";
 import { RunHeader } from "./components/RunHeader";
 import { ShockModal } from "./components/ShockModal";
@@ -57,6 +57,7 @@ export default function App() {
         <SectionTitle index="4" title="Forecasting and operations" description="Interrogate the read-only Oracle while monitoring provider readiness, caching, calls, and cost." />
         <OraclePanel oracle={data.oracle} act={act} />
         <CostPanel cost={data.cost} readiness={status?.provider_readiness} />
+        <CalibrationPanel calibration={data.calibration} />
 
         <SectionTitle index="5" title="People" description="Audit any persona from identity through balances, beliefs, memory, and exact decision prompts." />
         <AgentsPanel agents={data.agents} />

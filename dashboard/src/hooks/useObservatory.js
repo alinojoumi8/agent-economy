@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../api";
+import { clientLog } from "../logging.js";
 
 const INITIAL = {
   status: null,
@@ -13,6 +14,7 @@ const INITIAL = {
   agents: [],
   cost: null,
   oracle: { predictions: [], scorecard: {} },
+  calibration: { run: null, all: null, errors: [] },
   shocks: { library: { kinds: [], trigger_types: [] }, scheduled: [] },
 };
 
@@ -28,19 +30,34 @@ export function useObservatory() {
     refreshing.current = true;
     if (!quiet) setLoading(true);
     try {
+      const calibrationErrors = [];
+      const safeCalibration = async (path, scope) => {
+        try { return await api(path); }
+        catch (reason) {
+          calibrationErrors.push(`${scope}: ${reason instanceof Error ? reason.message : String(reason)}`);
+          return null;
+        }
+      };
       const [status, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks] = await Promise.all([
+        events, agents, cost, oracle, shocks, calibrationRun, calibrationAll] = await Promise.all([
         api("/api/run/status"), api("/api/metrics"), api("/api/banks"),
         api("/api/firms"), api("/api/institutions"), api("/api/news?limit=24"),
         api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
         api("/api/agents"), api("/api/cost"), api("/api/oracle/predictions"),
         api("/api/shocks"),
+        safeCalibration("/api/oracle/calibration?scope=run", "run"),
+        safeCalibration("/api/oracle/calibration?scope=all", "all"),
       ]);
       setData({ status, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks });
+        events, agents, cost, oracle, shocks,
+        calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors } });
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      clientLog("dashboard.refresh.failed", {
+        quiet, error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
     } finally {
       refreshing.current = false;
       setLoading(false);
@@ -56,6 +73,9 @@ export function useObservatory() {
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
+      clientLog("dashboard.action.failed", {
+        path, error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
       throw reason;
     }
   }, [refresh]);
@@ -65,9 +85,20 @@ export function useObservatory() {
     const timer = window.setInterval(() => refresh({ quiet: true }), 10_000);
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    socket.addEventListener("open", () => setConnected(true));
-    socket.addEventListener("close", () => setConnected(false));
-    socket.addEventListener("error", () => setConnected(false));
+    socket.addEventListener("open", () => {
+      setConnected(true);
+      clientLog("dashboard.websocket.connected");
+    });
+    socket.addEventListener("close", event => {
+      setConnected(false);
+      clientLog("dashboard.websocket.disconnected", {
+        code: event.code, clean: event.wasClean, reason: event.reason,
+      }, event.wasClean ? "info" : "warn");
+    });
+    socket.addEventListener("error", () => {
+      setConnected(false);
+      clientLog("dashboard.websocket.failed", {}, "error");
+    });
     socket.addEventListener("message", (event) => {
       try {
         const payload = JSON.parse(event.data);
@@ -85,7 +116,12 @@ export function useObservatory() {
           }));
           refresh({ quiet: true });
         }
-      } catch { /* malformed diagnostic frames should not break the dashboard */ }
+      } catch (reason) {
+        clientLog("dashboard.websocket.invalid_message", {
+          error_type: reason?.constructor?.name || typeof reason,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }, "warn");
+      }
     });
     const keepalive = window.setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send("ping");

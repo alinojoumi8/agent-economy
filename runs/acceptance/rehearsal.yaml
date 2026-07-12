@@ -1,0 +1,16 @@
+# Free deterministic rehearsal of the production acceptance workflow.
+# Inherits the exact horizon, population, Oracle checkpoint, and shock schedule,
+# while overriding every production route so no external provider is contacted.
+extends: production.yaml
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes:
+    citizen:        {provider: scripted, model: scripted}
+    founder:        {provider: scripted, model: scripted}
+    central_banker: {provider: scripted, model: scripted}
+    credit_officer: {provider: scripted, model: scripted}
+    reporter:       {provider: scripted, model: scripted}
+    editor:         {provider: scripted, model: scripted}
+    vc_partner:     {provider: scripted, model: scripted}
+    oracle:         {provider: scripted, model: scripted}

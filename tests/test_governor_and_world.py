@@ -7,7 +7,7 @@ import random
 import pytest
 
 from engine.store import Store
-from llm.gateway import Governor
+from llm.gateway import GatewayInterrupted, Governor, LLMRequest
 from world.loop import World
 
 
@@ -37,6 +37,36 @@ def _fresh_world(tmp_path, name="w.db", **over) -> World:
     return w
 
 
+def test_provider_request_is_cancelled_when_operator_interrupts(tmp_path):
+    world = _fresh_world(tmp_path, "interrupt.db")
+
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class SlowAdapter:
+            async def complete(self, *args, **kwargs):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        world.gateway.adapters["scripted"] = SlowAdapter()
+        request = LLMRequest(
+            role="citizen", purpose="decision", system="system", user="user",
+            agent_id=1, tick=1)
+        task = asyncio.create_task(world.gateway.complete(request))
+        await asyncio.wait_for(started.wait(), timeout=0.5)
+        world.gateway.interrupt_pending()
+        with pytest.raises(GatewayInterrupted):
+            await asyncio.wait_for(task, timeout=0.5)
+        assert cancelled.is_set()
+
+    asyncio.run(scenario())
+
+
 # ── governor thresholds (cost test, §14) ─────────────────────────────────────
 def test_governor_stages(tmp_path):
     s = Store(str(tmp_path / "g.db"))
@@ -59,6 +89,25 @@ def test_governor_stages(tmp_path):
     # Oracle carve-out: oracle can still spend if within its reserve.
     assert gov.can_spend(1.0, "oracle")
     assert not gov.can_spend(20.0, "decision") or gov.total_spend() + 20.0 <= gov.cap_usd
+
+
+def test_governor_supports_explicit_uncapped_runs(tmp_path):
+    store = Store(str(tmp_path / "uncapped.db"))
+    store.init_run_meta("uncapped", 1, {})
+    governor = Governor(store, {
+        "cap_usd": None, "oracle_reserve_usd": 10.0, "conversation_pairs": 15,
+    })
+    store.insert("llm_calls", tick=0, purpose="decision", cost_usd=10_000.0,
+                 in_tokens=0, out_tokens=0, cached=0)
+
+    assert governor.cap_usd is None
+    assert governor.level() == 0
+    assert governor.conversation_pairs() == 15
+    assert governor.cadence_multiplier() == 1
+    assert governor.citizens_enabled()
+    assert not governor.should_pause()
+    assert governor.can_spend(1_000_000.0, "oracle")
+    assert governor.status()["fraction"] is None
 
 
 # ── reconciliation property test over a real run ─────────────────────────────
@@ -201,3 +250,13 @@ def test_oracle_prediction_and_resolution(tmp_path):
     # Unanswerable question refuses rather than fabricates.
     ans2 = asyncio.run(w.oracle.ask("Is the moon made of cheese?"))
     assert ans2.get("insufficient_data")
+    w.gateway.scripted.register("oracle", lambda _context: {
+        "p": 1.5, "reasoning": "invalid probability",
+        "deadline_tick": w.store.tick,
+        "resolution_rule": {},
+    })
+    invalid = asyncio.run(w.oracle.ask("Will this invalid forecast be stored?"))
+    assert invalid.get("insufficient_data")
+    stored = w.store.query_one(
+        "SELECT p, status FROM predictions WHERE id=?", (invalid["prediction_id"],))
+    assert stored["p"] is None and stored["status"] == "insufficient_data"

@@ -1,8 +1,33 @@
+import { clientLog } from "./logging.js";
+
 export async function api(path, options = {}) {
-  const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({}));
+  const method = options.method || "GET";
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (reason) {
+    clientLog("dashboard.api.network_failed", {
+      path, method, error_type: reason?.constructor?.name || typeof reason,
+      error: reason instanceof Error ? reason.message : String(reason),
+    }, "error");
+    throw reason;
+  }
+  let body = {};
+  try {
+    body = await response.json();
+  } catch (reason) {
+    clientLog("dashboard.api.invalid_json", {
+      path, method, status_code: response.status,
+      error_type: reason?.constructor?.name || typeof reason,
+      error: reason instanceof Error ? reason.message : String(reason),
+    }, "warn");
+  }
   if (!response.ok) {
-    throw new Error(body.error || `${response.status} ${response.statusText}`);
+    const message = body.error || `${response.status} ${response.statusText}`;
+    clientLog("dashboard.api.http_failed", {
+      path, method, status_code: response.status, error: message,
+    }, "error");
+    throw new Error(message);
   }
   return body;
 }
@@ -33,6 +58,15 @@ export const number = (value, digits = 2) => {
 export const percent = (value, digits = 1) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
   return `${(Number(value) * 100).toFixed(digits)}%`;
+};
+
+export const budgetState = (governor = {}) => {
+  const spend = Number(governor?.total_spend_usd || 0);
+  const rawCap = governor?.cap_usd;
+  const capped = rawCap !== null && rawCap !== undefined && Number.isFinite(Number(rawCap));
+  const cap = capped ? Number(rawCap) : null;
+  const fraction = capped && cap > 0 ? Math.min(100, spend / cap * 100) : 0;
+  return { spend, cap, capped, fraction };
 };
 
 export const shortKind = (kind = "") => kind.replaceAll("_", " ");

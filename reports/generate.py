@@ -117,6 +117,8 @@ def generate_report(store: Store, world=None, out_dir: str = "reports/out") -> s
         "SELECT model, COUNT(*) AS calls, SUM(in_tokens) AS ti, SUM(out_tokens) AS toks, "
         "SUM(cost_usd) AS cost FROM llm_calls GROUP BY model")
     total_cost = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
+    cap = config.get("budget", {}).get("cap_usd", 200)
+    cost_limit = "uncapped" if cap is None else f"${float(cap):.2f} cap"
 
     esc = html.escape
 
@@ -178,7 +180,7 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
 {cal_html}
 
 <h2>Cost summary</h2>
-<p>Total spend: <b>${total_cost:.2f}</b> of ${config.get('budget',{}).get('cap_usd',200)} cap.</p>
+<p>Total spend: <b>${total_cost:.2f}</b> · {cost_limit}.</p>
 <table><tr><th>Model</th><th>Calls</th><th>In tokens</th><th>Out tokens</th><th>Cost</th></tr>
 {"".join(f"<tr><td>{esc(str(r['model']))}</td><td>{r['calls']}</td><td>{r['ti'] or 0}</td><td>{r['toks'] or 0}</td><td>${(r['cost'] or 0):.4f}</td></tr>" for r in cost_rows)}
 </table>
@@ -193,13 +195,47 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
     html_path = out / f"run_{run_id}_t{tick}.html"
     html_path.write_text(html_doc, encoding="utf-8")
 
-    md = [f"# Agent Economy — run {run_id}", f"Seed {meta['seed']} · {tick} days · {now}", "",
-          "## Narrative", narrative, "", "## Key events"]
+    md = [
+        f"# Agent Economy — run {run_id}",
+        f"Seed {meta['seed']} · {tick} days · {now}",
+        "",
+        "> Reviewer companion. The sibling HTML file is the canonical standalone "
+        "artifact with embedded charts.",
+        "",
+        "## Narrative", narrative, "", "## Key events",
+    ]
     md += [f"- t{t} **{k}** `{d}`" for t, k, d in timeline_rows[:100]]
-    md += ["", "## Oracle",
-           f"{len(preds)} predictions, {len(resolved)} resolved, mean Brier "
-           f"{f'{mean_brier:.3f}' if mean_brier is not None else '—'}",
-           "", "## Cost", f"Total ${total_cost:.2f}"]
+    md += ["", "## Metric snapshot", "", "| Metric | Latest |", "|---|---:|"]
+    md += [
+        f"| {title} | {store.metric_latest(name, 0.0):.4f} |"
+        for name, title in CHART_METRICS
+    ]
+    md += [
+        "", "## Oracle",
+        f"{len(preds)} predictions, {len(resolved)} resolved, mean Brier "
+        f"{f'{mean_brier:.3f}' if mean_brier is not None else '—'} "
+        f"vs naive {f'{naive_brier:.3f}' if naive_brier is not None else '—'}.",
+    ]
+    if cal["n"]:
+        md += [
+            f"Calibration: reliability {cal['reliability']:.3f}, "
+            f"resolution {cal['resolution']:.3f}, "
+            f"uncertainty {cal['uncertainty']:.3f}, "
+            f"base rate {cal['base_rate']:.3f}.",
+        ]
+    md += ["", "## Cost", f"Total ${total_cost:.2f} · {cost_limit}.",
+           "", "| Model | Calls | Input tokens | Output tokens | Cost |",
+           "|---|---:|---:|---:|---:|"]
+    md += [
+        f"| {r['model']} | {r['calls']} | {r['ti'] or 0} | "
+        f"{r['toks'] or 0} | ${(r['cost'] or 0):.4f} |"
+        for r in cost_rows
+    ]
+    md += [
+        "", "## Reproduction", "",
+        f"Seed: `{meta['seed']}`", "",
+        "```json", json.dumps(config, indent=2)[:6000], "```",
+    ]
     (out / f"run_{run_id}_t{tick}.md").write_text("\n".join(md), encoding="utf-8")
 
     store.log_event(tick, "report_generated", {"path": str(html_path)}, importance=1.0)

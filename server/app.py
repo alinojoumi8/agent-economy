@@ -6,46 +6,25 @@ broadcast over WebSocket so the dashboard updates within 2s of tick completion
 """
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import time
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from engine.store import Store, load_json
-from engine.ledger import ReconciliationError
+from engine.store import load_json
+from server.controller import RunController, build_tick_payload
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
+from observability import get_logger, log_event as operational_log
 
 
-class Hub:
-    """WebSocket fan-out."""
-
-    def __init__(self):
-        self.clients: set[WebSocket] = set()
-
-    async def connect(self, ws: WebSocket):
-        await ws.accept()
-        self.clients.add(ws)
-
-    def disconnect(self, ws: WebSocket):
-        self.clients.discard(ws)
-
-    async def broadcast(self, message: dict):
-        dead = []
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(json.dumps(message))
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(ws)
+logger = get_logger("server")
 
 
 class AskBody(BaseModel):
@@ -66,101 +45,62 @@ class SpeedBody(BaseModel):
 
 
 def create_app(world: World) -> FastAPI:
-    hub = Hub()
+    controller = RunController(world)
+    hub = controller.hub
     store = world.store
-    run_task: dict[str, Optional[asyncio.Task]] = {"task": None}
+    app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
+    app.state.run_controller = controller
 
-    loop_holder: dict[str, Optional[asyncio.AbstractEventLoop]] = {"loop": None}
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI):
-        loop_holder["loop"] = asyncio.get_running_loop()
-        yield
-
-    app = FastAPI(title="Agent Economy Observatory", lifespan=lifespan)
-
-    def on_tick(tick: int, summary: dict):
-        loop = loop_holder["loop"]
-        if loop is None:
-            return
-        payload = _tick_payload(world, tick, summary)
-        asyncio.run_coroutine_threadsafe(hub.broadcast(payload), loop) if loop.is_running() else None
-
-    world.on_tick = on_tick
+    @app.middleware("http")
+    async def log_http_request(request: Request, call_next):
+        started = time.perf_counter()
+        operational_log(
+            logger, logging.DEBUG, "http.request.started",
+            method=request.method, path=request.url.path,
+        )
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            operational_log(
+                logger, logging.ERROR, "http.request.failed",
+                method=request.method, path=request.url.path,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                error_type=type(exc).__name__, error=str(exc),
+            )
+            raise
+        level = logging.WARNING if response.status_code >= 400 else logging.INFO
+        operational_log(
+            logger, level, "http.request.completed",
+            method=request.method, path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        return response
 
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
     async def start_run(max_ticks: Optional[int] = None):
-        if run_task["task"] and not run_task["task"].done():
-            return {"status": "already_running"}
-        world._pause_requested = False
-        world._stop_requested = False
-
-        async def _runner():
-            try:
-                await world.run(max_ticks=max_ticks)
-            except ReconciliationError as exc:
-                await hub.broadcast({"type": "halt", "reason": str(exc)})
-            except Exception as exc:
-                world.status = "paused"
-                store.set_meta(status="paused")
-                store.log_event(store.tick, "run_exception", {"error": str(exc)[:500]},
-                                importance=5.0)
-                store.commit()
-                await hub.broadcast({"type": "pause", "reason": f"run paused: {exc}"})
-
-        run_task["task"] = asyncio.create_task(_runner())
-        return {"status": "running", "tick": store.tick}
+        return await controller.start(max_ticks)
 
     @app.post("/api/run/pause")
     async def pause_run():
-        world.request_pause()
-        return {"status": "pausing", "tick": store.tick}
+        return controller.pause()
 
     @app.post("/api/run/stop")
     async def stop_run():
-        world.request_stop()
-        running = bool(run_task["task"] and not run_task["task"].done())
-        if running:
-            return {"status": "stopping", "tick": store.tick}
-        world.status = "finished"
-        store.set_meta(status="finished")
-        store.commit()
-        world.checkpoint(store.tick, reason="stop")
-        if not world.last_report_path:
-            from reports.generate import generate_report as gen
-            world.last_report_path = gen(
-                store, world,
-                out_dir=str(world.config.get("report_dir", "reports/out")))
-        return {"status": "finished", "tick": store.tick,
-                "report_path": world.last_report_path}
+        return await controller.stop()
 
     @app.post("/api/run/step")
     async def step_once():
-        if run_task["task"] and not run_task["task"].done():
-            return {"status": "already_running"}
-        summary = await world.step()
-        if not summary.get("paused") and world.status != "halted":
-            world.status = "paused"
-            store.set_meta(status="paused")
-            store.commit()
-        await hub.broadcast(_tick_payload(world, summary["tick"], summary))
-        return summary
+        return await controller.step()
 
     @app.post("/api/run/speed")
     async def set_speed(body: SpeedBody):
-        world.speed_delay_s = max(0.0, float(body.delay_s))
-        return {"delay_s": world.speed_delay_s}
+        return controller.set_speed(body.delay_s)
 
     @app.get("/api/run/status")
     async def run_status():
-        meta = store.get_meta()
-        return {"run_id": meta["run_id"], "status": world.status, "tick": store.tick,
-                "seed": meta["seed"], "governor": world.gateway.governor.status(),
-                "running": bool(run_task["task"] and not run_task["task"].done()),
-                "provider_readiness": world.gateway.readiness(),
-                "pause_reason": world.last_pause_reason,
-                "report_path": world.last_report_path}
+        return controller.status()
 
     # ── world queries (dashboard panels, PRD R8) ─────────────────────────────
     @app.get("/api/metrics")
@@ -309,6 +249,7 @@ def create_app(world: World) -> FastAPI:
             d = dict(r)
             d["resolution_rule"] = load_json(r["resolution_rule_json"], {})
             d["drivers"] = load_json(r["drivers_json"], [])
+            d["evidence"] = load_json(r["evidence_json"], [])
             preds.append(d)
         return {"predictions": preds, "scorecard": world.oracle.scorecard()}
 
@@ -355,6 +296,7 @@ def create_app(world: World) -> FastAPI:
     # ── replay viewer (P1 R16): browse any stored run tick-by-tick ──────────
     from server.replay import ReplayReader
     reader = ReplayReader()
+    app.state.replay_reader = reader
 
     @app.get("/api/replay/runs")
     async def replay_runs():
@@ -383,12 +325,34 @@ def create_app(world: World) -> FastAPI:
 
     @app.post("/api/shocks")
     async def fire_shock(body: ShockBody):
+        controller._require_mutable("shock scheduling")
         if body.kind not in SHOCK_KINDS:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, reason="unknown_kind")
             return JSONResponse({"error": f"unknown kind {body.kind}"}, status_code=400)
+        if body.trigger_type not in TRIGGER_TYPES:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, trigger_type=body.trigger_type,
+                            reason="unknown_trigger_type")
+            return JSONResponse(
+                {"error": f"unknown trigger type {body.trigger_type}"}, status_code=400)
+        if body.duration_ticks < 0:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, duration_ticks=body.duration_ticks,
+                            reason="negative_duration")
+            return JSONResponse(
+                {"error": "duration_ticks must be non-negative"}, status_code=400)
         trigger = body.trigger or {"tick": store.tick + 1}
         sid = world.shocks.schedule(body.kind, body.trigger_type, trigger,
                                     duration_ticks=body.duration_ticks, params=body.params,
                                     label=body.label)
+        operational_log(logger, logging.INFO, "shock.scheduled",
+                        run_id=world.gateway.run_id, tick=store.tick,
+                        shock_id=sid, kind=body.kind,
+                        trigger_type=body.trigger_type)
         return {"shock_id": sid, "scheduled": True}
 
     # ── report (PRD R10) ─────────────────────────────────────────────────────
@@ -396,6 +360,8 @@ def create_app(world: World) -> FastAPI:
     async def generate_report():
         from reports.generate import generate_report as gen
         path = gen(store, world, out_dir=str(world.config.get("report_dir", "reports/out")))
+        operational_log(logger, logging.INFO, "report.generated",
+                        run_id=world.gateway.run_id, tick=store.tick, path=path)
         return {"path": path}
 
     # ── WebSocket ────────────────────────────────────────────────────────────
@@ -403,12 +369,16 @@ def create_app(world: World) -> FastAPI:
     async def websocket_endpoint(ws: WebSocket):
         await hub.connect(ws)
         try:
-            await ws.send_text(json.dumps(_tick_payload(world, store.tick, {"tick": store.tick})))
+            await ws.send_text(json.dumps(build_tick_payload(
+                world, store.tick, {"tick": store.tick})))
             while True:
                 await ws.receive_text()   # keepalive; controls go over REST
         except WebSocketDisconnect:
             hub.disconnect(ws)
-        except Exception:
+        except Exception as exc:
+            operational_log(logger, logging.WARNING, "websocket.failed",
+                            run_id=world.gateway.run_id,
+                            error_type=type(exc).__name__, error=str(exc))
             hub.disconnect(ws)
 
     # ── static dashboard + generated reports ────────────────────────────────
@@ -423,28 +393,3 @@ def create_app(world: World) -> FastAPI:
     app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
 
     return app
-
-
-def _tick_payload(world: World, tick: int, summary: dict) -> dict:
-    store = world.store
-    metric_names = ("gdp_proxy", "cpi", "unemployment", "index", "policy_rate",
-                    "money_supply", "gini", "sentiment")
-    metrics = {n: store.metric_latest(n, 0.0) for n in metric_names}
-    events = [{"id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
-               "importance": r["importance"], "payload": load_json(r["payload_json"], {})}
-              for r in store.query(
-                  "SELECT * FROM events WHERE tick=? AND importance>=1.5 ORDER BY id DESC LIMIT 12",
-                  (tick,))]
-    news = [{"headline": r["headline"], "outlet": r["outlet_name"], "tone": r["tone"]}
-            for r in store.query(
-                "SELECT * FROM news_articles WHERE tick=? ORDER BY id DESC LIMIT 4", (tick,))]
-    ticker = []
-    for f in store.query("SELECT id, name FROM firms WHERE status='listed'"):
-        price = world.economy.exchange.last_price(int(f["id"]))
-        if price is not None:
-            ticker.append({"firm_id": int(f["id"]), "name": f["name"], "price_cents": price})
-    return {"type": "tick", "tick": tick, "emitted_at_ms": int(time.time() * 1000),
-            "summary": summary, "metrics": metrics,
-            "events": events, "news": news, "ticker": ticker,
-            "governor": world.gateway.governor.status(), "status": world.status,
-            "pause_reason": world.last_pause_reason, "report_path": world.last_report_path}
