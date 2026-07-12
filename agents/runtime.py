@@ -101,7 +101,9 @@ class AgentRuntime:
         role = a["role"] or "citizen"
         system, user = self.ctx.render_prompt(context)
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
-                         agent_id=int(a["id"]), tick=tick, max_tokens=500)
+                         agent_id=int(a["id"]), tick=tick,
+                         max_tokens=int(self.config.get("llm", {}).get(
+                             "decision_max_tokens", 900)))
         resp = await self.gw.complete(req)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,

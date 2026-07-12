@@ -140,6 +140,82 @@ def test_goods_context_excludes_zero_inventory(tmp_path):
     world.store.close()
 
 
+def test_real_model_prompt_exposes_market_and_founder_decision_surfaces(tmp_path):
+    world = _world(
+        tmp_path, "rendered-market-context.db",
+        population={"size": 30},
+        firms={"count": 12, "listed": 3, "target_headcount": 3},
+    )
+    world.store.execute(
+        "UPDATE firms SET inventory=100 WHERE status IN ('private','listed')")
+    founder = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN firms f ON f.founder_agent_id=a.id "
+        "WHERE f.status IN ('private','listed') ORDER BY f.id LIMIT 1")
+    firm_id = int(world.store.scalar(
+        "SELECT id FROM firms WHERE founder_agent_id=?", (founder["id"],)))
+    applicant_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' AND id<>? ORDER BY id DESC LIMIT 1",
+        (founder["id"],)))
+    job_id = world.economy.labor.post_job(0, firm_id, "Operator", 250000)
+    application_id = world.economy.labor.apply_job(0, applicant_id, job_id)
+
+    context = world.runtime.ctx.build(founder, 1)
+    context["portfolio_day"] = True
+    context["career_day"] = True
+    system, prompt = world.runtime.ctx.render_prompt(context)
+
+    assert "approve_loan{application_id,rate_bps,term_ticks}" in system
+    assert "[MACRO" in prompt and "[BANKS" in prompt
+    assert "[LISTED FIRMS" in prompt and "[PORTFOLIO REVIEW DUE]" in prompt
+    assert "VALUE YOUR limit_price FROM FUNDAMENTALS" in prompt
+    assert "[CAREER REVIEW DUE]" in prompt
+    assert '"book_value_per_share":' in prompt
+    assert '"recent_revenue_7":' in prompt
+    assert "[YOUR FIRM" in prompt and '"unit_cost":' in prompt
+    assert '"employee_roster":' in prompt and '"employment_id":' in prompt
+    assert '"target_headcount":3' in prompt
+    assert "[APPLICANTS" in prompt
+    assert f'"application_id":{application_id}' in prompt
+    assert f'"occupation":' in prompt
+    assert "Manage your firm" in prompt
+    assert "at most 10% per review" in prompt
+    visible_goods = context["prices"][:16]
+    assert len(visible_goods) == 12
+    assert all(f'"firm_id":{offer["firm_id"]}' in prompt for offer in visible_goods)
+
+    central_banker = world.store.query_one(
+        "SELECT * FROM agents WHERE role='central_banker' LIMIT 1")
+    cb_prompt = world.runtime.ctx.render_prompt(
+        world.runtime.ctx.build(central_banker, 1))[1]
+    assert "[CENTRAL BANK]" in cb_prompt
+    assert "set_policy_rate{rate_bps}" in cb_prompt
+    assert "natural_unemployment=" in cb_prompt
+
+    founder_id = int(founder["id"])
+    cadence = load_json(founder["cadence_json"], {})
+    portfolio_tick = founder_id % int(cadence["portfolio"])
+    career_tick = founder_id % int(cadence["career"])
+    assert world.runtime.scheduler._citizen_wakes(founder, portfolio_tick, 1)
+    assert world.runtime.scheduler._citizen_wakes(founder, career_tick, 1)
+
+    class CapturingGateway:
+        def __init__(self):
+            self.request = None
+
+        async def complete(self, request, **_kwargs):
+            self.request = request
+            return SimpleNamespace(parsed={
+                "reasoning": "wait", "actions": [{"type": "do_nothing"}],
+                "belief_updates": [],
+            })
+
+    gateway = CapturingGateway()
+    world.runtime.gw = gateway
+    asyncio.run(world.runtime._decide_one(1, founder))
+    assert gateway.request.max_tokens == 900
+    world.store.close()
+
+
 def test_engine_semantics_version_preserves_markerless_runs(tmp_path):
     cfg = _config(tmp_path)
     fresh_store, fresh_world, _ = open_run(cfg, None, None, data_dir=tmp_path)

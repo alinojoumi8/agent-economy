@@ -43,6 +43,14 @@ class Scheduler:
         agent_id = int(a["id"])
         cadence = load_json(a["cadence_json"], {}) or {}
         act_every = max(1, int(cadence.get("act", self.base_act_every)) * max(1, cadence_multiplier))
+        portfolio_every = max(1, int(cadence.get("portfolio", 7)) * max(1, cadence_multiplier))
+        career_every = max(1, int(cadence.get("career", 30)) * max(1, cadence_multiplier))
+        # Concern-specific cadences are independent wakeups, not annotations
+        # that only matter when they happen to coincide with the base cadence.
+        if tick % portfolio_every == agent_id % portfolio_every:
+            return True
+        if tick % career_every == agent_id % career_every:
+            return True
         # Deterministic phase offset so wakeups spread evenly across ticks.
         if tick % act_every == agent_id % act_every:
             return True
