@@ -66,7 +66,9 @@ python run.py --experiment runs/experiments/rumor_vs_control.yaml
 
 - `gdp_proxy`: final-goods sales during one tick; it excludes wages.
 - `gdp_proxy_30d`: rolling 30-tick sum of final-goods sales.
-- `labor_income`: gross wages paid during one tick.
+- `labor_income`: gross wages paid during one tick. Because payroll is periodic,
+  the dashboard presents this flow as a rolling 30-day total so income remains
+  visible between paydays.
 - `cpi`: inventory-weighted goods price index, with genesis at tick 0.
 - `inflation_30d`: CPI change versus 30 ticks earlier, available from tick 30.
 - `cpi_yoy`: CPI change versus 365 ticks earlier, available from tick 365.
