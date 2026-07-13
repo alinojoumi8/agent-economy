@@ -95,6 +95,10 @@ llm:
       healthcheck_path: /models
       request_defaults:
         stream: false
+        # Keep the model's private thinking channel disabled. Only the public
+        # JSON content may enter the simulation or its replay log.
+        reasoning_effort: none
+        temperature: 0.0
   default_route: {provider: ollama, model: "gemma4:12b"}
   routes:
     # High-impact roles and purposes use the faster hosted strategic model.

@@ -19,6 +19,9 @@ def test_hybrid_live_profile_is_bounded_and_routes_by_risk(tmp_path, monkeypatch
     assert sum(region["population"] for region in config["living_world"]["regions"]) == 30
     assert config["budget"]["cap_usd"] == 0.25
     assert config["checkpoint_every"] == 1
+    ollama_defaults = config["llm"]["providers"]["ollama"]["request_defaults"]
+    assert ollama_defaults["reasoning_effort"] == "none"
+    assert ollama_defaults["temperature"] == 0.0
 
     store, world, _ = open_run(config, None, None, data_dir=tmp_path)
     try:

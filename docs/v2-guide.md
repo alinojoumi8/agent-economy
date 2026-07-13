@@ -172,7 +172,9 @@ An unperformed paid gate must be reported as pending, never treated as passed.
 legislature, one live newsroom desk, one conversation pair, a $0.25 simulator
 cost cap, and a checkpoint after every tick. MiniMax M3 handles strategic,
 legal, financial, regulatory, and political roles; local Ollama
-`gemma4:12b` handles newsroom and background generation.
+`gemma4:12b` handles newsroom and background generation. The Ollama route
+disables the private thinking channel and uses deterministic JSON temperature;
+only public response content may enter the event log or replay artifact.
 
 After setting `MINIMAX_API_KEY` and the non-secret local value
 `OLLAMA_API_KEY=ollama`, preflight and run the authorized three-tick pilot with:
