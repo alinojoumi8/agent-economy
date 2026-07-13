@@ -165,6 +165,27 @@ Provider calls and the outstanding paid-model v1 acceptance run remain separate
 operational gates. No live inference is run without `--approve-live-inference`.
 An unperformed paid gate must be reported as pending, never treated as passed.
 
+## Hybrid live pilot
+
+`runs/v2-live-hybrid.yaml` is the bounded provider-acceptance profile. It keeps
+30 agents across three regions, four LLM-capable core agents, a compact 4/2
+legislature, one live newsroom desk, one conversation pair, a $0.25 simulator
+cost cap, and a checkpoint after every tick. MiniMax M3 handles strategic,
+legal, financial, regulatory, and political roles; local Ollama
+`gemma4:12b` handles newsroom and background generation.
+
+After setting `MINIMAX_API_KEY` and the non-secret local value
+`OLLAMA_API_KEY=ollama`, preflight and run the authorized three-tick pilot with:
+
+```powershell
+python run.py --config runs/v2-live-hybrid.yaml --preflight-live --approve-live-inference
+python run.py --config runs/v2-live-hybrid.yaml --ticks 3 --approve-live-inference
+```
+
+Do not scale directly from this profile to 1,000 live agents. First review JSON
+validity and repairs, accepted/rejected action proposals, per-provider latency
+and token use, cost, per-currency reconciliation, checkpoints, and exact replay.
+
 ## Release checklist
 
 Before publication: run Python tests and compilation, dashboard tests/build,
