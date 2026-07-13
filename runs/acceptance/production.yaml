@@ -6,32 +6,46 @@ acceptance:
   min_agents: 95
   max_agents: 105
   max_spend_usd: null
+  efficiency_target_usd: 200
   oracle_p90_ms: 60000
-  rumor_initial_trust: 0.6
+  oracle_min_latency_samples: 5
   oracle_questions:
     - at_tick: 5
       question: What is the probability of a bank run within 30 ticks?
+    - at_tick: 65
+      question: What is the probability of a bank run within 30 ticks?
+    - at_tick: 125
+      question: What is the probability of a bank run within 30 ticks?
+    - at_tick: 185
+      question: What is the probability of a bank run within 30 ticks?
+    - at_tick: 245
+      question: What is the probability of a bank run within 30 ticks?
+    - at_tick: 305
+      question: What is the probability of a bank run within 30 ticks?
 
 shocks:
-  - kind: policy_rate
+  - kind: rumor
     trigger: shock
     trigger_params: {tick: 15}
+    params:
+      bank_selector: largest_by_deposits
+      audience: current_depositors
+      n_agents: 40
+    label: acceptance-bank-rumor
+  - kind: policy_rate
+    trigger: shock
+    trigger_params: {tick: 40}
     params: {rate_bps: 875}
     label: acceptance-policy-rate
   - kind: oil
     trigger: trend
-    trigger_params: {start: 30}
+    trigger_params: {start: 70}
     duration_ticks: 10
     params: {multiplier: 1.8}
     label: acceptance-oil
-  - kind: rumor
-    trigger: shock
-    trigger_params: {tick: 60}
-    params: {bank_id: 1, n_agents: 40}
-    label: acceptance-bank-rumor
   - kind: slant
     trigger: shock
-    trigger_params: {tick: 100}
+    trigger_params: {tick: 110}
     duration_ticks: 5
     params: {outlet_id: 1, directive: Frame the downturn as an urgent market crisis.}
     label: acceptance-slant

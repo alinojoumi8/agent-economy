@@ -68,7 +68,7 @@ No Docker/Kubernetes/queues in v1. One `python run.py --config run.yaml` process
 | 7 | `MEMORY` | Each active agent's day is compressed to a summary; importance scoring; belief updates extracted | Yes (cheap) |
 | 8 | `FINALIZE` | Idempotent completed-day metrics snapshot, Oracle resolution, and reconciliation after every settled action | No |
 
-`engine_semantics_version: 2` selects this completed-day contract. Markerless historical databases are resumed and replayed with the legacy seven-phase contract so already-completed runs retain byte-for-byte deterministic behavior.
+`engine_semantics_version: 2` selects the completed-day contract. Version `3` retains it and adds research-valid information/metric semantics: final-goods GDP, separate labor income, 30-day inflation, true 365-day YoY CPI, and explicit belief provenance. Markerless/v1 and stored v2 databases retain their historical behavior so exact replay stays byte-for-byte compatible.
 
 **Agent cadences (cost + realism):** every agent acts *only when scheduled* — shopping ~daily, portfolio review weekly, career decisions monthly, plus **event-triggered wakeups** (your bank is in the news, you got fired, someone told you something with high salience). Institutional agents act every tick. This is the single biggest cost lever (see §12).
 
@@ -100,9 +100,12 @@ beliefs        agent_id, key(e.g. 'trust:bank:2', 'inflation_expectation'),
                value REAL, updated_tick          -- numeric so metrics can aggregate
 news_articles  id, tick, outlet_id, headline, body, slant_tags, source_event_ids
 conversations  id, tick, participant_ids; messages(conv_id, agent_id, text, seq)
-events         id, tick, phase, kind, payload_json     -- append-only spine of the sim
-metrics        tick, name, value                       -- gdp_proxy, cpi, unemployment,
-                                                       -- index, m2, gini, sentiment
+events         id, tick, phase, kind, payload_json     -- append-only spine; includes
+                                                       -- belief_updated/normalized/rejected
+metrics        tick, name, value                       -- gdp_proxy, gdp_proxy_30d,
+                                                       -- labor_income, cpi, inflation_30d,
+                                                       -- cpi_yoy, unemployment, index, m2,
+                                                       -- gini, sentiment
 predictions    id, asked_tick, question, p REAL, reasoning, resolution_rule_json,
                deadline_tick, resolved_tick, outcome BOOL, brier REAL, evidence_json
 llm_calls      id, tick, agent_id, model, purpose, request_json, response_json,
@@ -122,6 +125,8 @@ Design notes:
 - **`events` is the source of truth for "what happened";** the dashboard, newsroom, Oracle, replay, and end-of-run report all read from it. Anything not in `events` didn't happen.
 - **Money is integer cents.** Floats cause reconciliation drift — never use them for balances.
 - **`beliefs` is numeric on purpose**: "trust in Bank 2 = 0.31" lets us chart belief collapse during a run — the core observable of the rumor experiments.
+- Reserved beliefs are normalized to defined domains (`trust:bank:*` `[0,1]`, sentiment `[-1,1]`, inflation expectation `[-0.05,0.25]`). Every update records old/raw/new values and source provenance in `events`; non-finite updates are rejected and audited.
+- `gdp_proxy` is final-goods sales only in v3. `labor_income` is separate, `gdp_proxy_30d` smooths the output view, `inflation_30d` begins at day 30, and `cpi_yoy` is absent until a real 365-day comparison exists.
 
 ## 5. The action schema (LLM → engine contract)
 
@@ -174,6 +179,8 @@ You are living inside a simulated economy. Respond only with the JSON schema…
 [TASK] Decide what you do today. Stay in character. You are not obligated to act.
 ```
 
+`information.citizen_bank_visibility` controls the epistemic boundary. New profiles use `public_status`: citizens/founders see bank IDs, names, and public status but no reserve ratios; credit officers see their own bank's ratio; the central banker, Oracle, dashboard, and reports see full ground truth. Missing configuration means `full_balance_sheet` only for historical replay compatibility.
+
 Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/entity match is enough at this scale): `score = 0.5·recency_decay + 0.3·importance + 0.2·relevance`.
 
 ## 7. Memory pipeline
@@ -181,7 +188,7 @@ Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/enti
 1. **Observation capture**: engine events touching the agent + conversation lines heard → `memories(kind=observation)` verbatim.
 2. **Nightly compression** (Haiku, ~200 out-tokens): day's observations → 1 summary + importance score (1–10) + extracted belief updates.
 3. **Weekly roll-up**: 7 daily summaries → 1 weekly summary; dailies demoted (still queryable, rarely retrieved).
-4. **Belief extraction**: numeric belief updates from step 2 are written to `beliefs` — this is what makes narrative → behavior measurable.
+4. **Belief extraction**: numeric updates are validated, normalized when reserved, written to `beliefs`, and appended as provenance-bearing events. Acceptance measures trust loss from each exposed agent's actual pre-rumor value to the minimum value in the ten-tick window; runs without history fail closed.
 
 ## 8. LLM gateway
 

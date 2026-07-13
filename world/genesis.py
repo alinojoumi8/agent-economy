@@ -14,6 +14,7 @@ from typing import Optional
 
 from engine.core import Economy
 from engine.ledger import SYS_EXTERNAL, SYS_INFLOW
+from agents.memory import Memory
 from agents.personas.vendor.persona_gen import Persona, sample_persona, sample_population
 
 
@@ -24,6 +25,7 @@ class Genesis:
         self.config = config
         self.prng = economy.prng
         self.persona_prng = persona_prng
+        self.memory = Memory(self.store, config)
         self.bank_ids: list[int] = []
         self.outlets = config.get("outlets", [
             {"id": 1, "name": "The Ledger", "slant": "pro-market-sensational"},
@@ -287,11 +289,11 @@ class Genesis:
     def _seed_beliefs(self, agent_id: int, bank_id: int) -> None:
         tick = 0
         for bid in self.bank_ids:
-            self.store.insert("beliefs", agent_id=agent_id, key=f"trust:bank:{bid}",
-                              value=0.6, updated_tick=tick)
-        self.store.insert("beliefs", agent_id=agent_id, key="sentiment", value=0.0, updated_tick=tick)
-        self.store.insert("beliefs", agent_id=agent_id, key="inflation_expectation",
-                          value=0.02, updated_tick=tick)
+            self.memory.set_belief(
+                agent_id, f"trust:bank:{bid}", 0.6, tick, source="genesis")
+        self.memory.set_belief(agent_id, "sentiment", 0.0, tick, source="genesis")
+        self.memory.set_belief(
+            agent_id, "inflation_expectation", 0.02, tick, source="genesis")
 
     def _social_graph(self) -> None:
         agents = [int(r["id"]) for r in self.store.query("SELECT id FROM agents WHERE alive=1")]
@@ -312,4 +314,8 @@ class Genesis:
         self.store.record_metric(0, "policy_rate", int(cb.get("neutral_rate_bps", 500)))
         self.store.record_metric(0, "commodity_index", 1.0)
         self.store.record_metric(0, "epidemic_multiplier", 1.0)
+        if int(self.config.get("engine_semantics_version", 2)) >= 3:
+            from world.metrics import Metrics
+            self.store.record_metric(
+                0, "cpi", Metrics(self.e, semantics_version=3)._cpi())
         self.e.gov.initialize(0)   # records opening tax rate + benefit level (R12)

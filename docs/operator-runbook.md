@@ -19,6 +19,30 @@ The production acceptance profile is uncapped but fully metered. Record the Git
 commit, resolved profile, seed, population, provider/model catalog result, and
 intended evidence gate before starting it.
 
+Run the free acceptance rehearsal and inspect its failed/live-only gates before
+authorizing inference:
+
+```powershell
+python run.py --config runs/acceptance/rehearsal.yaml `
+  --acceptance-run `
+  --experiment-evidence reports/out/experiment_rumor_vs_control.json
+```
+
+## Capped research-validity pilot
+
+The 30-tick pilot is the first paid gate. It targets the current depositors of
+the largest bank, hides private reserve ratios from citizens, and caps recorded
+spend at $25:
+
+```powershell
+python run.py --config runs/acceptance/pilot.yaml `
+  --acceptance-run --approve-live-inference
+```
+
+Do not start the full run unless this receipt passes its rumor, conversation,
+belief-history, deposit-outflow, ledger, provider, latency, and spend gates. Do
+not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
+
 ## Production acceptance
 
 Start a fresh acceptance run only with explicit live-inference authorization:
@@ -31,8 +55,22 @@ python run.py --config runs/acceptance/production.yaml `
 ```
 
 The driver runs to scheduled Oracle checkpoints and then the configured
-365-tick horizon. On success it writes the complete HTML report plus JSON and
-Markdown acceptance receipts.
+365-tick horizon. It schedules six questions and requires at least five Oracle
+latency samples. The profile is uncapped for runtime continuity but has a
+separate $200 efficiency completion gate. On success it writes the complete
+HTML report plus JSON and Markdown acceptance receipts.
+
+Copy `runs/acceptance/phenomena.template.yaml` to a run-specific reviewed file,
+set its top-level `run_id` to the exact reviewed run, and replace the pending
+examples with phenomena visible in that run's persisted metrics. Evidence for a
+different run fails closed even when its metric direction happens to match.
+
+During a run, `GET /api/acceptance/status` and the dashboard show completed
+gates, actual/projected spend, Oracle sample count, shock traces, and rumor
+window evidence. The status endpoint evaluates large databases off the server
+event loop and may return evidence cached for up to two seconds. Once a final
+receipt exists for the exact run ID and completed tick, the endpoint returns
+that artifact so experiment and reviewed-phenomena gates remain visible.
 
 ## Cooldown, pause, and resume
 

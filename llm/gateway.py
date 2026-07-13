@@ -97,6 +97,7 @@ class LLMResponse:
     cost_usd: float
     cached: bool = False
     ok: bool = True
+    call_id: Optional[int] = None
 
 
 class Governor:
@@ -403,8 +404,8 @@ class Gateway:
             replayed = self._replay_lookup(cache_key, req, schema_hint)
             if replayed is not None:
                 response, source_row = replayed
-                self._log_replay_call(req, cache_key, source_row)
-                operational_log(logger, logging.INFO, "llm.replay.hit",
+                response.call_id = self._log_replay_call(req, cache_key, source_row)
+                operational_log(logger, logging.DEBUG, "llm.replay.hit",
                                 run_id=self.run_id, model=model, role=req.role,
                                 purpose=req.purpose, agent_id=req.agent_id, tick=req.tick)
                 return response
@@ -418,7 +419,7 @@ class Gateway:
         resumed = self._durable_lookup(cache_key, schema_hint)
         if resumed is not None:
             operational_log(
-                logger, logging.INFO, "llm.resume.hit",
+                logger, logging.DEBUG, "llm.resume.hit",
                 run_id=self.run_id, provider=resumed.provider, model=resumed.model,
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick)
@@ -526,8 +527,9 @@ class Gateway:
 
         cached, cost = self._price(
             model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
-        self._log_call(req, provider, model, cache_key, result, cost, cached, latency_ms)
-        operational_log(logger, logging.INFO, "llm.request.completed",
+        call_id = self._log_call(
+            req, provider, model, cache_key, result, cost, cached, latency_ms)
+        operational_log(logger, logging.DEBUG, "llm.request.completed",
                         run_id=self.run_id, provider=provider, model=model,
                         role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                         tick=req.tick, attempts=attempts, latency_ms=latency_ms,
@@ -537,7 +539,7 @@ class Gateway:
 
         return LLMResponse(text=result.text, parsed=parsed, provider=provider, model=model,
                            in_tokens=result.in_tokens, out_tokens=result.out_tokens,
-                           cost_usd=cost, cached=cached, ok=ok)
+                           cost_usd=cost, cached=cached, ok=ok, call_id=call_id)
 
     async def _call_adapter(self, provider: str, adapter: Adapter, model: str, req: LLMRequest,
                             messages: list[dict], temperature: float,
@@ -721,9 +723,10 @@ class Gateway:
             text=resp.get("text", ""), parsed=parsed,
             provider=row["provider"], model=row["model"],
             in_tokens=int(row["in_tokens"]), out_tokens=int(row["out_tokens"]),
-            cost_usd=float(row["cost_usd"]), cached=bool(row["cached"]), ok=ok)
+            cost_usd=float(row["cost_usd"]), cached=bool(row["cached"]), ok=ok,
+            call_id=int(row["id"]))
 
-    def _log_replay_call(self, req: LLMRequest, cache_key: str, row) -> None:
+    def _log_replay_call(self, req: LLMRequest, cache_key: str, row) -> int:
         """Copy original accounting so governor stages and scheduling replay exactly."""
         level_before = self.governor.level()
         call_id = self.store.insert(
@@ -736,9 +739,10 @@ class Gateway:
             created_at=row["created_at"] or datetime.now(timezone.utc).isoformat())
         self.governor.record_cost(call_id, float(row["cost_usd"]), req.purpose)
         self._log_governor_transitions(req.tick, level_before)
+        return call_id
 
     def _log_call(self, req: LLMRequest, provider: str, model: str, cache_key: str,
-                  result, cost: float, cached: bool, latency_ms: int) -> None:
+                  result, cost: float, cached: bool, latency_ms: int) -> int:
         level_before = self.governor.level()
         call_id = self.store.insert(
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role, provider=provider,
@@ -751,6 +755,7 @@ class Gateway:
             created_at=datetime.now(timezone.utc).isoformat())
         self.governor.record_cost(call_id, cost, req.purpose)
         self._log_governor_transitions(req.tick, level_before)
+        return call_id
 
     def _log_governor_transitions(self, tick: int, level_before: int) -> None:
         """Persist every newly crossed budget stage for UI visibility and replay."""

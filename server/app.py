@@ -6,6 +6,7 @@ broadcast over WebSocket so the dashboard updates within 2s of tick completion
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -50,6 +51,8 @@ def create_app(world: World) -> FastAPI:
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
     app.state.run_controller = controller
+    acceptance_cache = {"result": None, "evaluated_at": 0.0}
+    acceptance_lock = asyncio.Lock()
 
     @app.middleware("http")
     async def log_http_request(request: Request, call_next):
@@ -102,9 +105,50 @@ def create_app(world: World) -> FastAPI:
     async def run_status():
         return controller.status()
 
+    @app.get("/api/acceptance/status")
+    async def acceptance_status():
+        meta = store.get_meta()
+        config = load_json(meta["config_json"], {})
+        if not config.get("acceptance"):
+            return {"configured": False, "passed": False, "checks": []}
+        # A completed receipt includes run-specific experiment/phenomena
+        # attachments that cannot be reconstructed from the DB alone. Prefer it
+        # only when it is bound to this run and current completed tick.
+        receipt_path = Path(str(config.get("report_dir", "reports/out"))) / (
+            f"acceptance_{meta['run_id']}.json")
+        if receipt_path.exists():
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                receipt = None
+            if (isinstance(receipt, dict)
+                    and receipt.get("run", {}).get("run_id") == str(meta["run_id"])
+                    and int(receipt.get("progress", {}).get("completed_ticks", -1))
+                    == int(meta["tick"])):
+                return {"configured": True, **receipt}
+        # A production database can be hundreds of MB. The evidence evaluator
+        # reconciles the ledger and builds causal shock traces, so keep it off
+        # the asyncio event loop and coalesce dashboard refreshes for two seconds.
+        now = time.monotonic()
+        cached = acceptance_cache["result"]
+        if cached is not None and now - acceptance_cache["evaluated_at"] < 2.0:
+            return cached
+        async with acceptance_lock:
+            now = time.monotonic()
+            cached = acceptance_cache["result"]
+            if cached is not None and now - acceptance_cache["evaluated_at"] < 2.0:
+                return cached
+            from reports.acceptance import evaluate_acceptance
+            result = {
+                "configured": True,
+                **await asyncio.to_thread(evaluate_acceptance, store.path),
+            }
+            acceptance_cache.update(result=result, evaluated_at=time.monotonic())
+            return result
+
     # ── world queries (dashboard panels, PRD R8) ─────────────────────────────
     @app.get("/api/metrics")
-    async def metrics(names: str = "gdp_proxy,cpi,unemployment,index,policy_rate,money_supply,gini,sentiment"):
+    async def metrics(names: str = "gdp_proxy,gdp_proxy_30d,labor_income,cpi,inflation_30d,cpi_yoy,unemployment,index,policy_rate,money_supply,gini,sentiment"):
         out = {}
         for name in names.split(","):
             name = name.strip()
@@ -131,6 +175,14 @@ def create_app(world: World) -> FastAPI:
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=?", (agent_id,))]
         beliefs = {r["key"]: r["value"] for r in store.query(
             "SELECT key, value FROM beliefs WHERE agent_id=?", (agent_id,))}
+        belief_history = [
+            {"event_id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
+             **load_json(r["payload_json"], {})}
+            for r in store.query(
+                "SELECT id, tick, kind, payload_json FROM events "
+                "WHERE subject_type='agent' AND subject_id=? AND kind IN "
+                "('belief_updated','belief_update_normalized','belief_update_rejected') "
+                "ORDER BY id DESC LIMIT 100", (agent_id,))]
         memories = [dict(r) for r in store.query(
             "SELECT tick, kind, text, importance FROM memories WHERE agent_id=? "
             "ORDER BY id DESC LIMIT 30", (agent_id,))]
@@ -147,7 +199,8 @@ def create_app(world: World) -> FastAPI:
         persona = {k: load_json(a[k], None) for k in
                    ("personality_json", "media_diet_json", "cadence_json")}
         return {"agent": dict(a), "persona": persona, "accounts": accounts, "loans": loans,
-                "beliefs": beliefs, "memories": memories, "shares": shares,
+                "beliefs": beliefs, "belief_history": belief_history,
+                "memories": memories, "shares": shares,
                 "recent_decisions": decisions}
 
     @app.get("/api/banks")

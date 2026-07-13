@@ -1,0 +1,31 @@
+# Paid, bounded research-validity pilot. Requires explicit live-inference approval.
+extends: ../production.yaml
+
+budget:
+  cap_usd: 25.0
+
+acceptance:
+  min_ticks: 30
+  min_agents: 95
+  max_agents: 105
+  max_spend_usd: 25.0
+  efficiency_target_usd: 25.0
+  oracle_p90_ms: 60000
+  oracle_min_latency_samples: 1
+  required_shocks: [rumor]
+  require_oracle_scoring: false
+  require_experiment: false
+  require_phenomena: false
+  oracle_questions:
+    - at_tick: 5
+      question: What is the probability of a bank run within 30 ticks?
+
+shocks:
+  - kind: rumor
+    trigger: shock
+    trigger_params: {tick: 15}
+    params:
+      bank_selector: largest_by_deposits
+      audience: current_depositors
+      n_agents: 40
+    label: pilot-bank-rumor

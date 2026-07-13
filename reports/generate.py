@@ -15,7 +15,10 @@ from pathlib import Path
 
 from engine.store import Store, load_json
 
-CHART_METRICS = [("gdp_proxy", "GDP proxy / day ($)"), ("cpi", "CPI"),
+CHART_METRICS = [("gdp_proxy", "Final-goods sales / day ($)"),
+                 ("gdp_proxy_30d", "Final-goods sales / 30 days ($)"),
+                 ("labor_income", "Labor income / day ($)"), ("cpi", "CPI"),
+                 ("inflation_30d", "30-day inflation"), ("cpi_yoy", "CPI year-over-year"),
                  ("unemployment", "Unemployment"), ("index", "Stock index"),
                  ("policy_rate", "Policy rate (bps)"), ("money_supply", "Money supply ($)"),
                  ("gini", "Gini"), ("sentiment", "Sentiment")]

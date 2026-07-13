@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Optional
 
 from engine.store import Store, load_json
@@ -19,8 +20,12 @@ RECENCY_HALFLIFE = 10.0   # ticks
 
 
 class Memory:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, config: Optional[dict] = None):
         self.store = store
+        beliefs = (config or {}).get("beliefs", {})
+        self.audit_history = bool(beliefs.get("audit_history", False))
+        self.enforce_reserved_ranges = bool(
+            beliefs.get("enforce_reserved_ranges", False))
 
     # ── capture ──────────────────────────────────────────────────────────────
     def observe(self, agent_id: int, tick: int, text: str, *, importance: float = 1.0,
@@ -84,21 +89,87 @@ class Memory:
         rows = self.store.query("SELECT key, value FROM beliefs WHERE agent_id=?", (agent_id,))
         return {r["key"]: float(r["value"]) for r in rows}
 
-    def set_belief(self, agent_id: int, key: str, value: float, tick: int) -> None:
+    @staticmethod
+    def _reserved_range(key: str) -> Optional[tuple[float, float]]:
+        if key.startswith("trust:bank:"):
+            return 0.0, 1.0
+        if key == "sentiment":
+            return -1.0, 1.0
+        if key == "inflation_expectation":
+            return -0.05, 0.25
+        return None
+
+    def set_belief(
+        self,
+        agent_id: int,
+        key: str,
+        value: float,
+        tick: int,
+        *,
+        source: str = "direct",
+        source_llm_call_id: Optional[int] = None,
+    ) -> float:
+        raw_value = float(value)
+        if not math.isfinite(raw_value):
+            if self.audit_history:
+                self.store.log_event(
+                    tick, "belief_update_rejected", {
+                        "agent_id": agent_id, "key": key,
+                        "raw_value": str(raw_value), "reason": "non_finite",
+                        "source": source, "source_llm_call_id": source_llm_call_id,
+                    }, phase="MEMORY" if source == "memory" else "EXECUTION",
+                    subject_type="agent", subject_id=agent_id, importance=1.0)
+            raise ValueError("belief value must be finite")
+
+        normalized = raw_value
+        bounds = self._reserved_range(key) if self.enforce_reserved_ranges else None
+        if bounds is not None:
+            normalized = min(bounds[1], max(bounds[0], raw_value))
+
         existing = self.store.query_one(
-            "SELECT id FROM beliefs WHERE agent_id=? AND key=?", (agent_id, key))
+            "SELECT id, value FROM beliefs WHERE agent_id=? AND key=?", (agent_id, key))
+        old_value = float(existing["value"]) if existing else None
         if existing:
-            self.store.update("beliefs", int(existing["id"]), value=float(value), updated_tick=tick)
+            self.store.update(
+                "beliefs", int(existing["id"]), value=normalized, updated_tick=tick)
         else:
-            self.store.insert("beliefs", agent_id=agent_id, key=key, value=float(value),
+            self.store.insert("beliefs", agent_id=agent_id, key=key, value=normalized,
                               updated_tick=tick)
 
-    def apply_belief_updates(self, agent_id: int, updates: list[dict], tick: int) -> None:
+        if self.audit_history:
+            payload = {
+                "agent_id": agent_id, "key": key, "old_value": old_value,
+                "raw_value": raw_value, "new_value": normalized,
+                "normalized": normalized != raw_value, "source": source,
+                "source_llm_call_id": source_llm_call_id,
+            }
+            phase = "MEMORY" if source == "memory" else (
+                "NIGHT_CLOSE" if source == "genesis" else "EXECUTION")
+            if normalized != raw_value:
+                self.store.log_event(
+                    tick, "belief_update_normalized", payload, phase=phase,
+                    subject_type="agent", subject_id=agent_id, importance=1.0)
+            self.store.log_event(
+                tick, "belief_updated", payload, phase=phase,
+                subject_type="agent", subject_id=agent_id, importance=0.5)
+        return normalized
+
+    def apply_belief_updates(
+        self,
+        agent_id: int,
+        updates: list[dict],
+        tick: int,
+        *,
+        source: str = "direct",
+        source_llm_call_id: Optional[int] = None,
+    ) -> None:
         for u in updates or []:
             key = u.get("key")
             if key is None:
                 continue
             try:
-                self.set_belief(agent_id, key, float(u.get("value", 0.0)), tick)
-            except (TypeError, ValueError):
+                self.set_belief(
+                    agent_id, str(key), float(u.get("value", 0.0)), tick,
+                    source=source, source_llm_call_id=source_llm_call_id)
+            except (TypeError, ValueError, OverflowError):
                 continue

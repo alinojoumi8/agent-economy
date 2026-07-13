@@ -47,7 +47,7 @@ class AgentRuntime:
         self.store = economy.store
         self.gw = gateway
         self.config = config
-        self.mem = Memory(self.store)
+        self.mem = Memory(self.store, config)
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.executor = ActionExecutor(economy)
         self.scheduler = Scheduler(self.store, config)
@@ -107,7 +107,8 @@ class AgentRuntime:
         resp = await self.gw.complete(req)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                "reasoning": env.get("reasoning", "")}
+                "reasoning": env.get("reasoning", ""),
+                "llm_call_id": getattr(resp, "call_id", None)}
 
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
@@ -116,7 +117,10 @@ class AgentRuntime:
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
             self.executor.execute_actions(tick, agent_id, actions, phase="EXECUTION")
-            self.mem.apply_belief_updates(agent_id, env.get("belief_updates", []), tick)
+            self.mem.apply_belief_updates(
+                agent_id, env.get("belief_updates", []), tick,
+                source=str(d.get("purpose") or "decision"),
+                source_llm_call_id=d.get("llm_call_id"))
             reasoning = (d.get("reasoning") or "").strip()
             if reasoning:
                 self.mem.observe(agent_id, tick, f"I decided: {reasoning}", importance=1.0,
@@ -126,7 +130,9 @@ class AgentRuntime:
     def capture_event_observations(self, tick: int) -> None:
         events = self.store.query(
             "SELECT * FROM events WHERE tick=? AND kind NOT IN "
-            "('action_rejected','metrics_snapshot','arrival_scheduled') ORDER BY id", (tick,))
+            "('action_rejected','metrics_snapshot','arrival_scheduled',"
+            "'belief_updated','belief_update_normalized','belief_update_rejected') "
+            "ORDER BY id", (tick,))
         for ev in events:
             payload = load_json(ev["payload_json"], {}) or {}
             kind = ev["kind"]
@@ -211,8 +217,10 @@ class AgentRuntime:
                 raise res
             if res is None:
                 continue
-            summary, importance, belief_updates = res
-            self.mem.apply_belief_updates(aid, belief_updates, tick)
+            summary, importance, belief_updates, llm_call_id = res
+            self.mem.apply_belief_updates(
+                aid, belief_updates, tick, source="memory",
+                source_llm_call_id=llm_call_id)
             self.mem.write_summary(aid, tick, summary, importance)
 
         if tick % 7 == 0:
@@ -231,12 +239,12 @@ class AgentRuntime:
 
     async def _compress_one(
         self, tick: int, agent_id: int,
-    ) -> Optional[tuple[str, float, list[dict]]]:
+    ) -> Optional[tuple[str, float, list[dict], Optional[int]]]:
         obs = self.mem.todays_observations(agent_id, tick)
         if not obs:
             return
         context = {"observations": obs, "tick": tick, "rng_seed": agent_id * 7 + tick,
-                   "infl_hint": self.store.metric_latest("cpi_yoy", 0.02)}
+                   "infl_hint": self.ctx.inflation_signal()}
         schema = '{"summary":"concise memory","importance":1.0,"belief_updates":[]}'
         req = LLMRequest(
             role="citizen", purpose="memory",
@@ -257,7 +265,8 @@ class AgentRuntime:
         except (TypeError, ValueError):
             importance = 1.0
         updates = env.get("belief_updates", [])
-        return summary, importance, updates if isinstance(updates, list) else []
+        return (summary, importance, updates if isinstance(updates, list) else [],
+                getattr(resp, "call_id", None))
 
     async def _rollup_week(
         self, tick: int, agent_id: int,

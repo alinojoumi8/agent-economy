@@ -134,25 +134,60 @@ class Shocks:
     def _apply_rumor(self, tick: int, s, params: dict, initial: bool) -> None:
         """Inject a synthetic 'heard' observation about a bank into targeted agents'
         memories. Purely informational — the engine touches no balance."""
-        bank_id = int(params.get("bank_id", 1))
+        research_targeting = "bank_selector" in params or "audience" in params
+        selector = str(params.get("bank_selector", "explicit"))
+        if selector == "largest_by_deposits":
+            candidates = [
+                (self.e.bank.deposits(int(row["id"])), int(row["id"]))
+                for row in self.store.query(
+                    "SELECT id FROM banks WHERE status='open' ORDER BY id")
+            ]
+            if not candidates:
+                raise RuntimeError("rumor shock requires an open bank")
+            bank_id = max(candidates, key=lambda item: (item[0], -item[1]))[1]
+        elif selector == "explicit":
+            bank_id = int(params.get("bank_id", 1))
+        else:
+            raise ValueError(
+                "rumor bank_selector must be explicit or largest_by_deposits")
+
         n = int(params.get("n_agents", 12))
+        audience = str(params.get("audience", "all_citizens"))
         text = params.get("text",
             f"A friend of a friend says bank {bank_id} is about to go under — people are quietly pulling out.")
-        agents = self.store.query(
-            "SELECT id FROM agents WHERE alive=1 AND kind='citizen' ORDER BY id")
+        if audience == "current_depositors":
+            agents = self.store.query(
+                "SELECT a.id FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+                "WHERE a.alive=1 AND a.kind='citizen' AND ac.bank_id=? "
+                "AND ac.balance_cents>0 ORDER BY a.id", (bank_id,))
+        elif audience == "all_citizens":
+            agents = self.store.query(
+                "SELECT id FROM agents WHERE alive=1 AND kind='citizen' ORDER BY id")
+        else:
+            raise ValueError(
+                "rumor audience must be all_citizens or current_depositors")
         # Deterministic target selection from the engine PRNG.
         ids = [int(r["id"]) for r in agents]
         self.e.prng.shuffle(ids)
         targets = ids[:n]
+        if research_targeting:
+            params["resolved_bank_id"] = bank_id
+            params["bank_id"] = bank_id
+            params["audience"] = audience
+            params["target_agent_ids"] = targets
         for aid in targets:
             self.store.insert(
                 "memories", agent_id=aid, tick=tick, kind="observation",
                 text=text, importance=4.0,
                 entities_json=json.dumps([f"bank:{bank_id}", f"rumor_bank:{bank_id}"]),
                 last_accessed_tick=tick, demoted=0)
-        self.store.log_event(tick, "rumor", {
+        event_payload = {
             "bank_id": bank_id, "n_agents": len(targets), "target_agent_ids": targets,
-            "text": text, "truthful": False},
+            "text": text, "truthful": False,
+        }
+        if research_targeting:
+            event_payload.update({"bank_selector": selector, "audience": audience})
+        self.store.log_event(tick, "rumor", event_payload,
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
 
     def _apply_slant(self, tick: int, s, params: dict, initial: bool) -> None:

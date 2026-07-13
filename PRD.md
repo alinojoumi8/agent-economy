@@ -23,6 +23,8 @@ These were decided during scoping and constrain everything below.
 | Interface | **Live web dashboard + end-of-run reports.** | Watch it unfold in real time, then get a written narrative + data appendix per run. |
 | Run length | **Open-ended.** A run continues until stopped, with checkpointing so it can pause/resume across days. | Long-horizon emergent effects (inequality drift, boom-bust cycles) need time. |
 | Budget | **Fully metered; cap is profile-specific.** Safety-capped profiles degrade before their configured ceiling. The production/acceptance profile is uncapped, waits through provider rate limits, and records actual spend. | The $200 figure is a measured efficiency target, not a production stop condition. This keeps capped development safe without terminating long production experiments. |
+| Agent information | **Public information by default.** Citizens and founders see their own finances plus public bank identity/status, news, conversations, and memories; they do not receive private reserve ratios. Credit officers see their own bank; the central banker, Oracle, dashboard, and reports retain full ground truth. | Narrative experiments are invalid if citizens can disprove a rumor from private balance-sheet data unavailable to real depositors. |
+| Macro measurement | **Final-goods output and labor income are separate.** Daily/30-day GDP proxies use final-goods sales; wages are a separate labor-income series. True year-over-year CPI requires 365 completed days. | Prevents double counting, payday spikes, and short-run changes being mislabeled as year-over-year inflation. |
 | Signature feature | **The Oracle** — a live analyst you can query mid-run ("probability of market crash within 30 days?"). It answers with a probability + reasoning, the prediction is logged, and the system later scores it against what actually happened. | This turns every run into an experiment and makes the sim's predictive value measurable (calibration/Brier scores). |
 
 ## 3. Problem statement
@@ -123,7 +125,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - 100 agents generated from a persona template library with controlled diversity (occupation, wealth distribution, personality, political lean, media diet).
 - Decision loop per agent per tick: perceive (world events + personal state + retrieved memories) → decide (LLM returns a structured action list) → engine executes.
 - Memory: verbatim recent buffer, compressed summaries beyond that, retrieval scored by recency × importance × relevance.
-- Acceptance: an agent inspector shows, for any decision, the exact prompt context and the returned action JSON.
+- Reserved beliefs have defined numeric ranges and every accepted, normalized, or rejected update is appended to the event spine with provenance.
+- Acceptance: an agent inspector shows, for any decision, the exact prompt context, returned action JSON, and belief-update history.
 
 **R3. Core institutions: banks + firms + labor + goods**
 - ≥ 2 commercial banks taking deposits and underwriting loans (LLM credit decisions, engine-enforced repayment schedules, default and collateral seizure mechanics).
@@ -139,7 +142,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R5. News outlets + conversation layer**
 - 2 outlets with distinct editorial slants; reporter agents draw only on true sim events, but framing/selection is theirs; stories published daily.
 - Agents consume news per their media diet; evening conversation phase pairs socially-connected agents; conversations are stored and searchable.
-- Acceptance (rumor pilot): after injecting a false rumor about a bank, within 10 ticks (a) the rumor appears in ≥ 5 distinct conversations, (b) trust-in-that-bank belief drops ≥ 0.2 for ≥ 25% of exposed agents, and (c) that bank's deposit outflow exceeds 2× its pre-rumor baseline.
+- Rumor experiments may resolve the largest bank at fire time and target current depositors; resolved bank and audience IDs are persisted without directly changing beliefs or balances.
+- Acceptance (rumor pilot): after injecting a false rumor about a bank, within 10 ticks (a) the rumor appears in ≥ 5 distinct conversations, (b) trust-in-that-bank belief falls by at least 20% relative to each agent's actual pre-rumor value for ≥ 25% of exposed agents, and (c) that bank's deposit outflow exceeds 2× its pre-rumor baseline.
 
 **R6. The Oracle**
 - Chat interface on the dashboard; read access to all world state (metrics, ledgers, news, sampled conversations, order books) but **no write access** — it can never influence the world.
@@ -154,7 +158,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Acceptance: a capped $200 profile never exceeds it; uncapped production records actual spend; degradation, rate-limit, and resume state are visible.
 
 **R8. Live dashboard**
-- Panels: macro metrics time series (GDP proxy, CPI, unemployment, policy rate, money supply, Gini, sentiment index), stock ticker + index chart, live news feed, conversation stream, agent inspector, bank balance sheets, Oracle chat, event/shock log, cost meter.
+- Panels: macro metrics time series (daily/30-day final-goods output, labor income, CPI, 30-day/YoY inflation when available, unemployment, policy rate, money supply, Gini, sentiment), stock ticker + index chart, live news feed, conversation stream, agent inspector, bank balance sheets, Oracle chat, event/shock log, cost meter, and acceptance progress.
 - Acceptance: dashboard receives each tick's updates within 2 seconds of tick completion; usable while the sim runs.
 
 **R9. Shock injection (minimum library)**
@@ -217,17 +221,16 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 ---
 
-## 10. Open questions
+## 10. Resolved implementation decisions
 
-**Blocking (answer before build starts)**
-1. *(Engineering)* Conversation volume is the main cost lever: how many agent-pair conversations per evening phase at launch? Proposal: 15 pairs/tick, governor-adjustable. → **Proposed default: 15.**
-2. *(Design)* Do citizens act every tick, or on personal cadences (shop daily, review portfolio weekly)? Cadenced acting cuts cost ~60% and is more realistic. → **Proposed: cadenced.**
-
-**Non-blocking (resolve during build)**
-3. *(Engineering)* SQLite vs Postgres for the run store — SQLite is simpler and likely sufficient for 100 agents; revisit at scale-up.
-4. *(Design)* Should news reporters be allowed to interview agents (extra LLM calls) or only observe events? Start observe-only.
-5. *(Design)* Central banker: rule-bounded (Taylor-rule guardrails + LLM discretion inside the band) or fully discretionary? Start rule-bounded to avoid absurd policy.
-6. *(Experiment design)* Which pilot experiment ships as the acceptance demo — rumor-driven bank run, or rate-hike transmission? Rumor bank run is the more novel showcase.
+1. Conversation volume is **15 pairs/tick**, governor-adjustable.
+2. Citizens act on **personal cadences** plus event-triggered wakeups.
+3. The v1 run store is **SQLite**; Postgres is deferred to hosted/scale work.
+4. Reporters are **observe-only**; interviews are deferred.
+5. The central banker is **rule-bounded**, with LLM discretion inside configured Taylor-rule guardrails.
+6. The acceptance showcase is the **rumor-driven bank-run experiment**.
+7. Citizens receive **public bank status, not private reserve ratios**; full visibility remains an explicit legacy/experimental option.
+8. P2 work follows a **research-quality-first** roadmap; participant and hosted modes remain deferred.
 
 ---
 

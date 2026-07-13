@@ -1,6 +1,6 @@
 # Rumor vs. control — five-seed experiment
 
-**Evidence date:** 2026-07-10
+**Evidence date:** 2026-07-13
 
 **Specification:** [`runs/experiments/rumor_vs_control.yaml`](../../runs/experiments/rumor_vs_control.yaml)
 
@@ -35,11 +35,11 @@ this is the offline acceptance profile.
 
 | Outcome at tick 30 | Treatment mean ± population SD | Control mean | Mean effect (T−C) |
 |---|---:|---:|---:|
-| Bank 1 deposits (cents) | 394,430.370 ± 95,223.299 | 1,205,611.976 | **−811,181.606** |
-| Bank 1 reserve ratio | 0.1000 ± 0.0000 | 0.5869 | **−0.4869** |
-| Sentiment | −0.7394 ± 0.0214 | 0.0109 | **−0.7503** |
+| Bank 1 deposits (cents) | 394,424.854 ± 95,231.652 | 1,200,534.760 | **−806,109.906** |
+| Bank 1 reserve ratio | 0.1010 ± 0.0019 | 0.5891 | **−0.4881** |
+| Sentiment | −0.7619 ± 0.0226 | 0.0117 | **−0.7736** |
 | Market index | 100.0000 ± 0.0000 | 100.0000 | 0.0000 |
-| Unemployment | 0.0077 ± 0.0154 | 0.0259 | −0.0182 |
+| Unemployment | 0.0077 ± 0.0154 | 0.0077 | 0.0000 |
 
 | Event count per run | Treatment mean | Control mean | Mean effect (T−C) |
 |---|---:|---:|---:|
@@ -56,6 +56,6 @@ not claim a bank failure; the observed outcome is a run that drives the bank to
 its 10% reserve floor without failure or central-bank support in these seeds.
 
 This satisfies the PRD's written N=5 experiment artifact for the functional
-prototype. It does **not** prove that MiniMax/Kimi agents reproduce the same
+prototype under semantics v3. It does **not** prove that MiniMax/Kimi agents reproduce the same
 distribution. That production confirmation requires provider keys, approved
 spend, and a separately retained real-provider run.

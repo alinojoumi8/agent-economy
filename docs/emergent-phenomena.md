@@ -1,6 +1,6 @@
 # Causal phenomena evidence — offline functional prototype
 
-**Evidence date:** 2026-07-10
+**Evidence refreshed:** 2026-07-13
 
 **Acceptance boundary:** implemented and tested with deterministic scripted agents;
 real MiniMax/Kimi confirmation remains unproven.
@@ -16,9 +16,15 @@ validates an action, while an agent policy chooses the consequential action.
 reserve ratio.
 
 **Metric signature:** across five matched seeds, the rumor arm averaged 16.8
-deposit moves versus 0 in controls, Bank 1 deposits ended 811,181.606 cents lower,
-and its reserve ratio ended 0.4869 lower. See
+deposit moves versus 0 in controls, Bank 1 deposits ended 806,109.906 cents lower,
+and its reserve ratio ended 0.4881 lower. See
 [`rumor-vs-control.md`](experiments/rumor-vs-control.md).
+
+The 365-tick semantics-v3 rehearsal `5f5eac3794` separately targeted 40 current
+depositors of the largest bank: 36 met the relative trust-drop threshold, 83
+qualifying conversations occurred, and bank 2 deposits fell by 3,131,877.63
+dollars between ticks 14 and 24. The run reconciled with no provider,
+checkpoint, report, or ledger failure. This is scripted evidence only.
 
 **Why it is not an engine shortcut:** the rumor hook writes information to
 memories but never moves money. Money moves only after an agent returns a

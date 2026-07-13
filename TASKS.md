@@ -22,17 +22,23 @@ while provider rate limits control throughput.
   successful responses are reused without duplicate provider charges or writes.
 - [x] Reconcile draft PR #10 without merging its competing acceptance stack:
   port only current, non-duplicative campaign or handbook improvements.
-- [ ] Publish this hardened branch as the replacement PR and pass fresh CI on
+- [x] Publish the hardened branch as replacement PR #11 and pass fresh CI on
   the current Python/dashboard baseline.
-- [ ] Use one inherited production-acceptance config for 365 ticks, about 100
+- [x] Use one inherited production-acceptance config for 365 ticks, about 100
   agents, the five required shock types, and an automatically scored Oracle
-  prediction.
+  prediction; require six latency samples and a separate $200 efficiency gate.
+- [x] Add research-valid public information boundaries, dynamic depositor-targeted
+  rumors, bounded/provenance-bearing beliefs, and fail-closed relative trust evidence.
+- [x] Separate final-goods output from labor income and expose correctly windowed
+  30-day and year-over-year inflation without changing legacy replay semantics.
+- [ ] With explicit approval, pass the capped 30-day live rumor pilot before
+  authorizing a new full production acceptance run.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
 - [x] Run the five-seed rumor treatment/control experiment and attach its
   reconciled comparison artifact.
-- [ ] Pass focused tests, the full Python suite, dashboard tests/build, live
+- [x] Pass focused tests, the full Python suite, dashboard tests/build, live
   dashboard/API smoke, autoreview, and diff checks.
 - [ ] With explicit live-inference approval, pass provider preflight and the
   uncapped 365-tick run with every evidence gate green.

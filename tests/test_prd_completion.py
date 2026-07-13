@@ -357,7 +357,7 @@ def test_production_config_inherits_world_and_requires_both_keys():
 
 
 def test_gateway_retries_once_and_bills_provider_reported_cache_tokens(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="agent_economy.llm")
+    caplog.set_level(logging.DEBUG, logger="agent_economy.llm")
     cfg = _config(tmp_path)
     cfg["llm"] = {
         "provider_retries": 1,
