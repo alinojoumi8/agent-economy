@@ -191,6 +191,22 @@ Do not scale directly from this profile to 1,000 live agents. First review JSON
 validity and repairs, accepted/rejected action proposals, per-provider latency
 and token use, cost, per-currency reconciliation, checkpoints, and exact replay.
 
+### Latest bounded acceptance evidence
+
+The three-tick acceptance run `9e43ee6918` at revision `6790919` completed in
+about 37 seconds. All 14 provider completions produced valid structured output
+without repair or provider failure: 12 MiniMax calls and two local Ollama calls.
+The simulator-estimated MiniMax cost was `$0.00473718`; Ollama was local and
+recorded zero provider cost. The audit found no persisted private-reasoning
+fields, all ledgers reconciled per currency, and all three tick checkpoints were
+created. Exact offline replay reproduced the source state hash
+`c14c0412aa7e32726de8216c60202ff44de88115f35959d7eb2b4943bed2d347`.
+
+This is an infrastructure and safety acceptance result, not yet a behavioral
+quality result: all 12 accepted strategic proposals chose `do_nothing`. The next
+live gate should seed a bounded legal, credit, funding, and disclosure fixture so
+that non-trivial typed actions and their deterministic effects are exercised.
+
 ## Release checklist
 
 Before publication: run Python tests and compilation, dashboard tests/build,
