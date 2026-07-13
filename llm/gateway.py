@@ -23,6 +23,31 @@ from observability import get_logger, log_event as operational_log
 
 logger = get_logger("llm")
 
+
+PRIVATE_REASONING_FIELDS = frozenset({
+    "analysis",
+    "chain_of_thought",
+    "reasoning",
+    "reasoning_content",
+    "reasoning_details",
+    "thinking",
+    "thought",
+    "thoughts",
+})
+
+
+def sanitize_provider_raw(value: Any) -> Any:
+    """Remove private reasoning text while retaining billing and response metadata."""
+    if isinstance(value, dict):
+        return {
+            key: sanitize_provider_raw(item)
+            for key, item in value.items()
+            if str(key).lower() not in PRIVATE_REASONING_FIELDS
+        }
+    if isinstance(value, list):
+        return [sanitize_provider_raw(item) for item in value]
+    return value
+
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
 DEFAULT_PRICING = {
     "minimax-m3": {"in": 0.30, "out": 1.20, "cache": 0.06},
@@ -748,7 +773,7 @@ class Gateway:
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role, provider=provider,
             model=model, purpose=req.purpose, cache_key=cache_key,
             request_json=json.dumps({"system": req.system, "user": req.user, "context": req.context}),
-            response_json=json.dumps({"text": result.text, "raw": result.raw,
+            response_json=json.dumps({"text": result.text, "raw": sanitize_provider_raw(result.raw),
                                       "cached_in_tokens": result.cached_in_tokens}),
             in_tokens=result.in_tokens, out_tokens=result.out_tokens, cached=1 if cached else 0,
             cost_usd=cost, latency_ms=latency_ms,

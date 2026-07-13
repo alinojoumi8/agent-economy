@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from run import open_run
 from run_config import load_config
+from llm.gateway import sanitize_provider_raw
 from llm.readiness import validate_llm_config
 
 
@@ -43,3 +44,25 @@ def test_hybrid_live_profile_is_bounded_and_routes_by_risk(tmp_path, monkeypatch
         assert ok, diagnostic
     finally:
         store.close()
+
+
+def test_provider_raw_private_reasoning_is_never_persisted():
+    raw = {
+        "choices": [{"message": {
+            "content": '{"actions":[]}',
+            "reasoning_content": "private chain",
+            "reasoning_details": [{"thought": "private detail"}],
+            "role": "assistant",
+        }}],
+        "usage": {"completion_tokens_details": {"reasoning_tokens": 42}},
+        "provider_calls": 2,
+        "repair": {"initial": {"thinking": "private trace"}},
+    }
+
+    sanitized = sanitize_provider_raw(raw)
+
+    message = sanitized["choices"][0]["message"]
+    assert message == {"content": '{"actions":[]}', "role": "assistant"}
+    assert sanitized["usage"]["completion_tokens_details"]["reasoning_tokens"] == 42
+    assert sanitized["provider_calls"] == 2
+    assert sanitized["repair"]["initial"] == {}

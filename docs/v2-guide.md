@@ -175,6 +175,9 @@ legal, financial, regulatory, and political roles; local Ollama
 `gemma4:12b` handles newsroom and background generation. The Ollama route
 disables the private thinking channel and uses deterministic JSON temperature;
 only public response content may enter the event log or replay artifact.
+The gateway also recursively removes provider fields such as
+`reasoning_content`, `reasoning_details`, and `thinking` before raw response
+metadata is persisted, while retaining token and billing counters.
 
 After setting `MINIMAX_API_KEY` and the non-secret local value
 `OLLAMA_API_KEY=ollama`, preflight and run the authorized three-tick pilot with:
