@@ -14,7 +14,7 @@ from typing import Optional
 from engine.core import Economy
 from engine.store import load_json
 
-SHOCK_KINDS = ("policy_rate", "oil", "rumor", "slant", "scandal", "epidemic")
+SHOCK_KINDS = ("policy_rate", "policy_rule_change", "oil", "rumor", "slant", "scandal", "epidemic")
 TRIGGER_TYPES = ("shock", "trend", "conditional")
 
 
@@ -115,6 +115,26 @@ class Shocks:
         self.store.log_event(tick, "policy_rate_set", {
             "old_bps": old, "requested_bps": target, "new_bps": target,
             "via": "shock"}, phase="NIGHT_CLOSE", importance=3.0)
+
+    def _apply_policy_rule_change(self, tick: int, s, params: dict, initial: bool) -> None:
+        """Apply validated typed rules; used by paired policy scenarios."""
+        changes = dict(params.get("changes", {}))
+        error = self.e.politics._validate_policy_changes(changes)
+        if error:
+            raise ValueError(error)
+        for key, value in sorted(changes.items()):
+            self.store.execute(
+                "UPDATE policy_rules SET status='superseded' WHERE rule_key=? AND status='active'",
+                (key,))
+            self.store.insert(
+                "policy_rules", bill_id=None, rule_key=key,
+                value_json=json.dumps(value, sort_keys=True), enacted_tick=tick,
+                effective_tick=tick, status="active")
+            if key in {"tax_rate_bps", "unemployment_benefit_cents"}:
+                self.store.record_metric(tick, key, float(value))
+        self.store.log_event(tick, "policy_rule_change", {
+            "changes": changes, "via": "scenario_shock"}, phase="NIGHT_CLOSE",
+            subject_type="government", subject_id=1, importance=4.0)
 
     def _apply_oil(self, tick: int, s, params: dict, initial: bool) -> None:
         """Scale the global commodity index every firm's input costs read."""

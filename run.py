@@ -87,6 +87,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         world.initialize()
         return store, world, run_id
     config = dict(config)
+    # Unversioned callers retain the historical v2 contract.  The checked-in
+    # v2 world profiles opt into semantics 4+ explicitly.
     config.setdefault("engine_semantics_version", 2)
     run_id = new_run_id()
     store = Store(str(data_dir / f"{run_id}.db"))
@@ -96,7 +98,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     return store, world, run_id
 
 
-def fork_run(spec: str, data_dir: Path = DATA_DIR) -> str:
+def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | None = None) -> str:
     """Fork a new run from a checkpoint (TECH-SPEC §13 what-if branching).
 
     `spec` is either a checkpoint .db path or `RUNID@TICK` (uses the newest
@@ -128,11 +130,23 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR) -> str:
     shutil.copyfile(src, dest)
     store = Store(str(dest))
     meta = store.get_meta()
+    config = json.loads(meta["config_json"])
+    old_semantics = int(config.get("engine_semantics_version", 1))
+    if upgrade_semantics is not None:
+        if int(upgrade_semantics) <= old_semantics:
+            store.close()
+            dest.unlink(missing_ok=True)
+            sys.exit(f"semantic upgrade must exceed stored version {old_semantics}")
+        config["engine_semantics_version"] = int(upgrade_semantics)
     store.set_meta(run_id=new_id, parent_run_id=meta["run_id"], fork_tick=int(meta["tick"]),
-                   status="paused")
+                   status="paused", config_json=json.dumps(config, sort_keys=True))
     store.log_event(int(meta["tick"]), "fork", {
         "parent_run_id": meta["run_id"], "fork_tick": int(meta["tick"]),
         "new_run_id": new_id}, phase="NIGHT_CLOSE", importance=2.0)
+    if upgrade_semantics is not None:
+        store.log_event(int(meta["tick"]), "semantic_upgrade", {
+            "parent_run_id": meta["run_id"], "old_version": old_semantics,
+            "new_version": int(upgrade_semantics)}, phase="NIGHT_CLOSE", importance=4.0)
     store.commit()
     store.close()
     operational_log(logger, logging.INFO, "run.fork.created",
@@ -178,9 +192,24 @@ def main() -> None:
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
     ap.add_argument("--fork", default=None,
                     help="fork a what-if branch: checkpoint .db path or RUNID@TICK")
+    ap.add_argument("--upgrade-semantics", type=int, default=None,
+                    help="only with --fork: explicitly upgrade the child engine semantics")
     ap.add_argument("--report", default=None, help="generate end-of-run report for run id and exit")
+    ap.add_argument("--export-static", default=None,
+                    help="export a self-contained replay from a run id or database path")
+    ap.add_argument("--output", default=None, help="output path for export commands")
     ap.add_argument("--experiment", default=None,
                     help="run a multi-seed experiment from a spec yaml (P1 R14) and exit")
+    ap.add_argument("--counterfactual", default=None,
+                    help="run a validated paired-seed scenario pack and exit")
+    ap.add_argument("--seeds", type=int, default=20,
+                    help="paired seed count for --counterfactual (default: 20)")
+    ap.add_argument("--scenario-ticks", type=int, default=None,
+                    help="override a scenario pack's horizon")
+    ap.add_argument("--refresh-datasets", default=None,
+                    help="explicitly refresh and repin a dataset manifest (networked)")
+    ap.add_argument("--verify-datasets", default=None,
+                    help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
     ap.add_argument("--acceptance-run", action="store_true",
@@ -200,13 +229,34 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
-    mode = ("experiment" if args.experiment else
+    mode = ("dataset_refresh" if args.refresh_datasets else
+            "dataset_verify" if args.verify_datasets else
+            "counterfactual" if args.counterfactual else
+            "static_export" if args.export_static else "experiment" if args.experiment else
             "acceptance_report" if args.acceptance_report else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
             "preflight" if (args.preflight or args.preflight_live) else
             "fork" if args.fork else "replay" if args.replay else
             "resume" if args.resume else "run")
     operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
+
+    if args.refresh_datasets:
+        from research.datasets import refresh_datasets
+        print(json.dumps(refresh_datasets(args.refresh_datasets), indent=2))
+        return
+
+    if args.verify_datasets:
+        from research.datasets import verify_manifest
+        print(json.dumps(verify_manifest(args.verify_datasets), indent=2))
+        return
+
+    if args.counterfactual:
+        from research.counterfactual import run_counterfactual
+        result = run_counterfactual(
+            args.counterfactual, seeds=args.seeds, ticks=args.scenario_ticks)
+        print(json.dumps({"scenario": result["scenario"], "design": result["design"],
+                          "artifacts": result["artifacts"]}, indent=2))
+        return
 
     if args.experiment:
         from experiments.harness import run_experiment
@@ -220,6 +270,19 @@ def main() -> None:
         store = Store(str(db))
         from reports.generate import generate_report
         print(generate_report(store))
+        return
+
+    if args.export_static:
+        source = Path(args.export_static)
+        if not source.exists():
+            source = DATA_DIR / f"{args.export_static}.db"
+        if not source.exists():
+            sys.exit(f"run database not found: {source}")
+        store = Store(str(source))
+        from server.static_export import export_static_replay
+        target = Path(args.output) if args.output else Path("static_exports") / f"{store.get_meta()['run_id']}.html"
+        print(export_static_replay(store, target))
+        store.close()
         return
 
     if args.acceptance_report:
@@ -259,7 +322,7 @@ def main() -> None:
                         live_ready=live_ready)
         return
     if args.fork:
-        args.resume = fork_run(args.fork)
+        args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
     store, world, run_id = open_run(config, args.resume, args.replay)
     operational_log(logger, logging.INFO, "run.opened",
                     run_id=run_id, tick=store.tick,

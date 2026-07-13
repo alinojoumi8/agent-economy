@@ -91,6 +91,9 @@ class World:
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
         Genesis(self.economy, self.config, self.persona_prng).build()
+        if self.config.get("dataset_manifest"):
+            from research.datasets import ingest_manifest
+            ingest_manifest(self.store, self.config["dataset_manifest"])
         self.shocks.load_from_config()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
@@ -358,6 +361,13 @@ class World:
         e.gov.run_nightly(tick)
         # VC portfolio sweep: write-offs + stale pitches (P1 R13).
         e.vc.run_nightly(tick)
+        # v2 legal kernel: activate contracts, detect due breaches, and expire orders.
+        if self.engine_semantics_version >= 4:
+            e.legal.run_nightly(tick)
+            e.information.run_nightly(tick)
+            e.politics.run_nightly(tick)
+            if self.engine_semantics_version >= 5:
+                e.regions.run_nightly(tick)
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
@@ -427,6 +437,8 @@ class World:
         for f in self.store.query("SELECT id FROM firms WHERE status='listed'"):
             self.economy.exchange.match_firm(tick, int(f["id"]))
         self.economy.exchange.expire_session(tick)
+        if self.engine_semantics_version >= 5:
+            self.economy.regions.match_fx(tick)
         self.economy.labor.expire_stale_jobs(tick)
         # Expire stale pending loan applications (older than a week).
         self.store.execute(
@@ -444,18 +456,23 @@ class World:
         outlets = self.config.get("outlets", [{"id": 1}, {"id": 2}])
         for sched_id in due_ids:
             p = sample_persona(self.persona_prng, n_outlets=len(outlets))
-            bank_id = self.engine_prng.choice(banks)
+            region_id = self.economy.regions.region_for_new_citizen() \
+                if self.economy.regions.enabled else None
+            bank_id = self.economy.regions.bank_for_region(banks, region_id) \
+                if self.economy.regions.enabled else self.engine_prng.choice(banks)
+            currency = self.economy.regions.currency_for_region(region_id)
             agent_id = self.store.insert(
                 "agents", name=p.name, kind="citizen", occupation=p.occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", alive=1, retired=0, arrived_tick=tick)
+                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                alive=1, retired=0, arrived_tick=tick)
             chk = self.economy.ledger.create_account(
                 "agent", agent_id, "checking", bank_id=bank_id,
                 label=f"agent:{agent_id}:checking", opening_cents=int(p.wealth_cents * 0.6),
-                funding_label=SYS_INFLOW, tick=tick)
+                funding_label=SYS_INFLOW, tick=tick, currency_code=currency)
             self.store.update("agents", agent_id, checking_account_id=chk)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
@@ -464,7 +481,8 @@ class World:
             housing_paid = min(housing_cost, self.economy.ledger.balance(chk))
             if housing_paid:
                 self.economy.ledger.transfer(
-                    tick, chk, self.economy.ledger.system_account(SYS_HOUSING),
+                    tick, chk, self.economy.ledger.system_account(
+                        SYS_HOUSING, currency_code=currency),
                     housing_paid, kind="housing_cost", memo="arrival move-in and rent")
                 self.store.log_event(
                     tick, "housing_cost", {"agent_id": agent_id,

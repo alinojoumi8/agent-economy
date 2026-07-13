@@ -6,7 +6,7 @@ as integer cents everywhere; Ledger.post rejects unbalanced batches before
 insertion and tick reconciliation independently verifies every account (PRD R1).
 """
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 10
 
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
@@ -489,9 +489,747 @@ CREATE TABLE IF NOT EXISTS shocks (
 """
 
 
+MIGRATION_6_SQL = r"""
+-- Agent Economy v2 legal-institutional kernel.
+CREATE TABLE IF NOT EXISTS legal_rulesets (
+    id              INTEGER PRIMARY KEY,
+    ruleset_key     TEXT NOT NULL,
+    version         TEXT NOT NULL,
+    jurisdiction    TEXT NOT NULL,
+    effective_tick  INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'active',
+    rules_json      TEXT NOT NULL,
+    sources_json    TEXT NOT NULL DEFAULT '[]',
+    disclaimer      TEXT NOT NULL,
+    UNIQUE (ruleset_key, version)
+);
+
+CREATE TABLE IF NOT EXISTS contracts (
+    id                  INTEGER PRIMARY KEY,
+    contract_type       TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'offered',
+    jurisdiction        TEXT NOT NULL,
+    ruleset_key         TEXT NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 1,
+    parent_contract_id  INTEGER,
+    drafter_agent_id    INTEGER NOT NULL,
+    offered_tick        INTEGER NOT NULL,
+    executed_tick       INTEGER,
+    effective_tick      INTEGER,
+    expiry_tick         INTEGER,
+    terminated_tick     INTEGER,
+    prose               TEXT NOT NULL DEFAULT '',
+    metadata_json       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_contracts_status ON contracts(status);
+CREATE INDEX IF NOT EXISTS ix_contracts_parent ON contracts(parent_contract_id);
+
+CREATE TABLE IF NOT EXISTS contract_parties (
+    id          INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL,
+    party_type  TEXT NOT NULL,
+    party_id    INTEGER NOT NULL,
+    role        TEXT NOT NULL,
+    UNIQUE (contract_id, party_type, party_id)
+);
+CREATE INDEX IF NOT EXISTS ix_contract_parties_party
+    ON contract_parties(party_type, party_id);
+
+CREATE TABLE IF NOT EXISTS contract_clauses (
+    id          INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL,
+    clause_key  TEXT NOT NULL,
+    clause_type TEXT NOT NULL,
+    ordinal     INTEGER NOT NULL,
+    terms_json  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active',
+    UNIQUE (contract_id, clause_key)
+);
+
+CREATE TABLE IF NOT EXISTS contract_acceptances (
+    id          INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL,
+    party_type  TEXT NOT NULL,
+    party_id    INTEGER NOT NULL,
+    accepted_tick INTEGER NOT NULL,
+    actor_id    INTEGER NOT NULL,
+    UNIQUE (contract_id, party_type, party_id)
+);
+
+CREATE TABLE IF NOT EXISTS obligations (
+    id              INTEGER PRIMARY KEY,
+    contract_id     INTEGER NOT NULL,
+    clause_id       INTEGER NOT NULL,
+    obligation_type TEXT NOT NULL,
+    obligor_type    TEXT NOT NULL,
+    obligor_id      INTEGER NOT NULL,
+    obligee_type    TEXT NOT NULL,
+    obligee_id      INTEGER NOT NULL,
+    due_tick        INTEGER NOT NULL,
+    grace_ticks     INTEGER NOT NULL DEFAULT 0,
+    amount_cents    INTEGER,
+    currency_code   TEXT NOT NULL DEFAULT 'USD',
+    terms_json      TEXT NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    performed_tick  INTEGER,
+    breached_tick   INTEGER,
+    transaction_id  INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_obligations_due ON obligations(status, due_tick);
+CREATE INDEX IF NOT EXISTS ix_obligations_contract ON obligations(contract_id);
+
+CREATE TABLE IF NOT EXISTS legal_notices (
+    id              INTEGER PRIMARY KEY,
+    contract_id     INTEGER,
+    matter_id       INTEGER,
+    sender_type     TEXT NOT NULL,
+    sender_id       INTEGER NOT NULL,
+    recipient_type  TEXT NOT NULL,
+    recipient_id    INTEGER NOT NULL,
+    notice_type     TEXT NOT NULL,
+    tick            INTEGER NOT NULL,
+    detail          TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS legal_matters (
+    id                  INTEGER PRIMARY KEY,
+    matter_type         TEXT NOT NULL,
+    venue               TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'filed',
+    contract_id         INTEGER,
+    claimant_type       TEXT NOT NULL,
+    claimant_id         INTEGER NOT NULL,
+    respondent_type     TEXT NOT NULL,
+    respondent_id       INTEGER NOT NULL,
+    claim_type          TEXT NOT NULL,
+    filed_tick          INTEGER NOT NULL,
+    response_due_tick   INTEGER NOT NULL,
+    resolved_tick       INTEGER,
+    counsel_agent_id    INTEGER,
+    requested_remedy_json TEXT NOT NULL DEFAULT '{}',
+    settlement_json     TEXT,
+    metadata_json       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_legal_matters_status ON legal_matters(status);
+
+CREATE TABLE IF NOT EXISTS legal_filings (
+    id                  INTEGER PRIMARY KEY,
+    matter_id           INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    filer_type          TEXT NOT NULL,
+    filer_id            INTEGER NOT NULL,
+    filing_type         TEXT NOT NULL,
+    body                TEXT NOT NULL DEFAULT '',
+    evidence_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    admitted            INTEGER NOT NULL DEFAULT 0,
+    model_call_id       INTEGER,
+    rationale_summary   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_legal_filings_matter ON legal_filings(matter_id);
+
+CREATE TABLE IF NOT EXISTS legal_decisions (
+    id                  INTEGER PRIMARY KEY,
+    matter_id           INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    decision_maker_id   INTEGER NOT NULL,
+    outcome             TEXT NOT NULL,
+    findings_json       TEXT NOT NULL,
+    evidence_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    remedy_json         TEXT NOT NULL DEFAULT '{}',
+    validation_status   TEXT NOT NULL,
+    validation_errors_json TEXT NOT NULL DEFAULT '[]',
+    model_call_id       INTEGER,
+    rationale_summary   TEXT NOT NULL DEFAULT '',
+    enforcement_event_id INTEGER,
+    UNIQUE (matter_id)
+);
+
+CREATE TABLE IF NOT EXISTS legal_restrictions (
+    id              INTEGER PRIMARY KEY,
+    matter_id       INTEGER NOT NULL,
+    subject_type    TEXT NOT NULL,
+    subject_id      INTEGER NOT NULL,
+    restriction_type TEXT NOT NULL,
+    params_json     TEXT NOT NULL DEFAULT '{}',
+    effective_tick  INTEGER NOT NULL,
+    expiry_tick     INTEGER,
+    status          TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS action_proposals (
+    id                  INTEGER PRIMARY KEY,
+    tick                INTEGER NOT NULL,
+    actor_id            INTEGER NOT NULL,
+    action_type         TEXT NOT NULL,
+    payload_json        TEXT NOT NULL,
+    evidence_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    model_call_id       INTEGER,
+    rationale_summary   TEXT NOT NULL DEFAULT '',
+    validation_status   TEXT NOT NULL DEFAULT 'pending',
+    result_json         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_action_proposals_tick ON action_proposals(tick, actor_id);
+"""
+
+
+MIGRATION_7_SQL = r"""
+-- Typed startup funding, diligence, intellectual property, disclosures, and M&A.
+CREATE TABLE IF NOT EXISTS term_sheets (
+    id                  INTEGER PRIMARY KEY,
+    tick                INTEGER NOT NULL,
+    firm_id             INTEGER NOT NULL,
+    proposer_agent_id   INTEGER NOT NULL,
+    investor_agent_id   INTEGER NOT NULL,
+    instrument_type     TEXT NOT NULL,
+    amount_cents        INTEGER NOT NULL,
+    currency_code       TEXT NOT NULL DEFAULT 'USD',
+    pre_money_cents     INTEGER,
+    valuation_cap_cents INTEGER,
+    discount_bps        INTEGER,
+    equity_bps          INTEGER,
+    liquidation_preference_bps INTEGER NOT NULL DEFAULT 10000,
+    pro_rata            INTEGER NOT NULL DEFAULT 0,
+    board_seat          INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'offered',
+    founder_accepted_tick INTEGER,
+    investor_accepted_tick INTEGER,
+    contract_id         INTEGER,
+    metadata_json       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_term_sheets_firm ON term_sheets(firm_id, status);
+
+CREATE TABLE IF NOT EXISTS due_diligence_checks (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    firm_id         INTEGER NOT NULL,
+    term_sheet_id   INTEGER,
+    reviewer_agent_id INTEGER NOT NULL,
+    scope           TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    findings_json   TEXT NOT NULL,
+    source_ids_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS funding_rounds (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    firm_id         INTEGER NOT NULL,
+    term_sheet_id   INTEGER NOT NULL,
+    investor_agent_id INTEGER NOT NULL,
+    round_type      TEXT NOT NULL,
+    amount_cents    INTEGER NOT NULL,
+    currency_code   TEXT NOT NULL DEFAULT 'USD',
+    shares_issued   INTEGER NOT NULL,
+    pre_money_cents INTEGER,
+    post_money_cents INTEGER,
+    transaction_id  INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'closed'
+);
+
+CREATE TABLE IF NOT EXISTS ip_assets (
+    id              INTEGER PRIMARY KEY,
+    firm_id         INTEGER NOT NULL,
+    creator_agent_id INTEGER,
+    counsel_agent_id INTEGER,
+    asset_type      TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    scope           TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'registered',
+    registered_tick INTEGER NOT NULL,
+    valuation_cents INTEGER NOT NULL DEFAULT 0,
+    metadata_json   TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_ip_assets_firm ON ip_assets(firm_id, status);
+
+CREATE TABLE IF NOT EXISTS ip_licenses (
+    id              INTEGER PRIMARY KEY,
+    ip_asset_id     INTEGER NOT NULL,
+    licensor_firm_id INTEGER NOT NULL,
+    licensee_firm_id INTEGER NOT NULL,
+    contract_id     INTEGER,
+    start_tick      INTEGER NOT NULL,
+    expiry_tick     INTEGER,
+    royalty_bps     INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS firm_disclosures (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    firm_id         INTEGER NOT NULL,
+    disclosure_type TEXT NOT NULL,
+    period_start_tick INTEGER NOT NULL,
+    period_end_tick INTEGER NOT NULL,
+    facts_json      TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    published_by_agent_id INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_disclosures_firm ON firm_disclosures(firm_id, tick);
+
+CREATE TABLE IF NOT EXISTS mergers (
+    id              INTEGER PRIMARY KEY,
+    proposed_tick   INTEGER NOT NULL,
+    acquirer_firm_id INTEGER NOT NULL,
+    target_firm_id  INTEGER NOT NULL,
+    proposer_agent_id INTEGER NOT NULL,
+    consideration_type TEXT NOT NULL DEFAULT 'cash',
+    price_cents     INTEGER NOT NULL,
+    currency_code   TEXT NOT NULL DEFAULT 'USD',
+    status          TEXT NOT NULL DEFAULT 'proposed',
+    target_approved_tick INTEGER,
+    regulator_notified_tick INTEGER,
+    closed_tick     INTEGER,
+    terminated_tick INTEGER,
+    agreement_contract_id INTEGER,
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    UNIQUE (acquirer_firm_id, target_firm_id, status)
+);
+
+CREATE TABLE IF NOT EXISTS merger_reviews (
+    id              INTEGER PRIMARY KEY,
+    merger_id       INTEGER NOT NULL,
+    tick            INTEGER NOT NULL,
+    regulator_agent_id INTEGER NOT NULL,
+    lookback_ticks  INTEGER NOT NULL DEFAULT 30,
+    pre_hhi         REAL NOT NULL,
+    post_hhi        REAL NOT NULL,
+    delta_hhi       REAL NOT NULL,
+    threshold_hhi   REAL NOT NULL,
+    threshold_delta REAL NOT NULL,
+    outcome         TEXT NOT NULL,
+    remedy_json     TEXT NOT NULL DEFAULT '{}',
+    rationale_summary TEXT NOT NULL DEFAULT '',
+    UNIQUE (merger_id)
+);
+
+CREATE TABLE IF NOT EXISTS trader_profiles (
+    agent_id        INTEGER PRIMARY KEY,
+    archetype       TEXT NOT NULL,
+    horizon_ticks   INTEGER NOT NULL,
+    risk_budget_bps INTEGER NOT NULL,
+    sentiment_weight REAL NOT NULL DEFAULT 0.0,
+    fundamentals_weight REAL NOT NULL DEFAULT 0.0,
+    momentum_weight REAL NOT NULL DEFAULT 0.0,
+    updated_tick    INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+MIGRATION_8_SQL = r"""
+-- Narrative information economy.
+CREATE TABLE IF NOT EXISTS claims (
+    id                  INTEGER PRIMARY KEY,
+    tick                INTEGER NOT NULL,
+    claim_key           TEXT NOT NULL,
+    subject_type        TEXT NOT NULL,
+    subject_id          INTEGER,
+    predicate           TEXT NOT NULL,
+    value_json          TEXT NOT NULL,
+    truth_status        TEXT NOT NULL,
+    source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    creator_agent_id    INTEGER,
+    correction_of_claim_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_claims_subject ON claims(subject_type, subject_id, tick);
+
+CREATE TABLE IF NOT EXISTS information_items (
+    id                  INTEGER PRIMARY KEY,
+    tick                INTEGER NOT NULL,
+    item_type           TEXT NOT NULL,
+    author_agent_id     INTEGER,
+    outlet_id           INTEGER,
+    claim_id            INTEGER NOT NULL,
+    parent_item_id      INTEGER,
+    news_article_id     INTEGER,
+    body                TEXT NOT NULL,
+    slant               REAL NOT NULL DEFAULT 0.0,
+    tone                REAL NOT NULL DEFAULT 0.0,
+    distortion          REAL NOT NULL DEFAULT 0.0,
+    novelty             REAL NOT NULL DEFAULT 0.5,
+    virality            REAL NOT NULL DEFAULT 0.0,
+    source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    status              TEXT NOT NULL DEFAULT 'published'
+);
+CREATE INDEX IF NOT EXISTS ix_information_items_tick ON information_items(tick, item_type);
+
+CREATE TABLE IF NOT EXISTS information_exposures (
+    id                  INTEGER PRIMARY KEY,
+    item_id             INTEGER NOT NULL,
+    agent_id            INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    channel             TEXT NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 1,
+    perceived_claim_json TEXT NOT NULL,
+    distortion          REAL NOT NULL DEFAULT 0.0,
+    UNIQUE (item_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS ix_exposures_agent ON information_exposures(agent_id, tick);
+
+-- Federal-lite political institutions.
+CREATE TABLE IF NOT EXISTS political_parties (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    platform_json   TEXT NOT NULL,
+    treasury_account_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS agencies (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    mandate         TEXT NOT NULL,
+    capacity        REAL NOT NULL DEFAULT 1.0,
+    leader_agent_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS legislators (
+    id              INTEGER PRIMARY KEY,
+    agent_id        INTEGER NOT NULL UNIQUE,
+    chamber         TEXT NOT NULL,
+    seat_number     INTEGER NOT NULL,
+    party_id        INTEGER NOT NULL,
+    term_start_tick INTEGER NOT NULL,
+    term_end_tick   INTEGER NOT NULL,
+    active          INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (chamber, seat_number, active)
+);
+CREATE INDEX IF NOT EXISTS ix_legislators_chamber ON legislators(chamber, active);
+
+CREATE TABLE IF NOT EXISTS committees (
+    id              INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    chamber         TEXT NOT NULL,
+    jurisdiction    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS committee_members (
+    committee_id    INTEGER NOT NULL,
+    legislator_id   INTEGER NOT NULL,
+    is_chair        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (committee_id, legislator_id)
+);
+
+CREATE TABLE IF NOT EXISTS bills (
+    id              INTEGER PRIMARY KEY,
+    bill_key        TEXT NOT NULL UNIQUE,
+    title           TEXT NOT NULL,
+    sponsor_legislator_id INTEGER NOT NULL,
+    origin_chamber  TEXT NOT NULL,
+    committee_id    INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'introduced',
+    current_version INTEGER NOT NULL DEFAULT 1,
+    introduced_tick INTEGER NOT NULL,
+    executive_action_tick INTEGER,
+    effective_tick  INTEGER,
+    policy_changes_json TEXT NOT NULL,
+    metadata_json   TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_bills_status ON bills(status);
+
+CREATE TABLE IF NOT EXISTS bill_versions (
+    id              INTEGER PRIMARY KEY,
+    bill_id         INTEGER NOT NULL,
+    version         INTEGER NOT NULL,
+    tick            INTEGER NOT NULL,
+    author_legislator_id INTEGER NOT NULL,
+    summary         TEXT NOT NULL,
+    text_json       TEXT NOT NULL,
+    UNIQUE (bill_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS legislative_votes (
+    id              INTEGER PRIMARY KEY,
+    bill_id         INTEGER NOT NULL,
+    version         INTEGER NOT NULL,
+    legislator_id   INTEGER NOT NULL,
+    stage           TEXT NOT NULL,
+    vote            TEXT NOT NULL,
+    tick            INTEGER NOT NULL,
+    UNIQUE (bill_id, version, legislator_id, stage)
+);
+
+CREATE TABLE IF NOT EXISTS bill_actions (
+    id              INTEGER PRIMARY KEY,
+    bill_id         INTEGER NOT NULL,
+    tick            INTEGER NOT NULL,
+    action_type     TEXT NOT NULL,
+    actor_agent_id  INTEGER,
+    detail_json     TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS lobbying_activities (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    sponsor_type    TEXT NOT NULL,
+    sponsor_id      INTEGER NOT NULL,
+    lobbyist_agent_id INTEGER NOT NULL,
+    target_agent_id INTEGER,
+    bill_id         INTEGER,
+    activity_type   TEXT NOT NULL,
+    position        TEXT NOT NULL,
+    amount_cents    INTEGER NOT NULL,
+    transaction_id  INTEGER NOT NULL,
+    salience_effect REAL NOT NULL,
+    disclosure_tick INTEGER NOT NULL,
+    disclosed       INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS elections (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    election_type   TEXT NOT NULL,
+    results_json    TEXT NOT NULL,
+    turnout         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS policy_rules (
+    id              INTEGER PRIMARY KEY,
+    bill_id         INTEGER,
+    rule_key        TEXT NOT NULL,
+    value_json      TEXT NOT NULL,
+    enacted_tick    INTEGER NOT NULL,
+    effective_tick  INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX IF NOT EXISTS ix_policy_rules_key ON policy_rules(rule_key, status, effective_tick);
+"""
+
+
+MIGRATION_9_SQL = r"""
+CREATE TABLE IF NOT EXISTS regions (
+    id              INTEGER PRIMARY KEY,
+    region_key      TEXT NOT NULL UNIQUE,
+    name            TEXT NOT NULL,
+    currency_code   TEXT NOT NULL,
+    population_target INTEGER NOT NULL,
+    specialization_json TEXT NOT NULL,
+    x               REAL NOT NULL,
+    y               REAL NOT NULL,
+    legal_ruleset   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS currencies (
+    code            TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    minor_unit      INTEGER NOT NULL DEFAULT 2,
+    numeraire_rate_ppm INTEGER NOT NULL,
+    issuer_region_id INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fx_reserves (
+    currency_code   TEXT PRIMARY KEY,
+    account_id      INTEGER NOT NULL,
+    target_inventory INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fx_orders (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    actor_id        INTEGER NOT NULL,
+    pair            TEXT NOT NULL,
+    base_currency   TEXT NOT NULL,
+    quote_currency  TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    qty             INTEGER NOT NULL,
+    qty_remaining   INTEGER NOT NULL,
+    limit_rate_ppm  INTEGER,
+    seq             INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS ix_fx_orders_book ON fx_orders(pair, status, seq);
+
+CREATE TABLE IF NOT EXISTS fx_trades (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    order_id        INTEGER NOT NULL,
+    actor_id        INTEGER NOT NULL,
+    pair            TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    base_qty        INTEGER NOT NULL,
+    quote_qty       INTEGER NOT NULL,
+    rate_ppm        INTEGER NOT NULL,
+    base_account_id INTEGER NOT NULL,
+    quote_account_id INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trade_shipments (
+    id              INTEGER PRIMARY KEY,
+    created_tick    INTEGER NOT NULL,
+    exporter_firm_id INTEGER NOT NULL,
+    importer_firm_id INTEGER NOT NULL,
+    origin_region_id INTEGER NOT NULL,
+    destination_region_id INTEGER NOT NULL,
+    contract_id     INTEGER,
+    quantity        INTEGER NOT NULL,
+    invoice_cents   INTEGER NOT NULL,
+    invoice_currency TEXT NOT NULL,
+    tariff_cents    INTEGER NOT NULL DEFAULT 0,
+    transport_cents INTEGER NOT NULL DEFAULT 0,
+    arrival_tick    INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'in_transit',
+    payment_transaction_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS migrations (
+    id              INTEGER PRIMARY KEY,
+    agent_id        INTEGER NOT NULL,
+    origin_region_id INTEGER NOT NULL,
+    destination_region_id INTEGER NOT NULL,
+    requested_tick  INTEGER NOT NULL,
+    completed_tick  INTEGER,
+    reason          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS agent_tier_history (
+    id              INTEGER PRIMARY KEY,
+    tick            INTEGER NOT NULL,
+    agent_id        INTEGER NOT NULL,
+    old_tier        TEXT NOT NULL,
+    new_tier        TEXT NOT NULL,
+    score           REAL NOT NULL,
+    reason_json     TEXT NOT NULL
+);
+"""
+
+
+MIGRATION_10_SQL = r"""
+-- Pinned research datasets, scenario packs, paired counterfactuals, and outputs.
+CREATE TABLE IF NOT EXISTS dataset_manifests (
+    id                  INTEGER PRIMARY KEY,
+    dataset_key         TEXT NOT NULL UNIQUE,
+    source_url          TEXT NOT NULL,
+    retrieval_time      TEXT NOT NULL,
+    release_date        TEXT NOT NULL,
+    vintage_date        TEXT NOT NULL,
+    checksum_sha256     TEXT NOT NULL,
+    transform_version   TEXT NOT NULL,
+    usage_terms         TEXT NOT NULL,
+    snapshot_path       TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'verified',
+    metadata_json       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS calibration_targets (
+    id                  INTEGER PRIMARY KEY,
+    dataset_manifest_id INTEGER NOT NULL,
+    target_key          TEXT NOT NULL,
+    value_json          TEXT NOT NULL,
+    unit                TEXT NOT NULL,
+    dimensions_json     TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(dataset_manifest_id, target_key, dimensions_json)
+);
+
+CREATE TABLE IF NOT EXISTS scenario_packs (
+    id                  INTEGER PRIMARY KEY,
+    scenario_key        TEXT NOT NULL UNIQUE,
+    version             TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    manifest_path       TEXT NOT NULL,
+    manifest_checksum   TEXT NOT NULL,
+    limitations         TEXT NOT NULL,
+    metadata_json       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS counterfactual_experiments (
+    id                  INTEGER PRIMARY KEY,
+    experiment_key      TEXT NOT NULL UNIQUE,
+    scenario_key        TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    checkpoint_hash     TEXT NOT NULL,
+    paired_seeds_json   TEXT NOT NULL,
+    treatment_variables_json TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'running',
+    report_path         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS counterfactual_results (
+    id                  INTEGER PRIMARY KEY,
+    experiment_id       INTEGER NOT NULL,
+    arm                 TEXT NOT NULL,
+    seed                INTEGER NOT NULL,
+    run_id              TEXT,
+    replay_hash         TEXT,
+    metrics_json        TEXT NOT NULL,
+    causal_trace_json   TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(experiment_id, arm, seed)
+);
+"""
+
+
+# Idempotent physical-design additions. These do not change engine semantics or
+# the public schema version; they bound history lookups and maintain an exact
+# ledger aggregate through SQLite triggers for constant-time reconciliation.
+PERFORMANCE_SQL = r"""
+DROP INDEX IF EXISTS ix_mem_agent;
+CREATE INDEX IF NOT EXISTS ix_mem_agent_kind_tick
+    ON memories(agent_id, kind, tick, demoted);
+CREATE INDEX IF NOT EXISTS ix_mem_tick_importance
+    ON memories(tick, importance, agent_id);
+CREATE INDEX IF NOT EXISTS ix_events_subject_tick
+    ON events(subject_type, subject_id, tick);
+CREATE INDEX IF NOT EXISTS ix_firms_founder_status
+    ON firms(founder_agent_id, status);
+CREATE INDEX IF NOT EXISTS ix_legal_claimant
+    ON legal_matters(claimant_type, claimant_id);
+CREATE INDEX IF NOT EXISTS ix_legal_respondent
+    ON legal_matters(respondent_type, respondent_id);
+CREATE INDEX IF NOT EXISTS ix_information_status_tick
+    ON information_items(status, tick, id);
+CREATE INDEX IF NOT EXISTS ix_metrics_name_tick
+    ON metrics(name, tick DESC);
+
+CREATE TABLE IF NOT EXISTS account_ledger_totals (
+    account_id  INTEGER PRIMARY KEY,
+    total_cents INTEGER NOT NULL DEFAULT 0
+);
+CREATE TRIGGER IF NOT EXISTS trg_ledger_totals_insert
+AFTER INSERT ON ledger_entries BEGIN
+    INSERT INTO account_ledger_totals(account_id, total_cents)
+    VALUES (NEW.account_id, NEW.delta_cents)
+    ON CONFLICT(account_id) DO UPDATE
+    SET total_cents=total_cents + NEW.delta_cents;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_ledger_totals_delete
+AFTER DELETE ON ledger_entries BEGIN
+    UPDATE account_ledger_totals
+    SET total_cents=total_cents - OLD.delta_cents
+    WHERE account_id=OLD.account_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_ledger_totals_update
+AFTER UPDATE OF account_id, delta_cents ON ledger_entries BEGIN
+    UPDATE account_ledger_totals
+    SET total_cents=total_cents - OLD.delta_cents
+    WHERE account_id=OLD.account_id;
+    INSERT INTO account_ledger_totals(account_id, total_cents)
+    VALUES (NEW.account_id, NEW.delta_cents)
+    ON CONFLICT(account_id) DO UPDATE
+    SET total_cents=total_cents + NEW.delta_cents;
+END;
+DELETE FROM account_ledger_totals;
+INSERT INTO account_ledger_totals(account_id, total_cents)
+SELECT account_id, SUM(delta_cents) FROM ledger_entries GROUP BY account_id;
+"""
+
+
 def initialize_schema(conn) -> None:
     """Create all tables on a fresh connection (idempotent)."""
     conn.executescript(SCHEMA_SQL)
+    conn.executescript(MIGRATION_6_SQL)
+    conn.executescript(MIGRATION_7_SQL)
+    conn.executescript(MIGRATION_8_SQL)
+    conn.executescript(MIGRATION_9_SQL)
+    conn.executescript(MIGRATION_10_SQL)
+    conn.executescript(PERFORMANCE_SQL)
+    _ensure_column(conn, "agents", "region_id", "INTEGER")
+    _ensure_column(conn, "agents", "population_tier", "TEXT NOT NULL DEFAULT 'periphery'")
+    _ensure_column(conn, "agents", "pinned_core", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "firms", "region_id", "INTEGER")
+    _ensure_column(conn, "firms", "currency_code", "TEXT NOT NULL DEFAULT 'USD'")
+    _ensure_column(conn, "banks", "region_id", "INTEGER")
+    _ensure_column(conn, "banks", "currency_code", "TEXT NOT NULL DEFAULT 'USD'")
+    _ensure_column(conn, "accounts", "currency_code", "TEXT NOT NULL DEFAULT 'USD'")
+    _ensure_column(conn, "transactions", "currency_code", "TEXT NOT NULL DEFAULT 'USD'")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(run_meta)")}
     additions = {
         "active_tick": "INTEGER",
@@ -517,6 +1255,12 @@ def initialize_schema(conn) -> None:
         "UPDATE run_meta SET schema_version=? WHERE id=1 AND schema_version<?",
         (SCHEMA_VERSION, SCHEMA_VERSION))
     conn.commit()
+
+
+def _ensure_column(conn, table: str, name: str, declaration: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if name not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
 
 def _migrate_legacy_progress(conn) -> None:

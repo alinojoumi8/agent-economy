@@ -9,6 +9,7 @@ import { RunHeader } from "./components/RunHeader";
 import { ParticipantPanel } from "./components/ParticipantPanel";
 import { ShockModal } from "./components/ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./components/WorldPanels";
+import { EconomicMap, InstitutionalPulse, LegalPoliticalPanels } from "./components/V2Observatory";
 import { SectionTitle } from "./components/ui";
 
 const MacroOverview = lazy(() => import("./components/MacroOverview"));
@@ -41,6 +42,11 @@ export default function App() {
       {status?.pause_reason && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-gold-300/20 bg-gold-300/[.05] px-4 py-3 text-xs text-gold-300"><strong>Run paused safely.</strong> {status.pause_reason.detail || status.pause_reason.reason}</aside>}
 
       <main id="main-content" className="mx-auto grid max-w-[1800px] grid-cols-12 gap-3 px-3 pb-16 pt-3 sm:px-5">
+        <SectionTitle index="0" title="The living legal-political economy" description="Watch regional production, trade, institutions, law, information, and capital move through one deterministic event spine." />
+        <EconomicMap map={data.v2?.map} />
+        <InstitutionalPulse legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} datasets={data.v2?.datasets} />
+        <LegalPoliticalPanels legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} startups={data.v2?.startups} markets={data.v2?.markets} />
+
         <SectionTitle index="1" title="Economy at a glance" description="Deterministic engine measurements after each night close. Every chart uses committed run data." />
         <Suspense fallback={<div className="panel col-span-full h-36 animate-pulse" aria-label="Loading charts" />}>
           <MacroOverview metrics={data.metrics} />

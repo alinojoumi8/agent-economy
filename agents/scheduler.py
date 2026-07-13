@@ -19,7 +19,15 @@ class Scheduler:
         self.event_wake_importance = float(config.get("behavior", {}).get("event_wake_importance", 2.0))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
-        agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
+        if int(self.config.get("engine_semantics_version", 1)) >= 5:
+            # In the living-world profile, only the promoted core receives an
+            # LLM/scripted strategic turn. Peripheral agents still participate
+            # in payroll, consumption, lifecycle, markets, exposure, and votes
+            # through deterministic engines.
+            agents = self.store.query(
+                "SELECT * FROM agents WHERE alive=1 AND population_tier='core' ORDER BY id")
+        else:
+            agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
         out = []
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
         for a in agents:

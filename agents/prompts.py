@@ -244,8 +244,19 @@ class ContextBuilder:
 
     def _news_for(self, a, tick: int) -> list[dict]:
         diet = set(load_json(a["media_diet_json"], []) or [])
-        rows = self.store.query(
-            "SELECT * FROM news_articles WHERE tick>=? ORDER BY tick DESC LIMIT 12", (tick - 1,))
+        if self.engine_semantics_version >= 4:
+            # In v2 an article is visible only after a persisted exposure.  This
+            # is the information-asymmetry boundary: querying the newsroom is
+            # not equivalent to an agent having observed every publication.
+            rows = self.store.query(
+                "SELECT n.* FROM information_exposures e "
+                "JOIN information_items i ON i.id=e.item_id "
+                "JOIN news_articles n ON n.id=i.news_article_id "
+                "WHERE e.agent_id=? AND e.tick>=? ORDER BY e.tick DESC, e.id DESC LIMIT 12",
+                (int(a["id"]), tick - 1))
+        else:
+            rows = self.store.query(
+                "SELECT * FROM news_articles WHERE tick>=? ORDER BY tick DESC LIMIT 12", (tick - 1,))
         out = []
         for r in rows:
             if diet and int(r["outlet_id"]) not in diet:
@@ -394,11 +405,16 @@ class ContextBuilder:
         agent_id = int(a["id"])
         acct = self.e.ledger.agent_checking_id(agent_id)
         fund_cash = self.e.ledger.balance(acct) if acct else 0
+        fund_currency = self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (acct,), default="USD")
         pending = []
         for p in self.store.query(
                 "SELECT p.*, f.name AS firm_name, f.sector AS sector, f.account_id AS firm_acct, "
-                "f.founded_tick AS founded_tick FROM pitches p JOIN firms f ON f.id=p.firm_id "
-                "WHERE p.status='pending' ORDER BY p.id"):
+                "f.founded_tick AS founded_tick, fa.currency_code AS firm_currency "
+                "FROM pitches p JOIN firms f ON f.id=p.firm_id "
+                "JOIN accounts fa ON fa.id=f.account_id "
+                "WHERE p.status='pending' AND fa.currency_code=? ORDER BY p.id",
+                (fund_currency,)):
             firm_id = int(p["firm_id"])
             revenue_30 = int(self.store.scalar(
                 "SELECT COALESCE(SUM(json_extract(payload_json,'$.total_cents')),0) FROM events "
@@ -411,12 +427,14 @@ class ContextBuilder:
                 "pitch_id": int(p["id"]), "firm_id": firm_id, "firm_name": p["firm_name"],
                 "sector": p["sector"], "ask_cents": int(p["ask_cents"]),
                 "summary": p["summary"], "follow_on": bool(p["follow_on"]),
+                "currency": p["firm_currency"],
                 "firm_cash": self.e.ledger.balance(int(p["firm_acct"])) if p["firm_acct"] else 0,
                 "revenue_30": revenue_30, "employees": employees,
                 "firm_age_ticks": tick - int(p["founded_tick"] or 0)})
         return {"tick": tick, "purpose": "vc_partner", "rng_seed": _seed(agent_id, tick),
                 "agent": {"id": agent_id, "name": a["name"], "role": "vc_partner"},
-                "fund_cash": fund_cash, "pending_pitches": pending,
+                "fund_cash": fund_cash, "fund_currency": fund_currency,
+                "pending_pitches": pending,
                 "portfolio": self.e.vc.portfolio(agent_id),
                 "metrics": self._metrics_snapshot(tick)}
 

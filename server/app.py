@@ -67,6 +67,8 @@ def create_app(world: World) -> FastAPI:
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
     app.state.run_controller = controller
+    from server.v2_api import install_v2_routes
+    install_v2_routes(app, world, controller)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 

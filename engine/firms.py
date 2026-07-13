@@ -48,11 +48,24 @@ class Firms:
     def found_firm(self, tick: int, founder_agent_id: int, name: str, sector: str,
                    product: Optional[dict] = None, opening_capital_cents: int = 0,
                    shares: int = 1000) -> int:
-        acct_id = self.ledger.create_account("firm", None, "checking", label=f"firm:{name}")
+        founder = self.store.query_one(
+            "SELECT region_id, checking_account_id FROM agents WHERE id=?", (founder_agent_id,))
+        region_id = int(founder["region_id"]) if founder and founder["region_id"] is not None else None
+        currency = "USD"
+        bank_id = None
+        if founder and founder["checking_account_id"] is not None:
+            source = self.store.query_one(
+                "SELECT currency_code,bank_id FROM accounts WHERE id=?", (founder["checking_account_id"],))
+            if source:
+                currency = str(source["currency_code"] or "USD")
+                bank_id = int(source["bank_id"]) if source["bank_id"] is not None else None
+        acct_id = self.ledger.create_account(
+            "firm", None, "checking", bank_id=bank_id, label=f"firm:{name}", currency_code=currency)
         firm_id = self.store.insert(
             "firms", name=name, sector=sector, founder_agent_id=founder_agent_id,
             status="private", product_json=json.dumps(product or DEFAULT_PRODUCT),
-            account_id=acct_id, founded_tick=tick, shares_outstanding=shares, inventory=0)
+            account_id=acct_id, founded_tick=tick, shares_outstanding=shares, inventory=0,
+            region_id=region_id, currency_code=currency)
         self.store.execute("UPDATE accounts SET owner_id=? WHERE id=?", (firm_id, acct_id))
         # Founder capitalises the firm from personal funds.
         if opening_capital_cents > 0:
@@ -102,7 +115,8 @@ class Firms:
         produced = max(0, min(desired, affordable))
         if produced <= 0:
             return
-        commodity_acct = self.ledger.system_account(SYS_COMMODITY)
+        currency = str(firm["currency_code"] or "USD")
+        commodity_acct = self.ledger.system_account(SYS_COMMODITY, currency_code=currency)
         self.ledger.post(tick, "production_input", [
             Leg(acct, -produced * unit_cost, "input cost"),
             Leg(commodity_acct, produced * unit_cost, "commodity purchase"),
@@ -125,6 +139,10 @@ class Firms:
         buyer_acct = self.ledger.agent_checking_id(buyer_agent_id)
         if buyer_acct is None:
             return {"ok": False, "reason": "no account"}
+        buyer_currency = self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (buyer_acct,), default="USD")
+        if str(buyer_currency or "USD") != str(firm["currency_code"] or "USD"):
+            return {"ok": False, "reason": "cross-border purchases require a trade shipment and FX"}
         affordable = self.ledger.balance(buyer_acct) // price if price > 0 else qty
         qty = min(qty, affordable)
         if qty <= 0:
@@ -171,7 +189,9 @@ class Firms:
                 legs = [Leg(firm_acct, -wage, "gross wages"),
                         Leg(emp_acct, wage - tax, "net wages")]
                 if tax > 0:
-                    legs.append(Leg(self.ledger.system_account(SYS_GOV), tax, "income tax"))
+                    currency = str(firm["currency_code"] or "USD")
+                    legs.append(Leg(self.ledger.system_account(
+                        SYS_GOV, currency_code=currency), tax, "income tax"))
                 self.ledger.post(tick, "wage", legs, memo=f"wages firm {firm['id']}")
                 self.store.update("employments", int(emp["id"]), next_pay_tick=tick + interval)
                 self.store.log_event(tick, "wage_paid", {

@@ -9,7 +9,6 @@ heard become observations → memory → beliefs. This is the rumor medium.
 from __future__ import annotations
 
 from collections import deque
-from difflib import SequenceMatcher
 import json
 import re
 from typing import Optional
@@ -71,6 +70,15 @@ class Newsroom:
                     slant_tags=json.dumps(art.get("slant_tags", [outlet["slant"]])),
                     source_event_ids=json.dumps(art.get("source_event_ids", [])),
                     tone=float(art.get("tone", 0.0)), truthful=1)
+                # Mirror the article into the v2 claim/exposure economy.  The
+                # article remains grounded in the same event ids; this adapter
+                # never fabricates a second source of truth.
+                self.e.information.register_news_article(
+                    tick, aid, int(outlet["id"]), art["headline"], art.get("body", ""),
+                    [int(item) for item in art.get("source_event_ids", [])],
+                    float(art.get("tone", 0.0)),
+                    author_agent_id=self._desk_agent("editor", int(outlet["id"])),
+                    slant=float(art.get("slant_score", 0.0)))
                 self.store.log_event(tick, "news_published", {
                     "article_id": aid, "outlet_id": outlet["id"], "outlet": outlet["name"],
                     "headline": art["headline"], "tone": art.get("tone", 0.0)},
@@ -185,7 +193,7 @@ class Conversations:
             return []
         # Weight by tie strength + event salience (agents touched by big events talk).
         salient = {int(r["agent_id"]) for r in self.store.query(
-            "SELECT DISTINCT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}
+            "SELECT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}
         weighted = []
         for t in ties:
             w = float(t["weight"])
@@ -225,7 +233,8 @@ class Conversations:
                  for aid in (a_id, b_id)}
         profiles = {
             aid: dict(self.store.query_one(
-                "SELECT name, occupation, age, health, kind FROM agents WHERE id=?", (aid,)))
+                "SELECT name, occupation, age, health, kind, population_tier "
+                "FROM agents WHERE id=?", (aid,)))
             for aid in (a_id, b_id)
         }
         rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
@@ -271,8 +280,15 @@ class Conversations:
                     if key != "avoid_texts"
                 })[:2400], context=context,
                 agent_id=speaker, tick=tick, max_tokens=120)
-            resp = await self.gw.complete(req, schema_hint=schema)
-            env = resp.parsed if isinstance(resp.parsed, dict) else {}
+            if (int(self.config.get("engine_semantics_version", 1)) >= 5
+                    and profiles[speaker].get("population_tier") != "core"):
+                # Peripheral dialogue is generated directly by the bounded,
+                # deterministic policy. Only the 100-agent core may create a
+                # model-call record in living-world runs.
+                env = conversation_turn(context)
+            else:
+                resp = await self.gw.complete(req, schema_hint=schema)
+                env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
             if not text:
                 continue
@@ -375,12 +391,26 @@ class Conversations:
         key = cls._line_key(text)
         if not key:
             return False
+        tokens = key.split()
+        token_set = set(tokens)
+        shingles = set(zip(tokens, tokens[1:], tokens[2:])) if len(tokens) >= 3 else set()
         for prior in prior_lines:
             prior_key = cls._line_key(prior)
             if key == prior_key:
                 return True
-            if min(len(key), len(prior_key)) >= 24:
-                if SequenceMatcher(None, key, prior_key).ratio() >= 0.90:
+            prior_tokens = prior_key.split()
+            prior_set = set(prior_tokens)
+            if token_set and prior_set:
+                intersection = len(token_set & prior_set)
+                union = len(token_set | prior_set)
+                if union and intersection / union >= 0.82:
+                    return True
+            if shingles and len(prior_tokens) >= 3:
+                prior_shingles = set(zip(
+                    prior_tokens, prior_tokens[1:], prior_tokens[2:]))
+                overlap = len(shingles & prior_shingles)
+                smaller = min(len(shingles), len(prior_shingles))
+                if smaller and overlap / smaller >= 0.80:
                     return True
         return False
 

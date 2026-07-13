@@ -13,11 +13,16 @@ from .credit import Bank
 from .exchange import Exchange
 from .firms import Firms
 from .government import Government
+from .information import InformationEconomy
 from .labor import Labor
+from .legal import LegalInstitution
 from .ledger import (Ledger, SYS_COMMODITY, SYS_EXTERNAL, SYS_GOV, SYS_INFLOW,
                      SYS_HOUSING, SYS_LOSS, SYS_MEDICAL)
 from .lifecycle import Lifecycle
 from .store import Store
+from .startups import StartupLifecycle
+from .politics import PoliticalEconomy
+from .regions import RegionalEconomy
 from .vc import VentureCapital
 
 
@@ -39,6 +44,12 @@ class Economy:
                                    health_cfg=config.get("health", {}))
         self.gov = Government(store, self.ledger, config.get("government"))
         self.vc = VentureCapital(store, self.ledger)
+        self.legal = LegalInstitution(store, self.ledger, config.get("legal"))
+        self.regions = RegionalEconomy(store, self.ledger, self.legal, engine_prng,
+                                      config.get("living_world"))
+        self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
+        self.information = InformationEconomy(store, config.get("information_economy"))
+        self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

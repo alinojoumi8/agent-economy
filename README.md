@@ -14,6 +14,49 @@ and settles every consequence through an exactly balanced double-entry ledger.
 > Agent Economy is a research simulator, not a real-economy forecast or
 > financial advice. The default offline profile is free and deterministic.
 
+## Legal-Political Economy v2
+
+The flagship `runs/v2.yaml` world makes institutions part of the economy rather
+than background flavor:
+
+- Executed contracts compile into enforceable obligations; claims, evidence,
+  settlements, judgments, injunctions, cap tables, and ledgers share one action path.
+- Startups move through formation, typed VC rounds, IP, disclosures, trading,
+  merger review, remedies, litigation, and exit.
+- Claims and articles spread through recorded asymmetric exposures before they
+  can affect beliefs, trades, investments, or votes.
+- A two-party legislature, elections, lobbying, agencies, and typed policy rules
+  create endogenous economic-political feedback.
+- 1,000 agents inhabit Northstar, Ironvale, and Suncoast. One hundred strategic
+  agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
+- Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
+  trade, migration, and regional specialization remain exactly replayable.
+- The observatory adds a living economic map, legal/political/startup surfaces,
+  causal traces, God-mode actions through the normal validator, and static replay export.
+- Pinned dataset manifests and paired-seed scenario packs support model-conditional
+  counterfactual research without presenting the simulation as a forecast.
+
+```powershell
+# Free 1,000-agent flagship run
+python run.py --config runs/v2.yaml --ticks 30
+
+# Verify pinned data without network access
+python run.py --verify-datasets config/data-manifest.yaml
+
+# Explicit networked refresh (never runs implicitly)
+python run.py --refresh-datasets config/data-manifest.yaml
+
+# Paired policy lab; defaults to 20 seeds
+python run.py --counterfactual scenarios/ai-competition-merger.yaml
+
+# Self-contained replay artifact
+python run.py --export-static RUN_ID --output static_exports/demo.html
+```
+
+See [the v2 architecture and research guide](docs/v2-guide.md) for schemas,
+legal-model limits, provenance, scenario authoring, replay guarantees, and the
+validity boundary.
+
 ## Why this project exists
 
 Many multi-agent demos make interesting text but cannot explain where money

@@ -9,6 +9,7 @@ overspend is realistic behaviour), never a crash.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from typing import Any, Optional
@@ -16,6 +17,7 @@ from typing import Any, Optional
 from .core import Economy
 from .credit import LoanTerms
 from .ledger import Leg
+from .types import ActionEnvelope, ValidationError
 from observability import get_logger, log_event as operational_log
 
 
@@ -27,6 +29,20 @@ VALID_TYPES = {
     "move_deposits", "set_policy_rate", "say_public", "do_nothing",
     "pitch_vc", "fund_pitch", "decline_pitch",          # VC track (P1 R13)
     "buy_insurance", "cancel_insurance",                # health economy (P1 R17)
+    # v2 legal-institutional kernel
+    "propose_contract", "counter_contract", "accept_contract", "reject_contract",
+    "perform_obligation", "issue_legal_notice", "file_claim", "submit_filing",
+    "propose_settlement", "accept_settlement", "issue_legal_decision",
+    # v2 startup, financing, IP, disclosure, and M&A lifecycle
+    "propose_term_sheet", "accept_term_sheet", "run_due_diligence", "close_funding_round",
+    "register_ip", "license_ip", "publish_disclosure", "propose_merger", "approve_merger",
+    "review_merger", "close_merger",
+    # v2 narrative economy and federal-lite political feedback
+    "create_claim", "publish_information", "repost_information", "correct_claim",
+    "sponsor_bill", "amend_bill", "committee_vote", "cast_legislative_vote",
+    "executive_bill_action", "override_veto", "lobby",
+    # v2 regional population, trade, migration, and foreign exchange
+    "place_fx_order", "cancel_fx_orders", "create_trade_shipment", "request_migration",
 }
 
 
@@ -44,17 +60,41 @@ class ActionExecutor:
 
     def execute_action(self, tick: int, actor_id: int, action: dict, phase: str = "EXECUTION",
                        seq: int = 0) -> dict:
-        atype = (action or {}).get("type")
+        try:
+            envelope = ActionEnvelope.from_mapping(actor_id, action or {})
+        except (TypeError, ValueError, ValidationError) as exc:
+            return self._reject(tick, actor_id, action, f"invalid action envelope: {exc}", phase)
+        action = envelope.engine_action()
+        atype = envelope.action_type
+        proposal_id = self.store.insert(
+            "action_proposals", tick=tick, actor_id=actor_id, action_type=atype,
+            payload_json=json.dumps(envelope.payload, sort_keys=True, default=str),
+            evidence_event_ids_json=json.dumps(list(envelope.evidence_event_ids)),
+            model_call_id=envelope.model_call_id,
+            rationale_summary=envelope.rationale_summary,
+            validation_status="pending")
         if atype not in VALID_TYPES:
-            return self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
+            result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         actor = self._agent(actor_id)
         if not actor:
-            return self._reject(tick, actor_id, action, "actor missing", phase)
+            result = self._reject(tick, actor_id, action, "actor missing", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         if not actor["alive"]:
-            return self._reject(tick, actor_id, action, "actor not alive", phase)
+            result = self._reject(tick, actor_id, action, "actor not alive", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         handler = getattr(self, f"_do_{atype}", None)
         if handler is None:
-            return self._reject(tick, actor_id, action, f"unhandled action: {atype}", phase)
+            result = self._reject(tick, actor_id, action, f"unhandled action: {atype}", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         try:
             # A handler may perform several writes before an unexpected error.
             # Keep the tick alive, but never retain a partially-applied action.
@@ -65,9 +105,16 @@ class ActionExecutor:
             operational_log(logger, logging.ERROR, "action.execution.failed",
                             tick=tick, actor_id=actor_id, action_type=atype,
                             phase=phase, error_type=type(exc).__name__, error=str(exc))
-            return self._reject(tick, actor_id, action, f"error: {exc}", phase)
+            result = self._reject(tick, actor_id, action, f"error: {exc}", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         if not result.get("ok"):
             self._reject(tick, actor_id, action, result.get("reason", "rejected"), phase)
+        self.store.update(
+            "action_proposals", proposal_id,
+            validation_status="accepted" if result.get("ok") else "rejected",
+            result_json=json.dumps(result, sort_keys=True, default=str))
         return result
 
     def _reject(self, tick: int, actor_id: int, action: dict, reason: str, phase: str) -> dict:
@@ -153,6 +200,9 @@ class ActionExecutor:
         to_bank_row = self.store.query_one("SELECT * FROM banks WHERE id=? AND status='open'", (to_bank,))
         if not to_bank_row or to_bank == from_bank:
             return {"ok": False, "reason": "invalid destination bank"}
+        source_currency = str(src["currency_code"] or "USD")
+        if str(to_bank_row["currency_code"] or "USD") != source_currency:
+            return {"ok": False, "reason": "cross-currency deposit moves require the FX market"}
 
         # Liquidity check on the source bank — this is where a run bites.
         if from_bank and not self.e.bank.can_settle_outflow(from_bank, amount):
@@ -183,8 +233,11 @@ class ActionExecutor:
             (agent_id, bank_id))
         if row:
             return int(row["id"])
+        currency = str(self.store.scalar(
+            "SELECT currency_code FROM banks WHERE id=?", (bank_id,), default="USD") or "USD")
         return self.e.ledger.create_account("agent", agent_id, "checking", bank_id=bank_id,
-                                            label=f"agent:{agent_id}@bank{bank_id}")
+                                            label=f"agent:{agent_id}@bank{bank_id}",
+                                            currency_code=currency)
 
     # ── labor ────────────────────────────────────────────────────────────────
     def _do_post_job(self, tick, actor_id, action, phase) -> dict:
@@ -381,16 +434,18 @@ class ActionExecutor:
             "SELECT 1 FROM insurance_policies WHERE agent_id=? AND status='active'", (actor_id,))
         if existing:
             return {"ok": False, "reason": "already insured"}
+        acct = self.e.ledger.agent_checking_id(actor_id)
+        currency = self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (acct,), default=None) if acct else None
         insurer = self.store.query_one(
             "SELECT id, account_id FROM firms WHERE sector='insurance' AND status<>'bankrupt' "
-            "ORDER BY id LIMIT 1")
+            "AND currency_code=? ORDER BY id LIMIT 1", (str(currency or "USD"),))
         if not insurer:
             return {"ok": False, "reason": "no insurer operating"}
         h = self.e.lifecycle.h
         premium = int(action.get("premium", h["premium_cents"]))
         coverage = int(h["coverage_bps"])
         interval = int(h["premium_interval_ticks"])
-        acct = self.e.ledger.agent_checking_id(actor_id)
         if acct is None or self.e.ledger.balance(acct) < premium:
             return {"ok": False, "reason": "cannot afford first premium"}
         # First premium settles on purchase; renewals run in the nightly sweep.
@@ -416,6 +471,137 @@ class ActionExecutor:
         return {"ok": True}
 
     # ── monetary policy (guardrailed) ────────────────────────────────────────
+    # v2 legal-institutional actions.  Each delegates to the deterministic
+    # legal service; prose in the proposal is never executed.
+    def _do_propose_contract(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.propose_contract(tick, actor_id, action)
+
+    def _do_counter_contract(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.counter_contract(
+            tick, actor_id, int(action.get("contract_id", 0)),
+            dict(action.get("changes", {})))
+
+    def _do_accept_contract(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.accept_contract(
+            tick, actor_id, int(action.get("contract_id", 0)),
+            str(action.get("party_type", "agent")), int(action.get("party_id", actor_id)))
+
+    def _do_reject_contract(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.reject_contract(tick, actor_id, int(action.get("contract_id", 0)))
+
+    def _do_perform_obligation(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.perform_obligation(tick, actor_id, int(action.get("obligation_id", 0)))
+
+    def _do_issue_legal_notice(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.issue_notice(tick, actor_id, action)
+
+    def _do_file_claim(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.file_claim(tick, actor_id, action)
+
+    def _do_submit_filing(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.submit_filing(tick, actor_id, action)
+
+    def _do_propose_settlement(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.propose_settlement(
+            tick, actor_id, int(action.get("matter_id", 0)), dict(action.get("terms", {})))
+
+    def _do_accept_settlement(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.accept_settlement(tick, actor_id, int(action.get("matter_id", 0)))
+
+    def _do_issue_legal_decision(self, tick, actor_id, action, phase) -> dict:
+        return self.e.legal.issue_decision(tick, actor_id, action)
+
+    def _do_propose_term_sheet(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.propose_term_sheet(tick, actor_id, action)
+
+    def _do_accept_term_sheet(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.accept_term_sheet(tick, actor_id, int(action.get("term_sheet_id", 0)))
+
+    def _do_run_due_diligence(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.run_due_diligence(tick, actor_id, int(action.get("term_sheet_id", 0)))
+
+    def _do_close_funding_round(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.close_funding_round(tick, actor_id, int(action.get("term_sheet_id", 0)))
+
+    def _do_register_ip(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.register_ip(tick, actor_id, action)
+
+    def _do_license_ip(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.license_ip(tick, actor_id, action)
+
+    def _do_publish_disclosure(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.publish_disclosure(
+            tick, actor_id, int(action.get("firm_id", 0)),
+            str(action.get("disclosure_type", "earnings")), int(action.get("lookback_ticks", 30)))
+
+    def _do_propose_merger(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.propose_merger(tick, actor_id, action)
+
+    def _do_approve_merger(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.approve_merger(tick, actor_id, int(action.get("merger_id", 0)))
+
+    def _do_review_merger(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.review_merger(
+            tick, actor_id, int(action.get("merger_id", 0)), dict(action.get("remedy", {})))
+
+    def _do_close_merger(self, tick, actor_id, action, phase) -> dict:
+        return self.e.startups.close_merger(tick, actor_id, int(action.get("merger_id", 0)))
+
+    def _do_create_claim(self, tick, actor_id, action, phase) -> dict:
+        return self.e.information.create_claim(tick, actor_id, action)
+
+    def _do_publish_information(self, tick, actor_id, action, phase) -> dict:
+        return self.e.information.publish_item(tick, actor_id, action)
+
+    def _do_repost_information(self, tick, actor_id, action, phase) -> dict:
+        return self.e.information.repost(
+            tick, actor_id, int(action.get("parent_item_id", 0)), str(action.get("commentary", "")))
+
+    def _do_correct_claim(self, tick, actor_id, action, phase) -> dict:
+        return self.e.information.correct_claim(
+            tick, actor_id, int(action.get("original_claim_id", 0)), dict(action.get("correction", {})))
+
+    def _do_sponsor_bill(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.sponsor_bill(tick, actor_id, action)
+
+    def _do_amend_bill(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.amend_bill(
+            tick, actor_id, int(action.get("bill_id", 0)), dict(action.get("amendment", {})))
+
+    def _do_committee_vote(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.committee_vote(
+            tick, actor_id, int(action.get("bill_id", 0)), str(action.get("vote", "abstain")))
+
+    def _do_cast_legislative_vote(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.cast_vote(
+            tick, actor_id, int(action.get("bill_id", 0)), str(action.get("vote", "abstain")))
+
+    def _do_executive_bill_action(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.executive_action(
+            tick, actor_id, int(action.get("bill_id", 0)), str(action.get("action", "")),
+            int(action.get("effective_delay_ticks", 1)))
+
+    def _do_override_veto(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.override_veto(
+            tick, actor_id, int(action.get("bill_id", 0)), str(action.get("vote", "yes")))
+
+    def _do_lobby(self, tick, actor_id, action, phase) -> dict:
+        return self.e.politics.lobby(tick, actor_id, action)
+
+    def _do_place_fx_order(self, tick, actor_id, action, phase) -> dict:
+        return self.e.regions.place_fx_order(tick, actor_id, action)
+
+    def _do_cancel_fx_orders(self, tick, actor_id, action, phase) -> dict:
+        return self.e.regions.cancel_fx_orders(tick, actor_id, action.get("pair"))
+
+    def _do_create_trade_shipment(self, tick, actor_id, action, phase) -> dict:
+        return self.e.regions.create_shipment(tick, actor_id, action)
+
+    def _do_request_migration(self, tick, actor_id, action, phase) -> dict:
+        return self.e.regions.request_migration(
+            tick, actor_id, int(action.get("destination_region_id", 0)),
+            str(action.get("reason", "")))
+
     def _do_set_policy_rate(self, tick, actor_id, action, phase) -> dict:
         a = self._agent(actor_id)
         if not a or a["role"] != "central_banker":

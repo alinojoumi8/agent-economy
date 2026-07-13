@@ -1,0 +1,56 @@
+extends: base.yaml
+
+# Flagship Legal-Political Economy world. Normal execution is offline and
+# deterministic; providers and dataset refreshes remain explicit commands.
+seed: 42
+engine_semantics_version: 5
+dataset_manifest: config/data-manifest.yaml
+checkpoint_every: 90
+
+population:
+  target_total: 1000
+
+banks:
+  count: 3
+  names: ["Northstar Bank", "Ironvale Industrial Bank", "Suncoast Exchange Bank"]
+  initial_reserve_ratio: 0.6
+  reserve_requirement_bps: 1000
+  risk_policy:
+    min_rate_bps: 300
+    max_rate_bps: 3000
+    default_rate_bps: 900
+
+living_world:
+  enabled: true
+  core_agents: 100
+  promotion_interval_ticks: 30
+  require_trade_contract: true
+  fx_market_maker_inventory: 100000000
+  regions:
+    - key: northstar
+      name: Northstar Federation
+      currency: NSD
+      population: 600
+      specialization: [technology, services, finance]
+      x: 0.25
+      y: 0.35
+      legal_ruleset: northstar-us-inspired-1.0
+      rate_ppm: 1000000
+    - key: ironvale
+      name: Ironvale Union
+      currency: IVC
+      population: 220
+      specialization: [manufacturing, energy]
+      x: 0.72
+      y: 0.28
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 750000
+    - key: suncoast
+      name: Suncoast Republic
+      currency: SCD
+      population: 180
+      specialization: [agriculture, logistics, tourism]
+      x: 0.55
+      y: 0.78
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 1200000

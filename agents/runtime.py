@@ -212,12 +212,38 @@ class AgentRuntime:
     # ── MEMORY: nightly compression + belief extraction ──────────────────────
     async def compress_memories(self, tick: int) -> None:
         # Only agents with observations today need compressing.
-        rows = self.store.query(
-            "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation' "
-            "AND agent_id NOT IN (SELECT agent_id FROM memories "
-            "WHERE tick=? AND kind='summary') "
-            "ORDER BY agent_id", (tick, tick))
-        agent_ids = [int(r["agent_id"]) for r in rows]
+        living_world = int(self.config.get("engine_semantics_version", 1)) >= 5
+        if living_world:
+            rows = self.store.query(
+                "SELECT DISTINCT m.agent_id,a.population_tier FROM memories m "
+                "JOIN agents a ON a.id=m.agent_id "
+                "WHERE m.tick=? AND m.kind='observation' "
+                "AND m.agent_id NOT IN (SELECT agent_id FROM memories "
+                "WHERE tick=? AND kind='summary') ORDER BY m.agent_id", (tick, tick))
+        else:
+            rows = self.store.query(
+                "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
+                "WHERE tick=? AND kind='observation' "
+                "AND agent_id NOT IN (SELECT agent_id FROM memories "
+                "WHERE tick=? AND kind='summary') ORDER BY agent_id", (tick, tick))
+        # Semantics-v5 uses deterministic daily compression for everyone and a
+        # model-capable weekly reflection for the core below. Older semantics
+        # retain their daily model path unchanged.
+        agent_ids = [] if living_world else [int(r["agent_id"]) for r in rows]
+        for row in rows:
+            if not living_world:
+                continue
+            aid = int(row["agent_id"])
+            observations = self.mem.todays_observations(aid, tick)
+            if not observations:
+                continue
+            summary = " | ".join(
+                str(item.get("text", item)) for item in observations)[:1800]
+            importance = max(
+                (float(item.get("importance", 1.0)) for item in observations),
+                default=1.0,
+            )
+            self.mem.write_summary(aid, tick, summary, importance)
         sem_tasks = [self._compress_one(tick, aid) for aid in agent_ids]
         results = await _gather_fail_fast(sem_tasks)
         for aid, res in zip(agent_ids, results):
@@ -234,9 +260,34 @@ class AgentRuntime:
             self.mem.write_summary(aid, tick, summary, importance)
 
         if tick % 7 == 0:
-            weekly_ids = [int(r["agent_id"]) for r in self.store.query(
-                "SELECT DISTINCT agent_id FROM memories WHERE kind='summary' AND demoted=0 "
-                "AND tick BETWEEN ? AND ? ORDER BY agent_id", (tick - 6, tick))]
+            if living_world:
+                weekly_rows = self.store.query(
+                    "SELECT DISTINCT m.agent_id,a.population_tier FROM memories m "
+                    "JOIN agents a ON a.id=m.agent_id WHERE m.kind='summary' "
+                    "AND m.demoted=0 AND m.tick BETWEEN ? AND ? ORDER BY m.agent_id",
+                    (tick - 6, tick))
+            else:
+                weekly_rows = self.store.query(
+                    "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
+                    "WHERE kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
+                    "ORDER BY agent_id", (tick - 6, tick))
+            weekly_ids = [
+                int(r["agent_id"]) for r in weekly_rows
+                if not living_world or r["population_tier"] == "core"
+            ]
+            for row in weekly_rows:
+                if not living_world or row["population_tier"] == "core":
+                    continue
+                aid = int(row["agent_id"])
+                daily = self.store.query(
+                    "SELECT text,importance FROM memories WHERE agent_id=? "
+                    "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
+                    "ORDER BY tick,id", (aid, tick - 6, tick))
+                if daily:
+                    summary = "Week summary: " + " | ".join(
+                        str(item["text"]) for item in daily)[:1800]
+                    importance = max(float(item["importance"]) for item in daily)
+                    self.mem.weekly_rollup(aid, tick, summary, importance)
             weekly_results = await _gather_fail_fast(
                 self._rollup_week(tick, aid) for aid in weekly_ids)
             for aid, res in zip(weekly_ids, weekly_results):
