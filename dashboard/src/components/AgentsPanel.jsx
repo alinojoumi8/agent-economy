@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { api, money, number, shortKind } from "../api";
+import { appendParticipantHistory } from "../participant";
 import { Badge, Empty, Modal, Panel } from "./ui";
 
-export function AgentsPanel({ agents }) {
+export function AgentsPanel({ agents, participant, status, act }) {
   const [filter, setFilter] = useState("");
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15,7 +16,39 @@ export function AgentsPanel({ agents }) {
 
   async function inspect(id) {
     setLoading(true);
-    try { setDetail(await api(`/api/agents/${id}`)); } finally { setLoading(false); }
+    try {
+      const agentDetail = await api(`/api/agents/${id}`);
+      let participantHistory = null;
+      if (participant?.enabled && agentDetail.agent?.kind === "citizen") {
+        participantHistory = await api(`/api/participant/history?agent_id=${id}&limit=50`);
+      }
+      setDetail({ ...agentDetail, participantHistory });
+    } finally { setLoading(false); }
+  }
+
+  async function loadOlderParticipantActions() {
+    const cursor = detail?.participantHistory?.next_before_id;
+    if (!detail?.agent?.id || !cursor) return;
+    setLoading(true);
+    try {
+      const page = await api(
+        `/api/participant/history?agent_id=${detail.agent.id}&limit=50&before_id=${cursor}`);
+      setDetail(current => ({
+        ...current,
+        participantHistory: appendParticipantHistory(current?.participantHistory, page),
+      }));
+    } finally { setLoading(false); }
+  }
+
+  async function takeControl(agentId) {
+    setLoading(true);
+    try {
+      await act("/api/participant/control", {
+        agent_id: agentId,
+        expected_tick: status?.tick ?? 0,
+      });
+      setDetail(null);
+    } finally { setLoading(false); }
   }
 
   return <>
@@ -30,13 +63,22 @@ export function AgentsPanel({ agents }) {
       </div>
     </Panel>
     {loading && <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-mint-300 px-3 py-2 text-xs font-semibold text-ink-950">Loading agent…</div>}
-    {detail && <AgentModal detail={detail} onClose={() => setDetail(null)} />}
+    {detail && <AgentModal detail={detail} participant={participant} running={status?.running}
+      historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
+      onTakeControl={takeControl} onClose={() => setDetail(null)} />}
   </>;
 }
 
-function AgentModal({ detail, onClose }) {
+function AgentModal({ detail, participant, running, historyLoading, onLoadOlder, onTakeControl, onClose }) {
   const agent = detail.agent;
+  const selectable = participant?.enabled && agent.kind === "citizen" && Boolean(agent.alive);
+  const controlledId = participant?.controlled_agent?.id;
   return <Modal title={`${agent.name} · agent ${agent.id}`} onClose={onClose} wide>
+    {selectable && <div className="mb-4 flex items-center justify-between rounded-xl border border-mint-300/15 bg-mint-300/[.05] p-3">
+      <div><div className="eyebrow">Participant Mode</div><p className="mt-1 text-xs text-slate-400">Control this citizen one validated day at a time.</p></div>
+      <button className="button button-primary" disabled={running || (controlledId && controlledId !== agent.id)}
+        onClick={() => onTakeControl(agent.id)}>{controlledId === agent.id ? "Currently controlled" : "Take control"}</button>
+    </div>}
     <div className="grid gap-4 lg:grid-cols-3">
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Identity</div>
@@ -63,6 +105,21 @@ function AgentModal({ detail, onClose }) {
         <div className="eyebrow mb-3">Decision audit</div>
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{detail.recent_decisions.length ? detail.recent_decisions.map((decision, index) => <details key={`${decision.tick}-${index}`} className="border-t border-mint-300/10 pt-2 first:border-0"><summary className="cursor-pointer text-xs text-slate-300">Day {decision.tick} · {decision.purpose} · {decision.model}</summary><pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(decision, null, 2)}</pre></details>) : <Empty>No decisions yet.</Empty>}</div>
       </section>
+      {detail.participantHistory && <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div><div className="eyebrow">Participant action history</div><p className="mt-1 text-xs text-slate-500">Durable operator inputs and validator results for this citizen.</p></div>
+          <Badge tone={detail.participantHistory.items.length ? "good" : "neutral"}>{detail.participantHistory.items.length} loaded</Badge>
+        </div>
+        <div className="scrollbar max-h-80 space-y-3 overflow-y-auto pr-2">
+          {detail.participantHistory.items.length ? detail.participantHistory.items.map(item =>
+            <details key={item.id} className="rounded-lg border border-mint-300/10 bg-ink-950/50 p-3">
+              <summary className="cursor-pointer text-xs text-slate-300">Day {item.target_tick} - {shortKind(item.action?.type || "action")} - <span className={item.status === "executed" ? "text-mint-300" : item.status === "rejected" ? "text-red-300" : "text-amber-300"}>{shortKind(item.status)}</span></summary>
+              {item.reasoning && <p className="mt-2 text-xs text-slate-400">{item.reasoning}</p>}
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify({ action: item.action, result: item.result, created_at: item.created_at, executed_at: item.executed_at, source_action_id: item.source_action_id }, null, 2)}</pre>
+            </details>) : <Empty>No participant actions recorded for this citizen.</Empty>}
+        </div>
+        {detail.participantHistory.next_before_id && <button className="button mt-3" disabled={historyLoading} onClick={onLoadOlder}>{historyLoading ? "Loading..." : "Load older actions"}</button>}
+      </section>}
     </div>
   </Modal>;
 }

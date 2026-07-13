@@ -13,12 +13,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from engine.store import load_json
+from agents.participant import ParticipantError
 from server.controller import RunController, build_tick_payload
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
@@ -43,6 +44,21 @@ class ShockBody(BaseModel):
 
 class SpeedBody(BaseModel):
     delay_s: float
+
+
+class ParticipantControlBody(BaseModel):
+    agent_id: int
+    expected_tick: int
+
+
+class ParticipantActionBody(BaseModel):
+    expected_tick: int
+    action: dict
+    reasoning: str = ""
+
+
+class ParticipantReleaseBody(BaseModel):
+    expected_tick: int
 
 
 def create_app(world: World) -> FastAPI:
@@ -125,7 +141,10 @@ def create_app(world: World) -> FastAPI:
                     and receipt.get("run", {}).get("run_id") == str(meta["run_id"])
                     and int(receipt.get("progress", {}).get("completed_ticks", -1))
                     == int(meta["tick"])):
-                return {"configured": True, **receipt}
+                return {
+                    "configured": True, **receipt,
+                    "orchestration": controller.status()["acceptance_orchestration"],
+                }
         # A production database can be hundreds of MB. The evidence evaluator
         # reconciles the ledger and builds causal shock traces, so keep it off
         # the asyncio event loop and coalesce dashboard refreshes for two seconds.
@@ -143,8 +162,54 @@ def create_app(world: World) -> FastAPI:
                 "configured": True,
                 **await asyncio.to_thread(evaluate_acceptance, store.path),
             }
+            result["orchestration"] = controller.status()["acceptance_orchestration"]
             acceptance_cache.update(result=result, evaluated_at=time.monotonic())
             return result
+
+    # ── participant mode (P2 R18, sandbox only) ─────────────────────────────
+    def participant_error(exc: ParticipantError):
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+    @app.get("/api/participant")
+    async def participant_status():
+        return controller.participant.status(running=controller.is_running())
+
+    @app.get("/api/participant/history")
+    async def participant_history(
+        agent_id: int,
+        limit: int = Query(default=50, ge=1, le=100),
+        before_id: Optional[int] = Query(default=None, ge=1),
+    ):
+        try:
+            return controller.participant.history(
+                agent_id, limit=limit, before_id=before_id)
+        except ParticipantError as exc:
+            participant_error(exc)
+
+    @app.post("/api/participant/control")
+    async def participant_control(body: ParticipantControlBody):
+        try:
+            return controller.participant.acquire(
+                body.agent_id, body.expected_tick, running=controller.is_running())
+        except ParticipantError as exc:
+            participant_error(exc)
+
+    @app.post("/api/participant/action")
+    async def participant_action(body: ParticipantActionBody):
+        try:
+            return controller.participant.queue_action(
+                body.expected_tick, body.action, body.reasoning,
+                running=controller.is_running())
+        except ParticipantError as exc:
+            participant_error(exc)
+
+    @app.post("/api/participant/release")
+    async def participant_release(body: ParticipantReleaseBody):
+        try:
+            return controller.participant.release(
+                body.expected_tick, running=controller.is_running())
+        except ParticipantError as exc:
+            participant_error(exc)
 
     # ── world queries (dashboard panels, PRD R8) ─────────────────────────────
     @app.get("/api/metrics")

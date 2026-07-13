@@ -65,6 +65,13 @@ class RunController:
         self.task: asyncio.Task[None] | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.world.on_tick = self.on_tick
+        self.participant = world.runtime.participant
+        self.acceptance_configured = bool(world.config.get("acceptance"))
+        self.acceptance_authorized = bool(getattr(world, "acceptance_authorized", False))
+        self.acceptance_target_tick = int(getattr(
+            world, "acceptance_target_tick",
+            world.config.get("acceptance", {}).get("min_ticks", 365)))
+        self.acceptance_artifacts: dict = {}
 
     def is_running(self) -> bool:
         return bool(self.task and not self.task.done())
@@ -89,6 +96,8 @@ class RunController:
         self.loop = asyncio.get_running_loop()
         operational_log(logger, logging.INFO, "server.started",
                         run_id=self.world.gateway.run_id, tick=self.store.tick)
+        if self.acceptance_authorized:
+            await self.start()
         try:
             yield
         finally:
@@ -108,13 +117,28 @@ class RunController:
 
     async def _run_world(self, max_ticks: int | None) -> None:
         try:
-            await self.world.run(max_ticks=max_ticks)
+            if self.acceptance_authorized:
+                await self._run_acceptance(max_ticks)
+            else:
+                await self.world.run(max_ticks=max_ticks)
         except ReconciliationError as exc:
             operational_log(logger, logging.CRITICAL, "run.halted",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             error_type=type(exc).__name__, error=str(exc))
             await self.hub.broadcast({"type": "halt", "reason": str(exc)})
         except Exception as exc:
+            from reports.acceptance import AcceptanceCheckpointMissed
+            if isinstance(exc, AcceptanceCheckpointMissed):
+                self.world.status = "paused"
+                self.world.last_pause_reason = {
+                    "reason": "acceptance_checkpoint_missed", "detail": str(exc)}
+                self.store.set_meta(status="paused")
+                self.store.commit()
+                operational_log(logger, logging.ERROR, "acceptance.checkpoint.missed",
+                                run_id=self.world.gateway.run_id, tick=self.store.tick,
+                                error=str(exc))
+                await self.hub.broadcast({"type": "pause", "reason": str(exc)})
+                return
             self.world.status = "paused"
             self.store.set_meta(status="paused")
             self.store.log_event(
@@ -125,8 +149,43 @@ class RunController:
                             error_type=type(exc).__name__, error=str(exc))
             await self.hub.broadcast({"type": "pause", "reason": f"run paused: {exc}"})
 
+    async def _run_acceptance(self, max_ticks: int | None) -> None:
+        from reports.acceptance import advance_acceptance_run, write_acceptance_package
+        from reports.generate import generate_report
+
+        target = min(
+            self.acceptance_target_tick,
+            self.store.tick + int(max_ticks)) if max_ticks is not None else self.acceptance_target_tick
+        status = await advance_acceptance_run(self.world, target_tick=target)
+        if status["state"] != "completed" or self.store.tick < self.acceptance_target_tick:
+            return
+        report_path = generate_report(
+            self.store, self.world,
+            out_dir=str(self.world.config.get("report_dir", "reports/out")))
+        receipt = write_acceptance_package(
+            self.store.path,
+            out_dir=str(self.world.config.get("report_dir", "reports/out")),
+            experiment_json=getattr(self.world, "acceptance_experiment_evidence", None),
+            phenomena_yaml=getattr(self.world, "acceptance_phenomena_evidence", None),
+        )
+        self.world.last_report_path = report_path
+        self.acceptance_artifacts = receipt.get("artifacts", {})
+        operational_log(
+            logger, logging.INFO, "acceptance.run.completed",
+            run_id=self.world.gateway.run_id, tick=self.store.tick,
+            passed=receipt.get("passed"), report_path=report_path,
+            artifacts=self.acceptance_artifacts)
+
     async def start(self, max_ticks: int | None = None) -> dict:
         self._require_mutable("start")
+        if self.acceptance_configured and not self.acceptance_authorized:
+            raise HTTPException(
+                status_code=403,
+                detail="acceptance runs must be launched with --acceptance-run and explicit live approval")
+        if self.participant.active_agent_id() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="continuous Run is disabled while a citizen is under participant control")
         if self.is_running():
             operational_log(logger, logging.INFO, "run.start.skipped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
@@ -183,6 +242,24 @@ class RunController:
         self.world._pause_requested = False
         self.world._stop_requested = False
         self.world.gateway.clear_interrupt()
+        if self.participant.active_agent_id() is not None and not self.participant.has_queued_action():
+            raise HTTPException(
+                status_code=409,
+                detail="choose an explicit participant action, including do nothing, before Step")
+        if self.acceptance_configured:
+            if not self.acceptance_authorized:
+                raise HTTPException(
+                    status_code=403,
+                    detail="acceptance steps require --acceptance-run and explicit live approval")
+            from reports.acceptance import advance_acceptance_run
+            target = min(self.acceptance_target_tick, self.store.tick + 1)
+            acceptance = await advance_acceptance_run(self.world, target_tick=target)
+            self.world.status = "paused"
+            self.store.set_meta(status="paused")
+            self.store.commit()
+            summary = {"tick": self.store.tick, "paused": True, "acceptance": acceptance}
+            await self.hub.broadcast(build_tick_payload(self.world, self.store.tick, summary))
+            return summary
         summary = await self.world.step()
         if not summary.get("paused") and self.world.status != "halted":
             self.world.status = "paused"
@@ -204,6 +281,16 @@ class RunController:
 
     def status(self) -> dict:
         meta = self.store.get_meta()
+        orchestration = None
+        if self.acceptance_configured:
+            from reports.acceptance import acceptance_schedule_status
+            orchestration = acceptance_schedule_status(
+                self.store, self.world.config, target_tick=self.acceptance_target_tick)
+            orchestration.update({
+                "authorized": self.acceptance_authorized,
+                "running": self.is_running(),
+                "artifacts": self.acceptance_artifacts,
+            })
         return {
             "run_id": meta["run_id"], "status": self.world.status,
             "tick": self.store.tick, "seed": meta["seed"],
@@ -217,6 +304,8 @@ class RunController:
             "rate_limit": self.world.gateway.rate_limit_status(),
             "pause_reason": self.world.last_pause_reason,
             "report_path": self.world.last_report_path,
+            "acceptance_orchestration": orchestration,
+            "participant_active": self.participant.active_agent_id() is not None,
         }
 
 

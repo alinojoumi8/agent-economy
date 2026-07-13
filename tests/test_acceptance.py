@@ -4,11 +4,16 @@ from pathlib import Path
 
 import yaml
 import pytest
+from fastapi.testclient import TestClient
 
 from engine.store import Store
-from reports.acceptance import execute_acceptance_run, uses_paid_providers, write_acceptance_package
+from reports.acceptance import (
+    AcceptanceCheckpointMissed, acceptance_schedule_status, execute_acceptance_run,
+    uses_paid_providers, write_acceptance_package,
+)
 from reports.generate import generate_report
 from run_config import load_config
+from server.app import create_app
 from world.loop import World
 
 
@@ -131,7 +136,7 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert receipt["passed"]
     assert all(check["passed"] for check in receipt["checks"])
     payload = json.loads((tmp_path / "out" / "acceptance_acceptance-fixture.json").read_text())
-    assert payload["passed"] and len(payload["checks"]) == 18
+    assert payload["passed"] and len(payload["checks"]) == 20
     trace_check = next(check for check in payload["checks"] if check["id"] == "shock_traces")
     assert set(trace_check["evidence"]) == {"policy_rate", "oil", "rumor", "slant", "scandal"}
     assert all(
@@ -336,6 +341,61 @@ def test_acceptance_stops_at_checkpoint_without_usable_oracle_evidence(tmp_path)
         asyncio.run(execute_acceptance_run(world, target_tick=2))
 
     assert store.tick == 1
+
+
+def test_acceptance_fails_closed_after_a_missed_oracle_checkpoint(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(acceptance={
+        "min_ticks": 3,
+        "oracle_questions": [{"at_tick": 1, "question": question}],
+    })
+    store = Store(str(tmp_path / "runner-missed.db"))
+    store.init_run_meta("runner-missed", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    store.set_meta(tick=2, status="paused")
+    store.commit()
+
+    with pytest.raises(AcceptanceCheckpointMissed, match="passed without usable evidence"):
+        asyncio.run(execute_acceptance_run(world, target_tick=3))
+
+    schedule = acceptance_schedule_status(store, config, target_tick=3)
+    assert schedule["state"] == "invalid"
+    assert schedule["missed"][0]["scheduled_tick"] == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='acceptance_checkpoint_missed'") == 1
+
+
+def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(
+        report_dir=str(tmp_path / "reports"),
+        acceptance={
+            "min_ticks": 2, "min_agents": 1, "max_agents": 100,
+            "oracle_min_latency_samples": 1,
+            "oracle_questions": [{"at_tick": 1, "question": question}],
+        },
+    )
+    store = Store(str(tmp_path / "served.db"))
+    store.init_run_meta("served", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    world.acceptance_authorized = True
+    world.acceptance_target_tick = 2
+
+    with TestClient(create_app(world)) as client:
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"] and status["tick"] >= 2:
+                break
+        assert status["tick"] == 2
+        assert status["acceptance_orchestration"]["state"] == "completed"
+        assert status["acceptance_orchestration"]["authorized"]
+        prediction = store.query_one(
+            "SELECT asked_tick FROM predictions WHERE question=?", (question,))
+        assert prediction and int(prediction["asked_tick"]) == 1
+        assert store.scalar(
+            "SELECT COUNT(*) FROM acceptance_checkpoints WHERE status='completed'", default=0) == 1
 
 
 def test_paid_acceptance_detection_fails_safe_for_any_real_route():

@@ -6,7 +6,7 @@ as integer cents everywhere; Ledger.post rejects unbalanced batches before
 insertion and tick reconciliation independently verifies every account (PRD R1).
 """
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS run_meta (
     prng_state    TEXT,                              -- JSON of random.Random.getstate()
     lifecycle_prng_state TEXT,
     governor_json TEXT,                              -- degradation level, spend counters
+    participant_influenced INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     parent_run_id TEXT,                              -- set when forked from a checkpoint
@@ -404,6 +405,17 @@ CREATE TABLE IF NOT EXISTS predictions (
     status         TEXT NOT NULL DEFAULT 'open'      -- open|resolved|insufficient_data
 );
 
+CREATE TABLE IF NOT EXISTS acceptance_checkpoints (
+    id             INTEGER PRIMARY KEY,
+    scheduled_tick INTEGER NOT NULL,
+    question       TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending', -- pending|completed|missed
+    prediction_id  INTEGER,
+    detail         TEXT,
+    completed_at   TEXT,
+    UNIQUE (scheduled_tick, question)
+);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- LLM call log (powers inspector, replay, prompt debugging) + cost accounting
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -438,6 +450,30 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS participant_control (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    agent_id      INTEGER,
+    active        INTEGER NOT NULL DEFAULT 0,
+    acquired_tick INTEGER,
+    updated_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS participant_actions (
+    id             INTEGER PRIMARY KEY,
+    agent_id       INTEGER NOT NULL,
+    target_tick    INTEGER NOT NULL,
+    action_json    TEXT NOT NULL,
+    reasoning      TEXT,
+    status         TEXT NOT NULL DEFAULT 'queued', -- queued|executed|rejected|cancelled
+    result_json    TEXT,
+    source_action_id INTEGER,
+    created_at     TEXT,
+    executed_at    TEXT,
+    UNIQUE (agent_id, target_tick)
+);
+CREATE INDEX IF NOT EXISTS ix_participant_actions_tick
+    ON participant_actions(target_tick, status);
+
 CREATE TABLE IF NOT EXISTS shocks (
     id            INTEGER PRIMARY KEY,
     kind          TEXT NOT NULL,                     -- policy_rate|oil|rumor|slant|scandal
@@ -462,6 +498,7 @@ def initialize_schema(conn) -> None:
         "next_phase": "TEXT NOT NULL DEFAULT 'NIGHT_CLOSE'",
         "phase_state_json": "TEXT NOT NULL DEFAULT '{}'",
         "legacy_partial": "INTEGER NOT NULL DEFAULT 0",
+        "participant_influenced": "INTEGER NOT NULL DEFAULT 0",
     }
     migrated = False
     for name, declaration in additions.items():

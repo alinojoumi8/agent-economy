@@ -96,8 +96,9 @@ belief-event, and macro-metric behavior so historical runs remain replayable.
 
 - V1 is a local single-process app with no authentication. Bind to localhost.
 - SQLite, approximately 100 agents, and one operator are intentional v1 limits.
-- Participant mode, regions/FX, 1,000-agent scale, and hosted multi-user service
-  are deferred P2 work.
+- Participant mode exists as an isolated, provider-free one-citizen sandbox.
+  Regions/FX, 1,000-agent scale, and hosted multi-user service remain future
+  work.
 - The Oracle is read-only and CLI-backed models are restricted to Oracle/dev
   purposes.
 

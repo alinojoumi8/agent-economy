@@ -9,11 +9,24 @@ from typing import Any
 
 
 # Metadata and checkpoint paths are operational, not simulated world state.
-EXCLUDED_TABLES = {"run_meta", "checkpoints"}
+EXCLUDED_TABLES = {
+    "run_meta", "checkpoints", "acceptance_checkpoints",
+    "participant_control", "participant_actions",
+}
 IGNORED_COLUMNS = {"created_at", "updated_at"}
 LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
-SURROGATE_ID_COLUMNS = {table: {"id"} for table in LOGICAL_ROW_TABLES}
-IGNORED_EVENT_KINDS = {"report_generated", "report_failed"}
+SURROGATE_ID_COLUMNS = {
+    **{table: {"id"} for table in LOGICAL_ROW_TABLES},
+    # Operational participant events are intentionally filtered. Their rows
+    # shift later event IDs without changing the deterministic event sequence.
+    "events": {"id"},
+}
+IGNORED_EVENT_KINDS = {
+    "report_generated", "report_failed",
+    "participant_control_acquired", "participant_control_released",
+    "participant_action_queued", "participant_action_replaced",
+    "participant_action_executed", "participant_action_rejected", "participant_idle",
+}
 JSON_COLUMNS = {
     "participant_ids", "slant_tags", "source_event_ids",
 }
@@ -50,16 +63,16 @@ def _canonical_value(column: str, value: Any) -> Any:
 
 
 def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
-    columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
+    all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
     ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
-    columns = [column for column in columns if column not in ignored]
+    columns = [column for column in all_columns if column not in ignored]
     where = ""
     params: tuple[Any, ...] = ()
     if table == "events":
         placeholders = ",".join("?" for _ in IGNORED_EVENT_KINDS)
         where = f" WHERE kind NOT IN ({placeholders})"
         params = tuple(sorted(IGNORED_EVENT_KINDS))
-    order = " ORDER BY id" if "id" in columns else ""
+    order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()
     records = []

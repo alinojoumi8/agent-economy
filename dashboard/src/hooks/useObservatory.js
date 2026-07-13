@@ -5,6 +5,7 @@ import { clientLog } from "../logging.js";
 const INITIAL = {
   status: null,
   acceptance: { configured: false, checks: [] },
+  participant: { enabled: false, active: false },
   metrics: {},
   banks: [],
   firms: [],
@@ -39,9 +40,10 @@ export function useObservatory() {
           return null;
         }
       };
-      const [status, acceptance, metrics, banks, firms, institutions, news, conversations,
+      const [status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
         events, agents, cost, oracle, shocks, calibrationRun, calibrationAll] = await Promise.all([
         api("/api/run/status"), api("/api/acceptance/status"),
+        api("/api/participant"),
         api("/api/metrics"), api("/api/banks"),
         api("/api/firms"), api("/api/institutions"), api("/api/news?limit=24"),
         api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
@@ -50,7 +52,7 @@ export function useObservatory() {
         safeCalibration("/api/oracle/calibration?scope=run", "run"),
         safeCalibration("/api/oracle/calibration?scope=all", "all"),
       ]);
-      setData({ status, acceptance, metrics, banks, firms, institutions, news, conversations,
+      setData({ status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
         events, agents, cost, oracle, shocks,
         calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors } });
       setError("");

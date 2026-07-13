@@ -360,18 +360,80 @@ def _apply_slant(headline: str, body: str, tone: float, slant: str, n_related: i
 
 
 def conversation_turn(context: dict) -> dict:
-    """One short conversational line. Spreads salient rumors the speaker holds."""
+    """One varied conversational line, with deterministic scripted fallbacks."""
+    rng = _rng(context)
     rumor = context.get("speaker_rumor_bank")
     partner = context.get("partner_name", "a neighbor")
-    if rumor is not None:
-        return {"text": f"Did you hear? People are pulling money out of bank {rumor}. I'm worried.",
-                "rumor_bank": rumor}
     topic = context.get("shared_topic")
-    if topic:
-        return {"text": f"Quite something about {topic}, isn't it, {partner}?",
-                "rumor_bank": None}
-    return {"text": f"Good to see you, {partner}. How's business?",
-            "rumor_bank": None}
+    prior_turns = context.get("conversation_so_far", []) or []
+    avoid = {
+        re.sub(r"[^a-z0-9]+", " ", str(line).lower()).strip()
+        for line in context.get("avoid_texts", []) or []
+    }
+
+    if rumor is not None:
+        candidates = [
+            f"{partner}, depositors are leaving bank {rumor}; I am worried about what comes next.",
+            f"I keep hearing that money is moving out of bank {rumor}. Have you heard the same?",
+            f"The withdrawals at bank {rumor} are making me rethink where I keep my savings.",
+            f"Bank {rumor} feels less secure today; people around me are pulling out deposits.",
+            f"I would watch bank {rumor} closely, {partner}; the withdrawal talk is spreading.",
+            f"The bank {rumor} rumor no longer feels distant now that depositors are acting on it.",
+        ]
+        rumor_bank = rumor
+    elif topic and prior_turns:
+        candidates = [
+            f"I see your point, {partner}; the household impact still worries me.",
+            "I am watching what happens to jobs and confidence next.",
+            f"That is fair, {partner}; we may need tomorrow's numbers to understand the effects.",
+            "My plans will stay cautious until the consequences become clearer.",
+            "The part I keep coming back to is who bears the cost first.",
+            "I agree that the situation could look very different once firms and banks respond.",
+            "For now, it makes me more careful about spending and borrowing.",
+            "Your point changes how I see it; wages may matter more than the headline.",
+        ]
+        rumor_bank = None
+    elif topic:
+        candidates = [
+            f"{partner}, what do you make of {topic}?",
+            f"I keep thinking about {topic}; it could change how people spend.",
+            f"The news about {topic} feels close to home today.",
+            f"Have you noticed how {topic} is affecting people around us?",
+            f"My read on {topic} is unsettled, {partner}; how are you seeing it?",
+            f"I wonder whether {topic} will matter more for jobs or prices.",
+            f"People are reacting strongly to {topic}, but I am not sure the headline tells the whole story.",
+            f"Before changing my plans, I want to understand who benefits from {topic}.",
+        ]
+        rumor_bank = None
+    else:
+        candidates = [
+            f"Good to see you, {partner}. What has changed for you lately?",
+            f"How are work and prices treating you this week, {partner}?",
+            f"I have been rethinking my budget lately. How about you, {partner}?",
+            f"It feels like the economy is shifting under us, {partner}.",
+            f"What are you watching most closely right now, {partner}?",
+            f"I hope things have been steady for you, {partner}; mine have been unpredictable.",
+            f"Have your plans changed since we last spoke, {partner}?",
+            f"I am trying to decide whether to save or spend more cautiously this week.",
+        ]
+        rumor_bank = None
+
+    if prior_turns and "?" in str(prior_turns[-1]):
+        statements = [candidate for candidate in candidates if "?" not in candidate]
+        if statements:
+            candidates = statements
+
+    start = rng.randrange(len(candidates))
+    for offset in range(len(candidates)):
+        text = candidates[(start + offset) % len(candidates)]
+        key = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+        if key not in avoid:
+            return {"text": text, "rumor_bank": rumor_bank}
+
+    # Extremely long histories can exhaust the template set. Keep the output
+    # deterministic while making the final fallback unique to this world day.
+    text = candidates[start] + f" (day {int(context.get('tick', 0))})"
+    return {"text": text, "rumor_bank": rumor_bank}
 
 
 def memory_compress(context: dict) -> dict:

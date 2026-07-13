@@ -1,0 +1,12 @@
+# Local, provider-free interactive sandbox. Participant actions are deliberately
+# excluded from acceptance profiles and mark the resulting run as human-influenced.
+extends: base.yaml
+
+participant_mode:
+  enabled: true
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+speed_delay_s: 0.0

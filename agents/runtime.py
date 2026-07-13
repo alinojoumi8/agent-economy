@@ -22,6 +22,7 @@ from .memory import Memory
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
 from .scheduler import Scheduler
+from .participant import ParticipantService
 from observability import get_logger, log_event as operational_log
 
 
@@ -49,6 +50,7 @@ class AgentRuntime:
         self.config = config
         self.mem = Memory(self.store, config)
         self.ctx = ContextBuilder(economy, self.mem, config)
+        self.participant = ParticipantService(self.store, self.ctx, config)
         self.executor = ActionExecutor(economy)
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
@@ -58,6 +60,11 @@ class AgentRuntime:
         gov = self.gw.governor
         agents = self.scheduler.scheduled_agents(
             tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
+        participant_decision = self.participant.decision_for_tick(tick)
+        participant_agent_id = (
+            int(participant_decision["agent_id"]) if participant_decision is not None else None)
+        if participant_agent_id is not None:
+            agents = [a for a in agents if int(a["id"]) != participant_agent_id]
         tasks = [self._decide_guarded(tick, a) for a in agents]
         results = await _gather_fail_fast(tasks)
         decisions = []
@@ -76,6 +83,8 @@ class AgentRuntime:
                 continue
             if res is not None:
                 decisions.append(res)
+        if participant_decision is not None:
+            decisions.append(participant_decision)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
             operational_log(logger, logging.ERROR, "agent.decision.outage_suspected",
@@ -116,7 +125,8 @@ class AgentRuntime:
             agent_id = d["agent_id"]
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
-            self.executor.execute_actions(tick, agent_id, actions, phase="EXECUTION")
+            results = self.executor.execute_actions(tick, agent_id, actions, phase="EXECUTION")
+            self.participant.complete(d.get("participant_action_id"), results, tick)
             self.mem.apply_belief_updates(
                 agent_id, env.get("belief_updates", []), tick,
                 source=str(d.get("purpose") or "decision"),

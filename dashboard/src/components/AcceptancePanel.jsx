@@ -9,6 +9,7 @@ export function AcceptancePanel({ acceptance }) {
   const fraction = Math.max(0, Math.min(1, Number(progress.fraction || 0)));
   const rumor = checks.find(check => check.id === "rumor_pilot")?.evidence || {};
   const shockTraces = checks.find(check => check.id === "shock_traces")?.evidence || {};
+  const orchestration = acceptance.orchestration || {};
   const dollars = value => value === null || value === undefined ? "—" : `$${number(value, 2)}`;
   return (
     <Panel title="Acceptance evidence" eyebrow="Live progress · fail closed" className="col-span-full"
@@ -22,7 +23,10 @@ export function AcceptancePanel({ acceptance }) {
             <dt className="text-slate-500">Projected spend</dt><dd className="tabular">{dollars(progress.projected_spend_usd)}</dd>
             <dt className="text-slate-500">Efficiency target</dt><dd className="tabular">{dollars(progress.efficiency_target_usd)}</dd>
             <dt className="text-slate-500">Oracle samples</dt><dd className="tabular">{progress.oracle_latency_samples || 0}/{progress.oracle_min_latency_samples || 0}</dd>
+            <dt className="text-slate-500">Orchestrator</dt><dd><Badge tone={orchestration.state === "invalid" ? "bad" : orchestration.authorized ? "good" : "warn"}>{orchestration.state || "not authorized"}</Badge></dd>
+            <dt className="text-slate-500">Next checkpoint</dt><dd className="tabular">{orchestration.next_checkpoint ? `day ${orchestration.next_checkpoint.scheduled_tick}` : "—"}</dd>
           </dl>
+          {orchestration.missed?.length > 0 && <div className="mt-3 rounded-lg border border-coral-300/20 bg-coral-300/[.05] p-2 text-xs text-coral-300">Missed Oracle checkpoint at day {orchestration.missed[0].scheduled_tick}. This run cannot produce a clean receipt.</div>}
           {rumor.exposed_agents > 0 && <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-mint-300/10 pt-3 text-xs">
             <dt className="text-slate-500">Rumor exposed</dt><dd className="tabular">{rumor.exposed_agents}</dd>
             <dt className="text-slate-500">Relative trust drops</dt><dd className="tabular">{rumor.trust_drop_agents || 0} · {number(Number(rumor.trust_drop_share || 0) * 100, 1)}%</dd>

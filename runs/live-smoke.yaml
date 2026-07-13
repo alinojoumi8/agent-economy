@@ -1,0 +1,20 @@
+# Small, paid, bounded profile for exercising real provider paths in the UI.
+# It preserves production routing while reaching newsroom/conversation phases quickly.
+extends: production.yaml
+
+population:
+  size: 14
+
+firms:
+  count: 3
+  listed: 1
+
+behavior:
+  act_every: 1000
+
+budget:
+  cap_usd: 2.0
+  oracle_reserve_usd: 0.20
+  conversation_pairs: 4
+
+checkpoint_every: 0

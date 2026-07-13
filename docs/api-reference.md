@@ -14,10 +14,31 @@ interactive OpenAPI documentation at `/docs` while the app is running.
 | `POST` | `/api/run/stop` | Finishes, checkpoints, and generates a report |
 | `POST` | `/api/run/speed` | JSON `{"delay_s": 0.5}` |
 | `GET` | `/api/run/status` | Run, phase, governor, readiness, cooldown, and report state |
-| `GET` | `/api/acceptance/status` | Gate results, progress, spend projection, Oracle samples, and shock evidence; a run/tick-matched final receipt supplies attachment-backed completed gates |
+| `GET` | `/api/acceptance/status` | Gate results, progress, spend projection, exact Oracle checkpoint schedule, and shock evidence; a run/tick-matched final receipt supplies attachment-backed completed gates |
 
 Halted worlds reject mutating controls. Starting an already-running world returns
 its current state rather than creating another task.
+
+## Participant sandbox
+
+These routes return HTTP 403 unless `participant_mode.enabled` is true. Control
+changes require a paused, completed-day boundary and an `expected_tick` matching
+the current completed tick.
+
+| Method | Path | Input/result |
+|---|---|---|
+| `GET` | `/api/participant` | Current lease, next tick, queued command, role-scoped action catalogue, and last execution result |
+| `GET` | `/api/participant/history?agent_id=4&limit=50&before_id=120` | Newest-first durable action history with an optional exclusive cursor; returns at most 100 records and `next_before_id` |
+| `POST` | `/api/participant/control` | JSON `{"agent_id": 4, "expected_tick": 0}`; controls one living citizen |
+| `POST` | `/api/participant/action` | JSON with `expected_tick`, an action from the returned catalogue, and optional `reasoning` |
+| `POST` | `/api/participant/release` | JSON `{"expected_tick": 3}`; releases control and cancels the next queued command |
+
+While a citizen is controlled, continuous `/api/run/start` is disabled and
+`/api/run/step` requires one queued action for the next day. Commands use the
+normal deterministic validator and ledger. Participant influence is persisted
+and makes the run ineligible for observer-only acceptance evidence.
+The citizen inspector loads this history on demand and can page backward without
+adding it to the observatory's frequent polling payload.
 
 ## World queries
 

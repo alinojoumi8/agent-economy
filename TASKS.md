@@ -45,12 +45,12 @@ while provider rate limits control throughput.
 
 ## Task 2 — R18 Participant Mode
 
-- [ ] Let an authorized participant select one agent and submit actions through
+- [x] Let an authorized participant select one agent and submit actions through
   the exact `ActionExecutor` validation/ledger path used by simulated agents.
-- [ ] Persist participant identity, prompt/action provenance, rejection reason,
+- [x] Persist participant identity, prompt/action provenance, rejection reason,
   and replay-safe audit events without granting direct state mutation.
-- [ ] Add the participant controls and inspector history to the dashboard.
-- [ ] Test valid, invalid, unauthorized, resume, and exact-replay scenarios;
+- [x] Add the participant controls and paginated inspector history to the dashboard.
+- [x] Test valid, invalid, unauthorized, resume, and exact-replay scenarios;
   then pass the full live-test/autoreview/commit gate.
 
 ## Task 3 — R19 1,000-agent scaling
