@@ -1,6 +1,13 @@
 # Agent Economy — default world configuration (reproducibility = this file + seed + code version)
 seed: 42
-engine_semantics_version: 2       # completed-day metrics/final reconciliation contract
+engine_semantics_version: 3       # v2 finalize contract + research-valid metric/information semantics
+
+information:
+  citizen_bank_visibility: public_status  # citizens see public status, never private reserve ratios
+
+beliefs:
+  audit_history: true
+  enforce_reserved_ranges: true
 
 population:
   size: 70                      # citizens (staff + founders come on top → ~100 agents)

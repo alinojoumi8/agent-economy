@@ -2,216 +2,239 @@
 
 [![CI](https://github.com/alinojoumi8/agent-economy/actions/workflows/ci.yml/badge.svg)](https://github.com/alinojoumi8/agent-economy/actions/workflows/ci.yml)
 
-A living, miniature US-style economy populated by ~100 persona-driven agents —
-teachers, founders, bankers, journalists — who work, trade, borrow, gossip, and
-panic. **LLMs propose, a deterministic engine disposes**: every dollar flows
-through a double-entry ledger that reconciles to zero every tick, so crashes and
-bank runs are *real* within the sim. See [PRD.md](PRD.md) and
-[TECH-SPEC.md](TECH-SPEC.md) for the full design.
+**A living miniature economy for studying how information changes beliefs,
+decisions, institutions, and markets.**
 
-## Quick start
+Agent Economy runs a US-style world populated by persona-driven citizens,
+founders, bankers, journalists, public officials, and an economic Oracle. Agents
+can work, buy goods, borrow, lend, trade, publish, gossip, form companies, vote,
+become ill, and panic. LLMs propose decisions; a deterministic engine validates
+and settles every consequence through an exactly balanced double-entry ledger.
 
-```bash
-pip install -r requirements.txt
+> Agent Economy is a research simulator, not a real-economy forecast or
+> financial advice. The default offline profile is free and deterministic.
 
-# Offline deterministic observatory (world starts paused — press ▶ Run)
+## Why this project exists
+
+Many multi-agent demos make interesting text but cannot explain where money
+came from, reproduce a run, or separate a model's belief from a scripted engine
+effect. Agent Economy is built around the opposite priorities:
+
+- **Mechanically valid**: every dollar is conserved; markets, loans, payroll,
+  taxes, insurance, and failures use deterministic rules.
+- **Causally inspectable**: information exposure, belief change, proposed
+  decision, validated action, and economic effect are persisted separately.
+- **Reproducible**: seeded offline runs produce stable evidence; exact replay
+  rebuilds a source run without contacting a provider.
+- **Observable**: a local React dashboard shows the economy, agents, institutions,
+  news, conversations, forecasts, costs, shocks, and acceptance gates live.
+- **Provider-aware**: real-model profiles preflight routes, meter cost, survive
+  rate limits, and pause visibly instead of silently changing models.
+
+## What can you use it for?
+
+| Use case | Example question |
+|---|---|
+| Misinformation research | Can a false bank rumor reduce trust and cause deposit flight? |
+| Monetary policy | How does a rate shock move loan quotes, hiring, output, and markets? |
+| Agent comparison | Do different model/provider mixes behave differently under identical mechanics? |
+| Forecast calibration | Is the read-only Oracle well calibrated after predictions resolve? |
+| Economics and AI education | How do beliefs become actions without violating accounting constraints? |
+| Multi-agent systems engineering | Can a long, costly run be resumed, replayed, audited, and budgeted? |
+
+## How it works
+
+```mermaid
+flowchart LR
+    INFO[News, rumors, conversations] --> CONTEXT[Role-scoped agent context]
+    CONTEXT --> MODEL[Scripted policy or LLM]
+    MODEL --> PROPOSAL[Structured decision and belief updates]
+    PROPOSAL --> VALIDATE[Deterministic validation]
+    VALIDATE --> ECON[Ledger, banks, firms, labor, market]
+    ECON --> METRICS[Metrics and events]
+    METRICS --> UI[Observatory, reports, replay]
+    METRICS --> INFO
+```
+
+One tick is one simulated day. Nightly mechanics settle obligations and shocks;
+agents then perceive, decide, trade, publish, converse, update memory, and
+finalize a reconciled day. New semantics-v3 runs hide private bank reserve ratios
+from citizens and append bounded belief updates with raw/normalized provenance.
+
+## Five-minute offline start
+
+Requirements: Python 3.11 or 3.12. Node.js is not needed unless you change the
+dashboard.
+
+```powershell
+git clone https://github.com/alinojoumi8/agent-economy.git
+Set-Location agent-economy
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+# Free, deterministic, no API key
 python run.py --config runs/base.yaml
-# → http://127.0.0.1:8000
-
-# Headless: run N ticks, emit an end-of-run report, exit
-python run.py --config runs/base.yaml --ticks 30
-
-# Resume a paused/checkpointed run; or prove an exact replay (no API cost)
-python run.py --resume <RUN_ID>
-python run.py --replay <RUN_ID>
-
-# Report for any stored run
-python run.py --report <RUN_ID>
-
-# Tests (engine invariants, order book, lifecycle, governor, rumor pilot, determinism)
-python -m pytest tests/ -q
 ```
 
-## Development workflow
+Open <http://127.0.0.1:8000>. The world starts paused; press **Run** or **Step**.
 
-Work from a feature branch and open a pull request into `main`. GitHub Actions
-runs the full test suite and compiles the Python sources on Windows and Linux
-with Python 3.11 and 3.12. Dependabot checks Python and GitHub Actions
-dependencies weekly.
-
-Local API keys belong in `.env`, which is excluded from Git. Copy
-`.env.example` when configuring the production provider profile; `runs/base.yaml`
-remains fully offline and needs no key.
-
-**No API key is needed for the explicit offline profile.** `runs/base.yaml` routes every role to the built-in
-`scripted` provider — deterministic policy agents that shop, work, lend, reprice,
-spread rumors, and run on banks. The whole system (dashboard, Oracle, shocks,
-reports, replay) works offline and reproducibly. Same seed ⇒ identical event log.
-
-Replay never mutates the source run. It creates a fresh `replay-*.db`, rebuilds
-genesis, re-executes every tick and recorded Oracle question against stored LLM
-responses, and prints table-by-table SHA-256 proof. Historical prompt changes
-reuse the source call's semantic identity and original request/cache key. A
-missing response pauses the replay and exits without contacting any live
-provider; a state mismatch exits with status 3.
-
-The dashboard source lives in `dashboard/` and builds into `server/static/`.
-For frontend development, run the FastAPI process on port 8000 and the Vite dev
-server in a second terminal:
+macOS/Linux users can activate with `source .venv/bin/activate`. A headless smoke
+run that writes a standalone report is:
 
 ```bash
-cd dashboard
-npm ci
-npm test
-npm run dev
-# production bundle: npm run build
+python run.py --config runs/base.yaml --ticks 3
 ```
 
-Vite proxies `/api`, `/ws`, and `/reports` to FastAPI during development. The
-production bundle is committed so normal Python users still start the complete
-application with one command and no Node.js runtime.
+> **Important:** `python run.py` without `--config` selects the live production
+> profile. Use the explicit `runs/base.yaml` command for offline work.
 
-## Operational logging
+## A first experiment
 
-The Python process emits one JSON object per operational event to stderr, and
-the dashboard emits the same style of secret-safe diagnostics to the browser
-console. Stable event names cover CLI modes, server and HTTP/WebSocket lifecycle,
-run controls, provider preflight/retry/repair/failure/cost outcomes, checkpoints,
-safe pauses, reports, shocks, experiment arms, client fetch/action failures, and
-malformed WebSocket data. Records include bounded context such as run ID, tick,
-status, latency, path, and cost; prompts, responses, and credentials are not
-logged, and credential-shaped fields or values are redacted. Set
-`AGENT_ECONOMY_LOG_LEVEL=DEBUG` to include Python per-tick and request-start events.
+Run five treatment seeds and five same-seed controls for the rumor scenario:
 
-These logs complement rather than replace the SQLite `events` and `llm_calls`
-tables: stderr is for process operations, while the database remains the
-replayable scientific and economic audit trail.
-
-## Using real LLMs
-
-The production profile is [runs/production.yaml](runs/production.yaml). It keeps
-the PRD's cheap-citizen/strong-seat split while using the providers' current
-official model IDs: Token Plan `MiniMax-M3` and Kimi Code's stable `kimi-for-coding`
-alias (currently K2.7 Code when Thinking is enabled).
-See the official [MiniMax Token Plan](https://platform.minimax.io/subscribe/token-plan)
-and [Kimi Code API](https://www.kimi.com/code/docs/en/) documentation. The
-secret-safe results of the authenticated 100-agent smoke run are recorded in
-[docs/live-provider-validation.md](docs/live-provider-validation.md).
-
-```bash
-copy .env.example .env
-# Fill MINIMAX_API_KEY with a Token Plan key (sk-cp-*) and KIMI_API_KEY
-# with a Kimi Code membership key (sk-kimi-*), then validate without inference:
-python run.py --preflight
-
-# Optional live authentication/model-list check. This calls /models, not chat completion:
-python run.py --preflight-live
-
-# Start the approximately 100-agent production world:
-python run.py
-```
-
-The no-argument entrypoint intentionally selects `runs/production.yaml`, the
-locked PRD profile. Use `--config runs/base.yaml` whenever an offline scripted
-run is desired; production never silently falls back when keys are absent.
-The production profile records spend without a dollar ceiling; `runs/base.yaml`
-retains the $200 governor cap for deterministic capped-run development.
-
-Provider/model names are validated before genesis. A missing key, unknown route,
-or unavailable model produces a clear preflight failure; it never silently falls
-back to scripted behavior. HTTP 429 throttling and explicit provider-overload
-responses such as MiniMax HTTP 529 create a visible provider-wide cooldown and
-retry until recovery or operator stop; other network failures use
-the configured bounded retry count. A continuing non-rate-limit failure records
-a diagnostic, reconciles the ledger, checkpoints the last completed tick plus
-the active phase cursor, and pauses visibly. Kimi receives a stable
-`prompt_cache_key`, and cost accounting uses cache-hit tokens reported by the
-provider rather than an estimated local cache hit.
-
-### Production acceptance
-
-Production acceptance is a separate evidence-gated workflow. The live command
-uses an uncapped provider budget and must not start without explicit inference
-approval; provider rate limits control throughput and actual spend is recorded:
-
-```bash
-# Free full-horizon rehearsal (all inherited routes are forced to scripted):
-python run.py --config runs/acceptance/rehearsal.yaml --acceptance-run \
-  --experiment-evidence reports/out/experiment_rumor_vs_control.json
-
-# Paid production acceptance:
-python run.py --config runs/acceptance/production.yaml --preflight-live
-python run.py --config runs/acceptance/production.yaml --acceptance-run --approve-live-inference
+```powershell
 python run.py --experiment runs/experiments/rumor_vs_control.yaml
-python run.py --acceptance-report RUN_ID \
-  --experiment-evidence reports/out/experiment_rumor_vs_control.json \
-  --phenomena-evidence runs/acceptance/phenomena.RUN_ID.yaml
 ```
 
-The receipt is written as `reports/out/acceptance_RUN_ID.{json,md}`. Copy
-`runs/acceptance/phenomena.template.yaml` to a run-specific reviewed file and
-replace its pending examples with three phenomena actually visible in that
-run's persisted metrics.
+Artifacts are written to `reports/out/` in JSON, Markdown, and HTML. Treatment
+and control worlds are isolated and every arm is reconciled.
 
-Routing is `role → {provider, model}` — citizens on MiniMax, the high-leverage
-seats (central banker, credit officers, reporters/editors, VC partner, Oracle) on
-Kimi. The Claude CLI adapter is **hard-restricted in code** to Oracle/dev use.
+The rumor engine only adds an observation. It does **not** lower trust or move
+money. The causal path must be produced by agents:
 
-Capped profiles retain PRD R7's staged degradation at 60/80/95% of their world
-budget (fewer conversations → stretched cadences → institutional-only) and a
-clean pause at 100%. The production profile explicitly disables that dollar
-ceiling; its dashboard and reports show actual spend as uncapped.
-
-## What you can do from the dashboard
-
-- **Run controls**: start / pause / step / speed; automatic checkpoints and
-  phase-aware restart from the exact interrupted phase.
-- **Watch**: macro metrics (GDP proxy, CPI, unemployment, index, money supply,
-  Gini, sentiment), live stock ticker, news feed (two outlets with opposite
-  slants), conversation stream, bank balance sheets, cost meter.
-- **Inspect**: click any agent → persona, accounts, loans, beliefs, memories, and
-  the exact prompt/response behind each decision.
-- **Ask the Oracle**: "probability of a bank run within 30 ticks?" → probability +
-  drivers + machine-checkable resolution rule; bounded read-only evidence is
-  stored with the prediction, outcomes auto-resolve, and current/pooled
-  reliability curves plus Brier decomposition accumulate in the dashboard. A
-  rejected tool plan receives one constrained repair attempt.
-- **Inject shocks**: policy-rate override, oil/commodity shock, false rumor,
-  slanted-news directive, firm scandal — instant, trend, or metric-conditional.
-- **Export**: the standalone HTML report embeds the complete charts and the
-  Markdown reviewer companion carries metrics, calibration, costs, config, and seed.
-
-## The rumor → bank run pipeline (the point of the whole thing)
-
-Inject a false rumor about a bank and watch it propagate: targeted agents *hear*
-it (memory) → trust beliefs fall → depositors move money out (`move_deposits`) →
-cross-bank reserve settlement drains the target's reserves → interbank borrowing →
-central-bank lender-of-last-resort → failure with depositor haircuts if support
-fails. No engine rule maps rumor → outflow; the path runs entirely through agent
-beliefs and decisions. In the default world, a 20-agent rumor cuts the target
-bank's deposits roughly in half within 10 ticks.
-
-## Layout
-
-Operational and recovery guidance starts in the
-[maintained handbook](docs/README.md).
-
-```
-run.py                  entrypoint
-runs/base.yaml          world config (population, models, budget, shocks, seed)
-runs/production.yaml    current MiniMax/Kimi production routing (~100 agents)
-engine/                 deterministic core: ledger, exchange, credit, firms, labor, lifecycle, actions
-agents/                 personas (vendored census-based gen), memory, scheduler, prompts, scripted policies
-llm/                    gateway: routing, budget governor, adapters (scripted/openai_compat/anthropic/cli)
-world/                  genesis, tick loop, metrics, shocks, newsroom, conversations
-oracle/                 analyst, resolution rules, resolver, Brier scoring
-dashboard/              React + Vite + Tailwind + Recharts dashboard source
-server/                 FastAPI + WebSocket + committed production dashboard bundle
-reports/                end-of-run HTML/Markdown generator
-tests/                  engine invariants, scripted bank run, governor, determinism, rumor pilot
-data/runs/<id>.db       one SQLite file per run (the whole run is one portable file)
+```text
+exposure -> belief update -> decision -> deposit transfer -> reserve pressure
 ```
 
-The dashboard follows the locked React/Vite/Tailwind/Recharts stack. Scripted
-policies remain the intentional offline/test profile; the production profile
-uses the current real-provider routes after key and live-model preflight.
+The evaluator measures trust relative to each exposed agent's real pre-rumor
+baseline and fails closed when history is missing.
+
+## What is in the observatory?
+
+- **Run controls**: run, pause, step, speed, safe stop/report, phase-aware resume.
+- **Macro view**: daily and rolling final-goods output, labor income, CPI,
+  correctly windowed inflation, unemployment, money, inequality, and markets.
+- **Agent inspector**: persona, accounts, loans, holdings, memories, bounded
+  beliefs, provenance, prompts, model responses, and decision audit.
+- **Institutions**: bank balance sheets, firms, government, VC, healthcare,
+  newsroom, and exchange.
+- **Information flow**: articles, conversations, shocks, and high-importance
+  events.
+- **Oracle**: evidence-bounded probability forecasts, automatic resolution,
+  Brier scores, and run/pooled calibration.
+- **Acceptance**: completed gates, actual/projected spend, Oracle sample count,
+  shock traces, and rumor-window evidence.
+- **Replay and export**: tick-by-tick historical viewer plus standalone reports.
+
+## Run profiles
+
+| Profile | Agents/purpose | Provider policy |
+|---|---|---|
+| `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
+| `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
+| `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
+| `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
+| `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
+
+Production never silently falls back when a key, route, or provider fails.
+
+## Optional real-model setup
+
+```powershell
+Copy-Item .env.example .env
+# Add MINIMAX_API_KEY and KIMI_API_KEY locally; never commit .env.
+
+python run.py --config runs/production.yaml --preflight
+python run.py --config runs/production.yaml --preflight-live
+python run.py --config runs/production.yaml
+```
+
+The preflight commands validate configuration and provider model catalogs; they
+do not request chat completions. Paid acceptance requires the additional,
+explicit `--approve-live-inference` flag. Read the
+[operator runbook](docs/operator-runbook.md) before starting it.
+
+## Resume, replay, and reports
+
+```powershell
+python run.py --config runs/base.yaml --resume <RUN_ID>
+python run.py --replay <RUN_ID>
+python run.py --report <RUN_ID>
+```
+
+- **Resume** restores the stored phase cursor and reuses completed calls.
+- **Replay** creates a new database, uses stored LLM responses only, and prints
+  canonical table-hash equality proof.
+- **Report** regenerates HTML/Markdown from a stored database.
+
+Each run is a portable SQLite file under `data/runs/`. It contains the economic
+state and the scientific audit trail: events, beliefs, memories, conversations,
+predictions, metrics, shocks, ledger entries, and model-call evidence.
+
+## Project structure
+
+```text
+run.py             CLI and local application entry point
+runs/              offline, production, acceptance, and experiment profiles
+engine/            deterministic ledger and economic mechanics
+agents/            personas, role contexts, scheduling, memory, decisions
+world/             genesis, phase loop, shocks, metrics, information layer
+llm/               adapters, routing, readiness, retry, metering, governor
+oracle/            evidence tools, prediction, resolution, calibration
+experiments/       treatment/control harness
+server/            FastAPI, WebSocket, replay API, committed dashboard bundle
+dashboard/         React/Vite/Tailwind/Recharts source
+reports/           run reports and acceptance receipts
+tests/             unit, invariant, integration, property, golden, acceptance
+docs/              maintained user/operator/research/developer handbook
+```
+
+## Documentation
+
+| If you want to... | Read |
+|---|---|
+| Install and run the app | [Getting started](docs/getting-started.md) |
+| Understand the research model and metrics | [Research guide](docs/research-guide.md) |
+| Understand components and data flow | [Architecture](docs/architecture.md) |
+| Customize a run or provider | [Configuration](docs/configuration.md) |
+| Automate the local server | [API reference](docs/api-reference.md) |
+| Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |
+| Diagnose a failure | [Troubleshooting](docs/troubleshooting.md) |
+| Develop or contribute | [Development](docs/development.md) and [Contributing](CONTRIBUTING.md) |
+| Inspect product commitments | [PRD](PRD.md), [technical spec](TECH-SPEC.md), [status](docs/implementation-status.md) |
+
+The [handbook index](docs/README.md) links all maintained and historical evidence
+documents.
+
+## Current status and limits
+
+All PRD-v1 P0/P1 feature surfaces are implemented and the automated backend and
+dashboard suites exercise the system. Final live acceptance is still an
+operational gate: the pre-fix paid run is preserved as diagnostic evidence, and
+a fresh capped rumor pilot must pass before a new 365-day paid run is started.
+
+V1 is intentionally local and single-operator. It has no authentication or
+tenant isolation; bind to `127.0.0.1` and do not expose it directly to an
+untrusted network. Participant mode, regions/FX, approximately 1,000 agents,
+real-data calibration, and hosted multi-user operation remain deferred.
+
+See [SECURITY.md](SECURITY.md) for data/credential boundaries and
+[docs/implementation-status.md](docs/implementation-status.md) for the evidence
+matrix.
+
+## Development
+
+```powershell
+python -m compileall -q agents engine experiments llm oracle reports server world run.py
+python -m pytest tests/ -q
+npm --prefix dashboard ci
+npm --prefix dashboard test
+npm --prefix dashboard run build
+git diff --check
+```
+
+Dashboard builds write to `server/static/`; that bundle is committed so Python
+users receive the full UI without Node.js. Contributions should preserve the
+ledger, information-boundary, belief-provenance, determinism, and replay
+invariants described in [CONTRIBUTING.md](CONTRIBUTING.md).

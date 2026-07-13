@@ -55,6 +55,14 @@ class ContextBuilder:
         self.mem = memory
         self.config = config
         self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
+        self.citizen_bank_visibility = str(
+            config.get("information", {}).get(
+                "citizen_bank_visibility", "full_balance_sheet"))
+        if self.citizen_bank_visibility not in {
+                "public_status", "full_balance_sheet"}:
+            raise ValueError(
+                "information.citizen_bank_visibility must be public_status or "
+                "full_balance_sheet")
 
     # ── public: assemble per-role context ────────────────────────────────────
     def build(self, agent_row, tick: int) -> dict:
@@ -132,7 +140,7 @@ class ContextBuilder:
             "prices": self._goods_offers(),
             "jobs": self._open_jobs(),
             "listed_firms": self._listed_firms(tick),
-            "banks": self._bank_views(),
+            "banks": self._bank_views(self.citizen_bank_visibility),
             "news": self._news_for(a, tick),
             "heard": heard,
             "memories": [m["text"] for m in memories],
@@ -219,11 +227,19 @@ class ContextBuilder:
             })
         return out
 
-    def _bank_views(self) -> list[dict]:
+    def _bank_views(
+        self,
+        visibility: str = "full_balance_sheet",
+        *,
+        own_bank_id: Optional[int] = None,
+    ) -> list[dict]:
         out = []
         for b in self.store.query("SELECT * FROM banks"):
-            out.append({"id": int(b["id"]), "name": b["name"], "status": b["status"],
-                        "reserve_ratio": round(self.e.bank.reserve_ratio(int(b["id"])), 4)})
+            bank_id = int(b["id"])
+            view = {"id": bank_id, "name": b["name"], "status": b["status"]}
+            if visibility == "full_balance_sheet" or bank_id == own_bank_id:
+                view["reserve_ratio"] = round(self.e.bank.reserve_ratio(bank_id), 4)
+            out.append(view)
         return out
 
     def _news_for(self, a, tick: int) -> list[dict]:
@@ -240,9 +256,34 @@ class ContextBuilder:
         return out
 
     def _metrics_snapshot(self, tick: int) -> dict:
-        names = ["cpi", "cpi_yoy", "unemployment", "index", "index_change_10", "gdp_proxy",
-                 "money_supply", "gini", "sentiment", "policy_rate"]
-        return {n: self.store.metric_latest(n, 0.0) for n in names}
+        names = [
+            "cpi", "cpi_yoy", "inflation_30d", "unemployment", "index",
+            "index_change_10", "gdp_proxy", "gdp_proxy_30d", "labor_income",
+            "money_supply", "gini", "sentiment", "policy_rate",
+        ]
+        if self.engine_semantics_version < 3:
+            return {n: self.store.metric_latest(n, 0.0) for n in names}
+        out = {}
+        for name in names:
+            value = self.store.metric_latest(name, None)
+            if value is not None:
+                out[name] = value
+        out["inflation_signal"] = self.inflation_signal()
+        return out
+
+    def inflation_signal(self) -> float:
+        """Bounded annual policy signal without pretending short runs are YoY."""
+        target = float(
+            self.config.get("central_bank", {}).get("target_inflation", 0.02))
+        if self.engine_semantics_version < 3:
+            return self.store.metric_latest("cpi_yoy", target)
+        year_over_year = self.store.metric_latest("cpi_yoy", None)
+        if year_over_year is not None:
+            return max(-0.5, min(0.5, year_over_year))
+        change_30d = self.store.metric_latest("inflation_30d", None)
+        if change_30d is not None:
+            return max(-0.5, min(0.5, 12.0 * change_30d))
+        return target
 
     # ── founder firm view ────────────────────────────────────────────────────
     def _firm_view(self, firm, tick: int) -> dict:
@@ -313,10 +354,18 @@ class ContextBuilder:
         return {"tick": tick, "purpose": "credit_officer", "rng_seed": _seed(int(a["id"]), tick),
                 "agent": {"id": int(a["id"]), "name": a["name"], "role": "credit_officer"},
                 "policy_rate_bps": self.e.policy_rate_bps(), "pending_loan_apps": pending,
-                "banks": self._bank_views()}
+                "banks": self._bank_views("public_status", own_bank_id=bank_id)}
 
     def _officer_bank(self, agent_id: int) -> Optional[int]:
-        v = self.store.scalar("SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1")
+        v = self.store.scalar(
+            "SELECT b.id FROM agents a JOIN banks b ON b.id=a.employer_id "
+            "WHERE a.id=? AND a.role='credit_officer' AND b.status='open'",
+            (agent_id,), default=None)
+        if v is None:
+            # Legacy/custom databases may not retain the institutional employer
+            # link. Preserve their historical first-open-bank behavior.
+            v = self.store.scalar(
+                "SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1")
         return int(v) if v is not None else None
 
     def _borrower_financials(self, borrower_type: str, borrower_id: int) -> tuple[int, int]:
@@ -377,6 +426,7 @@ class ContextBuilder:
         return {"tick": tick, "purpose": "central_banker", "rng_seed": _seed(int(a["id"]), tick),
                 "agent": {"id": int(a["id"]), "name": a["name"], "role": "central_banker"},
                 "policy_rate_bps": self.e.policy_rate_bps(), "metrics": m,
+                "banks": self._bank_views("full_balance_sheet"),
                 "neutral_rate_bps": int(cb.get("neutral_rate_bps", 500)),
                 "target_inflation": float(cb.get("target_inflation", 0.02)),
                 "natural_unemployment": float(cb.get("natural_unemployment", 0.05))}

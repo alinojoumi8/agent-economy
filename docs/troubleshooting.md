@@ -45,6 +45,22 @@ npm test -- --run
 npm run build
 ```
 
+Acceptance evidence is heavier than ordinary run status. On a large database,
+`/api/acceptance/status` can take seconds to refresh, but it runs off the server
+event loop and is cached briefly so controls and WebSockets stay responsive.
+
+## A database says `running` but no process exists
+
+An operating-system kill or forced terminal termination can prevent Python's
+`finally` cleanup from running. Confirm there is no matching simulation process
+and no server holding the database, then preserve the file and change the run to
+`paused` through an operator recovery procedure. Record an
+`orphaned_run_recovered` event with the previous state, new state, and reason.
+
+Normal Ctrl+C, dashboard Pause/Stop, provider interruption, and application
+exceptions execute phase-aware cleanup automatically. Never mark a truly active
+run paused from another process.
+
 ## A run is halted
 
 Do not restart, step, change speed, stop, or inject shocks into a halted run.
@@ -70,3 +86,16 @@ an unfinished horizon, unresolved Oracle predictions, absent reviewed phenomena
 YAML, missing N=5 experiment evidence, or a shock effect occurring before its
 shock. Regenerate with `--acceptance-report` only after the underlying evidence
 exists; report regeneration cannot make a failed gate pass.
+
+A legacy run without `belief_updated` history fails the rumor gate by design;
+the evaluator will not assume a universal initial trust value. A single Oracle
+sample also cannot satisfy the production p90 gate, even when its latency is
+below the limit.
+
+## I need per-call diagnostics
+
+Normal INFO output reports run-level milestones, checkpoints, repairs, pauses,
+and failures without printing one line for every successful agent call. Set
+`AGENT_ECONOMY_LOG_LEVEL=DEBUG` to include successful request, replay-hit,
+resume-hit, tick, and HTTP-start records. Prompts, responses, and credentials
+remain outside operational logs.

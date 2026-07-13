@@ -185,7 +185,8 @@ class Oracle:
     # ── world digest (read-only tools rolled into one) ───────────────────────
     def _world_digest(self, tick: int) -> dict:
         m = {n: self.store.metric_latest(n, 0.0) for n in
-             ("gdp_proxy", "cpi", "cpi_yoy", "unemployment", "index", "index_change_10",
+             ("gdp_proxy", "gdp_proxy_30d", "labor_income", "cpi", "inflation_30d",
+              "cpi_yoy", "unemployment", "index", "index_change_10",
               "money_supply", "gini", "sentiment", "policy_rate")}
         banks = []
         min_ratio, min_trust = 1.0, 1.0

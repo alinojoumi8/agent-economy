@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import { useObservatory } from "./hooks/useObservatory";
 import { AgentsPanel } from "./components/AgentsPanel";
+import { AcceptancePanel } from "./components/AcceptancePanel";
 import { ConversationsPanel, EventsPanel, NewsPanel } from "./components/InformationPanels";
 import { CalibrationPanel, CostPanel, OraclePanel } from "./components/OracleAndCost";
 import { ReplayModal } from "./components/ReplayModal";
@@ -58,6 +59,7 @@ export default function App() {
         <OraclePanel oracle={data.oracle} act={act} />
         <CostPanel cost={data.cost} readiness={status?.provider_readiness} />
         <CalibrationPanel calibration={data.calibration} />
+        <AcceptancePanel acceptance={data.acceptance} />
 
         <SectionTitle index="5" title="People" description="Audit any persona from identity through balances, beliefs, memory, and exact decision prompts." />
         <AgentsPanel agents={data.agents} />

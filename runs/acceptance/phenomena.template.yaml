@@ -1,5 +1,6 @@
 # Copy to a run-specific file after reviewing the generated metric charts.
 # A phenomenon passes only when its direction is confirmed from persisted data.
+run_id: replace-with-exact-run-id
 phenomena:
   - name: replace-with-observed-phenomenon-1
     status: pending

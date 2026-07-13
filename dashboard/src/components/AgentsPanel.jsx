@@ -50,6 +50,10 @@ function AgentModal({ detail, onClose }) {
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Beliefs</div>
         <div className="space-y-2">{Object.entries(detail.beliefs).slice(0, 12).map(([key, value]) => <div key={key} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-500">{shortKind(key)}</span><span className="tabular">{number(value, 3)}</span></div>)}</div>
+        {detail.belief_history?.length > 0 && <details className="mt-4 border-t border-mint-300/10 pt-3">
+          <summary className="cursor-pointer text-xs text-mint-300">Belief provenance · {detail.belief_history.length} events</summary>
+          <div className="scrollbar mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">{detail.belief_history.slice(0, 30).map(update => <div key={update.event_id} className="text-[10px] text-slate-500"><span className="text-slate-300">Day {update.tick} · {shortKind(update.key || update.kind)}</span><br />{number(update.old_value, 3)} → {number(update.new_value, 3)} · {update.source || shortKind(update.kind)}</div>)}</div>
+        </details>}
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-2">
         <div className="eyebrow mb-3">Memory</div>

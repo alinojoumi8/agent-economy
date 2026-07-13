@@ -258,7 +258,7 @@ def central_banker_decision(context: dict) -> dict:
     cur = int(context.get("policy_rate_bps", 500))
     neutral = int(context.get("neutral_rate_bps", 500))
     target_infl = float(context.get("target_inflation", 0.02))
-    infl = float(m.get("cpi_yoy", target_infl))
+    infl = float(m.get("inflation_signal", m.get("cpi_yoy", target_infl)))
     unemp = float(m.get("unemployment", 0.05))
     natural_unemp = float(context.get("natural_unemployment", 0.05))
     # Taylor rule (guardrailed further by the executor to ±max_step).

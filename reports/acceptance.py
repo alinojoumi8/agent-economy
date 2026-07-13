@@ -73,7 +73,7 @@ def _outflow(store: Store, bank_id: int, start_tick: int, end_tick: int) -> int:
     )
 
 
-def _rumor_pilot(store: Store, initial_trust: float) -> tuple[bool, dict]:
+def _rumor_pilot(store: Store) -> tuple[bool, dict]:
     rumors = _event_payloads(store, "rumor")
     if not rumors:
         return False, {"reason": "no rumor event"}
@@ -95,15 +95,46 @@ def _rumor_pilot(store: Store, initial_trust: float) -> tuple[bool, dict]:
         if participants.intersection(exposed) and mentions_rumor:
             participant_conversations.add(int(row["id"]))
 
-    trust_threshold = initial_trust - 0.2
-    dropped_agents: list[int] = []
-    for agent_id in exposed:
-        value = store.scalar(
-            "SELECT value FROM beliefs WHERE agent_id=? AND key=?",
-            (agent_id, f"trust:bank:{bank_id}"), default=None,
-        )
-        if value is not None and float(value) <= trust_threshold + 1e-9:
-            dropped_agents.append(agent_id)
+    trust_key = f"trust:bank:{bank_id}"
+    exposed_set = set(exposed)
+    baselines: dict[int, float] = {}
+    window_minima: dict[int, float] = {}
+    for row in store.query(
+        "SELECT id, tick, subject_id, payload_json FROM events "
+        "WHERE kind='belief_updated' AND tick<=? ORDER BY tick, id",
+        (end_tick,),
+    ):
+        agent_id = int(row["subject_id"] or 0)
+        if agent_id not in exposed_set:
+            continue
+        update = load_json(row["payload_json"], {})
+        if update.get("key") != trust_key:
+            continue
+        value = update.get("new_value")
+        if value is None:
+            continue
+        value = float(value)
+        if int(row["tick"]) < rumor_tick:
+            baselines[agent_id] = value
+        else:
+            window_minima[agent_id] = min(
+                value, window_minima.get(agent_id, value))
+
+    missing_history = sorted(exposed_set.difference(baselines))
+    history_complete = bool(exposed) and not missing_history
+    absolute_drops = {
+        agent_id: baselines[agent_id] - min(
+            baselines[agent_id], window_minima.get(agent_id, baselines[agent_id]))
+        for agent_id in exposed if agent_id in baselines
+    }
+    relative_drops = {
+        agent_id: (drop / baselines[agent_id] if baselines[agent_id] > 0 else 0.0)
+        for agent_id, drop in absolute_drops.items()
+    }
+    dropped_agents = [
+        agent_id for agent_id, drop in relative_drops.items()
+        if drop + 1e-9 >= 0.20
+    ]
     dropped = len(dropped_agents)
     drop_share = dropped / len(exposed) if exposed else 0.0
     pre_outflow = _outflow(store, bank_id, max(0, rumor_tick - 10), rumor_tick - 1)
@@ -127,12 +158,26 @@ def _rumor_pilot(store: Store, initial_trust: float) -> tuple[bool, dict]:
         "rumor_conversation_ids": sorted(participant_conversations)[:20],
         "trust_drop_agents": dropped, "trust_drop_share": round(drop_share, 4),
         "trust_drop_agent_ids": sorted(dropped_agents)[:20],
-        "initial_trust_assumption": initial_trust,
+        "belief_history_complete": history_complete,
+        "missing_belief_history_agent_ids": missing_history[:20],
+        "trust_baselines": {
+            str(agent_id): round(value, 6)
+            for agent_id, value in sorted(baselines.items())[:20]
+        },
+        "trust_absolute_drops": {
+            str(agent_id): round(value, 6)
+            for agent_id, value in sorted(absolute_drops.items())[:20]
+        },
+        "trust_relative_drops": {
+            str(agent_id): round(value, 6)
+            for agent_id, value in sorted(relative_drops.items())[:20]
+        },
         "pre_outflow_cents_10_ticks": pre_outflow,
         "post_outflow_cents_10_ticks": post_outflow,
         "post_outflow_events": post_outflow_events[:20],
     }
-    passed = len(participant_conversations) >= 5 and drop_share >= 0.25 and outflow_passed
+    passed = (history_complete and len(participant_conversations) >= 5
+              and drop_share >= 0.25 and outflow_passed)
     return passed, evidence
 
 
@@ -255,6 +300,17 @@ def _phenomena_evidence(store: Store, path: str | Path | None) -> tuple[bool, di
     if not evidence_path.exists():
         return False, {"reason": f"phenomena evidence not found: {evidence_path}"}
     payload = yaml.safe_load(evidence_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        return False, {"reason": "phenomena evidence must be a YAML mapping"}
+    expected_run_id = str(store.get_meta()["run_id"])
+    evidence_run_id = str(payload.get("run_id", "")).strip()
+    if evidence_run_id != expected_run_id:
+        return False, {
+            "reason": "phenomena evidence is not bound to this run",
+            "expected_run_id": expected_run_id,
+            "evidence_run_id": evidence_run_id or None,
+            "path": str(evidence_path),
+        }
     verified = []
     for item in payload.get("phenomena", []):
         metric = str(item.get("metric", ""))
@@ -288,7 +344,8 @@ def _phenomena_evidence(store: Store, path: str | Path | None) -> tuple[bool, di
         for item in verified if item["verified"]
     }
     return len(distinct) >= 3, {
-        "path": str(evidence_path), "documented": verified,
+        "path": str(evidence_path), "run_id": evidence_run_id,
+        "documented": verified,
         "distinct_verified": len(distinct),
     }
 
@@ -308,14 +365,26 @@ def evaluate_acceptance(
         meta = store.get_meta()
         config = load_json(meta["config_json"], {})
         acceptance = config.get("acceptance", {})
+        required_shocks = tuple(
+            str(kind) for kind in acceptance.get("required_shocks", REQUIRED_SHOCKS))
+        unknown_required = set(required_shocks).difference(REQUIRED_SHOCKS)
+        if unknown_required:
+            raise ValueError(
+                f"unknown acceptance required_shocks: {sorted(unknown_required)}")
+        require_oracle_scoring = bool(
+            acceptance.get("require_oracle_scoring", True))
+        require_experiment = bool(acceptance.get("require_experiment", True))
+        require_phenomena = bool(acceptance.get("require_phenomena", True))
         min_ticks = int(acceptance.get("min_ticks", 365))
         min_agents = int(acceptance.get("min_agents", 95))
         max_agents = int(acceptance.get("max_agents", 105))
         max_spend_raw = acceptance.get("max_spend_usd", 200.0)
         max_spend = None if max_spend_raw is None else float(max_spend_raw)
+        efficiency_target = float(acceptance.get("efficiency_target_usd", 200.0))
         configured_cap_raw = config.get("budget", {}).get("cap_usd", 200.0)
         configured_cap = None if configured_cap_raw is None else float(configured_cap_raw)
         oracle_p90_limit = int(acceptance.get("oracle_p90_ms", 60_000))
+        oracle_min_samples = int(acceptance.get("oracle_min_latency_samples", 5))
         tick = int(meta["tick"])
         status = str(meta["status"])
         agent_count = int(store.scalar("SELECT COUNT(*) FROM agents", default=0))
@@ -369,24 +438,23 @@ def evaluate_acceptance(
             "SELECT COUNT(*) FROM predictions WHERE status='resolved' AND brier IS NOT NULL", default=0
         ))
         effects, effect_evidence = _shock_effects(store)
-        rumor_ok, rumor_evidence = _rumor_pilot(
-            store, float(acceptance.get("rumor_initial_trust", 0.6))
-        )
+        rumor_ok, rumor_evidence = _rumor_pilot(store)
         effect_evidence["traces"]["rumor"].update({
             "downstream": rumor_evidence, "passed": rumor_ok,
         })
         shock_traces_ok = (
-            set(effect_evidence["traces"]) == set(REQUIRED_SHOCKS)
+            all(kind in effect_evidence["traces"] for kind in required_shocks)
             and all(
                 trace.get("source") and trace.get("downstream") and trace.get("passed")
-                for trace in effect_evidence["traces"].values()
+                for kind, trace in effect_evidence["traces"].items()
+                if kind in required_shocks
             )
         )
         experiment_ok, experiment_evidence = _experiment_evidence(experiment_json)
         phenomena_ok, phenomena_evidence = _phenomena_evidence(store, phenomena_yaml)
 
         checks = [
-            _check("run_horizon", "365-day run completed cleanly",
+            _check("run_horizon", f"Configured {min_ticks}-tick run completed cleanly",
                    tick >= min_ticks and status in {"paused", "finished"},
                    {"tick": tick, "minimum": min_ticks, "status": status}),
             _check("population", "Production population is approximately 100 agents",
@@ -400,42 +468,78 @@ def evaluate_acceptance(
                    (max_spend is None or spend <= max_spend)
                    and (configured_cap is None or spend <= configured_cap),
                    {"spend_usd": round(spend, 6), "maximum_usd": max_spend,
-                    "configured_cap_usd": configured_cap,
-                    "uncapped": max_spend is None and configured_cap is None}),
+                     "configured_cap_usd": configured_cap,
+                     "uncapped": max_spend is None and configured_cap is None}),
+            _check(
+                   "efficiency_target",
+                   f"Provider spend stayed within the ${efficiency_target:g} efficiency target",
+                   tick >= min_ticks and spend <= efficiency_target,
+                   {"spend_usd": round(spend, 6), "target_usd": efficiency_target,
+                    "completed_ticks": tick, "required_ticks": min_ticks}),
             _check("ledger", "Double-entry ledger reconciles exactly", reconciled, ledger_diag),
             _check("failure_events",
                    "No unrecovered provider, budget, report, or reconciliation failure remains",
                    not hard_failures and not unrecovered_provider_incidents and status != "halted",
                    failure_evidence),
             _check("oracle_latency", "Oracle p90 response latency is below 60 seconds",
-                   oracle_p90 is not None and oracle_p90 < oracle_p90_limit,
+                   len(oracle_latencies) >= oracle_min_samples
+                   and oracle_p90 is not None and oracle_p90 < oracle_p90_limit,
                    {"samples": len(oracle_latencies), "p90_ms": oracle_p90,
-                    "limit_ms": oracle_p90_limit}),
+                     "minimum_samples": oracle_min_samples,
+                     "limit_ms": oracle_p90_limit}),
             _check("oracle_scoring", "At least one Oracle prediction resolved automatically",
-                   resolved_predictions > 0, {"resolved_predictions": resolved_predictions}),
-            _check("required_shocks", "All five required shock types fired",
-                   set(effect_evidence["fired_ticks"]) >= set(REQUIRED_SHOCKS), effect_evidence["fired_ticks"]),
-            _check("shock_traces", "All five shocks have explicit source-to-downstream traces",
+                   not require_oracle_scoring or resolved_predictions > 0,
+                   {"resolved_predictions": resolved_predictions,
+                    "required": require_oracle_scoring}),
+            _check("required_shocks", "All configured required shock types fired",
+                   set(effect_evidence["fired_ticks"]) >= set(required_shocks),
+                   {"required": list(required_shocks),
+                    "fired_ticks": effect_evidence["fired_ticks"]}),
+            _check("shock_traces", "Required shocks have explicit source-to-downstream traces",
                    shock_traces_ok, effect_evidence["traces"]),
             _check("policy_rate_effect", "Policy-rate shock changed the policy-rate channel",
-                   effects["policy_rate"], effect_evidence),
+                   "policy_rate" not in required_shocks or effects["policy_rate"],
+                   effect_evidence if "policy_rate" in required_shocks else {"required": False}),
             _check("oil_effect", "Oil shock changed the commodity-price channel",
-                   effects["oil"], effect_evidence),
+                   "oil" not in required_shocks or effects["oil"],
+                   effect_evidence if "oil" in required_shocks else {"required": False}),
             _check("rumor_pilot", "Rumor pilot passed conversation, trust, and outflow thresholds",
-                   rumor_ok, rumor_evidence),
+                   "rumor" not in required_shocks or rumor_ok,
+                   rumor_evidence if "rumor" in required_shocks else {"required": False}),
             _check("slant_effect", "Slant directive produced a directed article",
-                   effects["slant"], effect_evidence),
+                   "slant" not in required_shocks or effects["slant"],
+                   effect_evidence if "slant" in required_shocks else {"required": False}),
             _check("scandal_effect", "Firm scandal was cited by a published article",
-                   effects["scandal"], effect_evidence),
+                   "scandal" not in required_shocks or effects["scandal"],
+                   effect_evidence if "scandal" in required_shocks else {"required": False}),
             _check("experiment_n5", "Five-seed treatment/control experiment completed and reconciled",
-                   experiment_ok, experiment_evidence),
+                   not require_experiment or experiment_ok,
+                   experiment_evidence if require_experiment else {"required": False}),
             _check("emergent_phenomena", "Three emergent phenomena have verified metric signatures",
-                   phenomena_ok, phenomena_evidence),
+                   not require_phenomena or phenomena_ok,
+                   phenomena_evidence if require_phenomena else {"required": False}),
         ]
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run": {"run_id": str(meta["run_id"]), "database": str(db), "seed": int(meta["seed"])},
+            "requirements": {
+                "required_shocks": list(required_shocks),
+                "require_oracle_scoring": require_oracle_scoring,
+                "require_experiment": require_experiment,
+                "require_phenomena": require_phenomena,
+            },
+            "progress": {
+                "completed_ticks": tick,
+                "required_ticks": min_ticks,
+                "fraction": min(1.0, tick / max(1, min_ticks)),
+                "actual_spend_usd": round(spend, 6),
+                "projected_spend_usd": (
+                    round(spend / tick * min_ticks, 6) if tick > 0 else None),
+                "efficiency_target_usd": efficiency_target,
+                "oracle_latency_samples": len(oracle_latencies),
+                "oracle_min_latency_samples": oracle_min_samples,
+            },
             "passed": all(check["passed"] for check in checks),
             "checks": checks,
         }
@@ -469,7 +573,8 @@ def write_acceptance_package(
 
     trace_check = next(check for check in receipt["checks"] if check["id"] == "shock_traces")
     lines += ["", "## Shock traces", ""]
-    for kind in REQUIRED_SHOCKS:
+    for kind in receipt.get("requirements", {}).get(
+            "required_shocks", REQUIRED_SHOCKS):
         trace = trace_check["evidence"].get(kind, {})
         lines += [
             f"### {kind.replace('_', ' ').title()}", "",
@@ -500,10 +605,17 @@ def write_acceptance_package(
     return {**receipt, "artifacts": {"json": str(json_path), "markdown": str(md_path)}}
 
 
-def _has_usable_oracle_evidence(store: Store, question: str) -> bool:
-    row = store.query_one(
-        "SELECT evidence_json FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
-        (question,))
+def _has_usable_oracle_evidence(
+    store: Store, question: str, asked_tick: int | None = None,
+) -> bool:
+    if asked_tick is None:
+        row = store.query_one(
+            "SELECT evidence_json FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
+            (question,))
+    else:
+        row = store.query_one(
+            "SELECT evidence_json FROM predictions WHERE question=? AND asked_tick=? "
+            "ORDER BY id DESC LIMIT 1", (question, asked_tick))
     evidence = load_json(row["evidence_json"], []) if row else []
     return bool(
         isinstance(evidence, list)
@@ -527,10 +639,12 @@ async def execute_acceptance_run(world: "World", *, target_tick: int | None = No
                 raise RuntimeError(f"acceptance run paused before Oracle checkpoint at tick {at_tick}")
         question = str(item["question"])
         existing = world.store.scalar(
-            "SELECT COUNT(*) FROM predictions WHERE question=?", (question,), default=0)
-        if not existing or not _has_usable_oracle_evidence(world.store, question):
+            "SELECT COUNT(*) FROM predictions WHERE question=? AND asked_tick=?",
+            (question, at_tick), default=0)
+        if not existing or not _has_usable_oracle_evidence(
+                world.store, question, at_tick):
             await world.oracle.ask(question)
-            if not _has_usable_oracle_evidence(world.store, question):
+            if not _has_usable_oracle_evidence(world.store, question, at_tick):
                 raise RuntimeError(
                     f"Oracle checkpoint at tick {at_tick} produced no usable read evidence")
     if world.store.tick < horizon:

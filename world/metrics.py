@@ -17,8 +17,17 @@ class Metrics:
     def snapshot(self, tick: int) -> dict:
         out = {}
         out["gdp_proxy"] = self._gdp_proxy(tick)
+        if self.semantics_version >= 3:
+            out["labor_income"] = self._labor_income(tick)
+            out["gdp_proxy_30d"] = self._gdp_proxy_30d(tick)
         out["cpi"] = self._cpi()
-        out["cpi_yoy"] = self._cpi_yoy(tick, out["cpi"])
+        if self.semantics_version >= 3:
+            if tick >= 30:
+                out["inflation_30d"] = self._inflation_30d(tick, out["cpi"])
+            if tick >= 365:
+                out["cpi_yoy"] = self._cpi_yoy(tick, out["cpi"])
+        else:
+            out["cpi_yoy"] = self._cpi_yoy(tick, out["cpi"])
         out["unemployment"] = self._unemployment()
         out["money_supply"] = self.e.ledger.total_deposits_cents() / 100.0
         out["gini"] = self._gini()
@@ -49,14 +58,29 @@ class Metrics:
         return out
 
     def _gdp_proxy(self, tick: int) -> float:
-        """Sum of goods sales + wages paid over the last tick, in dollars."""
+        """Final-goods sales for one tick; legacy v1/v2 also included wages."""
         v = self.store.scalar(
             "SELECT COALESCE(SUM(json_extract(payload_json,'$.total_cents')),0) FROM events "
             "WHERE tick=? AND kind='goods_sale'", (tick,), default=0)
+        if self.semantics_version >= 3:
+            return float(v) / 100.0
         w = self.store.scalar(
             "SELECT COALESCE(SUM(json_extract(payload_json,'$.wage_cents')),0) FROM events "
             "WHERE tick=? AND kind='wage_paid'", (tick,), default=0)
         return (float(v) + float(w)) / 100.0
+
+    def _labor_income(self, tick: int) -> float:
+        wages = self.store.scalar(
+            "SELECT COALESCE(SUM(json_extract(payload_json,'$.wage_cents')),0) FROM events "
+            "WHERE tick=? AND kind='wage_paid'", (tick,), default=0)
+        return float(wages) / 100.0
+
+    def _gdp_proxy_30d(self, tick: int) -> float:
+        value = self.store.scalar(
+            "SELECT COALESCE(SUM(json_extract(payload_json,'$.total_cents')),0) FROM events "
+            "WHERE kind='goods_sale' AND tick BETWEEN ? AND ?",
+            (max(1, tick - 29), tick), default=0)
+        return float(value) / 100.0
 
     def _cpi(self) -> float:
         """Fixed genesis-goods basket (base 100), immune to survivor bias."""
@@ -84,7 +108,16 @@ class Metrics:
             base = avg
         return 100.0 * avg / float(base)
 
+    def _inflation_30d(self, tick: int, cpi_now: float) -> float:
+        prev = self.store.metric_at_or_before("cpi", tick - 30, default=0.0)
+        return cpi_now / prev - 1.0 if prev > 0 else 0.0
+
     def _cpi_yoy(self, tick: int, cpi_now: float) -> float:
+        if self.semantics_version >= 3:
+            if tick < 365:
+                raise ValueError("cpi_yoy requires 365 completed ticks")
+            prev = self.store.metric_at_or_before("cpi", tick - 365, default=0.0)
+            return cpi_now / prev - 1.0 if prev > 0 else 0.0
         prev = self.store.metric_at_or_before("cpi", max(0, tick - 365), default=0.0)
         if prev <= 0:
             prev = self.store.metric_at_or_before("cpi", 0, default=100.0) or 100.0

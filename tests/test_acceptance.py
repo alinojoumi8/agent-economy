@@ -36,15 +36,17 @@ def _passing_evidence(tmp_path):
         "llm": {"default_route": {"provider": "minimax", "model": "MiniMax-M3"}},
         "acceptance": {"min_ticks": 365, "min_agents": 95, "max_agents": 105,
                        "max_spend_usd": 200.0, "oracle_p90_ms": 60_000,
-                       "rumor_initial_trust": 0.6},
+                       "efficiency_target_usd": 200.0,
+                       "oracle_min_latency_samples": 5},
     }
     store = Store(str(db))
     store.init_run_meta("acceptance-fixture", 9, config)
     store.set_meta(tick=365, status="paused")
     for agent_id in range(1, 101):
         store.insert("agents", id=agent_id, name=f"A{agent_id}", kind="citizen", age=30)
-    store.insert("llm_calls", tick=5, provider="minimax", model="MiniMax-M3",
-                 purpose="oracle", latency_ms=55_000, cost_usd=1.25)
+    for tick in (5, 65, 125, 185, 245):
+        store.insert("llm_calls", tick=tick, provider="minimax", model="MiniMax-M3",
+                     purpose="oracle", latency_ms=55_000, cost_usd=1.25)
     store.insert("predictions", asked_tick=5, question="bank run?", p=0.5,
                  deadline_tick=35, resolved_tick=35, outcome=1, brier=0.25, status="resolved")
 
@@ -56,7 +58,21 @@ def _passing_evidence(tmp_path):
     targets = [1, 2, 3, 4]
     store.log_event(60, "rumor", {"bank_id": 1, "target_agent_ids": targets})
     for agent_id in targets:
-        store.insert("beliefs", agent_id=agent_id, key="trust:bank:1", value=0.35, updated_tick=61)
+        # 0.50 -> 0.39 is a 22% relative drop but only 0.11 points. This fixture
+        # fails if the evaluator regresses to an absolute 0.20-point threshold.
+        store.insert("beliefs", agent_id=agent_id, key="trust:bank:1", value=0.39, updated_tick=61)
+        store.log_event(
+            0, "belief_updated", {
+                "agent_id": agent_id, "key": "trust:bank:1", "old_value": None,
+                "raw_value": 0.5, "new_value": 0.5, "normalized": False,
+                "source": "genesis", "source_llm_call_id": None,
+            }, subject_type="agent", subject_id=agent_id)
+        store.log_event(
+            61, "belief_updated", {
+                "agent_id": agent_id, "key": "trust:bank:1", "old_value": 0.5,
+                "raw_value": 0.39, "new_value": 0.39, "normalized": False,
+                "source": "decision", "source_llm_call_id": None,
+            }, subject_type="agent", subject_id=agent_id)
     store.log_event(55, "deposit_move", {"from_bank": 1, "amount_cents": 100})
     store.log_event(62, "deposit_move", {"from_bank": 1, "amount_cents": 300})
     for offset in range(5):
@@ -100,7 +116,9 @@ def _passing_evidence(tmp_path):
     experiment_path = tmp_path / "experiment.json"
     experiment_path.write_text(json.dumps(experiment), encoding="utf-8")
     phenomena_path = tmp_path / "phenomena.yaml"
-    phenomena_path.write_text(yaml.safe_dump({"phenomena": phenomena}), encoding="utf-8")
+    phenomena_path.write_text(yaml.safe_dump({
+        "run_id": "acceptance-fixture", "phenomena": phenomena,
+    }), encoding="utf-8")
     return db, experiment_path, phenomena_path
 
 
@@ -113,7 +131,7 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert receipt["passed"]
     assert all(check["passed"] for check in receipt["checks"])
     payload = json.loads((tmp_path / "out" / "acceptance_acceptance-fixture.json").read_text())
-    assert payload["passed"] and len(payload["checks"]) == 17
+    assert payload["passed"] and len(payload["checks"]) == 18
     trace_check = next(check for check in payload["checks"] if check["id"] == "shock_traces")
     assert set(trace_check["evidence"]) == {"policy_rate", "oil", "rumor", "slant", "scandal"}
     assert all(
@@ -123,6 +141,8 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     rumor_trace = trace_check["evidence"]["rumor"]["downstream"]
     assert len(rumor_trace["rumor_conversation_ids"]) == 5
     assert rumor_trace["trust_drop_agent_ids"] == [1, 2, 3, 4]
+    assert rumor_trace["trust_relative_drops"]["1"] == pytest.approx(0.22)
+    assert rumor_trace["trust_absolute_drops"]["1"] == pytest.approx(0.11)
     assert rumor_trace["post_outflow_events"][0]["amount_cents"] == 300
     markdown = (tmp_path / "out" / "acceptance_acceptance-fixture.md").read_text()
     assert "Overall: **PASS**" in markdown and "Rumor pilot" in markdown
@@ -138,6 +158,23 @@ def test_acceptance_package_fails_closed_without_reviewed_attachments(tmp_path):
 
     assert not receipt["passed"]
     assert failed == {"experiment_n5", "emergent_phenomena"}
+
+
+def test_rumor_acceptance_fails_closed_without_belief_history(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    store.execute("DELETE FROM events WHERE kind='belief_updated'")
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "legacy", experiment_json=experiment,
+        phenomena_yaml=phenomena,
+    )
+    rumor = next(check for check in receipt["checks"] if check["id"] == "rumor_pilot")
+    assert not rumor["passed"]
+    assert not rumor["evidence"]["belief_history_complete"]
+    assert rumor["evidence"]["missing_belief_history_agent_ids"] == [1, 2, 3, 4]
 
 
 def test_acceptance_rejects_duplicate_phenomena_and_pre_shock_effects(tmp_path):
@@ -156,6 +193,26 @@ def test_acceptance_rejects_duplicate_phenomena_and_pre_shock_effects(tmp_path):
     failed = {check["id"] for check in receipt["checks"] if not check["passed"]}
 
     assert failed == {"policy_rate_effect", "shock_traces", "emergent_phenomena"}
+
+
+def test_acceptance_rejects_phenomena_reviewed_for_a_different_run(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    payload = yaml.safe_load(phenomena.read_text(encoding="utf-8"))
+    payload["run_id"] = "another-run"
+    phenomena.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "out", experiment_json=experiment,
+        phenomena_yaml=phenomena,
+    )
+    check = next(
+        check for check in receipt["checks"]
+        if check["id"] == "emergent_phenomena")
+    assert not check["passed"]
+    assert check["evidence"]["reason"] == (
+        "phenomena evidence is not bound to this run")
+    assert check["evidence"]["expected_run_id"] == "acceptance-fixture"
+    assert check["evidence"]["evidence_run_id"] == "another-run"
 
 
 def test_acceptance_distinguishes_recovered_provider_incidents(tmp_path):
@@ -308,6 +365,44 @@ def test_live_acceptance_profile_is_explicitly_uncapped():
 
     assert config["budget"]["cap_usd"] is None
     assert config["acceptance"]["max_spend_usd"] is None
+    assert config["acceptance"]["efficiency_target_usd"] == 200
+    assert config["acceptance"]["oracle_min_latency_samples"] == 5
+    assert len(config["acceptance"]["oracle_questions"]) == 6
+    assert config["information"]["citizen_bank_visibility"] == "public_status"
+
+
+def test_live_pilot_profile_is_capped_and_rumor_scoped():
+    config = load_config("runs/acceptance/pilot.yaml")
+
+    assert config["acceptance"]["min_ticks"] == 30
+    assert config["budget"]["cap_usd"] == 25.0
+    assert config["acceptance"]["required_shocks"] == ["rumor"]
+    assert not config["acceptance"]["require_oracle_scoring"]
+    assert not config["acceptance"]["require_experiment"]
+    assert not config["acceptance"]["require_phenomena"]
+
+
+def test_scoped_pilot_receipt_omits_full_acceptance_requirements(tmp_path):
+    db, _, _ = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    meta = store.get_meta()
+    config = json.loads(meta["config_json"])
+    config["acceptance"].update({
+        "required_shocks": ["rumor"],
+        "require_oracle_scoring": False,
+        "require_experiment": False,
+        "require_phenomena": False,
+        "oracle_min_latency_samples": 1,
+    })
+    store.init_run_meta(str(meta["run_id"]), int(meta["seed"]), config)
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(db, out_dir=tmp_path / "pilot")
+    assert receipt["passed"]
+    assert receipt["requirements"]["required_shocks"] == ["rumor"]
+    assert next(c for c in receipt["checks"] if c["id"] == "policy_rate_effect")[
+        "evidence"] == {"required": False}
 
 
 def test_uncapped_policy_is_preserved_in_receipt_and_end_report(tmp_path):
