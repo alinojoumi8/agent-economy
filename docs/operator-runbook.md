@@ -36,8 +36,13 @@ spend at $25:
 
 ```powershell
 python run.py --config runs/acceptance/pilot.yaml `
-  --acceptance-run --approve-live-inference
+  --acceptance-run --serve --approve-live-inference
 ```
+
+The served form keeps the observatory and `/api/acceptance/status` available
+throughout the run. The authorized acceptance driver auto-starts and pauses
+fail-closed if an exact Oracle checkpoint was passed without a persisted
+prediction. Omit `--serve` only for unattended headless execution.
 
 Do not start the full run unless this receipt passes its rumor, conversation,
 belief-history, deposit-outflow, ledger, provider, latency, and spend gates. Do
@@ -49,7 +54,7 @@ Start a fresh acceptance run only with explicit live-inference authorization:
 
 ```powershell
 python run.py --config runs/acceptance/production.yaml `
-  --acceptance-run --approve-live-inference `
+  --acceptance-run --serve --approve-live-inference `
   --experiment-evidence reports/out/experiment_rumor_vs_control.json `
   --phenomena-evidence reports/out/<reviewed-phenomena>.yaml
 ```
@@ -67,7 +72,9 @@ different run fails closed even when its metric direction happens to match.
 
 During a run, `GET /api/acceptance/status` and the dashboard show completed
 gates, actual/projected spend, Oracle sample count, shock traces, and rumor
-window evidence. The status endpoint evaluates large databases off the server
+window evidence. They also show the exact checkpoint schedule, next scheduled
+question, persisted checkpoint result, and any missed checkpoint that stopped
+the run. The status endpoint evaluates large databases off the server
 event loop and may return evidence cached for up to two seconds. Once a final
 receipt exists for the exact run ID and completed tick, the endpoint returns
 that artifact so experiment and reviewed-phenomena gates remain visible.
@@ -108,6 +115,24 @@ must be treated explicitly rather than silently advanced.
 A reported run can be reopened through Run or Step; the previous report path is
 cleared and a later stop generates a fresh report. A `halted` run cannot be
 mutated because halt represents an invariant failure requiring investigation.
+
+## Participant sandbox
+
+Participant mode is a separate provider-free extension and is never enabled in
+an acceptance profile:
+
+```powershell
+python run.py --config runs/participant.yaml
+```
+
+At a completed-day boundary, open a living citizen, take control, and queue one
+action for the next day. Continuous **Run** is disabled; **Step** remains locked
+until an explicit action (including **Do nothing**) is queued. The server owns
+all hidden entity IDs, validates the command against the citizen's current
+role-scoped action catalogue, then sends it through the normal action executor
+and double-entry ledger. Control and action records survive restart, replay
+without live input, appear as paginated history in the citizen inspector, and
+release automatically if the citizen dies.
 
 ## Reports and exact replay
 

@@ -388,6 +388,7 @@ def evaluate_acceptance(
         tick = int(meta["tick"])
         status = str(meta["status"])
         agent_count = int(store.scalar("SELECT COUNT(*) FROM agents", default=0))
+        participant_influenced = bool(meta["participant_influenced"])
         spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
         providers = {
             str(row["provider"]) for row in store.query("SELECT DISTINCT provider FROM llm_calls")
@@ -434,6 +435,11 @@ def evaluate_acceptance(
             )
         ]
         oracle_p90 = _p90(oracle_latencies)
+        oracle_schedule = acceptance_schedule_status(store, config, target_tick=min_ticks)
+        oracle_schedule_ok = (
+            not oracle_schedule["missed"]
+            and all(item["status"] == "completed" for item in oracle_schedule["checkpoints"])
+        )
         resolved_predictions = int(store.scalar(
             "SELECT COUNT(*) FROM predictions WHERE status='resolved' AND brier IS NOT NULL", default=0
         ))
@@ -460,6 +466,9 @@ def evaluate_acceptance(
             _check("population", "Production population is approximately 100 agents",
                    min_agents <= agent_count <= max_agents,
                    {"agents": agent_count, "range": [min_agents, max_agents]}),
+            _check("observer_integrity", "No participant actions contaminated the observer-only run",
+                   not participant_influenced,
+                   {"participant_influenced": participant_influenced}),
             _check("real_providers", "Run used only configured real providers",
                    bool(real_providers) and not forbidden_providers,
                    {"providers": sorted(providers), "real": sorted(real_providers),
@@ -485,8 +494,10 @@ def evaluate_acceptance(
                    len(oracle_latencies) >= oracle_min_samples
                    and oracle_p90 is not None and oracle_p90 < oracle_p90_limit,
                    {"samples": len(oracle_latencies), "p90_ms": oracle_p90,
-                     "minimum_samples": oracle_min_samples,
-                     "limit_ms": oracle_p90_limit}),
+                    "minimum_samples": oracle_min_samples,
+                    "limit_ms": oracle_p90_limit}),
+            _check("oracle_schedule", "Every configured Oracle checkpoint ran at its exact tick",
+                   oracle_schedule_ok, oracle_schedule),
             _check("oracle_scoring", "At least one Oracle prediction resolved automatically",
                    not require_oracle_scoring or resolved_predictions > 0,
                    {"resolved_predictions": resolved_predictions,
@@ -520,7 +531,7 @@ def evaluate_acceptance(
                    phenomena_evidence if require_phenomena else {"required": False}),
         ]
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run": {"run_id": str(meta["run_id"]), "database": str(db), "seed": int(meta["seed"])},
             "requirements": {
@@ -540,6 +551,7 @@ def evaluate_acceptance(
                 "oracle_latency_samples": len(oracle_latencies),
                 "oracle_min_latency_samples": oracle_min_samples,
             },
+            "orchestration": oracle_schedule,
             "passed": all(check["passed"] for check in checks),
             "checks": checks,
         }
@@ -624,30 +636,122 @@ def _has_usable_oracle_evidence(
     )
 
 
-async def execute_acceptance_run(world: "World", *, target_tick: int | None = None) -> None:
-    """Advance a world to the acceptance horizon and ask scheduled Oracle questions."""
+class AcceptanceCheckpointMissed(RuntimeError):
+    """Raised when a prospective Oracle checkpoint cannot be reconstructed honestly."""
+
+
+def acceptance_schedule_status(store: Store, config: dict, *, target_tick: int | None = None) -> dict:
+    """Return persisted, exact-tick Oracle checkpoint progress without changing the run."""
+    acceptance = config.get("acceptance", {})
+    horizon = int(target_tick or acceptance.get("min_ticks", 365))
+    questions = sorted(
+        acceptance.get("oracle_questions", []), key=lambda item: int(item["at_tick"]))
+    checkpoints = []
+    for item in questions:
+        scheduled_tick = int(item["at_tick"])
+        if scheduled_tick > horizon:
+            continue
+        question = str(item["question"])
+        prediction = store.query_one(
+            "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
+            (question, scheduled_tick))
+        persisted = store.query_one(
+            "SELECT status,detail,prediction_id FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=? AND question=?", (scheduled_tick, question))
+        usable = _has_usable_oracle_evidence(store, question, scheduled_tick)
+        status = "completed" if usable else (
+            "missed" if store.tick > scheduled_tick or (persisted and persisted["status"] == "missed")
+            else "pending")
+        checkpoints.append({
+            "scheduled_tick": scheduled_tick, "question": question, "status": status,
+            "prediction_id": int(prediction["id"]) if prediction and usable else None,
+            "detail": persisted["detail"] if persisted else None,
+        })
+    missed = [item for item in checkpoints if item["status"] == "missed"]
+    pending = [item for item in checkpoints if item["status"] == "pending"]
+    state = "invalid" if missed else (
+        "completed" if store.tick >= horizon and not pending else "pending")
+    return {
+        "state": state, "target_tick": horizon, "completed_tick": store.tick,
+        "next_checkpoint": pending[0] if pending else None,
+        "checkpoints": checkpoints, "missed": missed,
+    }
+
+
+def _record_checkpoint(
+    store: Store, scheduled_tick: int, question: str, status: str,
+    *, prediction_id: int | None = None, detail: str | None = None,
+) -> None:
+    completed_at = datetime.now(timezone.utc).isoformat() if status == "completed" else None
+    store.execute(
+        "INSERT INTO acceptance_checkpoints(scheduled_tick,question,status,prediction_id,detail,completed_at) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(scheduled_tick,question) DO UPDATE SET "
+        "status=excluded.status,prediction_id=excluded.prediction_id,detail=excluded.detail,"
+        "completed_at=excluded.completed_at",
+        (scheduled_tick, question, status, prediction_id, detail, completed_at))
+    store.commit()
+
+
+async def advance_acceptance_run(
+    world: "World", *, target_tick: int | None = None,
+) -> dict:
+    """Advance until the horizon or a safe pause, enforcing exact Oracle checkpoints."""
     acceptance = world.config.get("acceptance", {})
     horizon = int(target_tick or acceptance.get("min_ticks", 365))
-    questions = sorted(acceptance.get("oracle_questions", []), key=lambda item: int(item["at_tick"]))
+    questions = sorted(
+        acceptance.get("oracle_questions", []), key=lambda item: int(item["at_tick"]))
     for item in questions:
         at_tick = int(item["at_tick"])
         if at_tick > horizon:
             continue
+        question = str(item["question"])
+        if _has_usable_oracle_evidence(world.store, question, at_tick):
+            prediction_id = world.store.scalar(
+                "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
+                (question, at_tick), default=None)
+            _record_checkpoint(
+                world.store, at_tick, question, "completed",
+                prediction_id=int(prediction_id) if prediction_id is not None else None)
+            continue
+        if world.store.tick > at_tick:
+            detail = (
+                f"Oracle checkpoint at tick {at_tick} was passed without usable evidence; "
+                "a late prediction would be contaminated by later world state")
+            _record_checkpoint(world.store, at_tick, question, "missed", detail=detail)
+            world.store.log_event(
+                world.store.tick, "acceptance_checkpoint_missed",
+                {"scheduled_tick": at_tick, "question": question, "detail": detail},
+                phase="CONTROL", importance=5.0)
+            world.store.commit()
+            raise AcceptanceCheckpointMissed(detail)
         if world.store.tick < at_tick:
             await world.run(max_ticks=at_tick - world.store.tick)
-            if world.store.tick < at_tick or world.last_pause_reason:
-                raise RuntimeError(f"acceptance run paused before Oracle checkpoint at tick {at_tick}")
-        question = str(item["question"])
-        existing = world.store.scalar(
-            "SELECT COUNT(*) FROM predictions WHERE question=? AND asked_tick=?",
-            (question, at_tick), default=0)
-        if not existing or not _has_usable_oracle_evidence(
-                world.store, question, at_tick):
-            await world.oracle.ask(question)
-            if not _has_usable_oracle_evidence(world.store, question, at_tick):
-                raise RuntimeError(
-                    f"Oracle checkpoint at tick {at_tick} produced no usable read evidence")
+            if world.store.tick < at_tick:
+                return acceptance_schedule_status(
+                    world.store, world.config, target_tick=horizon)
+        await world.oracle.ask(question)
+        if not _has_usable_oracle_evidence(world.store, question, at_tick):
+            raise RuntimeError(
+                f"Oracle checkpoint at tick {at_tick} produced no usable read evidence")
+        prediction_id = world.store.scalar(
+            "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
+            (question, at_tick), default=None)
+        _record_checkpoint(
+            world.store, at_tick, question, "completed",
+            prediction_id=int(prediction_id) if prediction_id is not None else None)
+        world.store.log_event(
+            at_tick, "acceptance_checkpoint_completed",
+            {"scheduled_tick": at_tick, "question": question, "prediction_id": prediction_id},
+            phase="CONTROL", importance=2.0)
+        world.store.commit()
     if world.store.tick < horizon:
         await world.run(max_ticks=horizon - world.store.tick)
-    if world.store.tick < horizon or world.last_pause_reason:
-        raise RuntimeError(f"acceptance run paused at tick {world.store.tick}; target was {horizon}")
+    return acceptance_schedule_status(world.store, world.config, target_tick=horizon)
+
+
+async def execute_acceptance_run(world: "World", *, target_tick: int | None = None) -> None:
+    """Headless compatibility wrapper: a pause remains a non-zero completion failure."""
+    status = await advance_acceptance_run(world, target_tick=target_tick)
+    if status["state"] != "completed":
+        raise RuntimeError(
+            f"acceptance run paused at tick {world.store.tick}; target was {status['target_tick']}")

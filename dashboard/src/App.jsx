@@ -6,6 +6,7 @@ import { ConversationsPanel, EventsPanel, NewsPanel } from "./components/Informa
 import { CalibrationPanel, CostPanel, OraclePanel } from "./components/OracleAndCost";
 import { ReplayModal } from "./components/ReplayModal";
 import { RunHeader } from "./components/RunHeader";
+import { ParticipantPanel } from "./components/ParticipantPanel";
 import { ShockModal } from "./components/ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./components/WorldPanels";
 import { SectionTitle } from "./components/ui";
@@ -22,7 +23,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <RunHeader status={status} connected={connected} loading={loading} act={act}
+      <RunHeader status={status} participant={data.participant} connected={connected} loading={loading} act={act}
         onShock={() => setShockOpen(true)} onReplay={() => setReplayOpen(true)} />
 
       {error && <div role="alert" className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-4 rounded-xl border border-coral-300/25 bg-coral-300/[.06] px-4 py-3 text-xs text-coral-300">
@@ -62,7 +63,8 @@ export default function App() {
         <AcceptancePanel acceptance={data.acceptance} />
 
         <SectionTitle index="5" title="People" description="Audit any persona from identity through balances, beliefs, memory, and exact decision prompts." />
-        <AgentsPanel agents={data.agents} />
+        <ParticipantPanel participant={data.participant} act={act} />
+        <AgentsPanel agents={data.agents} participant={data.participant} status={status} act={act} />
       </main>
 
       {shockOpen && <ShockModal library={data.shocks?.library} tick={status?.tick || 0} act={act} onClose={() => setShockOpen(false)} />}

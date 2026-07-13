@@ -3,10 +3,12 @@ import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
-export function RunHeader({ status, connected, loading, act, onShock, onReplay }) {
+export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
   const terminal = status?.status === "halted";
+  const participantActive = Boolean(participant?.active);
+  const participantReady = Boolean(participant?.queued_action);
   const { spend, cap, capped, fraction } = budgetState(status?.governor);
 
   async function action(name, path, body) {
@@ -37,12 +39,14 @@ export function RunHeader({ status, connected, loading, act, onShock, onReplay }
           <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+          {participantActive && <Badge tone="good">playing {participant?.controlled_agent?.name}</Badge>}
+          {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.rate_limit && <Badge tone="warn">rate limited · retry {Math.ceil(status.rate_limit.cooldown_remaining_s)}s</Badge>}
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={loading || running || terminal || busy} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={loading || running || terminal || busy} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button button-primary" disabled={loading || running || terminal || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={loading || running || terminal || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
           <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
           <button className="button button-danger" disabled={loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>

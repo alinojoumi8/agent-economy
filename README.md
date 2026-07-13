@@ -79,6 +79,18 @@ python run.py --config runs/base.yaml
 
 Open <http://127.0.0.1:8000>. The world starts paused; press **Run** or **Step**.
 
+To play one citizen through the same validator and ledger used by autonomous
+agents, start the provider-free participant sandbox instead:
+
+```powershell
+python run.py --config runs/participant.yaml
+```
+
+Open a living citizen in the observatory, choose **Take control**, queue one
+action, and press **Step**. The citizen inspector retains a paginated audit of
+queued, executed, rejected, and cancelled commands. Participant runs are clearly
+marked and cannot be used as acceptance evidence.
+
 macOS/Linux users can activate with `source .venv/bin/activate`. A headless smoke
 run that writes a standalone report is:
 
@@ -125,6 +137,8 @@ baseline and fails closed when history is missing.
   Brier scores, and run/pooled calibration.
 - **Acceptance**: completed gates, actual/projected spend, Oracle sample count,
   shock traces, and rumor-window evidence.
+- **Participant sandbox**: take control of one citizen, queue one validated
+  action per day, and inspect the durable execution result.
 - **Replay and export**: tick-by-tick historical viewer plus standalone reports.
 
 ## Run profiles
@@ -132,6 +146,7 @@ baseline and fails closed when history is missing.
 | Profile | Agents/purpose | Provider policy |
 |---|---|---|
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
+| `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |

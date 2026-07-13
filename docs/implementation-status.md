@@ -95,7 +95,7 @@ Evidence labels:
 | T9 — Deterministic market mechanics | Complete | 1.00 | Banking, firms, labor, exchange, settlement, and bankruptcy are tested end to end. |
 | T10 — Seeded lifecycle mechanics | Complete | 1.00 | Biology is PRNG-owned and the exact two-year integration test passes. |
 | T11 — React, Vite, Tailwind, Recharts | Complete | 1.00 | Modular source, committed local bundle, CI build, responsive browser pass, and no CDN runtime. |
-| T12 — Unit, acceptance, golden, property/cost strategy | Complete | 1.00 | 127 tests include randomized mechanics, lifecycle storms, role-scoped bank data, true relative rumor effects, belief provenance, macro windows, exact v3/legacy replay, budget transitions, documentation integrity, golden output, long runs, and acceptance. |
+| T12 — Unit, acceptance, golden, property/cost strategy | Complete | 1.00 | 144 tests include randomized mechanics, lifecycle storms, role-scoped bank data, true relative rumor effects, belief provenance, participant history/resume/replay, macro windows, exact v3/legacy replay, budget transitions, documentation integrity, golden output, long runs, and acceptance. |
 | T13 — Determinism, checkpoint, resume, replay, forks | Complete | 1.00 | Same-seed, golden, checkpoints, resume, parent-safe forks, and canonical full-state replay hashes are tested. |
 | T14 — Repository layout and phased build | Complete | 1.00 | All specified packages and P1 surfaces, including the dashboard package, are present. |
 
@@ -134,7 +134,7 @@ Three causal chains are documented and mechanically tested: credibility shock �
 2. **Prove the operating envelope.** Run the six-question Oracle schedule, then a separately authorized 365-day production run at or below the $200 efficiency target.
 3. **Deepen research quality.** Add preregistered hypotheses, effect sizes/confidence intervals, and a causal explorer linking exposure → belief → action → economic effect.
 4. **Accumulate calibration evidence.** Resolve enough live Oracle predictions to publish meaningful bins, Brier score, reliability, resolution, and uncertainty.
-5. **Keep participant/hosted expansion deferred.** Do not trade away observer integrity until the research instrument is proven.
+5. **Keep hosted expansion deferred and participant runs isolated.** The participant sandbox is implemented, but its evidence is explicitly disqualified from observer-only acceptance.
 
 No speculative calendar estimate is assigned; completion depends primarily on credential and spend authorization.
 
@@ -142,11 +142,11 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 
 | Check | Result |
 |---|---|
-| Code baseline | `codex/research-validity-v1`, based on merged `main` at `07ba53d` |
-| Python suite | **127 passed in 72.40 seconds** with `python -m pytest tests/ -q` |
-| Frontend/dependencies | **7 tests passed**; 593-module Vite production build passed; `npm audit` found 0 vulnerabilities; `pip check` found no broken requirements |
+| Code baseline | `codex/participant-acceptance-v1`, based on merged `main` at `70ed92e` |
+| Python suite | **144 passed in 201.27 seconds** with `python -m pytest tests/ -q` |
+| Frontend/dependencies | **9 tests passed**; 595-module Vite production build passed; dependency audit and environment checks remain part of the release gate |
 | Compile and hygiene | Python compile-all, documentation link/profile checks, and `git diff --check` passed |
-| Local API/UI smoke | Run `052298d92a`: root/OpenAPI/status/metrics/agent/acceptance routes returned 200, belief history was present, Step reached tick 1, Stop finished and generated a report, and stderr contained no error/critical/traceback finding |
+| Local API/UI smoke | Provider-free participant run `171cddcb1b`: root and history bundle returned 200, continuous Run was blocked under control, a queued command executed at tick 1, paginated history exposed its result, release succeeded, spend remained $0, and stderr contained no error/critical/traceback finding |
 | Free acceptance rehearsal | Run `5f5eac3794`: 101 agents, 365 ticks, exact ledger, six resolved Oracle samples, all five shocks/traces, 36/40 relative rumor drops, 83 qualifying conversations, valid metric windows/belief bounds, and zero failure events; only `real_providers` intentionally failed |
 | Live diagnostic | Run `f7c6238bf5`: 100 agents, paused at tick 76, exact ledger, one 28.48-second Oracle sample, $24.232937 spend, zero provider/contract failures; preserved as pre-fix diagnostic evidence |
 | Replay | New semantics-v3 belief events and legacy v1/v2/golden behavior pass exact replay regressions; prior live source/replay retained identical 27-table hash `405b1d5ae37e58b7ab2c8a8baf6ac44a0c17ca134427a075e170fead4a9ce6c8` |
@@ -157,7 +157,7 @@ No speculative calendar estimate is assigned; completion depends primarily on cr
 
 | Future requirement | PRD disposition | Assessment |
 |---|---|---|
-| **R18 — Participant mode** | P2 future | Intentionally deferred; observer-only integrity remains preserved. |
+| **R18 — Participant mode** | Implemented extension | Sandbox-only one-citizen control uses a role-scoped catalogue, one command per completed-day boundary, the normal validator/ledger, paginated inspector history, restart-safe state, exact replay, and browser controls. Acceptance profiles reject participant mode and receipts fail observer integrity when influence is present. |
 | **R19 — Scale to approximately 1,000 agents** | P2 future | Intentionally deferred; current launch profile targets approximately 100. |
 | **R20 — Regions and foreign exchange** | P2 future | Intentionally deferred. |
 | **R21 — Real-data calibration** | P2 future | Intentionally deferred; future inputs must be versioned and provenance-aware. |

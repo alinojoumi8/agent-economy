@@ -268,7 +268,7 @@ def main() -> None:
     print(f"[agent-economy] run {run_id} @ tick {store.tick} "
           f"(seed {store.get_meta()['seed']}, {'replay' if args.replay else 'live'})")
 
-    if args.acceptance_run:
+    if args.acceptance_run and not args.serve:
         from reports.acceptance import execute_acceptance_run, write_acceptance_package
         target_tick = args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365))
         asyncio.run(execute_acceptance_run(world, target_tick=target_tick))
@@ -285,6 +285,13 @@ def main() -> None:
         if not receipt["passed"]:
             raise SystemExit(5)
         return
+
+    if args.acceptance_run and args.serve:
+        world.acceptance_authorized = True
+        world.acceptance_target_tick = (
+            args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365)))
+        world.acceptance_experiment_evidence = args.experiment_evidence
+        world.acceptance_phenomena_evidence = args.phenomena_evidence
 
     replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
     ticks = args.ticks if args.ticks is not None else replay_ticks
@@ -328,7 +335,8 @@ def main() -> None:
     app = create_app(world)
     operational_log(logger, logging.INFO, "server.starting",
                     run_id=run_id, host=args.host, port=args.port)
-    print(f"[agent-economy] observatory: http://{args.host}:{args.port}  (world starts paused - press Run)")
+    startup = "acceptance orchestration starts automatically" if args.acceptance_run else "world starts paused - press Run"
+    print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

@@ -8,13 +8,28 @@ heard become observations → memory → beliefs. This is the rumor medium.
 """
 from __future__ import annotations
 
+from collections import deque
+from difflib import SequenceMatcher
 import json
+import re
 from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
 from llm.gateway import Gateway, LLMRequest
 from agents.memory import Memory
+from agents.policies import conversation_turn
+
+
+DEFAULT_CONVERSATION_THEMES = [
+    "household budgets and the price of essentials",
+    "job security, hiring, and workplace changes",
+    "wages and the cost of living",
+    "saving, borrowing, and confidence in local banks",
+    "local businesses, inventory, and changing prices",
+    "health costs and financial resilience",
+    "how market moves affect ordinary households",
+]
 
 
 class Newsroom:
@@ -135,6 +150,17 @@ class Conversations:
         self.config = config
         self.mem = Memory(self.store)
         self.turns = int(config.get("conversations", {}).get("turns", 3))
+        self._recent_limit = int(
+            config.get("conversations", {}).get("recent_utterance_limit", 12))
+        self._recent_per_source = max(2, self._recent_limit // 3)
+        self._recent_global: deque[str] = deque(maxlen=self._recent_per_source)
+        self._recent_by_agent: dict[int, deque[str]] = {}
+        self._recent_by_topic: dict[str, deque[str]] = {}
+        self._used_line_keys: set[str] = set()
+        for row in self.store.query(
+                "SELECT m.agent_id, m.text, c.topic FROM messages m "
+                "JOIN conversations c ON c.id=m.conv_id ORDER BY m.id"):
+            self._remember_line(int(row["agent_id"]), row["topic"], str(row["text"]))
 
     def plan_pairs(self, tick: int) -> list[tuple[int, int]]:
         return self._sample_pairs(tick, self.gw.governor.conversation_pairs())
@@ -143,8 +169,8 @@ class Conversations:
                       pairs: Optional[list[tuple[int, int]]] = None) -> int:
         pairs = self.plan_pairs(tick) if pairs is None else pairs
         count = 0
-        for a, b in pairs:
-            await self._converse(tick, a, b)
+        for topic_slot, (a, b) in enumerate(pairs):
+            await self._converse(tick, a, b, topic_slot=topic_slot)
             count += 1
         return count
 
@@ -188,7 +214,8 @@ class Conversations:
             chosen.append((a, b))
         return chosen
 
-    async def _converse(self, tick: int, a_id: int, b_id: int) -> None:
+    async def _converse(self, tick: int, a_id: int, b_id: int,
+                        *, topic_slot: int = 0) -> None:
         participant_ids = json.dumps([a_id, b_id])
         if self.store.query_one(
                 "SELECT id FROM conversations WHERE tick=? AND participant_ids=?",
@@ -196,31 +223,81 @@ class Conversations:
             return
         names = {aid: self.store.scalar("SELECT name FROM agents WHERE id=?", (aid,), default="?")
                  for aid in (a_id, b_id)}
+        profiles = {
+            aid: dict(self.store.query_one(
+                "SELECT name, occupation, age, health, kind FROM agents WHERE id=?", (aid,)))
+            for aid in (a_id, b_id)
+        }
         rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
-        shared_topic = self._shared_topic(tick)
+        shared_topic = self._shared_topic(tick, a_id, b_id, topic_slot=topic_slot)
         transcript = []
         for turn in range(self.turns):
             speaker, listener = (a_id, b_id) if turn % 2 == 0 else (b_id, a_id)
+            recent_utterances = self._recent_utterances(speaker, shared_topic)
+            conversation_so_far = [line["text"] for line in transcript]
             context = {"tick": tick, "speaker_id": speaker,
                        "partner_name": names[listener],
+                       "speaker_profile": profiles[speaker],
                        "speaker_rumor_bank": rumors[speaker],
                        "shared_topic": shared_topic,
+                       "turn_index": turn,
+                       "conversation_so_far": conversation_so_far,
+                       "recent_utterances": recent_utterances,
+                       "avoid_texts": recent_utterances + conversation_so_far,
                        "rng_seed": tick * 1009 + speaker * 13 + turn}
             schema = '{"text":"brief natural sentence","rumor_bank":null}'
             req = LLMRequest(
                 role="citizen", purpose="conversation",
                 system=(
-                    "Write one brief in-world conversational sentence from the speaker "
-                    "to the named partner. Respond ONLY with JSON matching " + schema
+                    "Continue a natural in-world conversation with one brief sentence from "
+                    "the speaker to the named partner. Use the shared topic when present, "
+                    "and treat the supplied JSON context as the entire factual world. Do not "
+                    "invent laws, websites, contracts, lawsuits, investigations, client lists, "
+                    "relationships, institutions, or off-screen events. Facts not present in "
+                    "the context are unknown; express uncertainty instead of filling gaps. "
+                    "Use a cautious modal statement (may, might, could, seems) or a question. "
+                    "Do not use first-person pronouns or narrate anecdotes, employer details, "
+                    "possessions, private contacts, or past experiences. A general concern based "
+                    "on the supplied occupation is allowed, but an unsupported backstory is not. "
+                    "Do not repeat or closely paraphrase conversation_so_far, "
+                    "recent_utterances, or avoid_texts. If the previous line asked a "
+                    "question, respond to it instead of asking the same question again. "
+                    "A question is optional; prefer a concrete reaction or personal impact. "
+                    "Respond ONLY with JSON matching " + schema
                     + ". Set rumor_bank to an integer from speaker_rumor_bank only when "
-                      "the speaker shares that rumor; otherwise use null."),
-                user=json.dumps(context)[:800], context=context,
+                    "the speaker shares that rumor; otherwise use null."),
+                user=json.dumps({
+                    key: value for key, value in context.items()
+                    if key != "avoid_texts"
+                })[:2400], context=context,
                 agent_id=speaker, tick=tick, max_tokens=120)
             resp = await self.gw.complete(req, schema_hint=schema)
             env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
             if not text:
                 continue
+            avoid_texts = recent_utterances + conversation_so_far
+            repeats_question = (
+                "?" in text and bool(conversation_so_far)
+                and "?" in conversation_so_far[-1]
+            )
+            if (repeats_question or self._has_ungrounded_detail(text)
+                    or self._previously_said(text, avoid_texts)):
+                fallback_context = dict(context)
+                fallback_context["avoid_texts"] = list(avoid_texts)
+                for attempt in range(1, 10):
+                    fallback_context["rng_seed"] = (
+                        int(context["rng_seed"]) + 104729 * attempt)
+                    fallback = conversation_turn(fallback_context)
+                    candidate = str(fallback.get("text", "")).strip()[:300]
+                    if not self._previously_said(candidate, avoid_texts):
+                        text = candidate
+                        env = fallback
+                        break
+                    fallback_context["avoid_texts"].append(candidate)
+                else:
+                    text = f"{candidate.rstrip()} This feels different on day {tick}."[:300]
+                    env = fallback
             # The listener hears the line → observation (rumor propagation medium).
             ents = ["conversation", f"agent:{speaker}"]
             rumor_bank = env.get("rumor_bank")
@@ -250,6 +327,8 @@ class Conversations:
                 "conv_id": conv_id, "participants": [a_id, b_id],
                 "turns": len(transcript)},
                 phase="EVENING", importance=0.5)
+        for line in transcript:
+            self._remember_line(int(line["speaker"]), shared_topic, line["text"])
 
     def _rumor_held(self, agent_id: int, tick: int) -> Optional[int]:
         rows = self.store.query(
@@ -261,7 +340,132 @@ class Conversations:
                     return int(e.split(":")[1])
         return None
 
-    def _shared_topic(self, tick: int) -> Optional[str]:
-        row = self.store.query_one(
-            "SELECT headline FROM news_articles WHERE tick>=? ORDER BY id DESC LIMIT 1", (tick - 1,))
-        return row["headline"] if row else None
+    def _recent_utterances(self, agent_id: int, topic: Optional[str]) -> list[str]:
+        """Return compact no-repeat context from the speaker and this topic."""
+        texts = list(reversed(self._recent_global))
+        texts.extend(reversed(self._recent_by_agent.get(agent_id, ())))
+        if topic:
+            texts.extend(reversed(self._recent_by_topic.get(topic.lower(), ())))
+        unique: list[str] = []
+        seen: set[str] = set()
+        for text in texts:
+            key = self._line_key(text)
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(text)
+        return unique[:self._recent_limit]
+
+    def _remember_line(self, agent_id: int, topic: Optional[str], text: str) -> None:
+        self._used_line_keys.add(self._line_key(text))
+        self._recent_global.append(text)
+        agent_lines = self._recent_by_agent.setdefault(
+            agent_id, deque(maxlen=self._recent_per_source))
+        agent_lines.append(text)
+        if topic:
+            topic_lines = self._recent_by_topic.setdefault(
+                str(topic).lower(), deque(maxlen=self._recent_per_source))
+            topic_lines.append(text)
+
+    @staticmethod
+    def _line_key(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+    @classmethod
+    def _too_similar(cls, text: str, prior_lines: list[str]) -> bool:
+        key = cls._line_key(text)
+        if not key:
+            return False
+        for prior in prior_lines:
+            prior_key = cls._line_key(prior)
+            if key == prior_key:
+                return True
+            if min(len(key), len(prior_key)) >= 24:
+                if SequenceMatcher(None, key, prior_key).ratio() >= 0.90:
+                    return True
+        return False
+
+    @staticmethod
+    def _has_ungrounded_detail(text: str) -> bool:
+        """Allow only cautious, impersonal provider lines grounded in supplied state."""
+        patterns = (
+            r"\b(linkedin|attorneys?|arbitration|non[- ]?compete|lawsuits?|litigat\w*|"
+            r"legal team|client list|discovery)\b",
+            r"\b(last (?:week|month|year)|years? ago|yesterday|next term|two miles|"
+            r"since we last)\b",
+            r"\b(?:i|we) (?:know|heard|saw|started|kept|have|had|used to|work at|"
+            r"spoke to|sat down)\b",
+            r"\bmy (?:contract|employer|school|shop|clients?|suppliers?|books?|receipts?|"
+            r"coworkers?|manager|neighbou?r|family|friends?|portfolio|pipeline)\b",
+            r"\b(?:people|someone) (?:i know|over at|on the inside)\b",
+            r"\b(?:the school|the shop|the office|the factory)\b",
+            r"\b(?:had to know|knew those|welcome mat|paperwork)\b",
+        )
+        lowered = text.lower()
+        if any(re.search(pattern, lowered) for pattern in patterns):
+            return True
+        if re.search(
+                r"\b(i|i'm|i've|i'd|i'll|me|my|mine|we|we're|we've|we'd|we'll|"
+                r"us|our|ours)\b", lowered):
+            return True
+        return not bool(re.search(
+            r"\?|\b(may|might|could|seems?|appears?|perhaps|possibly|uncertain|"
+            r"risk|worry|wonder|likely)\b", lowered))
+
+    def _previously_said(self, text: str, prior_lines: list[str]) -> bool:
+        if self._too_similar(text, prior_lines):
+            return True
+        return self._line_key(text) in self._used_line_keys
+
+    def _shared_topic(self, tick: int, a_id: int | None = None,
+                      b_id: int | None = None, *, topic_slot: int = 0) -> Optional[str]:
+        """Rotate recent headlines across pairs instead of saturating a day with one topic."""
+        cfg = self.config.get("conversations", {})
+        lookback = max(1, int(cfg.get("topic_lookback_ticks", 3)))
+        limit = max(2, int(cfg.get("topic_pool_size", 12)))
+        rows = self.store.query(
+            "SELECT headline, source_event_ids FROM news_articles WHERE tick>=? "
+            "ORDER BY tick DESC, id DESC LIMIT ?",
+            (tick - lookback + 1, limit))
+        topics: list[str] = []
+        seen: set[str] = set()
+        seen_sources: set[tuple[int, ...]] = set()
+        for row in rows:
+            topic = str(row["headline"] or "").strip()
+            key = topic.lower()
+            sources = load_json(row["source_event_ids"], []) or []
+            source_key = tuple(sorted(int(source) for source in sources))
+            if source_key and source_key in seen_sources:
+                continue
+            if topic and key not in seen:
+                seen.add(key)
+                if source_key:
+                    seen_sources.add(source_key)
+                topics.append(topic)
+        themes = cfg.get("themes", DEFAULT_CONVERSATION_THEMES)
+        theme_topics: list[str] = []
+        for theme_value in themes:
+            theme = str(theme_value or "").strip()
+            key = theme.lower()
+            if theme and key not in seen:
+                seen.add(key)
+                theme_topics.append(theme)
+        if theme_topics:
+            daily_advance = max(1, int(
+                self.config.get("budget", {}).get("conversation_pairs", 1)))
+            theme_offset = (max(0, tick - 1) * daily_advance) % len(theme_topics)
+            topics.extend(theme_topics[theme_offset:] + theme_topics[:theme_offset])
+        if not topics:
+            return None
+
+        if a_id is not None and b_id is not None:
+            pair_json = (json.dumps([a_id, b_id]), json.dumps([b_id, a_id]))
+            prior_rows = self.store.query(
+                "SELECT topic FROM conversations WHERE participant_ids IN (?, ?) "
+                "AND tick>=? AND topic IS NOT NULL ORDER BY tick DESC",
+                (pair_json[0], pair_json[1], tick - lookback))
+            prior = {str(row["topic"]).lower() for row in prior_rows}
+            fresh = [topic for topic in topics if topic.lower() not in prior]
+            if fresh:
+                topics = fresh
+
+        return topics[topic_slot % len(topics)]

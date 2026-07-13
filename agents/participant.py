@@ -1,0 +1,504 @@
+"""Server-authoritative participant control for local sandbox runs.
+
+Participant commands are durable inputs, but they still travel through the
+normal ActionExecutor during EXECUTION.  This module never mutates economic
+state directly.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+from engine.actions import VALID_TYPES
+from engine.store import Store, load_json
+
+
+PARTICIPANT_TYPES = VALID_TYPES.difference({
+    "approve_loan", "deny_loan", "set_policy_rate", "fund_pitch", "decline_pitch",
+})
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class ParticipantError(RuntimeError):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+class ParticipantService:
+    """Persist one local participant lease and one command per future tick."""
+
+    def __init__(self, store: Store, context_builder, config: dict):
+        self.store = store
+        self.ctx = context_builder
+        self.config = config
+        self.enabled = bool(config.get("participant_mode", {}).get("enabled", False))
+        if self.enabled and config.get("acceptance"):
+            raise ValueError("participant mode cannot be enabled for an acceptance run")
+
+    def _control(self):
+        return self.store.query_one("SELECT * FROM participant_control WHERE id=1")
+
+    def active_agent_id(self) -> Optional[int]:
+        row = self._control()
+        if not row or not row["active"] or row["agent_id"] is None:
+            return None
+        agent = self.store.query_one(
+            "SELECT id, alive, kind FROM agents WHERE id=?", (int(row["agent_id"]),))
+        if not agent or not agent["alive"] or agent["kind"] != "citizen":
+            return None
+        return int(agent["id"])
+
+    def release_if_unavailable(self, tick: int, *, commit: bool) -> bool:
+        """Close a stale lease after the citizen dies or otherwise disappears."""
+        row = self._control()
+        if not row or not row["active"] or row["agent_id"] is None:
+            return False
+        agent_id = int(row["agent_id"])
+        agent = self.store.query_one(
+            "SELECT alive,kind FROM agents WHERE id=?", (agent_id,))
+        if agent and agent["alive"] and agent["kind"] == "citizen":
+            return False
+        self.store.execute(
+            "UPDATE participant_control SET active=0,updated_at=? WHERE id=1", (_utcnow(),))
+        self.store.execute(
+            "UPDATE participant_actions SET status='cancelled' "
+            "WHERE agent_id=? AND target_tick>=? AND status='queued'",
+            (agent_id, int(tick)),
+        )
+        self.store.log_event(
+            int(tick), "participant_control_released",
+            {"agent_id": agent_id, "reason": "citizen_unavailable"}, phase="CONTROL",
+            subject_type="agent", subject_id=agent_id, importance=1.5)
+        if commit:
+            self.store.commit()
+        return True
+
+    def _require_enabled(self) -> None:
+        if not self.enabled:
+            raise ParticipantError(403, "participant mode is disabled for this run")
+
+    def _require_boundary(self, expected_tick: int, running: bool) -> None:
+        self._require_enabled()
+        if running:
+            raise ParticipantError(409, "pause the world before changing participant control")
+        meta = self.store.get_meta()
+        if meta["active_tick"] is not None:
+            raise ParticipantError(409, "participant changes require a completed-day boundary")
+        if int(expected_tick) != self.store.tick:
+            raise ParticipantError(
+                409, f"stale participant state: expected day {expected_tick}, current day {self.store.tick}")
+
+    def acquire(self, agent_id: int, expected_tick: int, *, running: bool) -> dict:
+        self._require_boundary(expected_tick, running)
+        agent = self.store.query_one(
+            "SELECT id, name, kind, alive FROM agents WHERE id=?", (int(agent_id),))
+        if not agent:
+            raise ParticipantError(404, "citizen not found")
+        if agent["kind"] != "citizen" or not agent["alive"]:
+            raise ParticipantError(409, "only a living citizen can be controlled")
+        current = self.active_agent_id()
+        if current is not None and current != int(agent_id):
+            raise ParticipantError(409, f"citizen {current} is already under participant control")
+        self.store.execute(
+            "INSERT INTO participant_control(id,agent_id,active,acquired_tick,updated_at) "
+            "VALUES(1,?,1,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "agent_id=excluded.agent_id,active=1,acquired_tick=excluded.acquired_tick,"
+            "updated_at=excluded.updated_at",
+            (int(agent_id), self.store.tick, _utcnow()),
+        )
+        self.store.set_meta(participant_influenced=1)
+        self.store.log_event(
+            self.store.tick, "participant_control_acquired",
+            {"agent_id": int(agent_id), "name": agent["name"]}, phase="CONTROL",
+            subject_type="agent", subject_id=int(agent_id), importance=1.5)
+        self.store.commit()
+        return self.status(running=False)
+
+    def release(self, expected_tick: int, *, running: bool, reason: str = "released") -> dict:
+        self._require_boundary(expected_tick, running)
+        agent_id = self.active_agent_id()
+        if agent_id is None:
+            raise ParticipantError(409, "no citizen is under participant control")
+        self.store.execute(
+            "UPDATE participant_control SET active=0,updated_at=? WHERE id=1", (_utcnow(),))
+        self.store.execute(
+            "UPDATE participant_actions SET status='cancelled' "
+            "WHERE agent_id=? AND target_tick>? AND status='queued'",
+            (agent_id, self.store.tick),
+        )
+        self.store.log_event(
+            self.store.tick, "participant_control_released",
+            {"agent_id": agent_id, "reason": reason}, phase="CONTROL",
+            subject_type="agent", subject_id=agent_id, importance=1.2)
+        self.store.commit()
+        return self.status(running=False)
+
+    def has_queued_action(self) -> bool:
+        agent_id = self.active_agent_id()
+        if agent_id is None:
+            return False
+        return bool(self.store.scalar(
+            "SELECT COUNT(*) FROM participant_actions "
+            "WHERE agent_id=? AND target_tick=? AND status='queued'",
+            (agent_id, self.store.tick + 1), default=0))
+
+    def queue_action(
+        self, expected_tick: int, action: dict, reasoning: str = "", *, running: bool,
+    ) -> dict:
+        self._require_boundary(expected_tick, running)
+        agent_id = self.active_agent_id()
+        if agent_id is None:
+            raise ParticipantError(409, "take control of a citizen before choosing an action")
+        normalized = self._normalize_action(agent_id, action)
+        target_tick = self.store.tick + 1
+        prior = self.store.query_one(
+            "SELECT id FROM participant_actions WHERE agent_id=? AND target_tick=?",
+            (agent_id, target_tick))
+        self.store.execute(
+            "INSERT INTO participant_actions(agent_id,target_tick,action_json,reasoning,status,"
+            "result_json,created_at,executed_at) VALUES(?,?,?,?,'queued',NULL,?,NULL) "
+            "ON CONFLICT(agent_id,target_tick) DO UPDATE SET action_json=excluded.action_json,"
+            "reasoning=excluded.reasoning,status='queued',result_json=NULL,executed_at=NULL",
+            (agent_id, target_tick, json.dumps(normalized), str(reasoning).strip()[:500], _utcnow()),
+        )
+        event = "participant_action_replaced" if prior else "participant_action_queued"
+        self.store.set_meta(participant_influenced=1)
+        self.store.log_event(
+            self.store.tick, event,
+            {"agent_id": agent_id, "target_tick": target_tick, "action": normalized},
+            phase="CONTROL", subject_type="agent", subject_id=agent_id, importance=1.2)
+        self.store.commit()
+        return self.status(running=False)
+
+    def status(self, *, running: bool) -> dict:
+        if not self.enabled:
+            reason = "disabled for acceptance runs" if self.config.get("acceptance") else "disabled by config"
+            return {"enabled": False, "reason": reason, "active": False}
+        meta = self.store.get_meta()
+        if not running and meta["active_tick"] is None:
+            self.release_if_unavailable(self.store.tick, commit=True)
+        agent_id = self.active_agent_id()
+        control = None
+        catalog: list[dict] = []
+        queued = None
+        if agent_id is not None:
+            agent = self.store.query_one(
+                "SELECT id,name,occupation,age,health,retired FROM agents WHERE id=?", (agent_id,))
+            control = dict(agent) if agent else {"id": agent_id}
+            catalog = self.action_catalog(agent_id)
+            row = self.store.query_one(
+                "SELECT * FROM participant_actions WHERE agent_id=? AND target_tick=? "
+                "ORDER BY id DESC LIMIT 1", (agent_id, self.store.tick + 1))
+            if row:
+                queued = {
+                    "id": int(row["id"]), "target_tick": int(row["target_tick"]),
+                    "action": load_json(row["action_json"], {}), "reasoning": row["reasoning"],
+                    "status": row["status"],
+                }
+        last = self.store.query_one(
+            "SELECT * FROM participant_actions WHERE status IN ('executed','rejected') "
+            "ORDER BY executed_at DESC,id DESC LIMIT 1")
+        return {
+            "enabled": True, "active": agent_id is not None, "running": bool(running),
+            "controlled_agent": control, "completed_tick": self.store.tick,
+            "next_tick": self.store.tick + 1, "queued_action": queued,
+            "action_catalog": catalog,
+            "last_result": ({
+                "agent_id": int(last["agent_id"]), "target_tick": int(last["target_tick"]),
+                "action": load_json(last["action_json"], {}), "status": last["status"],
+                "result": load_json(last["result_json"], []),
+            } if last else None),
+        }
+
+    def history(
+        self, agent_id: int, *, limit: int = 50, before_id: Optional[int] = None,
+    ) -> dict:
+        """Return a bounded, newest-first audit history for one citizen."""
+        self._require_enabled()
+        agent = self.store.query_one(
+            "SELECT id,name,kind FROM agents WHERE id=?", (int(agent_id),))
+        if not agent:
+            raise ParticipantError(404, "citizen not found")
+        if agent["kind"] != "citizen":
+            raise ParticipantError(409, "participant history is available only for citizens")
+        bounded_limit = max(1, min(100, int(limit)))
+        params: list[Any] = [int(agent_id)]
+        before = ""
+        if before_id is not None:
+            before = " AND id<?"
+            params.append(int(before_id))
+        params.append(bounded_limit + 1)
+        rows = list(self.store.query(
+            "SELECT id,agent_id,target_tick,action_json,reasoning,status,result_json,"
+            "source_action_id,created_at,executed_at FROM participant_actions "
+            f"WHERE agent_id=?{before} ORDER BY id DESC LIMIT ?", tuple(params)))
+        has_more = len(rows) > bounded_limit
+        rows = rows[:bounded_limit]
+        items = [{
+            "id": int(row["id"]),
+            "agent_id": int(row["agent_id"]),
+            "target_tick": int(row["target_tick"]),
+            "action": load_json(row["action_json"], {}),
+            "reasoning": row["reasoning"] or "",
+            "status": row["status"],
+            "result": load_json(row["result_json"], None),
+            "source_action_id": (
+                int(row["source_action_id"])
+                if row["source_action_id"] is not None else None),
+            "created_at": row["created_at"],
+            "executed_at": row["executed_at"],
+        } for row in rows]
+        return {
+            "agent": {"id": int(agent["id"]), "name": agent["name"]},
+            "items": items,
+            "next_before_id": int(rows[-1]["id"]) if has_more and rows else None,
+        }
+
+    def action_catalog(self, agent_id: int) -> list[dict]:
+        agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (int(agent_id),))
+        if not agent or not agent["alive"] or agent["kind"] != "citizen":
+            return []
+        ctx = self.ctx.build(agent, self.store.tick + 1)
+        prices = ctx.get("prices", [])
+        jobs = ctx.get("jobs", [])
+        listed = ctx.get("listed_firms", [])
+        banks = [bank for bank in ctx.get("banks", []) if bank.get("status") == "open"]
+        current_bank = ctx.get("state", {}).get("bank_id")
+        destinations = [bank for bank in banks if bank.get("id") != current_bank]
+        accounts = [dict(row) for row in self.store.query(
+            "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,COALESCE(a.name,f.name,ac.label) AS name "
+            "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
+            "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
+            "WHERE ac.id<>? AND (ac.owner_type<>'agent' OR a.alive=1) ORDER BY ac.id LIMIT 250",
+            (int(agent["checking_account_id"] or 0),))]
+        firm = ctx.get("my_firm")
+        applications = ctx.get("firm_applications", [])
+        lawyers = [dict(row) for row in self.store.query(
+            "SELECT id,name FROM agents WHERE alive=1 AND lower(COALESCE(occupation,''))='lawyer' ORDER BY id")]
+
+        def select(name: str, label: str, options: list[dict], *, required: bool = True) -> dict:
+            return {"name": name, "label": label, "kind": "select", "required": required,
+                    "options": options}
+
+        def number(name: str, label: str, default: int, minimum: int = 0) -> dict:
+            return {"name": name, "label": label, "kind": "number", "required": True,
+                    "default": default, "min": minimum}
+
+        def text(name: str, label: str, default: str = "", maximum: int = 120,
+                 required: bool = True) -> dict:
+            return {"name": name, "label": label, "kind": "text", "required": required,
+                    "default": default, "max_length": maximum}
+
+        items = [
+            {"type": "do_nothing", "label": "Do nothing", "fields": []},
+            {"type": "buy_goods", "label": "Buy goods", "fields": [
+                select("firm_id", "Seller", [{"value": p["firm_id"],
+                        "label": f"{p['product']} - {p['price']}c - {p['inventory']} available"}
+                        for p in prices]), number("qty", "Quantity", 1, 1)]},
+            {"type": "apply_job", "label": "Apply for a job", "fields": [
+                select("job_id", "Job", [{"value": j["job_id"],
+                        "label": f"{j['title']} - {j['wage']}c"} for j in jobs])]},
+            {"type": "apply_loan", "label": "Apply for a personal loan", "fields": [
+                select("bank_id", "Bank", [{"value": b["id"], "label": b["name"]} for b in banks]),
+                number("amount", "Amount (cents)", 100_000, 1),
+                text("purpose", "Purpose", "personal expenses", 120)]},
+            {"type": "move_deposits", "label": "Move bank deposits", "fields": [
+                select("to_bank_id", "Destination bank", [{"value": b["id"], "label": b["name"]}
+                       for b in destinations]),
+                number("amount", "Amount (cents, 0 = all)", 0, 0)]},
+            {"type": "place_order", "label": "Place a stock order", "fields": [
+                select("firm_id", "Company", [{"value": f["firm_id"], "label": f["name"]}
+                       for f in listed]),
+                select("side", "Side", [{"value": "buy", "label": "Buy"},
+                       {"value": "sell", "label": "Sell"}]),
+                number("qty", "Shares", 1, 1), number("limit_price", "Limit price (cents, 0 = market)", 0, 0)]},
+            {"type": "cancel_orders", "label": "Cancel my open stock orders", "fields": []},
+            {"type": "transfer", "label": "Transfer money", "fields": [
+                select("to_account", "Recipient", [{"value": a["id"],
+                        "label": f"{a.get('name') or a.get('label') or a['owner_type']} - account {a['id']}"}
+                        for a in accounts]), number("amount", "Amount (cents)", 1_000, 1),
+                text("memo", "Memo", "", 120, required=False)]},
+            {"type": "say_public", "label": "Make a public statement", "fields": [
+                text("text", "Statement", "", 500)]},
+            {"type": "buy_insurance", "label": "Buy health insurance", "fields": []},
+            {"type": "cancel_insurance", "label": "Cancel health insurance", "fields": []},
+            {"type": "found_company", "label": "Found a company", "fields": [
+                text("name", "Company name", "", 60), text("sector", "Sector", "services", 40),
+                select("lawyer_agent_id", "Lawyer", [{"value": l["id"], "label": l["name"]}
+                       for l in lawyers]), number("opening_capital", "Opening capital (cents)", 0, 0)]},
+        ]
+        if firm:
+            firm_id = int(firm["firm_id"])
+            items.extend([
+                {"type": "set_price", "label": "Set my company price", "fields": [
+                    {"name": "firm_id", "kind": "hidden", "default": firm_id},
+                    number("price", "Unit price (cents)", int(firm["price"]), 1)]},
+                {"type": "post_job", "label": "Post a company job", "fields": [
+                    {"name": "firm_id", "kind": "hidden", "default": firm_id},
+                    text("title", "Job title", "worker", 60), number("wage", "Wage (cents)", 200_00, 0)]},
+                {"type": "hire", "label": "Hire an applicant", "fields": [
+                    select("application_id", "Applicant", [{"value": a["application_id"],
+                           "label": f"Agent {a['agent_id']} - {a['occupation'] or 'candidate'}"}
+                           for a in applications])]},
+                {"type": "fire", "label": "Fire an employee", "fields": [
+                    select("employment_id", "Employee", [{"value": e["employment_id"],
+                           "label": f"Agent {e['agent_id']} - {e['occupation'] or 'employee'}"}
+                           for e in firm.get("employee_roster", [])])]},
+                {"type": "pitch_vc", "label": "Pitch my company to VC", "fields": [
+                    {"name": "firm_id", "kind": "hidden", "default": firm_id},
+                    number("ask", "Funding request (cents)", 500_00, 1),
+                    text("summary", "Pitch", "growth capital", 300)]},
+                {"type": "apply_loan", "label": "Apply for a company loan", "variant": "firm", "fields": [
+                    {"name": "as_firm", "kind": "hidden", "default": True},
+                    {"name": "firm_id", "kind": "hidden", "default": firm_id},
+                    select("bank_id", "Bank", [{"value": b["id"], "label": b["name"]} for b in banks]),
+                    number("amount", "Amount (cents)", 300_00, 1),
+                    text("purpose", "Purpose", "working capital", 120)]},
+            ])
+        for item in items:
+            item.setdefault("variant", "default")
+            empty_required_select = any(
+                field.get("kind") == "select" and field.get("required", True)
+                and not field.get("options") for field in item.get("fields", []))
+            item["enabled"] = not empty_required_select
+            if empty_required_select:
+                item["disabled_reason"] = "No valid options are currently available"
+        return items
+
+    def _normalize_action(self, agent_id: int, action: Any) -> dict:
+        if not isinstance(action, dict):
+            raise ParticipantError(400, "action must be a JSON object")
+        action_type = str(action.get("type", ""))
+        if action_type not in PARTICIPANT_TYPES:
+            raise ParticipantError(400, f"action type {action_type or '<missing>'} is not available")
+        variant = str(action.get("variant", "default"))
+        descriptors = [item for item in self.action_catalog(agent_id)
+                       if item["type"] == action_type and item.get("variant", "default") == variant]
+        if not descriptors:
+            raise ParticipantError(400, "action is not available to the controlled citizen")
+        descriptor = descriptors[0]
+        if not descriptor.get("enabled", True):
+            raise ParticipantError(409, descriptor.get("disabled_reason", "action is currently unavailable"))
+        normalized: dict[str, Any] = {"type": action_type}
+        allowed = {"type", "variant"}
+        for field in descriptor.get("fields", []):
+            name = field["name"]
+            allowed.add(name)
+            kind = field.get("kind")
+            # Hidden fields are server-owned capability data. A client may echo
+            # them, but it cannot redirect an action to another firm or role.
+            value = field.get("default") if kind == "hidden" else action.get(
+                name, field.get("default"))
+            if value is None or value == "":
+                if field.get("required", True):
+                    raise ParticipantError(400, f"{name} is required")
+                continue
+            if kind in {"number", "hidden"} and isinstance(field.get("default"), bool):
+                value = bool(value)
+            elif kind == "number":
+                if isinstance(value, bool):
+                    raise ParticipantError(400, f"{name} must be an integer")
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    raise ParticipantError(400, f"{name} must be an integer") from None
+                if value < int(field.get("min", value)):
+                    raise ParticipantError(400, f"{name} must be at least {field['min']}")
+            elif kind == "select":
+                values = [option["value"] for option in field.get("options", [])]
+                if value not in values:
+                    raise ParticipantError(409, f"{name} is stale or unavailable")
+            elif kind == "text":
+                value = str(value).strip()
+                if field.get("required", True) and not value:
+                    raise ParticipantError(400, f"{name} is required")
+                value = value[:int(field.get("max_length", 500))]
+            normalized[name] = value
+        extras = set(action).difference(allowed)
+        if extras:
+            raise ParticipantError(400, f"unexpected action fields: {sorted(extras)}")
+        return normalized
+
+    def decision_for_tick(self, tick: int) -> Optional[dict]:
+        row = self._replay_action(tick)
+        if row is None:
+            self.release_if_unavailable(tick, commit=False)
+            agent_id = self.active_agent_id()
+            if agent_id is None:
+                return None
+            row = self.store.query_one(
+                "SELECT * FROM participant_actions WHERE agent_id=? AND target_tick=? "
+                "AND status='queued' ORDER BY id DESC LIMIT 1", (agent_id, tick))
+            if row is None:
+                self.store.log_event(
+                    tick, "participant_idle", {"agent_id": agent_id}, phase="MORNING",
+                    subject_type="agent", subject_id=agent_id, importance=0.8)
+                return {"agent_id": agent_id, "purpose": "participant_idle",
+                        "envelope": {"actions": [{"type": "do_nothing"}], "belief_updates": []},
+                        "reasoning": "Participant explicitly supplied no command.",
+                        "llm_call_id": None, "participant_action_id": None}
+        action = load_json(row["action_json"], {})
+        return {
+            "agent_id": int(row["agent_id"]), "purpose": "participant",
+            "envelope": {"actions": [action], "belief_updates": []},
+            "reasoning": str(row["reasoning"] or "Participant-selected action."),
+            "llm_call_id": None, "participant_action_id": int(row["id"]),
+        }
+
+    def _replay_action(self, tick: int):
+        source_path = self.config.get("replay_source_path")
+        if not source_path:
+            return None
+        path = Path(str(source_path))
+        if not path.exists():
+            return None
+        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='participant_actions'").fetchone()
+            if not exists:
+                return None
+            source = conn.execute(
+                "SELECT * FROM participant_actions WHERE target_tick=? "
+                "AND status IN ('executed','rejected') ORDER BY id LIMIT 1", (tick,)).fetchone()
+            if not source:
+                return None
+            self.store.execute(
+                "INSERT OR IGNORE INTO participant_actions(agent_id,target_tick,action_json,reasoning,"
+                "status,source_action_id,created_at) VALUES(?,?,?,?,'queued',?,?)",
+                (int(source["agent_id"]), tick, source["action_json"], source["reasoning"],
+                 int(source["id"]), _utcnow()),
+            )
+            self.store.set_meta(participant_influenced=1)
+            return self.store.query_one(
+                "SELECT * FROM participant_actions WHERE agent_id=? AND target_tick=?",
+                (int(source["agent_id"]), tick))
+        finally:
+            conn.close()
+
+    def complete(self, action_id: Optional[int], results: list[dict], tick: int) -> None:
+        if action_id is None:
+            return
+        row = self.store.query_one("SELECT * FROM participant_actions WHERE id=?", (int(action_id),))
+        if not row or row["status"] != "queued":
+            return
+        ok = bool(results) and all(bool(result.get("ok")) for result in results)
+        status = "executed" if ok else "rejected"
+        self.store.execute(
+            "UPDATE participant_actions SET status=?,result_json=?,executed_at=? WHERE id=?",
+            (status, json.dumps(results), _utcnow(), int(action_id)))
+        self.store.log_event(
+            tick, f"participant_action_{status}",
+            {"participant_action_id": int(action_id), "agent_id": int(row["agent_id"]),
+             "action": load_json(row["action_json"], {}), "results": results},
+            phase="EXECUTION", subject_type="agent", subject_id=int(row["agent_id"]),
+            importance=1.5 if ok else 1.0)

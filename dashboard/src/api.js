@@ -23,7 +23,7 @@ export async function api(path, options = {}) {
     }, "warn");
   }
   if (!response.ok) {
-    const message = body.error || `${response.status} ${response.statusText}`;
+    const message = body.error || body.detail || `${response.status} ${response.statusText}`;
     clientLog("dashboard.api.http_failed", {
       path, method, status_code: response.status, error: message,
     }, "error");
