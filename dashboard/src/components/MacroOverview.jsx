@@ -1,10 +1,11 @@
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { number, percent } from "../api";
+import { rollingSumSeries } from "../metrics";
 import { Panel } from "./ui";
 
 const DEFINITIONS = [
   ["gdp_proxy_30d", "30-day output", "Rolling final-goods sales; wages are reported separately", "#79e6bd"],
-  ["labor_income", "Labor income", "Gross wages paid during this day", "#fbbf24"],
+  ["labor_income", "30-day labor income", "Rolling gross wages paid during this day and the preceding 29 days", "#fbbf24"],
   ["cpi", "Price level", "Goods-price index", "#f7d783"],
   ["unemployment", "Unemployment", "Share seeking work", "#ff9788"],
   ["index", "Market index", "Listed-firm prices", "#93c5fd"],
@@ -26,7 +27,8 @@ export function MacroOverview({ metrics }) {
     <Panel title="Macro pulse" eyebrow="Engine-measured · never narrated" className="col-span-full">
       <div className="grid grid-cols-2 gap-px bg-mint-300/10 sm:grid-cols-3 xl:grid-cols-9">
         {DEFINITIONS.map(([key, label, help, color]) => {
-          const series = metrics[key] || [];
+          const sourceSeries = metrics[key] || [];
+          const series = key === "labor_income" ? rollingSumSeries(sourceSeries, 30) : sourceSeries;
           const latest = series.at(-1)?.value;
           const previous = series.at(-2)?.value;
           const delta = previous === undefined ? null : Number(latest) - Number(previous);
