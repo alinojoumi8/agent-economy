@@ -34,6 +34,11 @@ from run_config import load_config
 DATA_DIR = Path("data/runs")
 DEFAULT_CONFIG = "runs/production.yaml"
 logger = get_logger("cli")
+REPLAY_INPUT_TABLES = (
+    "dataset_manifests",
+    "calibration_targets",
+    "scenario_packs",
+)
 
 
 async def provider_preflight(config: dict, *, live: bool = False) -> dict:
@@ -53,6 +58,25 @@ def require_live_inference_approval(config: dict, *, approved: bool) -> None:
         raise SystemExit(
             "live provider run requires explicit --approve-live-inference authorization"
         )
+
+
+def _recorded_replay_inputs(source: Store) -> dict[str, list[dict]]:
+    """Capture external/input rows so replay never rereads mutable manifests."""
+    return {
+        table: [dict(row) for row in source.query(f'SELECT * FROM "{table}" ORDER BY id')]
+        for table in REPLAY_INPUT_TABLES
+    }
+
+
+def _restore_replay_inputs(store: Store, inputs: dict[str, list[dict]]) -> None:
+    """Replace freshly loaded reference data with the source run's pinned rows."""
+    store.execute("DELETE FROM calibration_targets")
+    store.execute("DELETE FROM dataset_manifests")
+    store.execute("DELETE FROM scenario_packs")
+    for table in REPLAY_INPUT_TABLES:
+        for row in inputs[table]:
+            store.insert(table, **row)
+    store.commit()
 
 
 def open_run(config: dict, resume: str | None, replay: str | None, *,
@@ -77,12 +101,15 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         if not source_db.exists():
             sys.exit(f"run database not found: {source_db}")
         source_store = Store(str(source_db))
-        source_meta = source_store.get_meta()
-        replay_cfg = json.loads(source_meta["config_json"])
-        replay_cfg.setdefault("engine_semantics_version", 1)
-        source_tick = int(source_meta["tick"])
-        source_seed = int(source_meta["seed"])
-        source_store.close()
+        try:
+            source_meta = source_store.get_meta()
+            replay_cfg = json.loads(source_meta["config_json"])
+            replay_cfg.setdefault("engine_semantics_version", 1)
+            source_tick = int(source_meta["tick"])
+            source_seed = int(source_meta["seed"])
+            replay_inputs = _recorded_replay_inputs(source_store)
+        finally:
+            source_store.close()
         replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         replay_cfg.update({
             "seed": source_seed,
@@ -93,8 +120,18 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         run_id = f"replay-{replay}-{new_run_id()}"
         store = Store(str(data_dir / f"{run_id}.db"))
         store.init_run_meta(run_id, source_seed, replay_cfg, parent_run_id=replay, fork_tick=0)
-        world = World(store, replay_cfg, replay=True)
-        world.initialize()
+        # Restore source-owned external inputs before genesis.  A replay must
+        # never depend on the path (or current contents) of the mutable
+        # dataset manifest recorded in the source configuration.
+        _restore_replay_inputs(store, replay_inputs)
+        missing_manifest = object()
+        recorded_manifest = replay_cfg.pop("dataset_manifest", missing_manifest)
+        try:
+            world = World(store, replay_cfg, replay=True)
+            world.initialize()
+        finally:
+            if recorded_manifest is not missing_manifest:
+                replay_cfg["dataset_manifest"] = recorded_manifest
         return store, world, run_id
     config = dict(config)
     # Unversioned callers retain the historical v2 contract.  The checked-in

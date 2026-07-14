@@ -1,8 +1,8 @@
 """Owned persona boundary for deterministic sampling and governed enrichment.
 
-The vendored module owns only the reproducible census-style base draw.  This
-module is the stable application-facing API and constrains the fields an LLM may
-enrich for a newly arrived citizen.
+The attributed base module owns only the reproducible synthetic heuristic draw.
+This module is the stable application-facing API and constrains the fields an
+LLM may enrich for a newly arrived citizen.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import random
 from dataclasses import replace
 from typing import Any, Iterable, Mapping
 
-from .vendor.persona_gen import Persona, sample_persona, sample_population
+from .base import Persona, sample_persona, sample_population
 
 
 PERSONA_SCHEMA = {
@@ -48,7 +48,7 @@ def configured_outlet_ids(outlets: Iterable[Mapping[str, Any]]) -> list[int]:
 
 def sample_arrival_persona(
         prng: random.Random, outlet_ids: Iterable[int]) -> Persona:
-    """Sample a base persona and map the vendor's ordinal diet to real IDs."""
+    """Sample a base persona and map its ordinal media diet to configured IDs."""
     allowed = [int(value) for value in outlet_ids]
     if not allowed:
         allowed = [1, 2]

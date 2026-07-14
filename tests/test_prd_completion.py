@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+import run as run_module
 from agents.memory import Memory
 from engine.ledger import ReconciliationError
 from engine.store import Store, load_json
@@ -397,6 +399,9 @@ def test_legacy_replay_flag_leaves_migration_credit_guards_disabled(tmp_path):
         actor = store.query_one(
             "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
             "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+            "AND e.status='active') "
             "AND ac.bank_id IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM loan_applications p WHERE p.borrower_type='agent' "
             "AND p.borrower_id=a.id) ORDER BY a.id LIMIT 1")
@@ -437,6 +442,9 @@ def test_migration_rejects_and_rechecks_agent_credit_exposure(tmp_path):
         actor = store.query_one(
             "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
             "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+            "AND e.status='active') "
             "AND ac.bank_id IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.borrower_type='agent' "
             "AND l.borrower_id=a.id AND l.status='active') "
@@ -444,16 +452,25 @@ def test_migration_rejects_and_rechecks_agent_credit_exposure(tmp_path):
             "AND p.borrower_id=a.id AND p.status='pending') ORDER BY a.id LIMIT 1")
         actor_id = int(actor["id"])
         origin_region_id = int(actor["region_id"])
-        destination_region_id = int(store.scalar(
-            "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (origin_region_id,)))
+        destination_firm = store.query_one(
+            "SELECT id,region_id FROM firms WHERE region_id<>? "
+            "AND status NOT IN ('bankrupt','acquired') ORDER BY id LIMIT 1",
+            (origin_region_id,))
+        destination_region_id = int(destination_firm["region_id"])
+        store.insert(
+            "jobs", tick=0, firm_id=int(destination_firm["id"]),
+            title="qualified migration role", wage_cents=100_000_000, status="open")
+        cadence = json.loads(actor["cadence_json"] or "{}")
+        career_every = max(1, int(cadence.get("career", 30)))
+        career_tick = actor_id % career_every
         bank_id = int(store.scalar(
             "SELECT bank_id FROM accounts WHERE id=?", (int(actor["checking_account_id"]),)))
 
         pending_id = store.insert(
-            "loan_applications", tick=1, bank_id=bank_id, borrower_type="agent",
+            "loan_applications", tick=career_tick, bank_id=bank_id, borrower_type="agent",
             borrower_id=actor_id, amount_cents=100, purpose="pending", status="pending")
         rejected = world.economy.regions.request_migration(
-            1, actor_id, destination_region_id, "pending credit")
+            career_tick, actor_id, destination_region_id, "pending credit")
         assert not rejected["ok"] and "pending loan application" in rejected["reason"]
         store.update("loan_applications", pending_id, status="denied", decided_tick=1)
 
@@ -463,33 +480,34 @@ def test_migration_rejects_and_rechecks_agent_credit_exposure(tmp_path):
             origin_tick=1, payment_cents=100, payment_interval_ticks=30,
             next_due_tick=31, missed_payments=0, collateral_json="{}", status="active")
         rejected = world.economy.regions.request_migration(
-            1, actor_id, destination_region_id, "active debt")
+            career_tick, actor_id, destination_region_id, "active debt")
         assert not rejected["ok"] and "active loan debt" in rejected["reason"]
         store.update("loans", loan_id, status="paid", outstanding_cents=0)
 
         requested = world.economy.regions.request_migration(
-            1, actor_id, destination_region_id, "clear at request time")
+            career_tick, actor_id, destination_region_id, "clear at request time")
         assert requested["ok"]
-        assert not world.runtime.executor.execute_action(1, actor_id, {
+        assert not world.runtime.executor.execute_action(career_tick, actor_id, {
             "type": "apply_loan", "bank_id": bank_id, "amount": 100,
             "purpose": "while migrating",
         })["ok"]
 
         raced_application_id = store.insert(
-            "loan_applications", tick=1, bank_id=bank_id, borrower_type="agent",
+            "loan_applications", tick=career_tick, bank_id=bank_id, borrower_type="agent",
             borrower_id=actor_id, amount_cents=100, purpose="simulated race", status="pending")
         officer_id = int(store.scalar(
             "SELECT id FROM agents WHERE role='credit_officer' AND alive=1 ORDER BY id LIMIT 1"))
-        assert not world.runtime.executor.execute_action(1, officer_id, {
+        assert not world.runtime.executor.execute_action(career_tick, officer_id, {
             "type": "approve_loan", "application_id": raced_application_id,
             "rate_bps": 500, "term_ticks": 30,
         })["ok"]
 
-        world.economy.regions.run_nightly(1)
+        world.economy.regions.run_nightly(career_tick + 1)
         migration = store.query_one(
             "SELECT status,completed_tick FROM migrations WHERE id=?",
             (requested["migration_id"],))
-        assert migration["status"] == "rejected" and int(migration["completed_tick"]) == 1
+        assert migration["status"] == "rejected"
+        assert int(migration["completed_tick"]) == career_tick + 1
         assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == origin_region_id
         assert store.scalar(
             "SELECT COUNT(*) FROM events WHERE kind='migration_rejected_credit_exposure' "
@@ -676,6 +694,95 @@ def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
     changed = verify_replay(source_store.path, replay_store.path)
     assert not changed["exact"]
     assert "accounts" in changed["differences"]
+
+
+@pytest.mark.parametrize("manifest_state", ["missing", "corrupt"])
+def test_exact_replay_uses_recorded_inputs_without_current_manifest(
+        tmp_path, manifest_state):
+    snapshot = tmp_path / "offline-targets.json"
+    snapshot_bytes = json.dumps({
+        "vintage_date": "2026-01-01",
+        "targets": [{
+            "key": "offline.target",
+            "value": 7,
+            "unit": "index",
+            "dimensions": {"scope": "test"},
+        }],
+    }, sort_keys=True).encode("utf-8")
+    snapshot.write_bytes(snapshot_bytes)
+    manifest = tmp_path / "offline-manifest.yaml"
+    manifest.write_text(json.dumps({
+        "manifest_version": 1,
+        "datasets": [{
+            "key": "offline-replay-v1",
+            "source_url": "https://example.invalid/offline-replay-v1",
+            "release_date": "2026-01-01",
+            "vintage_date": "2026-01-01",
+            "retrieval_time": "2026-01-02T00:00:00Z",
+            "checksum_sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+            "transform_version": "test-v1",
+            "usage_terms": "test fixture",
+            "snapshot_path": snapshot.name,
+        }],
+    }, sort_keys=True), encoding="utf-8")
+
+    source_store, source_world, source_id = open_run(
+        _config(tmp_path, dataset_manifest=str(manifest)),
+        None, None, data_dir=tmp_path)
+    replay_store = None
+    try:
+        assert source_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
+        assert source_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
+        asyncio.run(source_world.run(max_ticks=2))
+
+        if manifest_state == "missing":
+            manifest.unlink()
+        else:
+            manifest.write_text("manifest_version: [", encoding="utf-8")
+
+        replay_store, replay_world, _ = open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(replay_headless(replay_world, 2))
+        proof = verify_replay(source_store.path, replay_store.path)
+
+        assert proof["exact"], proof["differences"]
+        assert proof["differences"] == []
+        assert replay_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
+        assert replay_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
+    finally:
+        if replay_store is not None:
+            replay_store.close()
+        source_store.close()
+
+
+def test_open_run_closes_source_store_when_replay_input_capture_fails(
+        tmp_path, monkeypatch):
+    source_store, _, source_id = open_run(
+        _config(tmp_path), None, None, data_dir=tmp_path)
+    source_store.close()
+    opened = []
+
+    class TrackingStore(Store):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.was_closed = False
+            opened.append(self)
+
+        def close(self):
+            self.was_closed = True
+            super().close()
+
+    def fail_capture(_source):
+        raise RuntimeError("capture failed")
+
+    monkeypatch.setattr(run_module, "Store", TrackingStore)
+    monkeypatch.setattr(run_module, "_recorded_replay_inputs", fail_capture)
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        run_module.open_run({}, None, source_id, data_dir=tmp_path)
+
+    assert len(opened) == 1
+    assert opened[0].was_closed
 
 
 def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):

@@ -21,8 +21,10 @@ obligations, deadlines, market clearing, voting, policy effects, remedies, and
 replay. Models can draft, negotiate, argue, plan, and submit a structured action
 envelope. The envelope contains an actor, action type, validated payload,
 evidence-event references, optional model-call reference, and a short public
-rationale. Free text cannot mutate state, and private chain-of-thought is neither
-requested nor stored.
+rationale. Free text cannot mutate state. Private chain-of-thought is not part
+of the simulation contract: provider reasoning envelopes are recursively
+stripped before persistence or exposure, while bounded public rationales remain
+auditable.
 
 ```text
 model or deterministic policy
@@ -177,7 +179,16 @@ recorded requests/responses, and expected deterministic state needed to rebuild
 and replay the ten-tick live source without network access. The database itself
 records `engine_semantics_version: 5`; an earlier closure plan incorrectly
 called it semantics 6. CI preserves the stored semantics rather than rewriting
-historical evidence.
+historical evidence. Fixture format v2 records the source revision honestly as
+`unknown-not-recorded`, strips raw provider envelopes and private-reasoning
+fields, retains only public text plus cached-input telemetry, and replaces local
+repository paths with `repo://`. Reconstruction restores the recorded
+`dataset_manifests`, `calibration_targets`, and `scenario_packs` before replay,
+so current manifest edits cannot rewrite historical inputs. The fixture artifact
+SHA-256 is
+`af57eed59e47e9057d7645a65e1bb6f2b579a6a63a377fd6301f33af3955e2d7`; its
+normalized replay hash is
+`2efcabedba51e4bff3ccfd36393db20d13b41cd5d3e9a3772df42015db4f9170`.
 
 Required invariants include balanced ledgers per currency, conserved shares,
 no enforcement before execution, no remedy outside a validated decision, no
@@ -223,7 +234,7 @@ Do not scale directly from this profile to 1,000 live agents. First review JSON
 validity and repairs, accepted/rejected action proposals, per-provider latency
 and token use, cost, per-currency reconciliation, checkpoints, and exact replay.
 
-### Latest bounded acceptance evidence
+### Historical bounded acceptance evidence
 
 The three-tick acceptance run `9e43ee6918` at revision `6790919` completed in
 about 37 seconds. All 14 provider completions produced valid structured output
@@ -262,10 +273,11 @@ settlement, published two articles, recorded 72 information exposures, rejected
 no actions, and reconciled every currency. Live acceptance additionally requires
 private-reasoning redaction, bounded spend, checkpoints, and exact offline replay.
 
-### Latest seeded behavioral evidence
+### Historical seeded behavioral evidence (semantics 5)
 
-The live ten-tick run `fd0adc5dc1` at revision `9ac38a6` reached its configured
-boundary under its stored **semantics 5** contract with 48 valid completions: 40
+The live ten-tick run `fd0adc5dc1` reached its configured boundary under its
+stored **semantics 5** contract with 48 valid completions; its original source
+revision was not recorded and is not inferred. The run contains 40
 MiniMax M3 calls and eight local Ollama calls. MiniMax cost `$0.02361318` against
 the `$0.50` cap; Ollama recorded zero provider cost. There were no provider
 failures, invalid contracts, or rejected actions. Live agents denied the
@@ -303,7 +315,7 @@ requires every configured role to complete, no provider or contract failures,
 valid actor-matched provenance, private-reasoning redaction, checkpoints 1-30,
 balanced ledgers in every currency, and an exact offline replay.
 
-### Latest institutional live evidence
+### Historical institutional live evidence
 
 The 30-tick live run `e09e845b87` executed revision `d0d5797` through the served
 dashboard and stopped at its configured boundary. It recorded 737 valid model
@@ -418,8 +430,10 @@ python run.py --config runs/v2-spec-closure-live.yaml --ticks 5 --approve-live-i
 
 ### Semantics-7 closure evidence
 
-The focused named gate passed 86 tests in 88.17 seconds; the complete Python
-suite passed 268 tests in 157.42 seconds. Python compilation and pinned-dataset
+The focused named gate passed 86 tests before the final hardening pass; a
+93-test integrated adversarial gate passed afterward, and the current complete
+Python suite passed 280 tests in 165.73 seconds. Python
+compilation and pinned-dataset
 verification were green: FRED and BLS each supplied three required targets, and
 the four optional sources remained explicitly unpinned. Dashboard verification
 installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
@@ -452,16 +466,24 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 
 | Gate | Status | Evidence |
 |---|---|---|
-| Focused + full Python | **Passed** | 86 focused / 268 full; compile and datasets green |
+| Focused + full Python | **Passed** | 86 initial focused / 93 final adversarial / 280 current full; compile and datasets green |
 | Dashboard + hygiene | **Passed** | 16 tests, audit 0 high, 599-module build, fresh static bundle, clean diff |
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
-| GitHub Actions / PR #15 | **Passed** | Run `29354608739`: dashboard plus Ubuntu/Windows Python 3.11/3.12 green; PR open/draft |
+| GitHub Actions / PR #15 | **Required at merge** | Exact pushed head must pass dashboard plus Ubuntu/Windows Python 3.11/3.12 |
+
+The closure audit also passed the universal hash-locked Python install and
+advisory scan, generated dashboard notice freshness/full-text review (including
+Vite/Rolldown helpers emitted into the bundle), pinned FRED/BLS terms and
+checksum verification, pinned persona prior-art attribution with no copied
+upstream code, and both current-tree and full-history secret scans. These checks
+authorize this code merge; repeat them against any future release candidate.
 
 R21 real-US microdata, R22 hosted multi-user operation, the 30-day rumor gate,
 Oracle latency/calibration campaign, and 365-day/$200 acceptance run remain
-separate. Do not merge, tag, publish, or mark PR #15 ready as part of this gate.
+separate. The owner has authorized merging this closure after its exact-head CI
+matrix passes; tagging and publication are not authorized by that merge.
 
 ## Release checklist
 

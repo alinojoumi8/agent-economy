@@ -43,7 +43,10 @@ class Economy:
             local_currency_action_surfaces=local_currency_action_surfaces,
             engine_semantics_version=int(config.get("engine_semantics_version", 2)))
         self.firms = Firms(store, self.ledger)
-        self.labor = Labor(store)
+        self.labor = Labor(
+            store,
+            engine_semantics_version=int(config.get("engine_semantics_version", 2)),
+        )
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
                                    health_cfg=config.get("health", {}),

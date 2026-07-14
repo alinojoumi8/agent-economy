@@ -180,6 +180,41 @@ def test_participant_catalog_exposes_drawdown_but_not_job_search(store):
     assert "apply_job" not in catalog
 
 
+def test_semantics7_domain_and_action_boundary_reject_retiree_job_applications(store):
+    economy = _economy(store)
+    bank_id = make_bank(economy)
+    retiree_id, _, _ = _retiree(economy, bank_id, retired=False)
+    owner_id = economy.store.insert(
+        "agents", name="Owner", kind="citizen", occupation="founder", age=40,
+        alive=1, retired=0)
+    firm_id = economy.firms.found_firm(0, owner_id, "Employer", "services")
+    job_id = economy.labor.post_job(0, firm_id, "worker", 10_000)
+
+    application_id = economy.labor.apply_job(1, retiree_id, job_id)
+    assert application_id is not None
+    offer_id = economy.labor.make_offer(
+        1, application_id, owner_id, wage_cents=11_000)
+    assert offer_id is not None
+
+    economy.lifecycle._retire(2, retiree_id)
+    assert economy.store.scalar(
+        "SELECT state FROM applications WHERE id=?", (application_id,)) == "withdrawn"
+    assert economy.store.scalar(
+        "SELECT status FROM job_offers WHERE id=?", (offer_id,)) == "rejected"
+    assert economy.labor.accept_offer(3, offer_id, retiree_id) is None
+    assert economy.labor.apply_job(1, retiree_id, job_id) is None
+    result = ActionExecutor(economy).execute_action(
+        3, retiree_id, {"type": "apply_job", "job_id": job_id})
+    assert result["ok"] is False
+    assert economy.store.scalar(
+        "SELECT COUNT(*) FROM applications WHERE agent_id=? AND state<>'withdrawn'",
+        (retiree_id,)) == 0
+
+    # Historical semantics retain the pre-v7 direct domain behavior.
+    economy.labor.engine_semantics_version = 6
+    assert economy.labor.apply_job(4, retiree_id, job_id) is not None
+
+
 def test_semantics7_context_exposes_declared_savings_and_target_without_jobs(store):
     economy = _economy(store, retirement_liquidity_target_cents=125_000)
     bank_id = make_bank(economy)

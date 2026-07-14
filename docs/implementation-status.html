@@ -15,11 +15,11 @@
 </style>
 </head>
 <body>
-<header class="hero"><div class="wrap"><div class="kicker">Legal-Political Economy v2 · schema 11 · semantics 7</div><h1>Semantics-7 closure verified, including CI.</h1><p>The full local gate, free rehearsal, bounded MiniMax pilot, exact replays, and GitHub matrix passed. Live spend was $0.01121124 under the $1 cap; all 42 proposals were accepted and privacy/provenance checks found zero defects. Stored semantics 1–6 remain historical.</p><div class="meta"><span class="chip">Assessment 2026-07-14</span><span class="chip">codex/legal-political-economy-v2</span><span class="chip">PR #15 open/draft</span><span class="chip">No merge or publish</span></div></div></header>
+<header class="hero"><div class="wrap"><div class="kicker">Legal-Political Economy v2 · schema 11 · semantics 7</div><h1>Semantics-7 closure is locally verified.</h1><p>The 280-test local gate, free rehearsal, bounded MiniMax pilot, exact replays, dependency/license/provenance audits, and secret scans passed. Live spend was $0.01121124 under the $1 cap; all 42 proposals were accepted and privacy/provenance checks found zero defects. Stored semantics 1–6 remain historical.</p><div class="meta"><span class="chip">Assessment 2026-07-14</span><span class="chip">codex/legal-political-economy-v2</span><span class="chip">Merge after exact-head CI</span><span class="chip">No tag or publication</span></div></div></header>
 
 <main class="main wrap">
 <section class="verdict">
-  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>R18–R20 implemented; closure evidence complete.</h2><p>PRD-v1 P0/P1 and the participant, 1,000-agent, and regional extensions have code coverage. The focused/full suites, dashboard gate, deterministic rehearsal, live pilot, exact replays, and GitHub Actions matrix are green.</p></article>
+  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>R18–R20 implemented; closure evidence complete.</h2><p>PRD-v1 P0/P1 and the participant, 1,000-agent, and regional extensions have code coverage. The full suite, dashboard gate, deterministic rehearsal, live pilot, exact replays, and closure audits are green. The exact pushed head must still pass all five GitHub Actions jobs before merge.</p></article>
   <article class="card score"><div class="n">7</div><div class="label">Engine semantics</div><small>maintained profiles</small></article>
   <article class="card score"><div class="n">11</div><div class="label">Schema version</div><small>unchanged</small></article>
   <article class="card score"><div class="n">$0.0112</div><div class="label">Live pilot spend</div><small>under $1 ceiling</small></article>
@@ -32,10 +32,10 @@
 <tr data-priority="agents"><td class="req"><strong>Retirement liquidity</strong></td><td>Agents</td><td><span class="status complete">Implemented</span></td><td>Retiree-only own-account savings draw; config <code>retirement_liquidity_target_cents</code> becomes public <code>retirement_drawdown_target_cents</code> beside <code>savings_balance</code>.</td><td class="evidence"><a href="../tests/test_retirement_semantics7.py">tests</a>; five live withdrawals</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="agents"><td class="req"><strong>Arrival personas</strong></td><td>Agents</td><td><span class="status complete">Implemented</span></td><td>Night-close deterministic spawn, 70/30 accounts, visible inflow, one governed persona call, bounded fields, resume/fallback/fail-closed replay.</td><td class="evidence"><a href="../agents/personas/library.py">owned wrapper</a>; exact live split, one enrichment, zero provenance defects</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="economy"><td class="req"><strong>R20 autonomy</strong></td><td>Economy</td><td><span class="status complete">Implemented</span></td><td>Bounded FX/wallet facts, at most five executable trades, importer-currency invoice, and career/wage/credit-gated migration.</td><td class="evidence"><a href="../engine/regions.py">region engine</a>; shipment delivered tick 3, migration completed tick 2</td><td><span class="status complete">Passed</span></td></tr>
-<tr data-priority="replay"><td class="req"><strong>Portable replay</strong></td><td>Replay/provider</td><td><span class="status complete">Implemented</span></td><td>Logical LLM-reference canonicalization; wrong/dangling references fail; sanitized ten-tick source reconstructs offline without network.</td><td class="evidence"><a href="../tests/test_recorded_replay_golden.py">fixture test</a>; rehearsal/live exact</td><td><span class="status complete">Passed</span></td></tr>
+<tr data-priority="replay"><td class="req"><strong>Portable replay</strong></td><td>Replay/provider</td><td><span class="status complete">Implemented</span></td><td>Logical LLM-reference canonicalization; wrong/dangling references fail; v2 strips raw envelopes, uses <code>repo://</code>, and restores recorded external-input rows.</td><td class="evidence"><a href="../tests/test_recorded_replay_golden.py">fixture test</a>; artifact <code>af57eed5…952d7</code>; normalized hash <code>2efcabed…f9170</code></td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="replay"><td class="req"><strong>Prompt caching</strong></td><td>Replay/provider</td><td><span class="status complete">Implemented</span></td><td><code>off</code>, <code>provider_automatic</code>, <code>openai_key</code>, <code>anthropic_ephemeral</code>; compatibility and cached-token billing tested.</td><td class="evidence"><a href="../llm/readiness.py">readiness</a>; 10,974/20,782 cached input, 21/21 MiniMax cache markers</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="agents"><td class="req"><strong>Additive memory ranking</strong></td><td>Agents</td><td><span class="status complete">Implemented</span></td><td><code>0.5·recency + 0.3·importance + 0.2·relevance</code> is authoritative and distinguished from multiplication.</td><td class="evidence"><a href="../agents/memory.py">memory</a>; focused/full regression gates</td><td><span class="status complete">Passed</span></td></tr>
-<tr data-priority="replay"><td class="req"><strong>Fresh GitHub Actions matrix</strong></td><td>Release</td><td><span class="status complete">Complete</span></td><td>Run <code>29354608739</code> exercised every Ubuntu/Windows Python 3.11/3.12 job and the dashboard build; PR #15 remains open/draft.</td><td class="evidence">Five of five jobs passed without weakening the suite.</td><td><span class="status complete">Passed</span></td></tr>
+<tr data-priority="replay"><td class="req"><strong>Fresh GitHub Actions matrix</strong></td><td>Release</td><td><span class="status substantial">Merge gate</span></td><td>The exact pushed closure head must exercise every Ubuntu/Windows Python 3.11/3.12 job and the dashboard build.</td><td class="evidence">Require five of five successful jobs before ready/merge.</td><td><span class="status substantial">Required</span></td></tr>
 </tbody></table></div>
 
 <h2 class="section">R18–R22 disposition</h2>
@@ -49,31 +49,31 @@
 <h2 class="section">Historical replay evidence</h2>
 <section class="gap-grid">
   <article class="card gap"><b><code>fd0adc5dc1</code></b><p>Ten ticks, 48 valid calls, $0.02361318 MiniMax spend, zero provider/rejection failures, checkpoints and balanced currencies. Stored semantics 5—not semantics 6.</p></article>
-  <article class="card gap"><b>Exact historical replay</b><p><code>replay-fd0adc5dc1-fa13b78c6d</code>: tick 10, <code>differences: []</code>, hash <code>3586581…6173</code>. The fixture preserves its source contract.</p></article>
+  <article class="card gap"><b>Exact historical replay</b><p><code>replay-fd0adc5dc1-fa13b78c6d</code>: tick 10, <code>differences: []</code>, original hash <code>3586581…6173</code>. Source revision is <code>unknown-not-recorded</code>; normalized fixture replay is <code>2efcabed…f9170</code>.</p></article>
   <article class="card gap"><b><code>e09e845b87</code></b><p>Separate 30-tick institutional evidence: 737 valid calls, $0.29012772 spend, no provenance/redaction failure, exact replay.</p></article>
   <article class="card gap"><b><code>b4832032ba</code> semantics 7</b><p>Five ticks, 57 calls, all 42 proposals accepted, $0.01121124 spend, six checkpoints, zero failures/defects, balanced currencies, exact replay.</p></article>
 </section>
 
 <h2 class="section">Verification snapshot</h2>
 <section class="verification">
-  <div class="card"><b>Focused Python</b><span>86 tests passed in 88.17 seconds across semantics-7 mechanics, compatibility, pause/resume, and replay portability.</span></div>
-  <div class="card"><b>Full Python / data</b><span>268 tests passed in 157.42 seconds; compileall green; FRED/BLS required targets verified and four optional sources remained explicitly unpinned.</span></div>
-  <div class="card"><b>Dashboard + hygiene</b><span>80 packages/0 vulnerabilities, 16 tests, audit 0 high, 599-module build, fresh static bundle, clean diff.</span></div>
+  <div class="card"><b>Focused Python</b><span>86 initial targeted tests passed, followed by a 93-test integrated adversarial gate after final hardening.</span></div>
+  <div class="card"><b>Full Python / data</b><span>280 tests passed in 165.73 seconds; compileall green; FRED/BLS required targets verified and four optional sources remained explicitly unpinned.</span></div>
+  <div class="card"><b>Dashboard + supply chain</b><span>16 tests, audit 0, notice freshness, full license text including emitted Vite/Rolldown helpers, and two byte-identical 599-module builds.</span></div>
   <div class="card"><b>Free rehearsal</b><span><code>5a0d40d773</code> / <code>replay-5a0d40d773-b45777cf29</code>: every target, six checkpoints, balanced currencies, exact hash <code>fa190b0d…e8cffc34</code>.</span></div>
   <div class="card"><b>Bounded live pilot</b><span><code>b4832032ba</code> / <code>replay-b4832032ba-8d99c25c56</code>: $0.01121124, 42/42 accepted, zero failures/defects, exact hash <code>ec2b2409…c399ae2</code>.</span></div>
-  <div class="card"><b>GitHub Actions / PR</b><span>Run <code>29354608739</code>: dashboard and all Ubuntu/Windows Python 3.11/3.12 jobs passed. PR #15 is open/draft.</span></div>
+  <div class="card"><b>Closure audit</b><span>Hash-locked Python dependencies, advisory audit, dataset terms/provenance, persona attribution, and current/full-history secret scans passed. Repeat before publication.</span></div>
 </section>
 
 <h2 class="section">Separate release work</h2>
 <section class="roadmap">
-  <article class="card"><div><h3>Keep PR #15 draft for the release audit</h3><p>The semantics-7 gate is complete; merging, tagging, publishing, or marking ready still requires separate authorization.</p></div></article>
+  <article class="card"><div><h3>Merge only after exact-head CI</h3><p>The owner authorized this closure merge once dashboard and all four Python matrix jobs pass on the pushed head. Tagging and publication remain separate.</p></div></article>
   <article class="card"><div><h3>Run the 30-day rumor gate separately</h3><p>The five-tick closure pilot does not establish real-provider rumor emergence.</p></div></article>
   <article class="card"><div><h3>Measure Oracle latency and calibration</h3><p>Publish representative p50/p90 latency and a meaningful corpus of resolved predictions.</p></div></article>
   <article class="card"><div><h3>Authorize the 365-day/$200 campaign separately</h3><p>Do not infer release acceptance from the bounded closure pilot.</p></div></article>
 </section>
 </main>
 
-<footer class="wrap">Markdown is the canonical source. Generated databases corroborate findings but do not outrank committed code and tests. Do not merge, tag, publish, or mark PR #15 ready in this work package.</footer>
+<footer class="wrap">Markdown is the canonical source. Generated databases corroborate findings but do not outrank committed code and tests. Merge only from a green exact head; do not tag or publish in this closure.</footer>
 <script>
 const buttons=[...document.querySelectorAll('[data-filter]')];const rows=[...document.querySelectorAll('#requirements tbody tr')];buttons.forEach(button=>button.addEventListener('click',()=>{buttons.forEach(item=>item.classList.toggle('active',item===button));const filter=button.dataset.filter;rows.forEach(row=>row.classList.toggle('hide',filter!=='all'&&(filter==='open'?row.dataset.open!=='true':row.dataset.priority!==filter)));}));
 </script>

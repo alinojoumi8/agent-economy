@@ -12,7 +12,7 @@ HANDBOOK_DOCS = (
     "architecture.md", "configuration.md", "api-reference.md",
     "operator-runbook.md", "troubleshooting.md", "development.md",
     "implementation-status.md", "live-provider-validation.md",
-    "live-run-f7c6238bf5.md",
+    "live-run-f7c6238bf5.md", "v2-guide.md", "implementation-status.html",
 )
 
 
@@ -23,6 +23,12 @@ def _local_links(document: Path):
         if not target or target.startswith(("#", "http://", "https://", "mailto:")):
             continue
         yield target
+    if document.suffix == ".html":
+        for target in re.findall(r'href=["\']([^"\']+)["\']', text):
+            target = target.strip()
+            if not target or target.startswith(("#", "http://", "https://", "mailto:")):
+                continue
+            yield target
 
 
 def test_maintained_documentation_has_no_broken_local_links():

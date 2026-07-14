@@ -28,4 +28,3 @@ llm:
     memory:                {provider: scripted, model: scripted}
     newsroom:              {provider: scripted, model: scripted}
     oracle:                {provider: scripted, model: scripted}
-

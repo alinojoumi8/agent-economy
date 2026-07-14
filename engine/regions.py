@@ -336,6 +336,7 @@ class RegionalEconomy:
         *,
         actor_id: int,
         career_day: bool,
+        ignore_pending_migration_id: int | None = None,
     ) -> list[dict[str, Any]]:
         if (not career_day or str(agent["kind"]) != "citizen"
                 or str(agent["health"] or "healthy") != "healthy"
@@ -344,8 +345,11 @@ class RegionalEconomy:
         if self.store.query_one(
                 "SELECT 1 FROM employments WHERE agent_id=? AND status='active'", (actor_id,)):
             return []
-        if self.store.query_one(
-                "SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (actor_id,)):
+        pending = self.store.query_one(
+            "SELECT id FROM migrations WHERE agent_id=? AND status='pending' "
+            "ORDER BY id LIMIT 1", (actor_id,))
+        if (pending is not None
+                and int(pending["id"]) != int(ignore_pending_migration_id or 0)):
             return []
         if self._agent_credit_exposure(actor_id):
             return []
@@ -404,6 +408,69 @@ class RegionalEconomy:
             key=lambda item: (-int(item["wage_gain_bps"]),
                               int(item["destination_region_id"])),
         )[:5]
+
+    @staticmethod
+    def _is_career_day(agent, tick: int) -> bool:
+        try:
+            cadence = json.loads(str(agent["cadence_json"] or "{}"))
+        except (TypeError, ValueError):
+            cadence = {}
+        try:
+            every = max(1, int(cadence.get("career", 30)))
+        except (TypeError, ValueError):
+            every = 30
+        return tick % every == int(agent["id"]) % every
+
+    def _qualified_migration_option(
+            self, tick: int, actor_id: int, destination_region_id: int, *,
+            ignore_pending_migration_id: int | None = None) -> tuple[dict[str, Any] | None, str]:
+        """Return the exact advertised Semantics-7 migration opportunity.
+
+        The action boundary and nightly settlement both call this method so a
+        model cannot bypass the bounded prompt facts and an agent that becomes
+        ineligible before settlement cannot move.
+        """
+        agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (actor_id,))
+        if not agent or not bool(agent["alive"]):
+            return None, "migration requires a living citizen"
+        if agent["region_id"] is None or int(agent["region_id"]) == destination_region_id:
+            return None, "valid distinct destination required"
+        if not self.store.query_one("SELECT 1 FROM regions WHERE id=?", (destination_region_id,)):
+            return None, "valid distinct destination required"
+        if str(agent["kind"]) != "citizen":
+            return None, "migration requires a citizen"
+        if str(agent["health"] or "healthy") != "healthy":
+            return None, "migration requires a healthy citizen"
+        if bool(agent["retired"]):
+            return None, "retired citizens cannot migrate for work"
+        if self.store.query_one(
+                "SELECT 1 FROM employments WHERE agent_id=? AND status='active'",
+                (actor_id,)):
+            return None, "migration requires an unemployed citizen"
+        pending = self.store.query_one(
+            "SELECT id FROM migrations WHERE agent_id=? AND status='pending' "
+            "ORDER BY id LIMIT 1", (actor_id,))
+        if (pending is not None
+                and int(pending["id"]) != int(ignore_pending_migration_id or 0)):
+            return None, "migration already pending"
+        credit_exposure = self._agent_credit_exposure(actor_id)
+        if credit_exposure:
+            return None, f"resolve {credit_exposure} before migration"
+        if not self._is_career_day(agent, tick):
+            return None, "migration is available only on career cadence"
+        options = self._migration_options(
+            agent,
+            actor_id=actor_id,
+            career_day=self._is_career_day(agent, tick),
+            ignore_pending_migration_id=ignore_pending_migration_id,
+        )
+        for option in options:
+            if int(option["destination_region_id"]) == int(destination_region_id):
+                return option, ""
+        return None, (
+            "migration requires career cadence, a healthy unemployed non-retired "
+            "citizen, no credit exposure, and a qualified wage-gain destination"
+        )
 
     def _trade_opportunities(
         self,
@@ -489,6 +556,75 @@ class RegionalEconomy:
                 break
         return opportunities
 
+    @staticmethod
+    def _matches_trade_opportunity(
+            data: dict[str, Any], expected: dict[str, Any]) -> bool:
+        """Require exact model-visible settlement terms for Semantics 7.
+
+        Gateway provenance belongs to the action envelope rather than the
+        economic offer, so those fields may accompany an otherwise exact
+        action. Every model-controlled settlement field must retain both the
+        value and JSON scalar type emitted by the deterministic opportunity.
+        """
+        provenance_fields = {
+            "evidence_event_ids", "model_call_id", "rationale_summary",
+        }
+        candidate = {
+            key: value for key, value in data.items()
+            if key not in provenance_fields
+        }
+        if set(candidate) != set(expected):
+            return False
+        return all(
+            type(candidate[key]) is type(expected[key])
+            and candidate[key] == expected[key]
+            for key in expected
+        )
+
+    def _advertised_trade_actions(
+            self, tick: int, actor_id: int, exporter_firm_id: int,
+            data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return the opportunity set actually shown to this action's author.
+
+        Earlier actions from the same decision can legitimately change a
+        firm's mutable pricing state before its shipment executes. LLM-backed
+        actions therefore bind to the persisted request context that produced
+        them. Direct domain callers have no call record, so they bind to the
+        currently executable context instead.
+        """
+        model_call_id = data.get("model_call_id")
+        if model_call_id is None:
+            return [
+                opportunity["action"] for opportunity in self._trade_opportunities(
+                    tick, actor_id=actor_id,
+                    exporter_firm_id=exporter_firm_id)
+            ]
+        if isinstance(model_call_id, bool) or not isinstance(model_call_id, int):
+            return []
+        call = self.store.query_one(
+            "SELECT tick,agent_id,request_json FROM llm_calls WHERE id=?",
+            (model_call_id,))
+        if (call is None or call["agent_id"] is None
+                or int(call["tick"]) != int(tick)
+                or int(call["agent_id"]) != int(actor_id)):
+            return []
+        try:
+            request = json.loads(str(call["request_json"] or "{}"))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return []
+        context = request.get("context") if isinstance(request, dict) else None
+        opportunities = (
+            context.get("trade_opportunities")
+            if isinstance(context, dict) else None)
+        if not isinstance(opportunities, list):
+            return []
+        return [
+            dict(opportunity["action"])
+            for opportunity in opportunities
+            if isinstance(opportunity, dict)
+            and isinstance(opportunity.get("action"), dict)
+        ]
+
     # ------------------------------------------------------------------ trade and migration
     def create_shipment(self, tick: int, actor_id: int, data: dict[str, Any]) -> dict[str, Any]:
         exporter_id = int(data.get("exporter_firm_id", 0))
@@ -497,6 +633,14 @@ class RegionalEconomy:
         importer = self.store.query_one("SELECT * FROM firms WHERE id=?", (importer_id,))
         if not exporter or not importer or not self.legal.controls(actor_id, "firm", exporter_id):
             return {"ok": False, "reason": "exporter authorization and two firms required"}
+        if self.engine_semantics_version >= 7:
+            actor_alive = self.store.scalar(
+                "SELECT alive FROM agents WHERE id=?", (actor_id,), default=0)
+            if not bool(actor_alive):
+                return {"ok": False, "reason": "a living authorized exporter is required"}
+            if (str(exporter["status"]) in {"bankrupt", "acquired"}
+                    or str(importer["status"]) in {"bankrupt", "acquired"}):
+                return {"ok": False, "reason": "shipment requires two active firms"}
         if exporter["region_id"] == importer["region_id"]:
             return {"ok": False, "reason": "regional trade requires distinct regions"}
         contract_id = data.get("contract_id")
@@ -514,6 +658,19 @@ class RegionalEconomy:
             return {"ok": False, "reason": "invoice must use the importer's currency"}
         if quantity <= 0 or invoice <= 0 or int(exporter["inventory"]) < quantity:
             return {"ok": False, "reason": "positive available goods and invoice required"}
+        if self.engine_semantics_version >= 7:
+            advertised_actions = self._advertised_trade_actions(
+                tick, actor_id, exporter_id, data)
+            if not any(
+                    self._matches_trade_opportunity(data, expected)
+                    for expected in advertised_actions):
+                return {
+                    "ok": False,
+                    "reason": (
+                        "shipment must exactly match an advertised engine-qualified "
+                        "trade opportunity"
+                    ),
+                }
         importer_wallet = self._wallet("firm", importer_id, currency, create=True)
         exporter_wallet = self._wallet("firm", exporter_id, currency, create=True)
         total = invoice + tariff + transport
@@ -570,6 +727,11 @@ class RegionalEconomy:
             return {"ok": False, "reason": "valid distinct destination required"}
         if self.store.query_one("SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (actor_id,)):
             return {"ok": False, "reason": "migration already pending"}
+        if self.engine_semantics_version >= 7:
+            _, ineligible_reason = self._qualified_migration_option(
+                tick, actor_id, destination_region_id)
+            if ineligible_reason:
+                return {"ok": False, "reason": ineligible_reason}
         if self.local_currency_action_surfaces or self.engine_semantics_version >= 7:
             credit_exposure = self._agent_credit_exposure(actor_id)
             if credit_exposure:
@@ -620,6 +782,23 @@ class RegionalEconomy:
                     }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                     importance=1.5)
                 continue
+            if self.engine_semantics_version >= 7:
+                _, ineligible_reason = self._qualified_migration_option(
+                    int(migration["requested_tick"]), agent_id,
+                    int(migration["destination_region_id"]),
+                    ignore_pending_migration_id=int(migration["id"]),
+                )
+                if ineligible_reason:
+                    self.store.update(
+                        "migrations", int(migration["id"]), status="rejected",
+                        completed_tick=tick)
+                    self.store.log_event(
+                        tick, "migration_rejected_ineligible", {
+                            "migration_id": int(migration["id"]), "agent_id": agent_id,
+                            "reason": ineligible_reason,
+                        }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
+                        importance=1.5)
+                    continue
             destination = int(migration["destination_region_id"])
             currency = self.currency_for_region(destination)
             wallet = self._wallet("agent", agent_id, currency, create=True)

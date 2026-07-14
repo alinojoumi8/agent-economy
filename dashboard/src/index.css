@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source not "../public";
+@source not "../scripts";
 
 @theme {
   --font-sans: "Aptos", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;

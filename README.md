@@ -121,7 +121,7 @@ git clone https://github.com/alinojoumi8/agent-economy.git
 Set-Location agent-economy
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 
 # Free, deterministic, no API key
 python run.py --config runs/base.yaml
@@ -246,6 +246,13 @@ CI also restores the sanitized portable fixture for live run `fd0adc5dc1` and
 replays its ten recorded ticks with networking disabled. The source database is
 stored as semantics 5—not semantics 6—so the fixture preserves that historical
 contract while canonicalizing physical LLM row IDs through logical call content.
+Fixture format v2 strips raw provider envelopes, retains only the public text
+and cached-token counter, converts repository paths to `repo://`, and restores
+the source's recorded dataset/calibration/scenario rows rather than substituting
+today's mutable manifests. Its artifact SHA-256 is
+`af57eed59e47e9057d7645a65e1bb6f2b579a6a63a377fd6301f33af3955e2d7`; the
+normalized reconstructed replay hash is
+`2efcabedba51e4bff3ccfd36393db20d13b41cd5d3e9a3772df42015db4f9170`.
 
 ## Project structure
 
@@ -295,10 +302,13 @@ every target effect through tick 5 at zero spend and replayed exactly with hash
 with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
 spend under the `$1` cap, zero provider/provenance/privacy defects, balanced
 currencies, and exact replay hash `ec2b2409…c399ae2`. The focused gate passed 86
-tests in 88.17 seconds and the full suite passed 268 in 157.42 seconds;
-dashboard tests/build/audit and local hygiene are green. GitHub Actions run
-`29354608739` passed the dashboard job and the complete Ubuntu/Windows Python
-3.11/3.12 matrix; PR #15 stays draft.
+tests before the final hardening pass, a 93-test integrated adversarial gate
+passed afterward, and the current complete suite passes 280 in 165.73 seconds.
+Dashboard tests, notice validation, audit, two byte-identical
+production builds, dependency audit, secret scan, and local hygiene are green.
+A fresh exact-head GitHub Actions dashboard plus Ubuntu/Windows Python 3.11/3.12
+matrix is required immediately before merge; tagging and publication remain
+separate release decisions.
 
 The 30-day rumor gate, Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by this pilot.
@@ -312,16 +322,25 @@ See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence
 matrix.
 
+## Licensing and attribution
+
+The project source is licensed under Apache-2.0. Dataset-specific provenance,
+terms, and citation guidance are recorded in [NOTICE](NOTICE) and the pinned
+[data manifest](config/data-manifest.yaml). The dashboard's complete generated
+dependency notices are available in
+[dashboard/public/THIRD_PARTY_NOTICES.txt](dashboard/public/THIRD_PARTY_NOTICES.txt)
+and are shipped with the server bundle at
+[server/static/THIRD_PARTY_NOTICES.txt](server/static/THIRD_PARTY_NOTICES.txt).
+Persona-generator provenance and the distinction between upstream inspiration
+and locally authored code are documented in
+[agents/personas/ATTRIBUTION.md](agents/personas/ATTRIBUTION.md).
+
 ## Development
 
-```powershell
-python -m compileall -q agents engine experiments llm oracle reports server world run.py
-python -m pytest tests/ -q
-npm --prefix dashboard ci
-npm --prefix dashboard test
-npm --prefix dashboard run build
-git diff --check
-```
+Run the complete hash-locked local gate in
+[docs/development.md](docs/development.md#test-layers). It covers compilation,
+pinned datasets, Python/dashboard tests, dependency and notice audits, the
+production bundle, and diff hygiene.
 
 Dashboard builds write to `server/static/`; that bundle is committed so Python
 users receive the full UI without Node.js. Contributions should preserve the

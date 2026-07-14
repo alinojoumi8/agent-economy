@@ -14,8 +14,16 @@ DEFAULT_PAY_INTERVAL = 30  # ticks (~monthly)
 
 
 class Labor:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, *, engine_semantics_version: int = 2):
         self.store = store
+        self.engine_semantics_version = int(engine_semantics_version)
+
+    def _agent_can_work(self, agent_id: int) -> bool:
+        if self.engine_semantics_version < 7:
+            return True
+        actor = self.store.query_one(
+            "SELECT alive,retired FROM agents WHERE id=?", (agent_id,))
+        return bool(actor and actor["alive"] and not actor["retired"])
 
     def post_job(self, tick: int, firm_id: int, title: str, wage_cents: int) -> int:
         job_id = self.store.insert("jobs", tick=tick, firm_id=firm_id, title=title,
@@ -26,6 +34,8 @@ class Labor:
         return job_id
 
     def apply_job(self, tick: int, agent_id: int, job_id: int) -> Optional[int]:
+        if not self._agent_can_work(agent_id):
+            return None
         job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (job_id,))
         if not job or job["status"] != "open":
             return None
@@ -52,6 +62,8 @@ class Labor:
         """
         app = self.store.query_one("SELECT * FROM applications WHERE id=?", (application_id,))
         if not app or app["state"] not in ("pending", "negotiating"):
+            return None
+        if not self._agent_can_work(int(app["agent_id"])):
             return None
         job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (app["job_id"],))
         if not job or job["status"] != "open" or int(wage_cents) < 0:
@@ -103,6 +115,8 @@ class Labor:
         app = self.store.query_one("SELECT * FROM applications WHERE id=?", (application_id,))
         allowed_states = ("pending", "negotiating") if job_offer_id is not None else ("pending",)
         if not app or app["state"] not in allowed_states:
+            return None
+        if not self._agent_can_work(int(app["agent_id"])):
             return None
         job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (app["job_id"],))
         if not job or job["status"] != "open":

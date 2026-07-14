@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
-from observability import get_logger, log_event as operational_log
+from observability import get_logger, log_event as operational_log, safe_fields
 
 
 logger = get_logger("llm")
@@ -28,6 +28,7 @@ logger = get_logger("llm")
 PRIVATE_REASONING_FIELDS = frozenset({
     "analysis",
     "chain_of_thought",
+    "redacted_thinking",
     "reasoning",
     "reasoning_content",
     "reasoning_details",
@@ -39,6 +40,7 @@ PRIVATE_REASONING_TAGS = (
     "think",
     "analysis",
     "chain_of_thought",
+    "redacted_thinking",
     "reasoning_content",
     "reasoning_details",
     "thinking",
@@ -53,6 +55,28 @@ _PRIVATE_REASONING_UNCLOSED = re.compile(
     rf"<(?:{'|'.join(PRIVATE_REASONING_TAGS)})\b[^>]*>.*\Z",
     re.IGNORECASE | re.DOTALL,
 )
+_PRIVATE_REASONING_TYPES = frozenset({
+    *PRIVATE_REASONING_FIELDS,
+    *PRIVATE_REASONING_TAGS,
+})
+_PRIVATE_REASONING_KEY_MARKER = re.compile(
+    rf"(?i)(?:[\"']?\s*\b(?:{'|'.join(PRIVATE_REASONING_FIELDS)})\b"
+    rf"\s*[\"']?\s*[:=])"
+)
+_PRIVATE_REASONING_TYPE_MARKER = re.compile(
+    rf"(?i)(?:[\"']?\s*type\s*[\"']?\s*[:=]\s*[\"']?\s*"
+    rf"(?:{'|'.join(_PRIVATE_REASONING_TYPES)})\b)"
+)
+_JSON_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})", re.IGNORECASE)
+_DROP_PRIVATE = object()
+_JSON_DECODER = json.JSONDecoder()
+
+
+def _canonical_noop_text() -> str:
+    return json.dumps(
+        {"actions": [{"type": "do_nothing"}],
+         "reasoning": "unparseable output; no-op"},
+        ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def sanitize_provider_text(value: str) -> str:
@@ -66,21 +90,168 @@ def sanitize_provider_text(value: str) -> str:
     return _PRIVATE_REASONING_UNCLOSED.sub("", sanitized).strip()
 
 
-def sanitize_provider_raw(value: Any) -> Any:
-    """Remove private reasoning text while retaining billing and response metadata."""
+def _sanitize_private_value(value: Any, *, preserve_root_reasoning: bool,
+                            root: bool = True) -> Any:
+    """Remove private reasoning fields and type-discriminated content blocks."""
     if isinstance(value, dict):
-        return {
-            key: sanitize_provider_raw(item)
-            for key, item in value.items()
-            if str(key).lower() not in PRIVATE_REASONING_FIELDS
-        }
+        block_type = str(value.get("type", "")).strip().lower()
+        if block_type in _PRIVATE_REASONING_TYPES:
+            return _DROP_PRIVATE
+        sanitized: dict[Any, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).strip().lower()
+            keep_public_reasoning = (
+                root and preserve_root_reasoning and lowered == "reasoning")
+            if lowered in PRIVATE_REASONING_FIELDS and not keep_public_reasoning:
+                continue
+            clean_item = _sanitize_private_value(
+                item, preserve_root_reasoning=preserve_root_reasoning, root=False)
+            if clean_item is not _DROP_PRIVATE:
+                sanitized[key] = clean_item
+        return sanitized
     if isinstance(value, list):
-        return [sanitize_provider_raw(item) for item in value]
+        sanitized_items = []
+        for item in value:
+            clean_item = _sanitize_private_value(
+                item, preserve_root_reasoning=preserve_root_reasoning, root=False)
+            if clean_item is not _DROP_PRIVATE:
+                sanitized_items.append(clean_item)
+        return sanitized_items
     if isinstance(value, str):
-        return sanitize_provider_text(value)
+        return _sanitize_json_text(
+            value, preserve_root_reasoning=root and preserve_root_reasoning)
     return value
 
-# Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
+
+def _json_fragments(value: str) -> list[tuple[Any, int, int]]:
+    """Return every non-overlapping JSON object/array embedded in provider text."""
+    fragments: list[tuple[Any, int, int]] = []
+    cursor = 0
+    while cursor < len(value):
+        starts = [
+            position for position in (value.find("{", cursor), value.find("[", cursor))
+            if position >= 0
+        ]
+        if not starts:
+            break
+        start = min(starts)
+        try:
+            parsed, end = _JSON_DECODER.raw_decode(value, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        fragments.append((parsed, start, end))
+        cursor = end
+    return fragments
+
+
+def _has_private_reasoning_marker(value: str) -> bool:
+    """Detect key/type markers left outside parseable JSON and fail closed."""
+    # Provider exceptions sometimes JSON-encode a second payload, leaving its
+    # key quotes escaped in the outer diagnostic string.  Normalize only for
+    # detection; the persisted value is never decoded or trusted.
+    probe = value
+    for _ in range(3):
+        probe = probe.replace(r'\"', '"').replace(r"\'", "'")
+        probe = _JSON_UNICODE_ESCAPE.sub(
+            lambda match: (
+                chr(int(match.group(1), 16))
+                if int(match.group(1), 16) <= 0x7f
+                else match.group(0)
+            ),
+            probe,
+        )
+    return bool(
+        _PRIVATE_REASONING_KEY_MARKER.search(probe)
+        or _PRIVATE_REASONING_TYPE_MARKER.search(probe)
+    )
+
+
+def _sanitize_json_value(value: Any, *, preserve_root_reasoning: bool,
+                         redact_credentials: bool) -> Any:
+    cleaned = _sanitize_private_value(
+        value, preserve_root_reasoning=preserve_root_reasoning)
+    if cleaned is _DROP_PRIVATE:
+        cleaned = None
+    if redact_credentials:
+        cleaned = safe_fields({"payload": cleaned})["payload"]
+    return cleaned
+
+
+def _parse_exact_json(value: str) -> Any:
+    """Parse a complete JSON document, distinguishing failure from JSON null."""
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return _DROP_PRIVATE
+
+
+def _sanitize_json_text(value: str, *, preserve_root_reasoning: bool,
+                        redact_credentials: bool = False) -> str:
+    """Strip reasoning from all JSON fragments, failing closed on malformed ones."""
+    visible = sanitize_provider_text(value)
+    exact = _parse_exact_json(visible)
+    if exact is not _DROP_PRIVATE:
+        cleaned = _sanitize_json_value(
+            exact, preserve_root_reasoning=preserve_root_reasoning,
+            redact_credentials=redact_credentials)
+        if cleaned == exact:
+            return visible
+        return json.dumps(
+            cleaned, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    fragments = _json_fragments(visible)
+    if not fragments:
+        return "[REDACTED]" if _has_private_reasoning_marker(visible) else visible
+
+    # A public top-level ``reasoning`` field belongs only to one valid decision
+    # envelope. Multiple JSON values are not that contract, so raw/provider
+    # diagnostic fragments never gain the public-field exception.
+    keep_fragment_reasoning = preserve_root_reasoning and len(fragments) == 1
+    outside: list[str] = []
+    cursor = 0
+    for _, start, end in fragments:
+        outside.append(visible[cursor:start])
+        cursor = end
+    outside.append(visible[cursor:])
+    if _has_private_reasoning_marker("".join(outside)):
+        return "[REDACTED]"
+
+    rendered: list[str] = []
+    cursor = 0
+    for parsed, start, end in fragments:
+        rendered.append(visible[cursor:start])
+        cleaned = _sanitize_json_value(
+            parsed, preserve_root_reasoning=keep_fragment_reasoning,
+            redact_credentials=redact_credentials)
+        rendered.append(json.dumps(
+            cleaned, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        cursor = end
+    rendered.append(visible[cursor:])
+    return "".join(rendered)
+
+
+def sanitize_provider_raw(value: Any) -> Any:
+    """Remove private reasoning/credentials while retaining bounded metadata."""
+    if isinstance(value, (dict, list)):
+        cleaned = _sanitize_private_value(
+            value, preserve_root_reasoning=False)
+        if cleaned is _DROP_PRIVATE:
+            return None
+        return safe_fields({"raw": cleaned})["raw"]
+    if isinstance(value, str):
+        cleaned = _sanitize_json_text(value, preserve_root_reasoning=False)
+        return safe_fields({"raw": cleaned})["raw"]
+    return value
+
+
+def sanitize_provider_error(value: Any) -> str:
+    """Bound provider diagnostics and remove credentials and private reasoning."""
+    visible = _sanitize_json_text(
+        str(value), preserve_root_reasoning=False, redact_credentials=True)
+    return str(safe_fields({"error": visible})["error"])
+
+# Default modeled-equivalent pricing (TECH-SPEC §12), USD per 1M tokens.
 DEFAULT_PRICING = {
     "minimax-m3": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "MiniMax-M3": {"in": 0.30, "out": 1.20, "cache": 0.06},
@@ -107,7 +278,7 @@ class ProviderUnavailable(Exception):
         self.provider = provider
         self.model = model
         self.purpose = purpose
-        self.message = message[:500]
+        self.message = sanitize_provider_error(message)
         self.latency_ms = latency_ms
         self.attempts = attempts
         super().__init__(f"{provider}/{model} failed for {purpose}: {self.message}")
@@ -418,7 +589,7 @@ class Gateway:
             "next_retry_at": datetime.fromtimestamp(
                 retry_at_epoch, timezone.utc).isoformat(),
             "status_code": exc.status_code,
-            "detail": exc.detail,
+            "detail": sanitize_provider_error(exc.detail),
         }
         self._rate_limits[provider] = state
         operational_log(
@@ -461,17 +632,19 @@ class Gateway:
             seen.add(pair)
             adapter = self.adapters[provider]
             try:
-                result = await adapter.healthcheck(model)
+                result = sanitize_provider_raw(
+                    safe_fields(await adapter.healthcheck(model)))
                 checks.append({"provider": provider, **result})
                 operational_log(logger, logging.INFO, "llm.preflight.provider_completed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 ok=result.get("ok", False))
             except Exception as exc:
+                provider_error = sanitize_provider_error(exc)
                 checks.append({"provider": provider, "model": model, "ok": False,
-                               "live": True, "error": str(exc)[:500]})
+                               "live": True, "error": provider_error})
                 operational_log(logger, logging.ERROR, "llm.preflight.provider_failed",
                                 run_id=self.run_id, provider=provider, model=model,
-                                error_type=type(exc).__name__, error=str(exc))
+                                error_type=type(exc).__name__, error=provider_error)
         live_ready = all(c["ok"] for c in checks)
         operational_log(logger, logging.INFO if live_ready else logging.ERROR,
                         "llm.preflight.completed", run_id=self.run_id,
@@ -557,11 +730,12 @@ class Gateway:
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                             tick=req.tick, latency_ms=latency_ms,
                             attempts=failure.attempts, error_type=type(exc).__name__,
-                            error=str(exc))
-            raise failure from exc
+                            error=failure.message)
+            raise failure from None
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
-        result.text = sanitize_provider_text(result.text)
+        result.text = _sanitize_json_text(
+            result.text, preserve_root_reasoning=True)
         parsed, ok = self._parse(result.text)
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
@@ -584,7 +758,7 @@ class Gateway:
             def persist_initial_completion(reason: str) -> None:
                 """Meter the billable first completion even if repair cannot finish."""
                 partial = AdapterResult(
-                    text=initial_result.text,
+                    text=_canonical_noop_text(),
                     in_tokens=initial_result.in_tokens,
                     out_tokens=initial_result.out_tokens,
                     cached_in_tokens=initial_result.cached_in_tokens,
@@ -607,7 +781,8 @@ class Gateway:
                 repaired_result, repair_attempts = await self._call_adapter(
                     provider, adapter, model, repair, repair.messages(), 0.2,
                     provider_cache_key)
-                repaired_result.text = sanitize_provider_text(repaired_result.text)
+                repaired_result.text = _sanitize_json_text(
+                    repaired_result.text, preserve_root_reasoning=True)
                 attempts += repair_attempts
             except GatewayInterrupted:
                 persist_initial_completion("GatewayInterrupted")
@@ -629,8 +804,8 @@ class Gateway:
                                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                                 tick=req.tick, latency_ms=latency_ms,
                                 attempts=failure.attempts, error_type=type(exc).__name__,
-                                error=str(exc))
-                raise failure from exc
+                                error=failure.message)
+                raise failure from None
             # Persist the final usable text but meter both billable completions.
             # This stays one logical gateway record, so exact replay returns the
             # repaired envelope while reproducing the complete provider cost.
@@ -652,6 +827,7 @@ class Gateway:
                             tick=req.tick, valid=ok)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
+            result.text = _canonical_noop_text()
             operational_log(logger, logging.WARNING, "llm.contract.invalid",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -721,7 +897,7 @@ class Gateway:
                                 tick=req.tick, attempt=transient_attempt,
                                 next_attempt=transient_attempt + 1,
                                 error_type=type(last_error).__name__,
-                                error=str(last_error))
+                                error=sanitize_provider_error(last_error))
                 await asyncio.sleep(min(0.25 * (2 ** (transient_attempt - 1)), 2.0))
                 continue
             break

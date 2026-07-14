@@ -1,9 +1,10 @@
 # PRD delivery tasks
 
-These tasks are strictly sequential. A task may start only after every gate on
-the preceding task has reproducible evidence. Live inference requires explicit
-operator approval; the acceptance profile is uncapped and records actual spend
-while provider rate limits control throughput.
+These are independently gated workstreams. Dependencies inside a workstream are
+sequential, but completed extensions do not imply completion of the separate
+long-horizon acceptance campaign. Live inference requires explicit operator
+approval; the acceptance profile is uncapped and records actual spend while
+provider rate limits control throughput.
 
 ## Legal-Economy v2 semantics-7 closure
 
@@ -39,8 +40,10 @@ while provider rate limits control throughput.
 
 ### Evidence gates
 
-- [x] Focused semantics-7 gate: 86 tests passed in 88.17 seconds; full Python:
-  268 passed in 157.42 seconds; compilation and dataset verification passed.
+- [x] Focused semantics-7 gate passed 86 tests before final hardening; a
+  93-test integrated adversarial gate passed afterward, and the current full
+  Python suite passes 280 in 165.73 seconds, with compilation and dataset
+  verification green.
 - [x] Dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
   passed, high-severity audit found zero vulnerabilities, the 599-module Vite
   build and committed static bundle matched, and `git diff --check` passed.
@@ -53,9 +56,9 @@ while provider rate limits control throughput.
   targeted effects fired, provenance/privacy checks found zero defects, six
   checkpoints and all currencies reconciled, and exact replay
   `replay-b4832032ba-8d99c25c56` returned `differences: []`.
-- [x] GitHub Actions run `29354608739` passed the dashboard build and every
-  Ubuntu/Windows Python 3.11/3.12 matrix job. PR #15 remains draft; no merge,
-  tag, or publication was performed.
+- [x] The prior branch head passed every dashboard and Ubuntu/Windows Python
+  3.11/3.12 job; the merge procedure requires the exact pushed closure head to
+  repeat all five jobs. Tagging and publication remain separate.
 
 ## Task 1 — Production acceptance run and evidence package
 
@@ -126,6 +129,8 @@ while provider rate limits control throughput.
 
 ## Task 5 — R21 Real-data calibration
 
+- [x] Pin aggregate FRED/BLS calibration fixtures with checksums, precise source
+  metadata/terms, deterministic refresh validation, and offline tests.
 - [ ] Add versioned, provenance-bearing dataset adapters for income, wealth, and
   firm-size distributions, with validation and an offline fixture.
 - [ ] Initialize deterministically from a pinned dataset snapshot and report
@@ -143,7 +148,8 @@ while provider rate limits control throughput.
   operational observability, backups, and a recorded multi-user load test.
 - [ ] Pass the complete local and hosted acceptance gate before release.
 
-## Final gate
+## Closure merge gate
 
-- [ ] Re-audit PRD promises against routes, workers, persistence, tests, docs,
-  and runtime evidence; leave no unclassified gap.
+- [x] Re-audit PRD promises against routes, workers, persistence, tests, docs,
+  runtime evidence, licenses, dependencies, and secrets; classify R21/R22 and
+  long-horizon acceptance as separate work rather than hidden merge blockers.

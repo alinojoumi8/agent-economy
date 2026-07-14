@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import sqlite3
 import zlib
@@ -12,13 +13,87 @@ from engine.store import Store
 
 FIXTURE_PATH = Path(__file__).parent / "golden" / "fd0adc5dc1.sqlite.json.zlib.b64"
 REPO_ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_FORMAT_VERSION = 2
+SOURCE_RUN_ID = "fd0adc5dc1"
+SOURCE_REVISION = "unknown-not-recorded"
+SOURCE_ENGINE_SEMANTICS_VERSION = 5
+SOURCE_TICKS = 10
+RESPONSE_JSON_ALLOWLIST = ("text", "cached_in_tokens")
+SANITIZATION_METADATA = {
+    "llm_response_json_allowlist": list(RESPONSE_JSON_ALLOWLIST),
+    "raw_provider_envelopes_retained": False,
+    "removed_fields": ["tables.llm_calls.response_json.raw"],
+    "repository_paths": "repo://",
+}
+
+
+def sanitize_recorded_fixture(fixture: dict) -> dict:
+    """Return the deterministic, public form of a recorded replay fixture."""
+    if not isinstance(fixture, dict) or fixture.get("source_run_id") != SOURCE_RUN_ID:
+        raise ValueError("unexpected recorded replay fixture")
+    try:
+        calls = fixture["tables"]["llm_calls"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("recorded replay fixture is missing llm_calls") from exc
+    if not isinstance(calls, list):
+        raise ValueError("recorded replay fixture llm_calls must be a list")
+
+    sanitized = copy.deepcopy(fixture)
+    for row in sanitized["tables"]["llm_calls"]:
+        try:
+            response = json.loads(row["response_json"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("recorded replay fixture has invalid response_json") from exc
+        if not isinstance(response, dict):
+            raise ValueError("recorded replay fixture response_json must be an object")
+        missing = [key for key in RESPONSE_JSON_ALLOWLIST if key not in response]
+        if missing:
+            raise ValueError(
+                "recorded replay fixture response_json is missing " + ", ".join(missing))
+        if not isinstance(response["text"], str):
+            raise ValueError("recorded replay fixture response text must be a string")
+        cached_in_tokens = response["cached_in_tokens"]
+        if (not isinstance(cached_in_tokens, int) or isinstance(cached_in_tokens, bool)
+                or cached_in_tokens < 0):
+            raise ValueError(
+                "recorded replay fixture cached_in_tokens must be a non-negative integer")
+        public_response = {
+            key: response[key] for key in RESPONSE_JSON_ALLOWLIST
+        }
+        row["response_json"] = json.dumps(
+            public_response,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    sanitized.update({
+        "fixture_format_version": FIXTURE_FORMAT_VERSION,
+        "source_run_id": SOURCE_RUN_ID,
+        "source_revision": SOURCE_REVISION,
+        "source_engine_semantics_version": SOURCE_ENGINE_SEMANTICS_VERSION,
+        "source_ticks": SOURCE_TICKS,
+        "sanitization": copy.deepcopy(SANITIZATION_METADATA),
+    })
+    return sanitized
+
+
+def encode_recorded_fixture(fixture: dict) -> str:
+    """Encode a fixture deterministically after applying public sanitization."""
+    payload = json.dumps(
+        sanitize_recorded_fixture(fixture),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.b64encode(zlib.compress(payload, level=9)).decode("ascii") + "\n"
 
 
 def load_recorded_fixture() -> dict:
     compressed = base64.b64decode(FIXTURE_PATH.read_text(encoding="ascii"))
     fixture = json.loads(zlib.decompress(compressed).decode("utf-8"))
-    if fixture.get("source_run_id") != "fd0adc5dc1":
-        raise ValueError("unexpected recorded replay fixture")
+    if fixture != sanitize_recorded_fixture(fixture):
+        raise ValueError("recorded replay fixture is not in canonical public form")
     return fixture
 
 

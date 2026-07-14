@@ -316,7 +316,11 @@ def test_failed_report_repair_persists_and_meters_the_initial_completion(tmp_pat
     assert call is not None
     assert int(call["in_tokens"]) == 31 and int(call["out_tokens"]) == 7
     assert float(call["cost_usd"]) > 0
-    assert "malformed but billable" in call["response_json"]
+    persisted = json.loads(call["response_json"])
+    assert "malformed but billable" not in call["response_json"]
+    assert persisted["text"] == (
+        '{"actions":[{"type":"do_nothing"}],'
+        '"reasoning":"unparseable output; no-op"}')
 
     # The invalid durable completion makes a retry deterministic and free.
     asyncio.run(generate_report_async(

@@ -1,7 +1,7 @@
 """Genesis: build a fresh world from config (population, institutions, firms).
 
 Everything here is deterministic given the seed: the population comes from the
-vendored census persona generator (its own PRNG), and structural choices (bank
+attributed synthetic-heuristic persona generator (its own PRNG), and structural choices (bank
 assignment, social ties, initial employment) come from the engine PRNG. Money is
 minted from the visible external endowment account so the books reconcile to zero
 from tick 0.

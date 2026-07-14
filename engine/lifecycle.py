@@ -110,6 +110,25 @@ class Lifecycle:
                 "news": max(1, int(self.p["retired_news_every"])),
             })
             updates["cadence_json"] = json.dumps(cadence, sort_keys=True)
+            applications = self.store.query(
+                "SELECT id FROM applications WHERE agent_id=? "
+                "AND state IN ('pending','negotiating') ORDER BY id", (agent_id,))
+            application_ids = [int(application["id"]) for application in applications]
+            if application_ids:
+                placeholders = ",".join("?" for _ in application_ids)
+                self.store.execute(
+                    "UPDATE job_offers SET status='rejected',decided_tick=? "
+                    f"WHERE status='pending' AND application_id IN ({placeholders})",
+                    (tick, *application_ids))
+                self.store.execute(
+                    "UPDATE applications SET state='withdrawn' "
+                    f"WHERE id IN ({placeholders})", tuple(application_ids))
+                self.store.log_event(
+                    tick, "retirement_job_search_withdrawn", {
+                        "agent_id": agent_id,
+                        "application_ids": application_ids,
+                    }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
+                    importance=1.0)
         self.store.update("agents", agent_id, **updates)
         self.store.execute(
             "UPDATE employments SET status='ended', end_tick=? WHERE agent_id=? AND status='active'",

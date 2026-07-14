@@ -1,6 +1,6 @@
 # Agent Economy — Product Requirements Document
 
-**Version:** 1.0 · **Date:** 2026-07-09 · **Owner:** Ali · **Status:** Draft for review
+**Version:** 1.1 · **Date:** 2026-07-14 · **Owner:** Ali · **Status:** Maintained implementation contract
 
 ---
 
@@ -17,9 +17,9 @@ These were decided during scoping and constrain everything below.
 | Decision | Choice | Rationale |
 |---|---|---|
 | Who generates numbers | **LLMs decide, engine executes.** Agents output structured actions (borrow, hire, bid, publish); a deterministic engine validates and applies them via double-entry ledger and order matching. | Pure LLM-generated prices/balances don't reconcile. Conservation of money is what makes crashes and runs *real* within the sim. |
-| LLM backend | **Provider-agnostic hybrid.** The gateway maps each role to any {provider, model} in config. Defaults: citizens + conversations + memory on **MiniMax M3** (Ali's API key); ~8 high-leverage seats (central banker, credit officers, editors/lead reporters, VC partner, Oracle) on **Kimi K2.7** (Ali's API key); Anthropic API optional as an alternative tier. **Claude/Codex/Grok CLI subscriptions are never used for the agent swarm** — rate limits and provider terms rule them out for bulk inference; Claude CLI (headless) is permitted for the Oracle and development only. | 100 agents thinking daily is cost-dominated by citizens; M3/K2.7 pricing makes runs ~4× cheaper than an Anthropic-only setup. Per-role provider config also enables a research angle: does the economy behave differently with different models as citizens? |
-| Foundation | **Own kernel; strip existing frameworks for parts.** Rejected as base: AgentSociety 2 (pivoted to AI-social-scientist tooling; its economy modules live in the legacy, unmaintained 1.x), Doxa (single-maintainer v0.1 prototype, GPL-3.0, no double-entry banking layer), LLM-Economist (narrow tax-policy scope). Borrowed: LLM-Economist's census-based persona generation (MIT — vendored as code), Doxa's shock/trend/conditional event-trigger taxonomy (design idea only — no GPL code copied). | The frameworks provide the easy 20% (agent scaffolding); none contain the hard parts (conserved ledger, bank mechanics, order book + firm lifecycle, Oracle, cost governor, exact replay). |
-| User's role | **Observer only.** Ali does not play an agent in v1. He controls the world (start/pause/speed/shocks) and interrogates it (Oracle), but no in-world avatar. | Keeps the sim uncontaminated; participant mode is a P2. |
+| LLM backend | **Provider-agnostic hybrid.** The gateway maps each role to any {provider, model} in config. The maintained production profile routes citizens/founders to **MiniMax-M3** and high-leverage institutional seats plus the Oracle to Kimi Code's stable **`kimi-for-coding`** alias; conversation and memory calls inherit the actor's route. Anthropic API remains an optional alternative tier. **Claude/Codex/Grok CLI subscriptions are never used for the agent swarm** — rate limits and provider terms rule them out for bulk inference; the restricted CLI adapter is permitted for Oracle/development purposes only. | Citizen decisions dominate call volume, so per-role routing preserves cost control and enables model-vs-model economy experiments without hard-coding a provider. |
+| Foundation | **Own kernel; selectively adapt published ideas.** Rejected as base: AgentSociety 2 (pivoted to AI-social-scientist tooling; its economy modules live in the legacy, unmaintained 1.x), Doxa (single-maintainer v0.1 prototype, GPL-3.0, no double-entry banking layer), LLM-Economist (narrow tax-policy scope). Inspired by: LLM-Economist's persona-conditioning approach (clean synthetic-heuristic implementation with pinned attribution; no upstream code vendored) and Doxa's shock/trend/conditional event-trigger taxonomy (design idea only; no GPL code copied). | The frameworks provide the easy 20% (agent scaffolding); none contain the hard parts (conserved ledger, bank mechanics, order book + firm lifecycle, Oracle, cost governor, exact replay). |
+| User's role | **Observer-only acceptance baseline.** Ali controls the world (start/pause/speed/shocks) and interrogates it (Oracle). The implemented R18 participant extension is isolated and its runs are excluded from observer-only acceptance. | Preserves an uncontaminated v1 research baseline while permitting separately classified participant experiments. |
 | Interface | **Live web dashboard + end-of-run reports.** | Watch it unfold in real time, then get a written narrative + data appendix per run. |
 | Run length | **Open-ended.** A run continues until stopped, with checkpointing so it can pause/resume across days. | Long-horizon emergent effects (inequality drift, boom-bust cycles) need time. |
 | Budget | **Fully metered; cap is profile-specific.** Safety-capped profiles degrade before their configured ceiling. The production/acceptance profile is uncapped, waits through provider rate limits, and records actual spend. | The $200 figure is a measured efficiency target, not a production stop condition. This keeps capped development safe without terminating long production experiments. |
@@ -41,12 +41,12 @@ Real-world economic questions — "does misinformation cause bank runs?", "how d
 
 ## 5. Non-goals (v1)
 
-- **Not a game / no human player.** Participant mode ("I walk into the bank myself") is deferred — it contaminates observation and doubles UI scope.
+- **The v1 acceptance baseline has no human player.** The later R18 participant extension is implemented, but participant-influenced runs are separately classified and cannot satisfy observer-only acceptance.
 - **No calibration to real US data.** The sim is US-*style* (institutions, instruments), not a forecast of the actual US economy. Matching real GDP/CPI series is a research project of its own.
-- **No multi-country world, no FX.** One currency, one jurisdiction. Trade and FX are P2.
+- **The v1 acceptance baseline is one region and one currency.** The optional R20 multi-region/trade/FX extension is implemented under later semantics and is not required for v1 acceptance.
 - **No real money, real trading, or real news ingestion.** Fully sandboxed; nothing connects to real markets.
 - **No fine-tuning or custom model training.** Off-the-shelf APIs + prompting only.
-- **Not 1,000+ agents.** Architecture should not preclude scale-up, but v1 targets ~100; population realism comes from persona diversity, not headcount.
+- **The v1 acceptance profile targets approximately 100 agents.** The optional R19 core/periphery extension now supports a deterministic 1,000-agent run, but it does not redefine the v1 baseline.
 
 ## 6. The world — core concepts
 
@@ -95,7 +95,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - As an operator, I want to pause, resume, and change simulation speed at any time so that I can watch interesting moments closely and skip quiet periods.
 - As an operator, I want the run to checkpoint automatically so that I can stop tonight and resume tomorrow without losing state.
 - As an operator, I want a live dashboard showing macro metrics, the stock ticker, the news feed, and a stream of agent conversations so that I can follow the economy like a Bloomberg terminal for the sim.
-- As an operator, I want to click any agent and inspect its persona, balance sheet, memories, and recent decisions (with the LLM reasoning) so that I can audit *why* something happened.
+- As an operator, I want to click any agent and inspect its persona, balance sheet, memories, and recent decisions with their short public rationale and local provenance so that I can audit *why* something happened without exposing private model reasoning.
 - As an operator, I want to see running API spend and any configured cap so that I'm never surprised by cost.
 
 ### Experimenter
@@ -123,7 +123,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 **R2. Agent runtime (persona + memory + decision loop)**
 - 100 agents generated from a persona template library with controlled diversity (occupation, wealth distribution, personality, political lean, media diet).
-- The simulator owns an `agents.personas.library` boundary around the vendored generator. New adult arrivals retain engine-owned age, wealth, accounts, region, and lifecycle state; before their first morning decision, exactly one governed `role=persona, purpose=persona` completion may enrich only bounded persona traits. Provider/budget pauses resume normally, malformed successful output falls back deterministically, and replay fails closed when the recorded persona response is missing.
+- The simulator owns an `agents.personas.library` boundary around an attributed clean synthetic-heuristic sampler; it is not Census/microdata calibrated. New adult arrivals retain engine-owned age, wealth, accounts, region, and lifecycle state; before their first morning decision, exactly one governed `role=persona, purpose=persona` completion may enrich only bounded persona traits. Provider/budget pauses resume normally, malformed successful output falls back deterministically, and replay fails closed when the recorded persona response is missing.
 - Decision loop per agent per tick: perceive (world events + personal state + retrieved memories) → decide (LLM returns a structured action list) → engine executes.
 - Memory: verbatim recent buffer, compressed summaries beyond that, retrieval scored by `0.5·recency_decay + 0.3·importance + 0.2·relevance` (a weighted sum, not a product).
 - Reserved beliefs have defined numeric ranges and every accepted, normalized, or rejected update is appended to the event spine with provenance.
@@ -195,8 +195,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R18. Participant mode.** Ali (or an external LLM) plays an in-world agent through the same action API agents use. *(Implemented extension; participant-influenced runs remain disqualified from observer-only acceptance.)*
 **R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
 **R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
-**R21. Real-data calibration mode** — initialize distributions from real US micro data (income, wealth, firm size).
-**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment.
+**R21. Real-data calibration mode** — initialize distributions from real US micro data (income, wealth, firm size). *(Deferred; aggregate FRED/BLS provenance fixtures do not constitute microdata calibration.)*
+**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Deferred.)*
 
 ---
 
@@ -232,7 +232,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 5. The central banker is **rule-bounded**, with LLM discretion inside configured Taylor-rule guardrails.
 6. The acceptance showcase is the **rumor-driven bank-run experiment**.
 7. Citizens receive **public bank status, not private reserve ratios**; full visibility remains an explicit legacy/experimental option.
-8. P2 work follows a **research-quality-first** roadmap; participant and hosted modes remain deferred.
+8. P2 work follows a **research-quality-first** roadmap; participant mode is an implemented extension whose runs remain outside observer-only acceptance, while hosted multi-user mode remains deferred.
 
 ---
 

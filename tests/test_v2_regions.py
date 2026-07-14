@@ -55,6 +55,22 @@ def _active_trade_contract(
     return contract_id
 
 
+def _qualified_migration_destination(store, actor) -> tuple[int, int]:
+    """Create one destination that clears the bounded Semantics-7 wage gate."""
+    destination_firm = store.query_one(
+        "SELECT id,region_id FROM firms WHERE region_id<>? "
+        "AND status NOT IN ('bankrupt','acquired') ORDER BY id LIMIT 1",
+        (actor["region_id"],))
+    assert destination_firm is not None
+    store.insert(
+        "jobs", tick=0, firm_id=int(destination_firm["id"]),
+        title="qualified migration role", wage_cents=100_000_000, status="open")
+    cadence = json.loads(actor["cadence_json"] or "{}")
+    career_every = max(1, int(cadence.get("career", 30)))
+    career_tick = int(actor["id"]) % career_every
+    return int(destination_firm["region_id"]), career_tick
+
+
 def test_flagship_population_regions_tiers_and_currency_reconciliation(v2_world):
     store, world = v2_world
     rows = store.query(
@@ -74,8 +90,11 @@ def test_fx_is_inventory_backed_and_migration_changes_primary_currency(v2_world)
     store, world = v2_world
     economy = world.economy
     actor = store.query_one(
-        "SELECT a.id,a.checking_account_id FROM agents a JOIN regions r ON r.id=a.region_id "
-        "WHERE r.region_key='northstar' AND a.kind='citizen' "
+        "SELECT a.* FROM agents a JOIN regions r ON r.id=a.region_id "
+        "WHERE r.region_key='northstar' AND a.kind='citizen' AND a.alive=1 "
+        "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+        "AND e.status='active') "
         "AND (SELECT balance_cents FROM accounts WHERE id=a.checking_account_id)>10000 "
         "ORDER BY a.id LIMIT 1")
     actor_id = int(actor["id"])
@@ -93,15 +112,17 @@ def test_fx_is_inventory_backed_and_migration_changes_primary_currency(v2_world)
     assert economy.ledger.balance(int(actor["checking_account_id"])) < source_balance
     assert store.scalar("SELECT MIN(balance_cents) FROM fx_reserves r JOIN accounts a ON a.id=r.account_id") >= 0
 
-    ironvale = int(store.scalar("SELECT id FROM regions WHERE region_key='ironvale'"))
-    requested = economy.regions.request_migration(1, actor_id, ironvale, "new job")
+    destination, career_tick = _qualified_migration_destination(store, actor)
+    requested = economy.regions.request_migration(
+        career_tick, actor_id, destination, "new job")
     assert requested["ok"]
     assert store.scalar("SELECT status FROM migrations WHERE id=?",
                         (requested["migration_id"],)) == "pending"
-    economy.regions.run_nightly(1)
+    economy.regions.run_nightly(career_tick + 1)
     moved = store.query_one("SELECT region_id,checking_account_id FROM agents WHERE id=?", (actor_id,))
-    assert int(moved["region_id"]) == ironvale
-    assert store.scalar("SELECT currency_code FROM accounts WHERE id=?", (moved["checking_account_id"],)) == "IVC"
+    assert int(moved["region_id"]) == destination
+    assert store.scalar("SELECT currency_code FROM accounts WHERE id=?", (moved["checking_account_id"],)) == (
+        store.scalar("SELECT currency_code FROM regions WHERE id=?", (destination,)))
     assert store.scalar("SELECT status FROM migrations WHERE id=?",
                         (requested["migration_id"],)) == "completed"
     assert store.scalar(
@@ -227,14 +248,106 @@ def test_trade_rejects_unauthorized_uncontracted_inactive_and_wrong_currency(v2_
     assert economy.ledger.reconcile()[0]
 
 
+def test_semantics_7_trade_binds_exactly_to_advertised_opportunity(v2_world):
+    store, world = v2_world
+    economy = world.economy
+    parties = _trade_parties(store)
+    exporter_id = int(parties["exporter_firm_id"])
+    importer_id = int(parties["importer_firm_id"])
+    actor_id = int(parties["actor_id"])
+    store.update(
+        "firms", exporter_id,
+        inventory=max(
+            int(parties["exporter_inventory"]),
+            economy.regions.max_trade_quantity + 10,
+        ))
+    contract_id = _active_trade_contract(store, parties)
+    context = economy.regions.decision_context(
+        actor_id, tick=1, exporter_firm_id=exporter_id)
+    action = dict(context["trade_opportunities"][0]["action"])
+    assert action["contract_id"] == contract_id
+    assert int(store.scalar(
+        "SELECT inventory FROM firms WHERE id=?", (exporter_id,))) > action["quantity"]
+    assert action["invoice_cents"] > 1
+    assert parties["exporter_currency"] != parties["importer_currency"]
+
+    tampered_actions = {
+        "quantity": {**action, "quantity": action["quantity"] + 1},
+        "quantity_type": {**action, "quantity": str(action["quantity"])},
+        "invoice": {**action, "invoice_cents": action["invoice_cents"] - 1},
+        "currency": {**action, "invoice_currency": parties["exporter_currency"]},
+        "exporter": {**action, "exporter_firm_id": importer_id},
+        "importer": {**action, "importer_firm_id": exporter_id},
+        "contract": {**action, "contract_id": contract_id + 1_000_000},
+        "tariff": {**action, "tariff_cents": action["tariff_cents"] + 1},
+        "transport": {**action, "transport_cents": action["transport_cents"] + 1},
+        "transit": {**action, "transit_ticks": action["transit_ticks"] + 1},
+        "action_type": {**action, "type": "unadvertised_shipment"},
+        "extra_term": {**action, "discount_cents": 1},
+    }
+    inventory_before = int(store.scalar(
+        "SELECT inventory FROM firms WHERE id=?", (exporter_id,)))
+    accounts_before = int(store.scalar("SELECT COUNT(*) FROM accounts"))
+    for field, tampered in tampered_actions.items():
+        result = economy.regions.create_shipment(1, actor_id, tampered)
+        assert not result["ok"], (field, result)
+
+    assert store.scalar("SELECT COUNT(*) FROM trade_shipments") == 0
+    assert store.scalar(
+        "SELECT inventory FROM firms WHERE id=?", (exporter_id,)) == inventory_before
+    assert store.scalar("SELECT COUNT(*) FROM accounts") == accounts_before
+    assert economy.ledger.reconcile()[0]
+
+    # An LLM action binds to the morning request context, but mutable execution
+    # facts still fail closed if either firm or the actor becomes ineligible.
+    model_call_id = store.insert(
+        "llm_calls", tick=1, agent_id=actor_id, role="founder",
+        provider="test", model="test", purpose="decision",
+        request_json=json.dumps({"context": context}), response_json="{}")
+    attributed_action = {**action, "model_call_id": model_call_id}
+    for firm_id, inactive_status in (
+            (exporter_id, "acquired"), (importer_id, "bankrupt")):
+        prior_status = str(store.scalar(
+            "SELECT status FROM firms WHERE id=?", (firm_id,)))
+        store.update("firms", firm_id, status=inactive_status)
+        inactive = economy.regions.create_shipment(
+            1, actor_id, attributed_action)
+        assert not inactive["ok"] and "active firms" in inactive["reason"]
+        store.update("firms", firm_id, status=prior_status)
+
+    store.update("agents", actor_id, alive=0)
+    dead_actor = economy.regions.create_shipment(1, actor_id, attributed_action)
+    assert not dead_actor["ok"] and "living authorized exporter" in dead_actor["reason"]
+    store.update("agents", actor_id, alive=1)
+    assert store.scalar("SELECT COUNT(*) FROM trade_shipments") == 0
+    assert store.scalar(
+        "SELECT inventory FROM firms WHERE id=?", (exporter_id,)) == inventory_before
+    assert economy.ledger.reconcile()[0]
+
+    # The exact binding is deliberately Semantics-7-only. Historical runs
+    # preserve the prior direct domain behavior for recorded replay.
+    economy.regions.engine_semantics_version = 6
+    legacy = economy.regions.create_shipment(1, actor_id, {
+        **action,
+        "quantity": action["quantity"] + 1,
+        "invoice_cents": 1,
+    })
+    assert legacy["ok"]
+    assert store.scalar(
+        "SELECT quantity FROM trade_shipments WHERE id=?",
+        (legacy["shipment_id"],)) == action["quantity"] + 1
+    assert economy.ledger.reconcile()[0]
+
+
 def test_migration_rejects_credit_exposure_under_semantics_7(v2_world):
     store, world = v2_world
     economy = world.economy
     actor = store.query_one(
-        "SELECT a.id,a.region_id FROM agents a WHERE a.alive=1 "
-        "AND a.kind='citizen' ORDER BY a.id LIMIT 1")
-    destination = int(store.scalar(
-        "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (actor["region_id"],)))
+        "SELECT a.* FROM agents a WHERE a.alive=1 AND a.kind='citizen' "
+        "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+        "AND e.status='active') ORDER BY a.id LIMIT 1")
+    destination, career_tick = _qualified_migration_destination(store, actor)
     bank_id = int(store.scalar("SELECT id FROM banks ORDER BY id LIMIT 1"))
     store.insert(
         "loan_applications", tick=1, bank_id=bank_id, borrower_type="agent",
@@ -242,11 +355,52 @@ def test_migration_rejects_credit_exposure_under_semantics_7(v2_world):
         purpose="pre-migration credit", status="pending")
 
     result = economy.regions.request_migration(
-        1, int(actor["id"]), destination, "career")
+        career_tick, int(actor["id"]), destination, "career")
     assert not result["ok"]
     assert "pending loan application" in result["reason"]
     assert store.scalar("SELECT COUNT(*) FROM migrations WHERE agent_id=?",
                         (actor["id"],)) == 0
+
+
+def test_semantics_7_migration_action_and_settlement_revalidate_eligibility(v2_world):
+    store, world = v2_world
+    economy = world.economy
+    actor = store.query_one(
+        "SELECT a.* FROM agents a WHERE a.kind='citizen' AND a.alive=1 "
+        "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+        "AND e.status='active') ORDER BY a.id LIMIT 1")
+    destination, career_tick = _qualified_migration_destination(store, actor)
+    actor_id = int(actor["id"])
+    origin = int(actor["region_id"])
+
+    store.update("agents", actor_id, retired=1)
+    retired = economy.regions.request_migration(
+        career_tick, actor_id, destination, "retired bypass")
+    assert not retired["ok"] and "retired" in retired["reason"]
+
+    store.update("agents", actor_id, retired=0)
+    off_cadence = economy.regions.request_migration(
+        career_tick + 1, actor_id, destination, "off-cadence bypass")
+    assert not off_cadence["ok"] and "career cadence" in off_cadence["reason"]
+
+    requested = economy.regions.request_migration(
+        career_tick, actor_id, destination, "qualified career move")
+    assert requested["ok"]
+
+    # Settlement is the following NIGHT_CLOSE. Current eligibility is checked
+    # again, while cadence remains tied to the persisted request tick.
+    store.update("agents", actor_id, alive=0)
+    economy.regions.run_nightly(career_tick + 1)
+    assert store.scalar(
+        "SELECT status FROM migrations WHERE id=?", (requested["migration_id"],)) == "rejected"
+    assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == origin
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='migration_rejected_ineligible' "
+        "AND subject_id=?", (actor_id,)) == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='agent_migrated' AND subject_id=?",
+        (actor_id,)) == 0
 
 
 def test_semantics_7_context_bounds_trade_and_scripted_founder_uses_one(v2_world):
