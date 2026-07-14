@@ -44,7 +44,8 @@ move_deposits{to_bank_id}, pitch_vc{firm_id,ask,summary}, buy_insurance{},
 cancel_insurance{}, publish_disclosure{firm_id,disclosure_type,lookback_ticks},
 say_public{text}, do_nothing.
 Role actions: approve_loan{application_id,rate_bps,term_ticks},
-deny_loan{application_id,reason}, set_policy_rate{rate_bps},
+  deny_loan{application_id,reason}, set_policy_rate{rate_bps},
+  decide_liquidity_support{request_event_id,decision,evidence_event_ids},
 fund_pitch{pitch_id,amount,equity_bps}, decline_pitch{pitch_id,reason}.
 Legal role actions: submit_filing{matter_id,filer_type,filer_id,filing_type,
 evidence_event_ids,body}, propose_settlement{matter_id,terms:{remedy:{type,
@@ -61,6 +62,14 @@ executive_bill_action{bill_id,action,effective_delay_ticks},
 lobby{sponsor_type,sponsor_id,authorized_by_agent_id,target_agent_id,bill_id,
 activity_type,position,amount_cents}, review_merger{merger_id,remedy},
 place_fx_order{pair,side,qty,limit_rate_ppm}."""
+
+LABOR_IPO_ACTIONS_SUFFIX = """
+Semantics 6 labor actions replace direct hire: make_job_offer{application_id,wage},
+counter_job_offer{offer_id,wage}, accept_job_offer{offer_id},
+reject_job_offer{offer_id}. Only the receiving side may respond to a pending offer.
+IPO actions: open_ipo{firm_id,shares_offered,reserve_price,minimum_subscription_bps},
+place_ipo_bid{offering_id,qty,max_price}, close_ipo{offering_id}. Prices must be
+chosen by agents from supplied facts; never invent an offering or entity ID."""
 
 
 def _seed(agent_id: int, tick: int, salt: str = "") -> int:
@@ -105,6 +114,8 @@ class ContextBuilder:
         if firm:
             ctx["my_firm"] = self._firm_view(firm, tick)
             ctx["firm_applications"] = self._firm_applications(int(firm["id"]))
+            if self.engine_semantics_version >= 6:
+                ctx["firm_job_offers"] = self._firm_job_offers(int(firm["id"]))
             ctx["purpose"] = "founder"
         elif self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
             ctx["purpose"] = role
@@ -167,7 +178,7 @@ class ContextBuilder:
                  "net_worth": self.e.ledger.net_worth_agent(agent_id), "shares": shares}
         if self.local_currency_action_surfaces:
             state["currency_code"] = currency_code
-        return {
+        context = {
             "tick": tick,
             "purpose": "decision",
             "rng_seed": _seed(agent_id, tick),
@@ -199,6 +210,12 @@ class ContextBuilder:
             "portfolio_day": portfolio_day,
             "career_day": career_day,
         }
+        if self.engine_semantics_version >= 6:
+            context["labor_negotiation_enabled"] = True
+            context["incoming_job_offers"] = self._incoming_job_offers(agent_id)
+            context["ipo_offerings"] = self._ipo_offerings(
+                currency_code if self.local_currency_action_surfaces else None)
+        return context
 
     def _insurance_offer(self, currency_code: str | None = None) -> Optional[dict]:
         currency_clause = " AND currency_code=?" if currency_code is not None else ""
@@ -271,6 +288,47 @@ class ContextBuilder:
                 item["currency_code"] = str(j["firm_currency"] or "USD")
             out.append(item)
         return out
+
+    def _incoming_job_offers(self, agent_id: int) -> list[dict]:
+        rows = self.store.query(
+            "SELECT jo.id AS offer_id,jo.application_id,jo.wage_cents,"
+            "jo.proposer_agent_id,ap.job_id,j.firm_id,j.title,j.wage_cents AS posted_wage,"
+            "f.name AS firm_name,f.currency_code FROM job_offers jo "
+            "JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id JOIN firms f ON f.id=j.firm_id "
+            "WHERE jo.status='pending' AND ap.state='negotiating' "
+            "AND ap.agent_id=? AND jo.proposer_agent_id<>ap.agent_id ORDER BY jo.id",
+            (agent_id,))
+        return [{
+            "offer_id": int(row["offer_id"]),
+            "application_id": int(row["application_id"]),
+            "job_id": int(row["job_id"]), "firm_id": int(row["firm_id"]),
+            "firm_name": row["firm_name"], "title": row["title"],
+            "posted_wage": int(row["posted_wage"]),
+            "offered_wage": int(row["wage_cents"]),
+            "proposer_agent_id": int(row["proposer_agent_id"]),
+            "currency_code": str(row["currency_code"] or "USD"),
+        } for row in rows]
+
+    def _ipo_offerings(self, currency_code: str | None = None) -> list[dict]:
+        currency_clause = " AND f.currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
+        rows = self.store.query(
+            "SELECT io.id AS offering_id,io.firm_id,io.shares_offered,"
+            "io.reserve_price_cents,io.minimum_subscription_bps,f.name,f.currency_code,"
+            "COALESCE(SUM(CASE WHEN b.status='open' THEN b.qty ELSE 0 END),0) AS demand "
+            "FROM ipo_offerings io JOIN firms f ON f.id=io.firm_id "
+            "LEFT JOIN ipo_bids b ON b.offering_id=io.id "
+            f"WHERE io.status='building'{currency_clause} "
+            "GROUP BY io.id ORDER BY io.id", params)
+        return [{
+            "offering_id": int(row["offering_id"]), "firm_id": int(row["firm_id"]),
+            "firm_name": row["name"], "shares_offered": int(row["shares_offered"]),
+            "reserve_price": int(row["reserve_price_cents"]),
+            "minimum_subscription_bps": int(row["minimum_subscription_bps"]),
+            "book_demand": int(row["demand"]),
+            "currency_code": str(row["currency_code"] or "USD"),
+        } for row in rows]
 
     def _listed_firms(self, tick: int, currency_code: str | None = None) -> list[dict]:
         out = []
@@ -551,7 +609,7 @@ class ContextBuilder:
             (firm_id,))
         pending_pitch = self.store.query_one(
             "SELECT 1 FROM pitches WHERE firm_id=? AND status='pending'", (firm_id,))
-        return {
+        view = {
             "firm_id": firm_id, "name": firm["name"], "sector": firm["sector"],
             "inventory": int(firm["inventory"]),
             "price": int(prod.get("unit_price_cents", 500)),
@@ -565,8 +623,47 @@ class ContextBuilder:
             "has_pending_pitch": pending_pitch is not None,
             "is_private": firm["status"] == "private",
         }
+        if self.engine_semantics_version >= 6:
+            qualification = self.e.firms.ipo_qualification(tick, firm_id)
+            active_offering = self.store.query_one(
+                "SELECT id,shares_offered,reserve_price_cents,minimum_subscription_bps "
+                "FROM ipo_offerings WHERE firm_id=? AND status='building'", (firm_id,))
+            view["ipo_qualification"] = qualification
+            view["active_ipo"] = ({
+                "offering_id": int(active_offering["id"]),
+                "shares_offered": int(active_offering["shares_offered"]),
+                "reserve_price": int(active_offering["reserve_price_cents"]),
+                "minimum_subscription_bps": int(active_offering["minimum_subscription_bps"]),
+                "book_demand": int(self.store.scalar(
+                    "SELECT COALESCE(SUM(qty),0) FROM ipo_bids "
+                    "WHERE offering_id=? AND status='open'", (int(active_offering["id"]),),
+                    default=0)),
+            } if active_offering else None)
+        return view
 
     def _firm_applications(self, firm_id: int) -> list[dict]:
+        if self.engine_semantics_version >= 6:
+            rows = self.store.query(
+                "SELECT ap.id AS application_id,ap.agent_id,ap.job_id,ap.state,"
+                "a.occupation,a.age,j.wage_cents AS posted_wage,jo.id AS current_offer_id,"
+                "jo.proposer_agent_id,jo.wage_cents AS current_offer_wage "
+                "FROM applications ap JOIN jobs j ON j.id=ap.job_id "
+                "JOIN agents a ON a.id=ap.agent_id "
+                "LEFT JOIN job_offers jo ON jo.application_id=ap.id AND jo.status='pending' "
+                "WHERE j.firm_id=? AND ap.state IN ('pending','negotiating') ORDER BY ap.id",
+                (firm_id,))
+            return [{
+                "application_id": int(r["application_id"]), "agent_id": int(r["agent_id"]),
+                "job_id": int(r["job_id"]), "occupation": r["occupation"],
+                "age": int(r["age"]), "state": r["state"],
+                "posted_wage": int(r["posted_wage"]),
+                "current_offer_id": (int(r["current_offer_id"])
+                                     if r["current_offer_id"] is not None else None),
+                "current_offer_wage": (int(r["current_offer_wage"])
+                                       if r["current_offer_wage"] is not None else None),
+                "current_proposer_agent_id": (int(r["proposer_agent_id"])
+                                               if r["proposer_agent_id"] is not None else None),
+            } for r in rows]
         rows = self.store.query(
             "SELECT ap.id AS application_id, ap.agent_id AS agent_id, ap.job_id AS job_id, "
             "a.occupation AS occupation, a.age AS age FROM applications ap "
@@ -577,6 +674,24 @@ class ContextBuilder:
                  "agent_id": int(r["agent_id"]), "job_id": int(r["job_id"]),
                  "occupation": r["occupation"], "age": int(r["age"])}
                 for r in rows]
+
+    def _firm_job_offers(self, firm_id: int) -> list[dict]:
+        rows = self.store.query(
+            "SELECT jo.id AS offer_id,jo.application_id,jo.proposer_agent_id,"
+            "jo.wage_cents,ap.agent_id,ap.job_id,j.title,j.wage_cents AS posted_wage "
+            "FROM job_offers jo JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id WHERE j.firm_id=? "
+            "AND jo.status='pending' AND ap.state='negotiating' "
+            "AND jo.proposer_agent_id=ap.agent_id ORDER BY jo.id", (firm_id,))
+        return [{
+            "offer_id": int(row["offer_id"]),
+            "application_id": int(row["application_id"]),
+            "candidate_agent_id": int(row["agent_id"]),
+            "job_id": int(row["job_id"]), "title": row["title"],
+            "posted_wage": int(row["posted_wage"]),
+            "requested_wage": int(row["wage_cents"]),
+            "proposer_agent_id": int(row["proposer_agent_id"]),
+        } for row in rows]
 
     # ── institutional contexts ───────────────────────────────────────────────
     def _credit_officer_context(self, a, tick: int) -> dict:
@@ -724,6 +839,9 @@ class ContextBuilder:
                 "agent": {"id": int(a["id"]), "name": a["name"], "role": "central_banker"},
                 "policy_rate_bps": self.e.policy_rate_bps(), "metrics": m,
                 "banks": self._bank_views("full_balance_sheet"),
+                "liquidity_support_requests": (
+                    self.e.bank.pending_liquidity_requests(limit=8)
+                    if self.engine_semantics_version >= 6 else []),
                 "neutral_rate_bps": int(cb.get("neutral_rate_bps", 500)),
                 "target_inflation": float(cb.get("target_inflation", 0.02)),
                 "natural_unemployment": float(cb.get("natural_unemployment", 0.05))}
@@ -774,6 +892,14 @@ class ContextBuilder:
         if jobs:
             lines.append("[JOBS — COPY job_id AS AN INTEGER] "
                          + json.dumps(jobs[:6], separators=(",", ":")))
+        if context.get("incoming_job_offers"):
+            lines.append("[WAGE OFFERS TO YOU — COPY offer_id; ACCEPT, COUNTER, OR REJECT] "
+                         + json.dumps(context["incoming_job_offers"][:8],
+                                      separators=(",", ":")))
+        if context.get("ipo_offerings"):
+            lines.append("[OPEN IPO BOOKS — COPY offering_id; reserve_price IS ISSUER-SET] "
+                         + json.dumps(context["ipo_offerings"][:10],
+                                      separators=(",", ":")))
         listed = context.get("listed_firms", [])
         if listed:
             lines.append("[LISTED FIRMS — COPY firm_id; last_price IS HISTORICAL; "
@@ -791,8 +917,13 @@ class ContextBuilder:
             lines.append("[YOUR FIRM — COPY firm_id] "
                          + json.dumps(f, separators=(",", ":")))
         if context.get("firm_applications"):
-            lines.append("[APPLICANTS — COPY application_id TO hire] "
+            target = "make_job_offer" if getattr(self, "engine_semantics_version", 2) >= 6 else "hire"
+            lines.append(f"[APPLICANTS — COPY application_id TO {target}] "
                          + json.dumps(context["firm_applications"][:20],
+                                      separators=(",", ":")))
+        if context.get("firm_job_offers"):
+            lines.append("[CANDIDATE COUNTEROFFERS — COPY offer_id; ACCEPT, COUNTER, OR REJECT] "
+                         + json.dumps(context["firm_job_offers"][:10],
                                       separators=(",", ":")))
         if context.get("pending_loan_apps"):
             lines.append("[LOAN APPLICATIONS — COPY id AS application_id] "
@@ -824,8 +955,21 @@ class ContextBuilder:
                          f"{context.get('neutral_rate_bps')} target_inflation="
                          f"{context.get('target_inflation')} natural_unemployment="
                          f"{context.get('natural_unemployment')}")
-            lines.append("[TASK] Assess the macro data and use set_policy_rate{rate_bps} "
-                         "only if a change is warranted; otherwise do_nothing.")
+            requests = context.get("liquidity_support_requests", [])
+            if requests:
+                lines.append(
+                    "[LENDER OF LAST RESORT — RESOLVE EVERY REQUEST; COPY request_event_id "
+                    "AND CITE IT AS THE ONLY evidence_event_ids VALUE] "
+                    + json.dumps(requests, separators=(",", ":"))[:5000])
+                lines.append(
+                    "[TASK] Act as a prudent central-bank governor. For every pending request "
+                    "use decide_liquidity_support{request_event_id,decision,evidence_event_ids} "
+                    "with decision='approve' or 'deny' and evidence_event_ids=[request_event_id]. "
+                    "Weigh recorded solvency and systemic liquidity; do not invent an amount. "
+                    "You may also use set_policy_rate{rate_bps} if the macro data warrants it.")
+            else:
+                lines.append("[TASK] Assess the macro data and use set_policy_rate{rate_bps} "
+                             "only if a change is warranted; otherwise do_nothing.")
         elif purpose == "credit_officer":
             lines.append("[TASK] Underwrite every pending application from its real income, "
                          "net worth, requested amount, bank risk, and policy rate. Use "
@@ -835,7 +979,8 @@ class ContextBuilder:
             lines.append("[TASK] Manage your firm from cash, unit cost, inventory, recent "
                          "sales, payroll, employee_roster, target headcount, and applicants. "
                          "Consider pricing, "
-                         "hiring, funding, or a deliberate do_nothing; copy every supplied ID. "
+                         "hiring, funding, an IPO when qualified, or a deliberate do_nothing; "
+                         "copy every supplied ID. "
                          "Normally change price by at most 10% per review and avoid pricing "
                          "below unit cost unless you are deliberately liquidating inventory.")
         elif purpose == "vc_partner":
@@ -859,6 +1004,9 @@ class ContextBuilder:
         else:
             lines.append("[TASK] Decide what you do today from the available goods, jobs, "
                          "banks, and—when due—listed securities. Reply with the JSON envelope only.")
-        system = (SYSTEM_PREFIX + INSTITUTIONAL_ACTIONS_SUFFIX
-                  if context.get("institutional_work") else SYSTEM_PREFIX)
+        system = SYSTEM_PREFIX
+        if context.get("institutional_work"):
+            system += INSTITUTIONAL_ACTIONS_SUFFIX
+        if getattr(self, "engine_semantics_version", 2) >= 6:
+            system += LABOR_IPO_ACTIONS_SUFFIX
         return system, "\n\n".join(lines)

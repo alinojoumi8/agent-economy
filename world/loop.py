@@ -139,22 +139,41 @@ class World:
                 self.store.tick,
                 reason="stop" if self._stop_requested else "pause")
             if self._stop_requested:
-                try:
-                    from reports.generate import generate_report
-                    self.last_report_path = generate_report(
-                        self.store, self,
-                        out_dir=str(self.config.get("report_dir", "reports/out")))
-                    operational_log(logger, logging.INFO, "world.report.generated",
-                                    run_id=self.gateway.run_id, tick=self.store.tick,
-                                    path=self.last_report_path)
-                except Exception as exc:
-                    self.store.log_event(
-                        self.store.tick, "report_failed", {"error": str(exc)[:500]},
-                        importance=3.0)
-                    self.store.commit()
-                    operational_log(logger, logging.ERROR, "world.report.failed",
-                                    run_id=self.gateway.run_id, tick=self.store.tick,
-                                    error_type=type(exc).__name__, error=str(exc))
+                meta = self.store.get_meta()
+                if meta["active_tick"] is not None:
+                    self.last_report_path = None
+                    self.last_pause_reason = {
+                        "reason": "report_deferred_partial_tick",
+                        "active_tick": int(meta["active_tick"]),
+                        "phase": str(meta["next_phase"] or meta["phase"] or "unknown"),
+                        "detail": "finish the partial tick before generating an end-of-run report",
+                    }
+                    operational_log(
+                        logger, logging.WARNING, "world.report.deferred",
+                        run_id=self.gateway.run_id, tick=self.store.tick,
+                        active_tick=int(meta["active_tick"]),
+                        phase=self.last_pause_reason["phase"])
+                else:
+                    try:
+                        from reports.generate import generate_report_async
+                        # The run loop has exited and owns the only active provider
+                        # workflow here, so the Stop interrupt can be retired before
+                        # the separately bounded report request.
+                        self.gateway.clear_interrupt()
+                        self.last_report_path = await generate_report_async(
+                            self.store, self,
+                            out_dir=str(self.config.get("report_dir", "reports/out")))
+                        operational_log(logger, logging.INFO, "world.report.generated",
+                                        run_id=self.gateway.run_id, tick=self.store.tick,
+                                        path=self.last_report_path)
+                    except Exception as exc:
+                        self.store.log_event(
+                            self.store.tick, "report_failed", {"error": str(exc)[:500]},
+                            importance=3.0)
+                        self.store.commit()
+                        operational_log(logger, logging.ERROR, "world.report.failed",
+                                        run_id=self.gateway.run_id, tick=self.store.tick,
+                                        error_type=type(exc).__name__, error=str(exc))
             self._pause_requested = False
             operational_log(logger, logging.INFO, "world.run.finished",
                             run_id=self.gateway.run_id, start_tick=start_tick,
@@ -423,17 +442,24 @@ class World:
                 Leg(int(r["id"]), interest, "interest"), Leg(eq, -interest, "interest expense")])
 
     def _bank_liquidity_sweep(self, tick: int) -> None:
-        cb = self.economy.central_bank_reserve_acct()
         for b in self.store.query("SELECT * FROM banks WHERE status='open'"):
             bid = int(b["id"])
+            cb = self.economy.central_bank_reserve_acct(
+                str(b["currency_code"] or "USD"))
             required = int(self.economy.bank.deposits(bid) *
                            int(b["reserve_requirement_bps"]) / 10000)
             shortfall = required - self.economy.bank.reserves(bid)
             if shortfall > 0:
                 supported = False
                 if cb is not None:
-                    supported = self.economy.bank.attempt_liquidity_support(tick, bid, shortfall, cb)
-                if not supported:
+                    supported = self.economy.bank.attempt_liquidity_support(
+                        tick, bid, shortfall, cb,
+                        require_authorized_decision=self.engine_semantics_version >= 6,
+                        phase="NIGHT_CLOSE", source="night_close")
+                # ``None`` is a durable semantics-6 request awaiting the normal
+                # MORNING decision/EXECUTION proposal path. Only an explicit
+                # legacy denial or missing central bank fails immediately.
+                if supported is False:
                     self.economy.bank.fail_bank(tick, bid)
 
     def _phase_market(self, tick: int) -> None:

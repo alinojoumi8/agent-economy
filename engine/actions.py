@@ -26,7 +26,9 @@ logger = get_logger("engine.actions")
 VALID_TYPES = {
     "buy_goods", "place_order", "cancel_orders", "apply_loan", "approve_loan", "deny_loan",
     "post_job", "apply_job", "set_price", "hire", "fire", "found_company", "transfer",
-    "move_deposits", "set_policy_rate", "say_public", "do_nothing",
+    "make_job_offer", "counter_job_offer", "accept_job_offer", "reject_job_offer",
+    "open_ipo", "place_ipo_bid", "close_ipo",
+    "move_deposits", "set_policy_rate", "decide_liquidity_support", "say_public", "do_nothing",
     "pitch_vc", "fund_pitch", "decline_pitch",          # VC track (P1 R13)
     "buy_insurance", "cancel_insurance",                # health economy (P1 R17)
     # v2 legal-institutional kernel
@@ -52,6 +54,7 @@ class ActionExecutor:
         self.store = economy.store
         self.local_currency_action_surfaces = bool(
             economy.config.get("llm", {}).get("local_currency_action_surfaces", False))
+        self.engine_semantics_version = int(economy.config.get("engine_semantics_version", 2))
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
@@ -219,12 +222,23 @@ class ActionExecutor:
         # Liquidity check on the source bank — this is where a run bites.
         if from_bank and not self.e.bank.can_settle_outflow(from_bank, amount):
             shortfall = amount - self.e.bank.reserves(from_bank)
-            cb = self.e.central_bank_reserve_acct()
+            cb = self.e.central_bank_reserve_acct(source_currency)
             supported = False
             if cb is not None:
-                supported = self.e.bank.attempt_liquidity_support(tick, from_bank, shortfall, cb)
-            if not supported:
-                self.e.bank.fail_bank(tick, from_bank)
+                supported = self.e.bank.attempt_liquidity_support(
+                    tick, from_bank, shortfall, cb,
+                    require_authorized_decision=self.engine_semantics_version >= 6,
+                    phase=phase, source="deposit_transfer")
+            if supported is None:
+                pending = self.e.bank.pending_liquidity_requests(
+                    bank_id=from_bank, limit=1)
+                return {
+                    "ok": False, "reason": "liquidity_support_pending",
+                    "request_event_id": (
+                        int(pending[0]["request_event_id"]) if pending else None),
+                }
+            if supported is False:
+                self.e.bank.fail_bank(tick, from_bank, phase=phase)
                 return {"ok": False, "reason": "bank_failed_during_run"}
 
         dest_acct = self._ensure_checking(actor_id, to_bank)
@@ -281,6 +295,8 @@ class ActionExecutor:
         return {"ok": True, "application_id": app_id}
 
     def _do_hire(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version >= 6 and phase != "FIXTURE":
+            return {"ok": False, "reason": "use wage offer and acceptance actions for new hires"}
         app_id = int(action.get("application_id", 0))
         app = self.store.query_one("SELECT * FROM applications WHERE id=?", (app_id,))
         if not app:
@@ -304,12 +320,125 @@ class ActionExecutor:
             return {"ok": False, "reason": "hire failed"}
         return {"ok": True, "employment_id": emp_id}
 
+    def _do_make_job_offer(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
+        app_id = int(action.get("application_id", 0))
+        wage = int(action.get("wage", -1))
+        app = self._job_offer_application(app_id)
+        if not app:
+            return {"ok": False, "reason": "application missing or unavailable"}
+        if not self._controls_firm(actor_id, int(app["firm_id"])):
+            return {"ok": False, "reason": "actor does not control hiring firm"}
+        if int(app["agent_id"]) == actor_id:
+            return {"ok": False, "reason": "self-hiring cannot create a bilateral negotiation"}
+        if not self._alive(int(app["agent_id"])):
+            return {"ok": False, "reason": "candidate not alive"}
+        if wage < 0:
+            return {"ok": False, "reason": "wage must be >= 0"}
+        # A negotiated employment cannot ever cross currencies: payroll posts
+        # directly between the firm's and worker's local accounts.  This is a
+        # semantics-6 invariant, independent of whether the optional legacy
+        # local-currency action filtering is enabled.
+        if not self._job_currency_matches(app):
+            return {"ok": False, "reason": "offer must use the firm's payroll currency"}
+        offer_id = self.e.labor.make_offer(tick, app_id, actor_id, wage)
+        if offer_id is None:
+            return {"ok": False, "reason": "application already has a pending offer"}
+        return {"ok": True, "offer_id": offer_id, "application_id": app_id,
+                "wage_cents": wage}
+
+    def _do_counter_job_offer(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
+        offer_id = int(action.get("offer_id", 0))
+        wage = int(action.get("wage", -1))
+        offer = self._job_offer(offer_id)
+        reason = self._job_offer_counterparty_error(actor_id, offer)
+        if reason:
+            return {"ok": False, "reason": reason}
+        if wage < 0:
+            return {"ok": False, "reason": "wage must be >= 0"}
+        if not self._job_currency_matches(offer):
+            return {"ok": False, "reason": "offer must use the firm's payroll currency"}
+        new_offer_id = self.e.labor.make_offer(
+            tick, int(offer["application_id"]), actor_id, wage, parent_offer_id=offer_id)
+        if new_offer_id is None:
+            return {"ok": False, "reason": "offer is stale"}
+        return {"ok": True, "offer_id": new_offer_id, "parent_offer_id": offer_id,
+                "application_id": int(offer["application_id"]), "wage_cents": wage}
+
+    def _do_accept_job_offer(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
+        offer_id = int(action.get("offer_id", 0))
+        offer = self._job_offer(offer_id)
+        reason = self._job_offer_counterparty_error(actor_id, offer)
+        if reason:
+            return {"ok": False, "reason": reason}
+        if not self._alive(int(offer["agent_id"])):
+            return {"ok": False, "reason": "candidate not alive"}
+        if not self._job_currency_matches(offer):
+            return {"ok": False, "reason": "hire must use the firm's payroll currency"}
+        emp_id = self.e.labor.accept_offer(tick, offer_id, actor_id)
+        if emp_id is None:
+            return {"ok": False, "reason": "offer acceptance failed"}
+        return {"ok": True, "offer_id": offer_id, "employment_id": emp_id,
+                "wage_cents": int(offer["wage_cents"])}
+
+    def _do_reject_job_offer(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
+        offer_id = int(action.get("offer_id", 0))
+        offer = self._job_offer(offer_id)
+        reason = self._job_offer_counterparty_error(actor_id, offer)
+        if reason:
+            return {"ok": False, "reason": reason}
+        if not self.e.labor.reject_offer(tick, offer_id, actor_id):
+            return {"ok": False, "reason": "offer rejection failed"}
+        return {"ok": True, "offer_id": offer_id}
+
     def _do_fire(self, tick, actor_id, action, phase) -> dict:
         emp_id = int(action.get("employment_id", 0))
         emp = self.store.query_one("SELECT firm_id FROM employments WHERE id=?", (emp_id,))
         if not emp or not self._controls_firm(actor_id, int(emp["firm_id"])):
             return {"ok": False, "reason": "actor does not control firm"}
         return {"ok": self.e.labor.fire(tick, emp_id), "reason": "not active"}
+
+    # -- IPO book building -------------------------------------------------
+    def _do_open_ipo(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "agent-driven IPOs require engine semantics 6"}
+        firm_id = int(action.get("firm_id", 0)) or self._owned_firm(actor_id)
+        if not firm_id or not self._controls_firm(actor_id, firm_id):
+            return {"ok": False, "reason": "actor does not control issuer"}
+        return self.e.firms.open_ipo(
+            tick, actor_id, firm_id, int(action.get("shares_offered", 0)),
+            int(action.get("reserve_price", 0)),
+            int(action.get("minimum_subscription_bps", 5000)))
+
+    def _do_place_ipo_bid(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "agent-driven IPOs require engine semantics 6"}
+        offering_id = int(action.get("offering_id", 0))
+        offering = self.store.query_one(
+            "SELECT firm_id FROM ipo_offerings WHERE id=? AND status='building'",
+            (offering_id,))
+        if offering and self._controls_firm(actor_id, int(offering["firm_id"])):
+            return {"ok": False, "reason": "issuer controllers cannot bid in their own offering"}
+        return self.e.firms.place_ipo_bid(
+            tick, actor_id, offering_id,
+            int(action.get("qty", 0)), int(action.get("max_price", 0)))
+
+    def _do_close_ipo(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "agent-driven IPOs require engine semantics 6"}
+        offering_id = int(action.get("offering_id", 0))
+        offering = self.store.query_one(
+            "SELECT firm_id,issuer_agent_id FROM ipo_offerings WHERE id=?", (offering_id,))
+        if not offering or not self._controls_firm(actor_id, int(offering["firm_id"])):
+            return {"ok": False, "reason": "actor does not control issuer"}
+        return self.e.firms.close_ipo(tick, actor_id, offering_id)
 
     # ── founding ─────────────────────────────────────────────────────────────
     def _do_found_company(self, tick, actor_id, action, phase) -> dict:
@@ -664,6 +793,33 @@ class ActionExecutor:
             tick, actor_id, int(action.get("destination_region_id", 0)),
             str(action.get("reason", "")))
 
+    def _do_decide_liquidity_support(self, tick, actor_id, action, phase) -> dict:
+        if self.engine_semantics_version < 6:
+            return {"ok": False, "reason": "agent-authored liquidity support is unavailable"}
+        request_event_id = int(action.get("request_event_id", 0))
+        evidence = action.get("evidence_event_ids", [])
+        try:
+            evidence_ids = [int(item) for item in evidence]
+        except (TypeError, ValueError):
+            return {"ok": False, "reason": "liquidity decision evidence is malformed"}
+        if evidence_ids != [request_event_id] or request_event_id <= 0:
+            return {
+                "ok": False,
+                "reason": "liquidity decision must cite exactly its request event",
+            }
+        request = self.e.bank.pending_liquidity_request(request_event_id)
+        central_bank_reserve_acct = None
+        if request is not None:
+            currency_code = self.store.scalar(
+                "SELECT currency_code FROM banks WHERE id=?",
+                (int(request["bank_id"]),), default=None)
+            if currency_code is not None:
+                central_bank_reserve_acct = self.e.central_bank_reserve_acct(
+                    str(currency_code))
+        return self.e.bank.decide_liquidity_support(
+            tick, actor_id, request_event_id, str(action.get("decision", "")),
+            action.get("model_call_id"), central_bank_reserve_acct, phase=phase)
+
     def _do_set_policy_rate(self, tick, actor_id, action, phase) -> dict:
         a = self._agent(actor_id)
         if not a or a["role"] != "central_banker":
@@ -705,6 +861,44 @@ class ActionExecutor:
     def _is_vc_partner(self, agent_id: int) -> bool:
         a = self._agent(agent_id)
         return bool(a and a["role"] == "vc_partner" and a["alive"])
+
+    def _job_offer_application(self, application_id: int):
+        return self.store.query_one(
+            "SELECT ap.*,j.firm_id,j.status AS job_status,f.currency_code "
+            "FROM applications ap JOIN jobs j ON j.id=ap.job_id "
+            "JOIN firms f ON f.id=j.firm_id WHERE ap.id=? "
+            "AND ap.state IN ('pending','negotiating') AND j.status='open'",
+            (application_id,))
+
+    def _job_offer(self, offer_id: int):
+        return self.store.query_one(
+            "SELECT jo.*,ap.agent_id,ap.job_id,ap.state AS application_state,"
+            "j.firm_id,j.status AS job_status,f.currency_code "
+            "FROM job_offers jo JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id JOIN firms f ON f.id=j.firm_id "
+            "WHERE jo.id=?", (offer_id,))
+
+    def _job_offer_counterparty_error(self, actor_id: int, offer) -> Optional[str]:
+        if not offer or offer["status"] != "pending":
+            return "offer missing or stale"
+        if offer["application_state"] != "negotiating" or offer["job_status"] != "open":
+            return "application is no longer negotiable"
+        candidate_id = int(offer["agent_id"])
+        proposer_id = int(offer["proposer_agent_id"])
+        if actor_id == proposer_id:
+            return "proposer cannot respond to its own offer"
+        if actor_id == candidate_id:
+            return None
+        if self._controls_firm(actor_id, int(offer["firm_id"])) and proposer_id == candidate_id:
+            return None
+        return "only the receiving candidate or hiring firm may respond"
+
+    def _job_currency_matches(self, row) -> bool:
+        candidate_currency = self.store.scalar(
+            "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+            "ON ac.id=a.checking_account_id WHERE a.id=?", (int(row["agent_id"]),))
+        return (candidate_currency is not None
+                and str(candidate_currency or "USD") == str(row["currency_code"] or "USD"))
 
 
 def _json(value, default):

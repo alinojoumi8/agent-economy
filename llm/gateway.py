@@ -170,6 +170,11 @@ class Governor:
         cap = budget_cfg.get("cap_usd", 200.0)
         self.cap_usd = None if cap is None else float(cap)
         self.oracle_reserve_usd = float(budget_cfg.get("oracle_reserve_usd", 10.0))
+        # End-of-run prose is operational rather than behavioral.  Fresh
+        # profiles opt into a small carve-out; missing means zero so historical
+        # stored configs keep their original world/Oracle scheduling exactly.
+        self.report_reserve_usd = max(
+            0.0, float(budget_cfg.get("report_reserve_usd", 0.0)))
         # Persisted opt-in keeps historical capped replays on their original
         # accounting while fresh runs reserve the complete Oracle workflow.
         self.oracle_plan_in_reserve = bool(
@@ -179,6 +184,7 @@ class Governor:
         self._last_call_id = 0
         self._total_spend_usd = 0.0
         self._oracle_spend_usd = 0.0
+        self._report_spend_usd = 0.0
         self._world_spend_usd = 0.0
         self._refresh_spend()
         self._level = self._calculate_level()
@@ -193,12 +199,16 @@ class Governor:
         row = self.store.query_one(
             "SELECT COALESCE(MAX(id),0) AS last_id, "
             "COALESCE(SUM(cost_usd),0) AS total, "
-            f"COALESCE(SUM(CASE WHEN {oracle_clause} THEN cost_usd ELSE 0 END),0) AS oracle "
+            f"COALESCE(SUM(CASE WHEN {oracle_clause} THEN cost_usd ELSE 0 END),0) AS oracle, "
+            "COALESCE(SUM(CASE WHEN purpose='report_narrative' "
+            "THEN cost_usd ELSE 0 END),0) AS report "
             "FROM llm_calls")
         self._last_call_id = int(row["last_id"] if row else 0)
         self._total_spend_usd = float(row["total"] if row else 0.0)
         self._oracle_spend_usd = float(row["oracle"] if row else 0.0)
-        self._world_spend_usd = self._total_spend_usd - self._oracle_spend_usd
+        self._report_spend_usd = float(row["report"] if row else 0.0)
+        self._world_spend_usd = (
+            self._total_spend_usd - self._oracle_spend_usd - self._report_spend_usd)
 
     def _ensure_current(self) -> None:
         last_id = int(self.store.scalar(
@@ -211,7 +221,9 @@ class Governor:
         cost = float(cost_usd)
         self._last_call_id = max(self._last_call_id, int(call_id))
         self._total_spend_usd += cost
-        if self._uses_oracle_reserve(purpose):
+        if self._uses_report_reserve(purpose):
+            self._report_spend_usd += cost
+        elif self._uses_oracle_reserve(purpose):
             self._oracle_spend_usd += cost
         else:
             self._world_spend_usd += cost
@@ -219,6 +231,10 @@ class Governor:
     def _uses_oracle_reserve(self, purpose: str) -> bool:
         return purpose == "oracle" or (
             self.oracle_plan_in_reserve and purpose == "oracle_plan")
+
+    @staticmethod
+    def _uses_report_reserve(purpose: str) -> bool:
+        return purpose == "report_narrative"
 
     def total_spend(self) -> float:
         self._ensure_current()
@@ -232,11 +248,17 @@ class Governor:
         self._ensure_current()
         return self._world_spend_usd
 
+    def report_spend(self) -> float:
+        self._ensure_current()
+        return self._report_spend_usd
+
     @property
     def world_budget(self) -> float:
         if self.cap_usd is None:
             return float("inf")
-        return max(0.01, self.cap_usd - self.oracle_reserve_usd)
+        return max(
+            0.01,
+            self.cap_usd - self.oracle_reserve_usd - self.report_reserve_usd)
 
     def _calculate_level(self) -> int:
         if self.cap_usd is None:
@@ -272,18 +294,24 @@ class Governor:
         self._ensure_current()
         if self.cap_usd is None:
             return True
+        if self._uses_report_reserve(purpose):
+            return self._report_spend_usd + est_cost <= self.report_reserve_usd \
+                and self._total_spend_usd + est_cost <= self.cap_usd
         if self._uses_oracle_reserve(purpose):
             return self._oracle_spend_usd + est_cost <= self.oracle_reserve_usd \
                 and self._total_spend_usd + est_cost <= self.cap_usd
-        return self._total_spend_usd + est_cost <= self.cap_usd
+        return self._world_spend_usd + est_cost <= self.world_budget \
+            and self._total_spend_usd + est_cost <= self.cap_usd
 
     def status(self) -> dict:
         self._ensure_current()
         return {
             "cap_usd": self.cap_usd, "oracle_reserve_usd": self.oracle_reserve_usd,
+            "report_reserve_usd": self.report_reserve_usd,
             "total_spend_usd": round(self._total_spend_usd, 4),
             "world_spend_usd": round(self._world_spend_usd, 4),
             "oracle_spend_usd": round(self._oracle_spend_usd, 4),
+            "report_spend_usd": round(self._report_spend_usd, 4),
             "level": self.level(), "conversation_pairs": self.conversation_pairs(),
             "cadence_multiplier": self.cadence_multiplier(),
             "citizens_enabled": self.citizens_enabled(),
@@ -318,6 +346,7 @@ class Gateway:
         self.replay_conn: Optional[sqlite3.Connection] = None
         self._replay_positions: dict[str, int] = {}
         self._replay_used_call_ids: set[int] = set()
+        self._replay_event_id_map: dict[int, int] = {}
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
@@ -517,8 +546,12 @@ class Gateway:
             failure = ProviderUnavailable(
                 provider, model, req.purpose, f"{type(exc).__name__}: {exc}",
                 latency_ms=latency_ms, attempts=self.provider_retries + 1)
-            self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
-                                 phase="LLM", importance=5.0)
+            # Report narration is generated after the simulated tick has
+            # closed. Its provider outage is operational and must not mutate
+            # deterministic world state that an offline replay rebuilds.
+            if req.purpose != "report_narrative":
+                self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                     phase="LLM", importance=5.0)
             operational_log(logger, logging.ERROR, "llm.request.failed",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -547,6 +580,29 @@ class Gateway:
                       + (f" Required shape: {schema_hint}" if schema_hint else "")),
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
+
+            def persist_initial_completion(reason: str) -> None:
+                """Meter the billable first completion even if repair cannot finish."""
+                partial = AdapterResult(
+                    text=initial_result.text,
+                    in_tokens=initial_result.in_tokens,
+                    out_tokens=initial_result.out_tokens,
+                    cached_in_tokens=initial_result.cached_in_tokens,
+                    raw={
+                        "provider_calls": 1,
+                        "initial": initial_result.raw,
+                        "repair_failed": reason[:120],
+                    },
+                )
+                cached, cost = self._price(
+                    model, partial.in_tokens, partial.out_tokens,
+                    partial.cached_in_tokens, pricing)
+                partial_latency_ms = int(
+                    (datetime.now(timezone.utc) - started).total_seconds() * 1000)
+                self._log_call(
+                    req, provider, model, cache_key, partial, cost, cached,
+                    partial_latency_ms)
+
             try:
                 repaired_result, repair_attempts = await self._call_adapter(
                     provider, adapter, model, repair, repair.messages(), 0.2,
@@ -554,14 +610,20 @@ class Gateway:
                 repaired_result.text = sanitize_provider_text(repaired_result.text)
                 attempts += repair_attempts
             except GatewayInterrupted:
+                persist_initial_completion("GatewayInterrupted")
+                raise
+            except asyncio.CancelledError:
+                persist_initial_completion("CancelledError")
                 raise
             except Exception as exc:
+                persist_initial_completion(type(exc).__name__)
                 latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
                 failure = ProviderUnavailable(
                     provider, model, req.purpose, f"repair {type(exc).__name__}: {exc}",
                     latency_ms=latency_ms, attempts=attempts + self.provider_retries + 1)
-                self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
-                                     phase="LLM", importance=5.0)
+                if req.purpose != "report_narrative":
+                    self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                         phase="LLM", importance=5.0)
                 operational_log(logger, logging.ERROR, "llm.repair.failed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -722,6 +784,66 @@ class Gateway:
                            "m": model, "msgs": req.messages()}, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
+    @staticmethod
+    def _event_payload_identity(payload_json: str | None) -> str:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return str(payload_json or "")
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False)
+
+    def _local_event_id_for_replay(self, source_event_id: int) -> int:
+        """Translate a source SQLite event ID to the same logical local event."""
+        source_id = int(source_event_id)
+        cached = self._replay_event_id_map.get(source_id)
+        if cached is not None:
+            return cached
+        if self.replay_conn is None:
+            return source_id
+        source = self.replay_conn.execute(
+            "SELECT tick,phase,kind,subject_type,subject_id,importance,payload_json "
+            "FROM events WHERE id=?", (source_id,)).fetchone()
+        if source is None:
+            return source_id
+        candidates = self.store.query(
+            "SELECT id,importance,payload_json FROM events "
+            "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
+            "AND subject_id IS ? ORDER BY id",
+            (int(source["tick"]), source["phase"], source["kind"],
+             source["subject_type"], source["subject_id"]))
+        source_payload = self._event_payload_identity(source["payload_json"])
+        matches = [
+            int(candidate["id"]) for candidate in candidates
+            if float(candidate["importance"]) == float(source["importance"])
+            and self._event_payload_identity(candidate["payload_json"]) == source_payload
+        ]
+        if len(matches) == 1:
+            self._replay_event_id_map[source_id] = matches[0]
+            return matches[0]
+        return source_id
+
+    def _localize_replay_event_references(self, value):
+        """Localize event provenance embedded in a recorded model response."""
+        if isinstance(value, dict):
+            localized = {}
+            for key, nested in value.items():
+                if key == "request_event_id" and isinstance(nested, int) \
+                        and not isinstance(nested, bool):
+                    localized[key] = self._local_event_id_for_replay(nested)
+                elif key == "evidence_event_ids" and isinstance(nested, list):
+                    localized[key] = [
+                        self._local_event_id_for_replay(item)
+                        if isinstance(item, int) and not isinstance(item, bool) else item
+                        for item in nested
+                    ]
+                else:
+                    localized[key] = self._localize_replay_event_references(nested)
+            return localized
+        if isinstance(value, list):
+            return [self._localize_replay_event_references(item) for item in value]
+        return value
+
     def _replay_lookup(self, cache_key: str, req: LLMRequest,
                        schema_hint: str = ""):
         if self.replay_conn is None:
@@ -765,6 +887,8 @@ class Gateway:
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok:
+            parsed = self._localize_replay_event_references(parsed)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}
@@ -824,7 +948,12 @@ class Gateway:
             cost_usd=cost, latency_ms=latency_ms,
             created_at=datetime.now(timezone.utc).isoformat())
         self.governor.record_cost(call_id, cost, req.purpose)
-        self._log_governor_transitions(req.tick, level_before)
+        # End-of-run narration is an operational artifact: meter it against the
+        # hard cap, but do not append simulated-world degradation events after
+        # the final tick. Replay intentionally regenerates reports via the
+        # deterministic engine fallback without dispatching a provider.
+        if req.purpose != "report_narrative":
+            self._log_governor_transitions(req.tick, level_before)
         return call_id
 
     def _log_governor_transitions(self, tick: int, level_before: int) -> None:

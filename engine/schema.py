@@ -6,7 +6,7 @@ as integer cents everywhere; Ledger.post rejects unbalanced batches before
 insertion and tick reconciliation independently verifies every account (PRD R1).
 """
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
@@ -1157,6 +1157,99 @@ CREATE TABLE IF NOT EXISTS counterfactual_results (
 """
 
 
+MIGRATION_11_SQL = r"""
+-- Agent-to-agent wage bargaining.  Each row is an immutable offer; a newer
+-- counter supersedes the previous pending row, preserving the full audit trail.
+CREATE TABLE IF NOT EXISTS job_offers (
+    id                  INTEGER PRIMARY KEY,
+    application_id      INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    proposer_agent_id   INTEGER NOT NULL,
+    wage_cents          INTEGER NOT NULL,
+    parent_offer_id     INTEGER,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    decided_tick        INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_job_offers_application
+    ON job_offers(application_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_job_offers_pending
+    ON job_offers(application_id) WHERE status='pending';
+
+-- Primary-market book building.  The reserve and every bid are agent-authored;
+-- the engine only applies a deterministic price/time allocation rule.
+CREATE TABLE IF NOT EXISTS ipo_offerings (
+    id                      INTEGER PRIMARY KEY,
+    firm_id                 INTEGER NOT NULL,
+    issuer_agent_id         INTEGER NOT NULL,
+    opened_tick             INTEGER NOT NULL,
+    shares_offered          INTEGER NOT NULL,
+    reserve_price_cents     INTEGER NOT NULL,
+    minimum_subscription_bps INTEGER NOT NULL DEFAULT 5000,
+    status                  TEXT NOT NULL DEFAULT 'building',
+    closed_tick             INTEGER,
+    clearing_price_cents    INTEGER,
+    shares_sold             INTEGER NOT NULL DEFAULT 0,
+    proceeds_cents          INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ipo_active_firm
+    ON ipo_offerings(firm_id) WHERE status='building';
+
+CREATE TABLE IF NOT EXISTS ipo_bids (
+    id                  INTEGER PRIMARY KEY,
+    offering_id         INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    bidder_agent_id     INTEGER NOT NULL,
+    qty                 INTEGER NOT NULL,
+    max_price_cents     INTEGER NOT NULL,
+    qty_allocated       INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS ix_ipo_bids_book
+    ON ipo_bids(offering_id, status, max_price_cents, tick, id);
+
+-- Cap-table provenance for non-secondary equity movements.  A primary
+-- issuance has no source holder; transaction_id links paid allocations to the
+-- balanced cash ledger.  Genesis distributions are explicitly identified and
+-- have no cash transaction.
+CREATE TABLE IF NOT EXISTS share_movements (
+    id                  INTEGER PRIMARY KEY,
+    tick                INTEGER NOT NULL,
+    firm_id             INTEGER NOT NULL,
+    from_holder_type    TEXT,
+    from_holder_id      INTEGER,
+    to_holder_type      TEXT NOT NULL,
+    to_holder_id        INTEGER NOT NULL,
+    qty                 INTEGER NOT NULL,
+    movement_type       TEXT NOT NULL,
+    reference_type      TEXT,
+    reference_id        INTEGER,
+    price_cents         INTEGER,
+    amount_cents        INTEGER NOT NULL DEFAULT 0,
+    transaction_id      INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_share_movements_firm
+    ON share_movements(firm_id, id);
+CREATE INDEX IF NOT EXISTS ix_share_movements_reference
+    ON share_movements(reference_type, reference_id);
+
+-- Durable lender-of-last-resort workflow state.  The request event remains the
+-- immutable public/audit record; this table provides an indexed state pointer
+-- so scheduler and context reads never rescan every historical proposal JSON.
+CREATE TABLE IF NOT EXISTS liquidity_support_requests (
+    id                  INTEGER PRIMARY KEY,
+    request_event_id    INTEGER NOT NULL UNIQUE,
+    bank_id             INTEGER NOT NULL,
+    requested_tick      INTEGER NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    decided_tick        INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_liquidity_support_pending_bank
+    ON liquidity_support_requests(bank_id) WHERE status='pending';
+CREATE INDEX IF NOT EXISTS ix_liquidity_support_status
+    ON liquidity_support_requests(status, bank_id, request_event_id);
+"""
+
+
 # Idempotent physical-design additions. These do not change engine semantics or
 # the public schema version; they bound history lookups and maintain an exact
 # ledger aggregate through SQLite triggers for constant-time reconciliation.
@@ -1168,6 +1261,10 @@ CREATE INDEX IF NOT EXISTS ix_mem_tick_importance
     ON memories(tick, importance, agent_id);
 CREATE INDEX IF NOT EXISTS ix_events_subject_tick
     ON events(subject_type, subject_id, tick);
+CREATE INDEX IF NOT EXISTS ix_events_kind_subject_tick
+    ON events(kind, subject_type, subject_id, tick, id);
+CREATE INDEX IF NOT EXISTS ix_action_proposals_type_status
+    ON action_proposals(action_type, validation_status, tick, id);
 CREATE INDEX IF NOT EXISTS ix_firms_founder_status
     ON firms(founder_agent_id, status);
 CREATE INDEX IF NOT EXISTS ix_legal_claimant
@@ -1220,6 +1317,7 @@ def initialize_schema(conn) -> None:
     conn.executescript(MIGRATION_8_SQL)
     conn.executescript(MIGRATION_9_SQL)
     conn.executescript(MIGRATION_10_SQL)
+    conn.executescript(MIGRATION_11_SQL)
     conn.executescript(PERFORMANCE_SQL)
     _ensure_column(conn, "agents", "region_id", "INTEGER")
     _ensure_column(conn, "agents", "population_tier", "TEXT NOT NULL DEFAULT 'periphery'")

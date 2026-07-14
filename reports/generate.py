@@ -8,12 +8,15 @@ always produced.
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from engine.store import Store, load_json
+from llm.gateway import LLMRequest, sanitize_provider_text
+from world.event_visibility import PUBLIC_REPORTABLE_EVENT_KINDS
 
 CHART_METRICS = [("gdp_proxy", "Final-goods sales / day ($)"),
                  ("gdp_proxy_30d", "Final-goods sales / 30 days ($)"),
@@ -28,6 +31,29 @@ KEY_EVENT_KINDS = ("genesis", "shock_fired", "rumor", "bank_failure", "bankruptc
                    "company_founded", "loan_default", "budget_pause", "reconciliation_failure",
                    "firm_scandal", "slant_directive", "election_held", "vc_funded",
                    "vc_writeoff", "epidemic_started", "epidemic_ended")
+
+NARRATIVE_EVENT_LIMIT = 60
+NARRATIVE_EVENT_COUNT_LIMIT = 40
+NARRATIVE_SUMMARY_MAX_CHARS = 12_000
+NARRATIVE_MAX_CHARS = 6000
+PUBLIC_EVENT_FACT_KEYS = frozenset({
+    "amount_cents", "bank_id", "candidate_id", "damages_cents", "duration_ticks",
+    "firm_id", "haircut_rate", "kind", "matter_id", "multiplier", "outcome",
+    "outlet_id", "rate_bps", "status", "winner_id",
+})
+
+
+class ReportBoundaryError(RuntimeError):
+    """A public report may only describe a fully committed tick boundary."""
+
+
+def _require_completed_boundary(store: Store) -> None:
+    meta = store.get_meta()
+    if meta["active_tick"] is not None:
+        raise ReportBoundaryError(
+            "report deferred: tick "
+            f"{int(meta['active_tick'])} is partial at "
+            f"{str(meta['next_phase'] or meta['phase'] or 'unknown')}")
 
 
 def _svg_chart(points: list[tuple[int, float]], title: str, w: int = 460, h: int = 130) -> str:
@@ -86,14 +112,209 @@ def _narrative(store: Store) -> str:
     return "\n\n".join(paras)
 
 
-def generate_report(store: Store, world=None, out_dir: str = "reports/out") -> str:
+def _public_event_facts(payload: dict) -> dict:
+    """Keep only bounded, non-personal facts for the public narrative prompt."""
+    facts = {}
+    for key in sorted(PUBLIC_EVENT_FACT_KEYS):
+        value = payload.get(key)
+        if isinstance(value, (bool, int, float)) or value is None:
+            if key in payload:
+                facts[key] = value
+        elif isinstance(value, str):
+            facts[key] = sanitize_provider_text(value)[:80]
+    return facts
+
+
+def _narrative_summary(store: Store) -> dict:
+    """Build a deterministic, bounded public summary of world state and events."""
+    meta = store.get_meta()
+    metrics = {}
+    for name, _title in CHART_METRICS:
+        series = store.metric_series(name)
+        if series:
+            metrics[name] = {
+                "start_tick": int(series[0][0]),
+                "start": round(float(series[0][1]), 6),
+                "end_tick": int(series[-1][0]),
+                "end": round(float(series[-1][1]), 6),
+            }
+
+    public_kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS))
+    public_placeholders = ",".join("?" for _ in public_kinds)
+    counts = [
+        {
+            "kind": str(row["kind"])[:80],
+            "count": int(row["n"]),
+            "first_tick": int(row["first_tick"]),
+            "last_tick": int(row["last_tick"]),
+        }
+        for row in store.query(
+            "SELECT kind, COUNT(*) AS n, MIN(tick) AS first_tick, MAX(tick) AS last_tick "
+            f"FROM events WHERE kind IN ({public_placeholders}) "
+            "GROUP BY kind ORDER BY n DESC, kind LIMIT ?",
+            (*public_kinds, NARRATIVE_EVENT_COUNT_LIMIT))
+    ]
+    key_kinds = tuple(sorted(set(KEY_EVENT_KINDS) & PUBLIC_REPORTABLE_EVENT_KINDS))
+    placeholders = ",".join("?" * len(key_kinds))
+    key_events = []
+    for row in store.query(
+            f"SELECT tick, kind, payload_json FROM events WHERE kind IN ({placeholders}) "
+            "ORDER BY importance DESC, tick, id LIMIT ?",
+            (*key_kinds, NARRATIVE_EVENT_LIMIT)):
+        payload = load_json(row["payload_json"], {}) or {}
+        item = {"tick": int(row["tick"]), "kind": str(row["kind"])[:80]}
+        facts = _public_event_facts(payload if isinstance(payload, dict) else {})
+        if facts:
+            item["facts"] = facts
+        key_events.append(item)
+
+    predictions = store.query(
+        "SELECT status, COUNT(*) AS n, AVG(brier) AS mean_brier "
+        "FROM predictions GROUP BY status ORDER BY status")
+    return {
+        "run": {
+            "run_id": str(meta["run_id"])[:120],
+            "seed": int(meta["seed"]),
+            "simulated_days": int(meta["tick"]),
+        },
+        "population": {
+            "total": int(store.scalar("SELECT COUNT(*) FROM agents", default=0)),
+            "alive_at_close": int(store.scalar(
+                "SELECT COUNT(*) FROM agents WHERE alive=1", default=0)),
+        },
+        "metrics": metrics,
+        "event_counts": counts,
+        "key_events": key_events,
+        "oracle": [
+            {
+                "status": str(row["status"])[:40],
+                "count": int(row["n"]),
+                "mean_brier": (None if row["mean_brier"] is None
+                               else round(float(row["mean_brier"]), 6)),
+            }
+            for row in predictions
+        ],
+    }
+
+
+def _fallback_provenance(reason: str) -> dict:
+    return {"source": "engine", "fallback": True, "reason": reason[:120]}
+
+
+def _bounded_summary(store: Store) -> tuple[dict, str]:
+    """Return a valid JSON summary under the hard prompt-size ceiling."""
+    summary = _narrative_summary(store)
+    encoded = json.dumps(
+        summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    for collection in (summary["key_events"], summary["event_counts"]):
+        while len(encoded) > NARRATIVE_SUMMARY_MAX_CHARS and collection:
+            collection.pop()
+            encoded = json.dumps(
+                summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) > NARRATIVE_SUMMARY_MAX_CHARS:
+        # The fixed aggregate fields are already small, but keep the ceiling a
+        # real invariant if future metric sets grow substantially.
+        summary["metrics"] = {}
+        encoded = json.dumps(
+            summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) > NARRATIVE_SUMMARY_MAX_CHARS:
+        summary = {
+            "run": summary["run"], "population": summary["population"],
+            "metrics": {}, "event_counts": [], "key_events": [], "oracle": [],
+        }
+        encoded = json.dumps(
+            summary, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return summary, encoded
+
+
+async def _resolve_narrative(store: Store, world=None) -> tuple[str, dict]:
+    """Use one governed provider call when possible, with a deterministic fallback."""
+    fallback = _narrative(store)
+    gateway = getattr(world, "gateway", None) if world is not None else None
+    if gateway is None:
+        return fallback, _fallback_provenance("no_gateway")
+    if bool(getattr(gateway, "replay", False)):
+        return fallback, _fallback_provenance("replay")
+
+    pause_reason = getattr(world, "last_pause_reason", None)
+    if isinstance(pause_reason, dict) and pause_reason.get("reason") in {"budget", "provider"}:
+        return fallback, _fallback_provenance(
+            f"run_paused_{str(pause_reason['reason'])[:40]}")
+
+    provider, model = gateway.route("reporter", "report_narrative")
+    if provider in {"scripted", "mock"}:
+        return fallback, _fallback_provenance(f"offline_{provider}")
+
+    config = load_json(store.get_meta()["config_json"], {}) or {}
+    report_config = config.get("reports", {}) if isinstance(config, dict) else {}
+    if not isinstance(report_config, dict):
+        report_config = {}
+    max_tokens = max(128, min(1200, int(report_config.get("narrative_max_tokens", 600))))
+    timeout_s = max(0.1, min(120.0, float(
+        report_config.get("narrative_timeout_s", 45.0))))
+    summary, summary_json = _bounded_summary(store)
+    request = LLMRequest(
+        role="reporter",
+        purpose="report_narrative",
+        tick=int(store.get_meta()["tick"]),
+        max_tokens=max_tokens,
+        temperature=0.2,
+        system=(
+            "Write the public end-of-run narrative for an economic simulation. "
+            "Use only the supplied aggregate facts. Do not identify private individuals, "
+            "invent causes, expose hidden reasoning, or include chain-of-thought. Return "
+            "exactly one JSON object with a narrative string containing 2-5 short factual "
+            "paragraphs."),
+        user=(
+            "Summarize the most important economic changes, shocks, institutional outcomes, "
+            "and uncertainty in this bounded run summary:\n" + summary_json),
+        context={"summary": summary},
+    )
+    try:
+        response = await asyncio.wait_for(
+            gateway.complete(
+                request, schema_hint='{"narrative":"public factual paragraphs"}'),
+            timeout=timeout_s)
+    except asyncio.TimeoutError:
+        return fallback, _fallback_provenance("provider_timeout")
+    except Exception as exc:
+        return fallback, _fallback_provenance(f"provider_failure:{type(exc).__name__}")
+
+    candidate = response.parsed.get("narrative") if response.ok else None
+    if not isinstance(candidate, str):
+        return fallback, _fallback_provenance("invalid_provider_contract")
+    candidate = sanitize_provider_text(candidate).strip()[:NARRATIVE_MAX_CHARS]
+    if not candidate:
+        return fallback, _fallback_provenance("empty_provider_narrative")
+    if response.call_id is None or store.query_one(
+            "SELECT id FROM llm_calls WHERE id=?", (int(response.call_id),)) is None:
+        return fallback, _fallback_provenance("missing_local_provenance")
+    return candidate, {
+        "source": "llm",
+        "fallback": False,
+        "model_call_id": int(response.call_id),
+        "provider": str(response.provider),
+        "model": str(response.model),
+        "purpose": "report_narrative",
+    }
+
+
+def _provenance_label(provenance: dict) -> str:
+    if provenance.get("source") == "llm":
+        call = provenance.get("model_call_id")
+        return (f"LLM narrative · {provenance.get('provider')}/{provenance.get('model')} · "
+                f"local call #{call}")
+    return f"Deterministic engine fallback · {provenance.get('reason', 'offline')}"
+
+
+def _render_report(store: Store, narrative: str, narrative_provenance: dict,
+                   out_dir: str = "reports/out") -> str:
+    _require_completed_boundary(store)
     meta = store.get_meta()
     run_id = meta["run_id"]
     tick = int(meta["tick"])
     config = load_json(meta["config_json"], {}) or {}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    narrative = _narrative(store)
 
     timeline_rows = []
     for e in store.query(
@@ -164,6 +385,7 @@ def generate_report(store: Store, world=None, out_dir: str = "reports/out") -> s
 <p class="meta">Run <b>{esc(run_id)}</b> · seed {meta['seed']} · {tick} simulated days · generated {now}</p>
 
 <h2>Narrative</h2>
+<p class="meta">{esc(_provenance_label(narrative_provenance))}</p>
 <div class="narr">{"".join(f"<p>{esc(p)}</p>" for p in narrative.split(chr(10)+chr(10)))}</div>
 
 <h2>Timeline of key events</h2>
@@ -205,7 +427,9 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
         "> Reviewer companion. The sibling HTML file is the canonical standalone "
         "artifact with embedded charts.",
         "",
-        "## Narrative", narrative, "", "## Key events",
+        "## Narrative", html.escape(narrative, quote=False), "",
+        f"Narrative provenance: {_provenance_label(narrative_provenance)}", "",
+        "## Key events",
     ]
     md += [f"- t{t} **{k}** `{d}`" for t, k, d in timeline_rows[:100]]
     md += ["", "## Metric snapshot", "", "| Metric | Latest |", "|---|---:|"]
@@ -241,6 +465,28 @@ vs naive-0.5 baseline {f"{naive_brier:.3f}" if naive_brier is not None else "—
     ]
     (out / f"run_{run_id}_t{tick}.md").write_text("\n".join(md), encoding="utf-8")
 
-    store.log_event(tick, "report_generated", {"path": str(html_path)}, importance=1.0)
+    store.log_event(tick, "report_generated", {
+        "path": str(html_path), "narrative": narrative_provenance,
+    }, importance=1.0)
     store.commit()
     return str(html_path)
+
+
+async def generate_report_async(store: Store, world=None,
+                                out_dir: str = "reports/out") -> str:
+    """Generate a report without nesting an event loop for its optional LLM call."""
+    _require_completed_boundary(store)
+    narrative, provenance = await _resolve_narrative(store, world)
+    return _render_report(store, narrative, provenance, out_dir)
+
+
+def generate_report(store: Store, world=None, out_dir: str = "reports/out") -> str:
+    """Synchronous report API; async runtime callers use ``generate_report_async``."""
+    _require_completed_boundary(store)
+    if world is not None and getattr(world, "gateway", None) is not None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(generate_report_async(store, world, out_dir))
+    return _render_report(
+        store, _narrative(store), _fallback_provenance("synchronous_or_offline"), out_dir)

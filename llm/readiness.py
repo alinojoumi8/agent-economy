@@ -126,9 +126,12 @@ def validate_llm_config(
     cli_routes = [name for name, route in route_items
                   if isinstance(route, dict)
                   and providers.get(route.get("provider"), {}).get("kind") == "cli"]
-    forbidden_cli = [name for name in cli_routes if name not in {"oracle", "dev"}]
+    forbidden_cli = [
+        name for name in cli_routes if name not in {"oracle_plan", "oracle", "dev"}]
     if forbidden_cli:
-        errors.append("CLI providers may only serve oracle/dev routes: " + ", ".join(forbidden_cli))
+        errors.append(
+            "CLI providers may only serve oracle_plan/oracle/dev routes: "
+            + ", ".join(forbidden_cli))
 
     mode = "offline" if set(referenced).issubset(BUILTIN_PROVIDERS) else "network"
     report = {

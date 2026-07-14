@@ -10,7 +10,8 @@
                 the OpenAI wire format.
 - `anthropic` : optional tier if an Anthropic key is present.
 - `cli`       : wraps `claude -p --output-format json`; HARD-restricted to
-                purpose in {oracle, dev}. Raises if a swarm role is routed to it.
+                purpose in {oracle_plan, oracle, dev}. Raises if a swarm role is
+                routed to it.
 """
 from __future__ import annotations
 
@@ -236,7 +237,7 @@ class AnthropicAdapter(Adapter):
 class CLIAdapter(Adapter):
     """Wraps the Claude CLI in headless mode. Restricted to Oracle/dev use only."""
     name = "cli"
-    ALLOWED_PURPOSES = {"oracle", "dev"}
+    ALLOWED_PURPOSES = {"oracle", "oracle_plan", "dev"}
 
     def __init__(self, command: str = "claude"):
         self.command = command

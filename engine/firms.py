@@ -261,13 +261,245 @@ class Firms:
             phase="NIGHT_CLOSE", subject_type="firm", subject_id=firm_id, importance=4.0)
 
     # ── IPO / listing (R4) ───────────────────────────────────────────────────
-    def list_firm(self, tick: int, firm_id: int, ipo_price_cents: int, float_shares: int) -> None:
+    def list_firm(self, tick: int, firm_id: int, ipo_price_cents: Optional[int],
+                  float_shares: int, *, legacy_reference_price: bool = False) -> None:
+        """Bootstrap a listing without inventing a modern market price.
+
+        `legacy_reference_price` exists solely for exact replay of semantics 1-5
+        genesis runs.  Semantics 6+ listings either begin without a price or use
+        :meth:`close_ipo`, whose clearing price comes from agent-authored bids.
+        """
         firm = self.get(firm_id)
         if not firm or firm["status"] != "private":
             return
         self.store.update("firms", firm_id, status="listed", listed_tick=tick)
-        self.store.record_metric(tick, f"stock:{firm_id}", ipo_price_cents)
+        if legacy_reference_price:
+            if ipo_price_cents is None or int(ipo_price_cents) <= 0:
+                raise ValueError("legacy listing requires a positive reference price")
+            self.store.record_metric(tick, f"stock:{firm_id}", int(ipo_price_cents))
+            self.store.log_event(tick, "ipo", {
+                "firm_id": firm_id, "name": firm["name"],
+                "ipo_price_cents": int(ipo_price_cents),
+                "float_shares": float_shares}, phase="MARKET", subject_type="firm",
+                subject_id=firm_id, importance=3.0)
+            return
+        self.store.log_event(tick, "bootstrap_listing", {
+            "firm_id": firm_id, "name": firm["name"], "float_shares": float_shares,
+            "reference_price_cents": None,
+        }, phase="MARKET", subject_type="firm", subject_id=firm_id, importance=2.0)
+
+    def ipo_qualification(self, tick: int, firm_id: int) -> dict:
+        """Return deterministic qualification facts, not a discretionary price."""
+        firm = self.get(firm_id)
+        if not firm:
+            return {"qualified": False, "reasons": ["firm missing"]}
+        age = max(0, int(tick) - int(firm["founded_tick"] or 0))
+        employees = int(self.store.scalar(
+            "SELECT COUNT(*) FROM employments WHERE firm_id=? AND status='active'",
+            (firm_id,), default=0))
+        sales = int(self.store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='goods_sale' "
+            "AND json_extract(payload_json,'$.firm_id')=?", (firm_id,), default=0))
+        cash = self.ledger.balance(int(firm["account_id"])) if firm["account_id"] else 0
+        reasons: list[str] = []
+        if firm["status"] != "private":
+            reasons.append("firm must be private")
+        if age < 30:
+            reasons.append("firm needs 30 ticks of operating history")
+        if not (employees >= 2 or sales >= 3 or cash >= 100_000):
+            reasons.append("firm needs scale: 2 employees, 3 sales, or 100000 cents cash")
+        if int(firm["shares_outstanding"] or 0) <= 0:
+            reasons.append("firm has no outstanding equity")
+        active = self.store.query_one(
+            "SELECT id FROM ipo_offerings WHERE firm_id=? AND status='building'", (firm_id,))
+        if active:
+            reasons.append("firm already has an active offering")
+        return {
+            "qualified": not reasons, "reasons": reasons, "firm_age_ticks": age,
+            "employees": employees, "sales": sales, "cash_cents": cash,
+            "shares_outstanding": int(firm["shares_outstanding"] or 0),
+        }
+
+    def open_ipo(self, tick: int, actor_id: int, firm_id: int, shares_offered: int,
+                 reserve_price_cents: int, minimum_subscription_bps: int = 5000) -> dict:
+        qualification = self.ipo_qualification(tick, firm_id)
+        if not qualification["qualified"]:
+            return {"ok": False, "reason": "; ".join(qualification["reasons"])}
+        firm = self.get(firm_id)
+        offered = int(shares_offered)
+        reserve = int(reserve_price_cents)
+        outstanding = int(firm["shares_outstanding"])
+        if offered <= 0 or offered > outstanding:
+            return {"ok": False, "reason": "shares_offered must be between 1 and current shares outstanding"}
+        if reserve <= 0:
+            return {"ok": False, "reason": "reserve price must be positive and agent-authored"}
+        minimum = int(minimum_subscription_bps)
+        if minimum < 1 or minimum > 10_000:
+            return {"ok": False, "reason": "minimum subscription must be 1..10000 bps"}
+        offering_id = self.store.insert(
+            "ipo_offerings", firm_id=firm_id, issuer_agent_id=actor_id,
+            opened_tick=tick, shares_offered=offered, reserve_price_cents=reserve,
+            minimum_subscription_bps=minimum, status="building")
+        self.store.log_event(tick, "ipo_book_opened", {
+            "offering_id": offering_id, "firm_id": firm_id, "issuer_agent_id": actor_id,
+            "shares_offered": offered, "reserve_price_cents": reserve,
+            "minimum_subscription_bps": minimum,
+        }, phase="EXECUTION", subject_type="ipo_offering", subject_id=offering_id,
+            importance=2.5)
+        return {"ok": True, "offering_id": offering_id}
+
+    def place_ipo_bid(self, tick: int, bidder_agent_id: int, offering_id: int,
+                      qty: int, max_price_cents: int) -> dict:
+        offering = self.store.query_one(
+            "SELECT io.*,f.account_id AS firm_account_id,f.currency_code FROM ipo_offerings io "
+            "JOIN firms f ON f.id=io.firm_id WHERE io.id=?", (offering_id,))
+        if not offering or offering["status"] != "building":
+            return {"ok": False, "reason": "IPO offering is not open"}
+        if int(offering["issuer_agent_id"]) == int(bidder_agent_id):
+            return {"ok": False, "reason": "issuer cannot bid in its own offering"}
+        quantity = int(qty)
+        limit = int(max_price_cents)
+        if quantity <= 0 or limit < int(offering["reserve_price_cents"]):
+            return {"ok": False, "reason": "positive quantity and a bid at or above reserve are required"}
+        bidder_account = self.ledger.agent_checking_id(bidder_agent_id)
+        if bidder_account is None:
+            return {"ok": False, "reason": "bidder has no checking account"}
+        account = self.store.query_one(
+            "SELECT balance_cents,currency_code FROM accounts WHERE id=?", (bidder_account,))
+        if (not account or str(account["currency_code"] or "USD")
+                != str(offering["currency_code"] or "USD")):
+            return {"ok": False, "reason": "IPO bid requires the issuer currency"}
+        commitment = quantity * limit
+        currency = str(offering["currency_code"] or "USD")
+        existing_commitment = int(self.store.scalar(
+            "SELECT COALESCE(SUM(ib.qty * ib.max_price_cents), 0) "
+            "FROM ipo_bids ib JOIN ipo_offerings io ON io.id=ib.offering_id "
+            "JOIN firms f ON f.id=io.firm_id "
+            "WHERE ib.bidder_agent_id=? AND ib.status='open' "
+            "AND io.status='building' AND COALESCE(f.currency_code,'USD')=?",
+            (bidder_agent_id, currency), default=0))
+        if int(account["balance_cents"]) < existing_commitment + commitment:
+            return {"ok": False, "reason": "insufficient funds for bid commitment"}
+        bid_id = self.store.insert(
+            "ipo_bids", offering_id=offering_id, tick=tick,
+            bidder_agent_id=bidder_agent_id, qty=quantity,
+            max_price_cents=limit, status="open")
+        self.store.log_event(tick, "ipo_bid_placed", {
+            "bid_id": bid_id, "offering_id": offering_id,
+            "bidder_agent_id": bidder_agent_id, "qty": quantity,
+            "max_price_cents": limit,
+        }, phase="EXECUTION", subject_type="ipo_offering", subject_id=offering_id,
+            importance=1.2)
+        return {"ok": True, "bid_id": bid_id}
+
+    def close_ipo(self, tick: int, actor_id: int, offering_id: int) -> dict:
+        offering = self.store.query_one(
+            "SELECT io.*,f.name AS firm_name,f.account_id AS firm_account_id,"
+            "f.shares_outstanding,f.status AS firm_status FROM ipo_offerings io "
+            "JOIN firms f ON f.id=io.firm_id WHERE io.id=?", (offering_id,))
+        if not offering or offering["status"] != "building" or offering["firm_status"] != "private":
+            return {"ok": False, "reason": "IPO offering is not closable"}
+        bids = self.store.query(
+            "SELECT * FROM ipo_bids WHERE offering_id=? AND status='open' "
+            "ORDER BY max_price_cents DESC,tick,id", (offering_id,))
+        if not bids:
+            return {"ok": False, "reason": "book has no valid bids; no market price exists"}
+        offered = int(offering["shares_offered"])
+        reserve = int(offering["reserve_price_cents"])
+
+        # Revalidate the book against current balances before discovering a
+        # price.  Funds are conservatively reserved at each bid's limit in
+        # price/time order, so cash spent after bid placement cannot leave an
+        # unfunded high bid setting the marginal clearing price.
+        available_by_agent: dict[int, int] = {}
+        funded_qty_by_bid: dict[int, int] = {}
+        for bid in bids:
+            bidder_id = int(bid["bidder_agent_id"])
+            if bidder_id not in available_by_agent:
+                account_id = self.ledger.agent_checking_id(bidder_id)
+                available_by_agent[bidder_id] = (
+                    self.ledger.balance(account_id) if account_id is not None else 0)
+            limit = int(bid["max_price_cents"])
+            funded_qty = min(
+                int(bid["qty"]), available_by_agent[bidder_id] // limit)
+            funded_qty_by_bid[int(bid["id"])] = funded_qty
+            available_by_agent[bidder_id] -= funded_qty * limit
+
+        declared = 0
+        marginal = reserve
+        for bid in bids:
+            funded_qty = funded_qty_by_bid[int(bid["id"])]
+            if funded_qty <= 0:
+                continue
+            declared += funded_qty
+            marginal = int(bid["max_price_cents"])
+            if declared >= offered:
+                break
+        clearing = max(reserve, marginal if declared >= offered else reserve)
+
+        # Pre-compute allocations from current balances.  No cash or shares move
+        # until the minimum subscription is known to pass.
+        remaining = offered
+        allocations: list[tuple[object, int, int]] = []
+        for bid in bids:
+            if remaining <= 0:
+                break
+            if int(bid["max_price_cents"]) < clearing:
+                continue
+            allocated = min(funded_qty_by_bid[int(bid["id"])], remaining)
+            if allocated <= 0:
+                continue
+            remaining -= allocated
+            allocations.append((bid, allocated, allocated * clearing))
+        sold = sum(item[1] for item in allocations)
+        minimum_shares = (
+            offered * int(offering["minimum_subscription_bps"]) + 9_999) // 10_000
+        if sold < minimum_shares:
+            return {"ok": False, "reason": "book does not meet minimum subscription"}
+
+        firm_id = int(offering["firm_id"])
+        firm_account = int(offering["firm_account_id"])
+        proceeds = 0
+        allocated_ids: set[int] = set()
+        for bid, allocated, amount in allocations:
+            bidder_id = int(bid["bidder_agent_id"])
+            bidder_account = self.ledger.agent_checking_id(bidder_id)
+            txn_id = self.ledger.transfer(
+                tick, int(bidder_account), firm_account, amount, kind="ipo_subscription",
+                memo=f"IPO offering {offering_id}, bid {int(bid['id'])}")
+            self.store.execute(
+                "INSERT INTO shares(firm_id,holder_type,holder_id,qty) VALUES(?, 'agent', ?, ?) "
+                "ON CONFLICT(firm_id,holder_type,holder_id) DO UPDATE SET qty=qty+excluded.qty",
+                (firm_id, bidder_id, allocated))
+            self.store.insert(
+                "share_movements", tick=tick, firm_id=firm_id,
+                from_holder_type=None, from_holder_id=None,
+                to_holder_type="agent", to_holder_id=bidder_id, qty=allocated,
+                movement_type="ipo_primary_issuance", reference_type="ipo_bid",
+                reference_id=int(bid["id"]), price_cents=clearing,
+                amount_cents=amount, transaction_id=txn_id)
+            self.store.update("ipo_bids", int(bid["id"]), status="allocated",
+                              qty_allocated=allocated)
+            allocated_ids.add(int(bid["id"]))
+            proceeds += amount
+        for bid in bids:
+            if int(bid["id"]) not in allocated_ids:
+                self.store.update("ipo_bids", int(bid["id"]), status="rejected")
+        self.store.update(
+            "firms", firm_id, status="listed", listed_tick=tick,
+            shares_outstanding=int(offering["shares_outstanding"]) + sold)
+        self.store.update(
+            "ipo_offerings", offering_id, status="listed", closed_tick=tick,
+            clearing_price_cents=clearing, shares_sold=sold, proceeds_cents=proceeds)
+        # This is a discovered primary-market price: both the issuer reserve and
+        # the marginal investor bid are persisted agent actions.
+        self.store.record_metric(tick, f"stock:{firm_id}", clearing)
         self.store.log_event(tick, "ipo", {
-            "firm_id": firm_id, "name": firm["name"], "ipo_price_cents": ipo_price_cents,
-            "float_shares": float_shares}, phase="MARKET", subject_type="firm",
-            subject_id=firm_id, importance=3.0)
+            "offering_id": offering_id, "firm_id": firm_id,
+            "issuer_agent_id": actor_id, "clearing_price_cents": clearing,
+            "shares_offered": offered, "shares_sold": sold,
+            "proceeds_cents": proceeds,
+        }, phase="MARKET", subject_type="firm", subject_id=firm_id, importance=3.5)
+        return {"ok": True, "firm_id": firm_id, "offering_id": offering_id,
+                "clearing_price_cents": clearing, "shares_sold": sold,
+                "proceeds_cents": proceeds}

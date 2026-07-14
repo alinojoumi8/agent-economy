@@ -683,12 +683,22 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     source.init_run_meta("provenance-source", 42, {})
     replay.init_run_meta("provenance-replay", 42, {})
 
-    def insert_call(store, call_id, agent_id):
+    def insert_agent(store, agent_id, role):
+        store.insert(
+            "agents", id=agent_id, name=f"Agent {agent_id}", kind="staff",
+            role=role)
+
+    def insert_call(
+            store, call_id, agent_id, *, tick=1,
+            role="credit_officer", purpose=None):
+        purpose = purpose or role
         return store.insert(
-            "llm_calls", id=call_id, tick=1, agent_id=agent_id,
-            role="credit_officer", provider="minimax", model="MiniMax-M3",
-            purpose="credit_officer", cache_key=f"call-{agent_id}",
-            request_json=json.dumps({"agent_id": agent_id}, sort_keys=True),
+            "llm_calls", id=call_id, tick=tick, agent_id=agent_id,
+            role=role, provider="minimax", model="MiniMax-M3",
+            purpose=purpose, cache_key=f"call-{agent_id}-{tick}-{role}",
+            request_json=json.dumps({
+                "agent_id": agent_id, "tick": tick, "role": role,
+            }, sort_keys=True),
             response_json=json.dumps({
                 "text": '{"reasoning":"bounded","actions":[{"type":"do_nothing"}]}',
                 "raw": {}, "cached_in_tokens": 0,
@@ -705,15 +715,23 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
             rationale_summary="bounded", validation_status="accepted",
             result_json='{"ok": true}')
 
+    for store in (source, replay):
+        insert_agent(store, 2, "credit_officer")
+        insert_agent(store, 3, "judge")
+
     insert_call(source, 1, 2)
-    insert_call(source, 2, 3)
+    insert_call(source, 2, 3, role="judge")
+    insert_call(source, 3, 2, tick=2)
+    insert_call(source, 4, 2, role="lawyer")
     insert_action(source, 1, 2, 1)
     insert_action(source, 2, 3, 2)
 
     # Replay completion order is reversed, so its correct local surrogate IDs
     # differ even though both proposals retain the same logical provenance.
-    insert_call(replay, 1, 3)
+    insert_call(replay, 1, 3, role="judge")
     insert_call(replay, 2, 2)
+    insert_call(replay, 3, 2, tick=2)
+    insert_call(replay, 4, 2, role="lawyer")
     insert_action(replay, 1, 2, 2)
     insert_action(replay, 2, 3, 1)
     source.commit()
@@ -804,6 +822,56 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     assert not wrong["exact"]
     assert wrong["differences"] == ["action_proposals"]
 
+    # A wrong-but-local pointer must fail even when source and replay make the
+    # same logical mistake. Hash equality alone cannot prove actor provenance.
+    source.execute("UPDATE action_proposals SET model_call_id=2 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_actor = verify_replay(source.path, replay.path)
+    assert not wrong_actor["exact"]
+    assert wrong_actor["differences"] == ["action_proposals"]
+
+    # The same invariant covers a local call from the wrong turn or role.
+    for source_call_id, replay_call_id in ((3, 3), (4, 4)):
+        source.execute(
+            "UPDATE action_proposals SET model_call_id=? WHERE id=1",
+            (source_call_id,))
+        replay.execute(
+            "UPDATE action_proposals SET model_call_id=? WHERE id=1",
+            (replay_call_id,))
+        source.commit()
+        replay.commit()
+        wrong_turn_or_role = verify_replay(source.path, replay.path)
+        assert not wrong_turn_or_role["exact"]
+        assert wrong_turn_or_role["differences"] == ["action_proposals"]
+
+    # Nested belief provenance is actor-bound too, not merely local.
+    source.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=2 WHERE id=1")
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    source.commit()
+    replay.commit()
+    wrong_nested_actor = verify_replay(source.path, replay.path)
+    assert not wrong_nested_actor["exact"]
+    assert wrong_nested_actor["differences"] == ["events"]
+
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+
     # Even identical dangling IDs on both sides must fail closed rather than
     # compare as equivalent provenance.
     source.execute("UPDATE action_proposals SET model_call_id=999 WHERE id=1")
@@ -813,6 +881,130 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     dangling = verify_replay(source.path, replay.path)
     assert not dangling["exact"]
     assert dangling["differences"] == ["action_proposals"]
+
+
+def test_replay_rejects_same_actor_turn_wrong_llm_purpose(tmp_path):
+    source = Store(str(tmp_path / "purpose-source.db"))
+    replay = Store(str(tmp_path / "purpose-replay.db"))
+    config = {"llm": {"institutional_role_purposes": True}}
+    source.init_run_meta("purpose-source", 42, config)
+    replay.init_run_meta("purpose-replay", 42, config)
+
+    for store in (source, replay):
+        store.insert("agents", id=1, name="Citizen", kind="citizen")
+        # NIGHT_CLOSE bankruptcy at tick 1 precedes that tick's MORNING
+        # decision. This former founder must therefore route as a citizen.
+        store.insert(
+            "firms", id=1, name="Closed firm", founder_agent_id=1,
+            status="bankrupt", founded_tick=0, bankrupt_tick=1)
+        for call_id, purpose in ((1, "decision"), (2, "memory")):
+            store.insert(
+                "llm_calls", id=call_id, tick=1, agent_id=1,
+                role="citizen", provider="minimax", model="MiniMax-M3",
+                purpose=purpose, cache_key=f"citizen-{purpose}",
+                request_json="{}", response_json='{"text":"bounded","raw":{}}',
+                in_tokens=10, out_tokens=5, cached=0, cost_usd=0.001,
+                latency_ms=10, created_at="2026-07-14T00:00:00+00:00")
+        # The actor, tick, role, and local existence all match. Only purpose
+        # proves this is a memory call rather than the decision that acted.
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=1,
+            action_type="do_nothing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=2,
+            rationale_summary="bounded", validation_status="accepted",
+            result_json='{"ok":true}')
+        store.commit()
+
+    wrong_purpose = verify_replay(source.path, replay.path)
+    assert not wrong_purpose["exact"]
+    assert wrong_purpose["differences"] == ["action_proposals"]
+
+    source.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    corrected = verify_replay(source.path, replay.path)
+    assert corrected["exact"], corrected["differences"]
+
+
+def test_replay_validates_legal_model_reference_owners(tmp_path):
+    source = Store(str(tmp_path / "legal-provenance-source.db"))
+    replay = Store(str(tmp_path / "legal-provenance-replay.db"))
+    source.init_run_meta("legal-provenance-source", 42, {})
+    replay.init_run_meta("legal-provenance-replay", 42, {})
+
+    def insert_agent(store, agent_id, role):
+        store.insert(
+            "agents", id=agent_id, name=f"Agent {agent_id}", kind="staff",
+            role=role)
+
+    def insert_call(store, call_id, agent_id, role):
+        store.insert(
+            "llm_calls", id=call_id, tick=1, agent_id=agent_id, role=role,
+            provider="minimax", model="MiniMax-M3", purpose=role,
+            cache_key=f"legal-{agent_id}", request_json="{}",
+            response_json='{"text":"bounded","raw":{}}', in_tokens=10,
+            out_tokens=5, cached=0, cost_usd=0.001, latency_ms=10,
+            created_at="2026-07-14T00:00:00+00:00")
+
+    def insert_rows(store, lawyer_call_id, judge_call_id):
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=1,
+            action_type="submit_filing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=lawyer_call_id,
+            rationale_summary="bounded filing", validation_status="accepted",
+            result_json='{"filing_id":1,"ok":true}')
+        store.insert(
+            "action_proposals", id=2, tick=1, actor_id=2,
+            action_type="issue_legal_decision", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=judge_call_id,
+            rationale_summary="bounded decision", validation_status="accepted",
+            result_json='{"decision_id":1,"ok":true}')
+        store.insert(
+            "legal_filings", id=1, matter_id=1, tick=1,
+            filer_type="agent", filer_id=1, filing_type="brief", body="bounded",
+            evidence_event_ids_json="[]", admitted=0,
+            model_call_id=lawyer_call_id, rationale_summary="bounded filing")
+        store.insert(
+            "legal_decisions", id=1, matter_id=1, tick=1,
+            decision_maker_id=2, outcome="dismissed", findings_json="[]",
+            evidence_event_ids_json="[]", remedy_json='{"type":"none"}',
+            validation_status="valid", validation_errors_json="[]",
+            model_call_id=judge_call_id, rationale_summary="bounded decision")
+
+    for store in (source, replay):
+        insert_agent(store, 1, "lawyer")
+        insert_agent(store, 2, "judge")
+    insert_call(source, 1, 1, "lawyer")
+    insert_call(source, 2, 2, "judge")
+    insert_rows(source, 1, 2)
+    insert_call(replay, 1, 2, "judge")
+    insert_call(replay, 2, 1, "lawyer")
+    insert_rows(replay, 2, 1)
+    source.commit()
+    replay.commit()
+
+    reordered = verify_replay(source.path, replay.path)
+    assert reordered["exact"], reordered["differences"]
+
+    # Both databases point the filing at the same logical but wrong judge call.
+    source.execute("UPDATE legal_filings SET model_call_id=2 WHERE id=1")
+    replay.execute("UPDATE legal_filings SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_filer = verify_replay(source.path, replay.path)
+    assert not wrong_filer["exact"]
+    assert wrong_filer["differences"] == ["legal_filings"]
+
+    source.execute("UPDATE legal_filings SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE legal_filings SET model_call_id=2 WHERE id=1")
+    source.execute("UPDATE legal_decisions SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE legal_decisions SET model_call_id=2 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_decider = verify_replay(source.path, replay.path)
+    assert not wrong_decider["exact"]
+    assert wrong_decider["differences"] == ["legal_decisions"]
 
 
 def test_replay_reports_legacy_missing_llm_table_without_crashing(tmp_path):

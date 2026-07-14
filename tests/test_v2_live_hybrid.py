@@ -14,7 +14,7 @@ def test_hybrid_live_profile_is_bounded_and_routes_by_risk(tmp_path, monkeypatch
     report = validate_llm_config(config, raise_on_error=False)
     assert report["ready"], report["errors"]
     assert report["routed_providers"] == ["minimax", "ollama"]
-    assert config["engine_semantics_version"] == 5
+    assert config["engine_semantics_version"] == 6
     assert config["population"]["target_total"] == 30
     assert config["living_world"]["core_agents"] == 4
     assert sum(region["population"] for region in config["living_world"]["regions"]) == 30

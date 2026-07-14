@@ -360,10 +360,15 @@ def main() -> None:
 
     if args.acceptance_run and not args.serve:
         from reports.acceptance import execute_acceptance_run, write_acceptance_package
+        from reports.generate import generate_report_async
         target_tick = args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365))
-        asyncio.run(execute_acceptance_run(world, target_tick=target_tick))
-        from reports.generate import generate_report
-        report_path = generate_report(store, world, out_dir=str(config.get("report_dir", "reports/out")))
+
+        async def execute_and_report_acceptance() -> str:
+            await execute_acceptance_run(world, target_tick=target_tick)
+            return await generate_report_async(
+                store, world, out_dir=str(config.get("report_dir", "reports/out")))
+
+        report_path = asyncio.run(execute_and_report_acceptance())
         receipt = write_acceptance_package(
             store.path,
             out_dir=str(config.get("report_dir", "reports/out")),
@@ -386,7 +391,20 @@ def main() -> None:
     replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
     ticks = args.ticks if args.ticks is not None else replay_ticks
     if ticks is not None and not args.serve:
-        asyncio.run(replay_headless(world, ticks) if args.replay else headless(world, ticks))
+        from reports.generate import ReportBoundaryError, generate_report_async
+
+        async def execute_and_report() -> str:
+            await (replay_headless(world, ticks) if args.replay else headless(world, ticks))
+            try:
+                return await generate_report_async(
+                    store, world, out_dir=str(config.get("report_dir", "reports/out")))
+            except ReportBoundaryError as exc:
+                operational_log(
+                    logger, logging.WARNING, "headless.report.deferred",
+                    run_id=run_id, tick=store.tick, detail=str(exc))
+                return ""
+
+        path = asyncio.run(execute_and_report())
         if args.replay:
             from world.replay_verify import verify_replay
             source = Path(str(world.config["replay_source_path"]))
@@ -400,15 +418,13 @@ def main() -> None:
             operational_log(logger, logging.INFO, "replay.verification.completed",
                             run_id=run_id, source_run_id=args.replay,
                             tables=proof.get("tables"))
-        from reports.generate import generate_report
-        path = generate_report(
-            store, world, out_dir=str(config.get("report_dir", "reports/out")))
         gov = world.gateway.governor.status()
         if world.last_pause_reason:
             reason = world.last_pause_reason.get("reason", "unknown")
             detail = str(world.last_pause_reason.get("detail", ""))[:500]
+            report_label = path or "deferred (partial tick)"
             print(f"[agent-economy] paused @ tick {store.tick} · {reason}: {detail} "
-                  f"· report: {path}")
+                  f"· report: {report_label}")
             operational_log(logger, logging.WARNING, "headless.run.paused",
                             run_id=run_id, tick=store.tick, reason=reason,
                             detail=detail, report_path=path)

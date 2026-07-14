@@ -95,15 +95,38 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "buy_insurance"})
                 reasons.append("buying health coverage")
 
-    # 5) Labour: unemployed & working-age → apply to the best open job.
+    # 5) Labour: negotiate a pending offer before applying elsewhere.
     if not state.get("employed") and not agent.get("retired") and health == "healthy":
-        jobs = sorted(context.get("jobs", []), key=lambda j: -int(j.get("wage", 0)))
-        if jobs:
-            actions.append({"type": "apply_job", "job_id": jobs[0]["job_id"]})
-            reasons.append("seeking work")
+        offers = sorted(
+            context.get("incoming_job_offers", []),
+            key=lambda offer: (-int(offer.get("offered_wage", 0)), int(offer.get("offer_id", 0))))
+        if offers:
+            offer = offers[0]
+            if int(offer["offered_wage"]) >= int(offer["posted_wage"]):
+                actions.append({"type": "accept_job_offer", "offer_id": offer["offer_id"]})
+                reasons.append("accepting a fair wage offer")
+            else:
+                actions.append({"type": "counter_job_offer", "offer_id": offer["offer_id"],
+                                "wage": int(offer["posted_wage"])})
+                reasons.append("countering below-posted wage")
+        else:
+            jobs = sorted(context.get("jobs", []), key=lambda j: -int(j.get("wage", 0)))
+            if jobs:
+                actions.append({"type": "apply_job", "job_id": jobs[0]["job_id"]})
+                reasons.append("seeking work")
 
     # 6) Portfolio: act on sentiment occasionally (weekly-ish cadence gate upstream).
     if context.get("portfolio_day") and health == "healthy" and not ran:
+        offerings = context.get("ipo_offerings", [])
+        affordable_offerings = [offering for offering in offerings
+                                if cash >= int(offering.get("reserve_price", 0)) > 0]
+        if affordable_offerings:
+            offering = rng.choice(affordable_offerings)
+            reserve = int(offering["reserve_price"])
+            qty = max(1, min(5, cash // max(1, reserve * 10)))
+            actions.append({"type": "place_ipo_bid", "offering_id": offering["offering_id"],
+                            "qty": qty, "max_price": reserve})
+            reasons.append("submitting a priced IPO bid")
         listed = context.get("listed_firms", [])
         if listed and cash > 50_000:
             pick = rng.choice(listed)
@@ -163,10 +186,24 @@ def founder_decision(context: dict) -> dict:
         actions.append({"type": "set_price", "firm_id": firm["firm_id"], "price": target})
         reasons.append(f"reprice {price}->{target}")
 
-    # Hire if there is demand and we can afford payroll.
+    # Hire if there is demand and we can afford payroll.  Semantics 6 uses a
+    # bilateral offer/counter/accept path; older recorded worlds retain direct
+    # hire for exact replay.
     applicants = context.get("firm_applications", [])
     payroll = int(firm.get("payroll", 0))
-    if applicants and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
+    counters = context.get("firm_job_offers", [])
+    if counters and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
+        actions.append({"type": "accept_job_offer", "offer_id": counters[0]["offer_id"]})
+        reasons.append("accepting a candidate wage counteroffer")
+    elif (context.get("labor_negotiation_enabled") and applicants
+          and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3))):
+        candidate = next((row for row in applicants if row.get("current_offer_id") is None), None)
+        if candidate:
+            posted = int(candidate.get("posted_wage", 0))
+            actions.append({"type": "make_job_offer", "application_id": candidate["application_id"],
+                            "wage": max(0, (posted * 95) // 100)})
+            reasons.append("opening wage negotiations")
+    elif applicants and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
         actions.append({"type": "hire", "application_id": applicants[0]["application_id"]})
         reasons.append("hiring")
     elif employees == 0 and cash > 0:
@@ -189,6 +226,27 @@ def founder_decision(context: dict) -> dict:
                         "ask": max(500_00, payroll * 3),
                         "summary": f"growth capital for {firm.get('name', 'the firm')}"})
         reasons.append("pitching the VC for a round")
+
+    # A qualified private issuer chooses its own reserve; investors then supply
+    # the book.  Closing is deterministic once declared demand clears the
+    # issuer's minimum subscription.
+    active_ipo = firm.get("active_ipo")
+    qualification = firm.get("ipo_qualification", {})
+    if active_ipo:
+        minimum = ((int(active_ipo["shares_offered"])
+                    * int(active_ipo["minimum_subscription_bps"])) + 9_999) // 10_000
+        if int(active_ipo.get("book_demand", 0)) >= minimum:
+            actions.append({"type": "close_ipo", "offering_id": active_ipo["offering_id"]})
+            reasons.append("closing a sufficiently subscribed IPO book")
+    elif qualification.get("qualified") and firm.get("is_private"):
+        outstanding = int(qualification.get("shares_outstanding", 0))
+        if outstanding > 0:
+            shares = max(1, outstanding // 5)
+            reserve = max(1, cash // outstanding)
+            actions.append({"type": "open_ipo", "firm_id": firm["firm_id"],
+                            "shares_offered": shares, "reserve_price": reserve,
+                            "minimum_subscription_bps": 5000})
+            reasons.append("opening an agent-priced IPO book")
 
     if not actions:
         # Founder still consumes as a household.
@@ -298,6 +356,34 @@ def lawyer_decision(context: dict) -> dict:
 
 
 def central_banker_decision(context: dict) -> dict:
+    liquidity_requests = context.get("liquidity_support_requests", [])
+    if liquidity_requests:
+        actions = []
+        reasons = []
+        for request in liquidity_requests[:8]:
+            request_event_id = int(request.get("request_event_id", 0))
+            if request_event_id <= 0:
+                continue
+            solvent = bool(request.get("solvent", False))
+            decision = "approve" if solvent else "deny"
+            actions.append({
+                "type": "decide_liquidity_support",
+                "request_event_id": request_event_id,
+                "decision": decision,
+                "evidence_event_ids": [request_event_id],
+            })
+            reasons.append(
+                f"{decision} bank {int(request.get('bank_id', 0))} request "
+                f"{request_event_id}: recorded assets "
+                f"{int(request.get('reserves_cents', 0)) + int(request.get('loan_assets_cents', 0))}c "
+                f"versus deposits {int(request.get('deposits_cents', 0))}c")
+        if not actions:
+            return _env(None, [{"type": "do_nothing"}], [],
+                        "no valid lender-of-last-resort request was supplied")
+        return _env(
+            None, actions, [],
+            "Prudent lender-of-last-resort review; " + "; ".join(reasons))
+
     m = context.get("metrics", {})
     cur = int(context.get("policy_rate_bps", 500))
     neutral = int(context.get("neutral_rate_bps", 500))

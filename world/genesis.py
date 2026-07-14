@@ -58,8 +58,21 @@ class Genesis:
     def _central_bank(self) -> None:
         region_id = self.e.regions.primary_region_id() if self.e.regions.enabled else None
         currency = self.e.regions.currency_for_region(region_id)
-        res = self.e.ledger.create_account("central_bank", 1, "reserve",
-                                           label="central_bank_reserve", currency_code=currency)
+        currencies = [currency]
+        if int(self.config.get("engine_semantics_version", 1)) >= 6:
+            configured_currencies = [
+                str(row["code"]) for row in self.store.query(
+                    "SELECT code FROM currencies ORDER BY code")
+            ]
+            currencies = ([currency] + [
+                code for code in configured_currencies if code != currency
+            ]) if configured_currencies else currencies
+        for code in currencies:
+            self.e.ledger.create_account(
+                "central_bank", 1, "reserve",
+                label=("central_bank_reserve" if code == currency
+                       else f"central_bank_reserve:{code}"),
+                currency_code=code)
         gov_agent = self.store.insert(
             "agents", name="Governor Vale", kind="staff", occupation="central banker",
             role="central_banker", age=58, model_tier="strong", alive=1, arrived_tick=0,
@@ -250,9 +263,27 @@ class Genesis:
         self.store.execute("UPDATE shares SET qty=qty-? WHERE firm_id=? AND holder_id=? AND holder_type='agent'",
                            (per * len(holders), firm_id, founder))
         for h in holders:
-            self.e.exchange._adjust_shares(firm_id, "agent", int(h["id"]), per)
-        self.e.firms.list_firm(0, firm_id, price * 100 if price < 100 else price, float_shares)
-        self.store.record_metric(0, f"stock:{firm_id}", price * 100 if price < 100 else price)
+            holder_id = int(h["id"])
+            self.e.exchange._adjust_shares(firm_id, "agent", holder_id, per)
+            if int(self.config.get("engine_semantics_version", 2)) >= 6:
+                self.store.insert(
+                    "share_movements", tick=0, firm_id=firm_id,
+                    from_holder_type="agent", from_holder_id=founder,
+                    to_holder_type="agent", to_holder_id=holder_id, qty=per,
+                    movement_type="bootstrap_distribution", reference_type="genesis",
+                    reference_id=firm_id, price_cents=None, amount_cents=0,
+                    transaction_id=None)
+        reference = price * 100 if price < 100 else price
+        if int(self.config.get("engine_semantics_version", 2)) >= 6:
+            # The opening cap table supplies sellers, but there is deliberately
+            # no stock metric until agents express crossing prices.
+            self.e.firms.list_firm(0, firm_id, None, float_shares)
+        else:
+            self.e.firms.list_firm(
+                0, firm_id, reference, float_shares, legacy_reference_price=True)
+            # Preserve the duplicate genesis metric written by semantics 1-5;
+            # recorded runs depend on its physical row identity for exact replay.
+            self.store.record_metric(0, f"stock:{firm_id}", reference)
 
     # ── health economy: hospital + insurer firms (P1 R17) ───────────────────
     def _health_institutions(self) -> None:

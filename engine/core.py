@@ -63,9 +63,20 @@ class Economy:
             self.ledger.ensure_system_account(label)
 
     # ── convenient references ────────────────────────────────────────────────
-    def central_bank_reserve_acct(self) -> Optional[int]:
+    def central_bank_reserve_acct(self, currency_code: Optional[str] = None) -> Optional[int]:
+        """Return the central-bank reserve account for one settlement currency.
+
+        Omitting ``currency_code`` preserves the legacy primary-account lookup.
+        Semantics-6 callers always supply the distressed bank's currency.
+        """
+        params: tuple = ()
+        currency_clause = ""
+        if currency_code is not None:
+            currency_clause = " AND currency_code=?"
+            params = (str(currency_code or "USD").upper(),)
         v = self.store.scalar(
-            "SELECT id FROM accounts WHERE owner_type='central_bank' AND kind='reserve' LIMIT 1")
+            "SELECT id FROM accounts WHERE owner_type='central_bank' "
+            f"AND kind='reserve'{currency_clause} ORDER BY id LIMIT 1", params)
         return int(v) if v is not None else None
 
     def policy_rate_bps(self) -> int:

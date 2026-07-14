@@ -32,6 +32,9 @@ class Scheduler:
             agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
         out = []
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
+        liquidity_decision_due = (
+            int(self.config.get("engine_semantics_version", 1)) >= 6
+            and self._has_pending_liquidity_request())
         for a in agents:
             if (self.institutional_role_purposes
                     and a["role"] in {"editor", "reporter"}):
@@ -40,8 +43,9 @@ class Scheduler:
                 # collides with the reporter response contract.
                 continue
             if a["role"] == "central_banker":
-                # Policy meetings, not daily moves (±50bps per meeting, TECH-SPEC §5).
-                if tick % max(1, meeting_interval) == 0:
+                # Regular rate meetings retain their cadence, but an unresolved
+                # lender-of-last-resort request is an immediate policy wakeup.
+                if liquidity_decision_due or tick % max(1, meeting_interval) == 0:
                     out.append(a)
                 continue
             if a["role"]:  # other institutional agents act every tick
@@ -54,6 +58,13 @@ class Scheduler:
             if self._citizen_wakes(a, tick, cadence_multiplier):
                 out.append(a)
         return out
+
+    def _has_pending_liquidity_request(self) -> bool:
+        return self.store.query_one(
+            "SELECT 1 FROM liquidity_support_requests r "
+            "JOIN banks b ON b.id=r.bank_id "
+            "WHERE r.status='pending' AND b.status='open' "
+            "ORDER BY r.request_event_id LIMIT 1") is not None
 
     def _citizen_wakes(self, a, tick: int, cadence_multiplier: int) -> bool:
         agent_id = int(a["id"])

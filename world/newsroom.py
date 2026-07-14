@@ -10,14 +10,19 @@ from __future__ import annotations
 
 from collections import deque
 import json
+import math
 import re
 from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest
+from llm.gateway import Gateway, LLMRequest, sanitize_provider_text
 from agents.memory import Memory
 from agents.policies import conversation_turn
+from world.event_visibility import (
+    PUBLIC_REPORTABLE_EVENT_KINDS,
+    public_event_payload,
+)
 
 
 DEFAULT_CONVERSATION_THEMES = [
@@ -38,6 +43,11 @@ class Newsroom:
         self.gw = gateway
         self.config = config
         self.shocks = shocks
+        # Missing means historical behavior. Fresh maintained profiles opt in
+        # explicitly so stored runs replay with the newsroom contract they had
+        # when they were created.
+        self.daily_news_required = bool(
+            config.get("information", {}).get("daily_news_required", False))
         self.outlets = config.get("outlets", [
             {"id": 1, "name": "The Ledger", "slant": "pro-market-sensational"},
             {"id": 2, "name": "Commons Dispatch", "slant": "cautious-pro-labor"},
@@ -45,6 +55,23 @@ class Newsroom:
 
     async def publish(self, tick: int) -> list[dict]:
         events = self._salient_events(tick)
+        if not events and self.daily_news_required:
+            events = self._daily_events(tick)
+        if not events and self.daily_news_required:
+            # A quiet day is itself a true, engine-observed fact. Persist it
+            # before the desks write so every daily brief has an auditable
+            # source event instead of inventing activity that did not occur.
+            event_id = self.store.log_event(
+                tick, "quiet_day", {
+                    "summary": "No reportable economic event occurred before the newsroom phase.",
+                }, phase="NEWSROOM", importance=0.25)
+            events = [{
+                "id": event_id, "kind": "quiet_day",
+                "payload": {
+                    "summary": "No reportable economic event occurred before the newsroom phase.",
+                },
+                "importance": 0.25,
+            }]
         if not events:
             return []
         directives = self.shocks.active_slant_directives(tick) if self.shocks else {}
@@ -59,7 +86,9 @@ class Newsroom:
             drafts = await self._report_stories(tick, outlet, events)
             art = await self._write_story(tick, outlet, events, directives.get(outlet["id"]),
                                           drafts=drafts)
-            if art and art.get("headline"):
+            art = self._ground_article(
+                outlet, art, events, directive=directives.get(outlet["id"]))
+            if art:
                 pending.append((outlet, art))
         articles = []
         with self.store.savepoint(f"newsroom_{tick}"):
@@ -86,15 +115,142 @@ class Newsroom:
                 articles.append(art)
         return articles
 
-    def _salient_events(self, tick: int) -> list[dict]:
+    def _daily_events(self, tick: int) -> list[dict]:
+        """Return true events for a low-salience daily brief.
+
+        The normal desk still leads with material events. This path exists only
+        for profiles that promise daily publication and never reaches backward
+        to another tick, so a story cannot silently recycle yesterday's news.
+        """
+        kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS))
+        placeholders = ",".join("?" for _ in kinds)
         rows = self.store.query(
-            "SELECT * FROM events WHERE tick=? AND importance>=1.5 "
-            "AND kind NOT IN ('news_published','metrics_snapshot') ORDER BY importance DESC, id LIMIT 12",
-            (tick,))
+            f"SELECT * FROM events WHERE tick=? AND kind IN ({placeholders}) "
+            "ORDER BY importance DESC, id LIMIT 12", (tick, *kinds))
+        return [{
+            "id": int(row["id"]), "tick": int(row["tick"]), "kind": row["kind"],
+            "payload": public_event_payload(
+                row["kind"], load_json(row["payload_json"], {}) or {}),
+            "importance": float(row["importance"]),
+        } for row in rows]
+
+    def _logical_source_event_id(self, source_event_id: int,
+                                 events: list[dict]) -> Optional[int]:
+        """Resolve a recorded replay event ID to this database's local ID.
+
+        Event IDs are SQLite surrogates. Operational participant events can
+        shift them between a source run and an otherwise exact replay, so a
+        recorded newsroom response must be matched by deterministic event
+        contents before its citation is accepted locally. Ambiguous or missing
+        matches fail closed.
+        """
+        replay_conn = getattr(self.gw, "replay_conn", None)
+        if replay_conn is None:
+            return source_event_id if any(
+                int(event["id"]) == source_event_id for event in events) else None
+
+        source = replay_conn.execute(
+            "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
+            (source_event_id,)).fetchone()
+        if source is None:
+            return None
+        source_payload = public_event_payload(
+            source["kind"], load_json(source["payload_json"], {}) or {})
+        candidates = []
+        for event in events:
+            local = self.store.query_one(
+                "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
+                (int(event["id"]),))
+            if (local is not None
+                    and int(local["tick"]) == int(source["tick"])
+                    and str(local["kind"]) == str(source["kind"])
+                    and public_event_payload(
+                        local["kind"], load_json(local["payload_json"], {}) or {}
+                    ) == source_payload
+                    and float(local["importance"]) == float(source["importance"])):
+                candidates.append(int(event["id"]))
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _ground_article(self, outlet: dict, article: Optional[dict],
+                        events: list[dict], *,
+                        directive: Optional[str] = None) -> Optional[dict]:
+        """Fail closed to a deterministic brief when source provenance is bad."""
+        if not events:
+            return None
+        art = dict(article) if isinstance(article, dict) else {}
+        headline = art.get("headline")
+        body = art.get("body", "")
+        raw_tags = art.get("slant_tags")
+        raw_tone = art.get("tone", 0.0)
+        contract_valid = (
+            isinstance(headline, str) and bool(headline.strip())
+            and isinstance(body, str)
+            and isinstance(raw_tags, list)
+            and all(isinstance(tag, str) for tag in raw_tags)
+            and type(raw_tone) in {int, float}
+            and math.isfinite(float(raw_tone))
+        )
+        raw_sources = art.get("source_event_ids", [])
+        all_sources_valid = isinstance(raw_sources, list) and bool(raw_sources)
+        if not isinstance(raw_sources, list):
+            raw_sources = []
+        source_ids = []
+        for value in raw_sources:
+            # Provider citations are a typed protocol.  Coercing strings or
+            # booleans would make malformed/dangling references look valid.
+            if type(value) is not int:
+                all_sources_valid = False
+                continue
+            local_event_id = self._logical_source_event_id(value, events)
+            if local_event_id is None:
+                all_sources_valid = False
+            elif local_event_id not in source_ids:
+                source_ids.append(local_event_id)
+
+        # An editor response without a valid local source is not publishable.
+        # A compact engine-written brief preserves the daily promise without
+        # manufacturing facts or hiding the provider contract failure.
+        if not contract_valid or not source_ids or not all_sources_valid:
+            event = events[0]
+            kind = str(event.get("kind", "event"))
+            readable = kind.replace("_", " ")
+            art = {
+                "headline": f"{outlet['name']} daily brief: {readable}",
+                "body": (
+                    f"The event spine recorded {readable} today. "
+                    "This brief is grounded in today's recorded public event."),
+                "tone": 0.0,
+                "slant_tags": [outlet.get("slant", "neutral"), "daily-brief"],
+                "source_event_ids": [int(event["id"])],
+            }
+        else:
+            art["headline"] = sanitize_provider_text(headline).strip()
+            art["body"] = sanitize_provider_text(body).strip()
+            art["source_event_ids"] = source_ids
+            art["slant_tags"] = [
+                sanitize_provider_text(tag).strip()[:80]
+                for tag in raw_tags if sanitize_provider_text(tag).strip()
+            ] or [outlet.get("slant", "neutral")]
+            art["tone"] = max(-1.0, min(1.0, float(raw_tone)))
+            if directive:
+                art["tone"] = max(-1.0, art["tone"] - 0.3)
+                art["slant_tags"].append("directed")
+        return art
+
+    def _salient_events(self, tick: int) -> list[dict]:
+        kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS - {"quiet_day"}))
+        placeholders = ",".join("?" for _ in kinds)
+        rows = self.store.query(
+            f"SELECT * FROM events WHERE tick=? AND importance>=1.5 "
+            f"AND kind IN ({placeholders}) ORDER BY importance DESC, id LIMIT 12",
+            (tick, *kinds))
         out = []
         for r in rows:
-            out.append({"id": int(r["id"]), "kind": r["kind"],
-                        "payload": load_json(r["payload_json"], {}) or {},
+            out.append({"id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
+                        "payload": public_event_payload(
+                            r["kind"], load_json(r["payload_json"], {}) or {}),
                         "importance": float(r["importance"])})
         return out
 
@@ -142,11 +298,6 @@ class Newsroom:
                          tick=tick, max_tokens=400)
         resp = await self.gw.complete(req)
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
-        if directive and art.get("headline"):
-            # A slant directive skews tone negative/positive per its wording; scripted
-            # policy can't parse text, so nudge tone toward alarm when directed.
-            art["tone"] = float(art.get("tone", 0.0)) - 0.3
-            art["slant_tags"] = list(art.get("slant_tags", [])) + ["directed"]
         return art
 
 

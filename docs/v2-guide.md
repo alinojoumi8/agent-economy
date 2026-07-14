@@ -38,15 +38,17 @@ or fork a checkpoint. It cannot edit SQLite state directly.
 ## Semantics and migrations
 
 Schema migrations are sequential: v6 legal, v7 startup/IP/M&A, v8 information
-and politics, v9 regions/currencies/FX, and v10 datasets/scenarios/research
-outputs. Engine semantics 4 enables legal-institutional behavior; semantics 5
-enables regional multicurrency behavior.
+and politics, v9 regions/currencies/FX, v10 datasets/scenarios/research
+outputs, and v11 wage-offer, IPO-book, and share-movement provenance. Engine
+semantics 4 enables legal-institutional behavior, semantics 5 enables regional
+multicurrency behavior, and semantics 6 enables bilateral wage bargaining,
+qualified agent-priced IPOs, and agent-authored lender-of-last-resort decisions.
 
 Old runs retain their stored semantics. A run is never silently upgraded. Use
 an explicit child fork:
 
 ```powershell
-python run.py --fork RUN_ID@TICK --upgrade-semantics 5
+python run.py --fork RUN_ID@TICK --upgrade-semantics 6
 ```
 
 The child records its parent and fork tick plus a `semantic_upgrade` event with
@@ -111,6 +113,11 @@ are rooted at `/api/v2`:
 - `/causal/{event_id}`
 - `/god/action`, `/god/fork`
 
+The core `/api/conversations` endpoint supports bounded literal search over
+stored message text, topic, and speaker name, with optional agent, tick-range,
+cursor, and limit filters. The observatory search box queries the complete run
+rather than only the most recent in-memory page.
+
 Static export embeds all required replay data in a single HTML file. It displays
 structured rationales and provenance, never private reasoning.
 
@@ -157,7 +164,9 @@ responses, exact replay must produce the same event hash. Checkpoints persist
 engine, persona, and lifecycle PRNG state. Replay does not call a provider.
 Canonical replay resolves each persisted `model_call_id` through the logical LLM
 call it references, so concurrent completion order cannot create a false mismatch
-between otherwise identical databases. Missing LLM provenance fails closed.
+between otherwise identical databases. News citations are likewise checked
+against the deterministic event contents they reference when operational rows
+shift physical SQLite IDs. Missing or dangling provenance fails closed.
 
 Required invariants include balanced ledgers per currency, conserved shares,
 no enforcement before execution, no remedy outside a validated decision, no
@@ -248,9 +257,9 @@ All 40 LLM-attributed proposals referenced the correct local model call with no
 dangling provenance. The persisted provider metadata contained no private
 reasoning fields or tags, all ten checkpoint ticks were present, account caches
 matched the ledger, and IVC, NSD, SCD, and USD each reconciled to zero. Exact
-offline replay `replay-fd0adc5dc1-3b2c4f5434` matched every deterministic table
-at tick 10 with source and replay hash
-`46bee781169a2dfe4898e9026753c6adb87f8c8bfbfc04ade5610bfd9153e5f9`.
+offline replay `replay-fd0adc5dc1-a29fce4d82` matched every deterministic table
+at tick 10 with `differences: []` and source and replay hash
+`3586581baea968819cce9fed54b8d9427391645c869f163250c90e7e27976173`.
 
 ### Institutional live gate
 
@@ -299,7 +308,7 @@ and foreign keys passed, and IVC, MULTI, NSD, and SCD each reconciled to zero.
 Exact offline replay `replay-e09e845b87-19d917217c` reproduced all 737 recorded
 calls, all deterministic tables, and the Oracle prediction at tick 30. Source
 and replay hash were both
-`9e3cc67b90d2db15029bc33934ac0b1d2b847343a3230c89b87681da5904e20c`,
+`faf6bd4ada2085dc5ea40e594c0bf03aff2e826fed7715229dca514888907d2a`,
 with `differences: []`.
 
 This gate exposed two final provenance/accounting edge cases. Replay now resolves
@@ -309,6 +318,35 @@ planning and answer calls to the Oracle carve-out; markerless stored configs kee
 their historical split so old capped replays cannot cross a different governor
 threshold. No additional paid run is required. The full paid v1 acceptance
 campaign and optional external datasets remain separate release work.
+
+### Post-gate literal PRD completion
+
+The subsequent specification audit closed six code-level gaps:
+
+1. The restricted CLI route accepts both `oracle_plan` and `oracle`, while swarm
+   purposes remain blocked.
+2. Hiring in semantics 6 is a persisted bilateral offer/counter/accept/reject
+   protocol; the accepted wage is the payroll wage.
+3. Private firms must qualify before opening an IPO book. Issuers choose the
+   reserve, investors submit priced bids, and deterministic clearing writes
+   balanced cash and primary-share provenance without inventing a price.
+4. Fresh profiles publish same-day event-grounded news even on quiet days, and
+   stored conversations are searchable across the complete run.
+5. End-of-run narrative prose is written by one bounded governed reporter call
+   with local provenance and explicit deterministic fallbacks.
+6. Reserve distress now creates an immutable request that wakes the central
+   banker off cadence. Only an actor-correct, locally model-provenanced
+   approve/deny action can grant support or trigger failure and depositor
+   haircuts; replay never contacts a provider.
+
+These changes are semantics/config gated where historical behavior affects
+replay. Verification completed with 231 Python tests, 16 dashboard tests, a
+production dashboard build, a zero-vulnerability npm audit, Python compilation,
+and pinned-dataset manifest checks. Free semantics-6 rehearsal `aa828c6542`
+reached tick 10 with zero spend and no provider failure. The recorded live run
+was then replayed offline as `replay-fd0adc5dc1-a29fce4d82`; it remained exact
+with identical ticks and hashes and `differences: []`. No additional paid
+provider run was made or is required for this implementation pass.
 
 ## Release checklist
 

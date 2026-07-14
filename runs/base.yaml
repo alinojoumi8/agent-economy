@@ -1,6 +1,6 @@
 # Agent Economy — default world configuration (reproducibility = this file + seed + code version)
 seed: 42
-engine_semantics_version: 4       # v2 legal-institutional contract; stored older runs keep their version
+engine_semantics_version: 6       # wage bargaining + IPO books + agent LOLR; older runs keep their version
 
 legal:
   enabled: true
@@ -10,6 +10,7 @@ legal:
 
 information:
   citizen_bank_visibility: public_status  # citizens see public status, never private reserve ratios
+  daily_news_required: true               # every outlet publishes a same-day, event-grounded brief
 
 information_economy:
   enabled: true
@@ -103,12 +104,17 @@ conversations:
 budget:
   cap_usd: 200.0                # hard cap — never exceeded (PRD R7)
   oracle_reserve_usd: 10.0      # carve-out so questions never starve the world
+  report_reserve_usd: 0.25      # operational end-report prose; never changes world cadence
   oracle_plan_in_reserve: true  # planner + answer share the Oracle carve-out
   conversation_pairs: 15        # evening pairs at governor level 0
   thresholds: [0.60, 0.80, 0.95]
 
 oracle:
   default_horizon_ticks: 30
+
+reports:
+  narrative_max_tokens: 600
+  narrative_timeout_s: 45
 
 # ── LLM routing: explicit offline/test profile (free and deterministic). ──
 # To use real models, define providers and point roles at them, e.g.:

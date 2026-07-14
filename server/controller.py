@@ -220,7 +220,7 @@ class RunController:
 
     async def _run_acceptance(self, max_ticks: int | None) -> None:
         from reports.acceptance import advance_acceptance_run, write_acceptance_package
-        from reports.generate import generate_report
+        from reports.generate import generate_report_async
 
         target = min(
             self.acceptance_target_tick,
@@ -228,7 +228,7 @@ class RunController:
         status = await advance_acceptance_run(self.world, target_tick=target)
         if status["state"] != "completed" or self.store.tick < self.acceptance_target_tick:
             return
-        report_path = generate_report(
+        report_path = await generate_report_async(
             self.store, self.world,
             out_dir=str(self.world.config.get("report_dir", "reports/out")))
         receipt = write_acceptance_package(
@@ -272,6 +272,11 @@ class RunController:
             return {"status": "limit_reached", "tick": self.store.tick,
                     "target_tick": self.target_tick}
         self._reopen_finished()
+        # A report describes one completed state boundary.  Once the world is
+        # accepted for further execution, a prior artifact must not be returned
+        # as though it described the later terminal tick.
+        self.world.last_report_path = None
+        self.world.last_pause_reason = None
         self.world._pause_requested = False
         self.world._stop_requested = False
         self.world.gateway.clear_interrupt()
@@ -300,9 +305,9 @@ class RunController:
         self._require_mutable("stop")
         self.world.request_stop()
         async with self._control_lock:
-            return self._stop_locked()
+            return await self._stop_locked()
 
-    def _stop_locked(self) -> dict:
+    async def _stop_locked(self) -> dict:
         self._require_mutable("stop")
         if self.is_running():
             operational_log(logger, logging.INFO, "run.stop.accepted",
@@ -313,9 +318,31 @@ class RunController:
         self.store.set_meta(status="finished")
         self.store.commit()
         self.world.checkpoint(self.store.tick, reason="stop")
+        meta = self.store.get_meta()
+        if meta["active_tick"] is not None:
+            deferred = {
+                "reason": "report_deferred_partial_tick",
+                "active_tick": int(meta["active_tick"]),
+                "phase": str(meta["next_phase"] or meta["phase"] or "unknown"),
+                "detail": "finish the partial tick before generating an end-of-run report",
+            }
+            self.world.last_report_path = None
+            self.world.last_pause_reason = deferred
+            operational_log(
+                logger, logging.WARNING, "run.stop.report_deferred",
+                run_id=self.world.gateway.run_id, tick=self.store.tick,
+                active_tick=deferred["active_tick"], phase=deferred["phase"])
+            return {
+                "status": "finished", "tick": self.store.tick,
+                "report_path": None, "report_deferred": deferred,
+            }
         if not self.world.last_report_path:
-            from reports.generate import generate_report
-            self.world.last_report_path = generate_report(
+            from reports.generate import generate_report_async
+            # No world/provider task is active while this control lock is held,
+            # so it is safe to retire the Pause/Stop interrupt before the
+            # independently bounded report call.
+            self.world.gateway.clear_interrupt()
+            self.world.last_report_path = await generate_report_async(
                 self.store, self.world,
                 out_dir=str(self.world.config.get("report_dir", "reports/out")))
         operational_log(logger, logging.INFO, "run.stop.completed",
@@ -323,6 +350,31 @@ class RunController:
                         report_path=self.world.last_report_path)
         return {"status": "finished", "tick": self.store.tick,
                 "report_path": self.world.last_report_path}
+
+    async def generate_report(self) -> str:
+        """Serialize report generation against Run/Step/Stop lifecycle changes."""
+        async with self._control_lock:
+            if self.is_running():
+                raise HTTPException(
+                    status_code=409,
+                    detail="pause or stop the run before generating a report")
+            meta = self.store.get_meta()
+            if meta["active_tick"] is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="finish the active partial tick before generating a report")
+
+            # A completed operator Pause leaves the gateway interrupt set.  No
+            # simulation call can be active under this lock, so clearing it here
+            # cannot race or revive an in-flight world request.
+            self.world.gateway.clear_interrupt()
+            from reports.generate import generate_report_async
+            path = await generate_report_async(
+                self.store, self.world,
+                out_dir=str(self.world.config.get("report_dir", "reports/out")))
+            self.world.last_report_path = path
+            await self.hub.broadcast(self.run_status_payload(running=False))
+            return path
 
     async def step(self) -> dict:
         async with self._control_lock:
@@ -341,19 +393,21 @@ class RunController:
                             reason="served_tick_limit_reached", target_tick=self.target_tick)
             return {"status": "limit_reached", "tick": self.store.tick,
                     "target_tick": self.target_tick}
-        self._reopen_finished()
-        self.world._pause_requested = False
-        self.world._stop_requested = False
-        self.world.gateway.clear_interrupt()
         if self.participant.active_agent_id() is not None and not self.participant.has_queued_action():
             raise HTTPException(
                 status_code=409,
                 detail="choose an explicit participant action, including do nothing, before Step")
+        if self.acceptance_configured and not self.acceptance_authorized:
+            raise HTTPException(
+                status_code=403,
+                detail="acceptance steps require --acceptance-run and explicit live approval")
+        self._reopen_finished()
+        self.world.last_report_path = None
+        self.world.last_pause_reason = None
+        self.world._pause_requested = False
+        self.world._stop_requested = False
+        self.world.gateway.clear_interrupt()
         if self.acceptance_configured:
-            if not self.acceptance_authorized:
-                raise HTTPException(
-                    status_code=403,
-                    detail="acceptance steps require --acceptance-run and explicit live approval")
             from reports.acceptance import advance_acceptance_run
             target = min(self.acceptance_target_tick, self.store.tick + 1)
             acceptance = await advance_acceptance_run(self.world, target_tick=target)
