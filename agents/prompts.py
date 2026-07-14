@@ -506,7 +506,8 @@ class ContextBuilder:
     def render_prompt(self, context: dict) -> tuple[str, str]:
         a = context.get("agent", {})
         s = context.get("state", {})
-        lines = [f"[PERSONA] {a.get('name')}, age {a.get('age')}, {a.get('occupation')}, "
+        lines = [f"[PERSONA] agent_id {a.get('id')}, {a.get('name')}, "
+                 f"age {a.get('age')}, {a.get('occupation')}, "
                  f"risk_tolerance {a.get('risk_tolerance')}, health {a.get('health')}."]
         if s:
             lines.append(f"[STATE] cash {s.get('checking_balance',0)}c at bank {s.get('bank_id')}, "

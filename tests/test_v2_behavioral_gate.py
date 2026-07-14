@@ -45,6 +45,7 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         assert context["assigned_legal_matters"][0]["evidence_events"]
         system, prompt = world.runtime.ctx.render_prompt(context)
         assert "submit_filing" in system
+        assert f"agent_id {lawyer['id']}" in prompt
         assert "ASSIGNED LEGAL MATTERS" in prompt
         assert "obligation_breached" in prompt
 

@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -34,6 +35,35 @@ PRIVATE_REASONING_FIELDS = frozenset({
     "thought",
     "thoughts",
 })
+PRIVATE_REASONING_TAGS = (
+    "think",
+    "analysis",
+    "chain_of_thought",
+    "reasoning_content",
+    "reasoning_details",
+    "thinking",
+    "thought",
+    "thoughts",
+)
+_PRIVATE_REASONING_BLOCK = re.compile(
+    rf"<(?P<tag>{'|'.join(PRIVATE_REASONING_TAGS)})\b[^>]*>.*?</(?P=tag)\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_PRIVATE_REASONING_UNCLOSED = re.compile(
+    rf"<(?:{'|'.join(PRIVATE_REASONING_TAGS)})\b[^>]*>.*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def sanitize_provider_text(value: str) -> str:
+    """Remove provider-only tagged reasoning while retaining the public answer."""
+    sanitized = value
+    while True:
+        redacted = _PRIVATE_REASONING_BLOCK.sub("", sanitized)
+        if redacted == sanitized:
+            break
+        sanitized = redacted
+    return _PRIVATE_REASONING_UNCLOSED.sub("", sanitized).strip()
 
 
 def sanitize_provider_raw(value: Any) -> Any:
@@ -46,6 +76,8 @@ def sanitize_provider_raw(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [sanitize_provider_raw(item) for item in value]
+    if isinstance(value, str):
+        return sanitize_provider_text(value)
     return value
 
 # Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
@@ -485,6 +517,7 @@ class Gateway:
             raise failure from exc
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
+        result.text = sanitize_provider_text(result.text)
         parsed, ok = self._parse(result.text)
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
@@ -507,6 +540,7 @@ class Gateway:
                 repaired_result, repair_attempts = await self._call_adapter(
                     provider, adapter, model, repair, repair.messages(), 0.2,
                     provider_cache_key)
+                repaired_result.text = sanitize_provider_text(repaired_result.text)
                 attempts += repair_attempts
             except GatewayInterrupted:
                 raise

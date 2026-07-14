@@ -395,6 +395,55 @@ def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatc
     store.close()
 
 
+def test_gateway_redacts_tagged_private_reasoning_before_persisting(
+        tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "PRIVACY_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "privacy-test"},
+            "routes": {},
+            "pricing": {"privacy-test": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+    }
+    store = Store(str(tmp_path / "privacy.db"))
+    store.init_run_meta("privacy", 1, config)
+    monkeypatch.setenv("PRIVACY_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+    public = '{"reasoning":"bounded public rationale","actions":[{"type":"do_nothing"}]}'
+    provider_text = f"<think>private scratch work</think>{public}"
+
+    class TaggedReasoningAdapter:
+        async def complete(self, *args, **kwargs):
+            return AdapterResult(
+                text=provider_text, in_tokens=10, out_tokens=10,
+                raw={"choices": [{"message": {
+                    "content": provider_text,
+                    "reasoning_content": "private raw reasoning",
+                }}]},
+            )
+
+    gateway.adapters["network"] = TaggedReasoningAdapter()
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="decision", tick=1)))
+
+    assert response.ok
+    assert response.parsed["reasoning"] == "bounded public rationale"
+    persisted = store.query_one("SELECT response_json FROM llm_calls")
+    payload = json.loads(persisted["response_json"])
+    serialized = json.dumps(payload)
+    assert "private scratch work" not in serialized
+    assert "private raw reasoning" not in serialized
+    assert "<think>" not in serialized
+    assert "reasoning_content" not in serialized
+    store.close()
+
+
 def test_empty_success_completions_are_metered_and_degrade_to_noop(tmp_path, monkeypatch):
     from engine.store import Store
     config = {
