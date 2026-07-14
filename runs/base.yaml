@@ -103,6 +103,7 @@ conversations:
 budget:
   cap_usd: 200.0                # hard cap — never exceeded (PRD R7)
   oracle_reserve_usd: 10.0      # carve-out so questions never starve the world
+  oracle_plan_in_reserve: true  # planner + answer share the Oracle carve-out
   conversation_pairs: 15        # evening pairs at governor level 0
   thresholds: [0.60, 0.80, 0.95]
 

@@ -170,6 +170,10 @@ class Governor:
         cap = budget_cfg.get("cap_usd", 200.0)
         self.cap_usd = None if cap is None else float(cap)
         self.oracle_reserve_usd = float(budget_cfg.get("oracle_reserve_usd", 10.0))
+        # Persisted opt-in keeps historical capped replays on their original
+        # accounting while fresh runs reserve the complete Oracle workflow.
+        self.oracle_plan_in_reserve = bool(
+            budget_cfg.get("oracle_plan_in_reserve", False))
         self.thresholds = budget_cfg.get("thresholds", [0.60, 0.80, 0.95])
         self.base_conversation_pairs = int(budget_cfg.get("conversation_pairs", 15))
         self._last_call_id = 0
@@ -183,10 +187,13 @@ class Governor:
     # resume. Runtime inserts update the cache in O(1); a cheap MAX(id) check
     # notices direct test/tool inserts and refreshes the aggregates when needed.
     def _refresh_spend(self) -> None:
+        oracle_clause = (
+            "purpose IN ('oracle','oracle_plan')"
+            if self.oracle_plan_in_reserve else "purpose='oracle'")
         row = self.store.query_one(
             "SELECT COALESCE(MAX(id),0) AS last_id, "
             "COALESCE(SUM(cost_usd),0) AS total, "
-            "COALESCE(SUM(CASE WHEN purpose='oracle' THEN cost_usd ELSE 0 END),0) AS oracle "
+            f"COALESCE(SUM(CASE WHEN {oracle_clause} THEN cost_usd ELSE 0 END),0) AS oracle "
             "FROM llm_calls")
         self._last_call_id = int(row["last_id"] if row else 0)
         self._total_spend_usd = float(row["total"] if row else 0.0)
@@ -204,10 +211,14 @@ class Governor:
         cost = float(cost_usd)
         self._last_call_id = max(self._last_call_id, int(call_id))
         self._total_spend_usd += cost
-        if purpose == "oracle":
+        if self._uses_oracle_reserve(purpose):
             self._oracle_spend_usd += cost
         else:
             self._world_spend_usd += cost
+
+    def _uses_oracle_reserve(self, purpose: str) -> bool:
+        return purpose == "oracle" or (
+            self.oracle_plan_in_reserve and purpose == "oracle_plan")
 
     def total_spend(self) -> float:
         self._ensure_current()
@@ -261,7 +272,7 @@ class Governor:
         self._ensure_current()
         if self.cap_usd is None:
             return True
-        if purpose == "oracle":
+        if self._uses_oracle_reserve(purpose):
             return self._oracle_spend_usd + est_cost <= self.oracle_reserve_usd \
                 and self._total_spend_usd + est_cost <= self.cap_usd
         return self._total_spend_usd + est_cost <= self.cap_usd

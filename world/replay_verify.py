@@ -30,6 +30,12 @@ IGNORED_EVENT_KINDS = {
 JSON_COLUMNS = {
     "participant_ids", "slant_tags", "source_event_ids",
 }
+LLM_REFERENCE_KEYS = {
+    "llm_call_id", "model_call_id", "source_llm_call_id",
+}
+LLM_REFERENCE_JSON_COLUMNS = {
+    ("events", "payload_json"),
+}
 
 
 def _connect(path: str | Path) -> sqlite3.Connection:
@@ -79,6 +85,52 @@ def _logical_llm_call_references(conn: sqlite3.Connection) -> dict[int, Any]:
     }
 
 
+def _canonical_llm_reference(
+        value: Any, llm_call_references: dict[int, Any]) -> tuple[Any, bool]:
+    if value is None:
+        return None, True
+    # IDs are persisted as SQLite/JSON integers. Do not silently coerce bools,
+    # numeric strings, fractional values, or non-finite floats into valid IDs.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return {"invalid_llm_call_id": {
+            "type": type(value).__name__,
+            "value": str(value),
+        }}, False
+    key = value
+    reference = llm_call_references.get(key)
+    if reference is None:
+        return {"dangling_llm_call_id": key}, False
+    return reference, True
+
+
+def _canonicalize_nested_llm_references(
+        value: Any, llm_call_references: dict[int, Any]) -> tuple[Any, bool]:
+    """Resolve local LLM IDs embedded in persisted JSON provenance."""
+    if isinstance(value, dict):
+        canonical = {}
+        references_valid = True
+        for key, nested in value.items():
+            if key in LLM_REFERENCE_KEYS:
+                resolved, valid = _canonical_llm_reference(
+                    nested, llm_call_references)
+            else:
+                resolved, valid = _canonicalize_nested_llm_references(
+                    nested, llm_call_references)
+            canonical[key] = resolved
+            references_valid = references_valid and valid
+        return canonical, references_valid
+    if isinstance(value, list):
+        canonical = []
+        references_valid = True
+        for nested in value:
+            resolved, valid = _canonicalize_nested_llm_references(
+                nested, llm_call_references)
+            canonical.append(resolved)
+            references_valid = references_valid and valid
+        return canonical, references_valid
+    return value, True
+
+
 def _table_digest(
         conn: sqlite3.Connection, table: str,
         llm_call_references: dict[int, Any]) -> tuple[int, str, bool]:
@@ -100,18 +152,17 @@ def _table_digest(
         record = {}
         for column in columns:
             if column == "model_call_id":
-                call_id = row[column]
-                if call_id is None:
-                    record[column] = None
-                else:
-                    key = int(call_id)
-                    reference = llm_call_references.get(key)
-                    record[column] = (
-                        reference if reference is not None
-                        else {"dangling_llm_call_id": key})
-                    references_valid = references_valid and reference is not None
+                resolved, valid = _canonical_llm_reference(
+                    row[column], llm_call_references)
+                record[column] = resolved
+                references_valid = references_valid and valid
             else:
-                record[column] = _canonical_value(column, row[column])
+                value = _canonical_value(column, row[column])
+                if (table, column) in LLM_REFERENCE_JSON_COLUMNS:
+                    value, valid = _canonicalize_nested_llm_references(
+                        value, llm_call_references)
+                    references_valid = references_valid and valid
+                record[column] = value
         records.append(json.dumps(
             record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False).encode("utf-8"))

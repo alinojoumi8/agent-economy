@@ -723,6 +723,81 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     assert proof["exact"], proof["differences"]
     assert proof["source_hash"] == proof["replay_hash"]
 
+    def insert_belief_event(store, source_llm_call_id):
+        store.insert(
+            "events", id=1, tick=1, phase="EXECUTION", kind="belief_updated",
+            subject_type="agent", subject_id=2, importance=0.5,
+            payload_json=json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer",
+                "source_llm_call_id": source_llm_call_id,
+            }, sort_keys=True))
+
+    # Nested event provenance is also local to each database and must resolve
+    # through the referenced call rather than compare physical IDs.
+    insert_belief_event(source, 1)
+    insert_belief_event(replay, 2)
+    source.commit()
+    replay.commit()
+    nested = verify_replay(source.path, replay.path)
+    assert nested["exact"], nested["differences"]
+
+    replay.execute(
+        "UPDATE events SET payload_json=? WHERE id=1",
+        (json.dumps({
+            "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+            "source": "credit_officer", "source_llm_call_id": 1,
+        }, sort_keys=True),))
+    replay.commit()
+    wrong_nested = verify_replay(source.path, replay.path)
+    assert not wrong_nested["exact"]
+    assert wrong_nested["differences"] == ["events"]
+
+    dangling_payload = json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 999,
+    }, sort_keys=True)
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (dangling_payload,))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (dangling_payload,))
+    source.commit()
+    replay.commit()
+    dangling_nested = verify_replay(source.path, replay.path)
+    assert not dangling_nested["exact"]
+    assert dangling_nested["differences"] == ["events"]
+
+    # Malformed types must fail closed and remain JSON-safe rather than being
+    # coerced to a physical ID or crashing the verifier.
+    for malformed in (True, 1.9, float("inf"), float("nan"), "1"):
+        source.execute(
+            "UPDATE events SET payload_json=? WHERE id=1",
+            (json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer",
+                "source_llm_call_id": malformed,
+            }, sort_keys=True),))
+        replay.execute(
+            "UPDATE events SET payload_json=? WHERE id=1",
+            (json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer", "source_llm_call_id": 2,
+            }, sort_keys=True),))
+        source.commit()
+        replay.commit()
+        malformed_proof = verify_replay(source.path, replay.path)
+        assert not malformed_proof["exact"]
+        assert malformed_proof["differences"] == ["events"]
+
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+    source.commit()
+    replay.commit()
+
     replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
     replay.commit()
     wrong = verify_replay(source.path, replay.path)

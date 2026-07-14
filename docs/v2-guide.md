@@ -248,13 +248,13 @@ All 40 LLM-attributed proposals referenced the correct local model call with no
 dangling provenance. The persisted provider metadata contained no private
 reasoning fields or tags, all ten checkpoint ticks were present, account caches
 matched the ledger, and IVC, NSD, SCD, and USD each reconciled to zero. Exact
-offline replay `replay-fd0adc5dc1-26323b9041` matched every deterministic table
+offline replay `replay-fd0adc5dc1-3b2c4f5434` matched every deterministic table
 at tick 10 with source and replay hash
 `46bee781169a2dfe4898e9026753c6adb87f8c8bfbfc04ade5610bfd9153e5f9`.
 
 ### Institutional live gate
 
-The next evidence run uses `runs/v2-live-institutional.yaml` for 30 ticks. It
+The completed evidence run used `runs/v2-live-institutional.yaml` for 30 ticks. It
 retains the inspectable 36-person behavioral fixture but promotes 22 core agents:
 the central banker plus every pinned legal, political, regulatory, market,
 credit, venture, and newsroom seat. Its `$2.00` cap is a runaway ceiling. A
@@ -269,8 +269,46 @@ python run.py --config runs/v2-live-institutional.yaml --ticks 30 --serve --appr
 The served command starts paused. Its Run and Step controls share one absolute
 tick-30 boundary, and the header reports the remaining ticks. Live acceptance
 requires every configured role to complete, no provider or contract failures,
-valid actor-matched provenance, private-reasoning redaction, checkpoints 1–30,
+valid actor-matched provenance, private-reasoning redaction, checkpoints 1-30,
 balanced ledgers in every currency, and an exact offline replay.
+
+### Latest institutional live evidence
+
+The 30-tick live run `e09e845b87` executed revision `d0d5797` through the served
+dashboard and stopped at its configured boundary. It recorded 737 valid model
+calls: 576 MiniMax M3 calls and 161 local Ollama `gemma4:12b` calls. Durable
+priced cost was `$0.29012772` against the `$2.00` cap; Ollama cost was zero.
+Every configured institutional role completed, including seven paired
+reporter/newsroom turns with no duplicate editor decision turn. The dashboard
+Step, Run, Pause, Oracle, report, tick-limit, v2 API, and WebSocket terminal-state
+paths were also exercised without a browser, console, or network fault.
+
+All 587 proposals were accepted. The run enacted the AI Market Interoperability
+Act after seven votes, recorded one self-funded lobbying activity, approved the
+seeded merger with an interoperability remedy, and executed one FX trade. It
+also denied the undercapitalized loan, declined the VC pitch, retained the
+material-litigation disclosure, submitted the assigned legal filing, and
+published seven articles. At tick 30 the Oracle recorded a medium-confidence
+12% bank-run forecast with a machine-checkable tick-60 resolution rule.
+
+The audit found no provider failures, pauses, invalid contracts, rejected
+actions, dangling LLM references, actor/tick provenance mismatches, or persisted
+private-reasoning fields or tags. All 30 checkpoint ticks were present, every
+account cache matched its ledger, every transaction balanced, SQLite integrity
+and foreign keys passed, and IVC, MULTI, NSD, and SCD each reconciled to zero.
+Exact offline replay `replay-e09e845b87-19d917217c` reproduced all 737 recorded
+calls, all deterministic tables, and the Oracle prediction at tick 30. Source
+and replay hash were both
+`9e3cc67b90d2db15029bc33934ac0b1d2b847343a3230c89b87681da5904e20c`,
+with `differences: []`.
+
+This gate exposed two final provenance/accounting edge cases. Replay now resolves
+nested event `source_llm_call_id` values by deterministic call contents and fails
+closed on wrong or dangling references. Fresh profiles also charge both Oracle
+planning and answer calls to the Oracle carve-out; markerless stored configs keep
+their historical split so old capped replays cannot cross a different governor
+threshold. No additional paid run is required. The full paid v1 acceptance
+campaign and optional external datasets remain separate release work.
 
 ## Release checklist
 
