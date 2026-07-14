@@ -207,6 +207,30 @@ quality result: all 12 accepted strategic proposals chose `do_nothing`. The next
 live gate should seed a bounded legal, credit, funding, and disclosure fixture so
 that non-trivial typed actions and their deterministic effects are exercised.
 
+### Seeded behavioral gate
+
+`runs/v2-live-behavioral.yaml` adds a fictional Northstar startup, employee,
+pending loan application, VC pitch, breached typed contract, assigned legal
+matter, and material-litigation disclosure. The fixture is atomic and submits
+every proposal through the normal action executor; the deterministic legal close
+detects the breach. Counsel receives only assigned matters, typed remedies, and
+referenced public event evidence. `runs/v2-behavioral-rehearsal.yaml` preserves
+the same 36-agent fixture while routing every purpose to deterministic policies.
+
+Run the free ten-tick rehearsal first, then explicitly authorize the live gate:
+
+```powershell
+python run.py --config runs/v2-behavioral-rehearsal.yaml --ticks 10
+python run.py --config runs/v2-live-behavioral.yaml --preflight-live --approve-live-inference
+python run.py --config runs/v2-live-behavioral.yaml --ticks 10 --approve-live-inference
+```
+
+The first deterministic rehearsal denied an undercapitalized loan, funded the
+staffed startup, admitted the contract-breach event, offered a remedy-limited
+settlement, published two articles, recorded 72 information exposures, rejected
+no actions, and reconciled every currency. Live acceptance additionally requires
+private-reasoning redaction, bounded spend, checkpoints, and exact offline replay.
+
 ## Release checklist
 
 Before publication: run Python tests and compilation, dashboard tests/build,

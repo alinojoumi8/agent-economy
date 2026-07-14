@@ -34,10 +34,14 @@ apply_loan{bank_id,amount,purpose}, apply_job{job_id}, post_job{firm_id,title,wa
 set_price{firm_id,price}, hire{application_id}, fire{employment_id},
 found_company{name,sector,lawyer_agent_id}, transfer{to_account,amount,memo},
 move_deposits{to_bank_id}, pitch_vc{firm_id,ask,summary}, buy_insurance{},
-cancel_insurance{}, say_public{text}, do_nothing.
+cancel_insurance{}, publish_disclosure{firm_id,disclosure_type,lookback_ticks},
+say_public{text}, do_nothing.
 Role actions: approve_loan{application_id,rate_bps,term_ticks},
 deny_loan{application_id,reason}, set_policy_rate{rate_bps},
 fund_pitch{pitch_id,amount,equity_bps}, decline_pitch{pitch_id,reason}.
+Legal role actions: submit_filing{matter_id,filer_type,filer_id,filing_type,
+evidence_event_ids,body}, propose_settlement{matter_id,terms:{remedy:{type,
+amount_cents}}}.
 Every field ending in _id, plus to_account, MUST be a JSON integer copied exactly from the
 provided context. Never emit labels such as "firm7", "job2", names, titles, or composite strings
 where an integer ID is required.
@@ -73,6 +77,8 @@ class ContextBuilder:
             return self._credit_officer_context(agent_row, tick)
         if role == "vc_partner":
             return self._vc_partner_context(agent_row, tick)
+        if role == "lawyer":
+            return self._lawyer_context(agent_row, tick)
         ctx = self._citizen_context(agent_row, tick)
         firm = self.store.query_one(
             "SELECT * FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
@@ -85,7 +91,7 @@ class ContextBuilder:
 
     def purpose_for(self, agent_row) -> str:
         role = agent_row["role"]
-        if role in ("central_banker", "credit_officer", "vc_partner"):
+        if role in ("central_banker", "credit_officer", "vc_partner", "lawyer"):
             return role
         if self.store.query_one("SELECT 1 FROM firms WHERE founder_agent_id=? AND status<>'bankrupt'",
                                 (agent_row["id"],)):
@@ -438,6 +444,53 @@ class ContextBuilder:
                 "portfolio": self.e.vc.portfolio(agent_id),
                 "metrics": self._metrics_snapshot(tick)}
 
+    def _lawyer_context(self, a, tick: int) -> dict:
+        agent_id = int(a["id"])
+        ctx = self._citizen_context(a, tick)
+        matters = []
+        for matter in self.store.query(
+                "SELECT * FROM legal_matters WHERE counsel_agent_id=? "
+                "AND status NOT IN ('decided','dismissed','settled') ORDER BY id",
+                (agent_id,)):
+            matter_id = int(matter["id"])
+            contract_id = int(matter["contract_id"] or 0)
+            evidence = []
+            for event in self.store.query(
+                    "SELECT id,tick,kind,payload_json FROM events WHERE "
+                    "(subject_type='legal_matter' AND subject_id=?) OR "
+                    "(subject_type='contract' AND subject_id=?) ORDER BY id",
+                    (matter_id, contract_id)):
+                evidence.append({
+                    "event_id": int(event["id"]), "tick": int(event["tick"]),
+                    "kind": event["kind"],
+                    "facts": load_json(event["payload_json"], {}) or {},
+                })
+            filings = [{
+                "filing_id": int(filing["id"]),
+                "filing_type": filing["filing_type"],
+                "admitted": bool(filing["admitted"]),
+                "evidence_event_ids": load_json(filing["evidence_event_ids_json"], []) or [],
+            } for filing in self.store.query(
+                "SELECT id,filing_type,admitted,evidence_event_ids_json FROM legal_filings "
+                "WHERE matter_id=? ORDER BY id", (matter_id,))]
+            matters.append({
+                "matter_id": matter_id,
+                "status": matter["status"],
+                "matter_type": matter["matter_type"],
+                "claim_type": matter["claim_type"],
+                "contract_id": contract_id or None,
+                "claimant": {"type": matter["claimant_type"], "id": int(matter["claimant_id"])},
+                "respondent": {"type": matter["respondent_type"], "id": int(matter["respondent_id"])},
+                "response_due_tick": int(matter["response_due_tick"]),
+                "requested_remedy": load_json(matter["requested_remedy_json"], {}) or {},
+                "settlement": load_json(matter["settlement_json"], {}) or {},
+                "evidence_events": evidence[-12:],
+                "filings": filings,
+            })
+        ctx["purpose"] = "lawyer"
+        ctx["assigned_legal_matters"] = matters
+        return ctx
+
     def _central_banker_context(self, a, tick: int) -> dict:
         cb = self.config.get("central_bank", {})
         m = self._metrics_snapshot(tick)
@@ -517,6 +570,10 @@ class ContextBuilder:
             lines.append("[PITCHES] " + json.dumps(context["pending_pitches"])[:1200] +
                          "\nRespond with fund_pitch{pitch_id,amount,equity_bps} or "
                          "decline_pitch{pitch_id,reason} per pitch.")
+        if context.get("assigned_legal_matters"):
+            lines.append("[ASSIGNED LEGAL MATTERS — COPY matter_id, contract_id, party IDs, "
+                         "AND evidence event_id VALUES EXACTLY] "
+                         + json.dumps(context["assigned_legal_matters"], separators=(",", ":"))[:4000])
         if context.get("insurance_offer") and not context.get("insured"):
             o = context["insurance_offer"]
             lines.append(f"[INSURANCE] {o['insurer']} offers health coverage: "
@@ -546,6 +603,15 @@ class ContextBuilder:
         elif purpose == "vc_partner":
             lines.append("[TASK] Evaluate pending pitches or deliberately do_nothing. "
                          "Reply with the JSON envelope only.")
+        elif purpose == "lawyer":
+            lines.append("[TASK] Act only for an assigned matter and only from its bounded record. "
+                         "If a breach evidence event is supplied and not yet filed, use "
+                         "submit_filing with filing_type='evidence', filer_type='agent', your "
+                         "integer agent id as filer_id, and supplied event_id values. If the "
+                         "record is already in hearing, you may propose a settlement no larger "
+                         "than the requested remedy. If an assigned matter has no supported "
+                         "next step, deliberately do_nothing. Only when there are no assigned "
+                         "matters may you make an ordinary household decision.")
         else:
             lines.append("[TASK] Decide what you do today from the available goods, jobs, "
                          "banks, and—when due—listed securities. Reply with the JSON envelope only.")

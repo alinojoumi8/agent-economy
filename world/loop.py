@@ -91,6 +91,9 @@ class World:
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
         Genesis(self.economy, self.config, self.persona_prng).build()
+        if self.config.get("behavioral_fixture", {}).get("enabled"):
+            from world.behavioral_fixture import BehavioralFixtureSeeder
+            BehavioralFixtureSeeder(self.economy, self.config).seed()
         if self.config.get("dataset_manifest"):
             from research.datasets import ingest_manifest
             ingest_manifest(self.store, self.config["dataset_manifest"])

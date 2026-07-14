@@ -253,6 +253,50 @@ def vc_partner_decision(context: dict) -> dict:
     return _env(None, actions or [{"type": "do_nothing"}], [], "; ".join(reasons) or "no pitches today")
 
 
+def lawyer_decision(context: dict) -> dict:
+    """File bounded evidence first, then make a remedy-limited settlement offer."""
+    agent_id = int(context.get("agent", {}).get("id", 0))
+    matters = context.get("assigned_legal_matters", [])
+    for matter in matters:
+        filed_evidence = {
+            int(event_id)
+            for filing in matter.get("filings", [])
+            for event_id in filing.get("evidence_event_ids", [])
+        }
+        breach_events = [
+            int(event["event_id"])
+            for event in matter.get("evidence_events", [])
+            if event.get("kind") == "obligation_breached"
+            and int(event["event_id"]) not in filed_evidence
+        ]
+        if breach_events and matter.get("status") in {
+                "filed", "pleading", "hearing", "settlement_offered"}:
+            matter_id = int(matter["matter_id"])
+            return _env(None, [{
+                "type": "submit_filing",
+                "matter_id": matter_id,
+                "filer_type": "agent",
+                "filer_id": agent_id,
+                "filing_type": "evidence",
+                "evidence_event_ids": breach_events,
+                "body": "The admitted simulation event records the overdue typed obligation.",
+            }], [], f"file breach evidence in matter {matter_id}")
+
+        remedy = dict(matter.get("requested_remedy", {}) or {})
+        if matter.get("status") == "hearing" and remedy:
+            matter_id = int(matter["matter_id"])
+            return _env(None, [{
+                "type": "propose_settlement",
+                "matter_id": matter_id,
+                "terms": {"remedy": remedy},
+            }], [], f"offer the requested bounded remedy in matter {matter_id}")
+
+    if matters:
+        return _env(None, [{"type": "do_nothing"}], [], "assigned matter has no supported next step")
+    # Preserve the lawyer's ordinary household behavior when there is no case.
+    return citizen_decision(context)
+
+
 def central_banker_decision(context: dict) -> dict:
     m = context.get("metrics", {})
     cur = int(context.get("policy_rate_bps", 500))
@@ -528,6 +572,7 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
     "credit_officer": credit_officer_decision,
     "central_banker": central_banker_decision,
     "vc_partner": vc_partner_decision,
+    "lawyer": lawyer_decision,
     "reporter": reporter_draft,
     "newsroom": newsroom_policy,
     "conversation": conversation_turn,
