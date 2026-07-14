@@ -15,14 +15,10 @@ small reviewable changes, and explicit accounting over clever shortcuts.
 
 ## Local verification
 
-```powershell
-python -m compileall -q agents engine experiments llm oracle reports server world run.py
-python -m pytest tests/ -q
-npm --prefix dashboard ci
-npm --prefix dashboard test
-npm --prefix dashboard run build
-git diff --check
-```
+Run the complete hash-locked gate documented in
+[docs/development.md](docs/development.md#test-layers). It includes compilation,
+pinned datasets, Python/dashboard tests, dependency and notice audits, the
+production bundle, and diff hygiene.
 
 The dashboard build writes to `server/static/`. Commit that regenerated bundle
 whenever dashboard source changes.
@@ -36,7 +32,8 @@ whenever dashboard source changes.
 - Preserve stable ordering, seeded randomness, and exact replay compatibility.
 - Provider failures pause visibly; never introduce a silent model fallback.
 - The Oracle remains read-only.
-- Citizens do not receive private bank balance-sheet data in semantics-v3 runs.
+- Citizens do not receive private bank balance-sheet data in maintained
+  public-status profiles; stored historical semantics retain their contract.
 - Reserved beliefs remain bounded and every accepted update is auditable.
 
 ## Pull request evidence

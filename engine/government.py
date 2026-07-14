@@ -50,7 +50,8 @@ class Government:
         return int(self.store.metric_latest("unemployment_benefit_cents", 0.0))
 
     def treasury_balance(self) -> int:
-        return self.ledger.balance(self.ledger.system_account(SYS_GOV))
+        return int(self.store.scalar(
+            "SELECT COALESCE(SUM(balance_cents),0) FROM accounts WHERE label=?", (SYS_GOV,), default=0))
 
     def initialize(self, tick: int = 0) -> None:
         """Record opening fiscal policy (genesis). Without this, tax stays 0."""
@@ -85,13 +86,15 @@ class Government:
         amount = self.benefit_cents()
         if amount <= 0:
             return
-        gov = self.ledger.system_account(SYS_GOV)
         paid = 0
         total = 0
         for agent_id in self._eligible_unemployed():
             acct = self.ledger.agent_checking_id(agent_id)
             if acct is None:
                 continue
+            currency = str(self.store.scalar(
+                "SELECT currency_code FROM accounts WHERE id=?", (acct,), default="USD") or "USD")
+            gov = self.ledger.system_account(SYS_GOV, currency_code=currency)
             # Deficit spending is allowed: sys:gov is external and may go negative.
             self.ledger.post(tick, "unemployment_benefit", [
                 Leg(acct, amount, "unemployment benefit"),

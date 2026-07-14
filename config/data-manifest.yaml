@@ -1,0 +1,103 @@
+manifest_version: 1
+model_boundary: Aggregate calibration only. Simulated firms and people remain fictional.
+datasets:
+  - key: fred-fedfunds-2020
+    source_url: https://fred.stlouisfed.org/series/FEDFUNDS
+    refresh_url: https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2020-01-01&coed=2020-12-31
+    release_date: "2021-01-08"
+    vintage_date: "2021-01-08"
+    retrieval_time: "2026-07-13T00:00:00Z"
+    checksum_sha256: b91d23814cc884a54452aecd11c5e6005600c1e8281a260f19a113b094420c07
+    transform_version: fred-monthly-targets-v1
+    refresh_vintage_policy: retrieval_date
+    usage_terms: >-
+      Source: Board of Governors of the Federal Reserve System (US), Federal
+      Funds Effective Rate [FEDFUNDS], retrieved from FRED, Federal Reserve Bank
+      of St. Louis. Preserve that attribution. FRED content is not relicensed by
+      this repository; use remains subject to the current FRED Services Terms of
+      Use and any underlying-series restrictions at
+      https://fred.stlouisfed.org/legal/terms/.
+    metadata:
+      series_id: FEDFUNDS
+      source_agency: Board of Governors of the Federal Reserve System (US)
+      release: H.15 Selected Interest Rates
+      frequency: monthly
+      seasonal_adjustment: not seasonally adjusted
+      copyright_status: "Public Domain: Citation Requested"
+      revision_policy: >-
+        The checked-in snapshot is the stated 2021-01-08 vintage. Explicit
+        refresh uses FRED's current graph CSV and resets vintage_date to the
+        UTC retrieval date; it does not claim an ALFRED real-time vintage.
+      target_key_prefix: policy_rate
+      target_months:
+        - "2020-01"
+        - "2020-04"
+        - "2020-12"
+    snapshot_path: ../research/data/fred-fedfunds-2020.json
+    required: true
+  - key: bls-unemployment-2020
+    source_url: https://data.bls.gov/timeseries/LNS14000000
+    release_date: "2021-01-08"
+    vintage_date: "2021-01-08"
+    retrieval_time: "2026-07-13T00:00:00Z"
+    checksum_sha256: 2536fd028ff6b396499f6bbd322144157339a1afbd96248cd4252312762efdb8
+    transform_version: bls-labor-targets-v1
+    usage_terms: >-
+      Source: U.S. Bureau of Labor Statistics, Labor Force Statistics from the
+      Current Population Survey, unemployment rate series LNS14000000. BLS
+      publications are public domain except identified previously copyrighted
+      photographs and illustrations; BLS requests source citation. See
+      https://www.bls.gov/opub/copyright-information.htm.
+    metadata:
+      series_id: LNS14000000
+      source_agency: U.S. Bureau of Labor Statistics
+      program: Labor Force Statistics from the Current Population Survey
+      frequency: monthly
+      seasonal_adjustment: seasonally adjusted
+    snapshot_path: ../research/data/bls-unemployment-2020.json
+    refresh_mode: manual
+    required: true
+  - key: federal-reserve-scf
+    source_url: https://www.federalreserve.gov/econres/scf-databases.htm
+    release_date: pending-refresh
+    vintage_date: pending-refresh
+    retrieval_time: pending-refresh
+    checksum_sha256: ""
+    transform_version: scf-household-distributions-v1
+    usage_terms: Federal Reserve SCF terms and citation guidance apply.
+    snapshot_path: ""
+    refresh_mode: manual
+    required: false
+  - key: census-susb
+    source_url: https://www.census.gov/programs-surveys/susb/data.html
+    release_date: pending-refresh
+    vintage_date: pending-refresh
+    retrieval_time: pending-refresh
+    checksum_sha256: ""
+    transform_version: susb-firm-size-sector-v1
+    usage_terms: U.S. Census Bureau data-use guidance applies.
+    snapshot_path: ""
+    refresh_mode: manual
+    required: false
+  - key: sec-edgar-sector-distributions
+    source_url: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
+    release_date: pending-refresh
+    vintage_date: pending-refresh
+    retrieval_time: pending-refresh
+    checksum_sha256: ""
+    transform_version: edgar-anonymized-sector-v1
+    usage_terms: SEC fair-access policy and API guidance apply.
+    snapshot_path: ""
+    refresh_mode: manual
+    required: false
+  - key: congress-procedural-fixtures
+    source_url: https://api.congress.gov/
+    release_date: pending-refresh
+    vintage_date: pending-refresh
+    retrieval_time: pending-refresh
+    checksum_sha256: ""
+    transform_version: congress-procedure-v1
+    usage_terms: Congress.gov API terms apply; an API key is required for refresh.
+    snapshot_path: ""
+    refresh_mode: manual
+    required: false

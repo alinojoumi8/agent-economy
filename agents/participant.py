@@ -39,6 +39,9 @@ class ParticipantService:
         self.store = store
         self.ctx = context_builder
         self.config = config
+        self.local_currency_action_surfaces = bool(
+            config.get("llm", {}).get("local_currency_action_surfaces", False))
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
         self.enabled = bool(config.get("participant_mode", {}).get("enabled", False))
         if self.enabled and config.get("acceptance"):
             raise ValueError("participant mode cannot be enabled for an acceptance run")
@@ -273,14 +276,33 @@ class ParticipantService:
         banks = [bank for bank in ctx.get("banks", []) if bank.get("status") == "open"]
         current_bank = ctx.get("state", {}).get("bank_id")
         destinations = [bank for bank in banks if bank.get("id") != current_bank]
-        accounts = [dict(row) for row in self.store.query(
-            "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,COALESCE(a.name,f.name,ac.label) AS name "
-            "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
-            "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
-            "WHERE ac.id<>? AND (ac.owner_type<>'agent' OR a.alive=1) ORDER BY ac.id LIMIT 250",
-            (int(agent["checking_account_id"] or 0),))]
+        if self.local_currency_action_surfaces:
+            primary_currency = str(self.store.scalar(
+                "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+                "ON ac.id=a.checking_account_id WHERE a.id=?", (int(agent_id),),
+                default="USD") or "USD")
+            account_rows = self.store.query(
+                "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,ac.currency_code,"
+                "COALESCE(a.name,f.name,ac.label) AS name "
+                "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
+                "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
+                "WHERE ac.id<>? AND ac.currency_code=? "
+                "AND (ac.owner_type<>'agent' OR a.alive=1) ORDER BY ac.id LIMIT 250",
+                (int(agent["checking_account_id"] or 0), primary_currency))
+        else:
+            account_rows = self.store.query(
+                "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,"
+                "COALESCE(a.name,f.name,ac.label) AS name "
+                "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
+                "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
+                "WHERE ac.id<>? AND (ac.owner_type<>'agent' OR a.alive=1) "
+                "ORDER BY ac.id LIMIT 250", (int(agent["checking_account_id"] or 0),))
+        accounts = [dict(row) for row in account_rows]
         firm = ctx.get("my_firm")
         applications = ctx.get("firm_applications", [])
+        incoming_job_offers = ctx.get("incoming_job_offers", [])
+        firm_job_offers = ctx.get("firm_job_offers", [])
+        ipo_offerings = ctx.get("ipo_offerings", [])
         lawyers = [dict(row) for row in self.store.query(
             "SELECT id,name FROM agents WHERE alive=1 AND lower(COALESCE(occupation,''))='lawyer' ORDER BY id")]
 
@@ -335,19 +357,57 @@ class ParticipantService:
                 select("lawyer_agent_id", "Lawyer", [{"value": l["id"], "label": l["name"]}
                        for l in lawyers]), number("opening_capital", "Opening capital (cents)", 0, 0)]},
         ]
+        if self.engine_semantics_version >= 7 and bool(agent["retired"]):
+            # Retirees do not search for work. Their only liquidity action is a
+            # bounded transfer between the two accounts declared on their row.
+            items = [item for item in items if item["type"] != "apply_job"]
+            savings_balance = int(self.store.scalar(
+                "SELECT ac.balance_cents FROM agents a JOIN accounts ac "
+                "ON ac.id=a.savings_account_id WHERE a.id=? "
+                "AND ac.owner_type='agent' AND ac.owner_id=a.id AND ac.kind='savings'",
+                (int(agent_id),), default=0) or 0)
+            items.append({
+                "type": "withdraw_savings",
+                "label": "Draw retirement savings",
+                "fields": [number(
+                    "amount", "Amount (cents)", max(1, min(savings_balance, 100_000)), 1)],
+                "enabled": savings_balance > 0,
+                "disabled_reason": "No savings balance is available",
+            })
+        if self.engine_semantics_version >= 6:
+            candidate_offer_options = [{
+                "value": offer["offer_id"],
+                "label": f"{offer['firm_name']} - {offer['offered_wage']}c",
+            } for offer in incoming_job_offers]
+            ipo_options = [{
+                "value": offering["offering_id"],
+                "label": f"{offering['firm_name']} - reserve {offering['reserve_price']}c",
+            } for offering in ipo_offerings]
+            items.extend([
+                {"type": "accept_job_offer", "variant": "candidate",
+                 "label": "Accept a wage offer", "fields": [
+                    select("offer_id", "Offer", candidate_offer_options)]},
+                {"type": "counter_job_offer", "variant": "candidate",
+                 "label": "Counter a wage offer", "fields": [
+                    select("offer_id", "Offer", candidate_offer_options),
+                    number("wage", "Requested wage (cents)", 200_00, 0)]},
+                {"type": "reject_job_offer", "variant": "candidate",
+                 "label": "Reject a wage offer", "fields": [
+                    select("offer_id", "Offer", candidate_offer_options)]},
+                {"type": "place_ipo_bid", "label": "Bid in an IPO", "fields": [
+                    select("offering_id", "Offering", ipo_options),
+                    number("qty", "Shares", 1, 1),
+                    number("max_price", "Maximum price per share (cents)", 100, 1)]},
+            ])
         if firm:
             firm_id = int(firm["firm_id"])
-            items.extend([
+            firm_items = [
                 {"type": "set_price", "label": "Set my company price", "fields": [
                     {"name": "firm_id", "kind": "hidden", "default": firm_id},
                     number("price", "Unit price (cents)", int(firm["price"]), 1)]},
                 {"type": "post_job", "label": "Post a company job", "fields": [
                     {"name": "firm_id", "kind": "hidden", "default": firm_id},
                     text("title", "Job title", "worker", 60), number("wage", "Wage (cents)", 200_00, 0)]},
-                {"type": "hire", "label": "Hire an applicant", "fields": [
-                    select("application_id", "Applicant", [{"value": a["application_id"],
-                           "label": f"Agent {a['agent_id']} - {a['occupation'] or 'candidate'}"}
-                           for a in applications])]},
                 {"type": "fire", "label": "Fire an employee", "fields": [
                     select("employment_id", "Employee", [{"value": e["employment_id"],
                            "label": f"Agent {e['agent_id']} - {e['occupation'] or 'employee'}"}
@@ -362,13 +422,60 @@ class ParticipantService:
                     select("bank_id", "Bank", [{"value": b["id"], "label": b["name"]} for b in banks]),
                     number("amount", "Amount (cents)", 300_00, 1),
                     text("purpose", "Purpose", "working capital", 120)]},
-            ])
+            ]
+            if self.engine_semantics_version < 6:
+                firm_items.insert(2, {
+                    "type": "hire", "label": "Hire an applicant", "fields": [
+                        select("application_id", "Applicant", [{"value": a["application_id"],
+                               "label": f"Agent {a['agent_id']} - {a['occupation'] or 'candidate'}"}
+                               for a in applications])],
+                })
+            else:
+                available_applications = [a for a in applications if a.get("current_offer_id") is None]
+                incoming_options = [{
+                    "value": offer["offer_id"],
+                    "label": f"Agent {offer['candidate_agent_id']} - {offer['requested_wage']}c",
+                } for offer in firm_job_offers]
+                qualification = firm.get("ipo_qualification", {})
+                active_ipo = firm.get("active_ipo")
+                firm_items.extend([
+                    {"type": "make_job_offer", "label": "Make a wage offer", "fields": [
+                        select("application_id", "Applicant", [{
+                            "value": a["application_id"],
+                            "label": f"Agent {a['agent_id']} - posted {a['posted_wage']}c",
+                        } for a in available_applications]),
+                        number("wage", "Offered wage (cents)", 200_00, 0)]},
+                    {"type": "accept_job_offer", "variant": "firm",
+                     "label": "Accept a candidate counteroffer", "fields": [
+                        select("offer_id", "Counteroffer", incoming_options)]},
+                    {"type": "counter_job_offer", "variant": "firm",
+                     "label": "Counter a candidate wage request", "fields": [
+                        select("offer_id", "Counteroffer", incoming_options),
+                        number("wage", "Offered wage (cents)", 200_00, 0)]},
+                    {"type": "reject_job_offer", "variant": "firm",
+                     "label": "Reject a candidate counteroffer", "fields": [
+                        select("offer_id", "Counteroffer", incoming_options)]},
+                    {"type": "open_ipo", "label": "Open an IPO book", "fields": [
+                        {"name": "firm_id", "kind": "hidden", "default": firm_id},
+                        number("shares_offered", "New shares offered", 100, 1),
+                        number("reserve_price", "Reserve price (cents)", 100, 1),
+                        number("minimum_subscription_bps", "Minimum subscription (bps)", 5000, 1)],
+                     "enabled": bool(qualification.get("qualified")),
+                     "disabled_reason": "; ".join(qualification.get("reasons", []))
+                         or "Firm does not qualify"},
+                    {"type": "close_ipo", "label": "Close my IPO book", "fields": [
+                        {"name": "offering_id", "kind": "hidden",
+                         "default": int(active_ipo["offering_id"]) if active_ipo else 0}],
+                     "enabled": active_ipo is not None,
+                     "disabled_reason": "No active IPO book"},
+                ])
+            items.extend(firm_items)
         for item in items:
             item.setdefault("variant", "default")
             empty_required_select = any(
                 field.get("kind") == "select" and field.get("required", True)
                 and not field.get("options") for field in item.get("fields", []))
-            item["enabled"] = not empty_required_select
+            item["enabled"] = bool(item.get("enabled", True)) and not empty_required_select
             if empty_required_select:
                 item["disabled_reason"] = "No valid options are currently available"
         return items

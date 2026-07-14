@@ -11,12 +11,19 @@ The backend and committed dashboard bundle are one release unit.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 python run.py --config runs/base.yaml
 ```
 
 Use the scripted profile for normal development. It exercises all systems
 without network cost and preserves deterministic results.
+
+`requirements.txt` is the human-edited dependency input. Regenerate the
+cross-platform, hash-locked install after changing it:
+
+```powershell
+uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+```
 
 ## Dashboard
 
@@ -26,6 +33,7 @@ Run FastAPI on port 8000, then in another terminal:
 Set-Location dashboard
 npm ci
 npm test
+npm run licenses:check
 npm run dev
 ```
 
@@ -37,6 +45,11 @@ npm --prefix dashboard run build
 ```
 
 Review and commit the new hashed bundle when frontend source changes.
+Run `npm run licenses` after dependency changes; Vite copies the generated
+`THIRD_PARTY_NOTICES.txt` into the public static bundle.
+The Tailwind source scan explicitly excludes `dashboard/public/` and
+`dashboard/scripts/` so generated legal text and notice tooling cannot change
+the application stylesheet or its content hash.
 
 ## Test layers
 
@@ -53,16 +66,32 @@ Review and commit the new hashed bundle when frontend source changes.
 Full local gate:
 
 ```powershell
-python -m compileall -q agents engine experiments llm oracle reports server world run.py
+python -m compileall -q agents engine experiments llm oracle reports research server world run.py
+python run.py --verify-datasets config/data-manifest.yaml
 python -m pytest tests/ -q
+python -m pip check
+uvx pip-audit -r requirements.lock
 npm --prefix dashboard ci
 npm --prefix dashboard test
+npm --prefix dashboard run licenses:check
+npm --prefix dashboard audit --audit-level=high
 npm --prefix dashboard run build
 git diff --check
 ```
 
-After a clean build, `git diff --exit-code -- server/static` proves the committed
-bundle was already current. When it changed intentionally, review and commit it.
+The closure/release audit also scans the current tree and full Git history with
+Gitleaks using the narrow repository config in `.gitleaks.toml`. Repeat the
+dependency, notice, dataset-provenance, attribution, and secret audits before a
+public tag; a successful merge audit is not a permanent publication waiver.
+
+After a clean build, verify both tracked changes and newly generated files:
+
+```powershell
+git diff --exit-code -- server/static
+if (git status --porcelain --untracked-files=all -- server/static) { throw "Uncommitted static output" }
+```
+
+When the bundle changed intentionally, review and commit every generated file.
 
 ## Adding behavior safely
 

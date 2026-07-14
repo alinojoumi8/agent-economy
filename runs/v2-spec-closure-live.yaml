@@ -1,0 +1,38 @@
+# Five-tick, $1-capped live supplement to the deterministic closure rehearsal.
+# MiniMax is used only for persona enrichment and selected strategic seats;
+# citizens, founders, newsroom, memory, and conversations remain scripted.
+extends: v2-spec-closure-rehearsal.yaml
+
+budget:
+  cap_usd: 1.0
+  oracle_reserve_usd: 0.05
+  report_reserve_usd: 0.0
+  conversation_pairs: 1
+
+llm:
+  concurrency: 2
+  provider_retries: 1
+  rate_limit_backoff_s: [5, 15, 30]
+  persona_max_tokens: 350
+  decision_max_tokens: 900
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      prompt_cache_mode: provider_automatic
+      timeout_s: 180
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        max_completion_tokens: 4096
+  default_route: {provider: scripted, model: scripted}
+  routes:
+    persona:        {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: minimax, model: MiniMax-M3}
+    credit_officer: {provider: minimax, model: MiniMax-M3}
+    vc_partner:     {provider: minimax, model: MiniMax-M3}
+    lawyer:         {provider: minimax, model: MiniMax-M3}
+  pricing:
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}

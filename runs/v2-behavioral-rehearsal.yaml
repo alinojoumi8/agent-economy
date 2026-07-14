@@ -1,0 +1,30 @@
+# Free deterministic rehearsal of the ten-tick behavioral gate. It inherits the
+# exact population and fixture but routes every possible purpose to scripted
+# policies, so validation never contacts MiniMax or Ollama.
+extends: v2-live-behavioral.yaml
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes:
+    citizen:               {provider: scripted, model: scripted}
+    decision:              {provider: scripted, model: scripted}
+    founder:               {provider: scripted, model: scripted}
+    central_banker:        {provider: scripted, model: scripted}
+    credit_officer:        {provider: scripted, model: scripted}
+    vc_partner:            {provider: scripted, model: scripted}
+    lawyer:                {provider: scripted, model: scripted}
+    exchange:              {provider: scripted, model: scripted}
+    gov_official:          {provider: scripted, model: scripted}
+    legislator_house:      {provider: scripted, model: scripted}
+    legislator_senate:     {provider: scripted, model: scripted}
+    regulator:             {provider: scripted, model: scripted}
+    competition_regulator: {provider: scripted, model: scripted}
+    labor_regulator:       {provider: scripted, model: scripted}
+    executive:             {provider: scripted, model: scripted}
+    lobbyist:              {provider: scripted, model: scripted}
+    reporter:              {provider: scripted, model: scripted}
+    editor:                {provider: scripted, model: scripted}
+    conversation:          {provider: scripted, model: scripted}
+    memory:                {provider: scripted, model: scripted}
+    newsroom:              {provider: scripted, model: scripted}
+    oracle:                {provider: scripted, model: scripted}

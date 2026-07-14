@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../api";
 import { clientLog } from "../logging.js";
+import { mergeRunPayload } from "../runState.js";
 
 const INITIAL = {
   status: null,
@@ -18,6 +19,7 @@ const INITIAL = {
   oracle: { predictions: [], scorecard: {} },
   calibration: { run: null, all: null, errors: [] },
   shocks: { library: { kinds: [], trigger_types: [] }, scheduled: [] },
+  v2: { map: null, legal: null, politics: null, information: null, startups: null, markets: null, datasets: null },
 };
 
 export function useObservatory() {
@@ -41,7 +43,8 @@ export function useObservatory() {
         }
       };
       const [status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks, calibrationRun, calibrationAll] = await Promise.all([
+        events, agents, cost, oracle, shocks, calibrationRun, calibrationAll,
+        map, legal, politics, information, startups, markets, datasets] = await Promise.all([
         api("/api/run/status"), api("/api/acceptance/status"),
         api("/api/participant"),
         api("/api/metrics"), api("/api/banks"),
@@ -51,10 +54,14 @@ export function useObservatory() {
         api("/api/shocks"),
         safeCalibration("/api/oracle/calibration?scope=run", "run"),
         safeCalibration("/api/oracle/calibration?scope=all", "all"),
+        api("/api/v2/map"), api("/api/v2/legal"), api("/api/v2/politics"),
+        api("/api/v2/information"), api("/api/v2/startups"), api("/api/v2/markets"),
+        api("/api/v2/datasets"),
       ]);
       setData({ status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
         events, agents, cost, oracle, shocks,
-        calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors } });
+        calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors },
+        v2: { map, legal, politics, information, startups, markets, datasets } });
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -106,19 +113,12 @@ export function useObservatory() {
     socket.addEventListener("message", (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload.type === "tick") {
+        if (payload.type === "tick" || payload.type === "run_status") {
           setData(current => ({
             ...current,
-            status: current.status ? {
-              ...current.status,
-              tick: payload.tick,
-              status: payload.status,
-              governor: payload.governor,
-              pause_reason: payload.pause_reason,
-              report_path: payload.report_path,
-            } : current.status,
+            status: mergeRunPayload(current.status, payload),
           }));
-          refresh({ quiet: true });
+          if (payload.type === "tick") refresh({ quiet: true });
         }
       } catch (reason) {
         clientLog("dashboard.websocket.invalid_message", {

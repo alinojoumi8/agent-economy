@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+import run as run_module
 from agents.memory import Memory
 from engine.ledger import ReconciliationError
 from engine.store import Store, load_json
@@ -138,6 +140,423 @@ def test_goods_context_excludes_zero_inventory(tmp_path):
     world.store.update("firms", firm_id, inventory=1)
     assert firm_id in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
     world.store.close()
+
+
+def test_citizen_goods_context_only_exposes_same_currency_sellers(tmp_path):
+    world = _world(
+        tmp_path, "local-goods-offers.db",
+        llm={"local_currency_action_surfaces": True,
+             "default_route": {"provider": "scripted", "model": "scripted"},
+             "routes": {}},
+    )
+    agent = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN accounts c "
+        "ON c.owner_type='agent' AND c.owner_id=a.id AND c.kind='checking' "
+        "ORDER BY a.id LIMIT 1")
+    checking_id = int(world.store.scalar(
+        "SELECT id FROM accounts WHERE owner_type='agent' AND owner_id=? "
+        "AND kind='checking' ORDER BY id LIMIT 1", (int(agent["id"]),)))
+    firms = world.store.query(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 2")
+    local_id, foreign_id = (int(firms[0]["id"]), int(firms[1]["id"]))
+    world.store.update("accounts", checking_id, currency_code="NSD")
+    world.store.update("firms", local_id, currency_code="NSD", inventory=10)
+    world.store.update("firms", foreign_id, currency_code="IVC", inventory=10)
+
+    context = world.runtime.ctx._citizen_context(agent, 1)
+    offered = {offer["firm_id"] for offer in context["prices"]}
+
+    assert context["state"]["currency_code"] == "NSD"
+    assert local_id in offered
+    assert foreign_id not in offered
+    world.store.close()
+
+
+def test_v2_currency_surfaces_follow_primary_wallet_and_reject_foreign_ids(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN regions r ON r.id=a.region_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND r.currency_code='NSD' "
+            "AND NOT EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id) "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p "
+            "WHERE p.borrower_type='agent' AND p.borrower_id=a.id) ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        old_primary = int(actor["checking_account_id"])
+        old_balance = world.economy.ledger.balance(old_primary)
+
+        placed = world.economy.regions.place_fx_order(0, actor_id, {
+            "pair": "IVC/NSD", "side": "buy", "qty": 5_000,
+        })
+        assert placed["ok"] and len(world.economy.regions.match_fx(0)) == 1
+        ivc_wallet = store.query_one(
+            "SELECT id,balance_cents FROM accounts WHERE owner_type='agent' AND owner_id=? "
+            "AND currency_code='IVC' ORDER BY id DESC LIMIT 1", (actor_id,))
+        assert old_balance > int(ivc_wallet["balance_cents"])
+        store.update("agents", actor_id, checking_account_id=int(ivc_wallet["id"]))
+        actor = store.query_one("SELECT * FROM agents WHERE id=?", (actor_id,))
+
+        local_firm = store.query_one(
+            "SELECT * FROM firms WHERE currency_code='IVC' AND founder_agent_id IS NOT NULL "
+            "ORDER BY id LIMIT 1")
+        foreign_firm = store.query_one(
+            "SELECT * FROM firms WHERE currency_code<>'IVC' AND founder_agent_id IS NOT NULL "
+            "ORDER BY id LIMIT 1")
+        local_id, foreign_id = int(local_firm["id"]), int(foreign_firm["id"])
+        store.update("firms", local_id, status="listed", inventory=10)
+        store.update("firms", foreign_id, status="listed", inventory=10)
+        local_job = world.economy.labor.post_job(0, local_id, "local role", 100)
+        foreign_job = world.economy.labor.post_job(0, foreign_id, "foreign role", 100)
+        local_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE currency_code='IVC' AND status='open' ORDER BY id LIMIT 1"))
+        foreign_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE currency_code<>'IVC' AND status='open' ORDER BY id LIMIT 1"))
+
+        context = world.runtime.ctx._citizen_context(actor, 1)
+        assert context["state"]["currency_code"] == "IVC"
+        assert context["state"]["checking_balance"] == int(ivc_wallet["balance_cents"])
+        assert {row["currency_code"] for row in context["prices"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["jobs"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["listed_firms"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["banks"]} == {"IVC"}
+        assert local_job in {row["job_id"] for row in context["jobs"]}
+        assert foreign_job not in {row["job_id"] for row in context["jobs"]}
+        assert local_id in {row["firm_id"] for row in context["listed_firms"]}
+        assert foreign_id not in {row["firm_id"] for row in context["listed_firms"]}
+        assert local_bank in {row["id"] for row in context["banks"]}
+        assert foreign_bank not in {row["id"] for row in context["banks"]}
+
+        catalog = world.runtime.participant.action_catalog(actor_id)
+        transfer = next(row for row in catalog if row["type"] == "transfer")
+        recipient_ids = [int(option["value"]) for option in transfer["fields"][0]["options"]]
+        recipient_currencies = {str(row["currency_code"]) for row in store.query(
+            f"SELECT DISTINCT currency_code FROM accounts WHERE id IN "
+            f"({','.join('?' for _ in recipient_ids)})", tuple(recipient_ids))} if recipient_ids else set()
+        assert recipient_currencies <= {"IVC"}
+
+        executor = world.runtime.executor
+        assert executor.local_currency_action_surfaces is True
+        assert world.runtime.participant.local_currency_action_surfaces is True
+        assert world.economy.bank.local_currency_action_surfaces is True
+        assert world.economy.regions.local_currency_action_surfaces is True
+        order_count = int(store.scalar("SELECT COUNT(*) FROM orders"))
+        app_count = int(store.scalar("SELECT COUNT(*) FROM applications"))
+        loan_count = int(store.scalar("SELECT COUNT(*) FROM loan_applications"))
+        assert not executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": foreign_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        assert not executor.execute_action(1, actor_id, {
+            "type": "apply_job", "job_id": foreign_job,
+        })["ok"]
+        assert not executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": foreign_bank, "amount": 100,
+            "purpose": "foreign currency",
+        })["ok"]
+        assert store.scalar("SELECT COUNT(*) FROM orders") == order_count
+        assert store.scalar("SELECT COUNT(*) FROM applications") == app_count
+        assert store.scalar("SELECT COUNT(*) FROM loan_applications") == loan_count
+
+        assert executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": local_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "apply_job", "job_id": local_job,
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": local_bank, "amount": 100,
+            "purpose": "local currency",
+        })["ok"]
+
+        bypassed = world.economy.labor.apply_job(1, actor_id, foreign_job)
+        assert bypassed is not None
+        assert not executor.execute_action(1, int(foreign_firm["founder_agent_id"]), {
+            "type": "hire", "application_id": bypassed,
+        })["ok"]
+        assert store.scalar(
+            "SELECT COUNT(*) FROM employments WHERE agent_id=? AND firm_id=? AND status='active'",
+            (actor_id, foreign_id)) == 0
+
+        moved = executor.execute_action(1, actor_id, {
+            "type": "move_deposits", "to_bank_id": local_bank, "amount": 0,
+        })
+        assert moved["ok"]
+        new_primary = int(store.scalar(
+            "SELECT checking_account_id FROM agents WHERE id=?", (actor_id,)))
+        assert new_primary != old_primary
+        assert store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (new_primary,)) == "IVC"
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
+
+
+def test_foreign_currency_action_guards_are_opt_in_for_legacy_replay(tmp_path):
+    world = _world(tmp_path, "legacy-currency-actions.db")
+    store = world.store
+    try:
+        executor = world.runtime.executor
+        assert executor.local_currency_action_surfaces is False
+        assert world.runtime.participant.local_currency_action_surfaces is False
+        assert world.economy.bank.local_currency_action_surfaces is False
+        assert world.economy.regions.local_currency_action_surfaces is False
+        actor = store.query_one(
+            "SELECT * FROM agents WHERE kind='citizen' AND alive=1 "
+            "AND id NOT IN (SELECT founder_agent_id FROM firms WHERE founder_agent_id IS NOT NULL) "
+            "ORDER BY id LIMIT 1")
+        actor_id = int(actor["id"])
+        firm = store.query_one(
+            "SELECT * FROM firms WHERE founder_agent_id IS NOT NULL ORDER BY id LIMIT 1")
+        firm_id = int(firm["id"])
+        founder_id = int(firm["founder_agent_id"])
+        bank_id = int(store.scalar("SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1"))
+        store.update("accounts", int(actor["checking_account_id"]), currency_code="NSD")
+        store.update("firms", firm_id, status="listed", currency_code="IVC", inventory=10)
+        store.update("banks", bank_id, currency_code="IVC")
+        job_id = world.economy.labor.post_job(0, firm_id, "legacy foreign role", 100)
+
+        application = executor.execute_action(
+            1, actor_id, {"type": "apply_job", "job_id": job_id})
+        assert application["ok"]
+        assert executor.execute_action(1, founder_id, {
+            "type": "hire", "application_id": application["application_id"],
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": firm_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        loan_application = executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "legacy foreign currency",
+        })
+        assert loan_application["ok"]
+
+        officer_id = int(store.scalar(
+            "SELECT id FROM agents WHERE role='credit_officer' AND alive=1 ORDER BY id LIMIT 1"))
+        approval = executor.execute_action(1, officer_id, {
+            "type": "approve_loan", "application_id": loan_application["application_id"],
+            "rate_bps": 500, "term_ticks": 30,
+        })
+        assert not approval["ok"]
+        assert "unbalanced transaction 'loan_disburse' by currency" in approval["reason"]
+        assert store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='loan_denied_currency'") == 0
+        assert store.scalar("SELECT COUNT(*) FROM loans WHERE borrower_type='agent' "
+                            "AND borrower_id=?", (actor_id,)) == 0
+    finally:
+        store.close()
+
+
+def test_legacy_replay_flag_preserves_richest_deposit_and_all_recipient_surfaces(tmp_path):
+    world = _world(tmp_path, "legacy-deposits-and-recipients.db")
+    store = world.store
+    try:
+        actor = store.query_one(
+            "SELECT * FROM agents WHERE kind='citizen' AND alive=1 ORDER BY id LIMIT 1")
+        actor_id = int(actor["id"])
+        primary_id = int(actor["checking_account_id"])
+        primary = store.query_one("SELECT * FROM accounts WHERE id=?", (primary_id,))
+        destination_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE id<>? AND status='open' ORDER BY id LIMIT 1",
+            (int(primary["bank_id"]),)))
+        richer_id = world.economy.ledger.create_account(
+            "agent", actor_id, "checking", bank_id=int(primary["bank_id"]),
+            label="legacy richer checking",
+            opening_cents=int(primary["balance_cents"]) + 1_000)
+        foreign_recipient_id = world.economy.ledger.create_account(
+            "system", None, "external", label="legacy foreign recipient",
+            currency_code="IVC")
+        primary_before = world.economy.ledger.balance(primary_id)
+        richer_before = world.economy.ledger.balance(richer_id)
+
+        moved = world.runtime.executor.execute_action(1, actor_id, {
+            "type": "move_deposits", "to_bank_id": destination_bank, "amount": 100,
+        })
+
+        assert moved["ok"]
+        assert world.economy.ledger.balance(richer_id) == richer_before - 100
+        assert world.economy.ledger.balance(primary_id) == primary_before
+        catalog = world.runtime.participant.action_catalog(actor_id)
+        transfer = next(row for row in catalog if row["type"] == "transfer")
+        recipient_ids = {int(option["value"])
+                         for option in transfer["fields"][0]["options"]}
+        assert foreign_recipient_id in recipient_ids
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
+
+
+def test_legacy_replay_flag_leaves_migration_credit_guards_disabled(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["engine_semantics_version"] = 6
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    config["llm"]["local_currency_action_surfaces"] = False
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+            "AND e.status='active') "
+            "AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p WHERE p.borrower_type='agent' "
+            "AND p.borrower_id=a.id) ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        bank_id = int(store.scalar(
+            "SELECT bank_id FROM accounts WHERE id=?", (int(actor["checking_account_id"]),)))
+        destination_region_id = int(store.scalar(
+            "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1",
+            (int(actor["region_id"]),)))
+        store.insert(
+            "loans", bank_id=bank_id, borrower_type="agent", borrower_id=actor_id,
+            principal_cents=100, outstanding_cents=100, rate_bps=0, term_ticks=30,
+            origin_tick=1, payment_cents=100, payment_interval_ticks=30,
+            next_due_tick=31, missed_payments=0, collateral_json="{}", status="active")
+
+        requested = world.economy.regions.request_migration(
+            1, actor_id, destination_region_id, "legacy replay")
+        assert requested["ok"]
+        applied = world.runtime.executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "legacy pending migration",
+        })
+        assert applied["ok"]
+        world.economy.regions.run_nightly(1)
+
+        assert store.scalar(
+            "SELECT status FROM migrations WHERE id=?", (requested["migration_id"],)) == "completed"
+        assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == destination_region_id
+    finally:
+        store.close()
+
+
+def test_migration_rejects_and_rechecks_agent_credit_exposure(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND a.health='healthy' AND a.retired=0 AND a.role IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id "
+            "AND e.status='active') "
+            "AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.borrower_type='agent' "
+            "AND l.borrower_id=a.id AND l.status='active') "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p WHERE p.borrower_type='agent' "
+            "AND p.borrower_id=a.id AND p.status='pending') ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        origin_region_id = int(actor["region_id"])
+        destination_firm = store.query_one(
+            "SELECT id,region_id FROM firms WHERE region_id<>? "
+            "AND status NOT IN ('bankrupt','acquired') ORDER BY id LIMIT 1",
+            (origin_region_id,))
+        destination_region_id = int(destination_firm["region_id"])
+        store.insert(
+            "jobs", tick=0, firm_id=int(destination_firm["id"]),
+            title="qualified migration role", wage_cents=100_000_000, status="open")
+        cadence = json.loads(actor["cadence_json"] or "{}")
+        career_every = max(1, int(cadence.get("career", 30)))
+        career_tick = actor_id % career_every
+        bank_id = int(store.scalar(
+            "SELECT bank_id FROM accounts WHERE id=?", (int(actor["checking_account_id"]),)))
+
+        pending_id = store.insert(
+            "loan_applications", tick=career_tick, bank_id=bank_id, borrower_type="agent",
+            borrower_id=actor_id, amount_cents=100, purpose="pending", status="pending")
+        rejected = world.economy.regions.request_migration(
+            career_tick, actor_id, destination_region_id, "pending credit")
+        assert not rejected["ok"] and "pending loan application" in rejected["reason"]
+        store.update("loan_applications", pending_id, status="denied", decided_tick=1)
+
+        loan_id = store.insert(
+            "loans", bank_id=bank_id, borrower_type="agent", borrower_id=actor_id,
+            principal_cents=100, outstanding_cents=100, rate_bps=0, term_ticks=30,
+            origin_tick=1, payment_cents=100, payment_interval_ticks=30,
+            next_due_tick=31, missed_payments=0, collateral_json="{}", status="active")
+        rejected = world.economy.regions.request_migration(
+            career_tick, actor_id, destination_region_id, "active debt")
+        assert not rejected["ok"] and "active loan debt" in rejected["reason"]
+        store.update("loans", loan_id, status="paid", outstanding_cents=0)
+
+        requested = world.economy.regions.request_migration(
+            career_tick, actor_id, destination_region_id, "clear at request time")
+        assert requested["ok"]
+        assert not world.runtime.executor.execute_action(career_tick, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "while migrating",
+        })["ok"]
+
+        raced_application_id = store.insert(
+            "loan_applications", tick=career_tick, bank_id=bank_id, borrower_type="agent",
+            borrower_id=actor_id, amount_cents=100, purpose="simulated race", status="pending")
+        officer_id = int(store.scalar(
+            "SELECT id FROM agents WHERE role='credit_officer' AND alive=1 ORDER BY id LIMIT 1"))
+        assert not world.runtime.executor.execute_action(career_tick, officer_id, {
+            "type": "approve_loan", "application_id": raced_application_id,
+            "rate_bps": 500, "term_ticks": 30,
+        })["ok"]
+
+        world.economy.regions.run_nightly(career_tick + 1)
+        migration = store.query_one(
+            "SELECT status,completed_tick FROM migrations WHERE id=?",
+            (requested["migration_id"],))
+        assert migration["status"] == "rejected"
+        assert int(migration["completed_tick"]) == career_tick + 1
+        assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == origin_region_id
+        assert store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='migration_rejected_credit_exposure' "
+            "AND subject_id=?", (actor_id,)) == 1
+    finally:
+        store.close()
+
+
+def test_cross_currency_loan_payment_becomes_arrears_without_posting(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.*,ac.bank_id,ac.currency_code FROM agents a "
+            "JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.borrower_type='agent' "
+            "AND l.borrower_id=a.id AND l.status='active') ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        loan_id = store.insert(
+            "loans", bank_id=int(actor["bank_id"]), borrower_type="agent",
+            borrower_id=actor_id, principal_cents=100, outstanding_cents=100,
+            rate_bps=0, term_ticks=30, origin_tick=0, payment_cents=100,
+            payment_interval_ticks=30, next_due_tick=1, missed_payments=0,
+            collateral_json="{}", status="active")
+        foreign_currency = str(store.scalar(
+            "SELECT code FROM currencies WHERE code<>? ORDER BY code LIMIT 1",
+            (str(actor["currency_code"]),)))
+        foreign_wallet = world.economy.regions._wallet(
+            "agent", actor_id, foreign_currency, create=True)
+        store.update("agents", actor_id, checking_account_id=foreign_wallet)
+        transaction_count = int(store.scalar("SELECT COUNT(*) FROM transactions"))
+
+        world.economy.bank.process_due_loans(1)
+
+        loan = store.query_one(
+            "SELECT outstanding_cents,missed_payments,status FROM loans WHERE id=?", (loan_id,))
+        assert int(loan["outstanding_cents"]) == 100
+        assert int(loan["missed_payments"]) == 1 and loan["status"] == "active"
+        assert store.scalar("SELECT COUNT(*) FROM transactions") == transaction_count
+        arrears = store.query_one(
+            "SELECT payload_json FROM events WHERE kind='loan_arrears' "
+            "AND subject_id=? ORDER BY id DESC LIMIT 1", (actor_id,))
+        assert "primary currency no longer matches bank" in load_json(
+            arrears["payload_json"], {})["reason"]
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
 
 
 def test_real_model_prompt_exposes_market_and_founder_decision_surfaces(tmp_path):
@@ -275,6 +694,549 @@ def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
     changed = verify_replay(source_store.path, replay_store.path)
     assert not changed["exact"]
     assert "accounts" in changed["differences"]
+
+
+@pytest.mark.parametrize("manifest_state", ["missing", "corrupt"])
+def test_exact_replay_uses_recorded_inputs_without_current_manifest(
+        tmp_path, manifest_state):
+    snapshot = tmp_path / "offline-targets.json"
+    snapshot_bytes = json.dumps({
+        "vintage_date": "2026-01-01",
+        "targets": [{
+            "key": "offline.target",
+            "value": 7,
+            "unit": "index",
+            "dimensions": {"scope": "test"},
+        }],
+    }, sort_keys=True).encode("utf-8")
+    snapshot.write_bytes(snapshot_bytes)
+    manifest = tmp_path / "offline-manifest.yaml"
+    manifest.write_text(json.dumps({
+        "manifest_version": 1,
+        "datasets": [{
+            "key": "offline-replay-v1",
+            "source_url": "https://example.invalid/offline-replay-v1",
+            "release_date": "2026-01-01",
+            "vintage_date": "2026-01-01",
+            "retrieval_time": "2026-01-02T00:00:00Z",
+            "checksum_sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+            "transform_version": "test-v1",
+            "usage_terms": "test fixture",
+            "snapshot_path": snapshot.name,
+        }],
+    }, sort_keys=True), encoding="utf-8")
+
+    source_store, source_world, source_id = open_run(
+        _config(tmp_path, dataset_manifest=str(manifest)),
+        None, None, data_dir=tmp_path)
+    replay_store = None
+    try:
+        assert source_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
+        assert source_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
+        asyncio.run(source_world.run(max_ticks=2))
+
+        if manifest_state == "missing":
+            manifest.unlink()
+        else:
+            manifest.write_text("manifest_version: [", encoding="utf-8")
+
+        replay_store, replay_world, _ = open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(replay_headless(replay_world, 2))
+        proof = verify_replay(source_store.path, replay_store.path)
+
+        assert proof["exact"], proof["differences"]
+        assert proof["differences"] == []
+        assert replay_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
+        assert replay_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
+    finally:
+        if replay_store is not None:
+            replay_store.close()
+        source_store.close()
+
+
+def test_open_run_closes_source_store_when_replay_input_capture_fails(
+        tmp_path, monkeypatch):
+    source_store, _, source_id = open_run(
+        _config(tmp_path), None, None, data_dir=tmp_path)
+    source_store.close()
+    opened = []
+
+    class TrackingStore(Store):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.was_closed = False
+            opened.append(self)
+
+        def close(self):
+            self.was_closed = True
+            super().close()
+
+    def fail_capture(_source):
+        raise RuntimeError("capture failed")
+
+    monkeypatch.setattr(run_module, "Store", TrackingStore)
+    monkeypatch.setattr(run_module, "_recorded_replay_inputs", fail_capture)
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        run_module.open_run({}, None, source_id, data_dir=tmp_path)
+
+    assert len(opened) == 1
+    assert opened[0].was_closed
+
+
+def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
+    source = Store(str(tmp_path / "provenance-source.db"))
+    replay = Store(str(tmp_path / "provenance-replay.db"))
+    source.init_run_meta("provenance-source", 42, {})
+    replay.init_run_meta("provenance-replay", 42, {})
+
+    def insert_agent(store, agent_id, role):
+        store.insert(
+            "agents", id=agent_id, name=f"Agent {agent_id}", kind="staff",
+            role=role)
+
+    def insert_call(
+            store, call_id, agent_id, *, tick=1,
+            role="credit_officer", purpose=None):
+        purpose = purpose or role
+        return store.insert(
+            "llm_calls", id=call_id, tick=tick, agent_id=agent_id,
+            role=role, provider="minimax", model="MiniMax-M3",
+            purpose=purpose, cache_key=f"call-{agent_id}-{tick}-{role}",
+            request_json=json.dumps({
+                "agent_id": agent_id, "tick": tick, "role": role,
+            }, sort_keys=True),
+            response_json=json.dumps({
+                "text": '{"reasoning":"bounded","actions":[{"type":"do_nothing"}]}',
+                "raw": {}, "cached_in_tokens": 0,
+            }, sort_keys=True),
+            in_tokens=100 + agent_id, out_tokens=20, cached=0,
+            cost_usd=0.001, latency_ms=1000 + agent_id,
+            created_at="2026-07-14T00:00:00+00:00")
+
+    def insert_action(store, proposal_id, actor_id, model_call_id):
+        store.insert(
+            "action_proposals", id=proposal_id, tick=1, actor_id=actor_id,
+            action_type="do_nothing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=model_call_id,
+            rationale_summary="bounded", validation_status="accepted",
+            result_json='{"ok": true}')
+
+    for store in (source, replay):
+        insert_agent(store, 2, "credit_officer")
+        insert_agent(store, 3, "judge")
+
+    insert_call(source, 1, 2)
+    insert_call(source, 2, 3, role="judge")
+    insert_call(source, 3, 2, tick=2)
+    insert_call(source, 4, 2, role="lawyer")
+    insert_action(source, 1, 2, 1)
+    insert_action(source, 2, 3, 2)
+
+    # Replay completion order is reversed, so its correct local surrogate IDs
+    # differ even though both proposals retain the same logical provenance.
+    insert_call(replay, 1, 3, role="judge")
+    insert_call(replay, 2, 2)
+    insert_call(replay, 3, 2, tick=2)
+    insert_call(replay, 4, 2, role="lawyer")
+    insert_action(replay, 1, 2, 2)
+    insert_action(replay, 2, 3, 1)
+    source.commit()
+    replay.commit()
+
+    proof = verify_replay(source.path, replay.path)
+    assert proof["exact"], proof["differences"]
+    assert proof["source_hash"] == proof["replay_hash"]
+
+    def insert_belief_event(store, source_llm_call_id):
+        store.insert(
+            "events", id=1, tick=1, phase="EXECUTION", kind="belief_updated",
+            subject_type="agent", subject_id=2, importance=0.5,
+            payload_json=json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer",
+                "source_llm_call_id": source_llm_call_id,
+            }, sort_keys=True))
+
+    # Nested event provenance is also local to each database and must resolve
+    # through the referenced call rather than compare physical IDs.
+    insert_belief_event(source, 1)
+    insert_belief_event(replay, 2)
+    source.commit()
+    replay.commit()
+    nested = verify_replay(source.path, replay.path)
+    assert nested["exact"], nested["differences"]
+
+    replay.execute(
+        "UPDATE events SET payload_json=? WHERE id=1",
+        (json.dumps({
+            "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+            "source": "credit_officer", "source_llm_call_id": 1,
+        }, sort_keys=True),))
+    replay.commit()
+    wrong_nested = verify_replay(source.path, replay.path)
+    assert not wrong_nested["exact"]
+    assert wrong_nested["differences"] == ["events"]
+
+    dangling_payload = json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 999,
+    }, sort_keys=True)
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (dangling_payload,))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (dangling_payload,))
+    source.commit()
+    replay.commit()
+    dangling_nested = verify_replay(source.path, replay.path)
+    assert not dangling_nested["exact"]
+    assert dangling_nested["differences"] == ["events"]
+
+    # Malformed types must fail closed and remain JSON-safe rather than being
+    # coerced to a physical ID or crashing the verifier.
+    for malformed in (True, 1.9, float("inf"), float("nan"), "1"):
+        source.execute(
+            "UPDATE events SET payload_json=? WHERE id=1",
+            (json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer",
+                "source_llm_call_id": malformed,
+            }, sort_keys=True),))
+        replay.execute(
+            "UPDATE events SET payload_json=? WHERE id=1",
+            (json.dumps({
+                "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+                "source": "credit_officer", "source_llm_call_id": 2,
+            }, sort_keys=True),))
+        source.commit()
+        replay.commit()
+        malformed_proof = verify_replay(source.path, replay.path)
+        assert not malformed_proof["exact"]
+        assert malformed_proof["differences"] == ["events"]
+
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+    source.commit()
+    replay.commit()
+
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.commit()
+    wrong = verify_replay(source.path, replay.path)
+    assert not wrong["exact"]
+    assert wrong["differences"] == ["action_proposals"]
+
+    # A wrong-but-local pointer must fail even when source and replay make the
+    # same logical mistake. Hash equality alone cannot prove actor provenance.
+    source.execute("UPDATE action_proposals SET model_call_id=2 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_actor = verify_replay(source.path, replay.path)
+    assert not wrong_actor["exact"]
+    assert wrong_actor["differences"] == ["action_proposals"]
+
+    # The same invariant covers a local call from the wrong turn or role.
+    for source_call_id, replay_call_id in ((3, 3), (4, 4)):
+        source.execute(
+            "UPDATE action_proposals SET model_call_id=? WHERE id=1",
+            (source_call_id,))
+        replay.execute(
+            "UPDATE action_proposals SET model_call_id=? WHERE id=1",
+            (replay_call_id,))
+        source.commit()
+        replay.commit()
+        wrong_turn_or_role = verify_replay(source.path, replay.path)
+        assert not wrong_turn_or_role["exact"]
+        assert wrong_turn_or_role["differences"] == ["action_proposals"]
+
+    # Nested belief provenance is actor-bound too, not merely local.
+    source.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=2 WHERE id=1")
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    source.commit()
+    replay.commit()
+    wrong_nested_actor = verify_replay(source.path, replay.path)
+    assert not wrong_nested_actor["exact"]
+    assert wrong_nested_actor["differences"] == ["events"]
+
+    source.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 1,
+    }, sort_keys=True),))
+    replay.execute("UPDATE events SET payload_json=? WHERE id=1", (json.dumps({
+        "agent_id": 2, "key": "sentiment", "new_value": 0.5,
+        "source": "credit_officer", "source_llm_call_id": 2,
+    }, sort_keys=True),))
+
+    # Even identical dangling IDs on both sides must fail closed rather than
+    # compare as equivalent provenance.
+    source.execute("UPDATE action_proposals SET model_call_id=999 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=999 WHERE id=1")
+    source.commit()
+    replay.commit()
+    dangling = verify_replay(source.path, replay.path)
+    assert not dangling["exact"]
+    assert dangling["differences"] == ["action_proposals"]
+
+
+def test_replay_rejects_same_actor_turn_wrong_llm_purpose(tmp_path):
+    source = Store(str(tmp_path / "purpose-source.db"))
+    replay = Store(str(tmp_path / "purpose-replay.db"))
+    config = {"llm": {"institutional_role_purposes": True}}
+    source.init_run_meta("purpose-source", 42, config)
+    replay.init_run_meta("purpose-replay", 42, config)
+
+    for store in (source, replay):
+        store.insert("agents", id=1, name="Citizen", kind="citizen")
+        # NIGHT_CLOSE bankruptcy at tick 1 precedes that tick's MORNING
+        # decision. This former founder must therefore route as a citizen.
+        store.insert(
+            "firms", id=1, name="Closed firm", founder_agent_id=1,
+            status="bankrupt", founded_tick=0, bankrupt_tick=1)
+        for call_id, purpose in ((1, "decision"), (2, "memory")):
+            store.insert(
+                "llm_calls", id=call_id, tick=1, agent_id=1,
+                role="citizen", provider="minimax", model="MiniMax-M3",
+                purpose=purpose, cache_key=f"citizen-{purpose}",
+                request_json="{}", response_json='{"text":"bounded","raw":{}}',
+                in_tokens=10, out_tokens=5, cached=0, cost_usd=0.001,
+                latency_ms=10, created_at="2026-07-14T00:00:00+00:00")
+        # The actor, tick, role, and local existence all match. Only purpose
+        # proves this is a memory call rather than the decision that acted.
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=1,
+            action_type="do_nothing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=2,
+            rationale_summary="bounded", validation_status="accepted",
+            result_json='{"ok":true}')
+        store.commit()
+
+    wrong_purpose = verify_replay(source.path, replay.path)
+    assert not wrong_purpose["exact"]
+    assert wrong_purpose["differences"] == ["action_proposals"]
+
+    source.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    corrected = verify_replay(source.path, replay.path)
+    assert corrected["exact"], corrected["differences"]
+
+
+def test_replay_validates_legal_model_reference_owners(tmp_path):
+    source = Store(str(tmp_path / "legal-provenance-source.db"))
+    replay = Store(str(tmp_path / "legal-provenance-replay.db"))
+    source.init_run_meta("legal-provenance-source", 42, {})
+    replay.init_run_meta("legal-provenance-replay", 42, {})
+
+    def insert_agent(store, agent_id, role):
+        store.insert(
+            "agents", id=agent_id, name=f"Agent {agent_id}", kind="staff",
+            role=role)
+
+    def insert_call(store, call_id, agent_id, role):
+        store.insert(
+            "llm_calls", id=call_id, tick=1, agent_id=agent_id, role=role,
+            provider="minimax", model="MiniMax-M3", purpose=role,
+            cache_key=f"legal-{agent_id}", request_json="{}",
+            response_json='{"text":"bounded","raw":{}}', in_tokens=10,
+            out_tokens=5, cached=0, cost_usd=0.001, latency_ms=10,
+            created_at="2026-07-14T00:00:00+00:00")
+
+    def insert_rows(store, lawyer_call_id, judge_call_id):
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=1,
+            action_type="submit_filing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=lawyer_call_id,
+            rationale_summary="bounded filing", validation_status="accepted",
+            result_json='{"filing_id":1,"ok":true}')
+        store.insert(
+            "action_proposals", id=2, tick=1, actor_id=2,
+            action_type="issue_legal_decision", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=judge_call_id,
+            rationale_summary="bounded decision", validation_status="accepted",
+            result_json='{"decision_id":1,"ok":true}')
+        store.insert(
+            "legal_filings", id=1, matter_id=1, tick=1,
+            filer_type="agent", filer_id=1, filing_type="brief", body="bounded",
+            evidence_event_ids_json="[]", admitted=0,
+            model_call_id=lawyer_call_id, rationale_summary="bounded filing")
+        store.insert(
+            "legal_decisions", id=1, matter_id=1, tick=1,
+            decision_maker_id=2, outcome="dismissed", findings_json="[]",
+            evidence_event_ids_json="[]", remedy_json='{"type":"none"}',
+            validation_status="valid", validation_errors_json="[]",
+            model_call_id=judge_call_id, rationale_summary="bounded decision")
+
+    for store in (source, replay):
+        insert_agent(store, 1, "lawyer")
+        insert_agent(store, 2, "judge")
+    insert_call(source, 1, 1, "lawyer")
+    insert_call(source, 2, 2, "judge")
+    insert_rows(source, 1, 2)
+    insert_call(replay, 1, 2, "judge")
+    insert_call(replay, 2, 1, "lawyer")
+    insert_rows(replay, 2, 1)
+    source.commit()
+    replay.commit()
+
+    reordered = verify_replay(source.path, replay.path)
+    assert reordered["exact"], reordered["differences"]
+
+    # Both databases point the filing at the same logical but wrong judge call.
+    source.execute("UPDATE legal_filings SET model_call_id=2 WHERE id=1")
+    replay.execute("UPDATE legal_filings SET model_call_id=1 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_filer = verify_replay(source.path, replay.path)
+    assert not wrong_filer["exact"]
+    assert wrong_filer["differences"] == ["legal_filings"]
+
+    source.execute("UPDATE legal_filings SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE legal_filings SET model_call_id=2 WHERE id=1")
+    source.execute("UPDATE legal_decisions SET model_call_id=1 WHERE id=1")
+    replay.execute("UPDATE legal_decisions SET model_call_id=2 WHERE id=1")
+    source.commit()
+    replay.commit()
+    wrong_decider = verify_replay(source.path, replay.path)
+    assert not wrong_decider["exact"]
+    assert wrong_decider["differences"] == ["legal_decisions"]
+
+
+def test_replay_reports_legacy_missing_llm_table_without_crashing(tmp_path):
+    source = Store(str(tmp_path / "legacy-source.db"))
+    replay = Store(str(tmp_path / "legacy-replay.db"))
+    source.init_run_meta("legacy-source", 42, {})
+    replay.init_run_meta("legacy-replay", 42, {})
+    source.execute("DROP TABLE llm_calls")
+    source.commit()
+    replay.commit()
+
+    proof = verify_replay(source.path, replay.path)
+
+    assert not proof["exact"]
+    assert proof["differences"] == ["llm_calls"]
+
+
+def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
+    world = _world(tmp_path, "served-tick-bound.db")
+
+    with TestClient(create_app(world, served_ticks=3)) as client:
+        started = client.post("/api/run/start?max_ticks=1")
+        assert started.status_code == 200
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"]:
+                break
+        assert status["tick"] == 1
+        assert status["target_tick"] == 3
+        assert status["remaining_ticks"] == 2
+
+        stepped = client.post("/api/run/step").json()
+        assert stepped["tick"] == 2
+
+        started = client.post("/api/run/start?max_ticks=99")
+        assert started.status_code == 200
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"]:
+                break
+        assert status["tick"] == 3
+        assert status["status"] == "paused"
+        assert status["remaining_ticks"] == 0
+
+        assert client.post("/api/run/start").json()["status"] == "limit_reached"
+        assert client.post("/api/run/step").json()["status"] == "limit_reached"
+        assert world.store.tick == 3
+
+
+def test_served_run_broadcasts_authoritative_completion_status(tmp_path):
+    world = _world(tmp_path, "served-completion-broadcast.db")
+    controller = RunController(world, served_ticks=1)
+    messages = []
+
+    async def capture(payload):
+        if payload.get("type") == "tick":
+            # Model a real WebSocket send that yields before it completes. The
+            # terminal run_status must still be delivered after this tick.
+            await asyncio.sleep(0.01)
+        messages.append(payload)
+
+    async def run_once():
+        controller.hub.broadcast = capture
+        controller.loop = asyncio.get_running_loop()
+        assert (await controller.start())["status"] == "running"
+        await controller.task
+
+    asyncio.run(run_once())
+
+    assert messages[-1] == {
+        **controller.run_status_payload(running=False),
+        "type": "run_status",
+    }
+    assert messages[-1]["tick"] == messages[-1]["target_tick"] == 1
+    assert messages[-1]["remaining_ticks"] == 0
+    assert messages[-1]["status"] == "paused"
+    assert messages[-1]["running"] is False
+    assert any(message.get("type") == "tick" for message in messages[:-1])
+    world.store.close()
+
+
+def test_concurrent_steps_cannot_cross_the_served_tick_bound(tmp_path):
+    world = _world(tmp_path, "served-concurrent-step.db")
+    controller = RunController(world, served_ticks=1)
+
+    async def yielding_step():
+        await asyncio.sleep(0)
+        tick = world.store.tick + 1
+        world.store.set_meta(tick=tick)
+        world.store.commit()
+        return {"tick": tick}
+
+    world.step = yielding_step
+
+    async def run_two():
+        return await asyncio.gather(controller.step(), controller.step())
+
+    results = asyncio.run(run_two())
+
+    assert world.store.tick == 1
+    assert sum(result.get("status") == "limit_reached" for result in results) == 1
+    assert controller.remaining_ticks() == 0
+    world.store.close()
+
+
+def test_stop_interrupts_before_waiting_for_an_active_step(tmp_path):
+    world = _world(tmp_path, "served-stop-interrupt.db")
+    controller = RunController(world, served_ticks=1)
+
+    async def contend_with_step():
+        await controller._control_lock.acquire()
+        try:
+            stop_task = asyncio.create_task(controller.stop())
+            await asyncio.sleep(0)
+            assert world._stop_requested is True
+        finally:
+            controller._control_lock.release()
+        return await stop_task
+
+    stopped = asyncio.run(contend_with_step())
+
+    assert stopped["status"] == "finished"
+    assert world.status == "finished"
+    world.store.close()
 
 
 def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):

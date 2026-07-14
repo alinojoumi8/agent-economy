@@ -1,11 +1,13 @@
-"""Census-based persona generation (vendored approach; see LICENSE.md).
+"""Deterministic synthetic persona generation; see ``ATTRIBUTION.md``.
 
-Clean re-implementation of LLM-Economist's idea (Karten et al., 2025, MIT): sample
-from realistic occupation / age / income / wealth distributions, then expand each
-draw into a rounded persona (personality, risk tolerance, political lean, media
-diet). Everything is drawn from a passed-in seeded PRNG so a run's population is
-reproducible. No LLM is required for the base draw; the runtime may optionally
-enrich a persona with one LLM call (used for arrivals).
+This clean implementation is inspired by LLM-Economist's published
+sample-then-enrich approach (Karten et al., 2025). Its occupation weights, age
+bands, income medians, and wealth formula are hand-authored synthetic heuristics,
+not Census or other microdata and not an empirical population calibration.
+Everything is drawn from a passed-in seeded PRNG so a run's fictional population
+is reproducible. No LLM is required for the base draw; the runtime may optionally
+enrich a persona with one LLM call for arrivals. No upstream source code is
+included in this module.
 """
 from __future__ import annotations
 
@@ -13,7 +15,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Occupation → (population weight, median annual income $, min age, max age).
+# Synthetic occupation heuristic:
+# (weight, median annual income $, min age, max age).
 OCCUPATIONS = [
     ("teacher",        0.10, 55_000, 24, 64),
     ("nurse",          0.09, 78_000, 23, 63),

@@ -19,6 +19,13 @@ from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
 from .memory import Memory
+from .personas.library import (
+    PERSONA_SCHEMA_HINT,
+    configured_outlet_ids,
+    persona_request,
+    scripted_persona_enrichment,
+    validate_persona_enrichment,
+)
 from .prompts import ContextBuilder
 from .policies import register_scripted_policies
 from .scheduler import Scheduler
@@ -54,6 +61,94 @@ class AgentRuntime:
         self.executor = ActionExecutor(economy)
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
+        self.gw.scripted.register("persona", scripted_persona_enrichment)
+
+    async def enrich_pending_arrivals(self, tick: int) -> None:
+        """Run each semantics-7 arrival's one governed persona enrichment call.
+
+        Completion is marked by a logical public event, while the gateway owns
+        private call provenance and durable same-run reuse.  If a process stops
+        after the call is recorded but before the marker is written, retrying
+        this phase reuses the stored response and applies the update once.
+        """
+        arrivals = self.store.query(
+            "SELECT a.* FROM agents a WHERE a.arrived_tick=? AND a.kind='citizen' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM events e WHERE e.subject_type='agent' "
+            "  AND e.subject_id=a.id AND e.kind IN "
+            "  ('persona_enriched','persona_enrichment_fallback')"
+            ") ORDER BY a.id",
+            (tick,),
+        )
+        if not arrivals:
+            return
+
+        outlet_ids = configured_outlet_ids(
+            self.config.get("outlets", [{"id": 1}, {"id": 2}]))
+        for agent in arrivals:
+            agent_id = int(agent["id"])
+            system, user, context = persona_request(agent, outlet_ids)
+            request = LLMRequest(
+                role="persona",
+                purpose="persona",
+                system=system,
+                user=user,
+                context=context,
+                agent_id=agent_id,
+                tick=tick,
+                max_tokens=int(self.config.get("llm", {}).get(
+                    "persona_max_tokens", 350)),
+                temperature=0.4,
+            )
+            # Budget/provider/replay failures deliberately propagate to World,
+            # which pauses the partial tick instead of silently skipping a call.
+            response = await self.gw.complete(
+                request, schema_hint=PERSONA_SCHEMA_HINT)
+            enrichment, error = validate_persona_enrichment(
+                response.parsed, outlet_ids)
+            if not response.ok or enrichment is None:
+                reason = "gateway_contract_invalid" if not response.ok else str(error)
+                with self.store.savepoint(
+                        f"persona_fallback_{tick}_{agent_id}"):
+                    self.store.log_event(
+                        tick,
+                        "persona_enrichment_fallback",
+                        {"agent_id": agent_id, "reason": reason,
+                         "source": "deterministic_base_persona"},
+                        phase="MORNING",
+                        subject_type="agent",
+                        subject_id=agent_id,
+                        importance=1.0,
+                    )
+                continue
+
+            # The state update and its completion marker must commit together.
+            # The preceding gateway row is already durable, so a process stop
+            # before this savepoint releases retries against the unchanged base
+            # prompt and reuses that one logical call.
+            with self.store.savepoint(f"persona_enrich_{tick}_{agent_id}"):
+                self.store.update(
+                    "agents",
+                    agent_id,
+                    occupation=enrichment["occupation"],
+                    personality_json=json.dumps(
+                        enrichment["personality"], sort_keys=True),
+                    political_lean=enrichment["political_lean"],
+                    media_diet_json=json.dumps(enrichment["media_diet"]),
+                    risk_tolerance=enrichment["risk_tolerance"],
+                )
+                self.store.log_event(
+                    tick,
+                    "persona_enriched",
+                    {"agent_id": agent_id,
+                     "fields": ["occupation", "personality", "political_lean",
+                                "media_diet", "risk_tolerance"],
+                     "source": "governed_llm"},
+                    phase="MORNING",
+                    subject_type="agent",
+                    subject_id=agent_id,
+                    importance=1.0,
+                )
 
     # ── MORNING: decide (concurrent) ─────────────────────────────────────────
     async def decide_all(self, tick: int) -> list[dict]:
@@ -125,7 +220,24 @@ class AgentRuntime:
             agent_id = d["agent_id"]
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
-            results = self.executor.execute_actions(tick, agent_id, actions, phase="EXECUTION")
+            model_call_id = d.get("llm_call_id")
+            rationale = str(d.get("reasoning") or "").strip()[:500]
+            attributed_actions = []
+            for action in actions:
+                if not isinstance(action, dict):
+                    attributed_actions.append(action)
+                    continue
+                attributed = dict(action)
+                # Provenance is execution metadata, not model-controlled state.
+                # Always bind an LLM-originated action to the authoritative call
+                # record returned by the gateway, regardless of model output.
+                if model_call_id is not None:
+                    attributed["model_call_id"] = model_call_id
+                if rationale and not attributed.get("rationale_summary"):
+                    attributed["rationale_summary"] = rationale
+                attributed_actions.append(attributed)
+            results = self.executor.execute_actions(
+                tick, agent_id, attributed_actions, phase="EXECUTION")
             self.participant.complete(d.get("participant_action_id"), results, tick)
             self.mem.apply_belief_updates(
                 agent_id, env.get("belief_updates", []), tick,
@@ -212,12 +324,38 @@ class AgentRuntime:
     # ── MEMORY: nightly compression + belief extraction ──────────────────────
     async def compress_memories(self, tick: int) -> None:
         # Only agents with observations today need compressing.
-        rows = self.store.query(
-            "SELECT DISTINCT agent_id FROM memories WHERE tick=? AND kind='observation' "
-            "AND agent_id NOT IN (SELECT agent_id FROM memories "
-            "WHERE tick=? AND kind='summary') "
-            "ORDER BY agent_id", (tick, tick))
-        agent_ids = [int(r["agent_id"]) for r in rows]
+        living_world = int(self.config.get("engine_semantics_version", 1)) >= 5
+        if living_world:
+            rows = self.store.query(
+                "SELECT DISTINCT m.agent_id,a.population_tier FROM memories m "
+                "JOIN agents a ON a.id=m.agent_id "
+                "WHERE m.tick=? AND m.kind='observation' "
+                "AND m.agent_id NOT IN (SELECT agent_id FROM memories "
+                "WHERE tick=? AND kind='summary') ORDER BY m.agent_id", (tick, tick))
+        else:
+            rows = self.store.query(
+                "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
+                "WHERE tick=? AND kind='observation' "
+                "AND agent_id NOT IN (SELECT agent_id FROM memories "
+                "WHERE tick=? AND kind='summary') ORDER BY agent_id", (tick, tick))
+        # Semantics-v5 uses deterministic daily compression for everyone and a
+        # model-capable weekly reflection for the core below. Older semantics
+        # retain their daily model path unchanged.
+        agent_ids = [] if living_world else [int(r["agent_id"]) for r in rows]
+        for row in rows:
+            if not living_world:
+                continue
+            aid = int(row["agent_id"])
+            observations = self.mem.todays_observations(aid, tick)
+            if not observations:
+                continue
+            summary = " | ".join(
+                str(item.get("text", item)) for item in observations)[:1800]
+            importance = max(
+                (float(item.get("importance", 1.0)) for item in observations),
+                default=1.0,
+            )
+            self.mem.write_summary(aid, tick, summary, importance)
         sem_tasks = [self._compress_one(tick, aid) for aid in agent_ids]
         results = await _gather_fail_fast(sem_tasks)
         for aid, res in zip(agent_ids, results):
@@ -234,9 +372,34 @@ class AgentRuntime:
             self.mem.write_summary(aid, tick, summary, importance)
 
         if tick % 7 == 0:
-            weekly_ids = [int(r["agent_id"]) for r in self.store.query(
-                "SELECT DISTINCT agent_id FROM memories WHERE kind='summary' AND demoted=0 "
-                "AND tick BETWEEN ? AND ? ORDER BY agent_id", (tick - 6, tick))]
+            if living_world:
+                weekly_rows = self.store.query(
+                    "SELECT DISTINCT m.agent_id,a.population_tier FROM memories m "
+                    "JOIN agents a ON a.id=m.agent_id WHERE m.kind='summary' "
+                    "AND m.demoted=0 AND m.tick BETWEEN ? AND ? ORDER BY m.agent_id",
+                    (tick - 6, tick))
+            else:
+                weekly_rows = self.store.query(
+                    "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
+                    "WHERE kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
+                    "ORDER BY agent_id", (tick - 6, tick))
+            weekly_ids = [
+                int(r["agent_id"]) for r in weekly_rows
+                if not living_world or r["population_tier"] == "core"
+            ]
+            for row in weekly_rows:
+                if not living_world or row["population_tier"] == "core":
+                    continue
+                aid = int(row["agent_id"])
+                daily = self.store.query(
+                    "SELECT text,importance FROM memories WHERE agent_id=? "
+                    "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
+                    "ORDER BY tick,id", (aid, tick - 6, tick))
+                if daily:
+                    summary = "Week summary: " + " | ".join(
+                        str(item["text"]) for item in daily)[:1800]
+                    importance = max(float(item["importance"]) for item in daily)
+                    self.mem.weekly_rollup(aid, tick, summary, importance)
             weekly_results = await _gather_fail_fast(
                 self._rollup_week(tick, aid) for aid in weekly_ids)
             for aid, res in zip(weekly_ids, weekly_results):

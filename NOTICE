@@ -1,0 +1,29 @@
+Agent Economy
+Copyright 2026 Agent Economy contributors
+
+The repository contains small, transformed aggregate calibration snapshots from
+the following sources. Apache-2.0 covers Agent Economy code, not third-party
+source content or service terms.
+
+Federal Funds Effective Rate [FEDFUNDS]
+- Source: Board of Governors of the Federal Reserve System (US), H.15 Selected
+  Interest Rates, retrieved through FRED, Federal Reserve Bank of St. Louis.
+- Series and citation: https://fred.stlouisfed.org/series/FEDFUNDS
+- FRED Services Terms of Use: https://fred.stlouisfed.org/legal/terms/
+- FRED labels this series "Public Domain: Citation Requested."
+- The pinned snapshot uses the 2021-01-08 vintage and records January, April,
+  and December 2020 monthly values. Preserve the source and FRED attribution;
+  downstream use remains subject to current FRED and source-series terms.
+- An explicit refresh reads FRED's current graph CSV, which may contain revised
+  observations, and resets the manifest/payload vintage to the UTC retrieval
+  date. It does not label current data as the original 2021 or an ALFRED vintage.
+
+Civilian unemployment rate [LNS14000000]
+- Source: U.S. Bureau of Labor Statistics, Labor Force Statistics from the
+  Current Population Survey.
+- Series: https://data.bls.gov/timeseries/LNS14000000
+- BLS copyright guidance: https://www.bls.gov/opub/copyright-information.htm
+- BLS-published material is public domain except identified previously
+  copyrighted photographs and illustrations; BLS requests source citation.
+  The pinned snapshot uses the 2021-01-08 vintage and records January, April,
+  and December 2020 monthly values.

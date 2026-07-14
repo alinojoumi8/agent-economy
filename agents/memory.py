@@ -19,6 +19,12 @@ from engine.store import Store, load_json
 RECENCY_HALFLIFE = 10.0   # ticks
 
 
+def retrieval_score(*, recency_decay: float, importance: float,
+                    relevance: float) -> float:
+    """Return the TECH-SPEC's authoritative additive retrieval score."""
+    return 0.5 * recency_decay + 0.3 * importance + 0.2 * relevance
+
+
 class Memory:
     def __init__(self, store: Store, config: Optional[dict] = None):
         self.store = store
@@ -49,7 +55,11 @@ class Memory:
             importance = min(1.0, float(r["importance"]) / 10.0)
             ents = set(load_json(r["entities_json"], []) or [])
             relevance = (len(ents & qset) / len(qset)) if qset else 0.0
-            score = 0.5 * recency + 0.3 * importance + 0.2 * relevance
+            score = retrieval_score(
+                recency_decay=recency,
+                importance=importance,
+                relevance=relevance,
+            )
             scored.append((score, r))
         scored.sort(key=lambda t: -t[0])
         top = scored[:k]

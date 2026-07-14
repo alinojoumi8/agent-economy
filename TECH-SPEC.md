@@ -1,6 +1,6 @@
 # Agent Economy — Technical Specification
 
-**Version:** 1.0 · **Date:** 2026-07-09 · **Companion to:** PRD.md
+**Version:** 1.1 · **Date:** 2026-07-14 · **Companion to:** PRD.md
 
 This document is written to be handed to an AI coding agent (or a developer) and implemented directly. Plain-language rationale is included because architectural "why" prevents bad shortcuts later.
 
@@ -43,11 +43,11 @@ This document is written to be handed to an AI coding agent (or a developer) and
 
 | Layer | Choice | Why |
 |---|---|---|
-| Language | **Python 3.12** | Best ecosystem for LLM tooling; matches Ali's AI-tool experience; an AI coding agent produces reliable Python. |
+| Language | **Python 3.11 and 3.12** | Both supported versions run the complete Linux/Windows CI matrix. |
 | Simulation kernel | Plain Python, single process, `asyncio` | 100 agents ≪ needing distribution. Async matters only for parallel LLM calls, not compute. |
 | API | **FastAPI** + WebSocket | Standard, minimal boilerplate, async-native. |
-| Store | **SQLite (WAL mode)**, one file per run | Zero-ops, transactional, a whole run is one portable file you can archive or share. Revisit Postgres only at 1,000+ agents (P2). |
-| LLM | **Provider-agnostic gateway.** Adapters: OpenAI-compatible (covers Kimi/Moonshot and MiniMax — both expose OpenAI-style APIs), Anthropic, and a restricted CLI adapter (Oracle/dev only). Defaults: citizens/conversations/memory → `minimax-m3`; strong seats + Oracle → `kimi-k2.7`. Routing is `role → {provider, model}` in `run.yaml`, not code. | Per PRD decision: Ali holds Kimi + MiniMax API keys; swapping providers per role is config, and enables model-vs-model economy experiments. |
+| Store | **SQLite (WAL mode)**, one file per run | Zero-ops, transactional, and portable. R19 proves the deterministic 1,000-agent profile on SQLite; a service database is an R22 hosted multi-user concern, not an R19 prerequisite. |
+| LLM | **Provider-agnostic gateway.** Adapters: OpenAI-compatible (Kimi/Moonshot and MiniMax), Anthropic, and a restricted CLI adapter (Oracle/dev only). The maintained production profile routes citizens/founders to `MiniMax-M3` and strong seats plus Oracle to Kimi Code's `kimi-for-coding`; conversation and memory purposes inherit the actor's role route. Routing is `role → {provider, model}` in YAML, not code. | Swapping providers per role is configuration, which also enables model-vs-model economy experiments. |
 | Dashboard | **React + Vite + Tailwind**, Recharts for charts | Standard; easy for AI-assisted iteration. Served statically by FastAPI — one process to run. |
 | Config | Single `run.yaml` per run (population, models, budget, cadences, shock schedule, seed) | Reproducibility = config + seed + code version. |
 
@@ -59,8 +59,8 @@ No Docker/Kubernetes/queues in v1. One `python run.py --config run.yaml` process
 
 | # | Phase | What happens | LLM? |
 |---|---|---|---|
-| 1 | `NIGHT_CLOSE` (previous day) | Interest accrual, loan payments due, payroll on paydays, **lifecycle draws** (illness onset/recovery, deaths + estate settlement, birthdays/aging, retirement transitions, arrival spawning), shocks, and a pre-decision reconciliation check | No |
-| 2 | `MORNING` | Agents scheduled to act today: perceive → decide. News from yesterday delivered per media diet | Yes (decisions) |
+| 1 | `NIGHT_CLOSE` (previous day) | Interest accrual, loan payments due, payroll on paydays, **lifecycle draws** (illness onset/recovery, deaths + estate settlement, birthdays/aging, retirement transitions, deterministic arrival spawning), shocks, and a pre-decision reconciliation check | No |
+| 2 | `MORNING` | Before decisions, each new semantics-7 arrival receives exactly one governed persona enrichment call; then scheduled agents perceive → decide. News from yesterday is delivered per media diet | Yes (persona + decisions) |
 | 3 | `EXECUTION` | Validator + engine apply all queued actions in deterministic order (sorted by agent id + action seq) | No |
 | 4 | `MARKET` | Exchange session: order book matches queued orders; goods purchases settle; labor offers/acceptances bind | No |
 | 5 | `NEWSROOM` | Reporters (strong model) scan the day's event log, write stories; editors pick and frame per outlet slant | Yes |
@@ -68,7 +68,7 @@ No Docker/Kubernetes/queues in v1. One `python run.py --config run.yaml` process
 | 7 | `MEMORY` | Each active agent's day is compressed to a summary; importance scoring; belief updates extracted | Yes (cheap) |
 | 8 | `FINALIZE` | Idempotent completed-day metrics snapshot, Oracle resolution, and reconciliation after every settled action | No |
 
-`engine_semantics_version: 2` selects the completed-day contract. Version `3` retains it and adds research-valid information/metric semantics: final-goods GDP, separate labor income, 30-day inflation, true 365-day YoY CPI, and explicit belief provenance. Markerless/v1 and stored v2 databases retain their historical behavior so exact replay stays byte-for-byte compatible.
+`engine_semantics_version: 2` selects the completed-day contract. Version `3` retains it and adds research-valid information/metric semantics: final-goods GDP, separate labor income, 30-day inflation, true 365-day YoY CPI, and explicit belief provenance. Semantics 4 adds legal/political institutions; semantics 5 adds regions, currencies, FX, shipments, and migration; semantics 6 adds bilateral hiring, agent-priced IPOs, and actor-provenanced lender-of-last-resort decisions. Maintained semantics 7 adds net bank loss recognition, retirement liquidity/cadence, deterministic arrivals with governed persona enrichment, and autonomous qualified R20 actions. Database schema remains v11. Markerless and stored semantics 1–6 retain their historical behavior; only an explicit fork may upgrade.
 
 **Agent cadences (cost + realism):** every agent acts *only when scheduled* — shopping ~daily, portfolio review weekly, career decisions monthly, plus **event-triggered wakeups** (your bank is in the news, you got fired, someone told you something with high salience). Institutional agents act every tick. This is the single biggest cost lever (see §12).
 
@@ -155,7 +155,7 @@ Agents respond with JSON conforming to a strict schema (use the API's structured
 }
 ```
 
-Role-specific action sets extend this: credit officers get `approve_loan/deny_loan` (with terms), the central banker gets `set_policy_rate` (clamped to ±50bps per meeting inside Taylor-rule guardrails), editors get `publish(article, framing)`, reporters get `draft_story(event_ids, angle)`.
+Role-specific action sets extend this: credit officers get `approve_loan/deny_loan` (with terms); the central banker gets `set_policy_rate` (clamped to ±50bps per meeting inside Taylor-rule guardrails) plus `decide_liquidity_support(request_event_id, approve|deny, evidence_event_ids)`; hiring firms and candidates exchange `make/counter/accept/reject_job_offer`; qualified issuers and investors use `open_ipo/place_ipo_bid/close_ipo`; editors get `publish(article, framing)`; reporters get `draft_story(event_ids, angle)`. Under semantics 7, retirees also receive `withdraw_savings{amount}` and qualified founders/citizens receive only the existing shipment, FX, and migration actions whose referenced opportunity IDs are present in their bounded context.
 
 **Validator rules (hard, non-negotiable):** sufficient funds/shares; market open; counterparty exists and alive; wage ≥ 0; one loan application per bank per week per borrower; policy rate within guardrails; every action's ledger effect balances.
 
@@ -169,11 +169,11 @@ You are living inside a simulated economy. Respond only with the JSON schema…
 (action schema + general world rules, ~600 tokens, benefits from prompt caching)
 
 [PERSONA] name, age, job, wage, personality, risk tolerance, political lean…
-[STATE] balances, debts, portfolio, employment, upcoming obligations
-[MARKETS] valid bank ids, stocked goods, jobs, listed-firm price/book/fundamentals
+[STATE] balances, debts, portfolio, employment, upcoming obligations; retirees also receive `savings_balance` and public `retirement_drawdown_target_cents`, derived from lifecycle config `retirement_liquidity_target_cents`
+[MARKETS] valid bank ids, stocked goods, jobs, listed-firm price/book/fundamentals; semantics-7 regional actors receive bounded wallet/FX facts, up to five executable trade opportunities, and career-gated migration destinations
 [ROLE] full founder economics + applicant ids, underwriting packets, or macro mandate
 [BELIEFS] current numeric beliefs rendered as sentences
-[MEMORIES] top-k retrieved (k=6) by recency × importance × relevance
+[MEMORIES] top-k retrieved (k=6) by the weighted additive retrieval score below
 [TODAY] news headlines from your media diet · things said to you yesterday ·
         current prices of goods you usually buy · your scheduled concerns today
 [TASK] Decide what you do today. Stay in character. You are not obligated to act.
@@ -186,7 +186,7 @@ Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/enti
 ## 7. Memory pipeline
 
 1. **Observation capture**: engine events touching the agent + conversation lines heard → `memories(kind=observation)` verbatim.
-2. **Nightly compression** (Haiku, ~200 out-tokens): day's observations → 1 summary + importance score (1–10) + extracted belief updates.
+2. **Nightly compression** (the actor's configured route, ~200 out-tokens): day's observations → 1 summary + importance score (1–10) + extracted belief updates.
 3. **Weekly roll-up**: 7 daily summaries → 1 weekly summary; dailies demoted (still queryable, rarely retrieved).
 4. **Belief extraction**: numeric updates are validated, normalized when reserved, written to `beliefs`, and appended as provenance-bearing events. Acceptance measures trust loss from each exposed agent's actual pre-rumor value to the minimum value in the ten-tick window; runs without history fail closed.
 
@@ -194,28 +194,29 @@ Retrieval scoring (Generative-Agents style, no embeddings in v1 — keyword/enti
 
 Single chokepoint through which every call flows. Responsibilities:
 
-- **Routing**: `role → {provider, model}` from `run.yaml`. Default strong seats (≈8, matching the cost model in §12): central banker (1), credit officers (2–3), editors + lead reporters (3), VC partner (1), plus the Oracle → `kimi-k2.7`. All other institutional staff and all citizens → `minimax-m3`.
+- **Routing**: `role → {provider, model}` from YAML. The maintained production profile sends central banking, credit, newsroom, VC, and Oracle seats to Kimi Code's `kimi-for-coding`; citizens/founders use `MiniMax-M3`. Conversation and memory calls inherit their actor's route. Other profiles may override any mapping explicitly.
 - **Adapters**: one interface (`complete(request) → response`), three implementations:
-  - `openai_compat` — Kimi (Moonshot) and MiniMax endpoints; also covers OpenRouter/vLLM/Ollama for free, since they all speak the OpenAI wire format.
+  - `openai_compat` — Kimi (Moonshot) and MiniMax endpoints; the same protocol adapter can target OpenRouter, vLLM, or Ollama when their endpoint and feature support are configured explicitly.
   - `anthropic` — optional tier if Ali adds an Anthropic API key.
-  - `cli` — wraps `claude -p --output-format json` (headless). **Hard-restricted in code to `purpose in {oracle, dev}`** — the gateway raises if a swarm role is configured onto it. Rationale: consumer-subscription rate limits stall a swarm mid-tick, and provider terms don't permit subscriptions as bulk-inference backends.
-- **Budget governor**: cumulative `llm_calls.cost_usd` per run is always metered. When `cap_usd` is configured, thresholds at 60/80/95% trigger staged degradation:
+  - `cli` — wraps `claude -p --output-format json` (headless). **Hard-restricted in code to `purpose in {oracle_plan, oracle, dev}`** — the gateway raises if a swarm role is configured onto it. Rationale: consumer-subscription rate limits stall a swarm mid-tick, and provider terms don't permit subscriptions as bulk-inference backends.
+- **Budget governor**: cumulative `llm_calls.cost_usd` per run is always metered. Capped fresh profiles carve out Oracle and end-report reserves first; world thresholds therefore cannot be changed later by generating or regenerating the operational report. When `cap_usd` is configured, thresholds at 60/80/95% of the world allocation trigger staged degradation:
   - 60%: evening conversations 15 → 8 pairs/tick
   - 80%: citizen cadences stretched ×2 (weekly → biweekly, etc.); conversations → 4 pairs
   - 95%: institutional agents only; citizens act on event-triggered wakeups only
   - 100%: clean pause + checkpoint + dashboard alert. **A configured cap is never exceeded.**
   - `cap_usd: null`: no application spend ceiling or degradation; this is the production/acceptance profile, and actual spend remains visible.
-- **Prompt caching**: shared system prefix (schema + world rules) marked cacheable — biggest single cost saver since it's identical across ~100 agents.
+- **Prompt caching**: each provider declares `prompt_cache_mode` as `off`, `provider_automatic`, `openai_key`, or `anthropic_ephemeral`; readiness rejects adapter/mode mismatches. The legacy `prompt_cache_key` option aliases `openai_key`. MiniMax uses its OpenAI-compatible automatic-prefix behavior and therefore receives no synthetic keyed-cache field. Anthropic ephemeral mode marks the shared system block with `cache_control`. Cache-read/create telemetry and billing are persisted; a provider cache miss is operational evidence, not a simulation failure.
 - **Concurrency**: configurable `asyncio.Semaphore(llm.concurrency)` on API calls (production currently uses 3); agents within a phase run concurrently and execution remains deterministic afterward.
-- **Failure policy**: HTTP failures preserve status and `Retry-After`. A 429, or an explicit provider-overload response such as MiniMax 529, sets one provider-wide visible cooldown and retries until recovery or operator stop, using `Retry-After` or 15/30/60/120/300-second fallback intervals. Other failures receive the configured bounded retry count and then pause the active phase. Malformed JSON receives one repair completion; a second invalid result becomes a logged `do_nothing`.
+- **Failure policy**: HTTP failures preserve status and `Retry-After`. A 429, or an explicit provider-overload response such as MiniMax 529, sets one provider-wide visible cooldown and retries until recovery or operator stop, using `Retry-After` or 15/30/60/120/300-second fallback intervals. Other failures receive the configured bounded retry count and then pause the active phase. Malformed JSON receives one repair completion; a second invalid result becomes a logged `do_nothing`. A billable malformed first completion is persisted even if its repair call fails. End-report generation adds its own bounded wall-clock timeout and falls back without mutating simulated state.
 
 ## 9. Market mechanics (all deterministic)
 
 - **Equity order book**: price-time priority; partial fills; orders expire end of session. Index = float-weighted average of listed firms. Circuit breaker (optional config): halt a symbol −20% intraday — interesting to toggle in crash experiments.
 - **Goods**: firms post prices; household `buy_goods` actions settle instantly if stocked and affordable; firm inventory decrements; simple production function converts labor-ticks + input costs → inventory each tick. A global **commodity/energy price index** feeds every firm's input-cost structure — this is the variable the oil shock moves (PRD R9).
-- **Labor**: postings visible to job-seekers at wakeup; `apply_job` → firm-side `hire` decision (LLM for founder-run firms); employment contract writes payroll obligations into the engine.
+- **Labor**: postings visible to job-seekers at wakeup; `apply_job` → firm-authored wage offer → candidate counter/accept/reject → firm counter/accept/reject. Only the receiving side can respond to a pending offer, every superseded offer remains auditable, and an accepted wage becomes the engine-enforced payroll obligation. Stored semantics 1–5 retain the historical direct-hire path; fresh semantics-6 runs cannot bypass bilateral acceptance.
 - **Shock hooks** (PRD R9 mapping): rate override → clamps `set_policy_rate`; oil shock → scales the commodity index; rumor → injects a synthetic "heard" observation into targeted agents' memories; slanted-news directive → editor receives a framing instruction for N ticks; firm scandal → injects a true negative event about the firm into `events`, which the newsroom picks up naturally. Each hook can be wrapped in any of the three trigger types (instant shock, gradual trend, metric-conditional) — evaluated by the event scheduler each tick.
-- **Credit**: `apply_loan` packages borrower financials automatically (engine attaches true ledger data — banks see real statements, not the borrower's claims); credit officer (Sonnet) returns approve/deny + rate + term inside bank risk-policy bounds; engine enforces schedule, arrears, default at 3 missed payments, collateral seizure, bank loss provisioning. **Bank failure mechanics**: reserves below threshold → interbank borrowing attempt → central bank lender-of-last-resort decision (Sonnet, in character) → failure = depositor haircut event (this is what makes bank runs matter).
+- **Equity issuance**: a private firm must pass deterministic age/scale/equity qualification. Its founder chooses the share count, reserve, and minimum subscription; investors submit priced bids; the engine applies price/time book clearing, balanced subscription settlement, primary-issuance cap-table provenance, and records a stock price only from those agent-authored terms. Bootstrap listings provide initial sellers but no engine-invented price.
+- **Credit**: `apply_loan` packages borrower financials automatically (engine attaches true ledger data — banks see real statements, not the borrower's claims); credit officers return approve/deny + rate + term inside bank risk-policy bounds; the engine enforces schedule, arrears, and default at three missed payments. Under semantics 7, default first seizes eligible cash collateral, then posts only unrecovered principal from the bank's currency-matched equity account to the matching `SYS_LOSS` account as a balanced `loan_loss_chargeoff`; the existing `loan_default` event includes recovered and net charged-off cents. **Bank failure mechanics**: reserves below threshold → interbank borrowing attempt → immutable liquidity-support request → immediate off-cycle central-banker wakeup → actor- and model-provenanced approve/deny action. Approval transfers exactly the recorded shortfall; denial produces the depositor haircut event. Transfer-triggered shortfalls remain pending and fail the transfer closed until the governor decides. Stored semantics 1–6 retain their prior default/solvency rules for exact replay.
 
 ### 9.1 Lifecycle mechanics (PRD R11 — all deterministic, seeded PRNG)
 
@@ -224,57 +225,93 @@ Single chokepoint through which every call flows. Responsibilities:
 - **Health draws** (nightly, per agent): annual age-banded probabilities converted to per-tick hazards. Defaults in `run.yaml`: illness onset ~4%/yr (20–40) rising to ~15%/yr (65+); mean sick duration 5 ticks; sick → critical escalation 5%; critical → death 10%/tick, critical → recovery 25%/tick.
 - **Sickness effects** (engine): sick agents are removed from the labor phase (no wage that tick), charged a medical out-of-pocket cost (config, default ~1 day's median wage per sick tick), and receive a "you are ill" observation. Firms see the absence (production function loses the labor-tick).
 - **Death**: age-banded baseline mortality (negligible <50, rising after) + critical-illness channel. On death, the engine runs **estate settlement in one atomic transaction batch**: outstanding debts settle via the creditor waterfall → remaining balances and share holdings transfer to the heir (deterministic rule: strongest social-graph tie among living agents; escheat to government sink account if none) → employment contracts terminate → sole-proprietor firms with no successor enter the bankruptcy path. A death event enters `events` with full prominence — the newsroom and the deceased's social ties react via the normal LLM loop.
-- **Aging/retirement**: age +1 per 365 ticks; at retirement age (config, default 65) the agent leaves the labor market and switches to a savings draw-down consumption pattern. Persona cadences shift (no job-seeking, more social).
+- **Aging/retirement**: age +1 per 365 ticks; at retirement age (config, default 65) the agent leaves the labor market. Semantics 7 applies the retired cadence both at genesis and transition: no career wake/job seeking, more frequent news, and greater conversation-pair weight. Lifecycle config `retirement_liquidity_target_cents` supplies the target; public decision context exposes it as `retirement_drawdown_target_cents` beside `savings_balance`. Scripted retirees issue `withdraw_savings{amount}` for the checking shortfall before consumption. Validation requires a retired actor, the actor's own declared savings and checking accounts, identical currency, and sufficient savings.
 - **Births as household events**: a dependent-count increment with a spending-pattern shift (config probability for age-appropriate households). No child agents.
-- **Arrivals (stable-population default)**: each death schedules a replacement adult arrival 5–20 ticks later — generated via the vendored persona library (one LLM call), spawned with starting savings drawn from the wealth distribution, an opening "moved to town" observation, and job-seeking cadence. `population_mode: stable | drift` in `run.yaml`.
+- **Arrivals (stable-population default)**: each death schedules a replacement adult arrival 5–20 ticks later. Semantics 7 spawns due arrivals deterministically during `NIGHT_CLOSE` through the owned `agents.personas.library` wrapper, funds them visibly from population inflow, and applies the same 70/30 checking/savings split as genesis. Before `MORNING` decisions, exactly one persisted `role=persona,purpose=persona` call may enrich only occupation, personality, political lean, risk tolerance, and media diet; age, wealth, accounts, region, and lifecycle state remain engine-owned. Provider/budget failures pause and resume. A successful malformed response records a deterministic fallback; replay without the recorded response fails closed. `population_mode: stable | drift` remains configurable.
 - **Conservation invariant**: estate settlement moves money, never creates or destroys it; arrivals' starting savings are minted from a visible `population_inflow` equity account so reconciliation stays exact and auditable.
+
+### 9.2 Regional trade and migration (PRD R20)
+
+- Semantics-7 regional prompt context contains bounded own-wallet balances and FX quotes plus at most five engine-qualified `trade_opportunities` and valid `migration_options`. Action schemas are advertised only when the corresponding IDs and facts are present.
+- A trade opportunity requires an effective contract between distinct-region firms, exporter inventory, and importer funds. The invoice is denominated in the importer's currency so the existing FX/settlement path can execute. A scripted founder creates at most one bounded shipment per decision; delivery and payment remain deterministic domain operations.
+- Migration is available only on career cadence to a healthy, unemployed, non-retired citizen with no disqualifying credit exposure. The numeraire-adjusted wage gain must meet the configured threshold. Authorization, destination, contract, funds, credit exposure, and currency checks fail closed and remain auditable.
 
 ## 10. Newsroom + conversations
 
-- Reporters receive the tick's `events` digest (pre-filtered by newsworthiness heuristic: money size, rarity, entity prominence) and draft 2–4 stories; the editor selects/frames per the outlet's configured slant (e.g. `outlet A: pro-market, sensationalist; outlet B: cautious, pro-labor`). Stories cite `source_event_ids` — the report can later audit how coverage diverged from ground truth (fun metric: *distortion index*).
-- Conversation pairing: sample K pairs weighted by social-graph edge weight + shared-event salience; 2–4 turns, Haiku both sides, capped ~150 tokens/turn. Lines heard become observations (→ memory → beliefs). This is the rumor-propagation medium.
+- Reporters receive only an explicit allowlist of public/reportable event kinds and a bounded public projection of each payload; private beliefs, participant controls, prompts, and provider diagnostics never reach a desk. Within that boundary the digest is ordered by newsworthiness (money size, rarity, entity prominence), reporters draft 2–4 stories, and the editor selects/frames per outlet slant. Stories cite `source_event_ids`; every citation must resolve locally or the complete provider article fails closed to a deterministic grounded brief. The report can later audit how coverage diverged from ground truth (fun metric: *distortion index*).
+- Conversation pairing: sample K pairs weighted by social-graph edge weight + shared-event salience, with a semantics-7 participation boost for retirees; 2–4 turns through each speaker's configured route, capped ~150 tokens/turn. Lines heard become observations (→ memory → beliefs). This is the rumor-propagation medium. The stored-run API supports bounded literal text/topic/speaker search plus agent, tick, and cursor filters.
+- Fresh maintained profiles require one same-day article per outlet. Editors still select and frame only true same-tick events; if a provider returns missing or dangling citations, publication fails closed to a deterministic brief tied to a local event. A genuinely quiet day first records a `quiet_day` fact so the daily promise never requires invented activity.
 
 ## 11. The Oracle
 
-- **Read-only analyst** (strong model — default `kimi-k2.7`; optionally routed through the Claude CLI adapter to use Ali's subscription, since Oracle volume is a handful of calls per session) exposed as dashboard chat. A provider-neutral planner can request only bounded `query_metrics(names, range)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`, and `read_order_book(firm, depth)` calls. Arbitrary SQL, writes, unknown tools, oversized plans, and excessive results are rejected.
+- **Read-only analyst** (the production profile uses Kimi Code's `kimi-for-coding`; an explicitly configured restricted CLI route is also permitted for Oracle volume) exposed as dashboard chat. A provider-neutral planner can request only bounded `query_metrics(names, range)`, `read_news(range)`, `sample_conversations(filter)`, `inspect_agent(id)`, `get_ledger_summary(entity)`, and `read_order_book(firm, depth)` calls. Arbitrary SQL, writes, unknown tools, oversized plans, and excessive results are rejected.
 - The executed read transcript is stored in `predictions.evidence_json`, returned by the API, and shown with the prediction for auditability.
 - Planner requests carry the inclusive valid tick range. A rejected plan is logged and receives one corrected planning attempt under the same tool/query/result bounds; acceptance re-asks a scheduled question when its latest prediction contains only rejected evidence.
 - Answer contract: `{p: 0.xx, drivers: [...], confidence: low|med|high, resolution_rule, deadline_tick}`. The resolution rule must be machine-checkable against world state (e.g. `bank_run := any bank loses >30% deposits within any 5-tick window before deadline`). If the question can't be given a checkable rule, the Oracle returns `insufficient_data` and says why.
 - A resolver job checks open predictions each tick; on resolution, Brier score = `(p − outcome)²` written to `predictions`. Dashboard shows running calibration.
 - Capped profiles reserve an Oracle carve-out (default: $10 of $200) so questions never starve the world. The uncapped production profile meters Oracle spend without applying a ceiling.
 
-## 12. Cost model (why $200 works)
+## 12. Cost model (planning estimate; 365-day gate pending)
 
-Pricing (verified July 2026): MiniMax M3 ≈ $0.30/M input + $1.20/M output (cache read $0.06/M); Kimi K2.7 ≈ $0.95/M + $4.00/M (cache read $0.19/M).
+The simulator's July 2026 pricing table uses a modeled price-equivalent of
+approximately $0.30/M input + $1.20/M output for MiniMax M3 (cache read
+$0.06/M) and $0.95/M + $4.00/M for Kimi Code/K2.7. Subscription-plan charges
+and provider cache outcomes may differ; durable metering records the configured
+equivalent rather than asserting an invoice.
 
 Per tick, default config (steady state):
 | Item | Calls | Tokens (in/out) | Cost |
 |---|---|---|---|
 | Citizen decisions (~35 wakeups/tick with cadences, M3) | 35 | 1,500 / 300 | ≈ $0.03 |
-| Institutional decisions (K2.7) | 8 | 2,000 / 400 | ≈ $0.03 |
-| Newsroom (K2.7) | 4 | 2,500 / 600 | ≈ $0.02 |
+| Institutional decisions (Kimi Code/K2.7 equivalent) | 8 | 2,000 / 400 | ≈ $0.03 |
+| Newsroom (Kimi Code/K2.7 equivalent) | 4 | 2,500 / 600 | ≈ $0.02 |
 | Conversations (15 pairs × 3 turns, M3) | 90 | 700 / 150 | ≈ $0.04 |
 | Memory compression (M3) | ~45 | 900 / 200 | ≈ $0.02 |
 | Lifecycle (engine-side; ~1 persona-gen call per arrival, a few per sim-year) | ~0 | — | ≈ $0.00 |
 | **Total** | | | **≈ $0.14/tick** |
 
-→ **$200 ≈ 1,400+ simulated days (~4 sim years)** at defaults, before governor degradation. The PRD target of ≥365 days has ~4× margin — headroom that can instead buy richer activity (more conversation pairs, more frequent wakeups) via config. Conservatisms retained: the prompt-caching discount is *not* applied (both providers cache the shared system prefix cheaply, so real cost is lower), and strong-model usage is capped at the ≈8 seats defined in §8. Event-heavy days (crash days) spike wakeups; margin absorbs this. An Anthropic-only variant (Haiku citizens / Sonnet seats) runs ≈ $0.50/tick — still within the PRD target, useful for model-comparison experiments.
+→ The arithmetic projects **$200 ≈ 1,400+ simulated days (~4 sim years)** at
+steady-state defaults before governor degradation. This is an unverified planning
+estimate, not acceptance evidence: the explicitly authorized 365-day campaign
+must still measure actual calls, provider behavior, and equivalent spend. Cache
+discount is excluded from the projection; event-heavy days may spike usage.
 
 ## 13. Determinism, checkpointing, replay
 
 - All engine randomness from one seeded PRNG. LLM outputs are *not* deterministic — so **replay uses stored outputs**: every LLM response is persisted in `llm_calls`; replay mode re-executes the engine against recorded responses, reproducing the run exactly without API cost (also = free debugging).
+- Physical SQLite LLM-call IDs are surrogate keys. Canonical verification resolves every persisted `model_call_id` through the referenced call's deterministic contents; reordered concurrent insertions therefore compare equal, while missing, dangling, actor-wrong, or logically wrong references fail verification explicitly.
+- Portable fixture format v2 retains only public response text and cached-input telemetry, strips raw provider envelopes/private-reasoning fields, rewrites repository paths as `repo://`, and records its source revision as `unknown-not-recorded` rather than inventing one. Rebuild restores the fixture's recorded `dataset_manifests`, `calibration_targets`, and `scenario_packs` before execution so later edits to current manifests cannot change historical replay. The `fd0adc5dc1` artifact SHA-256 is `af57eed59e47e9057d7645a65e1bb6f2b579a6a63a377fd6301f33af3955e2d7`; its normalized reconstructed replay hash is `2efcabedba51e4bff3ccfd36393db20d13b41cd5d3e9a3772df42015db4f9170`. The historical source/final-code database hash `3586581baea968819cce9fed54b8d9427391645c869f163250c90e7e27976173` remains separate evidence, not the normalized fixture hash.
 - Replay schedules persisted Oracle questions at their original `asked_tick`. Exact cache-key matches are preferred; when historical prompt text predates current code, the next unused call with the same tick/agent/role/purpose identity is copied verbatim with its original request and cache key.
 - `run_meta.tick` is the last fully completed tick. `active_tick`, `next_phase`, and `phase_state_json` persist in-flight work; successful LLM responses are reused by request key, deterministic phases use SQLite savepoints, and newsroom/conversation/memory writes are idempotent. A rate limit, provider pause, operator stop, or process restart therefore resumes the active phase without advancing or duplicating it.
 - Checkpoint = SQLite backup + phase cursor + PRNG state + governor counters, every N completed ticks and on pause. Forking a checkpoint creates a new run id for what-if branches.
 - Reconciliation check every tick: `SUM(ledger deltas) == 0` and per-account recomputation matches stored balances; failure → halt + dump (PRD R1).
-- On stop, the complete standalone HTML report embeds all charts. A Markdown reviewer companion records the narrative, event timeline, metric snapshot, Oracle/calibration scorecard, cost table, config, and seed.
+- On stop, one governed reporter call writes the public narrative from a bounded aggregate/event summary. It is metered against the dedicated report carve-out inside the run cap, cached by logical same-tick input, wall-clock bounded, sanitized, and linked to its local `model_call_id`; offline, replay, budget/provider failure, timeout, or an invalid response uses the deterministic engine narrative. Report generation is serialized with Run/Step/Stop and never runs across an active partial tick. The complete standalone HTML report embeds all charts, and a Markdown reviewer companion records narrative provenance, the event timeline, metric snapshot, Oracle/calibration scorecard, cost table, config, and seed.
 
 ## 14. Testing
 
 - **Engine unit tests (no LLM)**: ledger invariants, order-book matching against known fixtures, loan schedules, bankruptcy waterfall, estate settlement (death with debts, with/without heir, founder death) (tax math added with the P1 government layer). Property tests: random valid action sequences never break reconciliation; random lifecycle event sequences (sickness/death/arrival storms) never break reconciliation; same seed ⇒ identical lifecycle schedule.
 - **Scripted-agent integration tests**: replace LLM with scripted policies (always-buy, panic-withdrawer) to test systemic mechanics cheaply — a scripted bank run must produce a bank failure through real mechanics before any LLM is involved.
-- **Golden-run test**: 10-tick run with recorded LLM responses committed to repo; CI replays it and diffs the event log.
+- **Golden-run tests**: CI retains the scripted golden run, restores a sanitized portable fixture of live run `fd0adc5dc1` (stored semantics 5, ten ticks) and replays it with network access forbidden, and runs a deterministic semantics-7 closure scenario covering the new mechanics. Every replay must match ticks, hashes, and deterministic-table differences exactly.
 - **Cost test**: simulated pricing table + fake responses verify governor thresholds fire at 60/80/95/100%.
+- **Supply-chain/release audit**: Python installs use a universal hash-locked
+  `requirements.lock`; dashboard notices include runtime dependencies and emitted
+  build helpers; pinned datasets and persona prior-art have explicit provenance;
+  dependency advisories and current/full-history secrets are scanned. These
+  audits are repeated against a release candidate before tagging/publication.
+
+Current semantics-7 closure receipt: the final integrated adversarial gate
+passed 93 tests and the complete local suite passed 280 in 165.73 seconds,
+including compatibility, provenance, privacy, cache, dataset-refresh, and
+portable-replay regressions. Rehearsal
+`5a0d40d773` and live MiniMax pilot
+`b4832032ba` each completed five ticks with every targeted effect, six
+checkpoints, balanced currencies, and zero provider/rejection failures. Their
+offline replays matched exactly with hashes
+`fa190b0dc10a6b94038f7dbd8838a6aea14c1c5b57b691a4788527f8e8cffc34` and
+`ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
+The live run spent `$0.01121124` under its `$1` cap. Merge requires a fresh
+exact-head GitHub Actions pass for the dashboard and full Ubuntu/Windows Python
+3.11/3.12 matrix; tagging and publication remain separate release actions.
 
 ## 15. Prior art and borrowed components
 
@@ -282,12 +319,15 @@ Evaluated July 2026 as potential foundations; decision was **own kernel + select
 
 | Source | License | Verdict | What we take |
 |---|---|---|---|
-| [LLM-Economist](https://github.com/sethkarten/LLM-Economist) (Karten et al. 2025) | MIT | Too narrow as a base (tax planner vs. workers only) | **Vendor the census-based persona generation** (real occupation/age/income distributions → LLM-expanded personas) into `agents/personas/vendor/`; keep upstream attribution |
-| [Doxa](https://github.com/VincenzoManto/Doxa) (v0.1, single maintainer) | GPL-3.0 | Closest in spirit; rejected — no double-entry banking layer, demo scale, GPL is viral for any future distribution | **Design ideas only, zero code copied**: shock/trend/conditional event-trigger taxonomy; trust-graph-weighted conversation pairing sanity check |
+| [LLM-Economist](https://github.com/sethkarten/LLM-Economist) (Karten et al. 2025) | MIT upstream | Too narrow as a base (tax planner vs. workers only) | **Adapt the published persona-conditioning approach** through an independently written deterministic synthetic-heuristic base module; pin prior-art attribution and do not classify it as Census-calibrated or vendored upstream code |
+| [Doxa](https://github.com/VincenzoManto/Doxa) (v0.1, single maintainer) | GPL-3.0 | Closest in spirit; rejected — no double-entry banking layer, demo scale, and distribution would require evaluating GPL-3.0 copyleft obligations | **Design ideas only, zero code copied**: shock/trend/conditional event-trigger taxonomy; trust-graph-weighted conversation pairing sanity check |
 | [AgentSociety](https://github.com/tsinghua-fib-lab/agentsociety) (Tsinghua FIB) | Apache-2.0 | v2 pivoted to AI-social-scientist tooling; the economy/city modules are in unmaintained legacy v1 | Validation that SQLite-based full replay is the right pattern (their v2 does the same); their paper's methodology for evaluating agent believability |
-| Generative Agents (Stanford) / EconAgent (Tsinghua) | papers | Reference designs | Memory scoring (recency × importance × relevance) — already in §6; decision-cadence framing — already in §3 |
+| Generative Agents (Stanford) / EconAgent (Tsinghua) | papers | Reference designs | Weighted additive memory scoring over recency, importance, and relevance — already in §6; decision-cadence framing — already in §3 |
 
-Rule for vendored code: it lives under a `vendor/` subfolder with its upstream LICENSE file, and we never modify it in place — wrap it.
+Rule for external code: copied upstream source must live under `vendor/` with its
+license and immutable wrapper boundary. Independently written implementations of
+published ideas live in owned modules with an attribution note and must not be
+described as vendored code.
 
 ## 16. Repository layout
 
@@ -297,7 +337,7 @@ agent-economy/
   runs/base.yaml          # default world config (population, models, budget, shocks)
   engine/                 # deterministic core: ledger, markets, credit, firms
   agents/                 # personas, scheduler, prompt assembly, memory, actions
-    personas/vendor/      # LLM-Economist persona generation (MIT, unmodified)
+    personas/             # owned base sampler + governed enrichment boundary
   llm/                    # gateway: routing, governor, caching, parsing
     adapters/             # openai_compat (Kimi/MiniMax), anthropic, cli (restricted)
   world/                  # tick loop, phases, event bus, shocks, metrics
@@ -312,7 +352,7 @@ agent-economy/
 ## 17. Build order (maps to PRD §11 phases: steps 1–2 = Phase 1, 3–4 = Phase 2, 5–7 = Phase 3, 8 = Phase 4)
 
 1. **Kernel**: ledger + engine + validator + scripted agents + reconciliation tests. *No LLM yet — prove the economy's plumbing first.*
-2. Agent runtime + gateway + governor; 20 Haiku citizens, 1 bank; CLI event stream.
+2. Agent runtime + gateway + governor; 20 route-configured citizens, 1 bank; CLI event stream.
 3. Exchange + firms lifecycle + 2nd bank; scale to 100 agents; checkpoints.
 4. Newsroom + conversations + memory pipeline; run the rumor pilot.
 5. Dashboard (read-only first, then controls).

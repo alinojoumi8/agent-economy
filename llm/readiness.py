@@ -5,10 +5,20 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from .cache_config import normalize_prompt_cache_mode
+
 
 BUILTIN_PROVIDERS = {"scripted", "mock"}
 NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic"}
 KNOWN_PROVIDER_KINDS = NETWORK_PROVIDER_KINDS | {"cli"}
+PROMPT_CACHE_MODES = {
+    "off", "provider_automatic", "openai_key", "anthropic_ephemeral",
+}
+PROMPT_CACHE_MODES_BY_KIND = {
+    "openai_compat": {"off", "provider_automatic", "openai_key"},
+    "anthropic": {"off", "anthropic_ephemeral"},
+    "cli": {"off"},
+}
 
 
 class ProviderConfigurationError(RuntimeError):
@@ -77,12 +87,24 @@ def validate_llm_config(
         kind = str(pcfg.get("kind", "")).strip()
         key_env = str(pcfg.get("api_key_env", "")).strip()
         base_url = str(pcfg.get("base_url", "")).strip()
+        prompt_cache_mode = normalize_prompt_cache_mode(
+            pcfg.get("prompt_cache_mode"),
+            legacy_prompt_cache_key=bool(pcfg.get("prompt_cache_key")))
         key_required = kind in NETWORK_PROVIDER_KINDS
         key_value = str(env.get(key_env, "")).strip() if key_env else ""
         key_present = bool(key_value)
 
         if kind not in KNOWN_PROVIDER_KINDS:
             errors.append(f"provider '{provider}' has unknown kind '{kind or '<empty>'}'")
+        if prompt_cache_mode not in PROMPT_CACHE_MODES:
+            errors.append(
+                f"provider '{provider}' has unknown prompt_cache_mode "
+                f"'{prompt_cache_mode or '<empty>'}'")
+        elif kind in PROMPT_CACHE_MODES_BY_KIND and prompt_cache_mode not in PROMPT_CACHE_MODES_BY_KIND[kind]:
+            allowed = ", ".join(sorted(PROMPT_CACHE_MODES_BY_KIND[kind]))
+            errors.append(
+                f"provider '{provider}' kind '{kind}' does not support "
+                f"prompt_cache_mode '{prompt_cache_mode}' (allowed: {allowed})")
         if kind == "openai_compat" and not base_url:
             errors.append(f"provider '{provider}' requires base_url")
         if key_required and not key_env:
@@ -117,7 +139,7 @@ def validate_llm_config(
             "name": provider, "kind": kind or None, "models": models,
             "base_url": base_url or None, "key_env": key_env or None,
             "key_required": key_required, "key_present": key_present,
-            "configured": True,
+            "configured": True, "prompt_cache_mode": prompt_cache_mode,
         })
 
     for provider in sorted(set(providers) - set(referenced)):
@@ -126,9 +148,12 @@ def validate_llm_config(
     cli_routes = [name for name, route in route_items
                   if isinstance(route, dict)
                   and providers.get(route.get("provider"), {}).get("kind") == "cli"]
-    forbidden_cli = [name for name in cli_routes if name not in {"oracle", "dev"}]
+    forbidden_cli = [
+        name for name in cli_routes if name not in {"oracle_plan", "oracle", "dev"}]
     if forbidden_cli:
-        errors.append("CLI providers may only serve oracle/dev routes: " + ", ".join(forbidden_cli))
+        errors.append(
+            "CLI providers may only serve oracle_plan/oracle/dev routes: "
+            + ", ".join(forbidden_cli))
 
     mode = "offline" if set(referenced).issubset(BUILTIN_PROVIDERS) else "network"
     report = {

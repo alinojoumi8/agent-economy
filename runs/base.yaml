@@ -1,9 +1,30 @@
 # Agent Economy — default world configuration (reproducibility = this file + seed + code version)
 seed: 42
-engine_semantics_version: 3       # v2 finalize contract + research-valid metric/information semantics
+engine_semantics_version: 7       # strict credit/lifecycle/region contracts; older runs keep their version
+
+legal:
+  enabled: true
+  ruleset: northstar-us-inspired-1.0
+  response_ticks: 14
+  max_damages_cents: 10000000000
 
 information:
   citizen_bank_visibility: public_status  # citizens see public status, never private reserve ratios
+  daily_news_required: true               # every outlet publishes a same-day, event-grounded brief
+
+information_economy:
+  enabled: true
+  base_reach: 0.15
+  diffusion_window_ticks: 30
+
+political_model:
+  enabled: true
+  actor_bound_authorization: true  # fresh runs never trust action-supplied political delegation
+  house_seats: 12
+  senate_seats: 6
+  house_election_interval_ticks: 180
+  executive_election_interval_ticks: 360
+  lobbying_disclosure_delay_ticks: 5
 
 beliefs:
   audit_history: true
@@ -83,11 +104,17 @@ conversations:
 budget:
   cap_usd: 200.0                # hard cap — never exceeded (PRD R7)
   oracle_reserve_usd: 10.0      # carve-out so questions never starve the world
+  report_reserve_usd: 0.25      # operational end-report prose; never changes world cadence
+  oracle_plan_in_reserve: true  # planner + answer share the Oracle carve-out
   conversation_pairs: 15        # evening pairs at governor level 0
   thresholds: [0.60, 0.80, 0.95]
 
 oracle:
   default_horizon_ticks: 30
+
+reports:
+  narrative_max_tokens: 600
+  narrative_timeout_s: 45
 
 # ── LLM routing: explicit offline/test profile (free and deterministic). ──
 # To use real models, define providers and point roles at them, e.g.:

@@ -34,6 +34,11 @@ from run_config import load_config
 DATA_DIR = Path("data/runs")
 DEFAULT_CONFIG = "runs/production.yaml"
 logger = get_logger("cli")
+REPLAY_INPUT_TABLES = (
+    "dataset_manifests",
+    "calibration_targets",
+    "scenario_packs",
+)
 
 
 async def provider_preflight(config: dict, *, live: bool = False) -> dict:
@@ -43,6 +48,35 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
     store = Store(":memory:")
     store.init_run_meta("preflight", int(config.get("seed", 42)), config)
     return await Gateway(store, config).preflight(live=True)
+
+
+def require_live_inference_approval(config: dict, *, approved: bool) -> None:
+    """Fail closed before a command can dispatch any configured live provider."""
+    from reports.acceptance import uses_paid_providers
+
+    if uses_paid_providers(config) and not approved:
+        raise SystemExit(
+            "live provider run requires explicit --approve-live-inference authorization"
+        )
+
+
+def _recorded_replay_inputs(source: Store) -> dict[str, list[dict]]:
+    """Capture external/input rows so replay never rereads mutable manifests."""
+    return {
+        table: [dict(row) for row in source.query(f'SELECT * FROM "{table}" ORDER BY id')]
+        for table in REPLAY_INPUT_TABLES
+    }
+
+
+def _restore_replay_inputs(store: Store, inputs: dict[str, list[dict]]) -> None:
+    """Replace freshly loaded reference data with the source run's pinned rows."""
+    store.execute("DELETE FROM calibration_targets")
+    store.execute("DELETE FROM dataset_manifests")
+    store.execute("DELETE FROM scenario_packs")
+    for table in REPLAY_INPUT_TABLES:
+        for row in inputs[table]:
+            store.insert(table, **row)
+    store.commit()
 
 
 def open_run(config: dict, resume: str | None, replay: str | None, *,
@@ -67,12 +101,15 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         if not source_db.exists():
             sys.exit(f"run database not found: {source_db}")
         source_store = Store(str(source_db))
-        source_meta = source_store.get_meta()
-        replay_cfg = json.loads(source_meta["config_json"])
-        replay_cfg.setdefault("engine_semantics_version", 1)
-        source_tick = int(source_meta["tick"])
-        source_seed = int(source_meta["seed"])
-        source_store.close()
+        try:
+            source_meta = source_store.get_meta()
+            replay_cfg = json.loads(source_meta["config_json"])
+            replay_cfg.setdefault("engine_semantics_version", 1)
+            source_tick = int(source_meta["tick"])
+            source_seed = int(source_meta["seed"])
+            replay_inputs = _recorded_replay_inputs(source_store)
+        finally:
+            source_store.close()
         replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         replay_cfg.update({
             "seed": source_seed,
@@ -83,10 +120,22 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         run_id = f"replay-{replay}-{new_run_id()}"
         store = Store(str(data_dir / f"{run_id}.db"))
         store.init_run_meta(run_id, source_seed, replay_cfg, parent_run_id=replay, fork_tick=0)
-        world = World(store, replay_cfg, replay=True)
-        world.initialize()
+        # Restore source-owned external inputs before genesis.  A replay must
+        # never depend on the path (or current contents) of the mutable
+        # dataset manifest recorded in the source configuration.
+        _restore_replay_inputs(store, replay_inputs)
+        missing_manifest = object()
+        recorded_manifest = replay_cfg.pop("dataset_manifest", missing_manifest)
+        try:
+            world = World(store, replay_cfg, replay=True)
+            world.initialize()
+        finally:
+            if recorded_manifest is not missing_manifest:
+                replay_cfg["dataset_manifest"] = recorded_manifest
         return store, world, run_id
     config = dict(config)
+    # Unversioned callers retain the historical v2 contract.  The checked-in
+    # v2 world profiles opt into semantics 4+ explicitly.
     config.setdefault("engine_semantics_version", 2)
     run_id = new_run_id()
     store = Store(str(data_dir / f"{run_id}.db"))
@@ -96,7 +145,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     return store, world, run_id
 
 
-def fork_run(spec: str, data_dir: Path = DATA_DIR) -> str:
+def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | None = None) -> str:
     """Fork a new run from a checkpoint (TECH-SPEC §13 what-if branching).
 
     `spec` is either a checkpoint .db path or `RUNID@TICK` (uses the newest
@@ -128,11 +177,23 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR) -> str:
     shutil.copyfile(src, dest)
     store = Store(str(dest))
     meta = store.get_meta()
+    config = json.loads(meta["config_json"])
+    old_semantics = int(config.get("engine_semantics_version", 1))
+    if upgrade_semantics is not None:
+        if int(upgrade_semantics) <= old_semantics:
+            store.close()
+            dest.unlink(missing_ok=True)
+            sys.exit(f"semantic upgrade must exceed stored version {old_semantics}")
+        config["engine_semantics_version"] = int(upgrade_semantics)
     store.set_meta(run_id=new_id, parent_run_id=meta["run_id"], fork_tick=int(meta["tick"]),
-                   status="paused")
+                   status="paused", config_json=json.dumps(config, sort_keys=True))
     store.log_event(int(meta["tick"]), "fork", {
         "parent_run_id": meta["run_id"], "fork_tick": int(meta["tick"]),
         "new_run_id": new_id}, phase="NIGHT_CLOSE", importance=2.0)
+    if upgrade_semantics is not None:
+        store.log_event(int(meta["tick"]), "semantic_upgrade", {
+            "parent_run_id": meta["run_id"], "old_version": old_semantics,
+            "new_version": int(upgrade_semantics)}, phase="NIGHT_CLOSE", importance=4.0)
     store.commit()
     store.close()
     operational_log(logger, logging.INFO, "run.fork.created",
@@ -173,21 +234,37 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: locked MiniMax/Kimi production profile)")
-    ap.add_argument("--ticks", type=int, default=None, help="run N ticks headless then exit")
+    ap.add_argument("--ticks", type=int, default=None,
+                    help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
     ap.add_argument("--fork", default=None,
                     help="fork a what-if branch: checkpoint .db path or RUNID@TICK")
+    ap.add_argument("--upgrade-semantics", type=int, default=None,
+                    help="only with --fork: explicitly upgrade the child engine semantics")
     ap.add_argument("--report", default=None, help="generate end-of-run report for run id and exit")
+    ap.add_argument("--export-static", default=None,
+                    help="export a self-contained replay from a run id or database path")
+    ap.add_argument("--output", default=None, help="output path for export commands")
     ap.add_argument("--experiment", default=None,
                     help="run a multi-seed experiment from a spec yaml (P1 R14) and exit")
+    ap.add_argument("--counterfactual", default=None,
+                    help="run a validated paired-seed scenario pack and exit")
+    ap.add_argument("--seeds", type=int, default=20,
+                    help="paired seed count for --counterfactual (default: 20)")
+    ap.add_argument("--scenario-ticks", type=int, default=None,
+                    help="override a scenario pack's horizon")
+    ap.add_argument("--refresh-datasets", default=None,
+                    help="explicitly refresh and repin a dataset manifest (networked)")
+    ap.add_argument("--verify-datasets", default=None,
+                    help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
     ap.add_argument("--acceptance-run", action="store_true",
                     help="execute the configured acceptance horizon and scheduled Oracle checks")
     ap.add_argument("--approve-live-inference", "--approve-live-spend",
                     dest="approve_live_inference", action="store_true",
-                    help="explicitly authorize real-provider inference for --acceptance-run")
+                    help="explicitly authorize real-provider inference")
     ap.add_argument("--experiment-evidence", default=None,
                     help="experiment JSON to attach to an acceptance receipt")
     ap.add_argument("--phenomena-evidence", default=None,
@@ -200,7 +277,10 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
-    mode = ("experiment" if args.experiment else
+    mode = ("dataset_refresh" if args.refresh_datasets else
+            "dataset_verify" if args.verify_datasets else
+            "counterfactual" if args.counterfactual else
+            "static_export" if args.export_static else "experiment" if args.experiment else
             "acceptance_report" if args.acceptance_report else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
             "preflight" if (args.preflight or args.preflight_live) else
@@ -208,9 +288,38 @@ def main() -> None:
             "resume" if args.resume else "run")
     operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
 
+    if args.refresh_datasets:
+        from research.datasets import refresh_datasets
+        print(json.dumps(refresh_datasets(args.refresh_datasets), indent=2))
+        return
+
+    if args.verify_datasets:
+        from research.datasets import verify_manifest
+        print(json.dumps(verify_manifest(args.verify_datasets), indent=2))
+        return
+
+    if args.counterfactual:
+        from research.scenarios import load_scenario
+        pack = load_scenario(args.counterfactual)
+        effective_config = pack.config()
+        require_live_inference_approval(
+            effective_config, approved=args.approve_live_inference)
+        from research.counterfactual import run_counterfactual
+        result = run_counterfactual(
+            pack, seeds=args.seeds, ticks=args.scenario_ticks,
+            effective_config=effective_config)
+        print(json.dumps({"scenario": result["scenario"], "design": result["design"],
+                          "artifacts": result["artifacts"]}, indent=2))
+        return
+
     if args.experiment:
-        from experiments.harness import run_experiment
-        run_experiment(args.experiment)
+        from experiments.harness import load_spec, run_experiment
+        spec = load_spec(args.experiment)
+        require_live_inference_approval(
+            spec["config"], approved=args.approve_live_inference)
+        # Dispatch the exact resolved config that passed the authorization gate.
+        spec.pop("overrides", None)
+        run_experiment(spec)
         return
 
     if args.report:
@@ -220,6 +329,19 @@ def main() -> None:
         store = Store(str(db))
         from reports.generate import generate_report
         print(generate_report(store))
+        return
+
+    if args.export_static:
+        source = Path(args.export_static)
+        if not source.exists():
+            source = DATA_DIR / f"{args.export_static}.db"
+        if not source.exists():
+            sys.exit(f"run database not found: {source}")
+        store = Store(str(source))
+        from server.static_export import export_static_replay
+        target = Path(args.output) if args.output else Path("static_exports") / f"{store.get_meta()['run_id']}.html"
+        print(export_static_replay(store, target))
+        store.close()
         return
 
     if args.acceptance_report:
@@ -238,12 +360,10 @@ def main() -> None:
     operational_log(logger, logging.INFO, "config.loaded",
                     path=str(Path(args.config).resolve()), mode=mode,
                     seed=config.get("seed", 42))
-    if args.acceptance_run:
-        from reports.acceptance import uses_paid_providers
-        if uses_paid_providers(config) and not args.approve_live_inference:
-            raise SystemExit(
-                "live acceptance run requires explicit --approve-live-inference authorization"
-            )
+    fresh_run = not args.resume and not args.fork
+    if fresh_run and not (args.preflight or args.preflight_live or args.replay):
+        require_live_inference_approval(
+            config, approved=args.approve_live_inference)
     if args.preflight or args.preflight_live:
         report = asyncio.run(provider_preflight(config, live=args.preflight_live))
         print(json.dumps(report, indent=2))
@@ -259,8 +379,15 @@ def main() -> None:
                         live_ready=live_ready)
         return
     if args.fork:
-        args.resume = fork_run(args.fork)
+        args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
     store, world, run_id = open_run(config, args.resume, args.replay)
+    if not args.replay:
+        try:
+            require_live_inference_approval(
+                world.config, approved=args.approve_live_inference)
+        except SystemExit:
+            store.close()
+            raise
     operational_log(logger, logging.INFO, "run.opened",
                     run_id=run_id, tick=store.tick,
                     seed=store.get_meta()["seed"], replay=bool(args.replay),
@@ -270,10 +397,15 @@ def main() -> None:
 
     if args.acceptance_run and not args.serve:
         from reports.acceptance import execute_acceptance_run, write_acceptance_package
+        from reports.generate import generate_report_async
         target_tick = args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365))
-        asyncio.run(execute_acceptance_run(world, target_tick=target_tick))
-        from reports.generate import generate_report
-        report_path = generate_report(store, world, out_dir=str(config.get("report_dir", "reports/out")))
+
+        async def execute_and_report_acceptance() -> str:
+            await execute_acceptance_run(world, target_tick=target_tick)
+            return await generate_report_async(
+                store, world, out_dir=str(config.get("report_dir", "reports/out")))
+
+        report_path = asyncio.run(execute_and_report_acceptance())
         receipt = write_acceptance_package(
             store.path,
             out_dir=str(config.get("report_dir", "reports/out")),
@@ -296,7 +428,20 @@ def main() -> None:
     replay_ticks = int(world.config.get("replay_source_tick", 0)) if args.replay else None
     ticks = args.ticks if args.ticks is not None else replay_ticks
     if ticks is not None and not args.serve:
-        asyncio.run(replay_headless(world, ticks) if args.replay else headless(world, ticks))
+        from reports.generate import ReportBoundaryError, generate_report_async
+
+        async def execute_and_report() -> str:
+            await (replay_headless(world, ticks) if args.replay else headless(world, ticks))
+            try:
+                return await generate_report_async(
+                    store, world, out_dir=str(config.get("report_dir", "reports/out")))
+            except ReportBoundaryError as exc:
+                operational_log(
+                    logger, logging.WARNING, "headless.report.deferred",
+                    run_id=run_id, tick=store.tick, detail=str(exc))
+                return ""
+
+        path = asyncio.run(execute_and_report())
         if args.replay:
             from world.replay_verify import verify_replay
             source = Path(str(world.config["replay_source_path"]))
@@ -310,15 +455,13 @@ def main() -> None:
             operational_log(logger, logging.INFO, "replay.verification.completed",
                             run_id=run_id, source_run_id=args.replay,
                             tables=proof.get("tables"))
-        from reports.generate import generate_report
-        path = generate_report(
-            store, world, out_dir=str(config.get("report_dir", "reports/out")))
         gov = world.gateway.governor.status()
         if world.last_pause_reason:
             reason = world.last_pause_reason.get("reason", "unknown")
             detail = str(world.last_pause_reason.get("detail", ""))[:500]
+            report_label = path or "deferred (partial tick)"
             print(f"[agent-economy] paused @ tick {store.tick} · {reason}: {detail} "
-                  f"· report: {path}")
+                  f"· report: {report_label}")
             operational_log(logger, logging.WARNING, "headless.run.paused",
                             run_id=run_id, tick=store.tick, reason=reason,
                             detail=detail, report_path=path)
@@ -332,10 +475,13 @@ def main() -> None:
 
     import uvicorn
     from server.app import create_app
-    app = create_app(world)
+    app = create_app(
+        world, served_ticks=None if args.acceptance_run else ticks)
     operational_log(logger, logging.INFO, "server.starting",
                     run_id=run_id, host=args.host, port=args.port)
     startup = "acceptance orchestration starts automatically" if args.acceptance_run else "world starts paused - press Run"
+    if ticks is not None and not args.acceptance_run:
+        startup += f" (bounded to tick {store.tick + ticks})"
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

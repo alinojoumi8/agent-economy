@@ -31,7 +31,9 @@ from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
-from agents.personas.vendor.persona_gen import sample_persona
+from agents.personas.library import (
+    configured_outlet_ids, sample_arrival_persona, sample_persona,
+)
 from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
@@ -91,6 +93,15 @@ class World:
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
         Genesis(self.economy, self.config, self.persona_prng).build()
+        if self.config.get("behavioral_fixture", {}).get("enabled"):
+            from world.behavioral_fixture import BehavioralFixtureSeeder
+            BehavioralFixtureSeeder(self.economy, self.config).seed()
+        if self.config.get("spec_closure_fixture", {}).get("enabled"):
+            from world.spec_closure_fixture import SpecClosureFixtureSeeder
+            SpecClosureFixtureSeeder(self.economy, self.config).seed()
+        if self.config.get("dataset_manifest"):
+            from research.datasets import ingest_manifest
+            ingest_manifest(self.store, self.config["dataset_manifest"])
         self.shocks.load_from_config()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
@@ -133,22 +144,41 @@ class World:
                 self.store.tick,
                 reason="stop" if self._stop_requested else "pause")
             if self._stop_requested:
-                try:
-                    from reports.generate import generate_report
-                    self.last_report_path = generate_report(
-                        self.store, self,
-                        out_dir=str(self.config.get("report_dir", "reports/out")))
-                    operational_log(logger, logging.INFO, "world.report.generated",
-                                    run_id=self.gateway.run_id, tick=self.store.tick,
-                                    path=self.last_report_path)
-                except Exception as exc:
-                    self.store.log_event(
-                        self.store.tick, "report_failed", {"error": str(exc)[:500]},
-                        importance=3.0)
-                    self.store.commit()
-                    operational_log(logger, logging.ERROR, "world.report.failed",
-                                    run_id=self.gateway.run_id, tick=self.store.tick,
-                                    error_type=type(exc).__name__, error=str(exc))
+                meta = self.store.get_meta()
+                if meta["active_tick"] is not None:
+                    self.last_report_path = None
+                    self.last_pause_reason = {
+                        "reason": "report_deferred_partial_tick",
+                        "active_tick": int(meta["active_tick"]),
+                        "phase": str(meta["next_phase"] or meta["phase"] or "unknown"),
+                        "detail": "finish the partial tick before generating an end-of-run report",
+                    }
+                    operational_log(
+                        logger, logging.WARNING, "world.report.deferred",
+                        run_id=self.gateway.run_id, tick=self.store.tick,
+                        active_tick=int(meta["active_tick"]),
+                        phase=self.last_pause_reason["phase"])
+                else:
+                    try:
+                        from reports.generate import generate_report_async
+                        # The run loop has exited and owns the only active provider
+                        # workflow here, so the Stop interrupt can be retired before
+                        # the separately bounded report request.
+                        self.gateway.clear_interrupt()
+                        self.last_report_path = await generate_report_async(
+                            self.store, self,
+                            out_dir=str(self.config.get("report_dir", "reports/out")))
+                        operational_log(logger, logging.INFO, "world.report.generated",
+                                        run_id=self.gateway.run_id, tick=self.store.tick,
+                                        path=self.last_report_path)
+                    except Exception as exc:
+                        self.store.log_event(
+                            self.store.tick, "report_failed", {"error": str(exc)[:500]},
+                            importance=3.0)
+                        self.store.commit()
+                        operational_log(logger, logging.ERROR, "world.report.failed",
+                                        run_id=self.gateway.run_id, tick=self.store.tick,
+                                        error_type=type(exc).__name__, error=str(exc))
             self._pause_requested = False
             operational_log(logger, logging.INFO, "world.run.finished",
                             run_id=self.gateway.run_id, start_tick=start_tick,
@@ -206,6 +236,8 @@ class World:
                 elif phase == "MORNING":
                     if self.gateway.governor.should_pause():
                         raise BudgetExceeded("world budget exhausted before MORNING")
+                    if self.engine_semantics_version >= 7:
+                        await self.runtime.enrich_pending_arrivals(tick)
                     decisions = await self.runtime.decide_all(tick)
                     state["decisions"] = decisions
                     decisions_count = len(decisions)
@@ -358,6 +390,13 @@ class World:
         e.gov.run_nightly(tick)
         # VC portfolio sweep: write-offs + stale pitches (P1 R13).
         e.vc.run_nightly(tick)
+        # v2 legal kernel: activate contracts, detect due breaches, and expire orders.
+        if self.engine_semantics_version >= 4:
+            e.legal.run_nightly(tick)
+            e.information.run_nightly(tick)
+            e.politics.run_nightly(tick)
+            if self.engine_semantics_version >= 5:
+                e.regions.run_nightly(tick)
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
@@ -410,23 +449,32 @@ class World:
                 Leg(int(r["id"]), interest, "interest"), Leg(eq, -interest, "interest expense")])
 
     def _bank_liquidity_sweep(self, tick: int) -> None:
-        cb = self.economy.central_bank_reserve_acct()
         for b in self.store.query("SELECT * FROM banks WHERE status='open'"):
             bid = int(b["id"])
+            cb = self.economy.central_bank_reserve_acct(
+                str(b["currency_code"] or "USD"))
             required = int(self.economy.bank.deposits(bid) *
                            int(b["reserve_requirement_bps"]) / 10000)
             shortfall = required - self.economy.bank.reserves(bid)
             if shortfall > 0:
                 supported = False
                 if cb is not None:
-                    supported = self.economy.bank.attempt_liquidity_support(tick, bid, shortfall, cb)
-                if not supported:
+                    supported = self.economy.bank.attempt_liquidity_support(
+                        tick, bid, shortfall, cb,
+                        require_authorized_decision=self.engine_semantics_version >= 6,
+                        phase="NIGHT_CLOSE", source="night_close")
+                # ``None`` is a durable semantics-6 request awaiting the normal
+                # MORNING decision/EXECUTION proposal path. Only an explicit
+                # legacy denial or missing central bank fails immediately.
+                if supported is False:
                     self.economy.bank.fail_bank(tick, bid)
 
     def _phase_market(self, tick: int) -> None:
         for f in self.store.query("SELECT id FROM firms WHERE status='listed'"):
             self.economy.exchange.match_firm(tick, int(f["id"]))
         self.economy.exchange.expire_session(tick)
+        if self.engine_semantics_version >= 5:
+            self.economy.regions.match_fx(tick)
         self.economy.labor.expire_stale_jobs(tick)
         # Expire stale pending loan applications (older than a week).
         self.store.execute(
@@ -442,21 +490,45 @@ class World:
         if not banks:
             return
         outlets = self.config.get("outlets", [{"id": 1}, {"id": 2}])
+        outlet_ids = configured_outlet_ids(outlets)
         for sched_id in due_ids:
-            p = sample_persona(self.persona_prng, n_outlets=len(outlets))
-            bank_id = self.engine_prng.choice(banks)
+            if self.engine_semantics_version >= 7:
+                p = sample_arrival_persona(self.persona_prng, outlet_ids)
+            else:
+                p = sample_persona(self.persona_prng, n_outlets=len(outlets))
+            region_id = self.economy.regions.region_for_new_citizen() \
+                if self.economy.regions.enabled else None
+            bank_id = self.economy.regions.bank_for_region(banks, region_id) \
+                if self.economy.regions.enabled else self.engine_prng.choice(banks)
+            currency = self.economy.regions.currency_for_region(region_id)
             agent_id = self.store.insert(
                 "agents", name=p.name, kind="citizen", occupation=p.occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", alive=1, retired=0, arrived_tick=tick)
+                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                alive=1, retired=0, arrived_tick=tick)
+            if self.engine_semantics_version >= 7:
+                checking_cents = int(p.wealth_cents * 0.7)
+                savings_cents = p.wealth_cents - checking_cents
+            else:
+                checking_cents = int(p.wealth_cents * 0.6)
+                savings_cents = 0
             chk = self.economy.ledger.create_account(
                 "agent", agent_id, "checking", bank_id=bank_id,
-                label=f"agent:{agent_id}:checking", opening_cents=int(p.wealth_cents * 0.6),
-                funding_label=SYS_INFLOW, tick=tick)
-            self.store.update("agents", agent_id, checking_account_id=chk)
+                label=f"agent:{agent_id}:checking", opening_cents=checking_cents,
+                funding_label=SYS_INFLOW, tick=tick, currency_code=currency)
+            if self.engine_semantics_version >= 7:
+                sav = self.economy.ledger.create_account(
+                    "agent", agent_id, "savings", bank_id=bank_id,
+                    label=f"agent:{agent_id}:savings", opening_cents=savings_cents,
+                    funding_label=SYS_INFLOW, tick=tick, currency_code=currency)
+                self.store.update(
+                    "agents", agent_id, checking_account_id=chk,
+                    savings_account_id=sav)
+            else:
+                self.store.update("agents", agent_id, checking_account_id=chk)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
             housing_cost = max(0, int(self.config.get("lifecycle", {}).get(
@@ -464,7 +536,8 @@ class World:
             housing_paid = min(housing_cost, self.economy.ledger.balance(chk))
             if housing_paid:
                 self.economy.ledger.transfer(
-                    tick, chk, self.economy.ledger.system_account(SYS_HOUSING),
+                    tick, chk, self.economy.ledger.system_account(
+                        SYS_HOUSING, currency_code=currency),
                     housing_paid, kind="housing_cost", memo="arrival move-in and rent")
                 self.store.log_event(
                     tick, "housing_cost", {"agent_id": agent_id,
@@ -489,9 +562,15 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
-            self.store.log_event(tick, "arrival", {
+            arrival_payload = {
                 "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
-                "schedule_event_id": sched_id}, phase="NIGHT_CLOSE",
+                "schedule_event_id": sched_id}
+            if self.engine_semantics_version >= 7:
+                arrival_payload.update({
+                    "checking_cents": checking_cents,
+                    "savings_cents": savings_cents,
+                })
+            self.store.log_event(tick, "arrival", arrival_payload, phase="NIGHT_CLOSE",
                 subject_type="agent", subject_id=agent_id, importance=2.0)
 
     # ── checkpoints (SQLite backup + PRNG state, TECH-SPEC §13) ──────────────

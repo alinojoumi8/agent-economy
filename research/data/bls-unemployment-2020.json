@@ -1,0 +1,10 @@
+{
+  "dataset_key": "bls-unemployment-2020",
+  "vintage_date": "2021-01-08",
+  "series_id": "LNS14000000",
+  "targets": [
+    {"key": "unemployment.2020-01", "value": 3.6, "unit": "percent", "dimensions": {"population": "civilian labor force"}},
+    {"key": "unemployment.2020-04", "value": 14.8, "unit": "percent", "dimensions": {"population": "civilian labor force"}},
+    {"key": "unemployment.2020-12", "value": 6.7, "unit": "percent", "dimensions": {"population": "civilian labor force"}}
+  ]
+}

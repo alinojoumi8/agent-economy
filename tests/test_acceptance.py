@@ -1,11 +1,16 @@
 import asyncio
 import json
 from pathlib import Path
+import sys
 
 import yaml
 import pytest
 from fastapi.testclient import TestClient
 
+import experiments.harness as experiment_harness
+import research.counterfactual as counterfactual_runner
+import research.scenarios as scenarios
+import run as cli
 from engine.store import Store
 from reports.acceptance import (
     AcceptanceCheckpointMissed, acceptance_schedule_status, execute_acceptance_run,
@@ -398,6 +403,32 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
             "SELECT COUNT(*) FROM acceptance_checkpoints WHERE status='completed'", default=0) == 1
 
 
+def test_resumed_served_acceptance_uses_its_absolute_target(tmp_path):
+    config = _config(
+        report_dir=str(tmp_path / "reports"),
+        acceptance={"min_ticks": 2, "min_agents": 1, "max_agents": 100},
+    )
+    store = Store(str(tmp_path / "served-resume.db"))
+    store.init_run_meta("served-resume", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    store.set_meta(tick=1, status="paused")
+    store.commit()
+    world.acceptance_authorized = True
+    world.acceptance_target_tick = 2
+
+    with TestClient(create_app(world, served_ticks=2)) as client:
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"]:
+                break
+
+        assert status["tick"] == 2
+        assert status["target_tick"] == 2
+        assert status["remaining_ticks"] == 0
+        assert client.post("/api/run/start").json()["status"] == "limit_reached"
+
+
 def test_paid_acceptance_detection_fails_safe_for_any_real_route():
     assert not uses_paid_providers(_config())
     config = _config()
@@ -405,6 +436,145 @@ def test_paid_acceptance_detection_fails_safe_for_any_real_route():
         "oracle": {"provider": "kimi", "model": "kimi-for-coding"},
     }
     assert uses_paid_providers(config)
+
+
+def _prepare_cli(monkeypatch, *args):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["run.py", *args])
+
+
+def test_cli_paid_experiment_requires_approval_before_dispatch(tmp_path, monkeypatch):
+    spec_path = tmp_path / "paid-experiment.yaml"
+    spec_path.write_text(yaml.safe_dump({
+        "name": "paid-approval",
+        "config": _config(),
+        "overrides": {"llm": {"routes": {
+            "oracle": {"provider": "minimax", "model": "MiniMax-M3"},
+        }}},
+        "seeds": [1],
+        "ticks": 1,
+        "control": False,
+    }), encoding="utf-8")
+    dispatched = []
+    monkeypatch.setattr(
+        experiment_harness, "run_experiment", lambda spec: dispatched.append(spec))
+
+    _prepare_cli(monkeypatch, "--experiment", str(spec_path))
+    with pytest.raises(SystemExit, match="--approve-live-inference"):
+        cli.main()
+    assert not dispatched
+
+    _prepare_cli(
+        monkeypatch, "--experiment", str(spec_path), "--approve-live-inference")
+    cli.main()
+    assert len(dispatched) == 1
+    assert uses_paid_providers(dispatched[0]["config"])
+    assert "overrides" not in dispatched[0]
+
+
+def test_cli_scripted_experiment_does_not_require_approval(tmp_path, monkeypatch):
+    spec_path = tmp_path / "scripted-experiment.yaml"
+    spec_path.write_text(yaml.safe_dump({
+        "name": "scripted",
+        "config": _config(),
+        "seeds": [1],
+        "ticks": 1,
+        "control": False,
+    }), encoding="utf-8")
+    dispatched = []
+    monkeypatch.setattr(
+        experiment_harness, "run_experiment", lambda spec: dispatched.append(spec))
+
+    _prepare_cli(monkeypatch, "--experiment", str(spec_path))
+    cli.main()
+
+    assert len(dispatched) == 1
+    assert not uses_paid_providers(dispatched[0]["config"])
+
+
+def test_cli_paid_counterfactual_requires_approval_before_dispatch(monkeypatch):
+    paid_config = _config()
+    paid_config["llm"]["routes"] = {
+        "oracle": {"provider": "minimax", "model": "MiniMax-M3"},
+    }
+    pack = type("Pack", (), {"config": lambda self: paid_config})()
+    monkeypatch.setattr(scenarios, "load_scenario", lambda _path: pack)
+    dispatched = []
+
+    def dispatch(loaded_pack, **kwargs):
+        dispatched.append((loaded_pack, kwargs))
+        return {"scenario": {}, "design": {}, "artifacts": {}}
+
+    monkeypatch.setattr(counterfactual_runner, "run_counterfactual", dispatch)
+
+    _prepare_cli(monkeypatch, "--counterfactual", "paid-scenario.yaml")
+    with pytest.raises(SystemExit, match="--approve-live-inference"):
+        cli.main()
+    assert not dispatched
+
+    _prepare_cli(
+        monkeypatch, "--counterfactual", "paid-scenario.yaml",
+        "--approve-live-inference")
+    cli.main()
+    assert dispatched == [(pack, {
+        "seeds": 20,
+        "ticks": None,
+        "effective_config": paid_config,
+    })]
+
+
+def test_cli_scripted_counterfactual_does_not_require_approval(monkeypatch):
+    scripted_config = _config()
+    pack = type("Pack", (), {"config": lambda self: scripted_config})()
+    monkeypatch.setattr(scenarios, "load_scenario", lambda _path: pack)
+    dispatched = []
+
+    def dispatch(loaded_pack, **kwargs):
+        dispatched.append((loaded_pack, kwargs))
+        return {"scenario": {}, "design": {}, "artifacts": {}}
+
+    monkeypatch.setattr(counterfactual_runner, "run_counterfactual", dispatch)
+
+    _prepare_cli(monkeypatch, "--counterfactual", "scripted-scenario.yaml")
+    cli.main()
+
+    assert len(dispatched) == 1
+    assert dispatched[0][0] is pack
+    assert dispatched[0][1]["effective_config"] == scripted_config
+
+
+def test_counterfactual_runner_reuses_the_authorized_effective_config(
+        tmp_path, monkeypatch):
+    effective_config = _config()
+    effective_config["llm"]["routes"] = {
+        "oracle": {"provider": "minimax", "model": "MiniMax-M3"},
+    }
+    pack = scenarios.ScenarioPack(
+        key="authorized-config", version="1", title="Authorized config",
+        ticks=1, base_config="unused.yaml", dataset_manifest="manifest.yaml",
+        common_shocks=(),
+        arms={"control": {}, "treatment": {}}, metrics=(),
+        limitations="test only", path="unused.yaml", checksum_sha256="abc",
+    )
+    observed_configs = []
+
+    def run_arm(_pack, seed, arm, _data_dir, ticks, arm_config):
+        observed_configs.append(arm_config)
+        return {
+            "run_id": f"run-{arm}", "seed": seed, "arm": arm, "ticks": ticks,
+            "reconciled": True, "reconciliation": {}, "metrics": {},
+            "genesis_hash": "same-genesis", "replay_hash": f"hash-{arm}",
+            "causal_trace": [],
+        }
+
+    monkeypatch.setattr(counterfactual_runner, "_run_arm", run_arm)
+
+    counterfactual_runner.run_counterfactual(
+        pack, seeds=[1], ticks=1, out_dir=tmp_path / "reports",
+        data_root=tmp_path / "data", effective_config=effective_config)
+
+    assert observed_configs == [effective_config, effective_config]
 
 
 def test_rehearsal_inherits_acceptance_scope_but_routes_every_role_locally():

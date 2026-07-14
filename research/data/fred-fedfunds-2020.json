@@ -1,0 +1,10 @@
+{
+  "dataset_key": "fred-fedfunds-2020",
+  "vintage_date": "2021-01-08",
+  "series_id": "FEDFUNDS",
+  "targets": [
+    {"key": "policy_rate.2020-01", "value": 1.55, "unit": "percent", "dimensions": {"frequency": "monthly"}},
+    {"key": "policy_rate.2020-04", "value": 0.05, "unit": "percent", "dimensions": {"frequency": "monthly"}},
+    {"key": "policy_rate.2020-12", "value": 0.09, "unit": "percent", "dimensions": {"frequency": "monthly"}}
+  ]
+}

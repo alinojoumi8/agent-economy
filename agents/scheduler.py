@@ -17,15 +17,38 @@ class Scheduler:
         self.config = config
         self.base_act_every = int(config.get("behavior", {}).get("act_every", 3))
         self.event_wake_importance = float(config.get("behavior", {}).get("event_wake_importance", 2.0))
+        self.institutional_role_purposes = bool(
+            config.get("llm", {}).get("institutional_role_purposes", False))
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 1))
+        self.retired_news_every = max(1, int(
+            config.get("lifecycle", {}).get("retired_news_every", 1)))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
-        agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
+        if int(self.config.get("engine_semantics_version", 1)) >= 5:
+            # In the living-world profile, only the promoted core receives an
+            # LLM/scripted strategic turn. Peripheral agents still participate
+            # in payroll, consumption, lifecycle, markets, exposure, and votes
+            # through deterministic engines.
+            agents = self.store.query(
+                "SELECT * FROM agents WHERE alive=1 AND population_tier='core' ORDER BY id")
+        else:
+            agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
         out = []
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
+        liquidity_decision_due = (
+            int(self.config.get("engine_semantics_version", 1)) >= 6
+            and self._has_pending_liquidity_request())
         for a in agents:
+            if (self.institutional_role_purposes
+                    and a["role"] in {"editor", "reporter"}):
+                # The Newsroom owns these seats and already records role-bound
+                # reporter/newsroom calls. A second generic strategic turn
+                # collides with the reporter response contract.
+                continue
             if a["role"] == "central_banker":
-                # Policy meetings, not daily moves (±50bps per meeting, TECH-SPEC §5).
-                if tick % max(1, meeting_interval) == 0:
+                # Regular rate meetings retain their cadence, but an unresolved
+                # lender-of-last-resort request is an immediate policy wakeup.
+                if liquidity_decision_due or tick % max(1, meeting_interval) == 0:
                     out.append(a)
                 continue
             if a["role"]:  # other institutional agents act every tick
@@ -39,17 +62,30 @@ class Scheduler:
                 out.append(a)
         return out
 
+    def _has_pending_liquidity_request(self) -> bool:
+        return self.store.query_one(
+            "SELECT 1 FROM liquidity_support_requests r "
+            "JOIN banks b ON b.id=r.bank_id "
+            "WHERE r.status='pending' AND b.status='open' "
+            "ORDER BY r.request_event_id LIMIT 1") is not None
+
     def _citizen_wakes(self, a, tick: int, cadence_multiplier: int) -> bool:
         agent_id = int(a["id"])
         cadence = load_json(a["cadence_json"], {}) or {}
         act_every = max(1, int(cadence.get("act", self.base_act_every)) * max(1, cadence_multiplier))
         portfolio_every = max(1, int(cadence.get("portfolio", 7)) * max(1, cadence_multiplier))
         career_every = max(1, int(cadence.get("career", 30)) * max(1, cadence_multiplier))
+        if self.engine_semantics_version >= 7 and bool(a["retired"]):
+            news_every = max(1, int(cadence.get("news", self.retired_news_every))
+                             * max(1, cadence_multiplier))
+            if tick % news_every == agent_id % news_every:
+                return True
         # Concern-specific cadences are independent wakeups, not annotations
         # that only matter when they happen to coincide with the base cadence.
         if tick % portfolio_every == agent_id % portfolio_every:
             return True
-        if tick % career_every == agent_id % career_every:
+        if (not (self.engine_semantics_version >= 7 and bool(a["retired"]))
+                and tick % career_every == agent_id % career_every):
             return True
         # Deterministic phase offset so wakeups spread evenly across ticks.
         if tick % act_every == agent_id % act_every:

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from engine.store import load_json
 from agents.participant import ParticipantError
-from server.controller import RunController, build_tick_payload
+from server.controller import RunController
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
 from observability import get_logger, log_event as operational_log
@@ -61,12 +61,14 @@ class ParticipantReleaseBody(BaseModel):
     expected_tick: int
 
 
-def create_app(world: World) -> FastAPI:
-    controller = RunController(world)
+def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
+    controller = RunController(world, served_ticks=served_ticks)
     hub = controller.hub
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
     app.state.run_controller = controller
+    from server.v2_api import install_v2_routes
+    install_v2_routes(app, world, controller)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 
@@ -98,7 +100,7 @@ def create_app(world: World) -> FastAPI:
 
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
-    async def start_run(max_ticks: Optional[int] = None):
+    async def start_run(max_ticks: Optional[int] = Query(default=None, ge=1)):
         return await controller.start(max_ticks)
 
     @app.post("/api/run/pause")
@@ -308,8 +310,54 @@ def create_app(world: World) -> FastAPI:
         return [dict(r) for r in rows]
 
     @app.get("/api/conversations")
-    async def conversations(limit: int = 20):
-        convs = store.query("SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,))
+    async def conversations(
+        limit: int = Query(default=20, ge=1, le=200),
+        q: Optional[str] = Query(default=None, max_length=200),
+        agent_id: Optional[int] = Query(default=None, ge=1),
+        tick_from: Optional[int] = Query(default=None, ge=0),
+        tick_to: Optional[int] = Query(default=None, ge=0),
+        before_id: Optional[int] = Query(default=None, ge=1),
+    ):
+        if tick_from is not None and tick_to is not None and tick_from > tick_to:
+            raise HTTPException(status_code=422, detail="tick_from must be <= tick_to")
+
+        clauses = []
+        params: list[object] = []
+        search = (q or "").strip()
+        if search:
+            # Treat wildcard characters literally: this is a substring search,
+            # not a way to turn an empty query into an unbounded table scan.
+            escaped = (search.replace("\\", "\\\\")
+                       .replace("%", "\\%")
+                       .replace("_", "\\_"))
+            pattern = f"%{escaped}%"
+            clauses.append(
+                "(COALESCE(c.topic,'') COLLATE NOCASE LIKE ? ESCAPE '\\' OR EXISTS ("
+                "SELECT 1 FROM messages sm LEFT JOIN agents sa ON sa.id=sm.agent_id "
+                "WHERE sm.conv_id=c.id AND (sm.text COLLATE NOCASE LIKE ? ESCAPE '\\' "
+                "OR COALESCE(sa.name,'') COLLATE NOCASE LIKE ? ESCAPE '\\')))"
+            )
+            params.extend((pattern, pattern, pattern))
+        if agent_id is not None:
+            clauses.append(
+                "(EXISTS (SELECT 1 FROM json_each(c.participant_ids) "
+                "WHERE CAST(json_each.value AS INTEGER)=?) OR EXISTS ("
+                "SELECT 1 FROM messages am WHERE am.conv_id=c.id AND am.agent_id=?))")
+            params.extend((agent_id, agent_id))
+        if tick_from is not None:
+            clauses.append("c.tick>=?")
+            params.append(tick_from)
+        if tick_to is not None:
+            clauses.append("c.tick<=?")
+            params.append(tick_to)
+        if before_id is not None:
+            clauses.append("c.id<?")
+            params.append(before_id)
+
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        convs = store.query(
+            f"SELECT c.* FROM conversations c{where} ORDER BY c.id DESC LIMIT ?",
+            (*params, limit))
         out = []
         for c in convs:
             msgs = store.query(
@@ -318,6 +366,7 @@ def create_app(world: World) -> FastAPI:
                 (int(c["id"]),))
             out.append({"id": int(c["id"]), "tick": int(c["tick"]),
                         "participants": load_json(c["participant_ids"], []),
+                        "topic": c["topic"],
                         "messages": [dict(m) for m in msgs]})
         return out
 
@@ -476,8 +525,7 @@ def create_app(world: World) -> FastAPI:
     # ── report (PRD R10) ─────────────────────────────────────────────────────
     @app.post("/api/report")
     async def generate_report():
-        from reports.generate import generate_report as gen
-        path = gen(store, world, out_dir=str(world.config.get("report_dir", "reports/out")))
+        path = await controller.generate_report()
         operational_log(logger, logging.INFO, "report.generated",
                         run_id=world.gateway.run_id, tick=store.tick, path=path)
         return {"path": path}
@@ -487,8 +535,8 @@ def create_app(world: World) -> FastAPI:
     async def websocket_endpoint(ws: WebSocket):
         await hub.connect(ws)
         try:
-            await ws.send_text(json.dumps(build_tick_payload(
-                world, store.tick, {"tick": store.tick})))
+            await ws.send_text(json.dumps(controller.tick_payload(
+                store.tick, {"tick": store.tick})))
             while True:
                 await ws.receive_text()   # keepalive; controls go over REST
         except WebSocketDisconnect:

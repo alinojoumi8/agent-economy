@@ -28,16 +28,30 @@ jobs:
       - name: Install dashboard dependencies
         run: npm ci
         working-directory: dashboard
+      - name: Run dashboard tests
+        run: npm test
+        working-directory: dashboard
+      - name: Verify dashboard third-party notices
+        run: npm run licenses:check
+        working-directory: dashboard
+      - name: Audit dashboard dependencies
+        run: npm audit --audit-level=high
+        working-directory: dashboard
       - name: Build React dashboard
         run: npm run build
         working-directory: dashboard
       - name: Verify committed static bundle is current
-        run: git diff --exit-code -- server/static
+        run: |
+          git diff --exit-code -- server/static
+          test -z "$(git status --porcelain --untracked-files=all -- server/static)"
 
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Windows 3.11 completes the full 1,000-agent + portable-replay suite in
+    # roughly 16 minutes on hosted runners; retain the complete gate with
+    # enough headroom for normal runner variance.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -49,9 +63,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: requirements.lock
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Validate dependency environment
+        run: python -m pip check
       - name: Compile Python sources
-        run: python -m compileall -q agents engine experiments llm oracle reports server world run.py
+        run: python -m compileall -q agents engine experiments llm oracle reports research server world run.py
+      - name: Verify pinned research datasets
+        run: python run.py --verify-datasets config/data-manifest.yaml
       - name: Run test suite (includes golden-run diff)
         run: python -m pytest tests/ -q

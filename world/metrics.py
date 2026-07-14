@@ -49,6 +49,29 @@ class Metrics:
         out["insured_count"] = float(self.store.scalar(
             "SELECT COUNT(*) FROM insurance_policies WHERE status='active'", default=0))
         out["epidemic_multiplier"] = self.store.metric_latest("epidemic_multiplier", 1.0)
+        if self.semantics_version >= 4:
+            out["hhi"] = self._market_hhi(tick)
+            out["innovation_rate_30d"] = float(self.store.scalar(
+                "SELECT COUNT(*) FROM ip_assets WHERE registered_tick BETWEEN ? AND ?",
+                (max(0, tick - 29), tick), default=0))
+            out["litigation_burden"] = float(self.store.scalar(
+                "SELECT COUNT(*) FROM legal_matters WHERE status NOT IN ('settled','decided','dismissed')",
+                default=0)) / max(1.0, float(self.store.scalar(
+                    "SELECT COUNT(*) FROM firms WHERE status<>'bankrupt'", default=0)))
+            out["lobbying_spend_30d"] = float(self.store.scalar(
+                "SELECT COALESCE(SUM(amount_cents),0) FROM lobbying_activities WHERE tick BETWEEN ? AND ?",
+                (max(0, tick - 29), tick), default=0)) / 100.0
+            out["narrative_distortion"] = float(self.store.scalar(
+                "SELECT COALESCE(AVG(distortion),0) FROM information_items WHERE tick BETWEEN ? AND ?",
+                (max(0, tick - 29), tick), default=0) or 0)
+            out["firm_entries"] = float(self.store.scalar(
+                "SELECT COUNT(*) FROM firms WHERE founded_tick=?", (tick,), default=0))
+            out["firm_exits"] = float(self.store.scalar(
+                "SELECT COUNT(*) FROM events WHERE tick=? AND kind IN ('bankruptcy','merger_closed')",
+                (tick,), default=0))
+        if self.semantics_version >= 5:
+            out["fx_volume"] = float(self.store.scalar(
+                "SELECT COALESCE(SUM(base_qty),0) FROM fx_trades WHERE tick=?", (tick,), default=0))
         for name, value in out.items():
             if self.semantics_version >= 2:
                 # FINALIZE may be safely replayed after an interrupted boundary.
@@ -56,6 +79,17 @@ class Metrics:
                     "DELETE FROM metrics WHERE tick=? AND name=?", (tick, name))
             self.store.record_metric(tick, name, float(value))
         return out
+
+    def _market_hhi(self, tick: int) -> float:
+        rows = self.store.query(
+            "SELECT CAST(json_extract(payload_json,'$.firm_id') AS INTEGER) AS firm_id,"
+            "COALESCE(SUM(json_extract(payload_json,'$.total_cents')),0) AS revenue "
+            "FROM events WHERE kind='goods_sale' AND tick BETWEEN ? AND ? GROUP BY firm_id",
+            (max(0, tick - 29), tick))
+        total = sum(max(0, float(row["revenue"] or 0)) for row in rows)
+        if total <= 0:
+            return 0.0
+        return sum((float(row["revenue"] or 0) / total * 100.0) ** 2 for row in rows)
 
     def _gdp_proxy(self, tick: int) -> float:
         """Final-goods sales for one tick; legacy v1/v2 also included wages."""

@@ -1,0 +1,52 @@
+key: ai-competition-merger
+version: "1.0"
+title: AI Competition and Market Access Act
+ticks: 365
+base_config: ../runs/v2.yaml
+dataset_manifest: ../config/data-manifest.yaml
+limitations: Results are conditional on the fictional Northstar rules, agent strategies, calibration targets, and scenario design. They are not legal or policy predictions.
+common_shocks: []
+arms:
+  control:
+    treatment_variables: {regime: control}
+    shocks:
+      - kind: policy_rule_change
+        trigger: shock
+        trigger_params: {tick: 1}
+        params:
+          changes:
+            competition.hhi_threshold: 1800
+            competition.delta_threshold: 100
+            competition.agency_capacity: 1.0
+            ai.mandatory_acquisition_disclosure: false
+            ai.interoperability_remedy: false
+        label: baseline competition screen
+  light:
+    treatment_variables: {regime: light}
+    shocks:
+      - kind: policy_rule_change
+        trigger: shock
+        trigger_params: {tick: 1}
+        params:
+          changes:
+            competition.hhi_threshold: 1800
+            competition.delta_threshold: 100
+            competition.agency_capacity: 1.25
+            ai.mandatory_acquisition_disclosure: true
+            ai.interoperability_remedy: false
+        label: light AI acquisition regime
+  strict:
+    treatment_variables: {regime: strict, presumptive_challenge_hhi: 1800, presumptive_challenge_delta: 100}
+    shocks:
+      - kind: policy_rule_change
+        trigger: shock
+        trigger_params: {tick: 1}
+        params:
+          changes:
+            competition.hhi_threshold: 1500
+            competition.delta_threshold: 75
+            competition.agency_capacity: 1.5
+            ai.mandatory_acquisition_disclosure: true
+            ai.interoperability_remedy: true
+        label: strict AI acquisition regime
+metrics: [hhi, innovation_rate_30d, firm_entries, firm_exits, litigation_burden, lobbying_spend_30d, narrative_distortion, index, fx_volume]

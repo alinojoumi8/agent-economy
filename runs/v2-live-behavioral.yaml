@@ -1,0 +1,56 @@
+# Ten-tick live behavioral gate. This extends the provider-safe hybrid profile
+# with enough Northstar citizens to create a fictional startup and worker while
+# keeping the same four strategic core agents.
+extends: v2-live-hybrid.yaml
+
+population:
+  target_total: 36
+
+living_world:
+  enabled: true
+  core_agents: 4
+  promotion_interval_ticks: 30
+  require_trade_contract: true
+  fx_market_maker_inventory: 100000000
+  regions:
+    - key: northstar
+      name: Northstar Federation
+      currency: NSD
+      population: 30
+      specialization: [technology, services, finance]
+      x: 0.25
+      y: 0.35
+      legal_ruleset: northstar-us-inspired-1.0
+      rate_ppm: 1000000
+    - key: ironvale
+      name: Ironvale Union
+      currency: IVC
+      population: 3
+      specialization: [manufacturing, energy]
+      x: 0.72
+      y: 0.28
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 750000
+    - key: suncoast
+      name: Suncoast Republic
+      currency: SCD
+      population: 3
+      specialization: [agriculture, logistics, tourism]
+      x: 0.55
+      y: 0.78
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 1200000
+
+behavioral_fixture:
+  enabled: true
+  key: seeded-startup-behavior-v1
+  region: northstar
+  startup_name: Northstar Interface Labs
+  loan_amount_cents: 250000
+  pitch_amount_cents: 500000
+  damages_cents: 75000
+
+budget:
+  cap_usd: 0.50
+  oracle_reserve_usd: 0.05
+  conversation_pairs: 1

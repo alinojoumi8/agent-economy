@@ -9,16 +9,20 @@ heard become observations → memory → beliefs. This is the rumor medium.
 from __future__ import annotations
 
 from collections import deque
-from difflib import SequenceMatcher
 import json
+import math
 import re
 from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest
+from llm.gateway import Gateway, LLMRequest, sanitize_provider_text
 from agents.memory import Memory
 from agents.policies import conversation_turn
+from world.event_visibility import (
+    PUBLIC_REPORTABLE_EVENT_KINDS,
+    public_event_payload,
+)
 
 
 DEFAULT_CONVERSATION_THEMES = [
@@ -39,6 +43,11 @@ class Newsroom:
         self.gw = gateway
         self.config = config
         self.shocks = shocks
+        # Missing means historical behavior. Fresh maintained profiles opt in
+        # explicitly so stored runs replay with the newsroom contract they had
+        # when they were created.
+        self.daily_news_required = bool(
+            config.get("information", {}).get("daily_news_required", False))
         self.outlets = config.get("outlets", [
             {"id": 1, "name": "The Ledger", "slant": "pro-market-sensational"},
             {"id": 2, "name": "Commons Dispatch", "slant": "cautious-pro-labor"},
@@ -46,6 +55,23 @@ class Newsroom:
 
     async def publish(self, tick: int) -> list[dict]:
         events = self._salient_events(tick)
+        if not events and self.daily_news_required:
+            events = self._daily_events(tick)
+        if not events and self.daily_news_required:
+            # A quiet day is itself a true, engine-observed fact. Persist it
+            # before the desks write so every daily brief has an auditable
+            # source event instead of inventing activity that did not occur.
+            event_id = self.store.log_event(
+                tick, "quiet_day", {
+                    "summary": "No reportable economic event occurred before the newsroom phase.",
+                }, phase="NEWSROOM", importance=0.25)
+            events = [{
+                "id": event_id, "kind": "quiet_day",
+                "payload": {
+                    "summary": "No reportable economic event occurred before the newsroom phase.",
+                },
+                "importance": 0.25,
+            }]
         if not events:
             return []
         directives = self.shocks.active_slant_directives(tick) if self.shocks else {}
@@ -60,7 +86,9 @@ class Newsroom:
             drafts = await self._report_stories(tick, outlet, events)
             art = await self._write_story(tick, outlet, events, directives.get(outlet["id"]),
                                           drafts=drafts)
-            if art and art.get("headline"):
+            art = self._ground_article(
+                outlet, art, events, directive=directives.get(outlet["id"]))
+            if art:
                 pending.append((outlet, art))
         articles = []
         with self.store.savepoint(f"newsroom_{tick}"):
@@ -71,6 +99,15 @@ class Newsroom:
                     slant_tags=json.dumps(art.get("slant_tags", [outlet["slant"]])),
                     source_event_ids=json.dumps(art.get("source_event_ids", [])),
                     tone=float(art.get("tone", 0.0)), truthful=1)
+                # Mirror the article into the v2 claim/exposure economy.  The
+                # article remains grounded in the same event ids; this adapter
+                # never fabricates a second source of truth.
+                self.e.information.register_news_article(
+                    tick, aid, int(outlet["id"]), art["headline"], art.get("body", ""),
+                    [int(item) for item in art.get("source_event_ids", [])],
+                    float(art.get("tone", 0.0)),
+                    author_agent_id=self._desk_agent("editor", int(outlet["id"])),
+                    slant=float(art.get("slant_score", 0.0)))
                 self.store.log_event(tick, "news_published", {
                     "article_id": aid, "outlet_id": outlet["id"], "outlet": outlet["name"],
                     "headline": art["headline"], "tone": art.get("tone", 0.0)},
@@ -78,15 +115,142 @@ class Newsroom:
                 articles.append(art)
         return articles
 
-    def _salient_events(self, tick: int) -> list[dict]:
+    def _daily_events(self, tick: int) -> list[dict]:
+        """Return true events for a low-salience daily brief.
+
+        The normal desk still leads with material events. This path exists only
+        for profiles that promise daily publication and never reaches backward
+        to another tick, so a story cannot silently recycle yesterday's news.
+        """
+        kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS))
+        placeholders = ",".join("?" for _ in kinds)
         rows = self.store.query(
-            "SELECT * FROM events WHERE tick=? AND importance>=1.5 "
-            "AND kind NOT IN ('news_published','metrics_snapshot') ORDER BY importance DESC, id LIMIT 12",
-            (tick,))
+            f"SELECT * FROM events WHERE tick=? AND kind IN ({placeholders}) "
+            "ORDER BY importance DESC, id LIMIT 12", (tick, *kinds))
+        return [{
+            "id": int(row["id"]), "tick": int(row["tick"]), "kind": row["kind"],
+            "payload": public_event_payload(
+                row["kind"], load_json(row["payload_json"], {}) or {}),
+            "importance": float(row["importance"]),
+        } for row in rows]
+
+    def _logical_source_event_id(self, source_event_id: int,
+                                 events: list[dict]) -> Optional[int]:
+        """Resolve a recorded replay event ID to this database's local ID.
+
+        Event IDs are SQLite surrogates. Operational participant events can
+        shift them between a source run and an otherwise exact replay, so a
+        recorded newsroom response must be matched by deterministic event
+        contents before its citation is accepted locally. Ambiguous or missing
+        matches fail closed.
+        """
+        replay_conn = getattr(self.gw, "replay_conn", None)
+        if replay_conn is None:
+            return source_event_id if any(
+                int(event["id"]) == source_event_id for event in events) else None
+
+        source = replay_conn.execute(
+            "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
+            (source_event_id,)).fetchone()
+        if source is None:
+            return None
+        source_payload = public_event_payload(
+            source["kind"], load_json(source["payload_json"], {}) or {})
+        candidates = []
+        for event in events:
+            local = self.store.query_one(
+                "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
+                (int(event["id"]),))
+            if (local is not None
+                    and int(local["tick"]) == int(source["tick"])
+                    and str(local["kind"]) == str(source["kind"])
+                    and public_event_payload(
+                        local["kind"], load_json(local["payload_json"], {}) or {}
+                    ) == source_payload
+                    and float(local["importance"]) == float(source["importance"])):
+                candidates.append(int(event["id"]))
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _ground_article(self, outlet: dict, article: Optional[dict],
+                        events: list[dict], *,
+                        directive: Optional[str] = None) -> Optional[dict]:
+        """Fail closed to a deterministic brief when source provenance is bad."""
+        if not events:
+            return None
+        art = dict(article) if isinstance(article, dict) else {}
+        headline = art.get("headline")
+        body = art.get("body", "")
+        raw_tags = art.get("slant_tags")
+        raw_tone = art.get("tone", 0.0)
+        contract_valid = (
+            isinstance(headline, str) and bool(headline.strip())
+            and isinstance(body, str)
+            and isinstance(raw_tags, list)
+            and all(isinstance(tag, str) for tag in raw_tags)
+            and type(raw_tone) in {int, float}
+            and math.isfinite(float(raw_tone))
+        )
+        raw_sources = art.get("source_event_ids", [])
+        all_sources_valid = isinstance(raw_sources, list) and bool(raw_sources)
+        if not isinstance(raw_sources, list):
+            raw_sources = []
+        source_ids = []
+        for value in raw_sources:
+            # Provider citations are a typed protocol.  Coercing strings or
+            # booleans would make malformed/dangling references look valid.
+            if type(value) is not int:
+                all_sources_valid = False
+                continue
+            local_event_id = self._logical_source_event_id(value, events)
+            if local_event_id is None:
+                all_sources_valid = False
+            elif local_event_id not in source_ids:
+                source_ids.append(local_event_id)
+
+        # An editor response without a valid local source is not publishable.
+        # A compact engine-written brief preserves the daily promise without
+        # manufacturing facts or hiding the provider contract failure.
+        if not contract_valid or not source_ids or not all_sources_valid:
+            event = events[0]
+            kind = str(event.get("kind", "event"))
+            readable = kind.replace("_", " ")
+            art = {
+                "headline": f"{outlet['name']} daily brief: {readable}",
+                "body": (
+                    f"The event spine recorded {readable} today. "
+                    "This brief is grounded in today's recorded public event."),
+                "tone": 0.0,
+                "slant_tags": [outlet.get("slant", "neutral"), "daily-brief"],
+                "source_event_ids": [int(event["id"])],
+            }
+        else:
+            art["headline"] = sanitize_provider_text(headline).strip()
+            art["body"] = sanitize_provider_text(body).strip()
+            art["source_event_ids"] = source_ids
+            art["slant_tags"] = [
+                sanitize_provider_text(tag).strip()[:80]
+                for tag in raw_tags if sanitize_provider_text(tag).strip()
+            ] or [outlet.get("slant", "neutral")]
+            art["tone"] = max(-1.0, min(1.0, float(raw_tone)))
+            if directive:
+                art["tone"] = max(-1.0, art["tone"] - 0.3)
+                art["slant_tags"].append("directed")
+        return art
+
+    def _salient_events(self, tick: int) -> list[dict]:
+        kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS - {"quiet_day"}))
+        placeholders = ",".join("?" for _ in kinds)
+        rows = self.store.query(
+            f"SELECT * FROM events WHERE tick=? AND importance>=1.5 "
+            f"AND kind IN ({placeholders}) ORDER BY importance DESC, id LIMIT 12",
+            (tick, *kinds))
         out = []
         for r in rows:
-            out.append({"id": int(r["id"]), "kind": r["kind"],
-                        "payload": load_json(r["payload_json"], {}) or {},
+            out.append({"id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
+                        "payload": public_event_payload(
+                            r["kind"], load_json(r["payload_json"], {}) or {}),
                         "importance": float(r["importance"])})
         return out
 
@@ -134,11 +298,6 @@ class Newsroom:
                          tick=tick, max_tokens=400)
         resp = await self.gw.complete(req)
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
-        if directive and art.get("headline"):
-            # A slant directive skews tone negative/positive per its wording; scripted
-            # policy can't parse text, so nudge tone toward alarm when directed.
-            art["tone"] = float(art.get("tone", 0.0)) - 0.3
-            art["slant_tags"] = list(art.get("slant_tags", [])) + ["directed"]
         return art
 
 
@@ -178,19 +337,24 @@ class Conversations:
         if k <= 0:
             return []
         ties = self.store.query(
-            "SELECT t.agent_a, t.agent_b, t.weight FROM social_ties t "
+            "SELECT t.agent_a, t.agent_b, t.weight,x.retired AS a_retired,y.retired AS b_retired "
+            "FROM social_ties t "
             "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
             "WHERE x.alive=1 AND y.alive=1")
         if not ties:
             return []
         # Weight by tie strength + event salience (agents touched by big events talk).
         salient = {int(r["agent_id"]) for r in self.store.query(
-            "SELECT DISTINCT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}
+            "SELECT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}
         weighted = []
         for t in ties:
             w = float(t["weight"])
             if int(t["agent_a"]) in salient or int(t["agent_b"]) in salient:
                 w *= 3.0
+            if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                    and (bool(t["a_retired"]) or bool(t["b_retired"]))):
+                w *= max(1.0, float(self.config.get("conversations", {}).get(
+                    "retiree_pair_weight", 1.75)))
             weighted.append((w, int(t["agent_a"]), int(t["agent_b"])))
         # Deterministic weighted sample without replacement via engine PRNG.
         chosen: list[tuple[int, int]] = []
@@ -225,7 +389,8 @@ class Conversations:
                  for aid in (a_id, b_id)}
         profiles = {
             aid: dict(self.store.query_one(
-                "SELECT name, occupation, age, health, kind FROM agents WHERE id=?", (aid,)))
+                "SELECT name, occupation, age, health, kind, population_tier "
+                "FROM agents WHERE id=?", (aid,)))
             for aid in (a_id, b_id)
         }
         rumors = {aid: self._rumor_held(aid, tick) for aid in (a_id, b_id)}
@@ -271,8 +436,15 @@ class Conversations:
                     if key != "avoid_texts"
                 })[:2400], context=context,
                 agent_id=speaker, tick=tick, max_tokens=120)
-            resp = await self.gw.complete(req, schema_hint=schema)
-            env = resp.parsed if isinstance(resp.parsed, dict) else {}
+            if (int(self.config.get("engine_semantics_version", 1)) >= 5
+                    and profiles[speaker].get("population_tier") != "core"):
+                # Peripheral dialogue is generated directly by the bounded,
+                # deterministic policy. Only the 100-agent core may create a
+                # model-call record in living-world runs.
+                env = conversation_turn(context)
+            else:
+                resp = await self.gw.complete(req, schema_hint=schema)
+                env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
             if not text:
                 continue
@@ -375,12 +547,26 @@ class Conversations:
         key = cls._line_key(text)
         if not key:
             return False
+        tokens = key.split()
+        token_set = set(tokens)
+        shingles = set(zip(tokens, tokens[1:], tokens[2:])) if len(tokens) >= 3 else set()
         for prior in prior_lines:
             prior_key = cls._line_key(prior)
             if key == prior_key:
                 return True
-            if min(len(key), len(prior_key)) >= 24:
-                if SequenceMatcher(None, key, prior_key).ratio() >= 0.90:
+            prior_tokens = prior_key.split()
+            prior_set = set(prior_tokens)
+            if token_set and prior_set:
+                intersection = len(token_set & prior_set)
+                union = len(token_set | prior_set)
+                if union and intersection / union >= 0.82:
+                    return True
+            if shingles and len(prior_tokens) >= 3:
+                prior_shingles = set(zip(
+                    prior_tokens, prior_tokens[1:], prior_tokens[2:]))
+                overlap = len(shingles & prior_shingles)
+                smaller = min(len(shingles), len(prior_shingles))
+                if smaller and overlap / smaller >= 0.80:
                     return True
         return False
 

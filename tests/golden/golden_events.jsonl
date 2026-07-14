@@ -109,8 +109,6 @@
 {"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":22,"reason":"out of stock"},"ph":"EXECUTION","t":4}
 {"k":"price_set","p":{"firm_id":1,"new_cents":640,"old_cents":674,"product":"food_good"},"ph":"EXECUTION","t":4}
 {"k":"price_set","p":{"firm_id":4,"new_cents":5512,"old_cents":5250,"product":"care"},"ph":"EXECUTION","t":4}
-{"k":"news_published","p":{"article_id":3,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":4}
-{"k":"news_published","p":{"article_id":4,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":4}
 {"k":"conversation","p":{"conv_id":13,"participants":[5,23],"turns":3},"ph":"EVENING","t":4}
 {"k":"conversation","p":{"conv_id":14,"participants":[11,16],"turns":3},"ph":"EVENING","t":4}
 {"k":"conversation","p":{"conv_id":15,"participants":[14,18],"turns":3},"ph":"EVENING","t":4}
@@ -139,8 +137,6 @@
 {"k":"price_set","p":{"firm_id":1,"new_cents":608,"old_cents":640,"product":"food_good"},"ph":"EXECUTION","t":5}
 {"k":"price_set","p":{"firm_id":4,"new_cents":5787,"old_cents":5512,"product":"care"},"ph":"EXECUTION","t":5}
 {"k":"price_set","p":{"firm_id":5,"new_cents":3472,"old_cents":3307,"product":"coverage"},"ph":"EXECUTION","t":5}
-{"k":"news_published","p":{"article_id":5,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":5}
-{"k":"news_published","p":{"article_id":6,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":5}
 {"k":"conversation","p":{"conv_id":17,"participants":[3,6],"turns":3},"ph":"EVENING","t":5}
 {"k":"conversation","p":{"conv_id":18,"participants":[16,23],"turns":3},"ph":"EVENING","t":5}
 {"k":"conversation","p":{"conv_id":19,"participants":[19,27],"turns":3},"ph":"EVENING","t":5}
@@ -174,8 +170,8 @@
 {"k":"price_set","p":{"firm_id":1,"new_cents":577,"old_cents":608,"product":"food_good"},"ph":"EXECUTION","t":6}
 {"k":"price_set","p":{"firm_id":4,"new_cents":6076,"old_cents":5787,"product":"care"},"ph":"EXECUTION","t":6}
 {"k":"price_set","p":{"firm_id":5,"new_cents":3645,"old_cents":3472,"product":"coverage"},"ph":"EXECUTION","t":6}
-{"k":"news_published","p":{"article_id":7,"headline":"QUESTIONS SWIRL AROUND A LENDER \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.7},"ph":"NEWSROOM","t":6}
-{"k":"news_published","p":{"article_id":8,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":6}
+{"k":"news_published","p":{"article_id":3,"headline":"QUESTIONS SWIRL AROUND A LENDER \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.7},"ph":"NEWSROOM","t":6}
+{"k":"news_published","p":{"article_id":4,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":6}
 {"k":"conversation","p":{"conv_id":21,"participants":[2,16],"turns":3},"ph":"EVENING","t":6}
 {"k":"conversation","p":{"conv_id":22,"participants":[1,13],"turns":3},"ph":"EVENING","t":6}
 {"k":"conversation","p":{"conv_id":23,"participants":[8,24],"turns":3},"ph":"EVENING","t":6}
@@ -205,8 +201,8 @@
 {"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":24,"reason":"out of stock"},"ph":"EXECUTION","t":7}
 {"k":"price_set","p":{"firm_id":1,"new_cents":548,"old_cents":577,"product":"food_good"},"ph":"EXECUTION","t":7}
 {"k":"price_set","p":{"firm_id":5,"new_cents":3827,"old_cents":3645,"product":"coverage"},"ph":"EXECUTION","t":7}
-{"k":"news_published","p":{"article_id":9,"headline":"CENTRAL BANK MOVES RATES \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":7}
-{"k":"news_published","p":{"article_id":10,"headline":"Central Bank Moves Rates (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":7}
+{"k":"news_published","p":{"article_id":5,"headline":"CENTRAL BANK MOVES RATES \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":7}
+{"k":"news_published","p":{"article_id":6,"headline":"Central Bank Moves Rates (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":7}
 {"k":"conversation","p":{"conv_id":25,"participants":[6,22],"turns":3},"ph":"EVENING","t":7}
 {"k":"conversation","p":{"conv_id":26,"participants":[1,7],"turns":3},"ph":"EVENING","t":7}
 {"k":"conversation","p":{"conv_id":27,"participants":[13,21],"turns":3},"ph":"EVENING","t":7}
@@ -236,8 +232,8 @@
 {"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":23,"reason":"out of stock"},"ph":"EXECUTION","t":8}
 {"k":"action_rejected","p":{"action":{"firm_id":2,"qty":8,"type":"buy_goods"},"actor_id":24,"reason":"out of stock"},"ph":"EXECUTION","t":8}
 {"k":"price_set","p":{"firm_id":4,"new_cents":6379,"old_cents":6076,"product":"care"},"ph":"EXECUTION","t":8}
-{"k":"news_published","p":{"article_id":11,"headline":"VOTERS DELIVER A FISCAL VERDICT \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":8}
-{"k":"news_published","p":{"article_id":12,"headline":"Voters Deliver a Fiscal Verdict (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":8}
+{"k":"news_published","p":{"article_id":7,"headline":"VOTERS DELIVER A FISCAL VERDICT \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":8}
+{"k":"news_published","p":{"article_id":8,"headline":"Voters Deliver a Fiscal Verdict (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":8}
 {"k":"conversation","p":{"conv_id":29,"participants":[4,23],"turns":3},"ph":"EVENING","t":8}
 {"k":"conversation","p":{"conv_id":30,"participants":[1,13],"turns":3},"ph":"EVENING","t":8}
 {"k":"conversation","p":{"conv_id":31,"participants":[21,26],"turns":3},"ph":"EVENING","t":8}
@@ -265,8 +261,6 @@
 {"k":"price_set","p":{"firm_id":1,"new_cents":520,"old_cents":548,"product":"food_good"},"ph":"EXECUTION","t":9}
 {"k":"price_set","p":{"firm_id":4,"new_cents":6697,"old_cents":6379,"product":"care"},"ph":"EXECUTION","t":9}
 {"k":"price_set","p":{"firm_id":5,"new_cents":4018,"old_cents":3827,"product":"coverage"},"ph":"EXECUTION","t":9}
-{"k":"news_published","p":{"article_id":13,"headline":"MARKETS IN MOTION \u2014 INVESTORS ON EDGE","outlet":"A","outlet_id":1,"tone":-0.1},"ph":"NEWSROOM","t":9}
-{"k":"news_published","p":{"article_id":14,"headline":"Markets in Motion (workers weigh the fallout)","outlet":"B","outlet_id":2,"tone":0.2},"ph":"NEWSROOM","t":9}
 {"k":"conversation","p":{"conv_id":33,"participants":[21,27],"turns":3},"ph":"EVENING","t":9}
 {"k":"conversation","p":{"conv_id":34,"participants":[10,11],"turns":3},"ph":"EVENING","t":9}
 {"k":"conversation","p":{"conv_id":35,"participants":[13,15],"turns":3},"ph":"EVENING","t":9}

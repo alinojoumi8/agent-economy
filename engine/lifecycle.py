@@ -21,6 +21,7 @@ so lifecycle schedules stay comparable across experiment arms.
 """
 from __future__ import annotations
 
+import json
 import random
 from typing import Optional
 
@@ -44,6 +45,10 @@ DEFAULT_PARAMS = {
     "critical_recovery_per_tick": 0.25,
     "medical_cost_cents": 5000,           # per sick tick, out-of-pocket
     "retirement_age": 65,
+    "retirement_liquidity_target_cents": 100_000,
+    "retired_act_every": 2,
+    "retired_portfolio_every": 5,
+    "retired_news_every": 1,
     "birth_annual_prob": 0.05,            # age-appropriate households
     "birth_min_age": 22,
     "birth_max_age": 42,
@@ -58,7 +63,8 @@ DEFAULT_PARAMS = {
 class Lifecycle:
     def __init__(self, store: Store, ledger: Ledger, bank: Bank, firms: Firms,
                  prng: random.Random, params: Optional[dict] = None,
-                 health_cfg: Optional[dict] = None):
+                 health_cfg: Optional[dict] = None,
+                 engine_semantics_version: int = 2):
         self.store = store
         self.ledger = ledger
         self.bank = bank
@@ -66,6 +72,7 @@ class Lifecycle:
         self.prng = prng  # dedicated lifecycle PRNG
         self.p = {**DEFAULT_PARAMS, **(params or {})}
         self.h = {**DEFAULT_HEALTH, **(health_cfg or {})}
+        self.engine_semantics_version = int(engine_semantics_version)
 
     # ── nightly driver ───────────────────────────────────────────────────────
     def run_nightly(self, tick: int) -> None:
@@ -93,7 +100,36 @@ class Lifecycle:
                 self._retire(tick, agent_id)
 
     def _retire(self, tick: int, agent_id: int) -> None:
-        self.store.update("agents", agent_id, retired=1)
+        updates = {"retired": 1}
+        if self.engine_semantics_version >= 7:
+            row = self.store.query_one("SELECT cadence_json FROM agents WHERE id=?", (agent_id,))
+            cadence = json.loads(row["cadence_json"] or "{}") if row else {}
+            cadence.update({
+                "act": max(1, int(self.p["retired_act_every"])),
+                "portfolio": max(1, int(self.p["retired_portfolio_every"])),
+                "news": max(1, int(self.p["retired_news_every"])),
+            })
+            updates["cadence_json"] = json.dumps(cadence, sort_keys=True)
+            applications = self.store.query(
+                "SELECT id FROM applications WHERE agent_id=? "
+                "AND state IN ('pending','negotiating') ORDER BY id", (agent_id,))
+            application_ids = [int(application["id"]) for application in applications]
+            if application_ids:
+                placeholders = ",".join("?" for _ in application_ids)
+                self.store.execute(
+                    "UPDATE job_offers SET status='rejected',decided_tick=? "
+                    f"WHERE status='pending' AND application_id IN ({placeholders})",
+                    (tick, *application_ids))
+                self.store.execute(
+                    "UPDATE applications SET state='withdrawn' "
+                    f"WHERE id IN ({placeholders})", tuple(application_ids))
+                self.store.log_event(
+                    tick, "retirement_job_search_withdrawn", {
+                        "agent_id": agent_id,
+                        "application_ids": application_ids,
+                    }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
+                    importance=1.0)
+        self.store.update("agents", agent_id, **updates)
         self.store.execute(
             "UPDATE employments SET status='ended', end_tick=? WHERE agent_id=? AND status='active'",
             (tick, agent_id))
@@ -164,15 +200,18 @@ class Lifecycle:
         acct = self.ledger.agent_checking_id(agent_id)
         if acct is None or cost <= 0:
             return
+        currency = str(self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (acct,), default="USD") or "USD")
         # Provider: an open hospital firm earns the fee (R17); else the sink.
-        provider = self._hospital_account() or self.ledger.system_account(SYS_MEDICAL)
+        provider = self._hospital_account(currency) or self.ledger.system_account(
+            SYS_MEDICAL, currency_code=currency)
         # Insurance covers coverage_bps of the bill, limited by insurer cash.
         covered = 0
         policy = self._active_policy(agent_id)
         if policy:
             insurer = self.store.query_one(
-                "SELECT account_id FROM firms WHERE id=? AND status<>'bankrupt'",
-                (policy["insurer_firm_id"],))
+                "SELECT account_id FROM firms WHERE id=? AND status<>'bankrupt' AND currency_code=?",
+                (policy["insurer_firm_id"], currency))
             if insurer and insurer["account_id"]:
                 want = cost * int(policy["coverage_bps"]) // 10000
                 covered = min(want, max(0, self.ledger.balance(int(insurer["account_id"]))))
@@ -191,10 +230,10 @@ class Lifecycle:
                              memo=f"medical out-of-pocket agent {agent_id}")
 
     # ── health economy plumbing (R17) ────────────────────────────────────────
-    def _hospital_account(self) -> Optional[int]:
+    def _hospital_account(self, currency: str = "USD") -> Optional[int]:
         v = self.store.scalar(
             "SELECT account_id FROM firms WHERE sector='health' AND status<>'bankrupt' "
-            "ORDER BY id LIMIT 1")
+            "AND currency_code=? ORDER BY id LIMIT 1", (currency,))
         return int(v) if v is not None else None
 
     def _active_policy(self, agent_id: int):
@@ -210,13 +249,16 @@ class Lifecycle:
             pol_id = int(pol["id"])
             agent = self.store.query_one("SELECT alive FROM agents WHERE id=?", (pol["agent_id"],))
             insurer = self.store.query_one(
-                "SELECT account_id, status FROM firms WHERE id=?", (pol["insurer_firm_id"],))
+                "SELECT account_id, status, currency_code FROM firms WHERE id=?", (pol["insurer_firm_id"],))
             if not agent or not agent["alive"] or not insurer or insurer["status"] == "bankrupt":
                 self.store.update("insurance_policies", pol_id, status="cancelled", end_tick=tick)
                 continue
             acct = self.ledger.agent_checking_id(int(pol["agent_id"]))
             premium = int(pol["premium_cents"])
-            if acct is not None and self.ledger.balance(acct) >= premium:
+            acct_currency = self.store.scalar(
+                "SELECT currency_code FROM accounts WHERE id=?", (acct,), default=None) if acct else None
+            if (acct is not None and str(acct_currency or "USD") == str(insurer["currency_code"] or "USD")
+                    and self.ledger.balance(acct) >= premium):
                 self.ledger.transfer(tick, acct, int(insurer["account_id"]), premium,
                                      kind="insurance_premium", memo=f"premium policy {pol_id}")
                 self.store.update("insurance_policies", pol_id,
@@ -267,16 +309,23 @@ class Lifecycle:
 
         # 2) Transfer remaining cash to heir (or escheat to government).
         for acct in self.store.query(
-                "SELECT id, balance_cents, bank_id FROM accounts "
+                "SELECT id, balance_cents, bank_id, currency_code FROM accounts "
                 "WHERE owner_type='agent' AND owner_id=? AND balance_cents>0", (agent_id,)):
             bal = int(acct["balance_cents"])
             if heir_id:
-                heir_acct = self.ledger.agent_checking_id(heir_id)
+                heir = self.store.query_one(
+                    "SELECT id FROM accounts WHERE owner_type='agent' AND owner_id=? "
+                    "AND currency_code=? ORDER BY CASE kind WHEN 'checking' THEN 0 ELSE 1 END,id LIMIT 1",
+                    (heir_id, acct["currency_code"]))
+                heir_acct = int(heir["id"]) if heir else self.ledger.create_account(
+                    "agent", heir_id, "fx", label=f"inheritance:{heir_id}:{acct['currency_code']}",
+                    currency_code=str(acct["currency_code"] or "USD"))
                 if heir_acct:
                     self.ledger.transfer(tick, int(acct["id"]), heir_acct, bal,
                                          kind="inheritance", memo=f"estate to heir {heir_id}")
                     continue
-            gov = self.ledger.system_account(SYS_GOV)
+            gov = self.ledger.system_account(
+                SYS_GOV, currency_code=str(acct["currency_code"] or "USD"))
             self.ledger.transfer(tick, int(acct["id"]), gov, bal, kind="escheat",
                                  memo="escheat to government")
 

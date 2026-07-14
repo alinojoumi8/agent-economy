@@ -37,7 +37,7 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | Key | Meaning |
 |---|---|
 | `seed` | World, persona, targeting, and lifecycle reproducibility |
-| `engine_semantics_version` | Runtime compatibility contract; new profiles use `3` |
+| `engine_semantics_version` | Runtime compatibility contract; maintained profiles use `7` |
 | `population.size` | Sampled citizen count; institutional/founder agents are added |
 | `banks`, `firms`, `exchange` | Deterministic banking, production, and market parameters |
 | `central_bank` | Policy target, neutral rate, and step bounds |
@@ -55,7 +55,7 @@ basis points. One tick is one simulated day.
 New production/base/acceptance profiles use:
 
 ```yaml
-engine_semantics_version: 3
+engine_semantics_version: 7
 information:
   citizen_bank_visibility: public_status
 beliefs:

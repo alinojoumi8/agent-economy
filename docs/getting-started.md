@@ -17,7 +17,7 @@ From the repository root:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 ```
 
 On macOS or Linux, activate with `source .venv/bin/activate`.
@@ -99,13 +99,10 @@ calls, and prints canonical table-digest proof.
 
 ## Verify a checkout
 
-```powershell
-python -m pytest tests/ -q
-npm --prefix dashboard ci
-npm --prefix dashboard test
-npm --prefix dashboard run build
-git diff --check
-```
+Run the complete, hash-locked verification gate in the
+[development guide](development.md#test-layers). It includes compilation,
+pinned-dataset verification, Python and dashboard tests, dependency audits,
+third-party notice freshness, the production build, and diff hygiene.
 
 Continue with [core concepts and use cases](research-guide.md), the
 [configuration reference](configuration.md), or the

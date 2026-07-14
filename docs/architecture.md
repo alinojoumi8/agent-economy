@@ -95,10 +95,12 @@ belief-event, and macro-metric behavior so historical runs remain replayable.
 ## Runtime boundaries
 
 - V1 is a local single-process app with no authentication. Bind to localhost.
-- SQLite, approximately 100 agents, and one operator are intentional v1 limits.
-- Participant mode exists as an isolated, provider-free one-citizen sandbox.
-  Regions/FX, 1,000-agent scale, and hosted multi-user service remain future
-  work.
+- SQLite, approximately 100 agents, one region, and one operator remain the
+  intentional v1 acceptance baseline.
+- R18 participant mode, R19 deterministic 1,000-agent core/periphery scale, and
+  R20 regions/FX/trade/migration are implemented optional extensions. R21
+  real-US microdata calibration and R22 hosted multi-user operation remain
+  separate future work.
 - The Oracle is read-only and CLI-backed models are restricted to Oracle/dev
   purposes.
 

@@ -52,38 +52,46 @@ class Ledger:
     def create_account(self, owner_type: str, owner_id: Optional[int], kind: str, *,
                         bank_id: Optional[int] = None, label: str = "",
                         is_external: bool = False, opening_cents: int = 0,
-                        funding_label: str = SYS_EXTERNAL, tick: Optional[int] = None) -> int:
+                        funding_label: str = SYS_EXTERNAL, tick: Optional[int] = None,
+                        currency_code: str = "USD") -> int:
+        currency_code = str(currency_code or "USD").upper()
         acct_id = self.store.insert(
             "accounts", owner_type=owner_type, owner_id=owner_id, bank_id=bank_id,
             kind=kind, label=label, balance_cents=0, is_external=1 if is_external else 0,
+            currency_code=currency_code,
         )
         if opening_cents:
             # Fund from a visible source account so the books stay balanced. Genesis
             # uses the external endowment; arrivals mint from population_inflow (R11).
-            src = self.system_account(funding_label)
+            src = self.system_account(funding_label, currency_code=currency_code)
             self.post(self.store.tick if tick is None else tick, "endowment", [
                 Leg(acct_id, opening_cents, "opening balance"),
                 Leg(src, -opening_cents, "endowment source"),
             ], memo=f"endow {label or acct_id}")
         return acct_id
 
-    def ensure_system_account(self, label: str) -> int:
+    def ensure_system_account(self, label: str, *, currency_code: str = "USD") -> int:
+        currency_code = str(currency_code or "USD").upper()
         row = self.store.query_one(
-            "SELECT id FROM accounts WHERE owner_type='system' AND label=?", (label,)
+            "SELECT id FROM accounts WHERE owner_type='system' AND label=? AND currency_code=?",
+            (label, currency_code)
         )
         if row:
             return int(row["id"])
         return self.store.insert(
             "accounts", owner_type="system", owner_id=None, bank_id=None,
             kind="external", label=label, balance_cents=0, is_external=1,
+            currency_code=currency_code,
         )
 
-    def system_account(self, label: str) -> int:
+    def system_account(self, label: str, *, currency_code: str = "USD") -> int:
+        currency_code = str(currency_code or "USD").upper()
         row = self.store.query_one(
-            "SELECT id FROM accounts WHERE owner_type='system' AND label=?", (label,)
+            "SELECT id FROM accounts WHERE owner_type='system' AND label=? AND currency_code=?",
+            (label, currency_code)
         )
         if not row:
-            return self.ensure_system_account(label)
+            return self.ensure_system_account(label, currency_code=currency_code)
         return int(row["id"])
 
     def balance(self, account_id: int) -> int:
@@ -110,16 +118,29 @@ class Ledger:
     # ── the one write path ───────────────────────────────────────────────────
     def post(self, tick: int, kind: str, legs: list[Leg], memo: str = "") -> int:
         """Post one balanced transaction atomically. Raises if legs don't sum to 0."""
-        total = sum(leg.delta_cents for leg in legs)
-        if total != 0:
-            raise LedgerError(
-                f"unbalanced transaction '{kind}': legs sum to {total} (must be 0); legs={legs}"
-            )
         if not legs:
             raise LedgerError(f"empty transaction '{kind}'")
 
+        accounts = {}
+        totals: dict[str, int] = {}
+        for leg in legs:
+            account = self.store.query_one(
+                "SELECT balance_cents, currency_code FROM accounts WHERE id=?", (leg.account_id,))
+            if account is None:
+                raise LedgerError(f"account {leg.account_id} does not exist (txn '{kind}')")
+            accounts[leg.account_id] = account
+            currency = str(account["currency_code"] or "USD")
+            totals[currency] = totals.get(currency, 0) + int(leg.delta_cents)
+        unbalanced = {currency: total for currency, total in totals.items() if total != 0}
+        if unbalanced:
+            raise LedgerError(
+                f"unbalanced transaction '{kind}' by currency: {unbalanced}; legs={legs}"
+            )
+
         now = datetime.now(timezone.utc).isoformat()
-        txn_id = self.store.insert("transactions", tick=tick, kind=kind, memo=memo, created_at=now)
+        transaction_currency = next(iter(totals)) if len(totals) == 1 else "MULTI"
+        txn_id = self.store.insert("transactions", tick=tick, kind=kind, memo=memo,
+                                   created_at=now, currency_code=transaction_currency)
 
         # For counter_account annotation on 2-leg txns (the common case).
         counter = None
@@ -128,9 +149,6 @@ class Ledger:
                        legs[1].account_id: legs[0].account_id}
 
         for leg in legs:
-            bal = self.store.scalar("SELECT balance_cents FROM accounts WHERE id=?", (leg.account_id,))
-            if bal is None:
-                raise LedgerError(f"account {leg.account_id} does not exist (txn '{kind}')")
             self.store.execute(
                 "UPDATE accounts SET balance_cents = balance_cents + ? WHERE id=?",
                 (leg.delta_cents, leg.account_id),
@@ -155,6 +173,10 @@ class Ledger:
 
         f = self.store.query_one("SELECT bank_id, kind FROM accounts WHERE id=?", (from_acct,))
         t = self.store.query_one("SELECT bank_id, kind FROM accounts WHERE id=?", (to_acct,))
+        currencies = self.store.query(
+            "SELECT id, currency_code FROM accounts WHERE id IN (?,?)", (from_acct, to_acct))
+        if len(currencies) != 2 or len({str(row["currency_code"] or "USD") for row in currencies}) != 1:
+            raise LedgerError("direct transfer requires accounts in the same currency; use the FX market")
         if f and t and f["bank_id"] and t["bank_id"] and f["bank_id"] != t["bank_id"] \
                 and f["kind"] in ("checking", "savings") and t["kind"] in ("checking", "savings"):
             from_reserve = self._bank_reserve(int(f["bank_id"]))
@@ -175,18 +197,23 @@ class Ledger:
           2. each account's materialised balance == sum of its ledger deltas.
         """
         grand = int(self.store.scalar("SELECT COALESCE(SUM(balance_cents),0) FROM accounts", default=0))
+        currency_sums = {str(row["currency_code"] or "USD"): int(row["total"] or 0)
+                         for row in self.store.query(
+                             "SELECT currency_code, COALESCE(SUM(balance_cents),0) AS total "
+                             "FROM accounts GROUP BY currency_code")}
         mismatches = self.store.query(
             "SELECT a.id AS id, a.label AS label, a.balance_cents AS bal, "
-            "       COALESCE(le.s,0) AS recomputed "
+            "       COALESCE(le.total_cents,0) AS recomputed "
             "FROM accounts a "
-            "LEFT JOIN (SELECT account_id, SUM(delta_cents) AS s FROM ledger_entries GROUP BY account_id) le "
-            "  ON le.account_id = a.id "
-            "WHERE a.balance_cents <> COALESCE(le.s,0)"
+            "LEFT JOIN account_ledger_totals le ON le.account_id = a.id "
+            "WHERE a.balance_cents <> COALESCE(le.total_cents,0)"
         )
-        ok = (grand == 0) and (len(mismatches) == 0)
+        currencies_conserved = all(value == 0 for value in currency_sums.values())
+        ok = currencies_conserved and (len(mismatches) == 0)
         diag = {
             "grand_sum_cents": grand,
-            "conserved": grand == 0,
+            "conserved": currencies_conserved,
+            "currency_sums": currency_sums,
             "account_mismatches": [
                 {"account_id": int(m["id"]), "label": m["label"],
                  "stored": int(m["bal"]), "recomputed": int(m["recomputed"])}

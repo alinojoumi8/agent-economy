@@ -1,7 +1,7 @@
 """Genesis: build a fresh world from config (population, institutions, firms).
 
 Everything here is deterministic given the seed: the population comes from the
-vendored census persona generator (its own PRNG), and structural choices (bank
+attributed synthetic-heuristic persona generator (its own PRNG), and structural choices (bank
 assignment, social ties, initial employment) come from the engine PRNG. Money is
 minted from the visible external endowment account so the books reconcile to zero
 from tick 0.
@@ -15,7 +15,7 @@ from typing import Optional
 from engine.core import Economy
 from engine.ledger import SYS_EXTERNAL, SYS_INFLOW
 from agents.memory import Memory
-from agents.personas.vendor.persona_gen import Persona, sample_persona, sample_population
+from agents.personas.library import Persona, sample_persona, sample_population
 
 
 class Genesis:
@@ -35,13 +35,17 @@ class Genesis:
     # ── top-level ────────────────────────────────────────────────────────────
     def build(self) -> None:
         self.e.ensure_system_accounts()
+        self.e.regions.initialize(0)
         self._central_bank()
         self._banks()
         self._institutions()
+        self.e.politics.initialize(0)
         self._population()
         self._firms()
         self._health_institutions()
         self._social_graph()
+        self.e.startups.initialize_trader_profiles(0)
+        self.e.regions.rebalance_tiers(0)
         self._initial_metrics()
         self.store.log_event(0, "genesis", {
             "banks": len(self.bank_ids),
@@ -52,10 +56,27 @@ class Genesis:
 
     # ── central bank ─────────────────────────────────────────────────────────
     def _central_bank(self) -> None:
-        res = self.e.ledger.create_account("central_bank", 1, "reserve", label="central_bank_reserve")
+        region_id = self.e.regions.primary_region_id() if self.e.regions.enabled else None
+        currency = self.e.regions.currency_for_region(region_id)
+        currencies = [currency]
+        if int(self.config.get("engine_semantics_version", 1)) >= 6:
+            configured_currencies = [
+                str(row["code"]) for row in self.store.query(
+                    "SELECT code FROM currencies ORDER BY code")
+            ]
+            currencies = ([currency] + [
+                code for code in configured_currencies if code != currency
+            ]) if configured_currencies else currencies
+        for code in currencies:
+            self.e.ledger.create_account(
+                "central_bank", 1, "reserve",
+                label=("central_bank_reserve" if code == currency
+                       else f"central_bank_reserve:{code}"),
+                currency_code=code)
         gov_agent = self.store.insert(
             "agents", name="Governor Vale", kind="staff", occupation="central banker",
             role="central_banker", age=58, model_tier="strong", alive=1, arrived_tick=0,
+            region_id=region_id, population_tier="core", pinned_core=1,
             personality_json=json.dumps({"prudent": 0.9}), cadence_json=json.dumps({"act": 1}))
         self.central_bank_agent = gov_agent
         self.store.log_event(0, "institution_created", {"kind": "central_bank", "agent_id": gov_agent},
@@ -67,14 +88,19 @@ class Genesis:
         names = bank_cfg.get("names", ["First Bank", "Union Bank", "Meridian Trust"])
         n = int(bank_cfg.get("count", 2))
         for i in range(n):
-            res = self.e.ledger.create_account("bank", None, "reserve", label=f"{names[i]}_reserve")
-            eq = self.e.ledger.create_account("bank", None, "equity", label=f"{names[i]}_equity")
+            name = names[i % len(names)]
+            region_id = self.e.regions.region_for_bank_index(i) if self.e.regions.enabled else None
+            currency = self.e.regions.currency_for_region(region_id)
+            res = self.e.ledger.create_account("bank", None, "reserve", label=f"{name}_reserve",
+                                               currency_code=currency)
+            eq = self.e.ledger.create_account("bank", None, "equity", label=f"{name}_equity",
+                                              currency_code=currency)
             bid = self.store.insert(
-                "banks", name=names[i], reserve_account_id=res, equity_account_id=eq,
+                "banks", name=name, reserve_account_id=res, equity_account_id=eq,
                 risk_policy_json=json.dumps(bank_cfg.get("risk_policy",
                     {"min_rate_bps": 300, "max_rate_bps": 3000, "default_rate_bps": 900})),
                 reserve_requirement_bps=int(bank_cfg.get("reserve_requirement_bps", 1000)),
-                status="open")
+                status="open", region_id=region_id, currency_code=currency)
             self.store.execute("UPDATE accounts SET owner_id=? WHERE id=?", (bid, res))
             self.store.execute("UPDATE accounts SET owner_id=? WHERE id=?", (bid, eq))
             self.bank_ids.append(bid)
@@ -82,11 +108,11 @@ class Genesis:
     def _fund_bank_reserves(self) -> None:
         """After deposits exist, fund each bank's reserves to the configured ratio."""
         ratio = float(self.config.get("banks", {}).get("initial_reserve_ratio", 0.6))
-        ext = self.e.ledger.system_account(SYS_EXTERNAL)
         for bid in self.bank_ids:
             deposits = self.e.bank.deposits(bid)
             target = int(deposits * ratio)
             b = self.e.bank.get(bid)
+            ext = self.e.ledger.system_account(SYS_EXTERNAL, currency_code=b["currency_code"])
             from engine.ledger import Leg
             self.e.ledger.post(0, "reserve_endowment", [
                 Leg(int(b["reserve_account_id"]), target, "initial reserves"),
@@ -118,14 +144,20 @@ class Genesis:
 
     def _spawn_staff(self, name: str, occupation: str, role: str, *, employer_id: Optional[int] = None,
                      extra: Optional[dict] = None, opening_cents: int = 150_000) -> int:
-        bank_id = self.prng.choice(self.bank_ids)
+        if self.e.regions.enabled:
+            region_id = self.e.regions.primary_region_id()
+            bank_id = self.e.regions.bank_for_region(self.bank_ids, region_id)
+        else:
+            region_id = None
+            bank_id = self.prng.choice(self.bank_ids)
         agent_id = self.store.insert(
             "agents", name=name, kind="staff", occupation=occupation, role=role,
             employer_id=employer_id, age=self.prng.randint(30, 60), model_tier="strong",
             alive=1, arrived_tick=0, risk_tolerance=0.5, political_lean=0.0,
             personality_json=json.dumps(extra or {}),
             media_diet_json=json.dumps([o["id"] for o in self.outlets]),
-            cadence_json=json.dumps({"act": 1}))
+            cadence_json=json.dumps({"act": 1}), region_id=region_id,
+            population_tier="core", pinned_core=1)
         self._open_accounts(agent_id, bank_id, opening_cents, savings_cents=0)
         self._seed_beliefs(agent_id, bank_id)
         return agent_id
@@ -133,11 +165,23 @@ class Genesis:
     # ── population ───────────────────────────────────────────────────────────
     def _population(self) -> None:
         pop_cfg = self.config.get("population", {})
-        size = int(pop_cfg.get("size", 70))
+        if pop_cfg.get("target_total") is not None:
+            reserved_health = 2 if self.config.get("health") else 0
+            size = max(0, int(pop_cfg["target_total"]) - int(self.store.scalar(
+                "SELECT COUNT(*) FROM agents", default=0)) - reserved_health)
+        else:
+            reserved_health = 0
+            size = int(pop_cfg.get("size", 70))
         personas = sample_population(self.persona_prng, size, n_outlets=len(self.outlets))
         # Guarantee at least one lawyer occupation exists among citizens too.
         for p in personas:
-            bank_id = self.prng.choice(self.bank_ids)
+            if self.e.regions.enabled:
+                region_id = self.e.regions.region_for_new_citizen(
+                    reserved_northstar=reserved_health)
+                bank_id = self.e.regions.bank_for_region(self.bank_ids, region_id)
+            else:
+                region_id = None
+                bank_id = self.prng.choice(self.bank_ids)
             checking = int(p.wealth_cents * 0.7)
             savings = p.wealth_cents - checking
             agent_id = self.store.insert(
@@ -146,12 +190,29 @@ class Genesis:
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps(self._cadence_for(p)), model_tier="citizen",
-                alive=1, retired=1 if p.age >= 65 else 0, arrived_tick=0)
+                alive=1, retired=int(self._is_retired(p)), arrived_tick=0,
+                region_id=region_id, population_tier="periphery", pinned_core=0)
             self._open_accounts(agent_id, bank_id, checking, savings)
             self._seed_beliefs(agent_id, bank_id)
 
     def _cadence_for(self, p: Persona) -> dict:
+        if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                and self._is_retired(p)):
+            lifecycle = self.config.get("lifecycle", {})
+            return {
+                "act": max(1, int(lifecycle.get("retired_act_every", 2))),
+                "portfolio": max(1, int(lifecycle.get("retired_portfolio_every", 5))),
+                "career": 30,
+                "news": max(1, int(lifecycle.get("retired_news_every", 1))),
+            }
         return {"act": 3, "portfolio": 7, "career": 30}
+
+    def _is_retired(self, p: Persona) -> bool:
+        retirement_age = 65
+        if int(self.config.get("engine_semantics_version", 1)) >= 7:
+            retirement_age = int(
+                self.config.get("lifecycle", {}).get("retirement_age", 65))
+        return int(p.age) >= retirement_age
 
     # ── firms ────────────────────────────────────────────────────────────────
     def _firms(self) -> None:
@@ -176,8 +237,10 @@ class Genesis:
                                               product=product, opening_capital_cents=0)
             # Endow firm operating capital from external so it can pay wages/inputs.
             from engine.ledger import Leg
-            acct = int(self.e.firms.get(firm_id)["account_id"])
-            ext = self.e.ledger.system_account(SYS_EXTERNAL)
+            firm = self.e.firms.get(firm_id)
+            acct = int(firm["account_id"])
+            ext = self.e.ledger.system_account(
+                SYS_EXTERNAL, currency_code=str(firm["currency_code"] or "USD"))
             self.e.ledger.post(0, "firm_endowment", [
                 Leg(acct, capital, "seed capital"), Leg(ext, -capital, "endowment")],
                 memo=f"seed firm {firm_id}")
@@ -189,9 +252,11 @@ class Genesis:
 
     def _staff_firm(self, firm_id: int, price: int) -> None:
         wage = max(250_000, price * 400)
+        firm = self.e.firms.get(firm_id)
         pool = self.store.query(
             "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
-            "AND age BETWEEN 20 AND 64 ORDER BY id LIMIT 3")
+            "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT 3",
+            (firm["region_id"], firm["region_id"]))
         pay_interval = int(self.config.get("firms", {}).get("pay_interval_ticks", 30))
         for r in pool:
             aid = int(r["id"])
@@ -207,15 +272,34 @@ class Genesis:
         # Distribute a float to a handful of citizens so the book has participants.
         float_shares = so // 2
         holders = self.store.query(
-            "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 6")
+            "SELECT id FROM agents WHERE kind='citizen' AND (? IS NULL OR region_id=?) ORDER BY id LIMIT 6",
+            (firm["region_id"], firm["region_id"]))
         per = max(1, float_shares // max(1, len(holders)))
         # Move shares from founder to holders.
         self.store.execute("UPDATE shares SET qty=qty-? WHERE firm_id=? AND holder_id=? AND holder_type='agent'",
                            (per * len(holders), firm_id, founder))
         for h in holders:
-            self.e.exchange._adjust_shares(firm_id, "agent", int(h["id"]), per)
-        self.e.firms.list_firm(0, firm_id, price * 100 if price < 100 else price, float_shares)
-        self.store.record_metric(0, f"stock:{firm_id}", price * 100 if price < 100 else price)
+            holder_id = int(h["id"])
+            self.e.exchange._adjust_shares(firm_id, "agent", holder_id, per)
+            if int(self.config.get("engine_semantics_version", 2)) >= 6:
+                self.store.insert(
+                    "share_movements", tick=0, firm_id=firm_id,
+                    from_holder_type="agent", from_holder_id=founder,
+                    to_holder_type="agent", to_holder_id=holder_id, qty=per,
+                    movement_type="bootstrap_distribution", reference_type="genesis",
+                    reference_id=firm_id, price_cents=None, amount_cents=0,
+                    transaction_id=None)
+        reference = price * 100 if price < 100 else price
+        if int(self.config.get("engine_semantics_version", 2)) >= 6:
+            # The opening cap table supplies sellers, but there is deliberately
+            # no stock metric until agents express crossing prices.
+            self.e.firms.list_firm(0, firm_id, None, float_shares)
+        else:
+            self.e.firms.list_firm(
+                0, firm_id, reference, float_shares, legacy_reference_price=True)
+            # Preserve the duplicate genesis metric written by semantics 1-5;
+            # recorded runs depend on its physical row identity for exact replay.
+            self.store.record_metric(0, f"stock:{firm_id}", reference)
 
     # ── health economy: hospital + insurer firms (P1 R17) ───────────────────
     def _health_institutions(self) -> None:
@@ -223,19 +307,21 @@ class Genesis:
         if not hcfg:
             return
         from engine.ledger import Leg
-        ext = self.e.ledger.system_account(SYS_EXTERNAL)
         med_cost = int(self.config.get("lifecycle", {}).get("medical_cost_cents", 5000))
 
         def _found(founder_name: str, occupation: str, firm_name: str, sector: str,
                    product_name: str, unit_price: int, capital: int, staff: list[tuple[str, int]]):
-            bank_id = self.prng.choice(self.bank_ids)
+            region_id = self.e.regions.primary_region_id() if self.e.regions.enabled else None
+            bank_id = self.e.regions.bank_for_region(self.bank_ids, region_id) \
+                if self.e.regions.enabled else self.prng.choice(self.bank_ids)
             founder = self.store.insert(
                 "agents", name=founder_name, kind="citizen", occupation=occupation,
                 age=self.prng.randint(35, 55), health="healthy", dependents=1,
                 personality_json=json.dumps({"diligent": 0.8}), political_lean=0.0,
                 media_diet_json=json.dumps([o["id"] for o in self.outlets]),
                 risk_tolerance=0.4, cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", alive=1, retired=0, arrived_tick=0)
+                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                alive=1, retired=0, arrived_tick=0)
             self._open_accounts(founder, bank_id, 500_000, 0)
             self._seed_beliefs(founder, bank_id)
             # Service firms: no inventory production — revenue is fees/premiums.
@@ -243,7 +329,10 @@ class Genesis:
                        "base_input_cost_cents": 0, "output_per_worker": 0}
             firm_id = self.e.firms.found_firm(0, founder, firm_name, sector,
                                               product=product, opening_capital_cents=0)
-            acct = int(self.e.firms.get(firm_id)["account_id"])
+            firm = self.e.firms.get(firm_id)
+            acct = int(firm["account_id"])
+            ext = self.e.ledger.system_account(
+                SYS_EXTERNAL, currency_code=str(firm["currency_code"] or "USD"))
             self.e.ledger.post(0, "firm_endowment", [
                 Leg(acct, capital, "seed capital"), Leg(ext, -capital, "endowment")],
                 memo=f"seed {firm_name}")
@@ -276,14 +365,19 @@ class Genesis:
     # ── accounts + beliefs helpers ───────────────────────────────────────────
     def _open_accounts(self, agent_id: int, bank_id: int, checking_cents: int, savings_cents: int,
                        funding_label: str = SYS_EXTERNAL) -> None:
+        region_id = self.store.scalar("SELECT region_id FROM agents WHERE id=?", (agent_id,))
+        currency = self.e.regions.currency_for_region(
+            int(region_id) if region_id is not None else None) if self.e.regions.enabled else "USD"
         chk = self.e.ledger.create_account("agent", agent_id, "checking", bank_id=bank_id,
                                            label=f"agent:{agent_id}:checking",
-                                           opening_cents=max(0, checking_cents), funding_label=funding_label)
+                                           opening_cents=max(0, checking_cents), funding_label=funding_label,
+                                           currency_code=currency)
         sav = None
         if savings_cents > 0:
             sav = self.e.ledger.create_account("agent", agent_id, "savings", bank_id=bank_id,
                                                label=f"agent:{agent_id}:savings",
-                                               opening_cents=savings_cents, funding_label=funding_label)
+                                               opening_cents=savings_cents, funding_label=funding_label,
+                                               currency_code=currency)
         self.store.update("agents", agent_id, checking_account_id=chk, savings_account_id=sav)
 
     def _seed_beliefs(self, agent_id: int, bank_id: int) -> None:

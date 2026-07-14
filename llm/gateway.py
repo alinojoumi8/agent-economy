@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -18,12 +19,239 @@ from typing import Any, Optional
 
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
-from observability import get_logger, log_event as operational_log
+from observability import get_logger, log_event as operational_log, safe_fields
 
 
 logger = get_logger("llm")
 
-# Verified pricing (TECH-SPEC §12), USD per 1M tokens: [input, output, cache_read].
+
+PRIVATE_REASONING_FIELDS = frozenset({
+    "analysis",
+    "chain_of_thought",
+    "redacted_thinking",
+    "reasoning",
+    "reasoning_content",
+    "reasoning_details",
+    "thinking",
+    "thought",
+    "thoughts",
+})
+PRIVATE_REASONING_TAGS = (
+    "think",
+    "analysis",
+    "chain_of_thought",
+    "redacted_thinking",
+    "reasoning_content",
+    "reasoning_details",
+    "thinking",
+    "thought",
+    "thoughts",
+)
+_PRIVATE_REASONING_BLOCK = re.compile(
+    rf"<(?P<tag>{'|'.join(PRIVATE_REASONING_TAGS)})\b[^>]*>.*?</(?P=tag)\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_PRIVATE_REASONING_UNCLOSED = re.compile(
+    rf"<(?:{'|'.join(PRIVATE_REASONING_TAGS)})\b[^>]*>.*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+_PRIVATE_REASONING_TYPES = frozenset({
+    *PRIVATE_REASONING_FIELDS,
+    *PRIVATE_REASONING_TAGS,
+})
+_PRIVATE_REASONING_KEY_MARKER = re.compile(
+    rf"(?i)(?:[\"']?\s*\b(?:{'|'.join(PRIVATE_REASONING_FIELDS)})\b"
+    rf"\s*[\"']?\s*[:=])"
+)
+_PRIVATE_REASONING_TYPE_MARKER = re.compile(
+    rf"(?i)(?:[\"']?\s*type\s*[\"']?\s*[:=]\s*[\"']?\s*"
+    rf"(?:{'|'.join(_PRIVATE_REASONING_TYPES)})\b)"
+)
+_JSON_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})", re.IGNORECASE)
+_DROP_PRIVATE = object()
+_JSON_DECODER = json.JSONDecoder()
+
+
+def _canonical_noop_text() -> str:
+    return json.dumps(
+        {"actions": [{"type": "do_nothing"}],
+         "reasoning": "unparseable output; no-op"},
+        ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def sanitize_provider_text(value: str) -> str:
+    """Remove provider-only tagged reasoning while retaining the public answer."""
+    sanitized = value
+    while True:
+        redacted = _PRIVATE_REASONING_BLOCK.sub("", sanitized)
+        if redacted == sanitized:
+            break
+        sanitized = redacted
+    return _PRIVATE_REASONING_UNCLOSED.sub("", sanitized).strip()
+
+
+def _sanitize_private_value(value: Any, *, preserve_root_reasoning: bool,
+                            root: bool = True) -> Any:
+    """Remove private reasoning fields and type-discriminated content blocks."""
+    if isinstance(value, dict):
+        block_type = str(value.get("type", "")).strip().lower()
+        if block_type in _PRIVATE_REASONING_TYPES:
+            return _DROP_PRIVATE
+        sanitized: dict[Any, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).strip().lower()
+            keep_public_reasoning = (
+                root and preserve_root_reasoning and lowered == "reasoning")
+            if lowered in PRIVATE_REASONING_FIELDS and not keep_public_reasoning:
+                continue
+            clean_item = _sanitize_private_value(
+                item, preserve_root_reasoning=preserve_root_reasoning, root=False)
+            if clean_item is not _DROP_PRIVATE:
+                sanitized[key] = clean_item
+        return sanitized
+    if isinstance(value, list):
+        sanitized_items = []
+        for item in value:
+            clean_item = _sanitize_private_value(
+                item, preserve_root_reasoning=preserve_root_reasoning, root=False)
+            if clean_item is not _DROP_PRIVATE:
+                sanitized_items.append(clean_item)
+        return sanitized_items
+    if isinstance(value, str):
+        return _sanitize_json_text(
+            value, preserve_root_reasoning=root and preserve_root_reasoning)
+    return value
+
+
+def _json_fragments(value: str) -> list[tuple[Any, int, int]]:
+    """Return every non-overlapping JSON object/array embedded in provider text."""
+    fragments: list[tuple[Any, int, int]] = []
+    cursor = 0
+    while cursor < len(value):
+        starts = [
+            position for position in (value.find("{", cursor), value.find("[", cursor))
+            if position >= 0
+        ]
+        if not starts:
+            break
+        start = min(starts)
+        try:
+            parsed, end = _JSON_DECODER.raw_decode(value, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        fragments.append((parsed, start, end))
+        cursor = end
+    return fragments
+
+
+def _has_private_reasoning_marker(value: str) -> bool:
+    """Detect key/type markers left outside parseable JSON and fail closed."""
+    # Provider exceptions sometimes JSON-encode a second payload, leaving its
+    # key quotes escaped in the outer diagnostic string.  Normalize only for
+    # detection; the persisted value is never decoded or trusted.
+    probe = value
+    for _ in range(3):
+        probe = probe.replace(r'\"', '"').replace(r"\'", "'")
+        probe = _JSON_UNICODE_ESCAPE.sub(
+            lambda match: (
+                chr(int(match.group(1), 16))
+                if int(match.group(1), 16) <= 0x7f
+                else match.group(0)
+            ),
+            probe,
+        )
+    return bool(
+        _PRIVATE_REASONING_KEY_MARKER.search(probe)
+        or _PRIVATE_REASONING_TYPE_MARKER.search(probe)
+    )
+
+
+def _sanitize_json_value(value: Any, *, preserve_root_reasoning: bool,
+                         redact_credentials: bool) -> Any:
+    cleaned = _sanitize_private_value(
+        value, preserve_root_reasoning=preserve_root_reasoning)
+    if cleaned is _DROP_PRIVATE:
+        cleaned = None
+    if redact_credentials:
+        cleaned = safe_fields({"payload": cleaned})["payload"]
+    return cleaned
+
+
+def _parse_exact_json(value: str) -> Any:
+    """Parse a complete JSON document, distinguishing failure from JSON null."""
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return _DROP_PRIVATE
+
+
+def _sanitize_json_text(value: str, *, preserve_root_reasoning: bool,
+                        redact_credentials: bool = False) -> str:
+    """Strip reasoning from all JSON fragments, failing closed on malformed ones."""
+    visible = sanitize_provider_text(value)
+    exact = _parse_exact_json(visible)
+    if exact is not _DROP_PRIVATE:
+        cleaned = _sanitize_json_value(
+            exact, preserve_root_reasoning=preserve_root_reasoning,
+            redact_credentials=redact_credentials)
+        if cleaned == exact:
+            return visible
+        return json.dumps(
+            cleaned, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    fragments = _json_fragments(visible)
+    if not fragments:
+        return "[REDACTED]" if _has_private_reasoning_marker(visible) else visible
+
+    # A public top-level ``reasoning`` field belongs only to one valid decision
+    # envelope. Multiple JSON values are not that contract, so raw/provider
+    # diagnostic fragments never gain the public-field exception.
+    keep_fragment_reasoning = preserve_root_reasoning and len(fragments) == 1
+    outside: list[str] = []
+    cursor = 0
+    for _, start, end in fragments:
+        outside.append(visible[cursor:start])
+        cursor = end
+    outside.append(visible[cursor:])
+    if _has_private_reasoning_marker("".join(outside)):
+        return "[REDACTED]"
+
+    rendered: list[str] = []
+    cursor = 0
+    for parsed, start, end in fragments:
+        rendered.append(visible[cursor:start])
+        cleaned = _sanitize_json_value(
+            parsed, preserve_root_reasoning=keep_fragment_reasoning,
+            redact_credentials=redact_credentials)
+        rendered.append(json.dumps(
+            cleaned, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        cursor = end
+    rendered.append(visible[cursor:])
+    return "".join(rendered)
+
+
+def sanitize_provider_raw(value: Any) -> Any:
+    """Remove private reasoning/credentials while retaining bounded metadata."""
+    if isinstance(value, (dict, list)):
+        cleaned = _sanitize_private_value(
+            value, preserve_root_reasoning=False)
+        if cleaned is _DROP_PRIVATE:
+            return None
+        return safe_fields({"raw": cleaned})["raw"]
+    if isinstance(value, str):
+        cleaned = _sanitize_json_text(value, preserve_root_reasoning=False)
+        return safe_fields({"raw": cleaned})["raw"]
+    return value
+
+
+def sanitize_provider_error(value: Any) -> str:
+    """Bound provider diagnostics and remove credentials and private reasoning."""
+    visible = _sanitize_json_text(
+        str(value), preserve_root_reasoning=False, redact_credentials=True)
+    return str(safe_fields({"error": visible})["error"])
+
+# Default modeled-equivalent pricing (TECH-SPEC §12), USD per 1M tokens.
 DEFAULT_PRICING = {
     "minimax-m3": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "MiniMax-M3": {"in": 0.30, "out": 1.20, "cache": 0.06},
@@ -50,7 +278,7 @@ class ProviderUnavailable(Exception):
         self.provider = provider
         self.model = model
         self.purpose = purpose
-        self.message = message[:500]
+        self.message = sanitize_provider_error(message)
         self.latency_ms = latency_ms
         self.attempts = attempts
         super().__init__(f"{provider}/{model} failed for {purpose}: {self.message}")
@@ -113,11 +341,21 @@ class Governor:
         cap = budget_cfg.get("cap_usd", 200.0)
         self.cap_usd = None if cap is None else float(cap)
         self.oracle_reserve_usd = float(budget_cfg.get("oracle_reserve_usd", 10.0))
+        # End-of-run prose is operational rather than behavioral.  Fresh
+        # profiles opt into a small carve-out; missing means zero so historical
+        # stored configs keep their original world/Oracle scheduling exactly.
+        self.report_reserve_usd = max(
+            0.0, float(budget_cfg.get("report_reserve_usd", 0.0)))
+        # Persisted opt-in keeps historical capped replays on their original
+        # accounting while fresh runs reserve the complete Oracle workflow.
+        self.oracle_plan_in_reserve = bool(
+            budget_cfg.get("oracle_plan_in_reserve", False))
         self.thresholds = budget_cfg.get("thresholds", [0.60, 0.80, 0.95])
         self.base_conversation_pairs = int(budget_cfg.get("conversation_pairs", 15))
         self._last_call_id = 0
         self._total_spend_usd = 0.0
         self._oracle_spend_usd = 0.0
+        self._report_spend_usd = 0.0
         self._world_spend_usd = 0.0
         self._refresh_spend()
         self._level = self._calculate_level()
@@ -126,15 +364,22 @@ class Governor:
     # resume. Runtime inserts update the cache in O(1); a cheap MAX(id) check
     # notices direct test/tool inserts and refreshes the aggregates when needed.
     def _refresh_spend(self) -> None:
+        oracle_clause = (
+            "purpose IN ('oracle','oracle_plan')"
+            if self.oracle_plan_in_reserve else "purpose='oracle'")
         row = self.store.query_one(
             "SELECT COALESCE(MAX(id),0) AS last_id, "
             "COALESCE(SUM(cost_usd),0) AS total, "
-            "COALESCE(SUM(CASE WHEN purpose='oracle' THEN cost_usd ELSE 0 END),0) AS oracle "
+            f"COALESCE(SUM(CASE WHEN {oracle_clause} THEN cost_usd ELSE 0 END),0) AS oracle, "
+            "COALESCE(SUM(CASE WHEN purpose='report_narrative' "
+            "THEN cost_usd ELSE 0 END),0) AS report "
             "FROM llm_calls")
         self._last_call_id = int(row["last_id"] if row else 0)
         self._total_spend_usd = float(row["total"] if row else 0.0)
         self._oracle_spend_usd = float(row["oracle"] if row else 0.0)
-        self._world_spend_usd = self._total_spend_usd - self._oracle_spend_usd
+        self._report_spend_usd = float(row["report"] if row else 0.0)
+        self._world_spend_usd = (
+            self._total_spend_usd - self._oracle_spend_usd - self._report_spend_usd)
 
     def _ensure_current(self) -> None:
         last_id = int(self.store.scalar(
@@ -147,10 +392,20 @@ class Governor:
         cost = float(cost_usd)
         self._last_call_id = max(self._last_call_id, int(call_id))
         self._total_spend_usd += cost
-        if purpose == "oracle":
+        if self._uses_report_reserve(purpose):
+            self._report_spend_usd += cost
+        elif self._uses_oracle_reserve(purpose):
             self._oracle_spend_usd += cost
         else:
             self._world_spend_usd += cost
+
+    def _uses_oracle_reserve(self, purpose: str) -> bool:
+        return purpose == "oracle" or (
+            self.oracle_plan_in_reserve and purpose == "oracle_plan")
+
+    @staticmethod
+    def _uses_report_reserve(purpose: str) -> bool:
+        return purpose == "report_narrative"
 
     def total_spend(self) -> float:
         self._ensure_current()
@@ -164,11 +419,17 @@ class Governor:
         self._ensure_current()
         return self._world_spend_usd
 
+    def report_spend(self) -> float:
+        self._ensure_current()
+        return self._report_spend_usd
+
     @property
     def world_budget(self) -> float:
         if self.cap_usd is None:
             return float("inf")
-        return max(0.01, self.cap_usd - self.oracle_reserve_usd)
+        return max(
+            0.01,
+            self.cap_usd - self.oracle_reserve_usd - self.report_reserve_usd)
 
     def _calculate_level(self) -> int:
         if self.cap_usd is None:
@@ -204,18 +465,24 @@ class Governor:
         self._ensure_current()
         if self.cap_usd is None:
             return True
-        if purpose == "oracle":
+        if self._uses_report_reserve(purpose):
+            return self._report_spend_usd + est_cost <= self.report_reserve_usd \
+                and self._total_spend_usd + est_cost <= self.cap_usd
+        if self._uses_oracle_reserve(purpose):
             return self._oracle_spend_usd + est_cost <= self.oracle_reserve_usd \
                 and self._total_spend_usd + est_cost <= self.cap_usd
-        return self._total_spend_usd + est_cost <= self.cap_usd
+        return self._world_spend_usd + est_cost <= self.world_budget \
+            and self._total_spend_usd + est_cost <= self.cap_usd
 
     def status(self) -> dict:
         self._ensure_current()
         return {
             "cap_usd": self.cap_usd, "oracle_reserve_usd": self.oracle_reserve_usd,
+            "report_reserve_usd": self.report_reserve_usd,
             "total_spend_usd": round(self._total_spend_usd, 4),
             "world_spend_usd": round(self._world_spend_usd, 4),
             "oracle_spend_usd": round(self._oracle_spend_usd, 4),
+            "report_spend_usd": round(self._report_spend_usd, 4),
             "level": self.level(), "conversation_pairs": self.conversation_pairs(),
             "cadence_multiplier": self.cadence_multiplier(),
             "citizens_enabled": self.citizens_enabled(),
@@ -250,6 +517,7 @@ class Gateway:
         self.replay_conn: Optional[sqlite3.Connection] = None
         self._replay_positions: dict[str, int] = {}
         self._replay_used_call_ids: set[int] = set()
+        self._replay_event_id_map: dict[int, int] = {}
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
@@ -321,7 +589,7 @@ class Gateway:
             "next_retry_at": datetime.fromtimestamp(
                 retry_at_epoch, timezone.utc).isoformat(),
             "status_code": exc.status_code,
-            "detail": exc.detail,
+            "detail": sanitize_provider_error(exc.detail),
         }
         self._rate_limits[provider] = state
         operational_log(
@@ -364,17 +632,19 @@ class Gateway:
             seen.add(pair)
             adapter = self.adapters[provider]
             try:
-                result = await adapter.healthcheck(model)
+                result = sanitize_provider_raw(
+                    safe_fields(await adapter.healthcheck(model)))
                 checks.append({"provider": provider, **result})
                 operational_log(logger, logging.INFO, "llm.preflight.provider_completed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 ok=result.get("ok", False))
             except Exception as exc:
+                provider_error = sanitize_provider_error(exc)
                 checks.append({"provider": provider, "model": model, "ok": False,
-                               "live": True, "error": str(exc)[:500]})
+                               "live": True, "error": provider_error})
                 operational_log(logger, logging.ERROR, "llm.preflight.provider_failed",
                                 run_id=self.run_id, provider=provider, model=model,
-                                error_type=type(exc).__name__, error=str(exc))
+                                error_type=type(exc).__name__, error=provider_error)
         live_ready = all(c["ok"] for c in checks)
         operational_log(logger, logging.INFO if live_ready else logging.ERROR,
                         "llm.preflight.completed", run_id=self.run_id,
@@ -449,17 +719,23 @@ class Gateway:
             failure = ProviderUnavailable(
                 provider, model, req.purpose, f"{type(exc).__name__}: {exc}",
                 latency_ms=latency_ms, attempts=self.provider_retries + 1)
-            self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
-                                 phase="LLM", importance=5.0)
+            # Report narration is generated after the simulated tick has
+            # closed. Its provider outage is operational and must not mutate
+            # deterministic world state that an offline replay rebuilds.
+            if req.purpose != "report_narrative":
+                self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                     phase="LLM", importance=5.0)
             operational_log(logger, logging.ERROR, "llm.request.failed",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                             tick=req.tick, latency_ms=latency_ms,
                             attempts=failure.attempts, error_type=type(exc).__name__,
-                            error=str(exc))
-            raise failure from exc
+                            error=failure.message)
+            raise failure from None
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
+        result.text = _sanitize_json_text(
+            result.text, preserve_root_reasoning=True)
         parsed, ok = self._parse(result.text)
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
@@ -478,27 +754,58 @@ class Gateway:
                       + (f" Required shape: {schema_hint}" if schema_hint else "")),
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
+
+            def persist_initial_completion(reason: str) -> None:
+                """Meter the billable first completion even if repair cannot finish."""
+                partial = AdapterResult(
+                    text=_canonical_noop_text(),
+                    in_tokens=initial_result.in_tokens,
+                    out_tokens=initial_result.out_tokens,
+                    cached_in_tokens=initial_result.cached_in_tokens,
+                    raw={
+                        "provider_calls": 1,
+                        "initial": initial_result.raw,
+                        "repair_failed": reason[:120],
+                    },
+                )
+                cached, cost = self._price(
+                    model, partial.in_tokens, partial.out_tokens,
+                    partial.cached_in_tokens, pricing)
+                partial_latency_ms = int(
+                    (datetime.now(timezone.utc) - started).total_seconds() * 1000)
+                self._log_call(
+                    req, provider, model, cache_key, partial, cost, cached,
+                    partial_latency_ms)
+
             try:
                 repaired_result, repair_attempts = await self._call_adapter(
                     provider, adapter, model, repair, repair.messages(), 0.2,
                     provider_cache_key)
+                repaired_result.text = _sanitize_json_text(
+                    repaired_result.text, preserve_root_reasoning=True)
                 attempts += repair_attempts
             except GatewayInterrupted:
+                persist_initial_completion("GatewayInterrupted")
+                raise
+            except asyncio.CancelledError:
+                persist_initial_completion("CancelledError")
                 raise
             except Exception as exc:
+                persist_initial_completion(type(exc).__name__)
                 latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
                 failure = ProviderUnavailable(
                     provider, model, req.purpose, f"repair {type(exc).__name__}: {exc}",
                     latency_ms=latency_ms, attempts=attempts + self.provider_retries + 1)
-                self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
-                                     phase="LLM", importance=5.0)
+                if req.purpose != "report_narrative":
+                    self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
+                                         phase="LLM", importance=5.0)
                 operational_log(logger, logging.ERROR, "llm.repair.failed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                                 tick=req.tick, latency_ms=latency_ms,
                                 attempts=failure.attempts, error_type=type(exc).__name__,
-                                error=str(exc))
-                raise failure from exc
+                                error=failure.message)
+                raise failure from None
             # Persist the final usable text but meter both billable completions.
             # This stays one logical gateway record, so exact replay returns the
             # repaired envelope while reproducing the complete provider cost.
@@ -520,6 +827,7 @@ class Gateway:
                             tick=req.tick, valid=ok)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op", "actions": [{"type": "do_nothing"}]}
+            result.text = _canonical_noop_text()
             operational_log(logger, logging.WARNING, "llm.contract.invalid",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -589,7 +897,7 @@ class Gateway:
                                 tick=req.tick, attempt=transient_attempt,
                                 next_attempt=transient_attempt + 1,
                                 error_type=type(last_error).__name__,
-                                error=str(last_error))
+                                error=sanitize_provider_error(last_error))
                 await asyncio.sleep(min(0.25 * (2 ** (transient_attempt - 1)), 2.0))
                 continue
             break
@@ -652,6 +960,66 @@ class Gateway:
                            "m": model, "msgs": req.messages()}, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
+    @staticmethod
+    def _event_payload_identity(payload_json: str | None) -> str:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return str(payload_json or "")
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False)
+
+    def _local_event_id_for_replay(self, source_event_id: int) -> int:
+        """Translate a source SQLite event ID to the same logical local event."""
+        source_id = int(source_event_id)
+        cached = self._replay_event_id_map.get(source_id)
+        if cached is not None:
+            return cached
+        if self.replay_conn is None:
+            return source_id
+        source = self.replay_conn.execute(
+            "SELECT tick,phase,kind,subject_type,subject_id,importance,payload_json "
+            "FROM events WHERE id=?", (source_id,)).fetchone()
+        if source is None:
+            return source_id
+        candidates = self.store.query(
+            "SELECT id,importance,payload_json FROM events "
+            "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
+            "AND subject_id IS ? ORDER BY id",
+            (int(source["tick"]), source["phase"], source["kind"],
+             source["subject_type"], source["subject_id"]))
+        source_payload = self._event_payload_identity(source["payload_json"])
+        matches = [
+            int(candidate["id"]) for candidate in candidates
+            if float(candidate["importance"]) == float(source["importance"])
+            and self._event_payload_identity(candidate["payload_json"]) == source_payload
+        ]
+        if len(matches) == 1:
+            self._replay_event_id_map[source_id] = matches[0]
+            return matches[0]
+        return source_id
+
+    def _localize_replay_event_references(self, value):
+        """Localize event provenance embedded in a recorded model response."""
+        if isinstance(value, dict):
+            localized = {}
+            for key, nested in value.items():
+                if key == "request_event_id" and isinstance(nested, int) \
+                        and not isinstance(nested, bool):
+                    localized[key] = self._local_event_id_for_replay(nested)
+                elif key == "evidence_event_ids" and isinstance(nested, list):
+                    localized[key] = [
+                        self._local_event_id_for_replay(item)
+                        if isinstance(item, int) and not isinstance(item, bool) else item
+                        for item in nested
+                    ]
+                else:
+                    localized[key] = self._localize_replay_event_references(nested)
+            return localized
+        if isinstance(value, list):
+            return [self._localize_replay_event_references(item) for item in value]
+        return value
+
     def _replay_lookup(self, cache_key: str, req: LLMRequest,
                        schema_hint: str = ""):
         if self.replay_conn is None:
@@ -695,6 +1063,8 @@ class Gateway:
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok:
+            parsed = self._localize_replay_event_references(parsed)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}
@@ -748,13 +1118,18 @@ class Gateway:
             "llm_calls", tick=req.tick, agent_id=req.agent_id, role=req.role, provider=provider,
             model=model, purpose=req.purpose, cache_key=cache_key,
             request_json=json.dumps({"system": req.system, "user": req.user, "context": req.context}),
-            response_json=json.dumps({"text": result.text, "raw": result.raw,
+            response_json=json.dumps({"text": result.text, "raw": sanitize_provider_raw(result.raw),
                                       "cached_in_tokens": result.cached_in_tokens}),
             in_tokens=result.in_tokens, out_tokens=result.out_tokens, cached=1 if cached else 0,
             cost_usd=cost, latency_ms=latency_ms,
             created_at=datetime.now(timezone.utc).isoformat())
         self.governor.record_cost(call_id, cost, req.purpose)
-        self._log_governor_transitions(req.tick, level_before)
+        # End-of-run narration is an operational artifact: meter it against the
+        # hard cap, but do not append simulated-world degradation events after
+        # the final tick. Replay intentionally regenerates reports via the
+        # deterministic engine fallback without dispatching a provider.
+        if req.purpose != "report_narrative":
+            self._log_governor_transitions(req.tick, level_before)
         return call_id
 
     def _log_governor_transitions(self, tick: int, level_before: int) -> None:

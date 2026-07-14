@@ -14,6 +14,53 @@ and settles every consequence through an exactly balanced double-entry ledger.
 > Agent Economy is a research simulator, not a real-economy forecast or
 > financial advice. The default offline profile is free and deterministic.
 
+## Legal-Political Economy v2
+
+The flagship `runs/v2.yaml` world makes institutions part of the economy rather
+than background flavor:
+
+- Executed contracts compile into enforceable obligations; claims, evidence,
+  settlements, judgments, injunctions, cap tables, and ledgers share one action path.
+- Startups move through formation, typed VC rounds, IP, disclosures, trading,
+  merger review, remedies, litigation, and exit.
+- Claims and articles spread through recorded asymmetric exposures before they
+  can affect beliefs, trades, investments, or votes.
+- A two-party legislature, elections, lobbying, agencies, and typed policy rules
+  create endogenous economic-political feedback.
+- 1,000 agents inhabit Northstar, Ironvale, and Suncoast. One hundred strategic
+  agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
+- Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
+  trade, migration, and regional specialization remain exactly replayable.
+- Maintained profiles run engine semantics 7: defaults recognize only net bank
+  losses after collateral, retirees can draw their own savings, arrivals receive
+  governed persona enrichment, and qualified trade and migration opportunities
+  become autonomous actions. Stored semantics 1–6 retain their original rules.
+- The observatory adds a living economic map, legal/political/startup surfaces,
+  causal traces, God-mode actions through the normal validator, and static replay export.
+- Pinned dataset manifests and paired-seed scenario packs support model-conditional
+  counterfactual research without presenting the simulation as a forecast.
+
+```powershell
+# Free 1,000-agent flagship run
+python run.py --config runs/v2.yaml --ticks 30
+
+# Verify pinned data without network access
+python run.py --verify-datasets config/data-manifest.yaml
+
+# Explicit networked refresh (never runs implicitly)
+python run.py --refresh-datasets config/data-manifest.yaml
+
+# Paired policy lab; defaults to 20 seeds
+python run.py --counterfactual scenarios/ai-competition-merger.yaml
+
+# Self-contained replay artifact
+python run.py --export-static RUN_ID --output static_exports/demo.html
+```
+
+See [the v2 architecture and research guide](docs/v2-guide.md) for schemas,
+legal-model limits, provenance, scenario authoring, replay guarantees, and the
+validity boundary.
+
 ## Why this project exists
 
 Many multi-agent demos make interesting text but cannot explain where money
@@ -58,8 +105,11 @@ flowchart LR
 
 One tick is one simulated day. Nightly mechanics settle obligations and shocks;
 agents then perceive, decide, trade, publish, converse, update memory, and
-finalize a reconciled day. New semantics-v3 runs hide private bank reserve ratios
-from citizens and append bounded belief updates with raw/normalized provenance.
+finalize a reconciled day. Maintained semantics-7 profiles preserve the
+research-valid information boundary while adding net loan charge-offs,
+retirement liquidity, deterministic arrivals, governed arrival personas, and
+autonomous regional trade/migration. Markerless and stored semantics 1–6 runs
+are never silently upgraded.
 
 ## Five-minute offline start
 
@@ -71,7 +121,7 @@ git clone https://github.com/alinojoumi8/agent-economy.git
 Set-Location agent-economy
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
 
 # Free, deterministic, no API key
 python run.py --config runs/base.yaml
@@ -148,11 +198,16 @@ baseline and fails closed when history is missing.
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
+| `runs/v2-spec-closure-rehearsal.yaml` | Five-tick semantics-7 closure fixture | Scripted, free, deterministic |
+| `runs/v2-spec-closure-live.yaml` | Five-tick bounded semantics-7 pilot | MiniMax persona/strategic roles; scripted background; $1 cap |
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 
 Production never silently falls back when a key, route, or provider fails.
+Provider configs select `prompt_cache_mode` from `off`,
+`provider_automatic`, `openai_key`, or `anthropic_ephemeral`; the legacy
+`prompt_cache_key` option remains an alias for OpenAI-compatible keyed caching.
 
 ## Optional real-model setup
 
@@ -186,6 +241,18 @@ python run.py --report <RUN_ID>
 Each run is a portable SQLite file under `data/runs/`. It contains the economic
 state and the scientific audit trail: events, beliefs, memories, conversations,
 predictions, metrics, shocks, ledger entries, and model-call evidence.
+
+CI also restores the sanitized portable fixture for live run `fd0adc5dc1` and
+replays its ten recorded ticks with networking disabled. The source database is
+stored as semantics 5—not semantics 6—so the fixture preserves that historical
+contract while canonicalizing physical LLM row IDs through logical call content.
+Fixture format v2 strips raw provider envelopes, retains only the public text
+and cached-token counter, converts repository paths to `repo://`, and restores
+the source's recorded dataset/calibration/scenario rows rather than substituting
+today's mutable manifests. Its artifact SHA-256 is
+`af57eed59e47e9057d7645a65e1bb6f2b579a6a63a377fd6301f33af3955e2d7`; the
+normalized reconstructed replay hash is
+`2efcabedba51e4bff3ccfd36393db20d13b41cd5d3e9a3772df42015db4f9170`.
 
 ## Project structure
 
@@ -224,30 +291,56 @@ documents.
 
 ## Current status and limits
 
-All PRD-v1 P0/P1 feature surfaces are implemented and the automated backend and
-dashboard suites exercise the system. Final live acceptance is still an
-operational gate: the pre-fix paid run is preserved as diagnostic evidence, and
-a fresh capped rumor pilot must pass before a new 365-day paid run is started.
+All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent, and
+R20 multi-region extensions are implemented. The semantics-7 code closure adds
+the remaining bank, retirement, arrival/persona, autonomous trade/migration,
+portable replay, and cache-policy contracts without changing schema v11.
 
-V1 is intentionally local and single-operator. It has no authentication or
-tenant isolation; bind to `127.0.0.1` and do not expose it directly to an
-untrusted network. Participant mode, regions/FX, approximately 1,000 agents,
-real-data calibration, and hosted multi-user operation remain deferred.
+The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
+every target effect through tick 5 at zero spend and replayed exactly with hash
+`fa190b0d…e8cffc34`. The live run `b4832032ba` completed five semantics-7 ticks
+with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
+spend under the `$1` cap, zero provider/provenance/privacy defects, balanced
+currencies, and exact replay hash `ec2b2409…c399ae2`. The focused gate passed 86
+tests before the final hardening pass, a 93-test integrated adversarial gate
+passed afterward, and the current complete suite passes 280 in 165.73 seconds.
+Dashboard tests, notice validation, audit, two byte-identical
+production builds, dependency audit, secret scan, and local hygiene are green.
+A fresh exact-head GitHub Actions dashboard plus Ubuntu/Windows Python 3.11/3.12
+matrix is required immediately before merge; tagging and publication remain
+separate release decisions.
+
+The 30-day rumor gate, Oracle latency/calibration campaign, and
+365-day/$200 acceptance run remain separate and are not replaced by this pilot.
+
+The application is intentionally local and single-operator. It has no
+authentication or tenant isolation; bind to `127.0.0.1` and do not expose it
+directly to an untrusted network. R21 real-US microdata calibration and R22
+hosted multi-user operation remain deferred.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence
 matrix.
 
+## Licensing and attribution
+
+The project source is licensed under Apache-2.0. Dataset-specific provenance,
+terms, and citation guidance are recorded in [NOTICE](NOTICE) and the pinned
+[data manifest](config/data-manifest.yaml). The dashboard's complete generated
+dependency notices are available in
+[dashboard/public/THIRD_PARTY_NOTICES.txt](dashboard/public/THIRD_PARTY_NOTICES.txt)
+and are shipped with the server bundle at
+[server/static/THIRD_PARTY_NOTICES.txt](server/static/THIRD_PARTY_NOTICES.txt).
+Persona-generator provenance and the distinction between upstream inspiration
+and locally authored code are documented in
+[agents/personas/ATTRIBUTION.md](agents/personas/ATTRIBUTION.md).
+
 ## Development
 
-```powershell
-python -m compileall -q agents engine experiments llm oracle reports server world run.py
-python -m pytest tests/ -q
-npm --prefix dashboard ci
-npm --prefix dashboard test
-npm --prefix dashboard run build
-git diff --check
-```
+Run the complete hash-locked local gate in
+[docs/development.md](docs/development.md#test-layers). It covers compilation,
+pinned datasets, Python/dashboard tests, dependency and notice audits, the
+production bundle, and diff hygiene.
 
 Dashboard builds write to `server/static/`; that bundle is committed so Python
 users receive the full UI without Node.js. Contributions should preserve the

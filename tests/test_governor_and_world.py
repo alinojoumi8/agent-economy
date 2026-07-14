@@ -91,6 +91,36 @@ def test_governor_stages(tmp_path):
     assert not gov.can_spend(20.0, "decision") or gov.total_spend() + 20.0 <= gov.cap_usd
 
 
+def test_oracle_planner_reserve_is_persisted_and_replay_versioned(tmp_path):
+    store = Store(str(tmp_path / "oracle-budget.db"))
+    store.init_run_meta("oracle-budget", 1, {})
+    budget = {
+        "cap_usd": 0.2, "oracle_reserve_usd": 0.1,
+        "oracle_plan_in_reserve": True,
+    }
+    governor = Governor(store, budget)
+    call_id = store.insert(
+        "llm_calls", tick=0, role="oracle", purpose="oracle_plan",
+        cost_usd=0.04, in_tokens=0, out_tokens=0, cached=0)
+    governor.record_cost(call_id, 0.04, "oracle_plan")
+
+    assert governor.total_spend() == pytest.approx(0.04)
+    assert governor.oracle_spend() == pytest.approx(0.04)
+    assert governor.world_spend() == pytest.approx(0.0)
+    assert governor.can_spend(0.06, "oracle_plan")
+    assert not governor.can_spend(0.061, "oracle_plan")
+
+    restored = Governor(store, budget)
+    assert restored.oracle_spend() == pytest.approx(0.04)
+    assert restored.world_spend() == pytest.approx(0.0)
+
+    # Markerless stored configs preserve the historical planner accounting.
+    legacy = Governor(store, {"cap_usd": 0.2, "oracle_reserve_usd": 0.1})
+    assert legacy.oracle_spend() == pytest.approx(0.0)
+    assert legacy.world_spend() == pytest.approx(0.04)
+    store.close()
+
+
 def test_governor_supports_explicit_uncapped_runs(tmp_path):
     store = Store(str(tmp_path / "uncapped.db"))
     store.init_run_meta("uncapped", 1, {})

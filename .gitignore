@@ -16,6 +16,7 @@ reports/out/
 .venv/
 node_modules/
 dashboard/node_modules/
+.codebase-memory/
 build/
 dist/
 *.log

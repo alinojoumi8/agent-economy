@@ -51,7 +51,7 @@ adding it to the observatory's frequent polling payload.
 | `GET` | `/api/firms` | Sector, status, inventory, price, workers, cash, and stock price |
 | `GET` | `/api/institutions` | Government, VC, healthcare, and outlets |
 | `GET` | `/api/news?limit=30` | Latest articles |
-| `GET` | `/api/conversations?limit=20` | Conversations, participants, and messages |
+| `GET` | `/api/conversations?limit=20&q=bank&agent_id=12&tick_from=1&tick_to=30&before_id=90` | Conversations, topics, participants, and messages; bounded literal text/topic/speaker search with optional agent, tick-range, and cursor filters |
 | `GET` | `/api/events?limit=80&min_importance=0` | Recent append-only event spine |
 | `GET` | `/api/trades?limit=50` | Latest executed exchange trades |
 | `GET` | `/api/cost` | Governor plus model/purpose/agent cost breakdown |
@@ -101,7 +101,7 @@ kinds return HTTP 400; halted runs return HTTP 409.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/report` | Generates a report for the active run |
+| `POST` | `/api/report` | Generates/reuses a report at a completed tick boundary; returns `409` while Run or a partial tick is active |
 | `GET` | `/api/replay/runs` | Lists stored runs |
 | `GET` | `/api/replay/{run_id}/summary` | Stored run summary |
 | `GET` | `/api/replay/{run_id}/metrics` | Stored metrics; optional `names` |

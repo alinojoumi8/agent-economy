@@ -20,6 +20,7 @@ llm:
       # Token Plan keys (sk-cp-*) use the standard international OpenAI-compatible URL.
       base_url: https://api.minimax.io/v1
       api_key_env: MINIMAX_API_KEY
+      prompt_cache_mode: provider_automatic
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_completion_tokens
@@ -34,6 +35,7 @@ llm:
       # Moonshot pay-as-you-go key. These key families are not interchangeable.
       base_url: https://api.kimi.com/coding/v1
       api_key_env: KIMI_API_KEY
+      prompt_cache_mode: "off"
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_tokens

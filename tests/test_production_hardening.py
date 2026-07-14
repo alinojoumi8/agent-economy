@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from engine.store import Store
 from llm.adapters import AdapterHTTPError, AdapterResult, CLIAdapter
 from llm.gateway import Gateway, GatewayInterrupted, LLMRequest
+from llm.readiness import validate_llm_config
 from world.loop import World
 
 
@@ -77,6 +79,122 @@ def test_cli_adapter_cancels_process_and_rejects_nonzero_exit(monkeypatch):
 
     asyncio.run(cancel_request())
     assert blocked.killed
+
+
+def test_cli_adapter_allows_oracle_workflow_but_blocks_swarm_purposes(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"result":"{}"}', b""
+
+    async def create_process(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    adapter = CLIAdapter("agent-cli")
+
+    for purpose in ("oracle_plan", "oracle"):
+        result = asyncio.run(adapter.complete(
+            "model", [{"role": "user", "content": "hi"}], purpose=purpose))
+        assert result.text == "{}"
+
+    for purpose in ("decision", "conversation", "news"):
+        with pytest.raises(PermissionError, match=f"refused purpose='{purpose}'"):
+            asyncio.run(adapter.complete(
+                "model", [{"role": "user", "content": "hi"}], purpose=purpose))
+
+    assert len(calls) == 2
+
+
+def test_readiness_accepts_a_purpose_specific_oracle_plan_cli_route():
+    config = {
+        "llm": {
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "providers": {"local-cli": {"kind": "cli", "command": "agent-cli"}},
+            "routes": {
+                "oracle_plan": {"provider": "local-cli", "model": "planner"},
+            },
+        },
+    }
+
+    report = validate_llm_config(config, require_secrets=False, raise_on_error=False)
+
+    assert report["ready"], report["errors"]
+
+
+def test_oracle_role_routed_to_cli_can_plan_and_answer(tmp_path, monkeypatch):
+    responses = [
+        {"queries": [{
+            "tool": "query_metrics",
+            "args": {"names": ["gdp"], "from_tick": 0, "to_tick": 0, "limit": 1},
+        }]},
+        {
+            "p": 0.65,
+            "drivers": ["current output"],
+            "confidence": "med",
+            "resolution_rule": {
+                "type": "metric_crossed", "metric": "gdp",
+                "threshold": 0.0, "direction": "above",
+            },
+            "deadline_tick": 1,
+            "reasoning": "Current conditions support the forecast.",
+        },
+    ]
+    subprocess_calls = []
+
+    class FakeProcess:
+        returncode = 0
+
+        def __init__(self, response):
+            self.stdout = json.dumps({"result": json.dumps(response)}).encode()
+
+        async def communicate(self):
+            return self.stdout, b""
+
+    async def create_process(*args, **kwargs):
+        subprocess_calls.append((args, kwargs))
+        return FakeProcess(responses.pop(0))
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    config = {
+        "seed": 42,
+        "population": {"size": 10},
+        "banks": {"count": 2},
+        "firms": {"count": 3, "listed": 1},
+        "budget": {"cap_usd": None, "conversation_pairs": 0},
+        "llm": {
+            "provider_retries": 0,
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "routes": {
+                "oracle": {"provider": "claude-cli", "model": "claude"},
+            },
+            "providers": {
+                "claude-cli": {"kind": "cli", "command": "agent-cli"},
+            },
+        },
+        "checkpoint_every": 0,
+        "outlets": [
+            {"id": 1, "name": "A", "slant": "pro-market-sensational"},
+            {"id": 2, "name": "B", "slant": "cautious-pro-labor"},
+        ],
+    }
+    store = Store(str(tmp_path / "cli-oracle.db"))
+    store.init_run_meta("cli-oracle", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    answer = asyncio.run(world.oracle.ask("Will GDP remain above zero next tick?"))
+
+    assert answer["p"] == pytest.approx(0.65)
+    assert not responses
+    assert len(subprocess_calls) == 2
+    assert [row["purpose"] for row in store.query(
+        "SELECT purpose FROM llm_calls ORDER BY id")] == ["oracle_plan", "oracle"]
+    assert all(call[0][0] == "agent-cli" for call in subprocess_calls)
 
 
 @pytest.mark.parametrize("status_code", [429, 529])

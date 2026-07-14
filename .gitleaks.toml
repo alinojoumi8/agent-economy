@@ -1,0 +1,63 @@
+[extend]
+useDefault = true
+
+# Keep the default generic-api-key rule, but remove a small set of known,
+# structurally exact false positives. Every exception requires both the named
+# path and the expected benign line; no file or rule is ignored wholesale.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Blank Kimi API-key placeholder in the checked-in env template"
+  condition = "AND"
+  regexTarget = "match"
+  paths = ['''^\.env\.example$''']
+  regexes = ['''^KIMI_API_KEY=\r?\nANTHROPIC_API_KEY=\r?\n?$''']
+
+  [[rules.allowlists]]
+  description = "Public BLS dataset identifier in the research manifest"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''^config/data-manifest\.yaml$''']
+  regexes = ['''^[[:space:]]*-[[:space:]]+key:[[:space:]]+bls-unemployment-2020[[:space:]]*$''']
+
+  [[rules.allowlists]]
+  description = "Public BLS dataset and target identifiers in the pinned snapshot"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''^research/data/bls-unemployment-2020\.json$''']
+  regexes = [
+    '''^[[:space:]]*"dataset_key":[[:space:]]*"bls-unemployment-2020",[[:space:]]*$''',
+    '''^[[:space:]]*\{"key": "unemployment\.2020-01", "value": 3\.6, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
+    '''^[[:space:]]*\{"key": "unemployment\.2020-04", "value": 14\.8, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
+    '''^[[:space:]]*\{"key": "unemployment\.2020-12", "value": 6\.7, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\}[[:space:]]*$''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Public FRED target identifiers in the pinned snapshot"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''^research/data/fred-fedfunds-2020\.json$''']
+  regexes = [
+    '''^[[:space:]]*\{"key": "policy_rate\.2020-01", "value": 1\.55, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
+    '''^[[:space:]]*\{"key": "policy_rate\.2020-04", "value": 0\.05, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
+    '''^[[:space:]]*\{"key": "policy_rate\.2020-12", "value": 0\.09, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\}[[:space:]]*$''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Expected FRED target identifiers in the snapshot regression assertion"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''^tests/test_v2_research_observatory\.py$''']
+  regexes = [
+    '''^[[:space:]]*"key": "policy_rate\.2020-01", "unit": "percent", "value": 1\.55\},[[:space:]]*$''',
+    '''^[[:space:]]*"key": "policy_rate\.2020-04", "unit": "percent", "value": 0\.05\},[[:space:]]*$''',
+    '''^[[:space:]]*"key": "policy_rate\.2020-12", "unit": "percent", "value": 0\.09\},[[:space:]]*$''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Private-data redaction sentinel used only by the news privacy test"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''^tests/test_information_completion\.py$''']
+  regexes = ['''^[[:space:]]*secret = "private-liquidity-belief-9f8a"[[:space:]]*$''']

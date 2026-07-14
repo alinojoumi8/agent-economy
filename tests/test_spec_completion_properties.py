@@ -14,7 +14,13 @@ from agents.runtime import _gather_fail_fast
 from engine.actions import ActionExecutor
 from engine.credit import LoanTerms
 from llm.adapters import AdapterResult
-from llm.gateway import Gateway, LLMRequest
+from llm.gateway import (
+    Gateway,
+    LLMRequest,
+    ProviderUnavailable,
+    sanitize_provider_error,
+    sanitize_provider_raw,
+)
 from run import DEFAULT_CONFIG
 from server.app import create_app
 from tests.conftest import make_agent, make_bank
@@ -395,6 +401,214 @@ def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatc
     store.close()
 
 
+def test_gateway_redacts_tagged_private_reasoning_before_persisting(
+        tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "PRIVACY_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "privacy-test"},
+            "routes": {},
+            "pricing": {"privacy-test": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+    }
+    store = Store(str(tmp_path / "privacy.db"))
+    store.init_run_meta("privacy", 1, config)
+    monkeypatch.setenv("PRIVACY_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+    provider_payload = {
+        "analysis": "private structured reasoning",
+        "reasoning": "bounded public rationale",
+        "actions": [{
+            "type": "do_nothing",
+            "metadata": {"thinking": "private nested reasoning"},
+            "content": [
+                {"type": "reasoning", "text": "private typed reasoning"},
+                {"type": "text", "text": "public action metadata"},
+            ],
+        }],
+    }
+    provider_text = (
+        "<think>private scratch work</think>"
+        + json.dumps(provider_payload))
+
+    class TaggedReasoningAdapter:
+        async def complete(self, *args, **kwargs):
+            return AdapterResult(
+                text=provider_text, in_tokens=10, out_tokens=10,
+                raw={"choices": [{"message": {
+                    "content": provider_text,
+                    "reasoning_content": "private raw reasoning",
+                    "diagnostic": (
+                        'first {"analysis":"private raw fragment one",'
+                        '"status":"public first"} second '
+                        '{"reasoning_content":"private raw fragment two",'
+                        '"finish_reason":"stop"}'
+                    ),
+                    "malformed": (
+                        '{"type":"reasoning","text":"private malformed raw"'
+                    ),
+                    "blocks": [
+                        {"type": "reasoning", "text": "private raw typed reasoning"},
+                        {"type": "text", "text": "public raw metadata"},
+                    ],
+                }}]},
+            )
+
+    gateway.adapters["network"] = TaggedReasoningAdapter()
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="decision", tick=1)))
+
+    assert response.ok
+    assert response.parsed["reasoning"] == "bounded public rationale"
+    assert "analysis" not in response.parsed
+    assert response.parsed["actions"][0]["metadata"] == {}
+    assert response.parsed["actions"][0]["content"] == [
+        {"type": "text", "text": "public action metadata"}]
+    persisted = store.query_one("SELECT response_json FROM llm_calls")
+    payload = json.loads(persisted["response_json"])
+    serialized = json.dumps(payload)
+    for private_text in (
+            "private scratch work", "private structured reasoning",
+            "private nested reasoning", "private typed reasoning",
+            "private raw reasoning", "private raw typed reasoning",
+            "private raw fragment one", "private raw fragment two",
+            "private malformed raw"):
+        assert private_text not in serialized
+    assert "<think>" not in serialized
+    assert '"analysis"' not in serialized
+    assert "reasoning_content" not in serialized
+    raw_message = payload["raw"]["choices"][0]["message"]
+    assert "public first" in raw_message["diagnostic"]
+    assert '"finish_reason":"stop"' in raw_message["diagnostic"]
+    assert raw_message["malformed"] == "[REDACTED]"
+    store.close()
+
+
+def test_provider_text_sanitizers_cover_multiple_and_malformed_json_fragments():
+    raw = sanitize_provider_raw({
+        "api_key": "raw-credential-sentinel",
+        "content": (
+            'prefix {"analysis":"first-fragment-private","status":"public-one"} '
+            'middle {"reasoning_details":"second-fragment-private",'
+            '"finish_reason":"stop"} suffix'
+        ),
+        "malformed": (
+            r'provider payload {\"thinking\":\"escaped-malformed-private\"'
+        ),
+        "unicode_malformed": (
+            r'provider {"\u0061nalysis":"unicode-malformed-private"'
+        ),
+        "nested": {"credential": "nested-credential-sentinel", "status": "ok"},
+    })
+    serialized_raw = json.dumps(raw)
+
+    assert "first-fragment-private" not in serialized_raw
+    assert "second-fragment-private" not in serialized_raw
+    assert "public-one" in serialized_raw
+    assert "finish_reason" in serialized_raw
+    assert raw["malformed"] == "[REDACTED]"
+    assert raw["unicode_malformed"] == "[REDACTED]"
+    assert raw["api_key"] == "[REDACTED]"
+    assert raw["nested"] == {"credential": "[REDACTED]", "status": "ok"}
+    assert "credential-sentinel" not in serialized_raw
+
+    error = sanitize_provider_error(
+        'first {"analysis":"error-fragment-private","error":"public error"} '
+        'second {"thoughts":"error-second-private","status":"unavailable"}')
+    assert "error-fragment-private" not in error
+    assert "error-second-private" not in error
+    assert "public error" in error and "unavailable" in error
+
+    malformed_error = sanitize_provider_error(
+        '{"type":"reasoning","text":"malformed-error-private"')
+    assert malformed_error == "[REDACTED]"
+    assert "malformed-error-private" not in malformed_error
+
+    unicode_error = sanitize_provider_error(
+        r'provider {"reason\u0069ng_content":"unicode-error-private"')
+    assert unicode_error == "[REDACTED]"
+    assert "unicode-error-private" not in unicode_error
+
+
+def test_gateway_sanitizes_provider_errors_before_preflight_and_events(
+        tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "ERROR_PRIVACY_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "error-test"},
+            "routes": {},
+            "pricing": {"error-test": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+    }
+    store = Store(str(tmp_path / "provider-errors.db"))
+    store.init_run_meta("provider-errors", 1, config)
+    monkeypatch.setenv("ERROR_PRIVACY_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+
+    class FailingAdapter:
+        @staticmethod
+        def _message(stage):
+            first = (
+                f"api_key={stage}-credential <think>{stage}-tagged-private</think> "
+                + json.dumps({
+                    "analysis": f"{stage}-structured-private",
+                    "api_key": f"{stage}-json-credential",
+                    "error": "provider unavailable",
+                }))
+            if stage == "preflight":
+                return first + " second " + json.dumps({
+                    "reasoning_content": "preflight-second-fragment-private",
+                    "status": "public preflight status",
+                })
+            return first + ' malformed {"analysis":"completion-malformed-private"'
+
+        async def healthcheck(self, model):
+            raise RuntimeError(self._message("preflight"))
+
+        async def complete(self, *args, **kwargs):
+            raise RuntimeError(self._message("completion"))
+
+    gateway.adapters["network"] = FailingAdapter()
+    preflight = asyncio.run(gateway.preflight(live=True))
+    with pytest.raises(ProviderUnavailable) as exc_info:
+        asyncio.run(gateway.complete(
+            LLMRequest(role="citizen", purpose="decision", tick=1)))
+
+    event = store.query_one(
+        "SELECT payload_json FROM events WHERE kind='provider_failure' ORDER BY id DESC")
+    serialized = json.dumps({
+        "preflight": preflight,
+        "exception": str(exc_info.value),
+        "event": json.loads(event["payload_json"]),
+    })
+    for private_text in (
+            "preflight-credential", "preflight-tagged-private",
+            "preflight-structured-private", "preflight-json-credential",
+            "preflight-second-fragment-private",
+            "completion-credential", "completion-tagged-private",
+            "completion-structured-private", "completion-json-credential",
+            "completion-malformed-private"):
+        assert private_text not in serialized
+    assert "<think>" not in serialized
+    assert '"analysis"' not in serialized
+    assert "[REDACTED]" in serialized
+    assert "public preflight status" in serialized
+    assert json.loads(event["payload_json"])["error"] == "[REDACTED]"
+    store.close()
+
+
 def test_empty_success_completions_are_metered_and_degrade_to_noop(tmp_path, monkeypatch):
     from engine.store import Store
     config = {
@@ -433,12 +647,16 @@ def test_empty_success_completions_are_metered_and_degrade_to_noop(tmp_path, mon
     assert adapter.calls == 2
     assert not response.ok
     assert response.parsed["actions"] == [{"type": "do_nothing"}]
+    assert response.text == (
+        '{"actions":[{"type":"do_nothing"}],'
+        '"reasoning":"unparseable output; no-op"}')
     assert response.in_tokens == 200 and response.out_tokens == 8192
     expected_cost = (120 * 1.0 + 80 * 0.1 + 8192 * 2.0) / 1_000_000
     assert response.cost_usd == pytest.approx(expected_cost)
     row = store.query_one("SELECT * FROM llm_calls")
     assert row["in_tokens"] == 200 and row["out_tokens"] == 8192
     assert row["cost_usd"] == pytest.approx(expected_cost)
+    assert json.loads(row["response_json"])["text"] == response.text
     assert store.scalar("SELECT COUNT(*) FROM events WHERE kind='provider_failure'") == 0
     store.close()
 
