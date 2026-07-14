@@ -125,7 +125,24 @@ class AgentRuntime:
             agent_id = d["agent_id"]
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
-            results = self.executor.execute_actions(tick, agent_id, actions, phase="EXECUTION")
+            model_call_id = d.get("llm_call_id")
+            rationale = str(d.get("reasoning") or "").strip()[:500]
+            attributed_actions = []
+            for action in actions:
+                if not isinstance(action, dict):
+                    attributed_actions.append(action)
+                    continue
+                attributed = dict(action)
+                # Provenance is execution metadata, not model-controlled state.
+                # Always bind an LLM-originated action to the authoritative call
+                # record returned by the gateway, regardless of model output.
+                if model_call_id is not None:
+                    attributed["model_call_id"] = model_call_id
+                if rationale and not attributed.get("rationale_summary"):
+                    attributed["rationale_summary"] = rationale
+                attributed_actions.append(attributed)
+            results = self.executor.execute_actions(
+                tick, agent_id, attributed_actions, phase="EXECUTION")
             self.participant.complete(d.get("participant_action_id"), results, tick)
             self.mem.apply_belief_updates(
                 agent_id, env.get("belief_updates", []), tick,

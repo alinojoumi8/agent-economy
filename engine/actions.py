@@ -118,8 +118,12 @@ class ActionExecutor:
         return result
 
     def _reject(self, tick: int, actor_id: int, action: dict, reason: str, phase: str) -> dict:
+        public_action = ({
+            key: value for key, value in action.items()
+            if key not in {"model_call_id", "rationale_summary"}
+        } if isinstance(action, dict) else action)
         self.store.log_event(tick, "action_rejected", {
-            "actor_id": actor_id, "action": action, "reason": reason},
+            "actor_id": actor_id, "action": public_action, "reason": reason},
             phase=phase, subject_type="agent", subject_id=actor_id, importance=0.5)
         return {"ok": False, "reason": reason}
 

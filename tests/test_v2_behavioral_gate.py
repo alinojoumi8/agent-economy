@@ -61,6 +61,19 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         assert store.scalar("SELECT COUNT(*) FROM llm_calls WHERE provider<>'scripted'") == 0
         assert store.scalar("SELECT COUNT(*) FROM action_proposals WHERE validation_status='rejected'") == 0
 
+        attributed = store.query(
+            "SELECT action_type, model_call_id, rationale_summary FROM action_proposals "
+            "WHERE tick>0 AND action_type IN "
+            "('deny_loan','fund_pitch','submit_filing','propose_settlement')")
+        assert {row["action_type"] for row in attributed} == {
+            "deny_loan", "fund_pitch", "submit_filing", "propose_settlement",
+        }
+        assert all(row["model_call_id"] is not None for row in attributed)
+        assert all(row["rationale_summary"] for row in attributed)
+        filing = store.query_one("SELECT model_call_id, rationale_summary FROM legal_filings")
+        assert filing["model_call_id"] is not None
+        assert filing["rationale_summary"]
+
         exercised = {row["action_type"] for row in store.query(
             "SELECT DISTINCT action_type FROM action_proposals WHERE tick>0 "
             "AND validation_status='accepted' AND action_type<>'do_nothing'")}
@@ -70,4 +83,3 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         assert diagnostic["currency_sums"] == {"IVC": 0, "NSD": 0, "SCD": 0, "USD": 0}
     finally:
         store.close()
-
