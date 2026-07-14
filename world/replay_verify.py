@@ -62,7 +62,24 @@ def _canonical_value(column: str, value: Any) -> Any:
     return text
 
 
-def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
+def _logical_llm_call_references(conn: sqlite3.Connection) -> dict[int, Any]:
+    """Index local surrogate IDs by their deterministic LLM call contents."""
+    all_columns = [
+        str(column[1]) for column in conn.execute('PRAGMA table_info("llm_calls")')]
+    ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS["llm_calls"]
+    identity_columns = [column for column in all_columns if column not in ignored]
+    return {
+        int(row["id"]): {"llm_call": {
+            column: _canonical_value(column, row[column])
+            for column in identity_columns
+        }}
+        for row in conn.execute("SELECT * FROM llm_calls")
+    }
+
+
+def _table_digest(
+        conn: sqlite3.Connection, table: str,
+        llm_call_references: dict[int, Any]) -> tuple[int, str, bool]:
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
     ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
     columns = [column for column in all_columns if column not in ignored]
@@ -76,8 +93,23 @@ def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()
     records = []
+    references_valid = True
     for row in rows:
-        record = {column: _canonical_value(column, row[column]) for column in columns}
+        record = {}
+        for column in columns:
+            if column == "model_call_id":
+                call_id = row[column]
+                if call_id is None:
+                    record[column] = None
+                else:
+                    key = int(call_id)
+                    reference = llm_call_references.get(key)
+                    record[column] = (
+                        reference if reference is not None
+                        else {"dangling_llm_call_id": key})
+                    references_valid = references_valid and reference is not None
+            else:
+                record[column] = _canonical_value(column, row[column])
         records.append(json.dumps(
             record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False).encode("utf-8"))
@@ -87,7 +119,7 @@ def _table_digest(conn: sqlite3.Connection, table: str) -> tuple[int, str]:
     for record in records:
         digest.update(record)
         digest.update(b"\n")
-    return len(rows), digest.hexdigest()
+    return len(rows), digest.hexdigest(), references_valid
 
 
 def verify_replay(source_path: str | Path, replay_path: str | Path) -> dict:
@@ -101,6 +133,8 @@ def verify_replay(source_path: str | Path, replay_path: str | Path) -> dict:
         results = []
         source_run = source.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
         replay_run = replay.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
+        source_llm_call_references = _logical_llm_call_references(source)
+        replay_llm_call_references = _logical_llm_call_references(replay)
         source_total = hashlib.sha256()
         replay_total = hashlib.sha256()
         for name in names:
@@ -112,9 +146,12 @@ def verify_replay(source_path: str | Path, replay_path: str | Path) -> dict:
                     "source_hash": None, "replay_hash": None,
                 })
                 continue
-            source_rows, source_hash = _table_digest(source, name)
-            replay_rows, replay_hash = _table_digest(replay, name)
-            exact = source_rows == replay_rows and source_hash == replay_hash
+            source_rows, source_hash, source_references_valid = _table_digest(
+                source, name, source_llm_call_references)
+            replay_rows, replay_hash, replay_references_valid = _table_digest(
+                replay, name, replay_llm_call_references)
+            exact = (source_rows == replay_rows and source_hash == replay_hash
+                     and source_references_valid and replay_references_valid)
             results.append({
                 "table": name, "exact": exact,
                 "source_rows": source_rows, "replay_rows": replay_rows,

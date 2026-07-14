@@ -155,6 +155,9 @@ intervals, causal event traces, checksums, and limitations.
 For a fixed code revision, config, semantics version, seed, and recorded model
 responses, exact replay must produce the same event hash. Checkpoints persist
 engine, persona, and lifecycle PRNG state. Replay does not call a provider.
+Canonical replay resolves each persisted `model_call_id` through the logical LLM
+call it references, so concurrent completion order cannot create a false mismatch
+between otherwise identical databases. Missing LLM provenance fails closed.
 
 Required invariants include balanced ledgers per currency, conserved shares,
 no enforcement before execution, no remedy outside a validated decision, no
@@ -202,10 +205,9 @@ fields, all ledgers reconciled per currency, and all three tick checkpoints were
 created. Exact offline replay reproduced the source state hash
 `c14c0412aa7e32726de8216c60202ff44de88115f35959d7eb2b4943bed2d347`.
 
-This is an infrastructure and safety acceptance result, not yet a behavioral
-quality result: all 12 accepted strategic proposals chose `do_nothing`. The next
-live gate should seed a bounded legal, credit, funding, and disclosure fixture so
-that non-trivial typed actions and their deterministic effects are exercised.
+This was an infrastructure and safety result rather than a behavioral-quality
+result: all 12 accepted strategic proposals chose `do_nothing`. The seeded gate
+below subsequently closed that behavioral coverage gap with live typed actions.
 
 ### Seeded behavioral gate
 
@@ -230,6 +232,25 @@ staffed startup, admitted the contract-breach event, offered a remedy-limited
 settlement, published two articles, recorded 72 information exposures, rejected
 no actions, and reconciled every currency. Live acceptance additionally requires
 private-reasoning redaction, bounded spend, checkpoints, and exact offline replay.
+
+### Latest seeded behavioral evidence
+
+The live ten-tick run `fd0adc5dc1` at revision `9ac38a6` reached its configured
+boundary with 48 valid completions: 40 MiniMax M3 calls and eight local Ollama
+calls. MiniMax cost `$0.02361318` against the `$0.50` cap; Ollama recorded zero
+provider cost. There were no provider failures, invalid contracts, or rejected
+actions. Live agents denied the undercapitalized loan, declined the pre-revenue
+VC pitch, submitted an admitted breach filing, and offered the requested bounded
+settlement. The run also retained one material-litigation disclosure, published
+one article, and recorded 36 information exposures.
+
+All 40 LLM-attributed proposals referenced the correct local model call with no
+dangling provenance. The persisted provider metadata contained no private
+reasoning fields or tags, all ten checkpoint ticks were present, account caches
+matched the ledger, and IVC, NSD, SCD, and USD each reconciled to zero. Exact
+offline replay `replay-fd0adc5dc1-26323b9041` matched every deterministic table
+at tick 10 with source and replay hash
+`46bee781169a2dfe4898e9026753c6adb87f8c8bfbfc04ade5610bfd9153e5f9`.
 
 ## Release checklist
 

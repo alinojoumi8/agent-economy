@@ -277,6 +277,69 @@ def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
     assert "accounts" in changed["differences"]
 
 
+def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
+    source = Store(str(tmp_path / "provenance-source.db"))
+    replay = Store(str(tmp_path / "provenance-replay.db"))
+    source.init_run_meta("provenance-source", 42, {})
+    replay.init_run_meta("provenance-replay", 42, {})
+
+    def insert_call(store, call_id, agent_id):
+        return store.insert(
+            "llm_calls", id=call_id, tick=1, agent_id=agent_id,
+            role="credit_officer", provider="minimax", model="MiniMax-M3",
+            purpose="credit_officer", cache_key=f"call-{agent_id}",
+            request_json=json.dumps({"agent_id": agent_id}, sort_keys=True),
+            response_json=json.dumps({
+                "text": '{"reasoning":"bounded","actions":[{"type":"do_nothing"}]}',
+                "raw": {}, "cached_in_tokens": 0,
+            }, sort_keys=True),
+            in_tokens=100 + agent_id, out_tokens=20, cached=0,
+            cost_usd=0.001, latency_ms=1000 + agent_id,
+            created_at="2026-07-14T00:00:00+00:00")
+
+    def insert_action(store, proposal_id, actor_id, model_call_id):
+        store.insert(
+            "action_proposals", id=proposal_id, tick=1, actor_id=actor_id,
+            action_type="do_nothing", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=model_call_id,
+            rationale_summary="bounded", validation_status="accepted",
+            result_json='{"ok": true}')
+
+    insert_call(source, 1, 2)
+    insert_call(source, 2, 3)
+    insert_action(source, 1, 2, 1)
+    insert_action(source, 2, 3, 2)
+
+    # Replay completion order is reversed, so its correct local surrogate IDs
+    # differ even though both proposals retain the same logical provenance.
+    insert_call(replay, 1, 3)
+    insert_call(replay, 2, 2)
+    insert_action(replay, 1, 2, 2)
+    insert_action(replay, 2, 3, 1)
+    source.commit()
+    replay.commit()
+
+    proof = verify_replay(source.path, replay.path)
+    assert proof["exact"], proof["differences"]
+    assert proof["source_hash"] == proof["replay_hash"]
+
+    replay.execute("UPDATE action_proposals SET model_call_id=1 WHERE id=1")
+    replay.commit()
+    wrong = verify_replay(source.path, replay.path)
+    assert not wrong["exact"]
+    assert wrong["differences"] == ["action_proposals"]
+
+    # Even identical dangling IDs on both sides must fail closed rather than
+    # compare as equivalent provenance.
+    source.execute("UPDATE action_proposals SET model_call_id=999 WHERE id=1")
+    replay.execute("UPDATE action_proposals SET model_call_id=999 WHERE id=1")
+    source.commit()
+    replay.commit()
+    dangling = verify_replay(source.path, replay.path)
+    assert not dangling["exact"]
+    assert dangling["differences"] == ["action_proposals"]
+
+
 def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
     cfg = _config(tmp_path)
     source_store, source_world, source_id = open_run(
