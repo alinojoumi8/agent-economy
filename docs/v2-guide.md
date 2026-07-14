@@ -43,12 +43,15 @@ outputs, and v11 wage-offer, IPO-book, and share-movement provenance. Engine
 semantics 4 enables legal-institutional behavior, semantics 5 enables regional
 multicurrency behavior, and semantics 6 enables bilateral wage bargaining,
 qualified agent-priced IPOs, and agent-authored lender-of-last-resort decisions.
+Maintained profiles use semantics 7 for net loan-loss recognition, retirement
+liquidity and cadence, deterministic arrival/persona contracts, and autonomous
+qualified regional trade and migration. Schema remains v11.
 
 Old runs retain their stored semantics. A run is never silently upgraded. Use
 an explicit child fork:
 
 ```powershell
-python run.py --fork RUN_ID@TICK --upgrade-semantics 6
+python run.py --fork RUN_ID@TICK --upgrade-semantics 7
 ```
 
 The child records its parent and fork tick plus a `semantic_upgrade` event with
@@ -168,6 +171,14 @@ between otherwise identical databases. News citations are likewise checked
 against the deterministic event contents they reference when operational rows
 shift physical SQLite IDs. Missing or dangling provenance fails closed.
 
+The sanitized portable fixture at
+`tests/golden/fd0adc5dc1.sqlite.json.zlib.b64` contains the stored configuration,
+recorded requests/responses, and expected deterministic state needed to rebuild
+and replay the ten-tick live source without network access. The database itself
+records `engine_semantics_version: 5`; an earlier closure plan incorrectly
+called it semantics 6. CI preserves the stored semantics rather than rewriting
+historical evidence.
+
 Required invariants include balanced ledgers per currency, conserved shares,
 no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
@@ -190,6 +201,15 @@ only public response content may enter the event log or replay artifact.
 The gateway also recursively removes provider fields such as
 `reasoning_content`, `reasoning_details`, and `thinking` before raw response
 metadata is persisted, while retaining token and billing counters.
+
+Provider configuration now uses `prompt_cache_mode`: `off`,
+`provider_automatic`, `openai_key`, or `anthropic_ephemeral`. Readiness rejects
+adapter/mode mismatches, the old `prompt_cache_key` setting remains an
+`openai_key` alias, and MiniMax uses automatic prefix caching without an
+invented wire field, matching its [OpenAI-compatible prompt-caching
+contract](https://platform.minimax.io/docs/api-reference/text-prompt-caching).
+Cache telemetry is recorded for cost analysis; a cache miss is not a simulation
+failure.
 
 After setting `MINIMAX_API_KEY` and the non-secret local value
 `OLLAMA_API_KEY=ollama`, preflight and run the authorized three-tick pilot with:
@@ -245,19 +265,21 @@ private-reasoning redaction, bounded spend, checkpoints, and exact offline repla
 ### Latest seeded behavioral evidence
 
 The live ten-tick run `fd0adc5dc1` at revision `9ac38a6` reached its configured
-boundary with 48 valid completions: 40 MiniMax M3 calls and eight local Ollama
-calls. MiniMax cost `$0.02361318` against the `$0.50` cap; Ollama recorded zero
-provider cost. There were no provider failures, invalid contracts, or rejected
-actions. Live agents denied the undercapitalized loan, declined the pre-revenue
-VC pitch, submitted an admitted breach filing, and offered the requested bounded
-settlement. The run also retained one material-litigation disclosure, published
-one article, and recorded 36 information exposures.
+boundary under its stored **semantics 5** contract with 48 valid completions: 40
+MiniMax M3 calls and eight local Ollama calls. MiniMax cost `$0.02361318` against
+the `$0.50` cap; Ollama recorded zero provider cost. There were no provider
+failures, invalid contracts, or rejected actions. Live agents denied the
+undercapitalized loan, declined the pre-revenue VC pitch, submitted an admitted
+breach filing, and offered the requested bounded settlement. The run also
+retained one material-litigation disclosure, published one article, and
+recorded 36 information exposures. The run predates semantics 6/7 and is retained
+as historical replay evidence, not relabeled as a newer semantic contract.
 
 All 40 LLM-attributed proposals referenced the correct local model call with no
 dangling provenance. The persisted provider metadata contained no private
 reasoning fields or tags, all ten checkpoint ticks were present, account caches
 matched the ledger, and IVC, NSD, SCD, and USD each reconciled to zero. Exact
-offline replay `replay-fd0adc5dc1-a29fce4d82` matched every deterministic table
+offline replay `replay-fd0adc5dc1-fa13b78c6d` matched every deterministic table
 at tick 10 with `differences: []` and source and replay hash
 `3586581baea968819cce9fed54b8d9427391645c869f163250c90e7e27976173`.
 
@@ -344,9 +366,102 @@ replay. Verification completed with 231 Python tests, 16 dashboard tests, a
 production dashboard build, a zero-vulnerability npm audit, Python compilation,
 and pinned-dataset manifest checks. Free semantics-6 rehearsal `aa828c6542`
 reached tick 10 with zero spend and no provider failure. The recorded live run
-was then replayed offline as `replay-fd0adc5dc1-a29fce4d82`; it remained exact
+was then replayed offline as `replay-fd0adc5dc1-fa13b78c6d`; it remained exact
 with identical ticks and hashes and `differences: []`. No additional paid
-provider run was made or is required for this implementation pass.
+provider run was made for that earlier semantics-6 implementation pass. The
+semantics-7 closure below has its own bounded pilot gate.
+
+### Semantics-7 specification closure
+
+Semantics 7 closes four remaining behavioral contracts without changing schema
+v11 or stored semantics 1–6:
+
+1. A default first seizes eligible collateral, then posts only unrecovered
+   principal from the bank's same-currency equity account to `SYS_LOSS` as a
+   balanced `loan_loss_chargeoff`. The default event reports recovery and net
+   charge-off.
+2. Retirees can use `withdraw_savings{amount}` only between their own declared,
+   same-currency savings and checking accounts. Lifecycle config
+   `retirement_liquidity_target_cents` becomes public context field
+   `retirement_drawdown_target_cents` beside `savings_balance`; policy draws the shortfall before
+   consumption, never seeks work, reads news more frequently, and receives a
+   greater conversation-pair weight. Genesis and transitions share the cadence.
+3. Due arrivals spawn deterministically during `NIGHT_CLOSE`, funded visibly
+   from population inflow with the genesis 70/30 checking/savings split. The
+   owned persona wrapper permits exactly one persisted
+   `role=persona,purpose=persona` enrichment before morning decisions. Only
+   bounded persona traits can change; provider/budget pauses resume, malformed
+   success falls back deterministically, and missing replay responses fail closed.
+4. Regional prompts include bounded wallet/FX facts, at most five executable
+   cross-border trade opportunities, and career-gated migration destinations.
+   Trade requires an effective contract, distinct regions, inventory, and
+   importer funds and is invoiced in the importer's currency. Scripted founders
+   create at most one bounded shipment, while only healthy unemployed
+   non-retirees with sufficient numeraire-adjusted wage gain can request migration.
+
+The same pass makes the weighted additive memory formula authoritative, adds
+adapter-validated cache modes, and retains logical LLM-reference
+canonicalization plus explicit dangling-reference failures.
+
+`runs/v2-spec-closure-rehearsal.yaml` and
+`runs/v2-spec-closure-live.yaml` share a five-tick fixture containing a
+near-defaulted collateralized loan, retiree, due arrival, qualified shipment,
+and qualified migration opportunity. The live profile has a `$1` safety cap;
+MiniMax handles persona enrichment and selected strategic roles while background
+behavior remains scripted.
+
+```powershell
+python run.py --config runs/v2-spec-closure-rehearsal.yaml --ticks 5
+python run.py --config runs/v2-spec-closure-live.yaml --preflight-live --approve-live-inference
+python run.py --config runs/v2-spec-closure-live.yaml --ticks 5 --approve-live-inference
+```
+
+### Semantics-7 closure evidence
+
+The focused named gate passed 86 tests in 88.17 seconds; the complete Python
+suite passed 268 tests in 157.42 seconds. Python compilation and pinned-dataset
+verification were green: FRED and BLS each supplied three required targets, and
+the four optional sources remained explicitly unpinned. Dashboard verification
+installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
+high-severity audit vulnerabilities, built 599 Vite modules, confirmed the
+committed static bundle was fresh, and passed `git diff --check`.
+
+Free rehearsal `5a0d40d773` completed five ticks at `$0` and exercised every
+target effect with zero rejected actions or provider failures. It wrote six
+checkpoints and reconciled every currency to zero. Offline replay
+`replay-5a0d40d773-b45777cf29` matched tick 5 with `differences: []` and source/
+replay hash
+`fa190b0dc10a6b94038f7dbd8838a6aea14c1c5b57b691a4788527f8e8cffc34`.
+
+MiniMax-M3 passed live preflight. Live source `b4832032ba` ran schema 11 and
+semantics 7 through tick 5 with 57 calls: 21 MiniMax and 36 scripted. Durable
+spend was `$0.01121124` (display `$0.0112`) against the `$1` cap. Cached input
+was 10,974 of 20,782 input tokens, and all 21 MiniMax calls carried the provider
+cache marker. There were zero provider failures; all 42 action proposals were
+accepted, including five retirement withdrawals, one shipment, and one
+migration.
+
+The loan default wrote 120,000 NSD principal, recovered 5,000, and charged off
+the 115,000 net loss. The arrival received the exact 70/30 account split and one
+successful governed persona enrichment. The 399,999 IVC shipment delivered at
+tick 3, and migration completed at tick 2. Six checkpoints were present, every
+currency reconciled to zero, and the privacy/provenance audit found zero
+defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
+`differences: []` and hash
+`ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
+
+| Gate | Status | Evidence |
+|---|---|---|
+| Focused + full Python | **Passed** | 86 focused / 268 full; compile and datasets green |
+| Dashboard + hygiene | **Passed** | 16 tests, audit 0 high, 599-module build, fresh static bundle, clean diff |
+| Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
+| Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
+| Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
+| GitHub Actions / PR #15 | **PENDING — post-push only** | PR is open/draft; await the fresh Windows/Linux Python 3.11/3.12 matrix |
+
+R21 real-US microdata, R22 hosted multi-user operation, the 30-day rumor gate,
+Oracle latency/calibration campaign, and 365-day/$200 acceptance run remain
+separate. Do not merge, tag, publish, or mark PR #15 ready as part of this gate.
 
 ## Release checklist
 

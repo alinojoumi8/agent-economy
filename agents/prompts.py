@@ -63,6 +63,13 @@ lobby{sponsor_type,sponsor_id,authorized_by_agent_id,target_agent_id,bill_id,
 activity_type,position,amount_cents}, review_merger{merger_id,remedy},
 place_fx_order{pair,side,qty,limit_rate_ppm}."""
 
+SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX = """
+Institutional actions: sponsor_bill{title,topic,summary,policy_changes},
+committee_vote{bill_id,vote}, cast_legislative_vote{bill_id,vote},
+executive_bill_action{bill_id,action,effective_delay_ticks},
+lobby{sponsor_type,sponsor_id,authorized_by_agent_id,target_agent_id,bill_id,
+activity_type,position,amount_cents}, review_merger{merger_id,remedy}."""
+
 LABOR_IPO_ACTIONS_SUFFIX = """
 Semantics 6 labor actions replace direct hire: make_job_offer{application_id,wage},
 counter_job_offer{offer_id,wage}, accept_job_offer{offer_id},
@@ -120,6 +127,12 @@ class ContextBuilder:
         elif self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
             ctx["purpose"] = role
             ctx["institutional_work"] = self._institutional_work(agent_row, tick)
+        if self.engine_semantics_version >= 7:
+            ctx.update(self.e.regions.decision_context(
+                int(agent_row["id"]), tick=tick,
+                exporter_firm_id=int(firm["id"]) if firm else None,
+                career_day=bool(ctx.get("career_day")),
+            ))
         return ctx
 
     def purpose_for(self, agent_row) -> str:
@@ -152,6 +165,13 @@ class ContextBuilder:
         cash = int(checking["balance_cents"]) if checking else 0
         bank_id = int(checking["bank_id"]) if checking and checking["bank_id"] is not None else None
         currency_code = str(checking["currency_code"] or "USD") if checking else "USD"
+        savings_balance = 0
+        if self.engine_semantics_version >= 7:
+            savings_balance = int(self.store.scalar(
+                "SELECT ac.balance_cents FROM agents ag JOIN accounts ac "
+                "ON ac.id=ag.savings_account_id WHERE ag.id=? "
+                "AND ac.owner_type='agent' AND ac.owner_id=ag.id AND ac.kind='savings'",
+                (agent_id,), default=0) or 0)
         debt = int(self.store.scalar(
             "SELECT COALESCE(SUM(outstanding_cents),0) FROM loans "
             "WHERE borrower_type='agent' AND borrower_id=? AND status='active'", (agent_id,), default=0))
@@ -166,6 +186,8 @@ class ContextBuilder:
         portfolio_day = (tick % max(1, portfolio_every)) == (agent_id % max(1, portfolio_every))
         career_every = int(cadence.get("career", 30))
         career_day = (tick % max(1, career_every)) == (agent_id % max(1, career_every))
+        if self.engine_semantics_version >= 7 and bool(a["retired"]):
+            career_day = False
 
         heard = self._heard(agent_id, tick)
         memories = self.mem.retrieve(agent_id, tick, k=6, query_entities=self._query_entities(bank_id))
@@ -176,6 +198,8 @@ class ContextBuilder:
         state = {"checking_balance": cash, "bank_id": bank_id, "debt": debt,
                  "employed": emp is not None, "wage": int(emp["wage_cents"]) if emp else 0,
                  "net_worth": self.e.ledger.net_worth_agent(agent_id), "shares": shares}
+        if self.engine_semantics_version >= 7:
+            state["savings_balance"] = savings_balance
         if self.local_currency_action_surfaces:
             state["currency_code"] = currency_code
         context = {
@@ -195,8 +219,9 @@ class ContextBuilder:
             "beliefs": beliefs,
             "prices": self._goods_offers(
                 currency_code if self.local_currency_action_surfaces else None),
-            "jobs": self._open_jobs(
-                currency_code if self.local_currency_action_surfaces else None),
+            "jobs": ([] if self.engine_semantics_version >= 7 and bool(a["retired"])
+                     else self._open_jobs(
+                         currency_code if self.local_currency_action_surfaces else None)),
             "listed_firms": self._listed_firms(
                 tick, currency_code if self.local_currency_action_surfaces else None),
             "banks": self._bank_views(
@@ -210,9 +235,16 @@ class ContextBuilder:
             "portfolio_day": portfolio_day,
             "career_day": career_day,
         }
+        if self.engine_semantics_version >= 7:
+            context["savings_balance"] = savings_balance
+            context["retirement_drawdown_target_cents"] = max(0, int(
+                self.config.get("lifecycle", {}).get(
+                    "retirement_liquidity_target_cents", 100_000)))
         if self.engine_semantics_version >= 6:
             context["labor_negotiation_enabled"] = True
-            context["incoming_job_offers"] = self._incoming_job_offers(agent_id)
+            context["incoming_job_offers"] = (
+                [] if self.engine_semantics_version >= 7 and bool(a["retired"])
+                else self._incoming_job_offers(agent_id))
             context["ipo_offerings"] = self._ipo_offerings(
                 currency_code if self.local_currency_action_surfaces else None)
         return context
@@ -863,6 +895,12 @@ class ContextBuilder:
                 lines.append(f"[STATE] cash {s.get('checking_balance',0)}c at bank {s.get('bank_id')}, "
                              f"debt {s.get('debt',0)}c, employed={s.get('employed')}, "
                              f"net_worth {s.get('net_worth',0)}c, shares {s.get('shares',{})}.")
+            if "savings_balance" in s:
+                lines.append(
+                    f"[RETIREMENT LIQUIDITY] savings {s.get('savings_balance', 0)}c; "
+                    f"checking target {context.get('retirement_drawdown_target_cents', 0)}c. "
+                    "Only a retired agent may use withdraw_savings{amount}, and the amount "
+                    "cannot exceed the supplied savings balance.")
         beliefs = context.get("beliefs", {})
         if beliefs:
             lines.append("[BELIEFS] " + ", ".join(f"{k}={v}" for k, v in list(beliefs.items())[:8]))
@@ -879,6 +917,30 @@ class ContextBuilder:
         if metrics:
             lines.append("[MACRO — MOST RECENT COMPLETED DAY] "
                          + json.dumps(metrics, separators=(",", ":")))
+        if context.get("regional_state"):
+            lines.append("[REGION - COPY ONLY SUPPLIED REGIONAL FACTS] "
+                         + json.dumps(context["regional_state"], separators=(",", ":")))
+        if context.get("regional_wallets"):
+            lines.append("[REGIONAL WALLETS - BALANCES BOUND FX CAPACITY] "
+                         + json.dumps(context["regional_wallets"], separators=(",", ":")))
+        if context.get("fx_quotes"):
+            lines.append(
+                "[EXECUTABLE FX QUOTES - COPY A supplied buy_action/sell_action EXACTLY; "
+                "DO NOT INVENT pair, qty, OR rate] "
+                + json.dumps(context["fx_quotes"], separators=(",", ":"))[:4000])
+        if context.get("open_fx_orders"):
+            lines.append(
+                "[CANCELABLE FX ORDERS - COPY cancel_action EXACTLY] "
+                + json.dumps(context["open_fx_orders"], separators=(",", ":"))[:2000])
+        if context.get("migration_options"):
+            lines.append(
+                "[QUALIFIED MIGRATION OPTIONS - CAREER DAY; COPY action EXACTLY] "
+                + json.dumps(context["migration_options"], separators=(",", ":"))[:4000])
+        if context.get("trade_opportunities"):
+            lines.append(
+                "[QUALIFIED CROSS-BORDER SHIPMENTS - CONTRACT, INVENTORY, AND FUNDS "
+                "ALREADY VERIFIED; COPY ONE action EXACTLY] "
+                + json.dumps(context["trade_opportunities"], separators=(",", ":"))[:5000])
         banks = context.get("banks", [])
         if banks:
             lines.append("[BANKS — COPY id AS bank_id/to_bank_id] "
@@ -1006,7 +1068,32 @@ class ContextBuilder:
                          "banks, and—when due—listed securities. Reply with the JSON envelope only.")
         system = SYSTEM_PREFIX
         if context.get("institutional_work"):
-            system += INSTITUTIONAL_ACTIONS_SUFFIX
+            system += (SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX
+                       if getattr(self, "engine_semantics_version", 2) >= 7
+                       else INSTITUTIONAL_ACTIONS_SUFFIX)
         if getattr(self, "engine_semantics_version", 2) >= 6:
             system += LABOR_IPO_ACTIONS_SUFFIX
+        if (getattr(self, "engine_semantics_version", 2) >= 7
+                and bool(a.get("retired"))):
+            system += ("\nRetirement action: withdraw_savings{amount}. Draw only the "
+                       "checking shortfall shown in context and never apply for a job.")
+        if (getattr(self, "engine_semantics_version", 2) >= 7
+                and context.get("regional_actions_enabled")):
+            action_shapes = []
+            if any(q.get("buy_action") or q.get("sell_action")
+                   for q in context.get("fx_quotes", [])):
+                action_shapes.append(
+                    "place_fx_order{pair,side,qty,limit_rate_ppm}")
+            if context.get("open_fx_orders"):
+                action_shapes.append("cancel_fx_orders{pair}")
+            if context.get("migration_options"):
+                action_shapes.append("request_migration{destination_region_id,reason}")
+            if context.get("trade_opportunities"):
+                action_shapes.append(
+                    "create_trade_shipment{exporter_firm_id,importer_firm_id,contract_id,"
+                    "quantity,invoice_cents,invoice_currency,tariff_cents,transport_cents,"
+                    "transit_ticks}")
+            if action_shapes:
+                system += ("\nSemantics 7 regional actions are available only as supplied "
+                           "action objects; copy one exactly: " + ", ".join(action_shapes) + ".")
         return system, "\n\n".join(lines)

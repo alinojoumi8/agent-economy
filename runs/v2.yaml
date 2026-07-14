@@ -3,7 +3,7 @@ extends: base.yaml
 # Flagship Legal-Political Economy world. Normal execution is offline and
 # deterministic; providers and dataset refreshes remain explicit commands.
 seed: 42
-engine_semantics_version: 6
+engine_semantics_version: 7
 dataset_manifest: config/data-manifest.yaml
 checkpoint_every: 90
 

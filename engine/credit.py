@@ -28,10 +28,12 @@ class LoanTerms:
 
 class Bank:
     def __init__(self, store: Store, ledger: Ledger, *,
-                 local_currency_action_surfaces: bool = False):
+                 local_currency_action_surfaces: bool = False,
+                 engine_semantics_version: int = 2):
         self.store = store
         self.ledger = ledger
         self.local_currency_action_surfaces = bool(local_currency_action_surfaces)
+        self.engine_semantics_version = int(engine_semantics_version)
 
     # ── queries ──────────────────────────────────────────────────────────────
     def get(self, bank_id: int):
@@ -210,11 +212,23 @@ class Bank:
                 recovered += seize
 
         charged_off = outstanding - recovered
+        if self.engine_semantics_version >= 7 and charged_off > 0:
+            equity_acct = int(bank["equity_account_id"])
+            currency_code = str(bank["currency_code"] or "USD").upper()
+            loss_acct = self.ledger.system_account(
+                SYS_LOSS, currency_code=currency_code)
+            self.ledger.post(tick, "loan_loss_chargeoff", [
+                Leg(equity_acct, -charged_off, "unrecovered loan principal"),
+                Leg(loss_acct, charged_off, "loan principal written off"),
+            ], memo=f"charge off loan {loan_id}")
         self.store.update("loans", loan_id, outstanding_cents=0, status="default")
-        self.store.log_event(tick, "loan_default", {
+        payload = {
             "loan_id": loan_id, "bank_id": int(loan["bank_id"]),
             "borrower_type": loan["borrower_type"], "borrower_id": int(loan["borrower_id"]),
-            "charged_off_cents": charged_off, "recovered_cents": recovered},
+            "charged_off_cents": charged_off, "recovered_cents": recovered}
+        if self.engine_semantics_version >= 7:
+            payload["net_charged_off_cents"] = charged_off
+        self.store.log_event(tick, "loan_default", payload,
             phase="NIGHT_CLOSE", subject_type=loan["borrower_type"],
             subject_id=int(loan["borrower_id"]), importance=3.0)
 

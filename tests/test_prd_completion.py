@@ -389,6 +389,7 @@ def test_legacy_replay_flag_preserves_richest_deposit_and_all_recipient_surfaces
 
 def test_legacy_replay_flag_leaves_migration_credit_guards_disabled(tmp_path):
     config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["engine_semantics_version"] = 6
     config["checkpoint_dir"] = str(tmp_path / "checkpoints")
     config["llm"]["local_currency_action_surfaces"] = False
     store, world, _ = open_run(config, None, None, data_dir=tmp_path)

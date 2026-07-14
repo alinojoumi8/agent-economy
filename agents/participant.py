@@ -357,6 +357,23 @@ class ParticipantService:
                 select("lawyer_agent_id", "Lawyer", [{"value": l["id"], "label": l["name"]}
                        for l in lawyers]), number("opening_capital", "Opening capital (cents)", 0, 0)]},
         ]
+        if self.engine_semantics_version >= 7 and bool(agent["retired"]):
+            # Retirees do not search for work. Their only liquidity action is a
+            # bounded transfer between the two accounts declared on their row.
+            items = [item for item in items if item["type"] != "apply_job"]
+            savings_balance = int(self.store.scalar(
+                "SELECT ac.balance_cents FROM agents a JOIN accounts ac "
+                "ON ac.id=a.savings_account_id WHERE a.id=? "
+                "AND ac.owner_type='agent' AND ac.owner_id=a.id AND ac.kind='savings'",
+                (int(agent_id),), default=0) or 0)
+            items.append({
+                "type": "withdraw_savings",
+                "label": "Draw retirement savings",
+                "fields": [number(
+                    "amount", "Amount (cents)", max(1, min(savings_balance, 100_000)), 1)],
+                "enabled": savings_balance > 0,
+                "disabled_reason": "No savings balance is available",
+            })
         if self.engine_semantics_version >= 6:
             candidate_offer_options = [{
                 "value": offer["offer_id"],

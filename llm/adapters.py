@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
+from .cache_config import normalize_prompt_cache_mode
+
 
 @dataclass
 class AdapterResult:
@@ -146,7 +148,11 @@ class OpenAICompatAdapter(Adapter):
         self.healthcheck_path = str(config.get("healthcheck_path", "/models"))
         self.max_tokens_field = str(config.get("max_tokens_field", "max_tokens"))
         self.request_defaults = dict(config.get("request_defaults", {}) or {})
-        self.prompt_cache_key = bool(config.get("prompt_cache_key", False))
+        # `prompt_cache_key` is the backwards-compatible alias for profiles
+        # that predate the explicit provider cache contract.
+        self.prompt_cache_mode = normalize_prompt_cache_mode(
+            config.get("prompt_cache_mode"),
+            legacy_prompt_cache_key=bool(config.get("prompt_cache_key")))
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
                        temperature=0.7, cache_key="") -> AdapterResult:
@@ -158,7 +164,7 @@ class OpenAICompatAdapter(Adapter):
         }
         body[self.max_tokens_field] = max_tokens
         body.update(self.request_defaults)
-        if self.prompt_cache_key and cache_key:
+        if self.prompt_cache_mode == "openai_key" and cache_key:
             body["prompt_cache_key"] = cache_key
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             endpoint = f"{self.base_url}/chat/completions"
@@ -205,14 +211,27 @@ class OpenAICompatAdapter(Adapter):
 class AnthropicAdapter(Adapter):
     name = "anthropic"
 
-    def __init__(self, api_key_env: str = "ANTHROPIC_API_KEY", *, timeout: float = 60.0):
+    def __init__(self, config: dict | str | None = None, *, timeout: float = 60.0):
+        # Accept the historical string constructor for third-party callers.
+        if isinstance(config, str):
+            config = {"api_key_env": config}
+        config = config or {}
+        api_key_env = str(config.get("api_key_env", "ANTHROPIC_API_KEY"))
         self.api_key = os.environ.get(api_key_env, "")
-        self.timeout = timeout
+        self.timeout = float(config.get("timeout_s", timeout))
+        self.prompt_cache_mode = normalize_prompt_cache_mode(
+            config.get("prompt_cache_mode"))
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
                        temperature=0.7, cache_key="") -> AdapterResult:
         import httpx
-        system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+        system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
+        system: str | list[dict[str, Any]] = system_text
+        if self.prompt_cache_mode == "anthropic_ephemeral" and system_text:
+            system = [{
+                "type": "text", "text": system_text,
+                "cache_control": {"type": "ephemeral"},
+            }]
         convo = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
         headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
                    "content-type": "application/json"}
@@ -229,7 +248,8 @@ class AnthropicAdapter(Adapter):
         text = "".join(block.get("text", "") for block in data.get("content", []))
         usage = data.get("usage", {})
         cached_in = int(usage.get("cache_read_input_tokens", 0) or 0)
-        return AdapterResult(text=text, in_tokens=int(usage.get("input_tokens", 0)) + cached_in,
+        cache_write = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        return AdapterResult(text=text, in_tokens=int(usage.get("input_tokens", 0)) + cached_in + cache_write,
                              out_tokens=int(usage.get("output_tokens", 0)),
                              cached_in_tokens=cached_in, raw=data)
 
@@ -288,7 +308,7 @@ def build_adapters(config: dict) -> dict[str, Adapter]:
         if kind == "openai_compat":
             adapters[pname] = OpenAICompatAdapter(pcfg)
         elif kind == "anthropic":
-            adapters[pname] = AnthropicAdapter(pcfg.get("api_key_env", "ANTHROPIC_API_KEY"))
+            adapters[pname] = AnthropicAdapter(pcfg)
         elif kind == "cli":
             adapters[pname] = CLIAdapter(pcfg.get("command", "claude"))
     return adapters

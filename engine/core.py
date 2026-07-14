@@ -40,18 +40,23 @@ class Economy:
                                  circuit_breaker_drop=float(cb) if cb else None)
         self.bank = Bank(
             store, self.ledger,
-            local_currency_action_surfaces=local_currency_action_surfaces)
+            local_currency_action_surfaces=local_currency_action_surfaces,
+            engine_semantics_version=int(config.get("engine_semantics_version", 2)))
         self.firms = Firms(store, self.ledger)
         self.labor = Labor(store)
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
-                                   health_cfg=config.get("health", {}))
+                                   health_cfg=config.get("health", {}),
+                                   engine_semantics_version=int(
+                                       config.get("engine_semantics_version", 2)))
         self.gov = Government(store, self.ledger, config.get("government"))
         self.vc = VentureCapital(store, self.ledger)
         self.legal = LegalInstitution(store, self.ledger, config.get("legal"))
         self.regions = RegionalEconomy(store, self.ledger, self.legal, engine_prng,
                                       config.get("living_world"),
-                                      local_currency_action_surfaces=local_currency_action_surfaces)
+                                      local_currency_action_surfaces=local_currency_action_surfaces,
+                                      engine_semantics_version=int(
+                                          config.get("engine_semantics_version", 2)))
         self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
         self.information = InformationEconomy(store, config.get("information_economy"))
         self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))

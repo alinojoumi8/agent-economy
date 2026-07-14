@@ -63,6 +63,20 @@ def citizen_decision(context: dict) -> dict:
     belief_updates.append({"key": "sentiment", "value": round(sentiment, 3)})
     belief_updates.append({"key": "inflation_expectation", "value": round(min(0.25, max(-0.05, infl)), 4)})
 
+    # 2.5) Retirement liquidity: the engine validates that this is a same-owner,
+    # same-currency savings-to-checking transfer. It is deliberately proposed
+    # before any consumption action so the drawdown contract is observable.
+    if agent.get("retired") and "retirement_drawdown_target_cents" in context:
+        target = max(0, int(context.get("retirement_drawdown_target_cents", 0)))
+        savings = max(0, int(context.get(
+            "savings_balance", state.get("savings_balance", 0))))
+        shortfall = max(0, target - cash)
+        draw = min(shortfall, savings)
+        if draw > 0:
+            actions.append({"type": "withdraw_savings", "amount": draw})
+            cash += draw
+            reasons.append(f"drawing {draw} from retirement savings for liquidity")
+
     # 3) Bank run: if trust in my bank collapsed, move deposits somewhere safer.
     my_bank = state.get("bank_id")
     ran = False
@@ -95,8 +109,33 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "buy_insurance"})
                 reasons.append("buying health coverage")
 
-    # 5) Labour: negotiate a pending offer before applying elsewhere.
-    if not state.get("employed") and not agent.get("retired") and health == "healthy":
+    # 5) Career mobility: Semantics 7 exposes only destination actions whose
+    # numeraire-adjusted wage gain clears the configured threshold.  Migration
+    # remains a career-cadence decision and preempts a same-day local job action.
+    migration_requested = False
+    if (context.get("regional_actions_enabled") and context.get("career_day")
+            and not state.get("employed") and not agent.get("retired")
+            and health == "healthy"):
+        threshold = int(context.get("migration_wage_gain_bps", 1_000))
+        options = [
+            option for option in context.get("migration_options", [])
+            if int(option.get("wage_gain_bps", -1)) >= threshold
+            and isinstance(option.get("action"), dict)
+            and option["action"].get("type") == "request_migration"
+        ]
+        if options:
+            destination = min(
+                options,
+                key=lambda option: (-int(option["wage_gain_bps"]),
+                                    int(option["destination_region_id"])))
+            actions.append(dict(destination["action"]))
+            reasons.append(
+                f"migrating for a {int(destination['wage_gain_bps'])}bps wage gain")
+            migration_requested = True
+
+    # 5.5) Labour: negotiate a pending offer before applying elsewhere.
+    if (not migration_requested and not state.get("employed")
+            and not agent.get("retired") and health == "healthy"):
         offers = sorted(
             context.get("incoming_job_offers", []),
             key=lambda offer: (-int(offer.get("offered_wage", 0)), int(offer.get("offer_id", 0))))
@@ -247,6 +286,21 @@ def founder_decision(context: dict) -> dict:
                             "shares_offered": shares, "reserve_price": reserve,
                             "minimum_subscription_bps": 5000})
             reasons.append("opening an agent-priced IPO book")
+
+    # Semantics 7 founders act only on engine-qualified, contract-backed
+    # shipments and copy the bounded action object verbatim.  One opportunity
+    # per decision prevents a single wakeup from draining all inventory.
+    if context.get("regional_actions_enabled"):
+        opportunities = [
+            opportunity for opportunity in context.get("trade_opportunities", [])
+            if isinstance(opportunity.get("action"), dict)
+            and opportunity["action"].get("type") == "create_trade_shipment"
+            and int(opportunity["action"].get("exporter_firm_id", 0))
+            == int(firm.get("firm_id", 0))
+        ]
+        if opportunities:
+            actions.append(dict(opportunities[0]["action"]))
+            reasons.append("shipping against a funded cross-border contract")
 
     if not actions:
         # Founder still consumes as a household.

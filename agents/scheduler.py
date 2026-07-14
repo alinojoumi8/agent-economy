@@ -19,6 +19,9 @@ class Scheduler:
         self.event_wake_importance = float(config.get("behavior", {}).get("event_wake_importance", 2.0))
         self.institutional_role_purposes = bool(
             config.get("llm", {}).get("institutional_role_purposes", False))
+        self.engine_semantics_version = int(config.get("engine_semantics_version", 1))
+        self.retired_news_every = max(1, int(
+            config.get("lifecycle", {}).get("retired_news_every", 1)))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
         if int(self.config.get("engine_semantics_version", 1)) >= 5:
@@ -72,11 +75,17 @@ class Scheduler:
         act_every = max(1, int(cadence.get("act", self.base_act_every)) * max(1, cadence_multiplier))
         portfolio_every = max(1, int(cadence.get("portfolio", 7)) * max(1, cadence_multiplier))
         career_every = max(1, int(cadence.get("career", 30)) * max(1, cadence_multiplier))
+        if self.engine_semantics_version >= 7 and bool(a["retired"]):
+            news_every = max(1, int(cadence.get("news", self.retired_news_every))
+                             * max(1, cadence_multiplier))
+            if tick % news_every == agent_id % news_every:
+                return True
         # Concern-specific cadences are independent wakeups, not annotations
         # that only matter when they happen to coincide with the base cadence.
         if tick % portfolio_every == agent_id % portfolio_every:
             return True
-        if tick % career_every == agent_id % career_every:
+        if (not (self.engine_semantics_version >= 7 and bool(a["retired"]))
+                and tick % career_every == agent_id % career_every):
             return True
         # Deterministic phase offset so wakeups spread evenly across ticks.
         if tick % act_every == agent_id % act_every:

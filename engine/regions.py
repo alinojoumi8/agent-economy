@@ -30,7 +30,8 @@ DEFAULT_REGIONS = [
 class RegionalEconomy:
     def __init__(self, store: Store, ledger: Ledger, legal: LegalInstitution,
                  prng: random.Random, config: dict | None = None, *,
-                 local_currency_action_surfaces: bool = False):
+                 local_currency_action_surfaces: bool = False,
+                 engine_semantics_version: int | None = None):
         self.store = store
         self.ledger = ledger
         self.legal = legal
@@ -43,6 +44,21 @@ class RegionalEconomy:
         self.promotion_interval = int(self.config.get("promotion_interval_ticks", 30))
         self.require_trade_contract = bool(self.config.get("require_trade_contract", True))
         self.fx_inventory = int(self.config.get("fx_market_maker_inventory", 100_000_000))
+        self.migration_wage_gain_bps = max(
+            0, int(self.config.get("migration_wage_gain_bps", 1_000)))
+        self.max_trade_opportunities = max(
+            1, min(5, int(self.config.get("max_trade_opportunities", 5))))
+        self.max_trade_quantity = max(
+            1, int(self.config.get("max_trade_quantity", 5)))
+        self.trade_transit_ticks = max(
+            1, int(self.config.get("trade_transit_ticks", 3)))
+        try:
+            stored_config = json.loads(str(self.store.get_meta()["config_json"]))
+        except (TypeError, ValueError, KeyError):
+            stored_config = {}
+        self.engine_semantics_version = int(
+            stored_config.get("engine_semantics_version", 2)
+            if engine_semantics_version is None else engine_semantics_version)
 
     def initialize(self, tick: int = 0) -> None:
         if not self.enabled or self.store.query_one("SELECT 1 FROM regions LIMIT 1"):
@@ -210,6 +226,269 @@ class RegionalEconomy:
                                           label=f"{owner_type}:{owner_id}:{currency}",
                                           currency_code=currency)
 
+    # ------------------------------------------------------------------ bounded agent context
+    def decision_context(
+        self,
+        actor_id: int,
+        *,
+        tick: int,
+        exporter_firm_id: int | None = None,
+        career_day: bool = False,
+    ) -> dict[str, Any]:
+        """Return deterministic, action-ready regional facts for Semantics 7.
+
+        The context is deliberately more restrictive than the public action
+        endpoints: an action is advertised only when the current snapshot makes
+        it executable.  This keeps scripted and model-driven agents on the same
+        bounded opportunity set without changing historical prompt surfaces.
+        """
+        if not self.enabled or self.engine_semantics_version < 7:
+            return {}
+        agent = self.store.query_one(
+            "SELECT a.id,a.kind,a.alive,a.retired,a.health,a.region_id,"
+            "r.name AS region_name,r.currency_code,ac.id AS primary_account_id "
+            "FROM agents a JOIN regions r ON r.id=a.region_id "
+            "LEFT JOIN accounts ac ON ac.id=a.checking_account_id WHERE a.id=?",
+            (actor_id,))
+        if not agent or not agent["alive"] or agent["region_id"] is None:
+            return {}
+
+        primary_currency = str(agent["currency_code"] or "USD")
+        wallets = [{
+            "account_id": int(row["id"]),
+            "kind": str(row["kind"]),
+            "currency_code": str(row["currency_code"] or "USD"),
+            "balance_cents": int(row["balance_cents"]),
+            "primary": int(row["id"]) == int(agent["primary_account_id"] or 0),
+        } for row in self.store.query(
+            "SELECT id,kind,currency_code,balance_cents FROM accounts "
+            "WHERE owner_type='agent' AND owner_id=? "
+            "ORDER BY CASE kind WHEN 'checking' THEN 0 WHEN 'savings' THEN 1 ELSE 2 END,id "
+            "LIMIT 8", (actor_id,))]
+        settlement_wallets: dict[str, dict[str, Any]] = {}
+        for wallet in wallets:
+            settlement_wallets.setdefault(str(wallet["currency_code"]), wallet)
+
+        quote_wallet = settlement_wallets.get(primary_currency)
+        quote_balance = int(quote_wallet["balance_cents"]) if quote_wallet else 0
+        fx_quotes = []
+        for currency in self.store.query(
+                "SELECT code,name FROM currencies WHERE code<>? ORDER BY code LIMIT 5",
+                (primary_currency,)):
+            base = str(currency["code"])
+            pair = f"{base}/{primary_currency}"
+            rate = self.current_rate(base, primary_currency)
+            max_buy = max(0, (quote_balance * 1_000_000) // max(1, rate))
+            base_wallet = settlement_wallets.get(base)
+            max_sell = int(base_wallet["balance_cents"]) if base_wallet else 0
+            quote: dict[str, Any] = {
+                "pair": pair,
+                "base_currency": base,
+                "quote_currency": primary_currency,
+                "rate_ppm": rate,
+                "max_buy_qty": max_buy,
+                "max_sell_qty": max_sell,
+            }
+            if max_buy > 0:
+                qty = min(1_000, max_buy)
+                quote["buy_action"] = {
+                    "type": "place_fx_order", "pair": pair, "side": "buy",
+                    "qty": qty, "limit_rate_ppm": rate,
+                }
+            if max_sell > 0:
+                qty = min(1_000, max_sell)
+                quote["sell_action"] = {
+                    "type": "place_fx_order", "pair": pair, "side": "sell",
+                    "qty": qty, "limit_rate_ppm": rate,
+                }
+            fx_quotes.append(quote)
+
+        open_fx_orders = [{
+            "order_id": int(row["id"]), "pair": str(row["pair"]),
+            "side": str(row["side"]), "qty_remaining": int(row["qty_remaining"]),
+            "limit_rate_ppm": (int(row["limit_rate_ppm"])
+                               if row["limit_rate_ppm"] is not None else None),
+            "cancel_action": {"type": "cancel_fx_orders", "pair": str(row["pair"])},
+        } for row in self.store.query(
+            "SELECT id,pair,side,qty_remaining,limit_rate_ppm FROM fx_orders "
+            "WHERE actor_id=? AND status='open' ORDER BY tick,seq,id LIMIT 5", (actor_id,))]
+
+        return {
+            "regional_actions_enabled": True,
+            "regional_state": {
+                "region_id": int(agent["region_id"]),
+                "region_name": str(agent["region_name"]),
+                "currency_code": primary_currency,
+            },
+            "regional_wallets": wallets,
+            "fx_quotes": fx_quotes,
+            "open_fx_orders": open_fx_orders,
+            "migration_wage_gain_bps": self.migration_wage_gain_bps,
+            "migration_options": self._migration_options(
+                agent, actor_id=actor_id, career_day=career_day),
+            "trade_opportunities": self._trade_opportunities(
+                tick, actor_id=actor_id, exporter_firm_id=exporter_firm_id),
+        }
+
+    def _migration_options(
+        self,
+        agent,
+        *,
+        actor_id: int,
+        career_day: bool,
+    ) -> list[dict[str, Any]]:
+        if (not career_day or str(agent["kind"]) != "citizen"
+                or str(agent["health"] or "healthy") != "healthy"
+                or bool(agent["retired"])):
+            return []
+        if self.store.query_one(
+                "SELECT 1 FROM employments WHERE agent_id=? AND status='active'", (actor_id,)):
+            return []
+        if self.store.query_one(
+                "SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (actor_id,)):
+            return []
+        if self._agent_credit_exposure(actor_id):
+            return []
+
+        best_by_region: dict[int, dict[str, Any]] = {}
+        for row in self.store.query(
+                "SELECT j.id AS job_id,j.wage_cents,f.region_id,f.currency_code,"
+                "r.name AS region_name,c.numeraire_rate_ppm "
+                "FROM jobs j JOIN firms f ON f.id=j.firm_id "
+                "JOIN regions r ON r.id=f.region_id "
+                "JOIN currencies c ON c.code=f.currency_code "
+                "WHERE j.status='open' AND f.status NOT IN ('bankrupt','acquired') "
+                "ORDER BY f.region_id,j.wage_cents DESC,j.id"):
+            region_id = int(row["region_id"])
+            if region_id in best_by_region:
+                continue
+            wage = int(row["wage_cents"])
+            rate = int(row["numeraire_rate_ppm"])
+            best_by_region[region_id] = {
+                "job_id": int(row["job_id"]), "wage_cents": wage,
+                "wage_numeraire_cents": max(0, round(wage * rate / 1_000_000)),
+                "currency_code": str(row["currency_code"] or "USD"),
+                "region_name": str(row["region_name"]),
+            }
+
+        origin_id = int(agent["region_id"])
+        home_wage = int(best_by_region.get(origin_id, {}).get("wage_numeraire_cents", 0))
+        options = []
+        for destination_id, job in sorted(best_by_region.items()):
+            if destination_id == origin_id:
+                continue
+            destination_wage = int(job["wage_numeraire_cents"])
+            gain_bps = min(
+                1_000_000,
+                ((destination_wage - home_wage) * 10_000) // max(1, home_wage),
+            )
+            if gain_bps < self.migration_wage_gain_bps:
+                continue
+            options.append({
+                "destination_region_id": destination_id,
+                "destination_region_name": job["region_name"],
+                "destination_currency": job["currency_code"],
+                "best_job_id": job["job_id"],
+                "best_wage_cents": job["wage_cents"],
+                "best_wage_numeraire_cents": destination_wage,
+                "home_best_wage_numeraire_cents": home_wage,
+                "wage_gain_bps": gain_bps,
+                "action": {
+                    "type": "request_migration",
+                    "destination_region_id": destination_id,
+                    "reason": f"career opportunity job {job['job_id']}",
+                },
+            })
+        return sorted(
+            options,
+            key=lambda item: (-int(item["wage_gain_bps"]),
+                              int(item["destination_region_id"])),
+        )[:5]
+
+    def _trade_opportunities(
+        self,
+        tick: int,
+        *,
+        actor_id: int,
+        exporter_firm_id: int | None,
+    ) -> list[dict[str, Any]]:
+        if not exporter_firm_id or not self.legal.controls(
+                actor_id, "firm", int(exporter_firm_id)):
+            return []
+        exporter = self.store.query_one(
+            "SELECT id,name,inventory,product_json,region_id,currency_code FROM firms "
+            "WHERE id=? AND status NOT IN ('bankrupt','acquired')", (int(exporter_firm_id),))
+        if not exporter or int(exporter["inventory"]) <= 0 or exporter["region_id"] is None:
+            return []
+        try:
+            product = json.loads(str(exporter["product_json"] or "{}"))
+        except (TypeError, ValueError):
+            product = {}
+        exporter_unit_price = max(1, int(product.get("unit_price_cents", 500)))
+        exporter_currency = str(exporter["currency_code"] or "USD")
+
+        opportunities = []
+        rows = self.store.query(
+            "SELECT c.id AS contract_id,i.id AS importer_firm_id,i.name AS importer_name,"
+            "i.region_id AS importer_region_id,i.currency_code AS importer_currency,"
+            "i.account_id AS importer_account_id,ia.currency_code AS account_currency,"
+            "ia.balance_cents AS importer_balance "
+            "FROM contracts c "
+            "JOIN contract_parties ep ON ep.contract_id=c.id "
+            "AND ep.party_type='firm' AND ep.party_id=? "
+            "JOIN contract_parties ip ON ip.contract_id=c.id "
+            "AND ip.party_type='firm' AND ip.party_id<>? "
+            "JOIN firms i ON i.id=ip.party_id "
+            "JOIN accounts ia ON ia.id=i.account_id "
+            "WHERE c.status IN ('active','performed') "
+            "AND (c.effective_tick IS NULL OR c.effective_tick<=?) "
+            "AND (c.expiry_tick IS NULL OR c.expiry_tick>?) "
+            "AND i.status NOT IN ('bankrupt','acquired') AND i.region_id<>? "
+            "ORDER BY c.id,i.id",
+            (int(exporter_firm_id), int(exporter_firm_id), tick, tick,
+             int(exporter["region_id"])))
+        for row in rows:
+            importer_currency = str(row["importer_currency"] or "USD")
+            if str(row["account_currency"] or "USD") != importer_currency:
+                continue
+            rate = self.current_rate(exporter_currency, importer_currency)
+            unit_invoice = max(1, round(exporter_unit_price * rate / 1_000_000))
+            importer_balance = int(row["importer_balance"])
+            affordable = importer_balance // unit_invoice
+            quantity = min(
+                int(exporter["inventory"]), self.max_trade_quantity, affordable)
+            if quantity <= 0:
+                continue
+            invoice = quantity * unit_invoice
+            action = {
+                "type": "create_trade_shipment",
+                "exporter_firm_id": int(exporter_firm_id),
+                "importer_firm_id": int(row["importer_firm_id"]),
+                "contract_id": int(row["contract_id"]),
+                "quantity": quantity,
+                "invoice_cents": invoice,
+                "invoice_currency": importer_currency,
+                "tariff_cents": 0,
+                "transport_cents": 0,
+                "transit_ticks": self.trade_transit_ticks,
+            }
+            opportunities.append({
+                "exporter_firm_id": int(exporter_firm_id),
+                "exporter_name": str(exporter["name"]),
+                "importer_firm_id": int(row["importer_firm_id"]),
+                "importer_name": str(row["importer_name"]),
+                "contract_id": int(row["contract_id"]),
+                "quantity": quantity,
+                "unit_invoice_cents": unit_invoice,
+                "invoice_cents": invoice,
+                "invoice_currency": importer_currency,
+                "importer_available_cents": importer_balance,
+                "action": action,
+            })
+            if len(opportunities) >= self.max_trade_opportunities:
+                break
+        return opportunities
+
     # ------------------------------------------------------------------ trade and migration
     def create_shipment(self, tick: int, actor_id: int, data: dict[str, Any]) -> dict[str, Any]:
         exporter_id = int(data.get("exporter_firm_id", 0))
@@ -222,13 +501,17 @@ class RegionalEconomy:
             return {"ok": False, "reason": "regional trade requires distinct regions"}
         contract_id = data.get("contract_id")
         if self.require_trade_contract:
-            if contract_id is None or not self._contract_covers_firms(int(contract_id), exporter_id, importer_id):
+            if contract_id is None or not self._contract_covers_firms(
+                    int(contract_id), exporter_id, importer_id, tick=tick):
                 return {"ok": False, "reason": "effective cross-border contract required"}
         quantity = int(data.get("quantity", 0))
         invoice = int(data.get("invoice_cents", 0))
         tariff = max(0, int(data.get("tariff_cents", 0)))
         transport = max(0, int(data.get("transport_cents", 0)))
         currency = str(data.get("invoice_currency", exporter["currency_code"])).upper()
+        if (self.engine_semantics_version >= 7
+                and currency != str(importer["currency_code"] or "USD").upper()):
+            return {"ok": False, "reason": "invoice must use the importer's currency"}
         if quantity <= 0 or invoice <= 0 or int(exporter["inventory"]) < quantity:
             return {"ok": False, "reason": "positive available goods and invoice required"}
         importer_wallet = self._wallet("firm", importer_id, currency, create=True)
@@ -260,9 +543,19 @@ class RegionalEconomy:
         return {"ok": True, "shipment_id": shipment_id, "arrival_tick": arrival,
                 "transaction_id": txn_id}
 
-    def _contract_covers_firms(self, contract_id: int, firm_a: int, firm_b: int) -> bool:
-        if not self.store.query_one(
-                "SELECT 1 FROM contracts WHERE id=? AND status IN ('active','performed')", (contract_id,)):
+    def _contract_covers_firms(
+            self, contract_id: int, firm_a: int, firm_b: int, *, tick: int) -> bool:
+        if self.engine_semantics_version >= 7:
+            contract = self.store.query_one(
+                "SELECT 1 FROM contracts WHERE id=? AND status IN ('active','performed') "
+                "AND (effective_tick IS NULL OR effective_tick<=?) "
+                "AND (expiry_tick IS NULL OR expiry_tick>?)",
+                (contract_id, tick, tick))
+        else:
+            contract = self.store.query_one(
+                "SELECT 1 FROM contracts WHERE id=? AND status IN ('active','performed')",
+                (contract_id,))
+        if not contract:
             return False
         parties = {int(row["party_id"]) for row in self.store.query(
             "SELECT party_id FROM contract_parties WHERE contract_id=? AND party_type='firm'",
@@ -277,7 +570,7 @@ class RegionalEconomy:
             return {"ok": False, "reason": "valid distinct destination required"}
         if self.store.query_one("SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (actor_id,)):
             return {"ok": False, "reason": "migration already pending"}
-        if self.local_currency_action_surfaces:
+        if self.local_currency_action_surfaces or self.engine_semantics_version >= 7:
             credit_exposure = self._agent_credit_exposure(actor_id)
             if credit_exposure:
                 return {"ok": False, "reason": f"resolve {credit_exposure} before migration"}
@@ -315,7 +608,8 @@ class RegionalEconomy:
             agent_id = int(migration["agent_id"])
             credit_exposure = (
                 self._agent_credit_exposure(agent_id)
-                if self.local_currency_action_surfaces else None)
+                if (self.local_currency_action_surfaces
+                    or self.engine_semantics_version >= 7) else None)
             if credit_exposure:
                 self.store.update(
                     "migrations", int(migration["id"]), status="rejected", completed_tick=tick)

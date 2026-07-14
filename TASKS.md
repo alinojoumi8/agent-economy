@@ -5,6 +5,58 @@ the preceding task has reproducible evidence. Live inference requires explicit
 operator approval; the acceptance profile is uncapped and records actual spend
 while provider rate limits control throughput.
 
+## Legal-Economy v2 semantics-7 closure
+
+### Implementation
+
+- [x] Checkpoint the pre-existing six-feature work and move maintained profiles
+  to `engine_semantics_version: 7` without changing database schema v11.
+- [x] Gate new economic, lifecycle, prompt, and policy behavior so markerless and
+  stored semantics 1–6 retain their historical execution paths.
+- [x] On default, seize eligible collateral before posting only unrecovered
+  principal from the bank's currency-matched equity account to `SYS_LOSS` as a
+  balanced `loan_loss_chargeoff` transaction.
+- [x] Add retiree-only `withdraw_savings`; map lifecycle config
+  `retirement_liquidity_target_cents` to public decision field
+  `retirement_drawdown_target_cents`; apply retirement cadence at genesis and
+  transition, no retiree job search, and stronger conversation participation.
+- [x] Own the persona-library wrapper; spawn due arrivals deterministically at
+  `NIGHT_CLOSE` with visible population inflow and a 70/30 checking/savings
+  split; require one governed `role=persona,purpose=persona` call before the
+  arrival's first morning decision.
+- [x] Expose bounded regional wallet/FX facts, no more than five executable trade
+  opportunities, and career-gated migration destinations; activate authorized
+  scripted shipments and migration under semantics 7.
+- [x] Preserve logical LLM-reference replay canonicalization, add the sanitized
+  ten-tick `fd0adc5dc1` fixture, and fail closed on missing/dangling references.
+  The recorded source is semantics 5, despite the earlier plan describing it as
+  semantics 6.
+- [x] Add `prompt_cache_mode` (`off`, `provider_automatic`, `openai_key`,
+  `anthropic_ephemeral`), retain the legacy key alias, and make the additive
+  memory-ranking formula authoritative.
+- [x] Add paired `v2-spec-closure-rehearsal` and `v2-spec-closure-live` profiles
+  with a near-defaulted loan, retiree, due arrival, shipment, and migration path.
+
+### Evidence gates
+
+- [x] Focused semantics-7 gate: 86 tests passed in 88.17 seconds; full Python:
+  268 passed in 157.42 seconds; compilation and dataset verification passed.
+- [x] Dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
+  passed, high-severity audit found zero vulnerabilities, the 599-module Vite
+  build and committed static bundle matched, and `git diff --check` passed.
+- [x] Free rehearsal `5a0d40d773` reached tick 5 at zero spend, exercised every
+  targeted effect with zero rejection/provider failures, wrote six checkpoints,
+  balanced all currencies, and replayed exactly as
+  `replay-5a0d40d773-b45777cf29` with `differences: []`.
+- [x] MiniMax-M3 preflight passed. Live pilot `b4832032ba` reached tick 5 under
+  semantics 7/schema 11 for `$0.01121124`; all 42 proposals were accepted, all
+  targeted effects fired, provenance/privacy checks found zero defects, six
+  checkpoints and all currencies reconciled, and exact replay
+  `replay-b4832032ba-8d99c25c56` returned `differences: []`.
+- [ ] **PENDING — post-push CI only:** push the branch, wait for every Windows/Linux
+  Python 3.11/3.12 GitHub Actions job, and keep PR #15 draft. Do not merge, tag,
+  or publish.
+
 ## Task 1 — Production acceptance run and evidence package
 
 - [x] Harden production execution: typed HTTP errors, provider-wide 429
@@ -55,20 +107,22 @@ while provider rate limits control throughput.
 
 ## Task 3 — R19 1,000-agent scaling
 
-- [ ] Implement a fully simulated core plus a statistically simulated periphery
+- [x] Implement a fully simulated core plus a statistically simulated periphery
   with deterministic seeded cohort transitions and conserved aggregate money.
-- [ ] Make promotion/demotion between tiers explicit, observable, and replayable.
-- [ ] Prove economic invariants and define a recorded 1,000-agent performance
+- [x] Make promotion/demotion between tiers explicit, observable, and replayable.
+- [x] Prove economic invariants and define a recorded 1,000-agent performance
   baseline before passing the full live-test/autoreview/commit gate.
 
 ## Task 4 — R20 Multi-region, trade, and FX
 
-- [ ] Add regional ownership and markets without weakening the existing single-
+- [x] Add regional ownership and markets without weakening the existing single-
   region defaults.
-- [ ] Settle trade and FX through double-entry accounts with deterministic
+- [x] Settle trade and FX through double-entry accounts with deterministic
   price/order rules and region-aware shocks.
-- [ ] Expose regional/FX state in API, dashboard, reports, and replay; then pass
+- [x] Expose regional/FX state in API, dashboard, reports, and replay; then pass
   invariant, integration, live-test, autoreview, and commit gates.
+- [x] Close the semantics-7 autonomy gap with engine-qualified trade and
+  career-gated migration context plus deterministic scripted action policies.
 
 ## Task 5 — R21 Real-data calibration
 

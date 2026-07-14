@@ -21,6 +21,7 @@ so lifecycle schedules stay comparable across experiment arms.
 """
 from __future__ import annotations
 
+import json
 import random
 from typing import Optional
 
@@ -44,6 +45,10 @@ DEFAULT_PARAMS = {
     "critical_recovery_per_tick": 0.25,
     "medical_cost_cents": 5000,           # per sick tick, out-of-pocket
     "retirement_age": 65,
+    "retirement_liquidity_target_cents": 100_000,
+    "retired_act_every": 2,
+    "retired_portfolio_every": 5,
+    "retired_news_every": 1,
     "birth_annual_prob": 0.05,            # age-appropriate households
     "birth_min_age": 22,
     "birth_max_age": 42,
@@ -58,7 +63,8 @@ DEFAULT_PARAMS = {
 class Lifecycle:
     def __init__(self, store: Store, ledger: Ledger, bank: Bank, firms: Firms,
                  prng: random.Random, params: Optional[dict] = None,
-                 health_cfg: Optional[dict] = None):
+                 health_cfg: Optional[dict] = None,
+                 engine_semantics_version: int = 2):
         self.store = store
         self.ledger = ledger
         self.bank = bank
@@ -66,6 +72,7 @@ class Lifecycle:
         self.prng = prng  # dedicated lifecycle PRNG
         self.p = {**DEFAULT_PARAMS, **(params or {})}
         self.h = {**DEFAULT_HEALTH, **(health_cfg or {})}
+        self.engine_semantics_version = int(engine_semantics_version)
 
     # ── nightly driver ───────────────────────────────────────────────────────
     def run_nightly(self, tick: int) -> None:
@@ -93,7 +100,17 @@ class Lifecycle:
                 self._retire(tick, agent_id)
 
     def _retire(self, tick: int, agent_id: int) -> None:
-        self.store.update("agents", agent_id, retired=1)
+        updates = {"retired": 1}
+        if self.engine_semantics_version >= 7:
+            row = self.store.query_one("SELECT cadence_json FROM agents WHERE id=?", (agent_id,))
+            cadence = json.loads(row["cadence_json"] or "{}") if row else {}
+            cadence.update({
+                "act": max(1, int(self.p["retired_act_every"])),
+                "portfolio": max(1, int(self.p["retired_portfolio_every"])),
+                "news": max(1, int(self.p["retired_news_every"])),
+            })
+            updates["cadence_json"] = json.dumps(cadence, sort_keys=True)
+        self.store.update("agents", agent_id, **updates)
         self.store.execute(
             "UPDATE employments SET status='ended', end_tick=? WHERE agent_id=? AND status='active'",
             (tick, agent_id))

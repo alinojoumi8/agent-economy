@@ -31,6 +31,10 @@ than background flavor:
   agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
 - Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
   trade, migration, and regional specialization remain exactly replayable.
+- Maintained profiles run engine semantics 7: defaults recognize only net bank
+  losses after collateral, retirees can draw their own savings, arrivals receive
+  governed persona enrichment, and qualified trade and migration opportunities
+  become autonomous actions. Stored semantics 1–6 retain their original rules.
 - The observatory adds a living economic map, legal/political/startup surfaces,
   causal traces, God-mode actions through the normal validator, and static replay export.
 - Pinned dataset manifests and paired-seed scenario packs support model-conditional
@@ -101,8 +105,11 @@ flowchart LR
 
 One tick is one simulated day. Nightly mechanics settle obligations and shocks;
 agents then perceive, decide, trade, publish, converse, update memory, and
-finalize a reconciled day. New semantics-v3 runs hide private bank reserve ratios
-from citizens and append bounded belief updates with raw/normalized provenance.
+finalize a reconciled day. Maintained semantics-7 profiles preserve the
+research-valid information boundary while adding net loan charge-offs,
+retirement liquidity, deterministic arrivals, governed arrival personas, and
+autonomous regional trade/migration. Markerless and stored semantics 1–6 runs
+are never silently upgraded.
 
 ## Five-minute offline start
 
@@ -191,11 +198,16 @@ baseline and fails closed when history is missing.
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
+| `runs/v2-spec-closure-rehearsal.yaml` | Five-tick semantics-7 closure fixture | Scripted, free, deterministic |
+| `runs/v2-spec-closure-live.yaml` | Five-tick bounded semantics-7 pilot | MiniMax persona/strategic roles; scripted background; $1 cap |
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 
 Production never silently falls back when a key, route, or provider fails.
+Provider configs select `prompt_cache_mode` from `off`,
+`provider_automatic`, `openai_key`, or `anthropic_ephemeral`; the legacy
+`prompt_cache_key` option remains an alias for OpenAI-compatible keyed caching.
 
 ## Optional real-model setup
 
@@ -229,6 +241,11 @@ python run.py --report <RUN_ID>
 Each run is a portable SQLite file under `data/runs/`. It contains the economic
 state and the scientific audit trail: events, beliefs, memories, conversations,
 predictions, metrics, shocks, ledger entries, and model-call evidence.
+
+CI also restores the sanitized portable fixture for live run `fd0adc5dc1` and
+replays its ten recorded ticks with networking disabled. The source database is
+stored as semantics 5—not semantics 6—so the fixture preserves that historical
+contract while canonicalizing physical LLM row IDs through logical call content.
 
 ## Project structure
 
@@ -267,15 +284,28 @@ documents.
 
 ## Current status and limits
 
-All PRD-v1 P0/P1 feature surfaces are implemented and the automated backend and
-dashboard suites exercise the system. Final live acceptance is still an
-operational gate: the pre-fix paid run is preserved as diagnostic evidence, and
-a fresh capped rumor pilot must pass before a new 365-day paid run is started.
+All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent, and
+R20 multi-region extensions are implemented. The semantics-7 code closure adds
+the remaining bank, retirement, arrival/persona, autonomous trade/migration,
+portable replay, and cache-policy contracts without changing schema v11.
 
-V1 is intentionally local and single-operator. It has no authentication or
-tenant isolation; bind to `127.0.0.1` and do not expose it directly to an
-untrusted network. Participant mode, regions/FX, approximately 1,000 agents,
-real-data calibration, and hosted multi-user operation remain deferred.
+The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
+every target effect through tick 5 at zero spend and replayed exactly with hash
+`fa190b0d…e8cffc34`. The live run `b4832032ba` completed five semantics-7 ticks
+with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
+spend under the `$1` cap, zero provider/provenance/privacy defects, balanced
+currencies, and exact replay hash `ec2b2409…c399ae2`. The focused gate passed 86
+tests in 88.17 seconds and the full suite passed 268 in 157.42 seconds;
+dashboard tests/build/audit and local hygiene are green.
+
+Only the fresh post-push GitHub Actions matrix remains for this closure, and PR
+#15 stays draft. The 30-day rumor gate, Oracle latency/calibration campaign, and
+365-day/$200 acceptance run remain separate and are not replaced by this pilot.
+
+The application is intentionally local and single-operator. It has no
+authentication or tenant isolation; bind to `127.0.0.1` and do not expose it
+directly to an untrusted network. R21 real-US microdata calibration and R22
+hosted multi-user operation remain deferred.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

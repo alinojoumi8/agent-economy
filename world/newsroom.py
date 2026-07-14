@@ -337,7 +337,8 @@ class Conversations:
         if k <= 0:
             return []
         ties = self.store.query(
-            "SELECT t.agent_a, t.agent_b, t.weight FROM social_ties t "
+            "SELECT t.agent_a, t.agent_b, t.weight,x.retired AS a_retired,y.retired AS b_retired "
+            "FROM social_ties t "
             "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
             "WHERE x.alive=1 AND y.alive=1")
         if not ties:
@@ -350,6 +351,10 @@ class Conversations:
             w = float(t["weight"])
             if int(t["agent_a"]) in salient or int(t["agent_b"]) in salient:
                 w *= 3.0
+            if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                    and (bool(t["a_retired"]) or bool(t["b_retired"]))):
+                w *= max(1.0, float(self.config.get("conversations", {}).get(
+                    "retiree_pair_weight", 1.75)))
             weighted.append((w, int(t["agent_a"]), int(t["agent_b"])))
         # Deterministic weighted sample without replacement via engine PRNG.
         chosen: list[tuple[int, int]] = []

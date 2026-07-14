@@ -56,7 +56,7 @@ The world advances in **ticks (1 tick = 1 simulated day)** with phases inside ea
 ### 6.2 Agents (~100 at launch)
 Every agent has:
 - **Persona**: name, age, occupation, employer, income, wealth, personality traits, risk tolerance, political lean, media diet (which news outlets they read), social ties.
-- **Memory**: recent events verbatim; older events compressed into daily/weekly summaries; retrieval by recency × importance × relevance.
+- **Memory**: recent events verbatim; older events compressed into daily/weekly summaries; retrieval uses the weighted additive score `0.5·recency_decay + 0.3·importance + 0.2·relevance`.
 - **State**: bank balances, portfolio, debts, employment status, owned businesses.
 - **Beliefs**: evolving views (inflation expectations, trust in each bank, political stance) that decisions must reference.
 - **Lifecycle**: age, health state (healthy/sick/critical), and dependents. Agents age, fall ill, retire, and die — all determined engine-side from seeded probability tables, never by the LLM (see R11). Agents *react* to these events through the normal decision loop.
@@ -123,13 +123,15 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 **R2. Agent runtime (persona + memory + decision loop)**
 - 100 agents generated from a persona template library with controlled diversity (occupation, wealth distribution, personality, political lean, media diet).
+- The simulator owns an `agents.personas.library` boundary around the vendored generator. New adult arrivals retain engine-owned age, wealth, accounts, region, and lifecycle state; before their first morning decision, exactly one governed `role=persona, purpose=persona` completion may enrich only bounded persona traits. Provider/budget pauses resume normally, malformed successful output falls back deterministically, and replay fails closed when the recorded persona response is missing.
 - Decision loop per agent per tick: perceive (world events + personal state + retrieved memories) → decide (LLM returns a structured action list) → engine executes.
-- Memory: verbatim recent buffer, compressed summaries beyond that, retrieval scored by recency × importance × relevance.
+- Memory: verbatim recent buffer, compressed summaries beyond that, retrieval scored by `0.5·recency_decay + 0.3·importance + 0.2·relevance` (a weighted sum, not a product).
 - Reserved beliefs have defined numeric ranges and every accepted, normalized, or rejected update is appended to the event spine with provenance.
 - Acceptance: an agent inspector shows, for any decision, the exact prompt context, returned action JSON, and belief-update history.
 
 **R3. Core institutions: banks + firms + labor + goods**
 - ≥ 2 commercial banks taking deposits and underwriting loans (LLM credit decisions, engine-enforced repayment schedules, default and collateral seizure mechanics).
+- Under maintained semantics 7, default seizes eligible collateral first and recognizes only unrecovered principal as a balanced `loan_loss_chargeoff` from the bank's currency-matched equity account to `SYS_LOSS`. The default event exposes recovered and net charged-off amounts. Stored semantics 1–6 keep their original behavior.
 - Firms produce goods/services, set prices, hire/fire, pay wages, can go bankrupt (with creditor waterfall).
 - Labor market (postings, applications, wage negotiation) and goods market (posted prices, budget-constrained household purchases).
 - Acceptance: a full company lifecycle is observable — founding (via law firm), loan, hiring, revenue, and at least one bankruptcy path tested.
@@ -175,8 +177,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - **Biology is engine-side, reactions are LLM-side**: sickness, death, and aging are drawn from the seeded PRNG using age-weighted probability tables; the LLM never decides who gets sick or dies (this preserves replayability and prevents narrative-driven deaths).
 - Health states: healthy → sick → critical. Sick agents skip labor that tick (lost wages) and pay out-of-pocket medical costs; critical agents face elevated mortality until recovery.
 - Death: age-weighted mortality plus critical-illness escalation. Estate settlement runs through the ledger — creditor waterfall first, remainder to the heir (strongest social tie, deterministic rule), escheat to government if none. Shares transfer to the heir; a sole-proprietor firm with no successor winds down via the existing bankruptcy path. Deaths are events: they feed news and conversations (a founder's death is a market event).
-- Aging + retirement: age increments each simulated year; agents exit the labor force at ~65 and live off savings/pension draw-down.
-- Births are **household events**, not new agents: dependent count increases and spending patterns shift. Population is replenished by new adult **arrivals** ("moved to town") generated from the persona library, keeping the population ~100 (stable-population default; per approved decision 2026-07-09).
+- Aging + retirement: age increments each simulated year; agents exit the labor force at ~65 and live off savings/pension draw-down. Retirees can move funds only from their own declared same-currency savings account to checking through `withdraw_savings{amount}`. Lifecycle setting `retirement_liquidity_target_cents` is exposed to decisions as `retirement_drawdown_target_cents` beside `savings_balance`; retirees draw that checking shortfall before consumption, never seek jobs, read news more frequently, and receive greater conversation-pair weight.
+- Births are **household events**, not new agents: dependent count increases and spending patterns shift. Population is replenished by deterministic adult **arrivals** ("moved to town") spawned during `NIGHT_CLOSE`, keeping the population ~100 (stable-population default; per approved decision 2026-07-09). Starting wealth is visibly funded from population inflow and split 70/30 between checking and savings, matching genesis.
 - Acceptance: (a) over a 2-sim-year test run, at least one death settles its estate with the ledger reconciling to zero discrepancy; (b) a sick agent's wage loss and medical spending are visible in its ledger; (c) an arrival integrates — gets housing costs, seeks a job — within 10 ticks of spawning; (d) identical seed ⇒ identical lifecycle event schedule.
 
 ### P1 — Should have (fast follows)
@@ -190,9 +192,9 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 ### P2 — Future (design so we don't preclude them)
 
-**R18. Participant mode.** Ali (or an external LLM) plays an in-world agent through the same action API agents use.
-**R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery.
-**R20. Multi-region / trade / FX.**
+**R18. Participant mode.** Ali (or an external LLM) plays an in-world agent through the same action API agents use. *(Implemented extension; participant-influenced runs remain disqualified from observer-only acceptance.)*
+**R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
+**R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
 **R21. Real-data calibration mode** — initialize distributions from real US micro data (income, wealth, firm size).
 **R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment.
 

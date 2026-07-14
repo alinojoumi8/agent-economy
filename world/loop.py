@@ -31,7 +31,9 @@ from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
-from agents.personas.vendor.persona_gen import sample_persona
+from agents.personas.library import (
+    configured_outlet_ids, sample_arrival_persona, sample_persona,
+)
 from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
@@ -94,6 +96,9 @@ class World:
         if self.config.get("behavioral_fixture", {}).get("enabled"):
             from world.behavioral_fixture import BehavioralFixtureSeeder
             BehavioralFixtureSeeder(self.economy, self.config).seed()
+        if self.config.get("spec_closure_fixture", {}).get("enabled"):
+            from world.spec_closure_fixture import SpecClosureFixtureSeeder
+            SpecClosureFixtureSeeder(self.economy, self.config).seed()
         if self.config.get("dataset_manifest"):
             from research.datasets import ingest_manifest
             ingest_manifest(self.store, self.config["dataset_manifest"])
@@ -231,6 +236,8 @@ class World:
                 elif phase == "MORNING":
                     if self.gateway.governor.should_pause():
                         raise BudgetExceeded("world budget exhausted before MORNING")
+                    if self.engine_semantics_version >= 7:
+                        await self.runtime.enrich_pending_arrivals(tick)
                     decisions = await self.runtime.decide_all(tick)
                     state["decisions"] = decisions
                     decisions_count = len(decisions)
@@ -483,8 +490,12 @@ class World:
         if not banks:
             return
         outlets = self.config.get("outlets", [{"id": 1}, {"id": 2}])
+        outlet_ids = configured_outlet_ids(outlets)
         for sched_id in due_ids:
-            p = sample_persona(self.persona_prng, n_outlets=len(outlets))
+            if self.engine_semantics_version >= 7:
+                p = sample_arrival_persona(self.persona_prng, outlet_ids)
+            else:
+                p = sample_persona(self.persona_prng, n_outlets=len(outlets))
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
@@ -498,11 +509,26 @@ class World:
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
                 model_tier="citizen", population_tier="periphery", region_id=region_id,
                 alive=1, retired=0, arrived_tick=tick)
+            if self.engine_semantics_version >= 7:
+                checking_cents = int(p.wealth_cents * 0.7)
+                savings_cents = p.wealth_cents - checking_cents
+            else:
+                checking_cents = int(p.wealth_cents * 0.6)
+                savings_cents = 0
             chk = self.economy.ledger.create_account(
                 "agent", agent_id, "checking", bank_id=bank_id,
-                label=f"agent:{agent_id}:checking", opening_cents=int(p.wealth_cents * 0.6),
+                label=f"agent:{agent_id}:checking", opening_cents=checking_cents,
                 funding_label=SYS_INFLOW, tick=tick, currency_code=currency)
-            self.store.update("agents", agent_id, checking_account_id=chk)
+            if self.engine_semantics_version >= 7:
+                sav = self.economy.ledger.create_account(
+                    "agent", agent_id, "savings", bank_id=bank_id,
+                    label=f"agent:{agent_id}:savings", opening_cents=savings_cents,
+                    funding_label=SYS_INFLOW, tick=tick, currency_code=currency)
+                self.store.update(
+                    "agents", agent_id, checking_account_id=chk,
+                    savings_account_id=sav)
+            else:
+                self.store.update("agents", agent_id, checking_account_id=chk)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
             housing_cost = max(0, int(self.config.get("lifecycle", {}).get(
@@ -536,9 +562,15 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
-            self.store.log_event(tick, "arrival", {
+            arrival_payload = {
                 "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
-                "schedule_event_id": sched_id}, phase="NIGHT_CLOSE",
+                "schedule_event_id": sched_id}
+            if self.engine_semantics_version >= 7:
+                arrival_payload.update({
+                    "checking_cents": checking_cents,
+                    "savings_cents": savings_cents,
+                })
+            self.store.log_event(tick, "arrival", arrival_payload, phase="NIGHT_CLOSE",
                 subject_type="agent", subject_id=agent_id, importance=2.0)
 
     # ── checkpoints (SQLite backup + PRNG state, TECH-SPEC §13) ──────────────

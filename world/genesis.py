@@ -15,7 +15,7 @@ from typing import Optional
 from engine.core import Economy
 from engine.ledger import SYS_EXTERNAL, SYS_INFLOW
 from agents.memory import Memory
-from agents.personas.vendor.persona_gen import Persona, sample_persona, sample_population
+from agents.personas.library import Persona, sample_persona, sample_population
 
 
 class Genesis:
@@ -190,13 +190,29 @@ class Genesis:
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps(self._cadence_for(p)), model_tier="citizen",
-                alive=1, retired=1 if p.age >= 65 else 0, arrived_tick=0,
+                alive=1, retired=int(self._is_retired(p)), arrived_tick=0,
                 region_id=region_id, population_tier="periphery", pinned_core=0)
             self._open_accounts(agent_id, bank_id, checking, savings)
             self._seed_beliefs(agent_id, bank_id)
 
     def _cadence_for(self, p: Persona) -> dict:
+        if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                and self._is_retired(p)):
+            lifecycle = self.config.get("lifecycle", {})
+            return {
+                "act": max(1, int(lifecycle.get("retired_act_every", 2))),
+                "portfolio": max(1, int(lifecycle.get("retired_portfolio_every", 5))),
+                "career": 30,
+                "news": max(1, int(lifecycle.get("retired_news_every", 1))),
+            }
         return {"act": 3, "portfolio": 7, "career": 30}
+
+    def _is_retired(self, p: Persona) -> bool:
+        retirement_age = 65
+        if int(self.config.get("engine_semantics_version", 1)) >= 7:
+            retirement_age = int(
+                self.config.get("lifecycle", {}).get("retirement_age", 65))
+        return int(p.age) >= retirement_age
 
     # ── firms ────────────────────────────────────────────────────────────────
     def _firms(self) -> None:

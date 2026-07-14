@@ -81,6 +81,7 @@ llm:
       kind: openai_compat
       base_url: https://api.minimax.io/v1
       api_key_env: MINIMAX_API_KEY
+      prompt_cache_mode: provider_automatic
       timeout_s: 180
       healthcheck_path: /models
       max_tokens_field: max_completion_tokens
@@ -91,6 +92,7 @@ llm:
       kind: openai_compat
       base_url: http://127.0.0.1:11434/v1
       api_key_env: OLLAMA_API_KEY
+      prompt_cache_mode: "off"
       timeout_s: 240
       healthcheck_path: /models
       request_defaults:

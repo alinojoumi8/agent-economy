@@ -45,6 +45,8 @@ VALID_TYPES = {
     "executive_bill_action", "override_veto", "lobby",
     # v2 regional population, trade, migration, and foreign exchange
     "place_fx_order", "cancel_fx_orders", "create_trade_shipment", "request_migration",
+    # semantics-7 retirement liquidity
+    "withdraw_savings",
 }
 
 
@@ -78,7 +80,12 @@ class ActionExecutor:
             model_call_id=envelope.model_call_id,
             rationale_summary=envelope.rationale_summary,
             validation_status="pending")
-        if atype not in VALID_TYPES:
+        # `withdraw_savings` did not exist in historical semantics. Preserve
+        # the exact legacy unknown-action rejection so stored 1-6 runs cannot
+        # acquire a new result/event payload merely because the v7 handler is
+        # now present in this binary.
+        if (atype not in VALID_TYPES
+                or (atype == "withdraw_savings" and self.engine_semantics_version < 7)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -506,6 +513,45 @@ class ActionExecutor:
             "UPDATE orders SET status='cancelled' WHERE agent_id=? AND status IN ('open','partial')",
             (actor_id,))
         return {"ok": True}
+
+    def _do_withdraw_savings(self, tick, actor_id, action, phase) -> dict:
+        """Move a retiree's own savings into their own checking account."""
+        if self.engine_semantics_version < 7:
+            return {"ok": False, "reason": "withdraw_savings requires engine semantics 7"}
+        amount = int(action.get("amount", 0))
+        if amount <= 0:
+            return {"ok": False, "reason": "amount must be positive"}
+        agent = self._agent(actor_id)
+        if not agent or not bool(agent["retired"]):
+            return {"ok": False, "reason": "only retirees may withdraw savings"}
+        savings_id = int(agent["savings_account_id"] or 0)
+        checking_id = int(agent["checking_account_id"] or 0)
+        if not savings_id or not checking_id or savings_id == checking_id:
+            return {"ok": False, "reason": "retiree savings and checking accounts are required"}
+        accounts = self.store.query(
+            "SELECT id,owner_type,owner_id,kind,currency_code FROM accounts "
+            "WHERE id IN (?,?) ORDER BY id", (savings_id, checking_id))
+        by_id = {int(row["id"]): row for row in accounts}
+        savings = by_id.get(savings_id)
+        checking = by_id.get(checking_id)
+        if (not savings or not checking
+                or savings["owner_type"] != "agent" or checking["owner_type"] != "agent"
+                or int(savings["owner_id"] or 0) != actor_id
+                or int(checking["owner_id"] or 0) != actor_id
+                or savings["kind"] != "savings" or checking["kind"] != "checking"):
+            return {"ok": False, "reason": "accounts are not the actor's declared savings and checking"}
+        if str(savings["currency_code"] or "USD") != str(checking["currency_code"] or "USD"):
+            return {"ok": False, "reason": "savings and checking must use the same currency"}
+        if self.e.ledger.balance(savings_id) < amount:
+            return {"ok": False, "reason": "insufficient savings"}
+        txn_id = self.e.ledger.transfer(
+            tick, savings_id, checking_id, amount,
+            kind="retirement_savings_withdrawal", memo="retirement liquidity drawdown")
+        self.store.log_event(
+            tick, "retirement_savings_withdrawal",
+            {"agent_id": actor_id, "amount_cents": amount, "transaction_id": txn_id},
+            phase=phase, subject_type="agent", subject_id=actor_id, importance=1.0)
+        return {"ok": True, "amount_cents": amount, "transaction_id": txn_id}
 
     # ── credit: application + underwriting ───────────────────────────────────
     def _do_apply_loan(self, tick, actor_id, action, phase) -> dict:
