@@ -39,6 +39,8 @@ class ParticipantService:
         self.store = store
         self.ctx = context_builder
         self.config = config
+        self.local_currency_action_surfaces = bool(
+            config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.enabled = bool(config.get("participant_mode", {}).get("enabled", False))
         if self.enabled and config.get("acceptance"):
             raise ValueError("participant mode cannot be enabled for an acceptance run")
@@ -273,12 +275,28 @@ class ParticipantService:
         banks = [bank for bank in ctx.get("banks", []) if bank.get("status") == "open"]
         current_bank = ctx.get("state", {}).get("bank_id")
         destinations = [bank for bank in banks if bank.get("id") != current_bank]
-        accounts = [dict(row) for row in self.store.query(
-            "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,COALESCE(a.name,f.name,ac.label) AS name "
-            "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
-            "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
-            "WHERE ac.id<>? AND (ac.owner_type<>'agent' OR a.alive=1) ORDER BY ac.id LIMIT 250",
-            (int(agent["checking_account_id"] or 0),))]
+        if self.local_currency_action_surfaces:
+            primary_currency = str(self.store.scalar(
+                "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+                "ON ac.id=a.checking_account_id WHERE a.id=?", (int(agent_id),),
+                default="USD") or "USD")
+            account_rows = self.store.query(
+                "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,ac.currency_code,"
+                "COALESCE(a.name,f.name,ac.label) AS name "
+                "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
+                "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
+                "WHERE ac.id<>? AND ac.currency_code=? "
+                "AND (ac.owner_type<>'agent' OR a.alive=1) ORDER BY ac.id LIMIT 250",
+                (int(agent["checking_account_id"] or 0), primary_currency))
+        else:
+            account_rows = self.store.query(
+                "SELECT ac.id,ac.owner_type,ac.owner_id,ac.label,"
+                "COALESCE(a.name,f.name,ac.label) AS name "
+                "FROM accounts ac LEFT JOIN agents a ON ac.owner_type='agent' AND a.id=ac.owner_id "
+                "LEFT JOIN firms f ON ac.owner_type='firm' AND f.id=ac.owner_id "
+                "WHERE ac.id<>? AND (ac.owner_type<>'agent' OR a.alive=1) "
+                "ORDER BY ac.id LIMIT 250", (int(agent["checking_account_id"] or 0),))
+        accounts = [dict(row) for row in account_rows]
         firm = ctx.get("my_firm")
         applications = ctx.get("firm_applications", [])
         lawyers = [dict(row) for row in self.store.query(

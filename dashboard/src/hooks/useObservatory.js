@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../api";
 import { clientLog } from "../logging.js";
+import { mergeRunPayload } from "../runState.js";
 
 const INITIAL = {
   status: null,
@@ -112,19 +113,12 @@ export function useObservatory() {
     socket.addEventListener("message", (event) => {
       try {
         const payload = JSON.parse(event.data);
-        if (payload.type === "tick") {
+        if (payload.type === "tick" || payload.type === "run_status") {
           setData(current => ({
             ...current,
-            status: current.status ? {
-              ...current.status,
-              tick: payload.tick,
-              status: payload.status,
-              governor: payload.governor,
-              pause_reason: payload.pause_reason,
-              report_path: payload.report_path,
-            } : current.status,
+            status: mergeRunPayload(current.status, payload),
           }));
-          refresh({ quiet: true });
+          if (payload.type === "tick") refresh({ quiet: true });
         }
       } catch (reason) {
         clientLog("dashboard.websocket.invalid_message", {

@@ -19,6 +19,13 @@ from engine.core import Economy
 from engine.store import load_json
 from .memory import Memory
 
+
+INSTITUTIONAL_DECISION_ROLES = {
+    "exchange", "gov_official", "legislator_house", "legislator_senate",
+    "regulator", "competition_regulator", "labor_regulator", "executive",
+    "lobbyist",
+}
+
 # Shared system prefix — identical for all citizens, so it caches well (§8, §12).
 SYSTEM_PREFIX = """You are a person living inside a simulated US-style economy. You reason in character
 and act in your own self-interest given your persona, finances, beliefs, and what you have read and heard.
@@ -47,6 +54,14 @@ provided context. Never emit labels such as "firm7", "job2", names, titles, or c
 where an integer ID is required.
 You are never obligated to act. Money is in cents. Stay in character."""
 
+INSTITUTIONAL_ACTIONS_SUFFIX = """
+Institutional actions: sponsor_bill{title,topic,summary,policy_changes},
+committee_vote{bill_id,vote}, cast_legislative_vote{bill_id,vote},
+executive_bill_action{bill_id,action,effective_delay_ticks},
+lobby{sponsor_type,sponsor_id,authorized_by_agent_id,target_agent_id,bill_id,
+activity_type,position,amount_cents}, review_merger{merger_id,remedy},
+place_fx_order{pair,side,qty,limit_rate_ppm}."""
+
 
 def _seed(agent_id: int, tick: int, salt: str = "") -> int:
     return int(hashlib.sha1(f"{agent_id}:{tick}:{salt}".encode()).hexdigest()[:12], 16)
@@ -58,6 +73,10 @@ class ContextBuilder:
         self.store = economy.store
         self.mem = memory
         self.config = config
+        self.institutional_role_purposes = bool(
+            config.get("llm", {}).get("institutional_role_purposes", False))
+        self.local_currency_action_surfaces = bool(
+            config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
         self.citizen_bank_visibility = str(
             config.get("information", {}).get(
@@ -87,6 +106,9 @@ class ContextBuilder:
             ctx["my_firm"] = self._firm_view(firm, tick)
             ctx["firm_applications"] = self._firm_applications(int(firm["id"]))
             ctx["purpose"] = "founder"
+        elif self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
+            ctx["purpose"] = role
+            ctx["institutional_work"] = self._institutional_work(agent_row, tick)
         return ctx
 
     def purpose_for(self, agent_row) -> str:
@@ -96,16 +118,29 @@ class ContextBuilder:
         if self.store.query_one("SELECT 1 FROM firms WHERE founder_agent_id=? AND status<>'bankrupt'",
                                 (agent_row["id"],)):
             return "founder"
+        if self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
+            return str(role)
         return "decision"
 
     # ── citizen ──────────────────────────────────────────────────────────────
     def _citizen_context(self, a, tick: int) -> dict:
         agent_id = int(a["id"])
-        checking = self.store.query_one(
-            "SELECT * FROM accounts WHERE owner_type='agent' AND owner_id=? AND kind='checking' "
-            "ORDER BY balance_cents DESC LIMIT 1", (agent_id,))
+        if self.local_currency_action_surfaces:
+            checking = self.store.query_one(
+                "SELECT ac.* FROM agents ag JOIN accounts ac ON ac.id=ag.checking_account_id "
+                "WHERE ag.id=? AND ac.owner_type='agent' AND ac.owner_id=?",
+                (agent_id, agent_id))
+            if checking is None:
+                checking = self.store.query_one(
+                    "SELECT * FROM accounts WHERE owner_type='agent' AND owner_id=? "
+                    "AND kind='checking' ORDER BY id LIMIT 1", (agent_id,))
+        else:
+            checking = self.store.query_one(
+                "SELECT * FROM accounts WHERE owner_type='agent' AND owner_id=? AND kind='checking' "
+                "ORDER BY balance_cents DESC LIMIT 1", (agent_id,))
         cash = int(checking["balance_cents"]) if checking else 0
         bank_id = int(checking["bank_id"]) if checking and checking["bank_id"] is not None else None
+        currency_code = str(checking["currency_code"] or "USD") if checking else "USD"
         debt = int(self.store.scalar(
             "SELECT COALESCE(SUM(outstanding_cents),0) FROM loans "
             "WHERE borrower_type='agent' AND borrower_id=? AND status='active'", (agent_id,), default=0))
@@ -127,26 +162,35 @@ class ContextBuilder:
         insured = self.store.query_one(
             "SELECT 1 FROM insurance_policies WHERE agent_id=? AND status='active'",
             (agent_id,)) is not None
+        state = {"checking_balance": cash, "bank_id": bank_id, "debt": debt,
+                 "employed": emp is not None, "wage": int(emp["wage_cents"]) if emp else 0,
+                 "net_worth": self.e.ledger.net_worth_agent(agent_id), "shares": shares}
+        if self.local_currency_action_surfaces:
+            state["currency_code"] = currency_code
         return {
             "tick": tick,
             "purpose": "decision",
             "rng_seed": _seed(agent_id, tick),
             "run_threshold": float(self.config.get("behavior", {}).get("run_threshold", 0.35)),
             "insured": insured,
-            "insurance_offer": self._insurance_offer(),
+            "insurance_offer": self._insurance_offer(
+                currency_code if self.local_currency_action_surfaces else None),
             "agent": {"id": agent_id, "name": a["name"], "age": int(a["age"]),
                       "occupation": a["occupation"], "role": a["role"], "health": a["health"],
                       "retired": bool(a["retired"]), "dependents": int(a["dependents"]),
                       "risk_tolerance": float(a["risk_tolerance"] or 0.5),
                       "political_lean": float(a["political_lean"] or 0.0)},
-            "state": {"checking_balance": cash, "bank_id": bank_id, "debt": debt,
-                      "employed": emp is not None, "wage": int(emp["wage_cents"]) if emp else 0,
-                      "net_worth": self.e.ledger.net_worth_agent(agent_id), "shares": shares},
+            "state": state,
             "beliefs": beliefs,
-            "prices": self._goods_offers(),
-            "jobs": self._open_jobs(),
-            "listed_firms": self._listed_firms(tick),
-            "banks": self._bank_views(self.citizen_bank_visibility),
+            "prices": self._goods_offers(
+                currency_code if self.local_currency_action_surfaces else None),
+            "jobs": self._open_jobs(
+                currency_code if self.local_currency_action_surfaces else None),
+            "listed_firms": self._listed_firms(
+                tick, currency_code if self.local_currency_action_surfaces else None),
+            "banks": self._bank_views(
+                self.citizen_bank_visibility,
+                currency_code=currency_code if self.local_currency_action_surfaces else None),
             "news": self._news_for(a, tick),
             "heard": heard,
             "memories": [m["text"] for m in memories],
@@ -156,10 +200,12 @@ class ContextBuilder:
             "career_day": career_day,
         }
 
-    def _insurance_offer(self) -> Optional[dict]:
+    def _insurance_offer(self, currency_code: str | None = None) -> Optional[dict]:
+        currency_clause = " AND currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
         insurer = self.store.query_one(
             "SELECT id, name FROM firms WHERE sector='insurance' AND status<>'bankrupt' "
-            "ORDER BY id LIMIT 1")
+            f"{currency_clause} ORDER BY id LIMIT 1", params)
         if not insurer:
             return None
         h = self.e.lifecycle.h
@@ -188,30 +234,51 @@ class ContextBuilder:
                 heard.append({"text": r["text"], "rumor_bank": rumor_bank})
         return heard
 
-    def _goods_offers(self) -> list[dict]:
+    def _goods_offers(self, currency_code: str | None = None) -> list[dict]:
         inventory_clause = "inventory>0" if self.engine_semantics_version >= 2 else "inventory>=0"
+        currency_clause = " AND currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
         firms = self.store.query(
-            "SELECT id, product_json, inventory FROM firms "
+            "SELECT id, product_json, inventory, currency_code FROM firms "
             f"WHERE status IN ('private','listed') AND {inventory_clause} "
-            "ORDER BY inventory DESC, id")
+            f"{currency_clause} ORDER BY inventory DESC, id", params)
         out = []
         for f in firms:
             prod = load_json(f["product_json"], {}) or {}
-            out.append({"firm_id": int(f["id"]), "product": prod.get("product", "goods"),
-                        "price": int(prod.get("unit_price_cents", 500)),
-                        "inventory": int(f["inventory"])})
+            offer = {"firm_id": int(f["id"]), "product": prod.get("product", "goods"),
+                     "price": int(prod.get("unit_price_cents", 500)),
+                     "inventory": int(f["inventory"])}
+            if currency_code is not None:
+                offer["currency_code"] = str(f["currency_code"] or "USD")
+            out.append(offer)
         return out
 
-    def _open_jobs(self) -> list[dict]:
-        return [{"job_id": int(j["id"]), "firm_id": int(j["firm_id"]), "title": j["title"],
-                 "wage": int(j["wage_cents"])}
-                for j in self.store.query("SELECT * FROM jobs WHERE status='open' ORDER BY wage_cents DESC LIMIT 20")]
-
-    def _listed_firms(self, tick: int) -> list[dict]:
+    def _open_jobs(self, currency_code: str | None = None) -> list[dict]:
+        currency_clause = " AND f.currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
+        order_clause = (
+            " ORDER BY j.wage_cents DESC,j.id LIMIT 20" if currency_code is not None
+            else " ORDER BY j.wage_cents DESC LIMIT 20")
         out = []
+        for j in self.store.query(
+                "SELECT j.*,f.currency_code AS firm_currency FROM jobs j "
+                "JOIN firms f ON f.id=j.firm_id "
+                f"WHERE j.status='open'{currency_clause} "
+                f"{order_clause}", params):
+            item = {"job_id": int(j["id"]), "firm_id": int(j["firm_id"]),
+                    "title": j["title"], "wage": int(j["wage_cents"])}
+            if currency_code is not None:
+                item["currency_code"] = str(j["firm_currency"] or "USD")
+            out.append(item)
+        return out
+
+    def _listed_firms(self, tick: int, currency_code: str | None = None) -> list[dict]:
+        out = []
+        currency_clause = " AND currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
         for f in self.store.query(
-                "SELECT id,name,account_id,inventory,product_json FROM firms "
-                "WHERE status='listed' ORDER BY id"):
+                "SELECT id,name,account_id,inventory,product_json,currency_code FROM firms "
+                f"WHERE status='listed'{currency_clause} ORDER BY id", params):
             firm_id = int(f["id"])
             product = load_json(f["product_json"], {}) or {}
             shares = int(self.store.scalar(
@@ -223,14 +290,17 @@ class ContextBuilder:
                 "FROM events WHERE kind='goods_sale' AND tick>? "
                 "AND json_extract(payload_json,'$.firm_id')=?",
                 (tick - 7, firm_id), default=0))
-            out.append({
+            item = {
                 "firm_id": firm_id, "name": f["name"],
                 "last_price": self.e.exchange.last_price(firm_id),
                 "book_value_per_share": round(cash / shares) if shares else None,
                 "cash": cash, "inventory": int(f["inventory"]),
                 "goods_price": int(product.get("unit_price_cents", 500)),
                 "recent_revenue_7": revenue_7,
-            })
+            }
+            if currency_code is not None:
+                item["currency_code"] = str(f["currency_code"] or "USD")
+            out.append(item)
         return out
 
     def _bank_views(
@@ -238,15 +308,171 @@ class ContextBuilder:
         visibility: str = "full_balance_sheet",
         *,
         own_bank_id: Optional[int] = None,
+        currency_code: str | None = None,
     ) -> list[dict]:
         out = []
-        for b in self.store.query("SELECT * FROM banks"):
+        currency_clause = " WHERE currency_code=?" if currency_code is not None else ""
+        params = (currency_code,) if currency_code is not None else ()
+        order_clause = " ORDER BY id" if currency_code is not None else ""
+        for b in self.store.query(
+                f"SELECT * FROM banks{currency_clause}{order_clause}", params):
             bank_id = int(b["id"])
             view = {"id": bank_id, "name": b["name"], "status": b["status"]}
+            if currency_code is not None:
+                view["currency_code"] = str(b["currency_code"] or "USD")
             if visibility == "full_balance_sheet" or bank_id == own_bank_id:
                 view["reserve_ratio"] = round(self.e.bank.reserve_ratio(bank_id), 4)
             out.append(view)
         return out
+
+    def _institutional_work(self, a, tick: int) -> dict:
+        """Return a bounded queue of actions that are valid in the current state.
+
+        Concurrent decisions receive the same morning snapshot. Legislative
+        queues therefore expose only the smallest quorum-needed set of unvoted
+        members so the final same-tick vote advances the bill without making
+        later proposals stale.
+        """
+        agent_id = int(a["id"])
+        role = str(a["role"] or "")
+        work: dict = {"role": role, "eligible_actions": []}
+        primary = self.store.query_one(
+            "SELECT ac.id,ac.balance_cents,ac.currency_code,ac.bank_id FROM agents ag "
+            "JOIN accounts ac ON ac.id=ag.checking_account_id WHERE ag.id=?", (agent_id,))
+        if primary:
+            work["wallet"] = {
+                "account_id": int(primary["id"]),
+                "balance_cents": int(primary["balance_cents"]),
+                "currency_code": str(primary["currency_code"] or "USD"),
+                "bank_id": int(primary["bank_id"]) if primary["bank_id"] is not None else None,
+            }
+
+        if role in {"legislator_house", "legislator_senate"}:
+            self._legislative_work(agent_id, work)
+        elif role == "executive":
+            bill = self.store.query_one(
+                "SELECT id,title,status FROM bills WHERE status='executive' ORDER BY id LIMIT 1")
+            if bill:
+                work["bills"] = [dict(bill)]
+                work["eligible_actions"].append({
+                    "type": "executive_bill_action", "bill_id": int(bill["id"]),
+                    "action": "sign", "effective_delay_ticks": 1,
+                })
+        elif role == "lobbyist":
+            bill = self.store.query_one(
+                "SELECT b.id,b.title,b.status,l.agent_id AS sponsor_agent_id FROM bills b "
+                "JOIN legislators l ON l.id=b.sponsor_legislator_id "
+                "WHERE b.status NOT IN ('failed','enacted') ORDER BY b.id LIMIT 1")
+            first_lobbyist = self.store.scalar(
+                "SELECT MIN(id) FROM agents WHERE role='lobbyist' AND alive=1")
+            already = self.store.query_one(
+                "SELECT 1 FROM lobbying_activities WHERE lobbyist_agent_id=? AND bill_id=?",
+                (agent_id, int(bill["id"]))) if bill else None
+            if bill:
+                work["bills"] = [{"id": int(bill["id"]), "title": bill["title"],
+                                  "status": bill["status"]}]
+            if bill and agent_id == int(first_lobbyist or 0) and not already:
+                work["eligible_actions"].append({
+                    "type": "lobby", "sponsor_type": "agent", "sponsor_id": agent_id,
+                    "authorized_by_agent_id": agent_id,
+                    "target_agent_id": int(bill["sponsor_agent_id"]),
+                    "bill_id": int(bill["id"]), "activity_type": "meeting",
+                    "position": "support", "amount_cents": 1000,
+                })
+        elif role in {"regulator", "competition_regulator", "labor_regulator"}:
+            agency = self.store.query_one(
+                "SELECT id,name,mandate,capacity FROM agencies WHERE leader_agent_id=?",
+                (agent_id,))
+            if agency:
+                work["agency"] = dict(agency)
+            if role == "competition_regulator":
+                merger = self.store.query_one(
+                    "SELECT id,acquirer_firm_id,target_firm_id,price_cents,currency_code,status "
+                    "FROM mergers WHERE status='pending_review' ORDER BY id LIMIT 1")
+                if merger:
+                    work["pending_mergers"] = [dict(merger)]
+                    work["eligible_actions"].append({
+                        "type": "review_merger", "merger_id": int(merger["id"]),
+                        "remedy": {"type": "interoperability", "duration_ticks": 180},
+                    })
+        elif role == "exchange" and primary:
+            prior = self.store.query_one(
+                "SELECT 1 FROM fx_orders WHERE actor_id=? LIMIT 1", (agent_id,))
+            foreign = self.store.query_one(
+                "SELECT code FROM currencies WHERE code<>? ORDER BY code LIMIT 1",
+                (str(primary["currency_code"] or "USD"),))
+            if not prior and foreign and int(primary["balance_cents"]) >= 1000:
+                base = str(foreign["code"])
+                quote = str(primary["currency_code"] or "USD")
+                rate = int(self.e.regions.current_rate(base, quote))
+                work["fx_market"] = {"pair": f"{base}/{quote}", "current_rate_ppm": rate}
+                work["eligible_actions"].append({
+                    "type": "place_fx_order", "pair": f"{base}/{quote}",
+                    "side": "buy", "qty": 1000, "limit_rate_ppm": rate,
+                })
+        return work
+
+    def _legislative_work(self, agent_id: int, work: dict) -> None:
+        legislator = self.store.query_one(
+            "SELECT l.id,l.chamber,l.seat_number,l.party_id FROM legislators l "
+            "WHERE l.agent_id=? AND l.active=1", (agent_id,))
+        if not legislator:
+            return
+        committee_ids = [int(row["committee_id"]) for row in self.store.query(
+            "SELECT committee_id FROM committee_members WHERE legislator_id=? ORDER BY committee_id",
+            (int(legislator["id"]),))]
+        work["legislator"] = {**dict(legislator), "committee_ids": committee_ids}
+        bills = self.store.query(
+            "SELECT id,title,status,current_version,committee_id,origin_chamber "
+            "FROM bills ORDER BY id DESC LIMIT 8")
+        work["bills"] = [dict(row) for row in bills]
+
+        if not bills:
+            first = int(self.store.scalar(
+                "SELECT MIN(agent_id) FROM legislators WHERE active=1", default=0) or 0)
+            if agent_id == first:
+                work["eligible_actions"].append({
+                    "type": "sponsor_bill", "title": "AI Market Interoperability Act",
+                    "topic": "competition",
+                    "summary": "Require acquisition disclosure and strengthen competition review.",
+                    "policy_changes": {
+                        "competition.agency_capacity": 1.25,
+                        "ai.mandatory_acquisition_disclosure": True,
+                    },
+                })
+            return
+
+        bill = next((row for row in reversed(bills)
+                     if row["status"] in {"committee", "floor_house", "floor_senate"}), None)
+        if bill is None:
+            return
+        status = str(bill["status"])
+        if status == "committee":
+            members = self.store.query(
+                "SELECT l.id,l.agent_id FROM committee_members cm JOIN legislators l "
+                "ON l.id=cm.legislator_id WHERE cm.committee_id=? AND l.active=1 ORDER BY l.id",
+                (int(bill["committee_id"]),))
+            stage = "committee"
+            threshold = len(members) // 2 + 1
+        else:
+            chamber = status.removeprefix("floor_")
+            members = self.store.query(
+                "SELECT id,agent_id FROM legislators WHERE chamber=? AND active=1 ORDER BY id",
+                (chamber,))
+            stage = chamber
+            threshold = len(members) // 2 + 1
+        voted = {int(row["legislator_id"]): str(row["vote"]) for row in self.store.query(
+            "SELECT legislator_id,vote FROM legislative_votes WHERE bill_id=? AND version=? "
+            "AND stage=?", (int(bill["id"]), int(bill["current_version"]), stage))}
+        yes = sum(1 for vote in voted.values() if vote == "yes")
+        needed = max(0, threshold - yes)
+        eligible = [int(row["agent_id"]) for row in members
+                    if int(row["id"]) not in voted][:needed]
+        if agent_id in eligible:
+            action_type = "committee_vote" if stage == "committee" else "cast_legislative_vote"
+            work["eligible_actions"].append({
+                "type": action_type, "bill_id": int(bill["id"]), "vote": "yes",
+            })
 
     def _news_for(self, a, tick: int) -> list[dict]:
         diet = set(load_json(a["media_diet_json"], []) or [])
@@ -510,9 +736,15 @@ class ContextBuilder:
                  f"age {a.get('age')}, {a.get('occupation')}, "
                  f"risk_tolerance {a.get('risk_tolerance')}, health {a.get('health')}."]
         if s:
-            lines.append(f"[STATE] cash {s.get('checking_balance',0)}c at bank {s.get('bank_id')}, "
-                         f"debt {s.get('debt',0)}c, employed={s.get('employed')}, "
-                         f"net_worth {s.get('net_worth',0)}c, shares {s.get('shares',{})}.")
+            if "currency_code" in s:
+                lines.append(f"[STATE] cash {s.get('checking_balance',0)}c at bank {s.get('bank_id')}, "
+                             f"currency {s.get('currency_code','USD')}, debt {s.get('debt',0)}c, "
+                             f"employed={s.get('employed')}, "
+                             f"net_worth {s.get('net_worth',0)}c, shares {s.get('shares',{})}.")
+            else:
+                lines.append(f"[STATE] cash {s.get('checking_balance',0)}c at bank {s.get('bank_id')}, "
+                             f"debt {s.get('debt',0)}c, employed={s.get('employed')}, "
+                             f"net_worth {s.get('net_worth',0)}c, shares {s.get('shares',{})}.")
         beliefs = context.get("beliefs", {})
         if beliefs:
             lines.append("[BELIEFS] " + ", ".join(f"{k}={v}" for k, v in list(beliefs.items())[:8]))
@@ -575,6 +807,11 @@ class ContextBuilder:
             lines.append("[ASSIGNED LEGAL MATTERS — COPY matter_id, contract_id, party IDs, "
                          "AND evidence event_id VALUES EXACTLY] "
                          + json.dumps(context["assigned_legal_matters"], separators=(",", ":"))[:4000])
+        if context.get("institutional_work"):
+            lines.append(
+                "[INSTITUTIONAL WORK — ONLY eligible_actions MAY BE USED; COPY EVERY "
+                "FIELD, ID, AND VALUE EXACTLY] "
+                + json.dumps(context["institutional_work"], separators=(",", ":"))[:6000])
         if context.get("insurance_offer") and not context.get("insured"):
             o = context["insurance_offer"]
             lines.append(f"[INSURANCE] {o['insurer']} offers health coverage: "
@@ -613,7 +850,15 @@ class ContextBuilder:
                          "than the requested remedy. If an assigned matter has no supported "
                          "next step, deliberately do_nothing. Only when there are no assigned "
                          "matters may you make an ordinary household decision.")
+        elif purpose in INSTITUTIONAL_DECISION_ROLES:
+            lines.append(
+                "[TASK] Perform at most one supplied institutional_work.eligible_actions "
+                "object, copying it exactly. If the list is empty or you prefer not to act, "
+                "use do_nothing. Never invent an institutional ID, target, amount, vote, "
+                "remedy, policy field, currency pair, or alternative action.")
         else:
             lines.append("[TASK] Decide what you do today from the available goods, jobs, "
                          "banks, and—when due—listed securities. Reply with the JSON envelope only.")
-        return SYSTEM_PREFIX, "\n\n".join(lines)
+        system = (SYSTEM_PREFIX + INSTITUTIONAL_ACTIONS_SUFFIX
+                  if context.get("institutional_work") else SYSTEM_PREFIX)
+        return system, "\n\n".join(lines)

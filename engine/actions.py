@@ -50,6 +50,8 @@ class ActionExecutor:
     def __init__(self, economy: Economy):
         self.e = economy
         self.store = economy.store
+        self.local_currency_action_surfaces = bool(
+            economy.config.get("llm", {}).get("local_currency_action_surfaces", False))
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
@@ -191,9 +193,15 @@ class ActionExecutor:
     # ── bank-run primitive ───────────────────────────────────────────────────
     def _do_move_deposits(self, tick, actor_id, action, phase) -> dict:
         to_bank = int(action.get("to_bank_id", 0))
-        src = self.store.query_one(
-            "SELECT * FROM accounts WHERE owner_type='agent' AND owner_id=? AND kind='checking' "
-            "AND balance_cents>0 ORDER BY balance_cents DESC LIMIT 1", (actor_id,))
+        if self.local_currency_action_surfaces:
+            src = self.store.query_one(
+                "SELECT ac.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+                "WHERE a.id=? AND ac.owner_type='agent' AND ac.owner_id=? AND ac.balance_cents>0",
+                (actor_id, actor_id))
+        else:
+            src = self.store.query_one(
+                "SELECT * FROM accounts WHERE owner_type='agent' AND owner_id=? AND kind='checking' "
+                "AND balance_cents>0 ORDER BY balance_cents DESC LIMIT 1", (actor_id,))
         if not src:
             return {"ok": False, "reason": "no deposits to move"}
         from_bank = int(src["bank_id"]) if src["bank_id"] is not None else 0
@@ -257,6 +265,16 @@ class ActionExecutor:
 
     def _do_apply_job(self, tick, actor_id, action, phase) -> dict:
         job_id = int(action.get("job_id", 0))
+        if self.local_currency_action_surfaces:
+            job = self.store.query_one(
+                "SELECT j.status,f.currency_code FROM jobs j JOIN firms f ON f.id=j.firm_id "
+                "WHERE j.id=?", (job_id,))
+            actor_currency = self.store.scalar(
+                "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+                "ON ac.id=a.checking_account_id WHERE a.id=?", (actor_id,))
+            if (not job or job["status"] != "open" or actor_currency is None
+                    or str(job["currency_code"] or "USD") != str(actor_currency or "USD")):
+                return {"ok": False, "reason": "job must use the applicant's primary currency"}
         app_id = self.e.labor.apply_job(tick, actor_id, job_id)
         if app_id is None:
             return {"ok": False, "reason": "job unavailable"}
@@ -267,11 +285,20 @@ class ActionExecutor:
         app = self.store.query_one("SELECT * FROM applications WHERE id=?", (app_id,))
         if not app:
             return {"ok": False, "reason": "application missing"}
-        job = self.store.query_one("SELECT firm_id FROM jobs WHERE id=?", (app["job_id"],))
+        job = self.store.query_one(
+            "SELECT j.firm_id,f.currency_code FROM jobs j JOIN firms f ON f.id=j.firm_id "
+            "WHERE j.id=?", (app["job_id"],))
         if not job or not self._controls_firm(actor_id, int(job["firm_id"])):
             return {"ok": False, "reason": "actor does not control hiring firm"}
         if not self._alive(int(app["agent_id"])):
             return {"ok": False, "reason": "candidate not alive"}
+        if self.local_currency_action_surfaces:
+            candidate_currency = self.store.scalar(
+                "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+                "ON ac.id=a.checking_account_id WHERE a.id=?", (int(app["agent_id"]),))
+            if (candidate_currency is None
+                    or str(candidate_currency or "USD") != str(job["currency_code"] or "USD")):
+                return {"ok": False, "reason": "hire must use the firm's payroll currency"}
         emp_id = self.e.labor.hire(tick, app_id)
         if emp_id is None:
             return {"ok": False, "reason": "hire failed"}
@@ -315,9 +342,18 @@ class ActionExecutor:
         qty = int(action.get("qty", 0))
         if side not in ("buy", "sell") or qty <= 0:
             return {"ok": False, "reason": "bad order side/qty"}
-        firm = self.store.query_one("SELECT status FROM firms WHERE id=?", (firm_id,))
+        firm = self.store.query_one(
+            "SELECT status,currency_code FROM firms WHERE id=?", (firm_id,))
         if not firm or firm["status"] != "listed":
             return {"ok": False, "reason": "firm not listed"}
+        acct = None
+        if self.local_currency_action_surfaces:
+            acct = self.e.ledger.agent_checking_id(actor_id)
+            actor_currency = self.store.scalar(
+                "SELECT currency_code FROM accounts WHERE id=?", (acct,), default=None)
+            if (acct is None or actor_currency is None
+                    or str(actor_currency or "USD") != str(firm["currency_code"] or "USD")):
+                return {"ok": False, "reason": "stock orders require the firm's settlement currency"}
         limit = action.get("limit_price")
         order_type = "market" if limit in (None, 0) else "limit"
         limit_cents = int(limit) if limit not in (None, 0) else None
@@ -326,7 +362,8 @@ class ActionExecutor:
             if held < qty:
                 return {"ok": False, "reason": f"insufficient shares ({held} < {qty})"}
         elif order_type == "limit":
-            acct = self.e.ledger.agent_checking_id(actor_id)
+            if acct is None:
+                acct = self.e.ledger.agent_checking_id(actor_id)
             if acct is None or self.e.ledger.balance(acct) < qty * limit_cents:
                 return {"ok": False, "reason": "insufficient funds for buy order"}
         oid = self.e.exchange.place_order(tick, actor_id, firm_id, side, qty, limit_cents, order_type)
@@ -347,13 +384,29 @@ class ActionExecutor:
         amount = int(action.get("amount", 0))
         if amount <= 0:
             return {"ok": False, "reason": "amount must be positive"}
-        bank = self.store.query_one("SELECT status FROM banks WHERE id=?", (bank_id,))
+        bank = self.store.query_one(
+            "SELECT status,currency_code FROM banks WHERE id=?", (bank_id,))
         if not bank or bank["status"] != "open":
             return {"ok": False, "reason": "bank unavailable"}
         borrower_type = "firm" if action.get("as_firm") else "agent"
         borrower_id = int(action.get("firm_id", actor_id)) if action.get("as_firm") else actor_id
         if borrower_type == "firm" and not self._controls_firm(actor_id, borrower_id):
             return {"ok": False, "reason": "actor does not control borrowing firm"}
+        if (self.local_currency_action_surfaces and borrower_type == "agent"
+                and self.store.query_one(
+                "SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (borrower_id,))):
+            return {"ok": False, "reason": "resolve the pending migration before applying for credit"}
+        if self.local_currency_action_surfaces:
+            if borrower_type == "firm":
+                borrower_currency = self.store.scalar(
+                    "SELECT currency_code FROM firms WHERE id=?", (borrower_id,), default=None)
+            else:
+                borrower_currency = self.store.scalar(
+                    "SELECT ac.currency_code FROM agents a JOIN accounts ac "
+                    "ON ac.id=a.checking_account_id WHERE a.id=?", (borrower_id,), default=None)
+            if (borrower_currency is None
+                    or str(borrower_currency or "USD") != str(bank["currency_code"] or "USD")):
+                return {"ok": False, "reason": "loan bank must use the borrower's primary currency"}
         # One application per bank per week per borrower (validator rule §5),
         # regardless of whether the earlier application is still pending.
         recent = self.store.query_one(
@@ -378,6 +431,11 @@ class ActionExecutor:
         app = self.store.query_one("SELECT * FROM loan_applications WHERE id=?", (app_id,))
         if not app or app["status"] != "pending":
             return {"ok": False, "reason": "application not pending"}
+        if (self.local_currency_action_surfaces and app["borrower_type"] == "agent"
+                and self.store.query_one(
+                "SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'",
+                (int(app["borrower_id"]),))):
+            return {"ok": False, "reason": "resolve the pending migration before loan approval"}
         bank = self.store.query_one("SELECT * FROM banks WHERE id=?", (app["bank_id"],))
         policy = _json(bank["risk_policy_json"], {})
         rate = int(action.get("rate_bps", policy.get("default_rate_bps", 900)))

@@ -18,6 +18,7 @@ information_economy:
 
 political_model:
   enabled: true
+  actor_bound_authorization: true  # fresh runs never trust action-supplied political delegation
   house_seats: 12
   senate_seats: 6
   house_election_interval_ticks: 180

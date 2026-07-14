@@ -32,11 +32,15 @@ class Economy:
         self.store = store
         self.config = config
         self.prng = engine_prng
+        local_currency_action_surfaces = bool(
+            config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.ledger = Ledger(store)
         cb = config.get("exchange", {}).get("circuit_breaker_drop")
         self.exchange = Exchange(store, self.ledger,
                                  circuit_breaker_drop=float(cb) if cb else None)
-        self.bank = Bank(store, self.ledger)
+        self.bank = Bank(
+            store, self.ledger,
+            local_currency_action_surfaces=local_currency_action_surfaces)
         self.firms = Firms(store, self.ledger)
         self.labor = Labor(store)
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
@@ -46,7 +50,8 @@ class Economy:
         self.vc = VentureCapital(store, self.ledger)
         self.legal = LegalInstitution(store, self.ledger, config.get("legal"))
         self.regions = RegionalEconomy(store, self.ledger, self.legal, engine_prng,
-                                      config.get("living_world"))
+                                      config.get("living_world"),
+                                      local_currency_action_surfaces=local_currency_action_surfaces)
         self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
         self.information = InformationEconomy(store, config.get("information_economy"))
         self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))

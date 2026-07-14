@@ -1,0 +1,19 @@
+# Thirty-tick live institutional gate. Twenty-two core agents include the
+# central banker plus every pinned legal, political, regulatory, market, credit,
+# venture, and newsroom seat while retaining the inspectable 36-person world.
+extends: v2-live-behavioral.yaml
+
+living_world:
+  core_agents: 22
+
+behavioral_fixture:
+  institutional_work: true
+
+# A runaway ceiling, not a target. The latest 10-tick behavioral gate cost
+# $0.02361318; this larger role-complete gate is expected to remain well below it.
+budget:
+  cap_usd: 2.0
+
+llm:
+  institutional_role_purposes: true
+  local_currency_action_surfaces: true

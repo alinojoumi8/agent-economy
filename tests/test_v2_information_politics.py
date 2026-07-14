@@ -6,13 +6,20 @@ from engine.core import Economy
 from .conftest import make_agent, make_bank
 
 
-def _institutional_world(store):
+def _institutional_world(store, *, actor_bound_authorization=True):
+    political_model = {
+        "enabled": True,
+        "house_seats": 12,
+        "senate_seats": 6,
+        "house_election_interval_ticks": 180,
+        "executive_election_interval_ticks": 360,
+        "lobbying_disclosure_delay_ticks": 5,
+    }
+    if actor_bound_authorization is not None:
+        political_model["actor_bound_authorization"] = actor_bound_authorization
     config = {
         "information_economy": {"enabled": True, "base_reach": 1.0},
-        "political_model": {"enabled": True, "house_seats": 12, "senate_seats": 6,
-                            "house_election_interval_ticks": 180,
-                            "executive_election_interval_ticks": 360,
-                            "lobbying_disclosure_delay_ticks": 5},
+        "political_model": political_model,
         "legal": {"enabled": True},
     }
     economy = Economy(store, config, random.Random(41), random.Random(42))
@@ -57,15 +64,17 @@ def test_claim_exposure_is_asymmetric_persisted_and_updates_belief(store):
 
 
 def test_lobbying_spends_real_money_but_does_not_write_votes(store):
-    economy, executor, founder, _, firm = _institutional_world(store)
+    economy, executor, _, _, _ = _institutional_world(store)
     lobbyist = int(store.scalar("SELECT id FROM agents WHERE role='lobbyist' ORDER BY id LIMIT 1"))
     legislator = int(store.scalar("SELECT agent_id FROM legislators ORDER BY id LIMIT 1"))
+    firm = economy.firms.found_firm(
+        1, lobbyist, "Lobbyist-Owned Policy Firm", "services", opening_capital_cents=50_000)
     firm_account = int(store.scalar("SELECT account_id FROM firms WHERE id=?", (firm,)))
     before = economy.ledger.balance(firm_account)
 
     result = executor.execute_action(1, lobbyist, {
         "type": "lobby", "sponsor_type": "firm", "sponsor_id": firm,
-        "authorized_by_agent_id": founder, "target_agent_id": legislator,
+        "authorized_by_agent_id": lobbyist, "target_agent_id": legislator,
         "activity_type": "meeting", "position": "support", "amount_cents": 25_000,
     })
 
@@ -75,6 +84,73 @@ def test_lobbying_spends_real_money_but_does_not_write_votes(store):
     economy.politics.run_nightly(6)
     assert store.scalar("SELECT disclosed FROM lobbying_activities WHERE id=?",
                         (result["activity_id"],)) == 1
+    assert economy.ledger.reconcile()[0]
+
+
+def test_lobbying_cannot_spend_foreign_sponsor_funds_even_with_claimed_authorization(store):
+    economy, executor, founder, _, firm = _institutional_world(store)
+    lobbyist = int(store.scalar("SELECT id FROM agents WHERE role='lobbyist' ORDER BY id LIMIT 1"))
+    legislator = int(store.scalar("SELECT agent_id FROM legislators ORDER BY id LIMIT 1"))
+    founder_account = economy.ledger.agent_checking_id(founder)
+    firm_account = int(store.scalar("SELECT account_id FROM firms WHERE id=?", (firm,)))
+    founder_before = economy.ledger.balance(founder_account)
+    firm_before = economy.ledger.balance(firm_account)
+    activities_before = int(store.scalar("SELECT COUNT(*) FROM lobbying_activities", default=0))
+
+    foreign_agent = executor.execute_action(1, lobbyist, {
+        "type": "lobby", "sponsor_type": "agent", "sponsor_id": founder,
+        "authorized_by_agent_id": founder, "target_agent_id": legislator,
+        "activity_type": "meeting", "position": "support", "amount_cents": 1_000,
+    })
+    foreign_firm = executor.execute_action(1, lobbyist, {
+        "type": "lobby", "sponsor_type": "firm", "sponsor_id": firm,
+        "authorized_by_agent_id": founder, "target_agent_id": legislator,
+        "activity_type": "meeting", "position": "support", "amount_cents": 1_000,
+    })
+
+    assert foreign_agent == {"ok": False, "reason": "actor must control lobbying sponsor"}
+    assert foreign_firm == {"ok": False, "reason": "actor must control lobbying sponsor"}
+    assert economy.ledger.balance(founder_account) == founder_before
+    assert economy.ledger.balance(firm_account) == firm_before
+    assert int(store.scalar("SELECT COUNT(*) FROM lobbying_activities", default=0)) == activities_before
+    assert economy.ledger.reconcile()[0]
+
+
+def test_markerless_political_config_preserves_legacy_delegation_for_replay(store):
+    economy, executor, founder, _, firm = _institutional_world(
+        store, actor_bound_authorization=None)
+    lobbyist = int(store.scalar("SELECT id FROM agents WHERE role='lobbyist' ORDER BY id LIMIT 1"))
+    legislator = int(store.scalar("SELECT agent_id FROM legislators ORDER BY id LIMIT 1"))
+    firm_account = int(store.scalar("SELECT account_id FROM firms WHERE id=?", (firm,)))
+    before = economy.ledger.balance(firm_account)
+
+    delegated = executor.execute_action(1, lobbyist, {
+        "type": "lobby", "sponsor_type": "firm", "sponsor_id": firm,
+        "authorized_by_agent_id": founder, "target_agent_id": legislator,
+        "activity_type": "meeting", "position": "support", "amount_cents": 1_000,
+    })
+
+    assert delegated["ok"]
+    assert economy.ledger.balance(firm_account) == before - 1_000
+
+    sponsor_legislator = int(store.scalar(
+        "SELECT id FROM legislators WHERE active=1 ORDER BY id LIMIT 1"))
+    committee = int(store.scalar("SELECT id FROM committees ORDER BY id LIMIT 1"))
+    bill_id = store.insert(
+        "bills", bill_key="legacy-executive-authority", title="Legacy Authority Bill",
+        sponsor_legislator_id=sponsor_legislator, origin_chamber="house",
+        committee_id=committee, status="executive", current_version=1,
+        introduced_tick=0, policy_changes_json="{}", metadata_json="{}")
+    bank = int(store.scalar("SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1"))
+    gov_official, _ = make_agent(
+        economy, bank, name="Legacy Executive Delegate", role="gov_official")
+    signed = executor.execute_action(1, gov_official, {
+        "type": "executive_bill_action", "bill_id": bill_id,
+        "action": "sign", "effective_delay_ticks": 1,
+    })
+
+    assert signed["ok"]
+    assert store.scalar("SELECT status FROM bills WHERE id=?", (bill_id,)) == "enacted"
     assert economy.ledger.reconcile()[0]
 
 
@@ -110,6 +186,14 @@ def test_bill_process_enacts_typed_ai_competition_rules(store):
         status = executor.execute_action(1, agent_id, {
             "type": "cast_legislative_vote", "bill_id": bill_id, "vote": "yes"})["status"]
     assert status == "executive"
+    bank = int(store.scalar("SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1"))
+    gov_official, _ = make_agent(
+        economy, bank, name="Executive Office Staffer", role="gov_official")
+    denied = executor.execute_action(1, gov_official, {
+        "type": "executive_bill_action", "bill_id": bill_id,
+        "action": "sign", "effective_delay_ticks": 1})
+    assert denied == {"ok": False, "reason": "executive authority required"}
+    assert store.scalar("SELECT status FROM bills WHERE id=?", (bill_id,)) == "executive"
     executive = int(store.scalar("SELECT id FROM agents WHERE role='executive' LIMIT 1"))
     signed = executor.execute_action(1, executive, {
         "type": "executive_bill_action", "bill_id": bill_id,

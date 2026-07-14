@@ -96,8 +96,9 @@ def _causal_trace(store: Store) -> list[dict[str, Any]]:
     return trace
 
 
-def _run_arm(pack: ScenarioPack, seed: int, arm: str, data_dir: Path, ticks: int) -> dict[str, Any]:
-    config = pack.config()
+def _run_arm(pack: ScenarioPack, seed: int, arm: str, data_dir: Path, ticks: int,
+             effective_config: dict[str, Any]) -> dict[str, Any]:
+    config = json.loads(json.dumps(effective_config))
     config.update({"seed": seed, "checkpoint_every": 0, "speed_delay_s": 0.0,
                    "dataset_manifest": pack.dataset_manifest,
                    "scenario": {"key": pack.key, "version": pack.version, "arm": arm}})
@@ -127,15 +128,19 @@ def _run_arm(pack: ScenarioPack, seed: int, arm: str, data_dir: Path, ticks: int
     return result
 
 
-def run_counterfactual(scenario_path: str | Path, *, seeds: int | list[int] = 20,
+def run_counterfactual(scenario_path: str | Path | ScenarioPack, *, seeds: int | list[int] = 20,
                        ticks: int | None = None, out_dir: str | Path = "reports/out",
-                       data_root: str | Path = "data/counterfactuals") -> dict[str, Any]:
-    pack = load_scenario(scenario_path)
+                       data_root: str | Path = "data/counterfactuals",
+                       effective_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    pack = (scenario_path if isinstance(scenario_path, ScenarioPack)
+            else load_scenario(scenario_path))
+    resolved_config = (pack.config() if effective_config is None
+                       else effective_config)
     paired_seeds = list(range(1, seeds + 1)) if isinstance(seeds, int) else [int(s) for s in seeds]
     horizon = int(ticks or pack.ticks)
     data_dir = Path(data_root) / pack.key
     data_dir.mkdir(parents=True, exist_ok=True)
-    results = [_run_arm(pack, seed, arm, data_dir, horizon)
+    results = [_run_arm(pack, seed, arm, data_dir, horizon, resolved_config)
                for seed in paired_seeds for arm in pack.arms]
     for seed in paired_seeds:
         hashes = {row["genesis_hash"] for row in results if row["seed"] == seed}

@@ -183,6 +183,20 @@ class BehavioralFixtureSeeder:
             "summary": "Scale an audited interoperability product while resolving disclosed litigation.",
         })
 
+        merger_id = None
+        if self.cfg.get("institutional_work"):
+            proposed = self._must(0, founder_id, {
+                "type": "propose_merger", "acquirer_firm_id": startup_id,
+                "target_firm_id": respondent_id,
+                "price_cents": int(self.cfg.get("merger_price_cents", 50_000)),
+                "currency_code": currency,
+                "metadata": {"fixture_key": fixture_key},
+            })
+            merger_id = int(proposed["merger_id"])
+            self._must(0, respondent_founder, {
+                "type": "approve_merger", "merger_id": merger_id,
+            })
+
         payload = {
             "fixture_key": fixture_key,
             "startup_id": startup_id,
@@ -199,6 +213,8 @@ class BehavioralFixtureSeeder:
             "loan_application_id": int(loan["application_id"]),
             "pitch_id": int(pitch["pitch_id"]),
         }
+        if merger_id is not None:
+            payload["merger_id"] = merger_id
         self.store.log_event(
             0, "behavioral_fixture_seeded", payload, phase="NIGHT_CLOSE",
             subject_type="firm", subject_id=startup_id, importance=3.0,

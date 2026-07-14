@@ -17,6 +17,8 @@ class Scheduler:
         self.config = config
         self.base_act_every = int(config.get("behavior", {}).get("act_every", 3))
         self.event_wake_importance = float(config.get("behavior", {}).get("event_wake_importance", 2.0))
+        self.institutional_role_purposes = bool(
+            config.get("llm", {}).get("institutional_role_purposes", False))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
         if int(self.config.get("engine_semantics_version", 1)) >= 5:
@@ -31,6 +33,12 @@ class Scheduler:
         out = []
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
         for a in agents:
+            if (self.institutional_role_purposes
+                    and a["role"] in {"editor", "reporter"}):
+                # The Newsroom owns these seats and already records role-bound
+                # reporter/newsroom calls. A second generic strategic turn
+                # collides with the reporter response contract.
+                continue
             if a["role"] == "central_banker":
                 # Policy meetings, not daily moves (±50bps per meeting, TECH-SPEC §5).
                 if tick % max(1, meeting_interval) == 0:

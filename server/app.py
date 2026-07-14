@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from engine.store import load_json
 from agents.participant import ParticipantError
-from server.controller import RunController, build_tick_payload
+from server.controller import RunController
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
 from observability import get_logger, log_event as operational_log
@@ -61,8 +61,8 @@ class ParticipantReleaseBody(BaseModel):
     expected_tick: int
 
 
-def create_app(world: World) -> FastAPI:
-    controller = RunController(world)
+def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
+    controller = RunController(world, served_ticks=served_ticks)
     hub = controller.hub
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
@@ -100,7 +100,7 @@ def create_app(world: World) -> FastAPI:
 
     # ── run controls (PRD R7) ────────────────────────────────────────────────
     @app.post("/api/run/start")
-    async def start_run(max_ticks: Optional[int] = None):
+    async def start_run(max_ticks: Optional[int] = Query(default=None, ge=1)):
         return await controller.start(max_ticks)
 
     @app.post("/api/run/pause")
@@ -489,8 +489,8 @@ def create_app(world: World) -> FastAPI:
     async def websocket_endpoint(ws: WebSocket):
         await hub.connect(ws)
         try:
-            await ws.send_text(json.dumps(build_tick_payload(
-                world, store.tick, {"tick": store.tick})))
+            await ws.send_text(json.dumps(controller.tick_payload(
+                store.tick, {"tick": store.tick})))
             while True:
                 await ws.receive_text()   # keepalive; controls go over REST
         except WebSocketDisconnect:

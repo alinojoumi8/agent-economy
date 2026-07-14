@@ -140,6 +140,406 @@ def test_goods_context_excludes_zero_inventory(tmp_path):
     world.store.close()
 
 
+def test_citizen_goods_context_only_exposes_same_currency_sellers(tmp_path):
+    world = _world(
+        tmp_path, "local-goods-offers.db",
+        llm={"local_currency_action_surfaces": True,
+             "default_route": {"provider": "scripted", "model": "scripted"},
+             "routes": {}},
+    )
+    agent = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN accounts c "
+        "ON c.owner_type='agent' AND c.owner_id=a.id AND c.kind='checking' "
+        "ORDER BY a.id LIMIT 1")
+    checking_id = int(world.store.scalar(
+        "SELECT id FROM accounts WHERE owner_type='agent' AND owner_id=? "
+        "AND kind='checking' ORDER BY id LIMIT 1", (int(agent["id"]),)))
+    firms = world.store.query(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 2")
+    local_id, foreign_id = (int(firms[0]["id"]), int(firms[1]["id"]))
+    world.store.update("accounts", checking_id, currency_code="NSD")
+    world.store.update("firms", local_id, currency_code="NSD", inventory=10)
+    world.store.update("firms", foreign_id, currency_code="IVC", inventory=10)
+
+    context = world.runtime.ctx._citizen_context(agent, 1)
+    offered = {offer["firm_id"] for offer in context["prices"]}
+
+    assert context["state"]["currency_code"] == "NSD"
+    assert local_id in offered
+    assert foreign_id not in offered
+    world.store.close()
+
+
+def test_v2_currency_surfaces_follow_primary_wallet_and_reject_foreign_ids(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN regions r ON r.id=a.region_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND r.currency_code='NSD' "
+            "AND NOT EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id) "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p "
+            "WHERE p.borrower_type='agent' AND p.borrower_id=a.id) ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        old_primary = int(actor["checking_account_id"])
+        old_balance = world.economy.ledger.balance(old_primary)
+
+        placed = world.economy.regions.place_fx_order(0, actor_id, {
+            "pair": "IVC/NSD", "side": "buy", "qty": 5_000,
+        })
+        assert placed["ok"] and len(world.economy.regions.match_fx(0)) == 1
+        ivc_wallet = store.query_one(
+            "SELECT id,balance_cents FROM accounts WHERE owner_type='agent' AND owner_id=? "
+            "AND currency_code='IVC' ORDER BY id DESC LIMIT 1", (actor_id,))
+        assert old_balance > int(ivc_wallet["balance_cents"])
+        store.update("agents", actor_id, checking_account_id=int(ivc_wallet["id"]))
+        actor = store.query_one("SELECT * FROM agents WHERE id=?", (actor_id,))
+
+        local_firm = store.query_one(
+            "SELECT * FROM firms WHERE currency_code='IVC' AND founder_agent_id IS NOT NULL "
+            "ORDER BY id LIMIT 1")
+        foreign_firm = store.query_one(
+            "SELECT * FROM firms WHERE currency_code<>'IVC' AND founder_agent_id IS NOT NULL "
+            "ORDER BY id LIMIT 1")
+        local_id, foreign_id = int(local_firm["id"]), int(foreign_firm["id"])
+        store.update("firms", local_id, status="listed", inventory=10)
+        store.update("firms", foreign_id, status="listed", inventory=10)
+        local_job = world.economy.labor.post_job(0, local_id, "local role", 100)
+        foreign_job = world.economy.labor.post_job(0, foreign_id, "foreign role", 100)
+        local_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE currency_code='IVC' AND status='open' ORDER BY id LIMIT 1"))
+        foreign_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE currency_code<>'IVC' AND status='open' ORDER BY id LIMIT 1"))
+
+        context = world.runtime.ctx._citizen_context(actor, 1)
+        assert context["state"]["currency_code"] == "IVC"
+        assert context["state"]["checking_balance"] == int(ivc_wallet["balance_cents"])
+        assert {row["currency_code"] for row in context["prices"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["jobs"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["listed_firms"]} <= {"IVC"}
+        assert {row["currency_code"] for row in context["banks"]} == {"IVC"}
+        assert local_job in {row["job_id"] for row in context["jobs"]}
+        assert foreign_job not in {row["job_id"] for row in context["jobs"]}
+        assert local_id in {row["firm_id"] for row in context["listed_firms"]}
+        assert foreign_id not in {row["firm_id"] for row in context["listed_firms"]}
+        assert local_bank in {row["id"] for row in context["banks"]}
+        assert foreign_bank not in {row["id"] for row in context["banks"]}
+
+        catalog = world.runtime.participant.action_catalog(actor_id)
+        transfer = next(row for row in catalog if row["type"] == "transfer")
+        recipient_ids = [int(option["value"]) for option in transfer["fields"][0]["options"]]
+        recipient_currencies = {str(row["currency_code"]) for row in store.query(
+            f"SELECT DISTINCT currency_code FROM accounts WHERE id IN "
+            f"({','.join('?' for _ in recipient_ids)})", tuple(recipient_ids))} if recipient_ids else set()
+        assert recipient_currencies <= {"IVC"}
+
+        executor = world.runtime.executor
+        assert executor.local_currency_action_surfaces is True
+        assert world.runtime.participant.local_currency_action_surfaces is True
+        assert world.economy.bank.local_currency_action_surfaces is True
+        assert world.economy.regions.local_currency_action_surfaces is True
+        order_count = int(store.scalar("SELECT COUNT(*) FROM orders"))
+        app_count = int(store.scalar("SELECT COUNT(*) FROM applications"))
+        loan_count = int(store.scalar("SELECT COUNT(*) FROM loan_applications"))
+        assert not executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": foreign_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        assert not executor.execute_action(1, actor_id, {
+            "type": "apply_job", "job_id": foreign_job,
+        })["ok"]
+        assert not executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": foreign_bank, "amount": 100,
+            "purpose": "foreign currency",
+        })["ok"]
+        assert store.scalar("SELECT COUNT(*) FROM orders") == order_count
+        assert store.scalar("SELECT COUNT(*) FROM applications") == app_count
+        assert store.scalar("SELECT COUNT(*) FROM loan_applications") == loan_count
+
+        assert executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": local_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "apply_job", "job_id": local_job,
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": local_bank, "amount": 100,
+            "purpose": "local currency",
+        })["ok"]
+
+        bypassed = world.economy.labor.apply_job(1, actor_id, foreign_job)
+        assert bypassed is not None
+        assert not executor.execute_action(1, int(foreign_firm["founder_agent_id"]), {
+            "type": "hire", "application_id": bypassed,
+        })["ok"]
+        assert store.scalar(
+            "SELECT COUNT(*) FROM employments WHERE agent_id=? AND firm_id=? AND status='active'",
+            (actor_id, foreign_id)) == 0
+
+        moved = executor.execute_action(1, actor_id, {
+            "type": "move_deposits", "to_bank_id": local_bank, "amount": 0,
+        })
+        assert moved["ok"]
+        new_primary = int(store.scalar(
+            "SELECT checking_account_id FROM agents WHERE id=?", (actor_id,)))
+        assert new_primary != old_primary
+        assert store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (new_primary,)) == "IVC"
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
+
+
+def test_foreign_currency_action_guards_are_opt_in_for_legacy_replay(tmp_path):
+    world = _world(tmp_path, "legacy-currency-actions.db")
+    store = world.store
+    try:
+        executor = world.runtime.executor
+        assert executor.local_currency_action_surfaces is False
+        assert world.runtime.participant.local_currency_action_surfaces is False
+        assert world.economy.bank.local_currency_action_surfaces is False
+        assert world.economy.regions.local_currency_action_surfaces is False
+        actor = store.query_one(
+            "SELECT * FROM agents WHERE kind='citizen' AND alive=1 "
+            "AND id NOT IN (SELECT founder_agent_id FROM firms WHERE founder_agent_id IS NOT NULL) "
+            "ORDER BY id LIMIT 1")
+        actor_id = int(actor["id"])
+        firm = store.query_one(
+            "SELECT * FROM firms WHERE founder_agent_id IS NOT NULL ORDER BY id LIMIT 1")
+        firm_id = int(firm["id"])
+        founder_id = int(firm["founder_agent_id"])
+        bank_id = int(store.scalar("SELECT id FROM banks WHERE status='open' ORDER BY id LIMIT 1"))
+        store.update("accounts", int(actor["checking_account_id"]), currency_code="NSD")
+        store.update("firms", firm_id, status="listed", currency_code="IVC", inventory=10)
+        store.update("banks", bank_id, currency_code="IVC")
+        job_id = world.economy.labor.post_job(0, firm_id, "legacy foreign role", 100)
+
+        application = executor.execute_action(
+            1, actor_id, {"type": "apply_job", "job_id": job_id})
+        assert application["ok"]
+        assert executor.execute_action(1, founder_id, {
+            "type": "hire", "application_id": application["application_id"],
+        })["ok"]
+        assert executor.execute_action(1, actor_id, {
+            "type": "place_order", "firm_id": firm_id, "side": "buy",
+            "qty": 1, "limit_price": 1,
+        })["ok"]
+        loan_application = executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "legacy foreign currency",
+        })
+        assert loan_application["ok"]
+
+        officer_id = int(store.scalar(
+            "SELECT id FROM agents WHERE role='credit_officer' AND alive=1 ORDER BY id LIMIT 1"))
+        approval = executor.execute_action(1, officer_id, {
+            "type": "approve_loan", "application_id": loan_application["application_id"],
+            "rate_bps": 500, "term_ticks": 30,
+        })
+        assert not approval["ok"]
+        assert "unbalanced transaction 'loan_disburse' by currency" in approval["reason"]
+        assert store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='loan_denied_currency'") == 0
+        assert store.scalar("SELECT COUNT(*) FROM loans WHERE borrower_type='agent' "
+                            "AND borrower_id=?", (actor_id,)) == 0
+    finally:
+        store.close()
+
+
+def test_legacy_replay_flag_preserves_richest_deposit_and_all_recipient_surfaces(tmp_path):
+    world = _world(tmp_path, "legacy-deposits-and-recipients.db")
+    store = world.store
+    try:
+        actor = store.query_one(
+            "SELECT * FROM agents WHERE kind='citizen' AND alive=1 ORDER BY id LIMIT 1")
+        actor_id = int(actor["id"])
+        primary_id = int(actor["checking_account_id"])
+        primary = store.query_one("SELECT * FROM accounts WHERE id=?", (primary_id,))
+        destination_bank = int(store.scalar(
+            "SELECT id FROM banks WHERE id<>? AND status='open' ORDER BY id LIMIT 1",
+            (int(primary["bank_id"]),)))
+        richer_id = world.economy.ledger.create_account(
+            "agent", actor_id, "checking", bank_id=int(primary["bank_id"]),
+            label="legacy richer checking",
+            opening_cents=int(primary["balance_cents"]) + 1_000)
+        foreign_recipient_id = world.economy.ledger.create_account(
+            "system", None, "external", label="legacy foreign recipient",
+            currency_code="IVC")
+        primary_before = world.economy.ledger.balance(primary_id)
+        richer_before = world.economy.ledger.balance(richer_id)
+
+        moved = world.runtime.executor.execute_action(1, actor_id, {
+            "type": "move_deposits", "to_bank_id": destination_bank, "amount": 100,
+        })
+
+        assert moved["ok"]
+        assert world.economy.ledger.balance(richer_id) == richer_before - 100
+        assert world.economy.ledger.balance(primary_id) == primary_before
+        catalog = world.runtime.participant.action_catalog(actor_id)
+        transfer = next(row for row in catalog if row["type"] == "transfer")
+        recipient_ids = {int(option["value"])
+                         for option in transfer["fields"][0]["options"]}
+        assert foreign_recipient_id in recipient_ids
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
+
+
+def test_legacy_replay_flag_leaves_migration_credit_guards_disabled(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    config["llm"]["local_currency_action_surfaces"] = False
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p WHERE p.borrower_type='agent' "
+            "AND p.borrower_id=a.id) ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        bank_id = int(store.scalar(
+            "SELECT bank_id FROM accounts WHERE id=?", (int(actor["checking_account_id"]),)))
+        destination_region_id = int(store.scalar(
+            "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1",
+            (int(actor["region_id"]),)))
+        store.insert(
+            "loans", bank_id=bank_id, borrower_type="agent", borrower_id=actor_id,
+            principal_cents=100, outstanding_cents=100, rate_bps=0, term_ticks=30,
+            origin_tick=1, payment_cents=100, payment_interval_ticks=30,
+            next_due_tick=31, missed_payments=0, collateral_json="{}", status="active")
+
+        requested = world.economy.regions.request_migration(
+            1, actor_id, destination_region_id, "legacy replay")
+        assert requested["ok"]
+        applied = world.runtime.executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "legacy pending migration",
+        })
+        assert applied["ok"]
+        world.economy.regions.run_nightly(1)
+
+        assert store.scalar(
+            "SELECT status FROM migrations WHERE id=?", (requested["migration_id"],)) == "completed"
+        assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == destination_region_id
+    finally:
+        store.close()
+
+
+def test_migration_rejects_and_rechecks_agent_credit_exposure(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.* FROM agents a JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.region_id IS NOT NULL "
+            "AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.borrower_type='agent' "
+            "AND l.borrower_id=a.id AND l.status='active') "
+            "AND NOT EXISTS (SELECT 1 FROM loan_applications p WHERE p.borrower_type='agent' "
+            "AND p.borrower_id=a.id AND p.status='pending') ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        origin_region_id = int(actor["region_id"])
+        destination_region_id = int(store.scalar(
+            "SELECT id FROM regions WHERE id<>? ORDER BY id LIMIT 1", (origin_region_id,)))
+        bank_id = int(store.scalar(
+            "SELECT bank_id FROM accounts WHERE id=?", (int(actor["checking_account_id"]),)))
+
+        pending_id = store.insert(
+            "loan_applications", tick=1, bank_id=bank_id, borrower_type="agent",
+            borrower_id=actor_id, amount_cents=100, purpose="pending", status="pending")
+        rejected = world.economy.regions.request_migration(
+            1, actor_id, destination_region_id, "pending credit")
+        assert not rejected["ok"] and "pending loan application" in rejected["reason"]
+        store.update("loan_applications", pending_id, status="denied", decided_tick=1)
+
+        loan_id = store.insert(
+            "loans", bank_id=bank_id, borrower_type="agent", borrower_id=actor_id,
+            principal_cents=100, outstanding_cents=100, rate_bps=0, term_ticks=30,
+            origin_tick=1, payment_cents=100, payment_interval_ticks=30,
+            next_due_tick=31, missed_payments=0, collateral_json="{}", status="active")
+        rejected = world.economy.regions.request_migration(
+            1, actor_id, destination_region_id, "active debt")
+        assert not rejected["ok"] and "active loan debt" in rejected["reason"]
+        store.update("loans", loan_id, status="paid", outstanding_cents=0)
+
+        requested = world.economy.regions.request_migration(
+            1, actor_id, destination_region_id, "clear at request time")
+        assert requested["ok"]
+        assert not world.runtime.executor.execute_action(1, actor_id, {
+            "type": "apply_loan", "bank_id": bank_id, "amount": 100,
+            "purpose": "while migrating",
+        })["ok"]
+
+        raced_application_id = store.insert(
+            "loan_applications", tick=1, bank_id=bank_id, borrower_type="agent",
+            borrower_id=actor_id, amount_cents=100, purpose="simulated race", status="pending")
+        officer_id = int(store.scalar(
+            "SELECT id FROM agents WHERE role='credit_officer' AND alive=1 ORDER BY id LIMIT 1"))
+        assert not world.runtime.executor.execute_action(1, officer_id, {
+            "type": "approve_loan", "application_id": raced_application_id,
+            "rate_bps": 500, "term_ticks": 30,
+        })["ok"]
+
+        world.economy.regions.run_nightly(1)
+        migration = store.query_one(
+            "SELECT status,completed_tick FROM migrations WHERE id=?",
+            (requested["migration_id"],))
+        assert migration["status"] == "rejected" and int(migration["completed_tick"]) == 1
+        assert store.scalar("SELECT region_id FROM agents WHERE id=?", (actor_id,)) == origin_region_id
+        assert store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='migration_rejected_credit_exposure' "
+            "AND subject_id=?", (actor_id,)) == 1
+    finally:
+        store.close()
+
+
+def test_cross_currency_loan_payment_becomes_arrears_without_posting(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actor = store.query_one(
+            "SELECT a.*,ac.bank_id,ac.currency_code FROM agents a "
+            "JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND ac.bank_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM loans l WHERE l.borrower_type='agent' "
+            "AND l.borrower_id=a.id AND l.status='active') ORDER BY a.id LIMIT 1")
+        actor_id = int(actor["id"])
+        loan_id = store.insert(
+            "loans", bank_id=int(actor["bank_id"]), borrower_type="agent",
+            borrower_id=actor_id, principal_cents=100, outstanding_cents=100,
+            rate_bps=0, term_ticks=30, origin_tick=0, payment_cents=100,
+            payment_interval_ticks=30, next_due_tick=1, missed_payments=0,
+            collateral_json="{}", status="active")
+        foreign_currency = str(store.scalar(
+            "SELECT code FROM currencies WHERE code<>? ORDER BY code LIMIT 1",
+            (str(actor["currency_code"]),)))
+        foreign_wallet = world.economy.regions._wallet(
+            "agent", actor_id, foreign_currency, create=True)
+        store.update("agents", actor_id, checking_account_id=foreign_wallet)
+        transaction_count = int(store.scalar("SELECT COUNT(*) FROM transactions"))
+
+        world.economy.bank.process_due_loans(1)
+
+        loan = store.query_one(
+            "SELECT outstanding_cents,missed_payments,status FROM loans WHERE id=?", (loan_id,))
+        assert int(loan["outstanding_cents"]) == 100
+        assert int(loan["missed_payments"]) == 1 and loan["status"] == "active"
+        assert store.scalar("SELECT COUNT(*) FROM transactions") == transaction_count
+        arrears = store.query_one(
+            "SELECT payload_json FROM events WHERE kind='loan_arrears' "
+            "AND subject_id=? ORDER BY id DESC LIMIT 1", (actor_id,))
+        assert "primary currency no longer matches bank" in load_json(
+            arrears["payload_json"], {})["reason"]
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        store.close()
+
+
 def test_real_model_prompt_exposes_market_and_founder_decision_surfaces(tmp_path):
     world = _world(
         tmp_path, "rendered-market-context.db",
@@ -338,6 +738,130 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     dangling = verify_replay(source.path, replay.path)
     assert not dangling["exact"]
     assert dangling["differences"] == ["action_proposals"]
+
+
+def test_replay_reports_legacy_missing_llm_table_without_crashing(tmp_path):
+    source = Store(str(tmp_path / "legacy-source.db"))
+    replay = Store(str(tmp_path / "legacy-replay.db"))
+    source.init_run_meta("legacy-source", 42, {})
+    replay.init_run_meta("legacy-replay", 42, {})
+    source.execute("DROP TABLE llm_calls")
+    source.commit()
+    replay.commit()
+
+    proof = verify_replay(source.path, replay.path)
+
+    assert not proof["exact"]
+    assert proof["differences"] == ["llm_calls"]
+
+
+def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
+    world = _world(tmp_path, "served-tick-bound.db")
+
+    with TestClient(create_app(world, served_ticks=3)) as client:
+        started = client.post("/api/run/start?max_ticks=1")
+        assert started.status_code == 200
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"]:
+                break
+        assert status["tick"] == 1
+        assert status["target_tick"] == 3
+        assert status["remaining_ticks"] == 2
+
+        stepped = client.post("/api/run/step").json()
+        assert stepped["tick"] == 2
+
+        started = client.post("/api/run/start?max_ticks=99")
+        assert started.status_code == 200
+        for _ in range(100):
+            status = client.get("/api/run/status").json()
+            if not status["running"]:
+                break
+        assert status["tick"] == 3
+        assert status["status"] == "paused"
+        assert status["remaining_ticks"] == 0
+
+        assert client.post("/api/run/start").json()["status"] == "limit_reached"
+        assert client.post("/api/run/step").json()["status"] == "limit_reached"
+        assert world.store.tick == 3
+
+
+def test_served_run_broadcasts_authoritative_completion_status(tmp_path):
+    world = _world(tmp_path, "served-completion-broadcast.db")
+    controller = RunController(world, served_ticks=1)
+    messages = []
+
+    async def capture(payload):
+        if payload.get("type") == "tick":
+            # Model a real WebSocket send that yields before it completes. The
+            # terminal run_status must still be delivered after this tick.
+            await asyncio.sleep(0.01)
+        messages.append(payload)
+
+    async def run_once():
+        controller.hub.broadcast = capture
+        controller.loop = asyncio.get_running_loop()
+        assert (await controller.start())["status"] == "running"
+        await controller.task
+
+    asyncio.run(run_once())
+
+    assert messages[-1] == {
+        **controller.run_status_payload(running=False),
+        "type": "run_status",
+    }
+    assert messages[-1]["tick"] == messages[-1]["target_tick"] == 1
+    assert messages[-1]["remaining_ticks"] == 0
+    assert messages[-1]["status"] == "paused"
+    assert messages[-1]["running"] is False
+    assert any(message.get("type") == "tick" for message in messages[:-1])
+    world.store.close()
+
+
+def test_concurrent_steps_cannot_cross_the_served_tick_bound(tmp_path):
+    world = _world(tmp_path, "served-concurrent-step.db")
+    controller = RunController(world, served_ticks=1)
+
+    async def yielding_step():
+        await asyncio.sleep(0)
+        tick = world.store.tick + 1
+        world.store.set_meta(tick=tick)
+        world.store.commit()
+        return {"tick": tick}
+
+    world.step = yielding_step
+
+    async def run_two():
+        return await asyncio.gather(controller.step(), controller.step())
+
+    results = asyncio.run(run_two())
+
+    assert world.store.tick == 1
+    assert sum(result.get("status") == "limit_reached" for result in results) == 1
+    assert controller.remaining_ticks() == 0
+    world.store.close()
+
+
+def test_stop_interrupts_before_waiting_for_an_active_step(tmp_path):
+    world = _world(tmp_path, "served-stop-interrupt.db")
+    controller = RunController(world, served_ticks=1)
+
+    async def contend_with_step():
+        await controller._control_lock.acquire()
+        try:
+            stop_task = asyncio.create_task(controller.stop())
+            await asyncio.sleep(0)
+            assert world._stop_requested is True
+        finally:
+            controller._control_lock.release()
+        return await stop_task
+
+    stopped = asyncio.run(contend_with_step())
+
+    assert stopped["status"] == "finished"
+    assert world.status == "finished"
+    world.store.close()
 
 
 def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):

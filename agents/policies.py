@@ -564,6 +564,16 @@ def oracle_plan(context: dict) -> dict:
     return {"queries": queries}
 
 
+def institutional_decision(context: dict) -> dict:
+    """Execute at most one state-derived institutional work item."""
+    eligible = list((context.get("institutional_work") or {}).get("eligible_actions") or [])
+    if not eligible:
+        return {"reasoning": "No valid institutional work is pending.",
+                "actions": [{"type": "do_nothing"}]}
+    return {"reasoning": "I will perform the first currently eligible institutional action.",
+            "actions": [dict(eligible[0])]}
+
+
 # Registry: purpose -> scripted policy. Registered onto the gateway's scripted adapter.
 POLICIES: dict[str, Callable[[dict], dict]] = {
     "decision": citizen_decision,
@@ -573,6 +583,15 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
     "central_banker": central_banker_decision,
     "vc_partner": vc_partner_decision,
     "lawyer": lawyer_decision,
+    "exchange": institutional_decision,
+    "gov_official": institutional_decision,
+    "legislator_house": institutional_decision,
+    "legislator_senate": institutional_decision,
+    "regulator": institutional_decision,
+    "competition_regulator": institutional_decision,
+    "labor_regulator": institutional_decision,
+    "executive": institutional_decision,
+    "lobbyist": institutional_decision,
     "reporter": reporter_draft,
     "newsroom": newsroom_policy,
     "conversation": conversation_turn,

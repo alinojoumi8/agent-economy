@@ -45,6 +45,16 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
     return await Gateway(store, config).preflight(live=True)
 
 
+def require_live_inference_approval(config: dict, *, approved: bool) -> None:
+    """Fail closed before a command can dispatch any configured live provider."""
+    from reports.acceptance import uses_paid_providers
+
+    if uses_paid_providers(config) and not approved:
+        raise SystemExit(
+            "live provider run requires explicit --approve-live-inference authorization"
+        )
+
+
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +197,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: locked MiniMax/Kimi production profile)")
-    ap.add_argument("--ticks", type=int, default=None, help="run N ticks headless then exit")
+    ap.add_argument("--ticks", type=int, default=None,
+                    help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
     ap.add_argument("--fork", default=None,
@@ -216,7 +227,7 @@ def main() -> None:
                     help="execute the configured acceptance horizon and scheduled Oracle checks")
     ap.add_argument("--approve-live-inference", "--approve-live-spend",
                     dest="approve_live_inference", action="store_true",
-                    help="explicitly authorize real-provider inference for --acceptance-run")
+                    help="explicitly authorize real-provider inference")
     ap.add_argument("--experiment-evidence", default=None,
                     help="experiment JSON to attach to an acceptance receipt")
     ap.add_argument("--phenomena-evidence", default=None,
@@ -251,16 +262,27 @@ def main() -> None:
         return
 
     if args.counterfactual:
+        from research.scenarios import load_scenario
+        pack = load_scenario(args.counterfactual)
+        effective_config = pack.config()
+        require_live_inference_approval(
+            effective_config, approved=args.approve_live_inference)
         from research.counterfactual import run_counterfactual
         result = run_counterfactual(
-            args.counterfactual, seeds=args.seeds, ticks=args.scenario_ticks)
+            pack, seeds=args.seeds, ticks=args.scenario_ticks,
+            effective_config=effective_config)
         print(json.dumps({"scenario": result["scenario"], "design": result["design"],
                           "artifacts": result["artifacts"]}, indent=2))
         return
 
     if args.experiment:
-        from experiments.harness import run_experiment
-        run_experiment(args.experiment)
+        from experiments.harness import load_spec, run_experiment
+        spec = load_spec(args.experiment)
+        require_live_inference_approval(
+            spec["config"], approved=args.approve_live_inference)
+        # Dispatch the exact resolved config that passed the authorization gate.
+        spec.pop("overrides", None)
+        run_experiment(spec)
         return
 
     if args.report:
@@ -301,12 +323,10 @@ def main() -> None:
     operational_log(logger, logging.INFO, "config.loaded",
                     path=str(Path(args.config).resolve()), mode=mode,
                     seed=config.get("seed", 42))
-    if args.acceptance_run:
-        from reports.acceptance import uses_paid_providers
-        if uses_paid_providers(config) and not args.approve_live_inference:
-            raise SystemExit(
-                "live acceptance run requires explicit --approve-live-inference authorization"
-            )
+    fresh_run = not args.resume and not args.fork
+    if fresh_run and not (args.preflight or args.preflight_live or args.replay):
+        require_live_inference_approval(
+            config, approved=args.approve_live_inference)
     if args.preflight or args.preflight_live:
         report = asyncio.run(provider_preflight(config, live=args.preflight_live))
         print(json.dumps(report, indent=2))
@@ -324,6 +344,13 @@ def main() -> None:
     if args.fork:
         args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
     store, world, run_id = open_run(config, args.resume, args.replay)
+    if not args.replay:
+        try:
+            require_live_inference_approval(
+                world.config, approved=args.approve_live_inference)
+        except SystemExit:
+            store.close()
+            raise
     operational_log(logger, logging.INFO, "run.opened",
                     run_id=run_id, tick=store.tick,
                     seed=store.get_meta()["seed"], replay=bool(args.replay),
@@ -395,10 +422,13 @@ def main() -> None:
 
     import uvicorn
     from server.app import create_app
-    app = create_app(world)
+    app = create_app(
+        world, served_ticks=None if args.acceptance_run else ticks)
     operational_log(logger, logging.INFO, "server.starting",
                     run_id=run_id, host=args.host, port=args.port)
     startup = "acceptance orchestration starts automatically" if args.acceptance_run else "world starts paused - press Run"
+    if ticks is not None and not args.acceptance_run:
+        startup += f" (bounded to tick {store.tick + ticks})"
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

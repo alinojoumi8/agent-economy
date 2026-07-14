@@ -27,9 +27,11 @@ class LoanTerms:
 
 
 class Bank:
-    def __init__(self, store: Store, ledger: Ledger):
+    def __init__(self, store: Store, ledger: Ledger, *,
+                 local_currency_action_surfaces: bool = False):
         self.store = store
         self.ledger = ledger
+        self.local_currency_action_surfaces = bool(local_currency_action_surfaces)
 
     # ── queries ──────────────────────────────────────────────────────────────
     def get(self, bank_id: int):
@@ -79,6 +81,14 @@ class Bank:
         borrower_acct = self._borrower_account(borrower_type, borrower_id)
         if borrower_acct is None:
             return None
+        if (self.local_currency_action_surfaces
+                and not self._account_uses_bank_currency(b, borrower_acct)):
+            self.store.log_event(tick, "loan_denied_currency", {
+                "bank_id": bank_id, "borrower_type": borrower_type,
+                "borrower_id": borrower_id,
+            }, phase="EXECUTION", subject_type=borrower_type, subject_id=borrower_id,
+                importance=1.5)
+            return None
 
         self.ledger.post(tick, "loan_disburse", [
             Leg(borrower_acct, terms.amount_cents, "loan proceeds"),
@@ -109,6 +119,12 @@ class Bank:
             return int(v) if v is not None else None
         return None
 
+    def _account_uses_bank_currency(self, bank, account_id: int) -> bool:
+        currency = self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (account_id,), default=None)
+        return (currency is not None
+                and str(currency or "USD") == str(bank["currency_code"] or "USD"))
+
     # ── scheduled payments + default (NIGHT_CLOSE) ───────────────────────────
     def process_due_loans(self, tick: int) -> None:
         due = self.store.query(
@@ -122,6 +138,13 @@ class Bank:
         reserve_acct = int(bank["reserve_account_id"])
         equity_acct = int(bank["equity_account_id"])
         borrower_acct = self._borrower_account(loan["borrower_type"], int(loan["borrower_id"]))
+        currency_mismatch = (
+            self.local_currency_action_surfaces
+            and
+            borrower_acct is not None
+            and not self._account_uses_bank_currency(bank, borrower_acct))
+        if currency_mismatch:
+            borrower_acct = None
         outstanding = int(loan["outstanding_cents"])
         pmt = min(int(loan["payment_cents"]), outstanding + self._interest_due(loan))
         interest = self._interest_due(loan)
@@ -134,9 +157,12 @@ class Bank:
             missed = int(loan["missed_payments"]) + 1
             self.store.update("loans", loan_id, missed_payments=missed,
                               next_due_tick=tick + int(loan["payment_interval_ticks"]))
-            self.store.log_event(tick, "loan_arrears", {
+            payload = {
                 "loan_id": loan_id, "borrower_id": int(loan["borrower_id"]),
-                "missed_payments": missed}, phase="NIGHT_CLOSE",
+                "missed_payments": missed}
+            if currency_mismatch:
+                payload["reason"] = "borrower primary currency no longer matches bank"
+            self.store.log_event(tick, "loan_arrears", payload, phase="NIGHT_CLOSE",
                 subject_type=loan["borrower_type"], subject_id=int(loan["borrower_id"]),
                 importance=1.5)
             if missed >= 3:
@@ -171,6 +197,9 @@ class Bank:
         recovered = 0
         collateral = load_json(loan["collateral_json"], {}) or {}
         borrower_acct = self._borrower_account(loan["borrower_type"], int(loan["borrower_id"]))
+        if (self.local_currency_action_surfaces and borrower_acct is not None
+                and not self._account_uses_bank_currency(bank, borrower_acct)):
+            borrower_acct = None
 
         # Cash-collateral seizure (up to outstanding).
         if collateral.get("cash") and borrower_acct is not None:

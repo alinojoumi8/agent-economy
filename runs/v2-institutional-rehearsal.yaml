@@ -1,0 +1,16 @@
+# Free deterministic twin of the 30-tick institutional gate. All provider
+# routes remain scripted through v2-behavioral-rehearsal.yaml.
+extends: v2-behavioral-rehearsal.yaml
+
+living_world:
+  core_agents: 22
+
+behavioral_fixture:
+  institutional_work: true
+
+budget:
+  cap_usd: 2.0
+
+llm:
+  institutional_role_purposes: true
+  local_currency_action_surfaces: true

@@ -66,6 +66,8 @@ def _logical_llm_call_references(conn: sqlite3.Connection) -> dict[int, Any]:
     """Index local surrogate IDs by their deterministic LLM call contents."""
     all_columns = [
         str(column[1]) for column in conn.execute('PRAGMA table_info("llm_calls")')]
+    if not all_columns:
+        return {}
     ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS["llm_calls"]
     identity_columns = [column for column in all_columns if column not in ignored]
     return {

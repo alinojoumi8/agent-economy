@@ -26,6 +26,11 @@ class PoliticalEconomy:
         self.legal = legal
         self.config = config or {}
         self.enabled = config is not None and bool(self.config.get("enabled", True))
+        # Persisted marker: markerless recorded runs retain their historical
+        # authorization semantics during replay; all fresh base configs enable
+        # actor-bound checks.
+        self.actor_bound_authorization = bool(
+            self.config.get("actor_bound_authorization", False))
         self.house_seats = int(self.config.get("house_seats", 12))
         self.senate_seats = int(self.config.get("senate_seats", 6))
         self.house_interval = int(self.config.get("house_election_interval_ticks", 180))
@@ -224,7 +229,9 @@ class PoliticalEconomy:
                          action: str, effective_delay_ticks: int = 1) -> dict[str, Any]:
         actor = self.store.query_one("SELECT role FROM agents WHERE id=? AND alive=1", (actor_id,))
         bill = self.store.query_one("SELECT * FROM bills WHERE id=?", (bill_id,))
-        if not actor or (actor["role"] or "") not in {"executive", "gov_official"}:
+        authorized_roles = ({"executive"} if self.actor_bound_authorization
+                            else {"executive", "gov_official"})
+        if not actor or (actor["role"] or "") not in authorized_roles:
             return {"ok": False, "reason": "executive authority required"}
         if not bill or bill["status"] != "executive" or action not in {"sign", "veto"}:
             return {"ok": False, "reason": "bill is not awaiting valid executive action"}
@@ -321,11 +328,17 @@ class PoliticalEconomy:
             return {"ok": False, "reason": "registered lobbyist or lawyer required"}
         sponsor_type = str(data.get("sponsor_type", "firm"))
         sponsor_id = int(data.get("sponsor_id", 0))
-        authorizer = int(data.get("authorized_by_agent_id", 0))
-        if sponsor_type == "firm" and not self.legal.controls(authorizer, "firm", sponsor_id):
-            return {"ok": False, "reason": "firm authorization required"}
-        if sponsor_type == "agent" and authorizer != sponsor_id:
-            return {"ok": False, "reason": "agent authorization required"}
+        if self.actor_bound_authorization:
+            if sponsor_type not in {"agent", "firm"} or not self.legal.controls(
+                    actor_id, sponsor_type, sponsor_id):
+                return {"ok": False, "reason": "actor must control lobbying sponsor"}
+        else:
+            authorizer = int(data.get("authorized_by_agent_id", 0))
+            if sponsor_type == "firm" and not self.legal.controls(
+                    authorizer, "firm", sponsor_id):
+                return {"ok": False, "reason": "firm authorization required"}
+            if sponsor_type == "agent" and authorizer != sponsor_id:
+                return {"ok": False, "reason": "agent authorization required"}
         source = self._sponsor_account(sponsor_type, sponsor_id)
         amount = int(data.get("amount_cents", 0))
         if source is None or amount <= 0 or self.ledger.balance(source) < amount:

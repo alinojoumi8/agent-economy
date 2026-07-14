@@ -252,6 +252,26 @@ offline replay `replay-fd0adc5dc1-26323b9041` matched every deterministic table
 at tick 10 with source and replay hash
 `46bee781169a2dfe4898e9026753c6adb87f8c8bfbfc04ade5610bfd9153e5f9`.
 
+### Institutional live gate
+
+The next evidence run uses `runs/v2-live-institutional.yaml` for 30 ticks. It
+retains the inspectable 36-person behavioral fixture but promotes 22 core agents:
+the central banker plus every pinned legal, political, regulatory, market,
+credit, venture, and newsroom seat. Its `$2.00` cap is a runaway ceiling. A
+scripted twin is available for free shape validation.
+
+```powershell
+python run.py --config runs/v2-institutional-rehearsal.yaml --ticks 30
+python run.py --config runs/v2-live-institutional.yaml --preflight-live
+python run.py --config runs/v2-live-institutional.yaml --ticks 30 --serve --approve-live-inference
+```
+
+The served command starts paused. Its Run and Step controls share one absolute
+tick-30 boundary, and the header reports the remaining ticks. Live acceptance
+requires every configured role to complete, no provider or contract failures,
+valid actor-matched provenance, private-reasoning redaction, checkpoints 1–30,
+balanced ledgers in every currency, and an exact offline replay.
+
 ## Release checklist
 
 Before publication: run Python tests and compilation, dashboard tests/build,

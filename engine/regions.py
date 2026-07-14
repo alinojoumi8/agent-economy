@@ -29,12 +29,14 @@ DEFAULT_REGIONS = [
 
 class RegionalEconomy:
     def __init__(self, store: Store, ledger: Ledger, legal: LegalInstitution,
-                 prng: random.Random, config: dict | None = None):
+                 prng: random.Random, config: dict | None = None, *,
+                 local_currency_action_surfaces: bool = False):
         self.store = store
         self.ledger = ledger
         self.legal = legal
         self.prng = prng
         self.config = config or {}
+        self.local_currency_action_surfaces = bool(local_currency_action_surfaces)
         self.enabled = config is not None and bool(self.config.get("enabled", True))
         self.specs = list(self.config.get("regions", DEFAULT_REGIONS))
         self.core_target = int(self.config.get("core_agents", 100))
@@ -275,11 +277,26 @@ class RegionalEconomy:
             return {"ok": False, "reason": "valid distinct destination required"}
         if self.store.query_one("SELECT 1 FROM migrations WHERE agent_id=? AND status='pending'", (actor_id,)):
             return {"ok": False, "reason": "migration already pending"}
+        if self.local_currency_action_surfaces:
+            credit_exposure = self._agent_credit_exposure(actor_id)
+            if credit_exposure:
+                return {"ok": False, "reason": f"resolve {credit_exposure} before migration"}
         migration_id = self.store.insert(
             "migrations", agent_id=actor_id, origin_region_id=int(agent["region_id"]),
             destination_region_id=destination_region_id, requested_tick=tick,
             reason=str(reason)[:300], status="pending")
         return {"ok": True, "migration_id": migration_id, "status": "pending"}
+
+    def _agent_credit_exposure(self, agent_id: int) -> str | None:
+        if self.store.query_one(
+                "SELECT 1 FROM loans WHERE borrower_type='agent' AND borrower_id=? "
+                "AND status='active'", (agent_id,)):
+            return "active loan debt"
+        if self.store.query_one(
+                "SELECT 1 FROM loan_applications WHERE borrower_type='agent' AND borrower_id=? "
+                "AND status='pending'", (agent_id,)):
+            return "the pending loan application"
+        return None
 
     def run_nightly(self, tick: int) -> None:
         if not self.enabled:
@@ -296,6 +313,19 @@ class RegionalEconomy:
                 subject_type="trade_shipment", subject_id=int(shipment["id"]), importance=1.8)
         for migration in self.store.query("SELECT * FROM migrations WHERE status='pending' ORDER BY id"):
             agent_id = int(migration["agent_id"])
+            credit_exposure = (
+                self._agent_credit_exposure(agent_id)
+                if self.local_currency_action_surfaces else None)
+            if credit_exposure:
+                self.store.update(
+                    "migrations", int(migration["id"]), status="rejected", completed_tick=tick)
+                self.store.log_event(
+                    tick, "migration_rejected_credit_exposure", {
+                        "migration_id": int(migration["id"]), "agent_id": agent_id,
+                        "reason": credit_exposure,
+                    }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
+                    importance=1.5)
+                continue
             destination = int(migration["destination_region_id"])
             currency = self.currency_for_region(destination)
             wallet = self._wallet("agent", agent_id, currency, create=True)
