@@ -15,18 +15,18 @@
 </style>
 </head>
 <body>
-<header class="hero"><div class="wrap"><div class="kicker">Legal-Political Economy v2 · schema 11 · semantics 7</div><h1>Semantics-7 closure verified locally. Fresh CI pending.</h1><p>The full local gate, free rehearsal, bounded MiniMax pilot, and exact replays passed. Live spend was $0.01121124 under the $1 cap; all 42 proposals were accepted and privacy/provenance checks found zero defects. Stored semantics 1–6 remain historical.</p><div class="meta"><span class="chip">Assessment 2026-07-14</span><span class="chip">codex/legal-political-economy-v2</span><span class="chip">PR #15 open/draft</span><span class="chip">No merge or publish</span></div></div></header>
+<header class="hero"><div class="wrap"><div class="kicker">Legal-Political Economy v2 · schema 11 · semantics 7</div><h1>Semantics-7 closure verified, including CI.</h1><p>The full local gate, free rehearsal, bounded MiniMax pilot, exact replays, and GitHub matrix passed. Live spend was $0.01121124 under the $1 cap; all 42 proposals were accepted and privacy/provenance checks found zero defects. Stored semantics 1–6 remain historical.</p><div class="meta"><span class="chip">Assessment 2026-07-14</span><span class="chip">codex/legal-political-economy-v2</span><span class="chip">PR #15 open/draft</span><span class="chip">No merge or publish</span></div></div></header>
 
 <main class="main wrap">
 <section class="verdict">
-  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>R18–R20 implemented; local closure evidence complete.</h2><p>PRD-v1 P0/P1 and the participant, 1,000-agent, and regional extensions have code coverage. The focused/full suites, dashboard gate, deterministic rehearsal, live pilot, and exact replays are green. Only the fresh post-push GitHub matrix remains.</p></article>
+  <article class="card verdict-copy"><div class="kicker" style="color:var(--green)">Executive verdict</div><h2>R18–R20 implemented; closure evidence complete.</h2><p>PRD-v1 P0/P1 and the participant, 1,000-agent, and regional extensions have code coverage. The focused/full suites, dashboard gate, deterministic rehearsal, live pilot, exact replays, and GitHub Actions matrix are green.</p></article>
   <article class="card score"><div class="n">7</div><div class="label">Engine semantics</div><small>maintained profiles</small></article>
   <article class="card score"><div class="n">11</div><div class="label">Schema version</div><small>unchanged</small></article>
   <article class="card score"><div class="n">$0.0112</div><div class="label">Live pilot spend</div><small>under $1 ceiling</small></article>
 </section>
 
 <h2 class="section">Closure implementation</h2>
-<div class="filters" aria-label="Closure filters"><button class="active" data-filter="all">All</button><button data-filter="economy">Economy</button><button data-filter="agents">Agents</button><button data-filter="replay">Replay/provider</button><button data-filter="open">Post-push pending</button></div>
+<div class="filters" aria-label="Closure filters"><button class="active" data-filter="all">All</button><button data-filter="economy">Economy</button><button data-filter="agents">Agents</button><button data-filter="replay">Replay/provider</button></div>
 <div class="table-wrap"><table id="requirements"><thead><tr><th>Surface</th><th>Area</th><th>Implementation</th><th>Contract</th><th>Evidence</th><th>Final gate</th></tr></thead><tbody>
 <tr data-priority="economy"><td class="req"><strong>Bank loss recognition</strong></td><td>Economy</td><td><span class="status complete">Implemented</span></td><td>Collateral first; only net principal moves from same-currency bank equity to <code>SYS_LOSS</code> in balanced <code>loan_loss_chargeoff</code>.</td><td class="evidence"><a href="../engine/credit.py">credit engine</a>; live 120,000 NSD default, 5,000 recovered, 115,000 net</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="agents"><td class="req"><strong>Retirement liquidity</strong></td><td>Agents</td><td><span class="status complete">Implemented</span></td><td>Retiree-only own-account savings draw; config <code>retirement_liquidity_target_cents</code> becomes public <code>retirement_drawdown_target_cents</code> beside <code>savings_balance</code>.</td><td class="evidence"><a href="../tests/test_retirement_semantics7.py">tests</a>; five live withdrawals</td><td><span class="status complete">Passed</span></td></tr>
@@ -35,7 +35,7 @@
 <tr data-priority="replay"><td class="req"><strong>Portable replay</strong></td><td>Replay/provider</td><td><span class="status complete">Implemented</span></td><td>Logical LLM-reference canonicalization; wrong/dangling references fail; sanitized ten-tick source reconstructs offline without network.</td><td class="evidence"><a href="../tests/test_recorded_replay_golden.py">fixture test</a>; rehearsal/live exact</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="replay"><td class="req"><strong>Prompt caching</strong></td><td>Replay/provider</td><td><span class="status complete">Implemented</span></td><td><code>off</code>, <code>provider_automatic</code>, <code>openai_key</code>, <code>anthropic_ephemeral</code>; compatibility and cached-token billing tested.</td><td class="evidence"><a href="../llm/readiness.py">readiness</a>; 10,974/20,782 cached input, 21/21 MiniMax cache markers</td><td><span class="status complete">Passed</span></td></tr>
 <tr data-priority="agents"><td class="req"><strong>Additive memory ranking</strong></td><td>Agents</td><td><span class="status complete">Implemented</span></td><td><code>0.5·recency + 0.3·importance + 0.2·relevance</code> is authoritative and distinguished from multiplication.</td><td class="evidence"><a href="../agents/memory.py">memory</a>; focused/full regression gates</td><td><span class="status complete">Passed</span></td></tr>
-<tr data-priority="replay" data-open="true"><td class="req"><strong>Fresh GitHub Actions matrix</strong></td><td>Release</td><td><span class="status substantial">Pending</span></td><td>Push the reviewed commit and require every Windows/Linux Python 3.11/3.12 job; PR #15 remains open/draft.</td><td class="evidence">All local and live closure gates are green.</td><td><span class="status substantial">Post-push only</span></td></tr>
+<tr data-priority="replay"><td class="req"><strong>Fresh GitHub Actions matrix</strong></td><td>Release</td><td><span class="status complete">Complete</span></td><td>Run <code>29354608739</code> exercised every Ubuntu/Windows Python 3.11/3.12 job and the dashboard build; PR #15 remains open/draft.</td><td class="evidence">Five of five jobs passed without weakening the suite.</td><td><span class="status complete">Passed</span></td></tr>
 </tbody></table></div>
 
 <h2 class="section">R18–R22 disposition</h2>
@@ -61,12 +61,12 @@
   <div class="card"><b>Dashboard + hygiene</b><span>80 packages/0 vulnerabilities, 16 tests, audit 0 high, 599-module build, fresh static bundle, clean diff.</span></div>
   <div class="card"><b>Free rehearsal</b><span><code>5a0d40d773</code> / <code>replay-5a0d40d773-b45777cf29</code>: every target, six checkpoints, balanced currencies, exact hash <code>fa190b0d…e8cffc34</code>.</span></div>
   <div class="card"><b>Bounded live pilot</b><span><code>b4832032ba</code> / <code>replay-b4832032ba-8d99c25c56</code>: $0.01121124, 42/42 accepted, zero failures/defects, exact hash <code>ec2b2409…c399ae2</code>.</span></div>
-  <div class="card"><b>GitHub Actions / PR</b><span><strong>PENDING — post-push only</strong>: fresh Windows/Linux Python 3.11/3.12 matrix. PR #15 is open/draft.</span></div>
+  <div class="card"><b>GitHub Actions / PR</b><span>Run <code>29354608739</code>: dashboard and all Ubuntu/Windows Python 3.11/3.12 jobs passed. PR #15 is open/draft.</span></div>
 </section>
 
 <h2 class="section">Separate release work</h2>
 <section class="roadmap">
-  <article class="card"><div><h3>Record the fresh post-push CI matrix</h3><p>All local and live closure gates passed; await every Windows/Linux Python 3.11/3.12 job while PR #15 remains draft.</p></div></article>
+  <article class="card"><div><h3>Keep PR #15 draft for the release audit</h3><p>The semantics-7 gate is complete; merging, tagging, publishing, or marking ready still requires separate authorization.</p></div></article>
   <article class="card"><div><h3>Run the 30-day rumor gate separately</h3><p>The five-tick closure pilot does not establish real-provider rumor emergence.</p></div></article>
   <article class="card"><div><h3>Measure Oracle latency and calibration</h3><p>Publish representative p50/p90 latency and a meaningful corpus of resolved predictions.</p></div></article>
   <article class="card"><div><h3>Authorize the 365-day/$200 campaign separately</h3><p>Do not infer release acceptance from the bounded closure pilot.</p></div></article>

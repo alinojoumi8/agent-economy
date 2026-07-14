@@ -293,8 +293,9 @@ checkpoints, balanced currencies, and zero provider/rejection failures. Their
 offline replays matched exactly with hashes
 `fa190b0dc10a6b94038f7dbd8838a6aea14c1c5b57b691a4788527f8e8cffc34` and
 `ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
-The live run spent `$0.01121124` under its `$1` cap. Fresh post-push CI remains
-the only closure gate not yet recorded.
+The live run spent `$0.01121124` under its `$1` cap. GitHub Actions run
+`29354608739` passed the dashboard job and the full Ubuntu/Windows Python
+3.11/3.12 matrix; PR #15 remains draft.
 
 ## 15. Prior art and borrowed components
 

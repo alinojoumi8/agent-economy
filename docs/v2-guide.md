@@ -457,7 +457,7 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
-| GitHub Actions / PR #15 | **PENDING — post-push only** | PR is open/draft; await the fresh Windows/Linux Python 3.11/3.12 matrix |
+| GitHub Actions / PR #15 | **Passed** | Run `29354608739`: dashboard plus Ubuntu/Windows Python 3.11/3.12 green; PR open/draft |
 
 R21 real-US microdata, R22 hosted multi-user operation, the 30-day rumor gate,
 Oracle latency/calibration campaign, and 365-day/$200 acceptance run remain

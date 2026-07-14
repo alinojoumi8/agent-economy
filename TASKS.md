@@ -53,9 +53,9 @@ while provider rate limits control throughput.
   targeted effects fired, provenance/privacy checks found zero defects, six
   checkpoints and all currencies reconciled, and exact replay
   `replay-b4832032ba-8d99c25c56` returned `differences: []`.
-- [ ] **PENDING — post-push CI only:** push the branch, wait for every Windows/Linux
-  Python 3.11/3.12 GitHub Actions job, and keep PR #15 draft. Do not merge, tag,
-  or publish.
+- [x] GitHub Actions run `29354608739` passed the dashboard build and every
+  Ubuntu/Windows Python 3.11/3.12 matrix job. PR #15 remains draft; no merge,
+  tag, or publication was performed.
 
 ## Task 1 — Production acceptance run and evidence package
 

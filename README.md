@@ -296,10 +296,11 @@ with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
 spend under the `$1` cap, zero provider/provenance/privacy defects, balanced
 currencies, and exact replay hash `ec2b2409…c399ae2`. The focused gate passed 86
 tests in 88.17 seconds and the full suite passed 268 in 157.42 seconds;
-dashboard tests/build/audit and local hygiene are green.
+dashboard tests/build/audit and local hygiene are green. GitHub Actions run
+`29354608739` passed the dashboard job and the complete Ubuntu/Windows Python
+3.11/3.12 matrix; PR #15 stays draft.
 
-Only the fresh post-push GitHub Actions matrix remains for this closure, and PR
-#15 stays draft. The 30-day rumor gate, Oracle latency/calibration campaign, and
+The 30-day rumor gate, Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by this pilot.
 
 The application is intentionally local and single-operator. It has no

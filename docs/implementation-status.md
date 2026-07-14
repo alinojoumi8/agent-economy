@@ -19,7 +19,8 @@ portable recorded replay, provider cache modes, and additive memory ranking.
 The full local gate, five-tick closure rehearsal, bounded MiniMax pilot, and both
 exact replays are complete. The live run spent `$0.01121124` under its `$1` cap,
 all 42 proposals were accepted, and privacy/provenance checks found zero defects.
-Only the fresh post-push GitHub Actions matrix remains pending.
+GitHub Actions run `29354608739` passed the dashboard job and the complete
+Ubuntu/Windows Python 3.11/3.12 matrix. PR #15 remains open/draft.
 
 ## Semantics-7 closure matrix
 
@@ -109,7 +110,7 @@ them. Optional external datasets remain separate.
 | Free closure rehearsal | **Passed:** `5a0d40d773`, all targets, six checkpoints, balanced currencies, exact replay. |
 | Bounded live pilot | **Passed:** MiniMax ready; `b4832032ba`, `$0.01121124`, all 42 proposals accepted, zero provider/privacy/provenance failures. |
 | Live offline replay | **Passed:** `replay-b4832032ba-8d99c25c56`, tick/hash identical, `differences: []`. |
-| CI / PR | **PENDING — post-push only:** PR #15 is confirmed open/draft; await every fresh Windows/Linux Python 3.11/3.12 job. |
+| CI / PR | **Passed:** run `29354608739`; dashboard plus Ubuntu/Windows Python 3.11/3.12 green. PR #15 confirmed open/draft. |
 
 ## Release constraints and deferred campaigns
 
