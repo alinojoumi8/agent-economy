@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, post } from "../api";
 import { clientLog } from "../logging.js";
 import { mergeRunPayload } from "../runState.js";
+import { observatoryWebSocketUrl } from "../hostedRouting.js";
 
 const INITIAL = {
   status: null,
@@ -22,7 +23,7 @@ const INITIAL = {
   v2: { map: null, legal: null, politics: null, information: null, startups: null, markets: null, datasets: null },
 };
 
-export function useObservatory() {
+export function useObservatory({ hosted = false } = {}) {
   const [data, setData] = useState(INITIAL);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -52,8 +53,8 @@ export function useObservatory() {
         api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
         api("/api/agents"), api("/api/cost"), api("/api/oracle/predictions"),
         api("/api/shocks"),
-        safeCalibration("/api/oracle/calibration?scope=run", "run"),
-        safeCalibration("/api/oracle/calibration?scope=all", "all"),
+        hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=run", "run"),
+        hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=all", "all"),
         api("/api/v2/map"), api("/api/v2/legal"), api("/api/v2/politics"),
         api("/api/v2/information"), api("/api/v2/startups"), api("/api/v2/markets"),
         api("/api/v2/datasets"),
@@ -73,7 +74,7 @@ export function useObservatory() {
       refreshing.current = false;
       setLoading(false);
     }
-  }, []);
+  }, [hosted]);
 
   const act = useCallback(async (path, body) => {
     try {
@@ -94,8 +95,7 @@ export function useObservatory() {
   useEffect(() => {
     refresh();
     const timer = window.setInterval(() => refresh({ quiet: true }), 10_000);
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    const socket = new WebSocket(observatoryWebSocketUrl(window.location));
     socket.addEventListener("open", () => {
       setConnected(true);
       clientLog("dashboard.websocket.connected");

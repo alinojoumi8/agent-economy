@@ -7,6 +7,7 @@ broadcast over WebSocket so the dashboard updates within 2s of tick completion
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -61,8 +62,41 @@ class ParticipantReleaseBody(BaseModel):
     expected_tick: int
 
 
-def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
-    controller = RunController(world, served_ticks=served_ticks)
+def _hosted_safe_document(value):
+    """Remove filesystem-bearing fields from a hosted JSON document."""
+    if isinstance(value, dict):
+        return {
+            key: _hosted_safe_document(item)
+            for key, item in value.items()
+            if not (str(key) == "path" or str(key).endswith("_path")
+                    or str(key).endswith("_paths"))
+        }
+    if isinstance(value, list):
+        return [_hosted_safe_document(item) for item in value]
+    return value
+
+
+def _report_artifact_metadata(path: str, tick: int) -> dict:
+    report = Path(path)
+    digest = hashlib.sha256()
+    size = 0
+    with report.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+    return {
+        "kind": "report",
+        "tick": int(tick),
+        "sha256": digest.hexdigest(),
+        "size_bytes": size,
+        "media_type": "text/html",
+    }
+
+
+def create_app(world: World, *, served_ticks: int | None = None,
+               hosted_safe: bool = False) -> FastAPI:
+    controller = RunController(
+        world, served_ticks=served_ticks, hosted_safe=hosted_safe)
     hub = controller.hub
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
@@ -109,7 +143,8 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
 
     @app.post("/api/run/stop")
     async def stop_run():
-        return await controller.stop()
+        result = await controller.stop()
+        return _hosted_safe_document(result) if hosted_safe else result
 
     @app.post("/api/run/step")
     async def step_once():
@@ -128,7 +163,8 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
         meta = store.get_meta()
         config = load_json(meta["config_json"], {})
         if not config.get("acceptance"):
-            return {"configured": False, "passed": False, "checks": []}
+            result = {"configured": False, "passed": False, "checks": []}
+            return _hosted_safe_document(result) if hosted_safe else result
         # A completed receipt includes run-specific experiment/phenomena
         # attachments that cannot be reconstructed from the DB alone. Prefer it
         # only when it is bound to this run and current completed tick.
@@ -143,22 +179,23 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
                     and receipt.get("run", {}).get("run_id") == str(meta["run_id"])
                     and int(receipt.get("progress", {}).get("completed_ticks", -1))
                     == int(meta["tick"])):
-                return {
+                result = {
                     "configured": True, **receipt,
                     "orchestration": controller.status()["acceptance_orchestration"],
                 }
+                return _hosted_safe_document(result) if hosted_safe else result
         # A production database can be hundreds of MB. The evidence evaluator
         # reconciles the ledger and builds causal shock traces, so keep it off
         # the asyncio event loop and coalesce dashboard refreshes for two seconds.
         now = time.monotonic()
         cached = acceptance_cache["result"]
         if cached is not None and now - acceptance_cache["evaluated_at"] < 2.0:
-            return cached
+            return _hosted_safe_document(cached) if hosted_safe else cached
         async with acceptance_lock:
             now = time.monotonic()
             cached = acceptance_cache["result"]
             if cached is not None and now - acceptance_cache["evaluated_at"] < 2.0:
-                return cached
+                return _hosted_safe_document(cached) if hosted_safe else cached
             from reports.acceptance import evaluate_acceptance
             result = {
                 "configured": True,
@@ -166,7 +203,7 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
             }
             result["orchestration"] = controller.status()["acceptance_orchestration"]
             acceptance_cache.update(result=result, evaluated_at=time.monotonic())
-            return result
+            return _hosted_safe_document(result) if hosted_safe else result
 
     # ── participant mode (P2 R18, sandbox only) ─────────────────────────────
     def participant_error(exc: ParticipantError):
@@ -215,9 +252,12 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
 
     # ── world queries (dashboard panels, PRD R8) ─────────────────────────────
     @app.get("/api/metrics")
-    async def metrics(names: str = "gdp_proxy,gdp_proxy_30d,labor_income,cpi,inflation_30d,cpi_yoy,unemployment,index,policy_rate,money_supply,gini,sentiment"):
+    async def metrics(names: str = Query(
+        default="gdp_proxy,gdp_proxy_30d,labor_income,cpi,inflation_30d,cpi_yoy,unemployment,index,policy_rate,money_supply,gini,sentiment",
+        max_length=1000,
+    )):
         out = {}
-        for name in names.split(","):
+        for name in names.split(",")[:50]:
             name = name.strip()
             if name:
                 out[name] = [{"tick": t, "value": v} for t, v in store.metric_series(name)]
@@ -255,14 +295,21 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
             "ORDER BY id DESC LIMIT 30", (agent_id,))]
         shares = [dict(r) for r in store.query(
             "SELECT firm_id, qty FROM shares WHERE holder_type='agent' AND holder_id=?", (agent_id,))]
-        decisions = [
-            {"tick": r["tick"], "purpose": r["purpose"], "model": r["model"],
-             "request": load_json(r["request_json"], {}), "response": load_json(r["response_json"], {}),
-             "cost_usd": r["cost_usd"]}
-            for r in store.query(
+        decisions = []
+        for r in store.query(
                 "SELECT * FROM llm_calls WHERE agent_id=? AND purpose IN "
                 "('decision','citizen','founder','credit_officer','central_banker') "
-                "ORDER BY id DESC LIMIT 10", (agent_id,))]
+                "ORDER BY id DESC LIMIT 10", (agent_id,)):
+            decision = {
+                "tick": r["tick"], "purpose": r["purpose"], "model": r["model"],
+                "cost_usd": r["cost_usd"],
+            }
+            if not hosted_safe:
+                decision.update({
+                    "request": load_json(r["request_json"], {}),
+                    "response": load_json(r["response_json"], {}),
+                })
+            decisions.append(decision)
         persona = {k: load_json(a[k], None) for k in
                    ("personality_json", "media_diet_json", "cadence_json")}
         calibration_event = store.query_one(
@@ -324,7 +371,7 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
         return out
 
     @app.get("/api/news")
-    async def news(limit: int = 30):
+    async def news(limit: int = Query(default=30, ge=1, le=200)):
         rows = store.query("SELECT * FROM news_articles ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
@@ -390,14 +437,17 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
         return out
 
     @app.get("/api/events")
-    async def events(limit: int = 80, min_importance: float = 0.0):
+    async def events(
+        limit: int = Query(default=80, ge=1, le=500),
+        min_importance: float = Query(default=0.0, ge=0.0, le=1.0),
+    ):
         rows = store.recent_events(limit=limit, min_importance=min_importance)
         return [{"id": int(r["id"]), "tick": int(r["tick"]), "phase": r["phase"],
                  "kind": r["kind"], "importance": r["importance"],
                  "payload": load_json(r["payload_json"], {})} for r in rows]
 
     @app.get("/api/trades")
-    async def trades(limit: int = 50):
+    async def trades(limit: int = Query(default=50, ge=1, le=500)):
         rows = store.query("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
 
@@ -444,6 +494,10 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
     async def oracle_calibration(scope: str = "run"):
         from oracle.calibration import aggregate_calibration, run_calibration
         if scope == "all":
+            if hosted_safe:
+                raise HTTPException(
+                    status_code=403,
+                    detail="pooled cross-run calibration is disabled in hosted run apps")
             return aggregate_calibration()
         return run_calibration(store)
 
@@ -480,28 +534,29 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
         return {"government": gov, "vc": vc, "health": health, "outlets": outlets}
 
     # ── replay viewer (P1 R16): browse any stored run tick-by-tick ──────────
-    from server.replay import ReplayReader
-    reader = ReplayReader()
-    app.state.replay_reader = reader
+    if not hosted_safe:
+        from server.replay import ReplayReader
+        reader = ReplayReader()
+        app.state.replay_reader = reader
 
-    @app.get("/api/replay/runs")
-    async def replay_runs():
-        return reader.list_runs()
+        @app.get("/api/replay/runs")
+        async def replay_runs():
+            return reader.list_runs()
 
-    @app.get("/api/replay/{run_id}/summary")
-    async def replay_summary(run_id: str):
-        s = reader.summary(run_id)
-        return s if s else JSONResponse({"error": "run not found"}, status_code=404)
+        @app.get("/api/replay/{run_id}/summary")
+        async def replay_summary(run_id: str):
+            s = reader.summary(run_id)
+            return s if s else JSONResponse({"error": "run not found"}, status_code=404)
 
-    @app.get("/api/replay/{run_id}/metrics")
-    async def replay_metrics(run_id: str, names: Optional[str] = None):
-        m = reader.metrics(run_id, names)
-        return m if m is not None else JSONResponse({"error": "run not found"}, status_code=404)
+        @app.get("/api/replay/{run_id}/metrics")
+        async def replay_metrics(run_id: str, names: Optional[str] = None):
+            m = reader.metrics(run_id, names)
+            return m if m is not None else JSONResponse({"error": "run not found"}, status_code=404)
 
-    @app.get("/api/replay/{run_id}/tick/{tick}")
-    async def replay_tick(run_id: str, tick: int):
-        v = reader.tick_view(run_id, tick)
-        return v if v else JSONResponse({"error": "run not found"}, status_code=404)
+        @app.get("/api/replay/{run_id}/tick/{tick}")
+        async def replay_tick(run_id: str, tick: int):
+            v = reader.tick_view(run_id, tick)
+            return v if v else JSONResponse({"error": "run not found"}, status_code=404)
 
     # ── shocks (PRD R9) ──────────────────────────────────────────────────────
     @app.get("/api/shocks")
@@ -547,6 +602,8 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
         path = await controller.generate_report()
         operational_log(logger, logging.INFO, "report.generated",
                         run_id=world.gateway.run_id, tick=store.tick, path=path)
+        if hosted_safe:
+            return {"artifact": _report_artifact_metadata(path, store.tick)}
         return {"path": path}
 
     # ── WebSocket ────────────────────────────────────────────────────────────
@@ -567,14 +624,15 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
             hub.disconnect(ws)
 
     # ── static dashboard + generated reports ────────────────────────────────
-    static_dir = Path(__file__).parent / "static"
-    if static_dir.exists():
-        @app.get("/")
-        async def index():
-            return FileResponse(str(static_dir / "index.html"))
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-    reports_dir = Path("reports/out")
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
+    if not hosted_safe:
+        static_dir = Path(__file__).parent / "static"
+        if static_dir.exists():
+            @app.get("/")
+            async def index():
+                return FileResponse(str(static_dir / "index.html"))
+            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+        reports_dir = Path("reports/out")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
 
     return app

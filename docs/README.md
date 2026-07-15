@@ -12,17 +12,18 @@ each audience can find the authoritative level of detail.
   discipline, metrics, Oracle evidence, and interpretation limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
   information boundaries, beliefs, routing, budget, and shock targeting.
-- [Local API reference](api-reference.md) — REST, WebSocket, request shapes, and
-  PowerShell examples.
+- [Local and hosted API reference](api-reference.md) — REST, WebSocket,
+  tenant/auth/run routes, request shapes, and PowerShell examples.
 
 ## Operate and recover
 
-- [Operator runbook](operator-runbook.md) — safe startup, bounded pilot,
-  production acceptance, phase-aware resume, reports, replay, and retention.
+- [Operator runbook](operator-runbook.md) — safe startup, hosted deployment,
+  backup/restore, bounded pilot, production acceptance, phase-aware resume,
+  reports, replay, and retention.
 - [Troubleshooting](troubleshooting.md) — provider cooldowns, orphaned state,
   legacy databases, dashboard performance, evidence failures, and replay.
-- [Security policy](../SECURITY.md) — localhost boundary, credentials, run-data
-  sensitivity, and vulnerability reporting.
+- [Security policy](../SECURITY.md) — local/hosted boundaries, RLS/auth threat
+  model, credentials, run-data sensitivity, and vulnerability reporting.
 
 ## Build and understand
 

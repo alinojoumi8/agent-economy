@@ -1,8 +1,43 @@
-# Local API reference
+# Local and hosted API reference
 
 The dashboard uses the same REST and WebSocket interfaces available to local
 tools. There is no authentication; keep the server on localhost. FastAPI exposes
 interactive OpenAPI documentation at `/docs` while the app is running.
+
+## Hosted R22 boundary
+
+The optional hosted application is a separate authenticated entry point. It
+sets secure `__Host-ae_session` and CSRF cookies; every mutation must include
+the CSRF cookie value in the header named by `GET /api/v2/mode` (currently
+`X-AE-CSRF`). Observers are read-only; admins manage membership, runs, and
+controls. Cross-tenant resources return 404.
+
+| Method | Path | Role / result |
+|---|---|---|
+| `GET` | `/api/v2/mode` | Public hosted capabilities and profile names; never secrets |
+| `POST` | `/auth/register` | Redeem a one-time tenant invitation |
+| `POST` | `/auth/login` | Tenant UUID, email, and password; sets session + CSRF cookies |
+| `POST` | `/auth/logout` | Authenticated mutation; revokes the session |
+| `GET` | `/api/v2/tenants/{tenant}/session` | Current user and role |
+| `POST` | `/api/v2/tenants/{tenant}/invitations` | Admin; returns the credential once |
+| `POST` | `/api/v2/tenants/{tenant}/invitations/revoke` | Admin |
+| `GET` | `/api/v2/tenants/{tenant}/members` | Admin |
+| `PATCH` | `/api/v2/tenants/{tenant}/members/{user}` | Admin; role/status update with self-lockout guard |
+| `GET` | `/api/v2/tenants/{tenant}/runs` | Observer/admin tenant run catalog |
+| `POST` | `/api/v2/tenants/{tenant}/runs` | Admin; creates one SQLite-backed run from an allowlisted profile |
+| `GET` | `/api/v2/tenants/{tenant}/runs/{run}` | Catalog and available runtime status |
+| `PATCH` | `/api/v2/tenants/{tenant}/runs/{run}` | Admin ownership transfer; lifecycle changes use control |
+| `POST` | `/api/v2/tenants/{tenant}/runs/{run}/control` | Admin; `start`, `pause`, `stop`, `step`, or `speed` |
+| `GET` | `/api/v2/tenants/{tenant}/runs/{run}/world/{path}` | Bounded, sanitized read-only world API proxy |
+| `WS` | `/api/v2/tenants/{tenant}/runs/{run}/ws` | Authenticated tenant/run event stream |
+
+Hosted world proxy routes are allowlisted. Mutations, reports/static file
+mounts, replay discovery, arbitrary paths, provider configuration, prompt
+payloads, and credentials are not proxied. Service endpoints are
+`/health/live`, `/health/ready`, and `/metrics`.
+
+The remaining unprefixed routes in this document describe local mode. Local
+mode has no authentication; do not put it behind a public proxy.
 
 ## Run control
 

@@ -1,6 +1,6 @@
 # Agent Economy — Product Requirements Document
 
-**Version:** 1.1 · **Date:** 2026-07-14 · **Owner:** Ali · **Status:** Maintained implementation contract
+**Version:** 1.1 · **Date:** 2026-07-15 · **Owner:** Ali · **Status:** Maintained implementation contract
 
 ---
 
@@ -97,6 +97,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - As an operator, I want a live dashboard showing macro metrics, the stock ticker, the news feed, and a stream of agent conversations so that I can follow the economy like a Bloomberg terminal for the sim.
 - As an operator, I want to click any agent and inspect its persona, balance sheet, memories, and recent decisions with their short public rationale and local provenance so that I can audit *why* something happened without exposing private model reasoning.
 - As an operator, I want to see running API spend and any configured cap so that I'm never surprised by cost.
+- As a hosted administrator, I want invite-only membership and tenant-scoped roles so that separate research groups cannot inspect or control each other's runs.
+- As a hosted observer, I want to watch a shared run while a single authorized writer controls it so that collaboration never creates two competing simulation clocks.
 
 ### Experimenter
 - As an experimenter, I want to ask the Oracle free-form questions mid-run ("probability of a bank run within 30 days?") and get a probability with reasoning so that I can form hypotheses while the world runs.
@@ -196,7 +198,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
 **R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
 **R21. Real-data calibration mode** — initialize distributions from real US statistical data (income, wealth, firm size). *(Implemented as the explicit `real_us` profile: disclosure-protected 2022 SCF family records supply income, liquid-financial-asset, and total-net-worth draws, while 2022 SUSB national employer-firm classes supply initial headcounts. `LIQ` funds the modeled bank accounts; `NETWORTH` is persisted as an engine-owned, off-ledger calibration baseline visible through agent provenance, so property/business assets and debt are not silently minted as deposits. Fictional names, traits, behavior, and relationships remain synthetic; default profiles remain replay-identical.)*
-**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Deferred.)*
+**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. Public deployment, multi-user load evidence, and final hosted CI remain acceptance evidence rather than completed product claims.)*
 
 ---
 
@@ -227,12 +229,12 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 
 1. Conversation volume is **15 pairs/tick**, governor-adjustable.
 2. Citizens act on **personal cadences** plus event-triggered wakeups.
-3. The v1 run store is **SQLite**; Postgres is deferred to hosted/scale work.
+3. Every simulation run remains one **SQLite** database. The optional R22 service uses PostgreSQL only for identity, tenancy, run catalog, leases, audit, and snapshot metadata; it never becomes the deterministic world store.
 4. Reporters are **observe-only**; interviews are deferred.
 5. The central banker is **rule-bounded**, with LLM discretion inside configured Taylor-rule guardrails.
 6. The acceptance showcase is the **rumor-driven bank-run experiment**.
 7. Citizens receive **public bank status, not private reserve ratios**; full visibility remains an explicit legacy/experimental option.
-8. P2 work follows a **research-quality-first** roadmap; participant mode is an implemented extension whose runs remain outside observer-only acceptance, while hosted multi-user mode remains deferred.
+8. P2 work follows a **research-quality-first** roadmap. Participant mode is an implemented extension whose runs remain outside observer-only acceptance; hosted multi-user mode is an optional implemented deployment surface and does not alter local mode or engine semantics.
 
 ---
 

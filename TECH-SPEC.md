@@ -1,6 +1,6 @@
 # Agent Economy — Technical Specification
 
-**Version:** 1.1 · **Date:** 2026-07-14 · **Companion to:** PRD.md
+**Version:** 1.1 · **Date:** 2026-07-15 · **Companion to:** PRD.md
 
 This document is written to be handed to an AI coding agent (or a developer) and implemented directly. Plain-language rationale is included because architectural "why" prevents bad shortcuts later.
 
@@ -46,12 +46,17 @@ This document is written to be handed to an AI coding agent (or a developer) and
 | Language | **Python 3.11 and 3.12** | Both supported versions run the complete Linux/Windows CI matrix. |
 | Simulation kernel | Plain Python, single process, `asyncio` | 100 agents ≪ needing distribution. Async matters only for parallel LLM calls, not compute. |
 | API | **FastAPI** + WebSocket | Standard, minimal boilerplate, async-native. |
-| Store | **SQLite (WAL mode)**, one file per run | Zero-ops, transactional, and portable. R19 proves the deterministic 1,000-agent profile on SQLite; a service database is an R22 hosted multi-user concern, not an R19 prerequisite. |
+| World store | **SQLite (WAL mode)**, one file per run | Zero-ops, transactional, portable, and replay-exact. R19 proves the deterministic 1,000-agent profile on SQLite; R22 deliberately retains this boundary. |
+| Hosted control plane | **PostgreSQL 17** with forced row-level security | Optional R22 identity, tenant membership, sessions, run catalog, writer leases, audit, and snapshot metadata. It never stores or mutates deterministic world state. |
+| Hosted artifacts | Local filesystem or **S3-compatible object storage** | Immutable, checksum-verified SQLite snapshots; S3/MinIO is the deployment profile and filesystem storage remains useful for development. |
 | LLM | **Provider-agnostic gateway.** Adapters: OpenAI-compatible (Kimi/Moonshot and MiniMax), Anthropic, and a restricted CLI adapter (Oracle/dev only). The maintained production profile routes citizens/founders to `MiniMax-M3` and strong seats plus Oracle to Kimi Code's `kimi-for-coding`; conversation and memory purposes inherit the actor's role route. Routing is `role → {provider, model}` in YAML, not code. | Swapping providers per role is configuration, which also enables model-vs-model economy experiments. |
 | Dashboard | **React + Vite + Tailwind**, Recharts for charts | Standard; easy for AI-assisted iteration. Served statically by FastAPI — one process to run. |
 | Config | Single `run.yaml` per run (population, models, budget, cadences, shock schedule, seed) | Reproducibility = config + seed + code version. |
 
-No Docker/Kubernetes/queues in v1. One `python run.py --config run.yaml` process. Keep it boring.
+Local v1 remains one `python run.py --config run.yaml` process with no Docker,
+PostgreSQL, or object-store requirement. R22 is a separately enabled FastAPI
+deployment with a hardened container/Compose reference stack; it does not
+change the local entry point or simulation semantics.
 
 ## 3. Time: ticks and phases
 
@@ -265,6 +270,40 @@ Single chokepoint through which every call flows. Responsibilities:
   quantile evidence for income, modeled liquid wealth, total net worth, and
   realized firm size against the same-seed synthetic baseline where comparable.
 
+### 9.4 Hosted multi-user control plane (PRD R22)
+
+- Hosted mode is opt-in and uses a separate PostgreSQL catalog for tenants,
+  users, memberships, invitations, sessions, run records, writer leases,
+  snapshot metadata, audit records, and authentication-attempt throttling.
+  Tenant-bearing tables enable and force row-level security. The runtime login
+  must be `NOSUPERUSER NOBYPASSRLS`; default-deny access applies until the
+  transaction sets a validated tenant scope. Narrow `SECURITY DEFINER`
+  functions are limited to opaque credential routing and restart recovery.
+- Registration is invitation-only. Passwords are scrypt hashes; session and
+  invitation values are opaque 256-bit secrets stored only as hashes. Hosted
+  mutations require a same-site secure session cookie, tenant membership, the
+  appropriate `admin | observer` role, and a matching CSRF token.
+  Authentication attempts are throttled, cross-tenant resources return 404,
+  and audit payloads are redacted.
+- Each catalog run owns exactly one schema-v11 SQLite world database. A
+  lease-based supervisor permits one writer per run while allowing concurrent
+  observers and independent runs. Lease loss fails closed; restart discovers
+  interrupted worlds as paused rather than advancing them. Tick, pause, and
+  stop boundaries publish immutable, checksummed SQLite snapshots through the
+  filesystem or S3-compatible artifact adapter.
+- The hosted API prefixes run queries, controls, and WebSockets with
+  `/api/v2/tenants/{tenant_id}/runs/{run_id}`. Only safe read-only world routes
+  and run controls are proxied; local report mounts, replay discovery, arbitrary
+  filesystem paths, provider settings, and secrets are not exposed. Local mode
+  retains its existing unprefixed API and observatory.
+- The reference deployment builds a non-root, read-only application image and
+  composes PostgreSQL 17, MinIO, migrations, the hosted service, Caddy TLS, and
+  Prometheus. Health/readiness and metrics endpoints support orchestration.
+  Migration, bootstrap, atomic database-credential rotation, snapshot,
+  verification, restore, and readiness operations are explicit
+  `python -m hosted.cli` commands. Kubernetes and a
+  public managed deployment are not implied by this reference stack.
+
 ## 10. Newsroom + conversations
 
 - Reporters receive only an explicit allowlist of public/reportable event kinds and a bounded public projection of each payload; private beliefs, participant controls, prompts, and provider diagnostics never reach a desk. Within that boundary the digest is ordered by newsworthiness (money size, rarity, entity prominence), reporters draft 2–4 stories, and the editor selects/frames per outlet slant. Stories cite `source_event_ids`; every citation must resolve locally or the complete provider article fails closed to a deterministic grounded brief. The report can later audit how coverage diverged from ground truth (fun metric: *distortion index*).
@@ -321,6 +360,17 @@ discount is excluded from the projection; event-heavy days may spike usage.
 - **Engine unit tests (no LLM)**: ledger invariants, order-book matching against known fixtures, loan schedules, bankruptcy waterfall, estate settlement (death with debts, with/without heir, founder death) (tax math added with the P1 government layer). Property tests: random valid action sequences never break reconciliation; random lifecycle event sequences (sickness/death/arrival storms) never break reconciliation; same seed ⇒ identical lifecycle schedule.
 - **Scripted-agent integration tests**: replace LLM with scripted policies (always-buy, panic-withdrawer) to test systemic mechanics cheaply — a scripted bank run must produce a bank failure through real mechanics before any LLM is involved.
 - **Golden-run tests**: CI retains the scripted golden run, restores a sanitized portable fixture of live run `fd0adc5dc1` (stored semantics 5, ten ticks) and replays it with network access forbidden, and runs a deterministic semantics-7 closure scenario covering the new mechanics. Every replay must match ticks, hashes, and deterministic-table differences exactly.
+- **Hosted isolation tests**: catalog/auth tests cover tenant-scoped invitations,
+  sessions, roles, CSRF, throttling, leases, recovery, and path containment. Real
+  PostgreSQL tests exercise forced-RLS default denial, wrong-tenant writes,
+  concurrent tenant reads, restart scoping, and session revocation. Real
+  S3-compatible tests exercise immutable snapshots, checksums, collision
+  rejection, verification, and exact restore. The deployment gate validates
+  Compose, builds the non-root image, and runs CLI smoke tests. A bounded HTTPS
+  load probe uses environment-sourced test credentials to exercise own-scope
+  reads and cross-tenant denials and emits sanitized JSON evidence. Its timeout
+  is finite and bounded, and any recorded build reference must be a full Git
+  object ID.
 - **Cost test**: simulated pricing table + fake responses verify governor thresholds fire at 60/80/95/100%.
 - **Supply-chain/release audit**: Python installs use a universal hash-locked
   `requirements.lock`; dashboard notices include runtime dependencies and emitted
@@ -344,6 +394,15 @@ The live run spent `$0.01121124` under its `$1` cap. PR #15 merged to `main` as
 full Ubuntu/Windows Python 3.11/3.12 matrix passed; post-merge CI run
 `29368193807` repeated all five jobs successfully. Tagging and publication
 remain separate release actions.
+
+R21 subsequently merged through PR #18 at
+`21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs passed.
+Post-merge main run `29403186283` repeated the dashboard and Ubuntu/Windows
+Python 3.11/3.12 jobs successfully.
+R22 code and integration coverage are present on its implementation branch;
+final hosted image/Compose smoke, multi-user load evidence, exact-head CI, and
+public deployment remain pending verification and must not be inferred from
+the local implementation.
 
 ## 15. Prior art and borrowed components
 
@@ -375,6 +434,9 @@ agent-economy/
   world/                  # tick loop, phases, event bus, shocks, metrics
   oracle/                 # analyst agent, tools, resolver, scoring
   server/                 # FastAPI app, WebSocket hub, static dashboard
+  hosted/                 # optional R22 catalog/auth/supervisor/artifacts/API/CLI
+  deploy/                 # Compose, Caddy, Prometheus, PostgreSQL role init
+  config/hosted*.yaml     # strict hosted config; credentials come from env
   dashboard/              # React app (built → server/static)
   reports/                # end-of-run report generator (md + html)
   tests/

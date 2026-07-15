@@ -1,20 +1,23 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Assessment date:** 2026-07-14
+> **Assessment date:** 2026-07-15
 >
-> **Code baseline:** `main` at merge commit
-> `255555c2b24530c0bd39aed2f501277a468adc0a`
+> **Merged baseline:** `main` includes R21 PR #18 at
+> `21bbf30051e3de8c9b5b7a50e48a0e342d94676a`
 >
 > **Database / maintained engine contract:** schema v11 / semantics 7
 >
-> **Release state:** PR #15 is merged. Its exact-head matrix and post-merge CI
-> run `29368193807` passed all five jobs. Tagging and publication remain separate
-> actions.
+> **Release state:** R21 PR #18 passed all five PR jobs and is merged; post-merge
+> main run `29403186283` also passed all five jobs. R22 code
+> is implemented on its branch; final hosted image/Compose smoke, multi-user
+> load evidence, exact-head CI, and public deployment remain pending. Tagging
+> and publication remain separate actions.
 
 ## Executive verdict
 
 The PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
-R20 regional, and R21 real-U.S. calibration extensions are implemented. The semantics-7 closure completes
+R20 regional, R21 real-U.S. calibration, and R22 hosted multi-user code surfaces
+are implemented. The semantics-7 closure completes
 the remaining code contracts for bank loss recognition, retirement liquidity,
 deterministic arrival/persona handling, autonomous regional trade/migration,
 portable recorded replay, provider cache modes, and additive memory ranking.
@@ -25,7 +28,15 @@ historical/semantics-7 exact replays are complete. The live run spent
 privacy/provenance checks found zero defects. PR #15 merged to `main` as
 `255555c2b24530c0bd39aed2f501277a468adc0a` after its exact-head dashboard and
 Ubuntu/Windows Python 3.11/3.12 matrix passed. Post-merge CI run `29368193807`
-repeated all five jobs successfully.
+repeated all five jobs successfully. R21 then merged through PR #18 at
+`21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs passed.
+Post-merge main run `29403186283` repeated all five jobs successfully.
+
+R22 now adds a PostgreSQL tenant/auth/run catalog with forced RLS, one SQLite
+v11 world per run, invite-only observer/admin membership, CSRF/throttling/audit,
+a lease-based supervisor, immutable filesystem/S3 snapshots, a hosted dashboard,
+and Docker Compose/Caddy/Prometheus plus migration/backup/restore operations.
+These are code-complete surfaces, not proof of a public production deployment.
 
 ## Semantics-7 closure matrix
 
@@ -49,7 +60,7 @@ repeated all five jobs successfully.
 | **R19 — 1,000-agent scale** | Implemented extension | Deterministic core/periphery population, promotion/demotion, regional genesis, conserved balances, replay, observatory, and recorded performance gate exist. | Downstream release hardware should publish its own benchmark. |
 | **R20 — Regions, trade, migration, FX** | Implemented extension | Multicurrency ledgers, regional markets, FX inventory, shipments, migration, API/UI/report/replay surfaces, and semantics-7 autonomous opportunity context are implemented. | Five-tick rehearsal/live gates and exact replay passed. |
 | **R21 — Real-data calibration** | Implemented extension | Explicit `real_us` mode deterministically samples pinned 2022 SCF income, liquid-holding, and total-net-worth records plus 2022 SUSB employer-firm classes, records per-draw provenance and distance evidence, and replays from recorded targets without a manifest. | `LIQ` funds deposits; SCF total net worth is an engine-owned off-ledger calibration baseline visible in the inspector. Identities stay fictional and default mode stays synthetic. |
-| **R22 — Hosted multi-user service** | Deferred | Local single-process observatory only; no auth, tenancy, hosted persistence, or tenant isolation. | Separate architecture, security, operations, and load-test project. |
+| **R22 — Hosted multi-user service** | Implemented extension; acceptance pending | PostgreSQL tenant/user/membership/session/invite/run/lease/audit catalog with forced RLS; invite-only observer/admin auth; CSRF/throttling; single-writer supervisor; one SQLite v11 world per run; immutable local/S3 snapshots; hosted dashboard; Compose/Caddy/Prometheus; migrations and backup/verify/restore CLI; isolated PostgreSQL/MinIO integration coverage; bounded sanitized HTTPS load/isolation probe. | Load-probe unit tests pass, but final image/Compose smoke, recorded real-container multi-user evidence, exact-head CI, and any public deployment remain pending. Local mode and engine schema/semantics are unchanged. |
 
 ## Historical recorded-run evidence
 
@@ -99,13 +110,14 @@ returned `differences: []` with hash
 
 ## PRD-v1 acceptance boundary
 
-All P0/P1 code surfaces remain implemented. Four release-quality proof areas are
+All P0/P1 and R18–R22 code surfaces are implemented. Five release-quality proof areas are
 still operational rather than missing code:
 
-1. the corrected 30-day live rumor gate;
-2. representative Oracle p50/p90 latency and a resolved calibration corpus;
-3. the explicitly authorized 365-day/$200 live acceptance campaign; and
-4. a fresh release-candidate provenance/license/dependency/secret audit before
+1. final R22 hosted image/Compose smoke, multi-user load/isolation evidence, and exact-head CI;
+2. the corrected 30-day live rumor gate;
+3. representative Oracle p50/p90 latency and a resolved calibration corpus;
+4. the explicitly authorized 365-day/$200 live acceptance campaign; and
+5. a fresh release-candidate provenance/license/dependency/secret audit before
    tagging or publication.
 
 The five-tick semantics-7 pilot supplements those gates; it does not replace
@@ -125,7 +137,9 @@ separate.
 | Bounded live pilot | **Passed:** MiniMax ready; `b4832032ba`, `$0.01121124`, all 42 proposals accepted, zero provider/privacy/provenance failures. |
 | Live offline replay | **Passed:** `replay-b4832032ba-8d99c25c56`, tick/hash identical, `differences: []`. |
 | R21 recorded replay | **Passed:** `24d8dc242e` sampled 70 households and 12 realized firms through tick 5 with zero reconciliation failures; `replay-24d8dc242e-a9ed4f2910` matched hash `95b4b8bd…0cee369a`. |
-| CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
+| R21 merge | **Passed:** PR #18 passed all five PR jobs and merged as `21bbf30051e3de8c9b5b7a50e48a0e342d94676a`; post-merge main run `29403186283` repeated all five successfully. |
+| R22 code/integration surface | **Implemented, final gate pending:** hosted catalog/auth/RLS, supervisor, artifact adapters, dashboard, operations/deployment assets, PostgreSQL/MinIO integration tests, and a sanitized load/isolation probe are present; its three focused tests pass. Final image/Compose smoke, real-container load evidence, and exact-head CI are not yet recorded here. |
+| Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
 
 ## Closure audit evidence
 
@@ -152,8 +166,10 @@ public tag.
 
 - PR #15 merged after its exact-head matrix passed, and post-merge CI run
   `29368193807` passed all five jobs. No tag or publication was performed.
-- R21 real-U.S. calibration is implemented; R22 hosted multi-user operation
-  remains outstanding.
+- R21 real-U.S. calibration merged through five-job-green PR #18, and
+  post-merge main run `29403186283` passed all five jobs. R22 hosted
+  multi-user code is implemented; its final deployment smoke, load/isolation
+  evidence, exact-head CI, and public deployment remain outstanding proof.
 - The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
   acceptance run require separate execution and evidence.
 - Generated databases and reports corroborate findings but do not outrank

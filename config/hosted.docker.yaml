@@ -1,0 +1,30 @@
+enabled: true
+public_base_url: ${AGENT_ECONOMY_PUBLIC_BASE_URL}
+session_cookie_name: __Host-ae_session
+session_ttl_seconds: 43200
+
+database:
+  dsn_env: AGENT_ECONOMY_HOSTED_DATABASE_URL
+  password_env: AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD
+  runtime_role: agent_economy_app
+  supervisor_dsn_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL
+  supervisor_password_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD
+  supervisor_role: agent_economy_supervisor
+  migration_lock_key: 7321104221
+  connect_timeout_seconds: 10
+
+artifacts:
+  backend: s3
+  bucket: agent-economy-runs
+  prefix: v1
+  endpoint_url_env: AGENT_ECONOMY_S3_ENDPOINT_URL
+  region: us-east-1
+  access_key_env: AWS_ACCESS_KEY_ID
+  secret_key_env: AWS_SECRET_ACCESS_KEY
+
+runtime:
+  run_directory: /var/lib/agent-economy/runs
+  snapshot_directory: /var/lib/agent-economy/snapshots
+  writer_lease_seconds: 30
+  snapshot_interval_ticks: 5
+  shutdown_grace_seconds: 30

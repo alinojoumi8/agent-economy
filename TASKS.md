@@ -140,15 +140,26 @@ provider rate limits control throughput.
   calibration distance against synthetic mode.
 - [x] Test malformed/missing data, deterministic sampling, provenance, and
   backward compatibility; then pass the full gate.
+- [x] Merge PR #18 at
+  `21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs pass;
+  confirm post-merge main run `29403186283` also passes all five.
 
 ## Task 6 — R22 Hosted multi-user deployment
 
-- [ ] Add authentication, observer/admin roles, run ownership, and strict
+- [x] Add invitation-based authentication, observer/admin roles, run ownership, and strict
   cross-run tenant isolation.
-- [ ] Move hosted state/artifacts to durable services while retaining local
+- [x] Add a PostgreSQL control plane with forced RLS while keeping one SQLite
+  schema-v11 world per run and preserving local mode.
+- [x] Move hosted snapshots to immutable local/S3-compatible artifact services while retaining local
   single-user mode and reproducible run exports.
-- [ ] Add deployment configuration, migrations, security/authorization tests,
-  operational observability, backups, and a recorded multi-user load test.
+- [x] Add a lease-based single-writer supervisor, hosted dashboard, Docker
+  Compose/Caddy/Prometheus configuration, migrations, health/readiness,
+  backup/verify/restore operations, and security/authorization integration tests.
+- [x] Add a bounded, credential-redacted HTTPS load/isolation probe with
+  per-tenant own-scope reads, cross-tenant denial checks, and sanitized JSON
+  evidence output.
+- [ ] Record the final real-container image/Compose smoke and multi-user load
+  receipt, and pass the exact-head hosted CI job.
 - [ ] Pass the complete local and hosted acceptance gate before release.
 
 ## Closure merge receipt

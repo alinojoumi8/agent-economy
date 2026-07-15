@@ -504,9 +504,47 @@ replays from source-recorded targets even when the manifest is unavailable.
 Recorded gate `24d8dc242e` completed five free ticks with 70 household and 12
 realized-firm draws, zero reconciliation failures, and exact offline replay
 `replay-24d8dc242e-a9ed4f2910` at hash `95b4b8bd…0cee369a`.
-R22 hosted multi-user operation, the 30-day rumor gate, Oracle
-latency/calibration campaign, and 365-day/$200 acceptance run remain separate.
-Tagging and publication remain separate release decisions.
+R21 merged through PR #18 at
+`21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs passed.
+Post-merge main run `29403186283` repeated all five jobs successfully.
+
+## R22 hosted multi-user boundary
+
+R22 is now implemented as an optional control plane rather than a change to the
+simulation kernel. PostgreSQL stores tenants, identities, memberships,
+invitations, sessions, run records, writer leases, audit records, and snapshot
+pointers under forced row-level security. The serving role must be
+`NOSUPERUSER NOBYPASSRLS`. Each run remains one schema-v11 SQLite world, so
+local mode, semantics 7, recorded provenance, and exact replay are unchanged.
+
+Registration is invitation-only. Hosted roles are read-only `observer` and
+controlling `admin`; mutations require a secure tenant-bound session and CSRF
+token, authentication attempts are throttled, and cross-tenant lookups fail as
+not found. A lease-based supervisor allows multiple observers and independent
+runs but only one writer for each run. Lease loss pauses fail closed, and
+restart exposes interrupted runs as paused.
+
+Tick, pause, and stop boundaries can publish immutable checksummed SQLite
+snapshots to an absolute local artifact root or S3-compatible storage. Snapshot
+verification covers checksum, size, schema, and SQLite integrity before restore.
+The authenticated hosted dashboard selects tenant/run context, manages
+invitations/members for admins, and maps only supported run controls; local
+shock, Oracle, report, participant, and arbitrary file/provider surfaces are not
+promoted into hosted mutations.
+
+The reference deployment uses a non-root read-only application image with
+PostgreSQL 17, MinIO, an explicit migration job, Caddy TLS, and Prometheus.
+`python -m hosted.cli` provides migrate, serve, bootstrap, atomic database
+password rotation, snapshot, verify, restore, and readiness operations. Real PostgreSQL/MinIO integration tests are
+part of the code gate. `python -m hosted.load_test` adds a bounded HTTPS
+own-scope/cross-tenant probe with environment-sourced credentials and sanitized
+JSON output; its three focused tests pass. Final image/Compose smoke, recorded real-container multi-user
+load/isolation evidence, exact-head CI, and any public production deployment
+remain pending verification; the repository does not claim them yet.
+
+The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
+acceptance run also remain separate release evidence. Tagging and publication
+remain separate release decisions.
 
 ## Release checklist
 

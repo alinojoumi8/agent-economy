@@ -24,6 +24,23 @@ flowchart LR
 performs provider readiness checks, opens or creates a run database, and starts
 either a headless world or the local observatory.
 
+Hosted R22 is an optional outer control plane:
+
+```mermaid
+flowchart LR
+    B[Hosted dashboard] -->|session + CSRF| H[Hosted FastAPI]
+    H --> P[(PostgreSQL catalog + forced RLS)]
+    H --> S[Lease-based run supervisor]
+    S --> R1[(Tenant A / run 1 SQLite v11)]
+    S --> R2[(Tenant B / run 2 SQLite v11)]
+    S --> O[(Immutable local or S3 snapshots)]
+    H --> M[Prometheus metrics]
+```
+
+PostgreSQL owns identity, tenancy, sessions, run metadata, leases, audit, and
+snapshot pointers. It does not own economic state. Each supervised run still
+uses the same single-writer deterministic world and SQLite schema as local mode.
+
 ## Ownership boundary
 
 LLMs can only propose structured actions and belief updates. Deterministic code
@@ -66,6 +83,8 @@ if a provider interruption occurs mid-tick.
 | `reports/` | Run reports and production acceptance receipts |
 | `server/` | REST/WebSocket API and committed production dashboard bundle |
 | `dashboard/` | React/Vite/Tailwind/Recharts observatory source |
+| `hosted/` | PostgreSQL catalog/RLS, auth, supervisor, artifact adapters, hosted API, operations, and CLI |
+| `deploy/` | Compose reference stack, Caddy TLS, Prometheus, and PostgreSQL role initialization |
 
 ## Information and belief model
 
@@ -94,13 +113,20 @@ belief-event, and macro-metric behavior so historical runs remain replayable.
 
 ## Runtime boundaries
 
-- V1 is a local single-process app with no authentication. Bind to localhost.
+- Local v1 is a single-process app with no authentication. Bind to localhost.
 - SQLite, approximately 100 agents, one region, and one operator remain the
   intentional v1 acceptance baseline.
 - R18 participant mode, R19 deterministic 1,000-agent core/periphery scale,
   R20 regions/FX/trade/migration, and opt-in R21 SCF/SUSB initialization are
   implemented extensions. R21 reuses schema-v10 provenance tables and the
-  schema-v11 engine; R22 hosted multi-user operation remains separate work.
+  schema-v11 engine.
+- R22 is an implemented optional hosted boundary: invite-only auth and roles,
+  forced-RLS tenant catalog, one writer lease per run, multiple observers/runs,
+  immutable snapshots, hosted dashboard, and deployment/operations assets. It
+  leaves local APIs, simulation schema, and semantics unchanged.
+- The reference hosted stack is PostgreSQL 17 + MinIO + application + Caddy +
+  Prometheus. Public production deployment and recorded load evidence remain
+  verification gates, not current claims.
 - The Oracle is read-only and CLI-backed models are restricted to Oracle/dev
   purposes.
 

@@ -3,7 +3,8 @@ import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
-export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay }) {
+export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
+  hosted = false, canControl = true }) {
   const [busy, setBusy] = useState("");
   const running = Boolean(status?.running || status?.status === "running");
   const terminal = status?.status === "halted";
@@ -44,15 +45,16 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
           {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.target_tick != null && <Badge tone={limitReached ? "good" : "warn"}>{limitReached ? `target t${status.target_tick} reached` : `${status.remaining_ticks} days to t${status.target_tick}`}</Badge>}
           {status?.rate_limit && <Badge tone="warn">rate limited · retry {Math.ceil(status.rate_limit.cooldown_remaining_s)}s</Badge>}
+          {hosted && !canControl && <Badge>observer · read only</Badge>}
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={loading || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={loading || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
-          <button className="button" disabled={loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>Stop + report</button>
+          <button className="button button-primary" disabled={!canControl || loading || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={!canControl || loading || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button" disabled={!canControl || loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
+          <button className="button button-danger" disabled={!canControl || loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
-          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
             <option value="0.25">0.25 s/day</option>
             <option value="1">1 s/day</option>
@@ -61,9 +63,9 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
-          <button className="button hidden sm:inline-flex" onClick={onReplay}>Replay viewer</button>
-          <button className="button" disabled={terminal} onClick={onShock}>Inject shock</button>
-          <button className="button hidden md:inline-flex" disabled={busy} onClick={() => action("report", "/api/report")}>Generate report</button>
+          {!hosted && <button className="button hidden sm:inline-flex" onClick={onReplay}>Replay viewer</button>}
+          {!hosted && <button className="button" disabled={terminal} onClick={onShock}>Inject shock</button>}
+          {!hosted && <button className="button hidden md:inline-flex" disabled={busy} onClick={() => action("report", "/api/report")}>Generate report</button>}
         </div>
 
         <div className="w-full min-w-[200px] sm:ml-auto sm:w-64">

@@ -8,5 +8,9 @@ PyYAML>=6
 httpx>=0.27
 pydantic>=2
 python-dotenv>=1.0
+# Hosted R22 control plane, durable artifacts, and operational metrics.
+psycopg[binary,pool]>=3.2,<3.4
+boto3>=1.35,<2
+prometheus-client>=0.21,<1
 # dev / test
 pytest>=8
