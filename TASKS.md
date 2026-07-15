@@ -41,9 +41,10 @@ provider rate limits control throughput.
 ### Evidence gates
 
 - [x] Focused semantics-7 gate passed 86 tests before final hardening; a
-  93-test integrated adversarial gate passed afterward, and the current full
-  Python suite passes 280 in 165.73 seconds, with compilation and dataset
-  verification green.
+  93-test integrated adversarial gate passed afterward, and the semantics-7
+  closure suite passed 280 in 165.73 seconds. The post-merge
+  compatibility/replay cleanup suite passes 303 in 178.22 seconds, with
+  compilation and dataset verification green.
 - [x] Dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
   passed, high-severity audit found zero vulnerabilities, the 599-module Vite
   build and committed static bundle matched, and `git diff --check` passed.
@@ -56,9 +57,11 @@ provider rate limits control throughput.
   targeted effects fired, provenance/privacy checks found zero defects, six
   checkpoints and all currencies reconciled, and exact replay
   `replay-b4832032ba-8d99c25c56` returned `differences: []`.
-- [x] The prior branch head passed every dashboard and Ubuntu/Windows Python
-  3.11/3.12 job; the merge procedure requires the exact pushed closure head to
-  repeat all five jobs. Tagging and publication remain separate.
+- [x] The exact closure head passed every dashboard and Ubuntu/Windows Python
+  3.11/3.12 job. PR #15 merged to `main` as
+  `255555c2b24530c0bd39aed2f501277a468adc0a`, and post-merge CI run
+  `29368193807` repeated all five jobs successfully. Tagging and publication
+  remain separate.
 
 ## Task 1 — Production acceptance run and evidence package
 
@@ -148,7 +151,7 @@ provider rate limits control throughput.
   operational observability, backups, and a recorded multi-user load test.
 - [ ] Pass the complete local and hosted acceptance gate before release.
 
-## Closure merge gate
+## Closure merge receipt
 
 - [x] Re-audit PRD promises against routes, workers, persistence, tests, docs,
   runtime evidence, licenses, dependencies, and secrets; classify R21/R22 and

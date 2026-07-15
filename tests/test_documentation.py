@@ -14,6 +14,24 @@ HANDBOOK_DOCS = (
     "implementation-status.md", "live-provider-validation.md",
     "live-run-f7c6238bf5.md", "v2-guide.md", "implementation-status.html",
 )
+CLOSURE_STATUS_DOCS = (
+    "README.md", "TECH-SPEC.md", "TASKS.md",
+    "docs/implementation-status.md", "docs/v2-guide.md",
+    "docs/implementation-status.html",
+)
+SEMANTICS_7_MERGE_COMMIT = "255555c2b24530c0bd39aed2f501277a468adc0a"
+SEMANTICS_7_POST_MERGE_CI = "29368193807"
+STALE_SEMANTICS_7_MERGE_PHRASES = (
+    "codex/legal-political-economy-v2",
+    "merge after exact-head ci",
+    "must still pass all five github actions jobs before merge",
+    "require five of five successful jobs before ready/merge",
+    "exact pushed head must pass",
+    "required immediately before merge",
+    "required at merge",
+    "the merge procedure requires",
+    "before pr #15 is made ready and merged",
+)
 
 
 def _local_links(document: Path):
@@ -64,3 +82,20 @@ def test_documented_profiles_exist():
         "runs/experiments/rumor_vs_control.yaml",
     ):
         assert (ROOT / profile).exists(), f"documented profile is missing: {profile}"
+
+
+def test_semantics_7_closure_status_records_merged_main_and_post_merge_ci():
+    for relative_path in CLOSURE_STATUS_DOCS:
+        document = ROOT / relative_path
+        text = document.read_text(encoding="utf-8")
+        lowered = text.lower()
+        assert SEMANTICS_7_MERGE_COMMIT in text, (
+            f"{relative_path} is missing the semantics-7 merge commit")
+        assert SEMANTICS_7_POST_MERGE_CI in text, (
+            f"{relative_path} is missing the post-merge CI run")
+        assert "merged" in lowered, f"{relative_path} does not record the merged state"
+        assert "tag" in lowered and "publication" in lowered, (
+            f"{relative_path} does not preserve the no-tag/publication boundary")
+        for stale_phrase in STALE_SEMANTICS_7_MERGE_PHRASES:
+            assert stale_phrase not in lowered, (
+                f"{relative_path} retains stale pending-merge text: {stale_phrase}")

@@ -23,6 +23,7 @@ from .store import Store
 from .startups import StartupLifecycle
 from .politics import PoliticalEconomy
 from .regions import RegionalEconomy
+from .semantics import semantics_version
 from .vc import VentureCapital
 
 
@@ -32,6 +33,7 @@ class Economy:
         self.store = store
         self.config = config
         self.prng = engine_prng
+        self.engine_semantics_version = semantics_version(config, default=2)
         local_currency_action_surfaces = bool(
             config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.ledger = Ledger(store)
@@ -41,25 +43,23 @@ class Economy:
         self.bank = Bank(
             store, self.ledger,
             local_currency_action_surfaces=local_currency_action_surfaces,
-            engine_semantics_version=int(config.get("engine_semantics_version", 2)))
+            engine_semantics_version=self.engine_semantics_version)
         self.firms = Firms(store, self.ledger)
         self.labor = Labor(
             store,
-            engine_semantics_version=int(config.get("engine_semantics_version", 2)),
+            engine_semantics_version=self.engine_semantics_version,
         )
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
                                    health_cfg=config.get("health", {}),
-                                   engine_semantics_version=int(
-                                       config.get("engine_semantics_version", 2)))
+                                   engine_semantics_version=self.engine_semantics_version)
         self.gov = Government(store, self.ledger, config.get("government"))
         self.vc = VentureCapital(store, self.ledger)
         self.legal = LegalInstitution(store, self.ledger, config.get("legal"))
         self.regions = RegionalEconomy(store, self.ledger, self.legal, engine_prng,
-                                      config.get("living_world"),
-                                      local_currency_action_surfaces=local_currency_action_surfaces,
-                                      engine_semantics_version=int(
-                                          config.get("engine_semantics_version", 2)))
+                                       config.get("living_world"),
+                                       local_currency_action_surfaces=local_currency_action_surfaces,
+                                       engine_semantics_version=self.engine_semantics_version)
         self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
         self.information = InformationEconomy(store, config.get("information_economy"))
         self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))

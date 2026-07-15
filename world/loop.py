@@ -28,6 +28,7 @@ from typing import Callable, Optional
 
 from engine.core import Economy
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
+from engine.semantics import semantics_version
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
@@ -56,7 +57,7 @@ class World:
     def __init__(self, store: Store, config: dict, *, replay: bool = False):
         self.store = store
         self.config = config
-        self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
+        self.engine_semantics_version = semantics_version(config, default=2)
         self.phases = PHASES if self.engine_semantics_version >= 2 else LEGACY_PHASES
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
@@ -112,6 +113,11 @@ class World:
         operational_log(logger, logging.INFO, "world.initialized",
                         run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
                         agents=self.store.scalar("SELECT COUNT(*) FROM agents", default=0))
+
+    def close(self) -> None:
+        """Release the run and any recorded-source handles idempotently."""
+        self.gateway.close()
+        self.store.close()
 
     async def run(self, max_ticks: Optional[int] = None) -> None:
         self.status = "running"

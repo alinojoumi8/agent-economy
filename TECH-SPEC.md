@@ -281,7 +281,7 @@ discount is excluded from the projection; event-heavy days may spike usage.
 - All engine randomness from one seeded PRNG. LLM outputs are *not* deterministic — so **replay uses stored outputs**: every LLM response is persisted in `llm_calls`; replay mode re-executes the engine against recorded responses, reproducing the run exactly without API cost (also = free debugging).
 - Physical SQLite LLM-call IDs are surrogate keys. Canonical verification resolves every persisted `model_call_id` through the referenced call's deterministic contents; reordered concurrent insertions therefore compare equal, while missing, dangling, actor-wrong, or logically wrong references fail verification explicitly.
 - Portable fixture format v2 retains only public response text and cached-input telemetry, strips raw provider envelopes/private-reasoning fields, rewrites repository paths as `repo://`, and records its source revision as `unknown-not-recorded` rather than inventing one. Rebuild restores the fixture's recorded `dataset_manifests`, `calibration_targets`, and `scenario_packs` before execution so later edits to current manifests cannot change historical replay. The `fd0adc5dc1` artifact SHA-256 is `af57eed59e47e9057d7645a65e1bb6f2b579a6a63a377fd6301f33af3955e2d7`; its normalized reconstructed replay hash is `2efcabedba51e4bff3ccfd36393db20d13b41cd5d3e9a3772df42015db4f9170`. The historical source/final-code database hash `3586581baea968819cce9fed54b8d9427391645c869f163250c90e7e27976173` remains separate evidence, not the normalized fixture hash.
-- Replay schedules persisted Oracle questions at their original `asked_tick`. Exact cache-key matches are preferred; when historical prompt text predates current code, the next unused call with the same tick/agent/role/purpose identity is copied verbatim with its original request and cache key.
+- Replay opens its source database read-only without schema initialization or migration and releases both SQLite handles idempotently. It schedules persisted Oracle questions at their original `asked_tick` and reconstructs their acceptance checkpoint rows plus completed/missed orchestration events. Exact cache-key matches are preferred; when historical prompt text predates current code, the next unused call with the same tick/agent/role/purpose identity is copied verbatim with its original request and cache key.
 - `run_meta.tick` is the last fully completed tick. `active_tick`, `next_phase`, and `phase_state_json` persist in-flight work; successful LLM responses are reused by request key, deterministic phases use SQLite savepoints, and newsroom/conversation/memory writes are idempotent. A rate limit, provider pause, operator stop, or process restart therefore resumes the active phase without advancing or duplicating it.
 - Checkpoint = SQLite backup + phase cursor + PRNG state + governor counters, every N completed ticks and on pause. Forking a checkpoint creates a new run id for what-if branches.
 - Reconciliation check every tick: `SUM(ledger deltas) == 0` and per-account recomputation matches stored balances; failure → halt + dump (PRD R1).
@@ -300,7 +300,8 @@ discount is excluded from the projection; event-heavy days may spike usage.
   audits are repeated against a release candidate before tagging/publication.
 
 Current semantics-7 closure receipt: the final integrated adversarial gate
-passed 93 tests and the complete local suite passed 280 in 165.73 seconds,
+passed 93 tests and the closure suite passed 280 in 165.73 seconds. The
+post-merge compatibility/replay cleanup suite passes 303 in 178.22 seconds,
 including compatibility, provenance, privacy, cache, dataset-refresh, and
 portable-replay regressions. Rehearsal
 `5a0d40d773` and live MiniMax pilot
@@ -309,9 +310,11 @@ checkpoints, balanced currencies, and zero provider/rejection failures. Their
 offline replays matched exactly with hashes
 `fa190b0dc10a6b94038f7dbd8838a6aea14c1c5b57b691a4788527f8e8cffc34` and
 `ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
-The live run spent `$0.01121124` under its `$1` cap. Merge requires a fresh
-exact-head GitHub Actions pass for the dashboard and full Ubuntu/Windows Python
-3.11/3.12 matrix; tagging and publication remain separate release actions.
+The live run spent `$0.01121124` under its `$1` cap. PR #15 merged to `main` as
+`255555c2b24530c0bd39aed2f501277a468adc0a` after the exact-head dashboard and
+full Ubuntu/Windows Python 3.11/3.12 matrix passed; post-merge CI run
+`29368193807` repeated all five jobs successfully. Tagging and publication
+remain separate release actions.
 
 ## 15. Prior art and borrowed components
 
@@ -353,9 +356,12 @@ agent-economy/
 
 1. **Kernel**: ledger + engine + validator + scripted agents + reconciliation tests. *No LLM yet — prove the economy's plumbing first.*
 2. Agent runtime + gateway + governor; 20 route-configured citizens, 1 bank; CLI event stream.
-3. Exchange + firms lifecycle + 2nd bank; scale to 100 agents; checkpoints.
-4. Newsroom + conversations + memory pipeline; run the rumor pilot.
+3. Exchange + firms lifecycle + 2nd bank; scale to 100 agents; checkpoints;
+   implement and verify R11 health, death, estate settlement, and arrivals.
+4. Newsroom + conversations + memory pipeline; run the rumor pilot and the R11
+   lifecycle acceptance gate.
 5. Dashboard (read-only first, then controls).
 6. Oracle + resolver + scoring.
 7. Shock library + end-of-run reports → **v1 complete (PRD P0)**.
-8. P1: government/elections, VC, experiment harness, replay UI.
+8. P1 (R12–R17): government/elections, VC, experiment harness, Oracle
+   calibration, replay UI, and the health economy.

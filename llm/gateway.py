@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from engine.store import open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
@@ -522,9 +523,15 @@ class Gateway:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
                 raise ProviderConfigurationError(["replay_source_path is required for exact replay"])
-            source_uri = f"file:{source.replace(chr(92), '/')}?mode=ro"
-            self.replay_conn = sqlite3.connect(source_uri, uri=True, check_same_thread=False)
-            self.replay_conn.row_factory = sqlite3.Row
+            self.replay_conn = open_read_only_connection(
+                source, check_same_thread=False)
+
+    def close(self) -> None:
+        """Release replay resources; safe to call repeatedly during teardown."""
+        replay_conn = self.replay_conn
+        self.replay_conn = None
+        if replay_conn is not None:
+            replay_conn.close()
 
     @property
     def scripted(self):

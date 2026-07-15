@@ -11,27 +11,59 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from .schema import SCHEMA_VERSION, initialize_schema
+from .schema import SCHEMA_VERSION, assert_schema_compatible, initialize_schema
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def open_read_only_connection(
+        path: str, *, check_same_thread: bool = False) -> sqlite3.Connection:
+    """Open an existing SQLite database without permitting file mutations."""
+    # Do not use immutable=1: an active recorded run may have committed calls
+    # in its WAL, and immutable connections are allowed to ignore that file.
+    uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(
+        uri, uri=True, isolation_level=None, check_same_thread=check_same_thread)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only = ON")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        assert_schema_compatible(conn)
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
 class Store:
-    def __init__(self, path: str, *, create: bool = True):
+    def __init__(self, path: str, *, create: bool = True, read_only: bool = False):
         self.path = path
+        self.read_only = bool(read_only)
+        self._closed = False
+        if self.read_only:
+            self.conn = open_read_only_connection(path)
+            return
         if create:
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA busy_timeout = 5000")
+        try:
+            # Compatibility is checked inside initialize_schema before its
+            # first write. Close this constructor-owned handle if it fails.
+            initialize_schema(self.conn)
+        except Exception:
+            self.conn.close()
+            raise
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA synchronous = NORMAL")
-        self.conn.execute("PRAGMA busy_timeout = 5000")
-        initialize_schema(self.conn)
 
     # ── raw helpers ──────────────────────────────────────────────────────────
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
@@ -86,8 +118,12 @@ class Store:
             self.conn.execute(f"RELEASE {safe}")
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
-            self.conn.commit()
+            if not self.read_only:
+                self.conn.commit()
         finally:
             self.conn.close()
 

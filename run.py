@@ -24,6 +24,11 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+from engine.semantics import (
+    UnsupportedEngineSemantics,
+    semantics_version,
+    validate_engine_semantics_version,
+)
 from engine.store import Store
 from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
@@ -88,10 +93,15 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         if not db.exists():
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
-        stored_cfg = json.loads(store.get_meta()["config_json"])
-        # Markerless databases predate completed-day finalization and must keep
-        # their original phase/metric/prompt behavior for exact replay.
-        stored_cfg.setdefault("engine_semantics_version", 1)
+        try:
+            stored_cfg = json.loads(store.get_meta()["config_json"])
+            # Markerless databases predate completed-day finalization and must keep
+            # their original phase/metric/prompt behavior for exact replay.
+            stored_cfg["engine_semantics_version"] = semantics_version(
+                stored_cfg, default=1)
+        except Exception:
+            store.close()
+            raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         world = World(store, stored_cfg)
         world.restore_prng_state()
@@ -100,11 +110,12 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         source_db = data_dir / f"{replay}.db"
         if not source_db.exists():
             sys.exit(f"run database not found: {source_db}")
-        source_store = Store(str(source_db))
+        source_store = Store(str(source_db), create=False, read_only=True)
         try:
             source_meta = source_store.get_meta()
             replay_cfg = json.loads(source_meta["config_json"])
-            replay_cfg.setdefault("engine_semantics_version", 1)
+            replay_cfg["engine_semantics_version"] = semantics_version(
+                replay_cfg, default=1)
             source_tick = int(source_meta["tick"])
             source_seed = int(source_meta["seed"])
             replay_inputs = _recorded_replay_inputs(source_store)
@@ -136,7 +147,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     config = dict(config)
     # Unversioned callers retain the historical v2 contract.  The checked-in
     # v2 world profiles opt into semantics 4+ explicitly.
-    config.setdefault("engine_semantics_version", 2)
+    config["engine_semantics_version"] = semantics_version(config, default=2)
     run_id = new_run_id()
     store = Store(str(data_dir / f"{run_id}.db"))
     store.init_run_meta(run_id, int(config.get("seed", 42)), config)
@@ -175,16 +186,28 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
     data_dir.mkdir(parents=True, exist_ok=True)
     dest = data_dir / f"{new_id}.db"
     shutil.copyfile(src, dest)
-    store = Store(str(dest))
+    try:
+        store = Store(str(dest))
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
     meta = store.get_meta()
     config = json.loads(meta["config_json"])
-    old_semantics = int(config.get("engine_semantics_version", 1))
+    try:
+        old_semantics = semantics_version(config, default=1)
+        new_semantics = (validate_engine_semantics_version(upgrade_semantics)
+                         if upgrade_semantics is not None else old_semantics)
+    except UnsupportedEngineSemantics as exc:
+        store.close()
+        dest.unlink(missing_ok=True)
+        sys.exit(str(exc))
+    config["engine_semantics_version"] = old_semantics
     if upgrade_semantics is not None:
-        if int(upgrade_semantics) <= old_semantics:
+        if new_semantics <= old_semantics:
             store.close()
             dest.unlink(missing_ok=True)
             sys.exit(f"semantic upgrade must exceed stored version {old_semantics}")
-        config["engine_semantics_version"] = int(upgrade_semantics)
+        config["engine_semantics_version"] = new_semantics
     store.set_meta(run_id=new_id, parent_run_id=meta["run_id"], fork_tick=int(meta["tick"]),
                    status="paused", config_json=json.dumps(config, sort_keys=True))
     store.log_event(int(meta["tick"]), "fork", {
@@ -193,7 +216,7 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
     if upgrade_semantics is not None:
         store.log_event(int(meta["tick"]), "semantic_upgrade", {
             "parent_run_id": meta["run_id"], "old_version": old_semantics,
-            "new_version": int(upgrade_semantics)}, phase="NIGHT_CLOSE", importance=4.0)
+            "new_version": new_semantics}, phase="NIGHT_CLOSE", importance=4.0)
     store.commit()
     store.close()
     operational_log(logger, logging.INFO, "run.fork.created",
@@ -207,23 +230,155 @@ async def headless(world: World, ticks: int) -> None:
     await world.run(max_ticks=ticks)
 
 
+def _close_run(world, store: Store) -> None:
+    """Close a real World while retaining compatibility with lightweight callers."""
+    close_world = getattr(world, "close", None)
+    if callable(close_world):
+        close_world()
+    else:
+        store.close()
+
+
+def _recorded_acceptance_side_effects(
+        source, target_tick: int) -> tuple[dict, dict, list[dict]]:
+    """Load acceptance-run effects that sit outside the deterministic world loop."""
+    checkpoints: dict[int, dict] = {}
+    table_exists = source.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='acceptance_checkpoints'"
+    ).fetchone()
+    if table_exists is not None:
+        for row in source.execute(
+            "SELECT scheduled_tick,question,status,prediction_id,detail "
+            "FROM acceptance_checkpoints WHERE scheduled_tick<=? "
+            "AND prediction_id IS NOT NULL ORDER BY scheduled_tick,question",
+            (target_tick,),
+        ).fetchall():
+            prediction_id = int(row["prediction_id"])
+            if prediction_id in checkpoints:
+                raise RuntimeError(
+                    "recorded acceptance checkpoints reuse prediction_id "
+                    f"{prediction_id}")
+            checkpoints[prediction_id] = dict(row)
+
+    completion_events: dict[int, list[dict]] = {}
+    for row in source.execute(
+        "SELECT id,tick,phase,subject_type,subject_id,importance,payload_json "
+        "FROM events WHERE kind='acceptance_checkpoint_completed' AND tick<=? "
+        "ORDER BY id", (target_tick,),
+    ).fetchall():
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+            prediction_id = int(payload["prediction_id"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "recorded acceptance completion has an invalid prediction reference"
+            ) from exc
+        completion_events.setdefault(prediction_id, []).append({
+            **dict(row), "payload": payload,
+        })
+
+    missed_events = []
+    for row in source.execute(
+        "SELECT id,tick,phase,subject_type,subject_id,importance,payload_json "
+        "FROM events WHERE kind='acceptance_checkpoint_missed' AND tick<=? "
+        "ORDER BY id", (target_tick,),
+    ).fetchall():
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+            int(payload["scheduled_tick"])
+            str(payload["question"])
+            str(payload["detail"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "recorded missed acceptance checkpoint has an invalid payload"
+            ) from exc
+        missed_events.append({**dict(row), "payload": payload})
+    return checkpoints, completion_events, missed_events
+
+
 async def replay_headless(world: World, target_tick: int) -> None:
-    """Replay world ticks plus externally requested Oracle predictions."""
+    """Replay world ticks plus externally orchestrated Oracle side effects."""
     source = world.gateway.replay_conn
     if source is None:
         await headless(world, target_tick)
         return
+    checkpoints, completion_events, missed_events = _recorded_acceptance_side_effects(
+        source, target_tick)
     predictions = source.execute(
-        "SELECT asked_tick, question FROM predictions WHERE asked_tick<=? "
+        "SELECT id, asked_tick, question FROM predictions WHERE asked_tick<=? "
         "ORDER BY asked_tick, id", (target_tick,)).fetchall()
+    predictions_by_tick: dict[int, list] = {}
     for prediction in predictions:
-        asked_tick = int(prediction["asked_tick"])
-        if world.store.tick < asked_tick:
-            await world.run(max_ticks=asked_tick - world.store.tick)
-        if world.store.tick != asked_tick:
+        predictions_by_tick.setdefault(
+            int(prediction["asked_tick"]), []).append(prediction)
+    missed_by_tick: dict[int, list[dict]] = {}
+    for event in missed_events:
+        missed_by_tick.setdefault(int(event["tick"]), []).append(event)
+
+    consumed_checkpoint_ids: set[int] = set()
+    consumed_completion_ids: set[int] = set()
+    for action_tick in sorted(set(predictions_by_tick) | set(missed_by_tick)):
+        if world.store.tick < action_tick:
+            await world.run(max_ticks=action_tick - world.store.tick)
+        if world.store.tick != action_tick:
             raise RuntimeError(
-                f"replay paused at tick {world.store.tick} before Oracle tick {asked_tick}")
-        await world.oracle.ask(str(prediction["question"]))
+                f"replay paused at tick {world.store.tick} before external tick "
+                f"{action_tick}")
+
+        for prediction in predictions_by_tick.get(action_tick, []):
+            source_prediction_id = int(prediction["id"])
+            result = await world.oracle.ask(str(prediction["question"]))
+            try:
+                replay_prediction_id = int(result["prediction_id"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "replayed Oracle call produced no valid prediction reference"
+                ) from exc
+
+            checkpoint = checkpoints.get(source_prediction_id)
+            if checkpoint is not None:
+                from reports.acceptance import _record_checkpoint
+
+                _record_checkpoint(
+                    world.store, int(checkpoint["scheduled_tick"]),
+                    str(checkpoint["question"]), str(checkpoint["status"]),
+                    prediction_id=replay_prediction_id, detail=checkpoint["detail"])
+                consumed_checkpoint_ids.add(source_prediction_id)
+
+            for event in completion_events.get(source_prediction_id, []):
+                payload = dict(event["payload"])
+                payload["prediction_id"] = replay_prediction_id
+                world.store.log_event(
+                    int(event["tick"]), "acceptance_checkpoint_completed", payload,
+                    phase=event["phase"], subject_type=event["subject_type"],
+                    subject_id=event["subject_id"],
+                    importance=float(event["importance"]))
+                consumed_completion_ids.add(int(event["id"]))
+                world.store.commit()
+
+        for event in missed_by_tick.get(action_tick, []):
+            from reports.acceptance import _record_checkpoint
+
+            payload = dict(event["payload"])
+            _record_checkpoint(
+                world.store, int(payload["scheduled_tick"]),
+                str(payload["question"]), "missed", detail=str(payload["detail"]))
+            world.store.log_event(
+                int(event["tick"]), "acceptance_checkpoint_missed", payload,
+                phase=event["phase"], subject_type=event["subject_type"],
+                subject_id=event["subject_id"], importance=float(event["importance"]))
+            world.store.commit()
+
+    missing_checkpoints = sorted(set(checkpoints) - consumed_checkpoint_ids)
+    missing_events = sorted(
+        int(event["id"])
+        for events in completion_events.values() for event in events
+        if int(event["id"]) not in consumed_completion_ids)
+    if missing_checkpoints or missing_events:
+        raise RuntimeError(
+            "recorded acceptance side effects reference missing Oracle predictions: "
+            f"checkpoints={missing_checkpoints}, events={missing_events}")
     if world.store.tick < target_tick:
         await world.run(max_ticks=target_tick - world.store.tick)
 
@@ -386,7 +541,7 @@ def main() -> None:
             require_live_inference_approval(
                 world.config, approved=args.approve_live_inference)
         except SystemExit:
-            store.close()
+            _close_run(world, store)
             raise
     operational_log(logger, logging.INFO, "run.opened",
                     run_id=run_id, tick=store.tick,
@@ -405,18 +560,22 @@ def main() -> None:
             return await generate_report_async(
                 store, world, out_dir=str(config.get("report_dir", "reports/out")))
 
-        report_path = asyncio.run(execute_and_report_acceptance())
-        receipt = write_acceptance_package(
-            store.path,
-            out_dir=str(config.get("report_dir", "reports/out")),
-            experiment_json=args.experiment_evidence,
-            phenomena_yaml=args.phenomena_evidence,
-        )
-        print(json.dumps({"run_id": run_id, "report": report_path,
-                          "acceptance": receipt["artifacts"], "passed": receipt["passed"]}, indent=2))
-        if not receipt["passed"]:
-            raise SystemExit(5)
-        return
+        try:
+            report_path = asyncio.run(execute_and_report_acceptance())
+            receipt = write_acceptance_package(
+                store.path,
+                out_dir=str(config.get("report_dir", "reports/out")),
+                experiment_json=args.experiment_evidence,
+                phenomena_yaml=args.phenomena_evidence,
+            )
+            print(json.dumps({"run_id": run_id, "report": report_path,
+                              "acceptance": receipt["artifacts"],
+                              "passed": receipt["passed"]}, indent=2))
+            if not receipt["passed"]:
+                raise SystemExit(5)
+            return
+        finally:
+            _close_run(world, store)
 
     if args.acceptance_run and args.serve:
         world.acceptance_authorized = True
@@ -441,16 +600,25 @@ def main() -> None:
                     run_id=run_id, tick=store.tick, detail=str(exc))
                 return ""
 
-        path = asyncio.run(execute_and_report())
+        try:
+            path = asyncio.run(execute_and_report())
+        except BaseException:
+            _close_run(world, store)
+            raise
         if args.replay:
             from world.replay_verify import verify_replay
             source = Path(str(world.config["replay_source_path"]))
-            proof = verify_replay(source, store.path)
+            try:
+                proof = verify_replay(source, store.path)
+            except BaseException:
+                _close_run(world, store)
+                raise
             print(json.dumps(proof, indent=2))
             if not proof["exact"]:
                 operational_log(logger, logging.ERROR, "replay.verification.failed",
                                 run_id=run_id, source_run_id=args.replay,
                                 differences=proof.get("differences"))
+                _close_run(world, store)
                 raise SystemExit(3)
             operational_log(logger, logging.INFO, "replay.verification.completed",
                             run_id=run_id, source_run_id=args.replay,
@@ -465,12 +633,14 @@ def main() -> None:
             operational_log(logger, logging.WARNING, "headless.run.paused",
                             run_id=run_id, tick=store.tick, reason=reason,
                             detail=detail, report_path=path)
+            _close_run(world, store)
             raise SystemExit(4)
         print(f"[agent-economy] done @ tick {store.tick} · spend ${gov['total_spend_usd']:.2f} "
               f"· report: {path}")
         operational_log(logger, logging.INFO, "headless.run.completed",
                         run_id=run_id, tick=store.tick,
                         spend_usd=gov["total_spend_usd"], report_path=path)
+        _close_run(world, store)
         return
 
     import uvicorn
@@ -483,7 +653,10 @@ def main() -> None:
     if ticks is not None and not args.acceptance_run:
         startup += f" (bounded to tick {store.tick + ticks})"
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    finally:
+        _close_run(world, store)
 
 
 if __name__ == "__main__":

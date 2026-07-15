@@ -234,8 +234,9 @@ python run.py --report <RUN_ID>
 ```
 
 - **Resume** restores the stored phase cursor and reuses completed calls.
-- **Replay** creates a new database, uses stored LLM responses only, and prints
-  canonical table-hash equality proof.
+- **Replay** opens the recorded source read-only, creates a new database, uses
+  stored LLM responses only, reconstructs persisted acceptance-checkpoint
+  effects, and prints canonical table-hash equality proof.
 - **Report** regenerates HTML/Markdown from a stored database.
 
 Each run is a portable SQLite file under `data/runs/`. It contains the economic
@@ -303,12 +304,15 @@ with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
 spend under the `$1` cap, zero provider/provenance/privacy defects, balanced
 currencies, and exact replay hash `ec2b2409…c399ae2`. The focused gate passed 86
 tests before the final hardening pass, a 93-test integrated adversarial gate
-passed afterward, and the current complete suite passes 280 in 165.73 seconds.
+passed afterward, and the semantics-7 closure suite passed 280 in 165.73
+seconds. The post-merge compatibility/replay cleanup gate passes 303 tests in
+178.22 seconds.
 Dashboard tests, notice validation, audit, two byte-identical
 production builds, dependency audit, secret scan, and local hygiene are green.
-A fresh exact-head GitHub Actions dashboard plus Ubuntu/Windows Python 3.11/3.12
-matrix is required immediately before merge; tagging and publication remain
-separate release decisions.
+PR #15 merged to `main` as `255555c2b24530c0bd39aed2f501277a468adc0a`
+after its exact-head dashboard plus Ubuntu/Windows Python 3.11/3.12 matrix
+passed. Post-merge CI run `29368193807` repeated all five jobs successfully.
+Tagging and publication remain separate release decisions.
 
 The 30-day rumor gate, Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by this pilot.

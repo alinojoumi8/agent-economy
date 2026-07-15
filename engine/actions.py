@@ -17,6 +17,7 @@ from typing import Any, Optional
 from .core import Economy
 from .credit import LoanTerms
 from .ledger import Leg
+from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError
 from observability import get_logger, log_event as operational_log
 
@@ -56,7 +57,7 @@ class ActionExecutor:
         self.store = economy.store
         self.local_currency_action_surfaces = bool(
             economy.config.get("llm", {}).get("local_currency_action_surfaces", False))
-        self.engine_semantics_version = int(economy.config.get("engine_semantics_version", 2))
+        self.engine_semantics_version = semantics_version(economy.config, default=2)
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
