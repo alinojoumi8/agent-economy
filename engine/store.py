@@ -26,9 +26,15 @@ def open_read_only_connection(
     """Open an existing SQLite database without permitting file mutations."""
     # Do not use immutable=1: an active recorded run may have committed calls
     # in its WAL, and immutable connections are allowed to ignore that file.
-    uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+    uri = f"{Path(path).resolve().as_uri()}?mode=ro&cache=private"
     conn = sqlite3.connect(
-        uri, uri=True, isolation_level=None, check_same_thread=check_same_thread)
+        uri, uri=True, isolation_level=None,
+        check_same_thread=check_same_thread,
+        # Recorded-source connections are low-volume and short-lived.  Avoid
+        # CPython's statement cache so close() finalizes every prepared
+        # statement immediately; otherwise Python 3.11 on Windows can retain
+        # a source-file handle until a later GC cycle after an exact replay.
+        cached_statements=0)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only = ON")
