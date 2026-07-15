@@ -161,6 +161,12 @@ def _absolute_manifest(tmp_path: Path) -> Path:
     return target
 
 
+def test_pinned_dataset_snapshots_are_checkout_byte_stable():
+    """Checksums must survive Git's Windows ``core.autocrlf`` checkout."""
+    attributes = Path(".gitattributes").read_text(encoding="utf-8").splitlines()
+    assert "research/data/*.json -text" in attributes
+
+
 def _r21_config(manifest: Path | None = None) -> dict:
     config = load_config("runs/r21-real-us.yaml")
     if manifest is not None:
