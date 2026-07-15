@@ -387,7 +387,10 @@ def evaluate_acceptance(
         oracle_min_samples = int(acceptance.get("oracle_min_latency_samples", 5))
         tick = int(meta["tick"])
         status = str(meta["status"])
-        agent_count = int(store.scalar("SELECT COUNT(*) FROM agents", default=0))
+        living_agent_count = int(store.scalar(
+            "SELECT COUNT(*) FROM agents WHERE alive=1", default=0))
+        historical_agent_count = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
         participant_influenced = bool(meta["participant_influenced"])
         spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
         providers = {
@@ -463,9 +466,12 @@ def evaluate_acceptance(
             _check("run_horizon", f"Configured {min_ticks}-tick run completed cleanly",
                    tick >= min_ticks and status in {"paused", "finished"},
                    {"tick": tick, "minimum": min_ticks, "status": status}),
-            _check("population", "Production population is approximately 100 agents",
-                   min_agents <= agent_count <= max_agents,
-                   {"agents": agent_count, "range": [min_agents, max_agents]}),
+            _check("population", "Production population is approximately 100 living agents",
+                   min_agents <= living_agent_count <= max_agents,
+                   {"agents": living_agent_count,
+                    "living_agents": living_agent_count,
+                    "historical_total_agents": historical_agent_count,
+                    "range": [min_agents, max_agents]}),
             _check("observer_integrity", "No participant actions contaminated the observer-only run",
                    not participant_influenced,
                    {"participant_influenced": participant_influenced}),

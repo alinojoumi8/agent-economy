@@ -171,6 +171,11 @@ latency samples. The profile is uncapped for runtime continuity but has a
 separate $200 efficiency completion gate. On success it writes the complete
 HTML report plus JSON and Markdown acceptance receipts.
 
+The production profile starts with exactly 100 living agents: 63 sampled
+citizens plus engine-owned institutional and health-economy actors. The
+population gate counts living agents, while deceased rows remain preserved for
+lineage and replay as stable-population replacements arrive.
+
 Copy `runs/acceptance/phenomena.template.yaml` to a run-specific reviewed file,
 set its top-level `run_id` to the exact reviewed run, and replace the pending
 examples with phenomena visible in that run's persisted metrics. Evidence for a

@@ -1264,7 +1264,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
 def test_production_config_inherits_world_and_requires_both_keys():
     cfg = load_config("runs/production.yaml")
     assert cfg["budget"]["cap_usd"] is None
-    assert cfg["population"]["size"] == 87
+    assert cfg["population"]["size"] == 63
     assert cfg["banks"]["count"] == 2
     assert cfg["llm"]["default_route"] == {
         "provider": "minimax", "model": "MiniMax-M3"}

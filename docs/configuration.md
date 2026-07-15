@@ -61,6 +61,12 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | `speed_delay_s` | Wall-clock pause between ticks; does not change simulation time |
 | `outlets`, `shocks` | Information institutions and scheduled interventions |
 
+`runs/production.yaml` samples 63 citizens. Maintained semantics 7 adds the
+engine-owned institutional and health-economy actors, producing exactly 100
+living agents at genesis. Acceptance evaluates the living population; deceased
+rows remain available for historical and replay evidence without inflating that
+gate.
+
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
 

@@ -162,6 +162,31 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert "Observed through agent decisions and transactions." in markdown
 
 
+def test_acceptance_population_gate_counts_living_agents(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    store.insert(
+        "agents", id=101, name="Historical agent", kind="citizen", age=80,
+        alive=0, died_tick=300)
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "out", experiment_json=experiment,
+        phenomena_yaml=phenomena)
+    population = next(
+        check for check in receipt["checks"] if check["id"] == "population")
+
+    assert receipt["passed"]
+    assert population["passed"]
+    assert population["evidence"] == {
+        "agents": 100,
+        "living_agents": 100,
+        "historical_total_agents": 101,
+        "range": [95, 105],
+    }
+
+
 def test_acceptance_package_fails_closed_without_reviewed_attachments(tmp_path):
     db, _, _ = _passing_evidence(tmp_path)
     receipt = write_acceptance_package(db, out_dir=tmp_path / "out")
@@ -659,17 +684,34 @@ def test_counterfactual_runner_reuses_the_authorized_effective_config(
     assert observed_configs == [effective_config, effective_config]
 
 
-def test_rehearsal_inherits_acceptance_scope_but_routes_every_role_locally():
+def test_rehearsal_initializes_acceptance_population_and_routes_every_role_locally():
     config = load_config("runs/acceptance/rehearsal.yaml")
 
     assert config["acceptance"]["min_ticks"] == 365
-    assert config["population"]["size"] == 87
     assert {shock["kind"] for shock in config["shocks"]} == {
         "policy_rate", "oil", "rumor", "slant", "scandal",
     }
     routes = [config["llm"]["default_route"], *config["llm"]["routes"].values()]
     assert {route["provider"] for route in routes} == {"scripted"}
     assert not uses_paid_providers(config)
+
+    store = Store(":memory:")
+    store.init_run_meta("acceptance-population", int(config["seed"]), config)
+    world = World(store, config)
+    try:
+        world.initialize()
+        living_agents = int(store.scalar(
+            "SELECT COUNT(*) FROM agents WHERE alive=1", default=0))
+        total_agents = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
+        acceptance = config["acceptance"]
+
+        assert living_agents == 100
+        assert total_agents == 100
+        assert acceptance["min_agents"] <= living_agents <= acceptance["max_agents"]
+    finally:
+        world.gateway.close()
+        store.close()
 
 
 def test_live_acceptance_profile_is_explicitly_uncapped():
