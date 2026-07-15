@@ -1,5 +1,8 @@
 # Live Provider Validation
 
+> **Historical receipt:** this document preserves the July 10 provider baseline;
+> current verification counts and release state live in `implementation-status.md`.
+>
 > **Assessment date:** 2026-07-10
 >
 > **Code baseline:** `b2b25c0` on `fix/provider-live-readiness`

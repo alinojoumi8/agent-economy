@@ -8,6 +8,46 @@ insertion and tick reconciliation independently verifies every account (PRD R1).
 
 SCHEMA_VERSION = 11
 
+
+class SchemaCompatibilityError(RuntimeError):
+    """Raised when a run database requires a newer engine schema."""
+
+
+def _existing_schema_version(conn) -> int | None:
+    """Read an existing run's schema marker without changing the database."""
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_meta'"
+    ).fetchone()
+    if table is None:
+        return None
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(run_meta)")}
+    if "schema_version" not in columns:
+        return None
+    row = conn.execute("SELECT schema_version FROM run_meta WHERE id=1").fetchone()
+    if row is None:
+        return None
+    raw_version = row[0]
+    try:
+        version = int(raw_version)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SchemaCompatibilityError(
+            f"run database has invalid schema_version {raw_version!r}") from exc
+    if isinstance(raw_version, bool) or (
+            isinstance(raw_version, float) and raw_version != version):
+        raise SchemaCompatibilityError(
+            f"run database has invalid schema_version {raw_version!r}")
+    return version
+
+
+def assert_schema_compatible(conn) -> None:
+    """Reject future databases before any migration or cache rebuild runs."""
+    stored_version = _existing_schema_version(conn)
+    if stored_version is not None and stored_version > SCHEMA_VERSION:
+        raise SchemaCompatibilityError(
+            f"run database schema v{stored_version} is newer than this binary's "
+            f"supported schema v{SCHEMA_VERSION}")
+
+
 SCHEMA_SQL = r"""
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -1311,6 +1351,7 @@ SELECT account_id, SUM(delta_cents) FROM ledger_entries GROUP BY account_id;
 
 def initialize_schema(conn) -> None:
     """Create all tables on a fresh connection (idempotent)."""
+    assert_schema_compatible(conn)
     conn.executescript(SCHEMA_SQL)
     conn.executescript(MIGRATION_6_SQL)
     conn.executescript(MIGRATION_7_SQL)

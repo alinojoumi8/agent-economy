@@ -20,6 +20,7 @@ from reports.generate import generate_report
 from run_config import load_config
 from server.app import create_app
 from world.loop import World
+from world.replay_verify import verify_replay
 
 
 def _config(**over):
@@ -401,6 +402,87 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
         assert prediction and int(prediction["asked_tick"]) == 1
         assert store.scalar(
             "SELECT COUNT(*) FROM acceptance_checkpoints WHERE status='completed'", default=0) == 1
+
+
+def test_completed_acceptance_orchestration_replays_exactly(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(acceptance={
+        "min_ticks": 2,
+        "oracle_questions": [{"at_tick": 1, "question": question}],
+    })
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    try:
+        asyncio.run(execute_acceptance_run(source_world, target_tick=2))
+        assert source_store.scalar(
+            "SELECT COUNT(*) FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'", default=0) == 1
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+
+        checkpoint = replay_store.query_one(
+            "SELECT status,prediction_id FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=? AND question=?", (1, question))
+        assert checkpoint is not None
+        assert checkpoint["status"] == "completed"
+        assert checkpoint["prediction_id"] is not None
+        assert replay_store.scalar(
+            "SELECT COUNT(*) FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'", default=0) == 1
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
+def test_missed_acceptance_checkpoint_replays_exactly(tmp_path):
+    question = "Will a bank run happen?"
+    config = _config(acceptance={
+        "min_ticks": 3,
+        "oracle_questions": [{"at_tick": 1, "question": question}],
+    })
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    try:
+        asyncio.run(source_world.run(max_ticks=2))
+        with pytest.raises(AcceptanceCheckpointMissed):
+            asyncio.run(execute_acceptance_run(source_world, target_tick=3))
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+
+        checkpoint = replay_store.query_one(
+            "SELECT status,detail FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=? AND question=?", (1, question))
+        assert checkpoint is not None
+        assert checkpoint["status"] == "missed"
+        assert "passed without usable evidence" in checkpoint["detail"]
+        assert replay_store.scalar(
+            "SELECT COUNT(*) FROM events WHERE kind='acceptance_checkpoint_missed'",
+            default=0) == 1
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
 
 
 def test_resumed_served_acceptance_uses_its_absolute_target(tmp_path):

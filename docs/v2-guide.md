@@ -171,7 +171,10 @@ Canonical replay resolves each persisted `model_call_id` through the logical LLM
 call it references, so concurrent completion order cannot create a false mismatch
 between otherwise identical databases. News citations are likewise checked
 against the deterministic event contents they reference when operational rows
-shift physical SQLite IDs. Missing or dangling provenance fails closed.
+shift physical SQLite IDs. Missing or dangling provenance fails closed. The
+recorded source opens read-only without initialization or migration, all replay
+handles close idempotently, and persisted completed or missed acceptance
+checkpoint effects are reconstructed beside their Oracle predictions.
 
 The sanitized portable fixture at
 `tests/golden/fd0adc5dc1.sqlite.json.zlib.b64` contains the stored configuration,
@@ -431,8 +434,9 @@ python run.py --config runs/v2-spec-closure-live.yaml --ticks 5 --approve-live-i
 ### Semantics-7 closure evidence
 
 The focused named gate passed 86 tests before the final hardening pass; a
-93-test integrated adversarial gate passed afterward, and the current complete
-Python suite passed 280 tests in 165.73 seconds. Python
+93-test integrated adversarial gate passed afterward, and the semantics-7
+closure suite passed 280 tests in 165.73 seconds. The post-merge
+compatibility/replay cleanup suite passes 303 tests in 178.22 seconds. Python
 compilation and pinned-dataset
 verification were green: FRED and BLS each supplied three required targets, and
 the four optional sources remained explicitly unpinned. Dashboard verification
@@ -466,24 +470,27 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 
 | Gate | Status | Evidence |
 |---|---|---|
-| Focused + full Python | **Passed** | 86 initial focused / 93 final adversarial / 280 current full; compile and datasets green |
+| Focused + full Python | **Passed** | 86 initial focused / 93 final adversarial / 280 closure / 303 post-merge cleanup; compile and datasets green |
 | Dashboard + hygiene | **Passed** | 16 tests, audit 0 high, 599-module build, fresh static bundle, clean diff |
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
-| GitHub Actions / PR #15 | **Required at merge** | Exact pushed head must pass dashboard plus Ubuntu/Windows Python 3.11/3.12 |
+| GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
 The closure audit also passed the universal hash-locked Python install and
 advisory scan, generated dashboard notice freshness/full-text review (including
 Vite/Rolldown helpers emitted into the bundle), pinned FRED/BLS terms and
 checksum verification, pinned persona prior-art attribution with no copied
 upstream code, and both current-tree and full-history secret scans. These checks
-authorize this code merge; repeat them against any future release candidate.
+authorized PR #15's merge to `main` as
+`255555c2b24530c0bd39aed2f501277a468adc0a`; post-merge CI run `29368193807`
+repeated all five jobs successfully. Repeat the audits against any future
+release candidate.
 
 R21 real-US microdata, R22 hosted multi-user operation, the 30-day rumor gate,
 Oracle latency/calibration campaign, and 365-day/$200 acceptance run remain
-separate. The owner has authorized merging this closure after its exact-head CI
-matrix passes; tagging and publication are not authorized by that merge.
+separate. PR #15 is merged; tagging and publication were not authorized by that
+merge and remain separate release decisions.
 
 ## Release checklist
 

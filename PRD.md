@@ -243,7 +243,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 | **Phase 1 — Kernel** (weeks 1–3) | Engine + ledger, 20 agents, 1 bank, labor + goods markets, CLI only, cost governor | 30 simulated days, money conserved, readable event log |
 | **Phase 2 — Markets & media** (weeks 4–6) | Stock exchange, 2nd bank, news outlets, conversations, 100 agents, lifecycle (health/death/arrivals), checkpointing | Rumor-propagation pilot passes (R5) + lifecycle mechanics verified (R11) |
 | **Phase 3 — Observatory** (weeks 7–9) | Dashboard, Oracle + prediction scoring, shock library, end-of-run reports | Full R6–R10 acceptance; first complete metered production run |
-| **Phase 4 — P1 items** (weeks 10+) | Government + elections, VC track, experiment harness, replay | First multi-seed experiment written up |
+| **Phase 4 — P1 items** (weeks 10+) | Government + elections (R12), VC track (R13), experiment harness (R14), Oracle calibration (R15), replay (R16), health economy (R17) | First multi-seed experiment written up; calibration and health-economy gates pass |
 
 Timeline assumes part-time solo build with AI-assisted coding; phases are scope-gated, not date-gated.
 
