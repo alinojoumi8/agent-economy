@@ -1,0 +1,23 @@
+enabled: true
+public_base_url: ${AGENT_ECONOMY_PUBLIC_BASE_URL}
+session_cookie_name: __Host-ae_session
+session_ttl_seconds: 43200
+
+database:
+  dsn_env: AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL
+  password_env: AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD
+  runtime_role: agent_economy_app
+  supervisor_role: agent_economy_supervisor
+  migration_lock_key: 7321104221
+  connect_timeout_seconds: 10
+
+artifacts:
+  backend: filesystem
+  root: /tmp/agent-economy-migration-artifacts
+
+runtime:
+  run_directory: /var/lib/agent-economy/runs
+  snapshot_directory: /var/lib/agent-economy/snapshots
+  writer_lease_seconds: 30
+  snapshot_interval_ticks: 5
+  shutdown_grace_seconds: 30

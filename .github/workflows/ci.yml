@@ -69,8 +69,105 @@ jobs:
       - name: Validate dependency environment
         run: python -m pip check
       - name: Compile Python sources
-        run: python -m compileall -q agents engine experiments llm oracle reports research server world run.py
+        run: python -m compileall -q agents engine experiments hosted llm oracle reports research server world run.py
       - name: Verify pinned research datasets
         run: python run.py --verify-datasets config/data-manifest.yaml
       - name: Run test suite (includes golden-run diff)
         run: python -m pytest tests/ -q
+
+  hosted-integration:
+    name: Hosted PostgreSQL / S3 integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_PASSWORD: ci-postgres-password-not-a-secret
+      APP_DATABASE_PASSWORD: ci-runtime-password-not-a-secret
+      SUPERVISOR_DATABASE_PASSWORD: ci-supervisor-password-not-a-secret
+      MINIO_ROOT_USER: ci-minio-user
+      MINIO_ROOT_PASSWORD: ci-minio-password-not-a-secret
+      S3_ACCESS_KEY_ID: ci-snapshot-user
+      S3_SECRET_ACCESS_KEY: ci-snapshot-password-not-a-secret
+      AGENT_ECONOMY_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:ci-postgres-password-not-a-secret@127.0.0.1:55432/agent_economy
+      AGENT_ECONOMY_TEST_POSTGRES_RUNTIME_DSN: postgresql://agent_economy_app:ci-runtime-password-not-a-secret@127.0.0.1:55432/agent_economy
+      AGENT_ECONOMY_TEST_POSTGRES_SUPERVISOR_DSN: postgresql://agent_economy_supervisor:ci-supervisor-password-not-a-secret@127.0.0.1:55432/agent_economy
+      AGENT_ECONOMY_TEST_S3_ENDPOINT: http://127.0.0.1:59000
+      AGENT_ECONOMY_TEST_S3_ACCESS_KEY: ci-minio-user
+      AGENT_ECONOMY_TEST_S3_SECRET_KEY: ci-minio-password-not-a-secret
+      AGENT_ECONOMY_TEST_S3_BUCKET: agent-economy-runs
+      AGENT_ECONOMY_TEST_S3_SCOPED_ACCESS_KEY: ci-snapshot-user
+      AGENT_ECONOMY_TEST_S3_SCOPED_SECRET_KEY: ci-snapshot-password-not-a-secret
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Validate dependency environment
+        run: python -m pip check
+      - name: Start isolated PostgreSQL and MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name ae-r22-ci-postgres \
+            -p 127.0.0.1:55432:5432 \
+            -e POSTGRES_DB=agent_economy \
+            -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            -e APP_DATABASE_PASSWORD="$APP_DATABASE_PASSWORD" \
+            -e SUPERVISOR_DATABASE_PASSWORD="$SUPERVISOR_DATABASE_PASSWORD" \
+            -v "$PWD/deploy/postgres/init:/docker-entrypoint-initdb.d:ro" \
+            postgres:17-bookworm
+          docker run -d --name ae-r22-ci-minio \
+            -p 127.0.0.1:59000:9000 \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            server /data
+          for attempt in $(seq 1 60); do
+            if docker exec ae-r22-ci-postgres \
+              pg_isready -U postgres -d agent_economy >/dev/null 2>&1; then
+              break
+            fi
+            test "$attempt" -lt 60
+            sleep 1
+          done
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:59000/minio/health/live >/dev/null; then
+              break
+            fi
+            test "$attempt" -lt 60
+            sleep 1
+          done
+          docker run --rm --network host \
+            --entrypoint /bin/sh \
+            -v "$PWD/deploy/minio/app-policy.json:/config/app-policy.json:ro" \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
+            -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
+            -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
+            minio/mc:RELEASE.2025-04-16T18-13-26Z -ec '
+              mc alias set local http://127.0.0.1:59000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD";
+              mc mb --ignore-existing local/agent-economy-runs;
+              mc anonymous set none local/agent-economy-runs;
+              mc admin user add local "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY";
+              mc admin policy create local agent-economy-snapshots /config/app-policy.json;
+              mc admin policy attach local agent-economy-snapshots --user "$S3_ACCESS_KEY_ID"
+            '
+      - name: Run real durable-service isolation tests
+        run: >-
+          python -m pytest
+          tests/test_hosted_postgres_integration.py
+          tests/test_hosted_s3_integration.py -q
+      - name: Validate hosted Compose model
+        env:
+          AGENT_ECONOMY_PUBLIC_BASE_URL: https://localhost
+        run: docker compose -f deploy/compose.yaml config --quiet
+      - name: Build the non-root hosted image
+        run: docker build --tag agent-economy-hosted:ci .
+      - name: Smoke the hosted CLI image
+        run: docker run --rm agent-economy-hosted:ci --help
+      - name: Stop integration services
+        if: always()
+        run: docker rm -f ae-r22-ci-postgres ae-r22-ci-minio || true

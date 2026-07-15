@@ -1,0 +1,202 @@
+name: agent-economy-hosted
+
+x-runtime-environment: &runtime-environment
+  AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:-https://localhost}
+  AGENT_ECONOMY_HOSTED_DATABASE_URL: postgresql://agent_economy_app@postgres:5432/agent_economy
+  AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
+  AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL: postgresql://agent_economy_supervisor@postgres:5432/agent_economy
+  AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+  AGENT_ECONOMY_S3_ENDPOINT_URL: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+  AWS_DEFAULT_REGION: us-east-1
+
+x-migration-environment: &migration-environment
+  AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:-https://localhost}
+  AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL: postgresql://postgres@postgres:5432/agent_economy
+  AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+
+x-app-base: &app-base
+  image: agent-economy-hosted:${AGENT_ECONOMY_IMAGE_TAG:-local}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  networks: [backend]
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: agent_economy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
+      SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d agent_economy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        mc mb --ignore-existing local/agent-economy-runs;
+        mc anonymous set none local/agent-economy-runs;
+        mc admin user add local "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}";
+        mc admin policy create local agent-economy-snapshots /config/app-policy.json;
+        mc admin policy attach local agent-economy-snapshots --user "$${S3_ACCESS_KEY_ID}"
+    volumes:
+      - ./minio/app-policy.json:/config/app-policy.json:ro
+    networks: [backend]
+    restart: "no"
+
+  migrate:
+    <<: *app-base
+    environment: *migration-environment
+    command: ["migrate", "--config", "/app/config/hosted.migrate.docker.yaml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  bootstrap:
+    <<: *app-base
+    profiles: [ops]
+    environment: *migration-environment
+    command: ["bootstrap", "--help"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  rotate-database-passwords:
+    <<: *app-base
+    profiles: [ops]
+    environment:
+      <<: *migration-environment
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
+      SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+      AGENT_ECONOMY_NEW_POSTGRES_PASSWORD: ${AGENT_ECONOMY_NEW_POSTGRES_PASSWORD:-}
+    command: ["rotate-database-passwords", "--config", "/app/config/hosted.migrate.docker.yaml"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  app:
+    <<: *app-base
+    environment: *runtime-environment
+    command: ["serve", "--config", "/app/config/hosted.docker.yaml", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - run-cache:/var/lib/agent-economy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      AGENT_ECONOMY_PUBLIC_HOST: ${AGENT_ECONOMY_PUBLIC_HOST:-localhost}
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge, backend]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks: [backend]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  snapshot-all:
+    <<: *app-base
+    environment: *runtime-environment
+    profiles: [ops]
+    command: ["snapshot-all", "--config", "/app/config/hosted.docker.yaml"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - run-cache:/var/lib/agent-economy
+    restart: "no"
+
+networks:
+  edge: {}
+  backend:
+    internal: true
+
+volumes:
+  postgres-data: {}
+  minio-data: {}
+  run-cache: {}
+  caddy-data: {}
+  caddy-config: {}
+  prometheus-data: {}

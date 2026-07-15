@@ -15,6 +15,8 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
+| `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
+| `config/hosted.docker.yaml` | R22 Compose application service | PostgreSQL + S3-compatible storage |
 
 Profiles never silently change provider, model, endpoint, or credential type.
 
@@ -28,6 +30,17 @@ Secrets belong in the ignored `.env` file or process environment.
 | `KIMI_API_KEY` | Kimi Code membership route in production profiles |
 | `ANTHROPIC_API_KEY` | Optional custom Anthropic route |
 | `AGENT_ECONOMY_LOG_LEVEL` | Python operational log threshold; default `INFO` |
+| `AGENT_ECONOMY_HOSTED_CONFIG` | Optional default path for `python -m hosted.cli` |
+| `AGENT_ECONOMY_HOSTED_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD` | Password-free hosted web PostgreSQL conninfo plus its separately injected password |
+| `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD` | Password-free restart/lease supervisor conninfo plus its separate password |
+| `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD` | Password-free migration-only administrator conninfo plus its separate password |
+| `AGENT_ECONOMY_PUBLIC_BASE_URL` | Exact external HTTPS origin for hosted mode |
+| `AGENT_ECONOMY_S3_ENDPOINT_URL` | S3/MinIO endpoint used by the hosted artifact adapter |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3-compatible artifact credentials |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Reference Compose MinIO bootstrap identity; never passed to the app |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Reference Compose bucket/prefix-scoped runtime snapshot identity |
+| `AGENT_ECONOMY_BOOTSTRAP_PASSWORD` | One-time initial hosted administrator password |
+| `AGENT_ECONOMY_NEW_POSTGRES_PASSWORD` | Temporary new PostgreSQL administrator password used only by the profile-gated rotation job |
 
 Kimi Code membership keys use `https://api.kimi.com/coding/v1` and the
 `kimi-for-coding` alias. They are not interchangeable with Moonshot platform
@@ -76,6 +89,74 @@ seed-derived PRNG streams. `LIQ` funds deposits; `NETWORTH` remains an
 engine-owned off-ledger calibration baseline visible in agent provenance.
 Missing supports, wrong adapter versions, malformed values, or non-verified
 manifest rows fail closed.
+
+## R22 hosted service configuration
+
+Hosted configuration is independent of run-profile inheritance. It rejects
+unknown keys and secret values embedded directly in YAML: files name the
+environment variables that contain the PostgreSQL DSN and object-store
+credentials. `enabled: false` in `config/hosted.example.yaml` is the safe
+development default.
+
+```yaml
+enabled: true
+public_base_url: ${AGENT_ECONOMY_PUBLIC_BASE_URL}
+session_cookie_name: __Host-ae_session
+session_ttl_seconds: 43200
+database:
+  dsn_env: AGENT_ECONOMY_HOSTED_DATABASE_URL
+  password_env: AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD
+  runtime_role: agent_economy_app
+  supervisor_dsn_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL
+  supervisor_password_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD
+  supervisor_role: agent_economy_supervisor
+  connect_timeout_seconds: 10
+  pool_min_size: 1
+  pool_max_size: 10
+artifacts:
+  backend: s3
+  bucket: agent-economy-runs
+  prefix: v1
+  endpoint_url_env: AGENT_ECONOMY_S3_ENDPOINT_URL
+  region: us-east-1
+  access_key_env: AWS_ACCESS_KEY_ID
+  secret_key_env: AWS_SECRET_ACCESS_KEY
+runtime:
+  run_directory: /var/lib/agent-economy/runs
+  snapshot_directory: /var/lib/agent-economy/snapshots
+  writer_lease_seconds: 30
+  snapshot_interval_ticks: 5
+  shutdown_grace_seconds: 30
+```
+
+`writer_lease_seconds` belongs under `runtime`; the database mapping instead
+accepts connection timeout, pool bounds, migration advisory-lock key, and the
+runtime and supervisor roles. Both must be `NOSUPERUSER NOBYPASSRLS`; only the
+supervisor role receives restart run-discovery capability. Base conninfo and
+passwords are separate so psycopg can escape reserved characters safely. Use a
+privileged DSN only for the explicit migration command, never for serving.
+
+Filesystem artifacts require an absolute `artifacts.root` distinct from the
+run directory. S3 artifacts require a valid bucket, region, absolute HTTP(S)
+endpoint, and environment-sourced credentials. Snapshot and run directories
+must be absolute and distinct. Local simulation profiles and
+`engine_semantics_version` are unaffected by hosted configuration.
+
+### Hosted load-probe inputs
+
+`python -m hosted.load_test` does not read passwords from arguments or files.
+Each repeated `--user` value is
+`TENANT_UUID,EMAIL,PASSWORD_ENV[,RUN_UUID]`, and the named environment variable
+must be populated in the invoking process. Between 2 and 32 distinct tenant
+UUIDs are required, total scheduled requests cannot exceed 10,000, and every
+configured operation must run at least once: a minimum of three requests per
+user without run IDs and up to five when run IDs are supplied.
+`--requests-per-user` defaults to 40, `--concurrency` accepts 1–256 (default
+16), `--timeout-seconds` accepts finite values from 1 through 120 (default 10),
+and `--output` writes the sanitized JSON receipt atomically. When supplied,
+`--build-ref` must be a full lowercase 40- or 64-character Git object ID. The base URL must
+be HTTPS; `--allow-insecure-loopback` is only a local certificate-verification
+escape hatch for `localhost`, `127.0.0.1`, or `::1`.
 
 ## Information and beliefs
 

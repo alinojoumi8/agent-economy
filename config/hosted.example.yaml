@@ -1,0 +1,37 @@
+# Optional R22 hosted control plane. The simulation database remains one
+# schema-v11 SQLite file per run; PostgreSQL stores only users, tenancy, run
+# catalog metadata, leases, and object-store snapshot pointers.
+enabled: false
+public_base_url: https://economy.example.com
+session_cookie_name: __Host-ae_session
+session_ttl_seconds: 43200
+
+database:
+  # Put the PostgreSQL DSN in this environment variable. Never put credentials
+  # in this file.
+  dsn_env: AGENT_ECONOMY_HOSTED_DATABASE_URL
+  password_env: AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD
+  # Provision this login as NOSUPERUSER NOBYPASSRLS. The migration runner
+  # refuses to proceed when the role is missing or can bypass row security.
+  runtime_role: agent_economy_app
+  # The supervisor alone receives global active-run discovery. Use a distinct
+  # NOSUPERUSER/NOBYPASSRLS login and DSN.
+  supervisor_dsn_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL
+  supervisor_password_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD
+  supervisor_role: agent_economy_supervisor
+  migration_lock_key: 7321104221
+  connect_timeout_seconds: 10
+
+# For local development, use an absolute directory outside runtime.run_directory.
+# Production uses the S3 shape shown in config/hosted.docker.yaml. Credentials
+# and endpoint URLs are always resolved through named environment variables.
+artifacts:
+  backend: filesystem
+  root: C:/agent-economy-hosted/artifacts
+
+runtime:
+  run_directory: C:/agent-economy-hosted/runs
+  snapshot_directory: C:/agent-economy-hosted/snapshots
+  writer_lease_seconds: 30
+  snapshot_interval_ticks: 5
+  shutdown_grace_seconds: 30

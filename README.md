@@ -268,11 +268,26 @@ llm/               adapters, routing, readiness, retry, metering, governor
 oracle/            evidence tools, prediction, resolution, calibration
 experiments/       treatment/control harness
 server/            FastAPI, WebSocket, replay API, committed dashboard bundle
+hosted/            optional R22 catalog/auth/RLS, supervisor, artifacts, API, CLI
+deploy/            Compose, Caddy, Prometheus, PostgreSQL role initialization
 dashboard/         React/Vite/Tailwind/Recharts source
 reports/           run reports and acceptance receipts
 tests/             unit, invariant, integration, property, golden, acceptance
 docs/              maintained user/operator/research/developer handbook
 ```
+
+## Optional hosted multi-user mode
+
+R22 adds a separately enabled hosted service while preserving the zero-ops
+local workflow above. It provides invite-only tenants and roles, authenticated
+shared-run observation/control, a PostgreSQL control plane with forced row-level
+security, one deterministic SQLite v11 world per run, immutable local or
+S3-compatible snapshots, and a hosted dashboard. The reference deployment in
+`deploy/compose.yaml` includes PostgreSQL, MinIO, migrations, the application,
+Caddy, and Prometheus. Start with
+[configuration](docs/configuration.md), the
+[operator runbook](docs/operator-runbook.md), and
+[security policy](SECURITY.md); do not expose the local `run.py --serve` app.
 
 ## Documentation
 
@@ -294,7 +309,8 @@ documents.
 ## Current status and limits
 
 All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
-R20 multi-region, and R21 real-U.S. calibration extensions are implemented. The semantics-7 code closure adds
+R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
+surfaces are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
 
@@ -329,12 +345,22 @@ The recorded five-tick R21 gate `24d8dc242e` sampled 70 households and 12
 realized firms, retired no under-age SCF category-3 respondent, had zero
 reconciliation failures, and replayed offline as
 `replay-24d8dc242e-a9ed4f2910` with identical hash
-`95b4b8bd…0cee369a`. The integrated Python gate passes 328 tests.
+`95b4b8bd…0cee369a`. The integrated Python gate passes 328 tests. R21 merged
+through PR #18 at `21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five
+PR jobs passed. Post-merge main run `29403186283` repeated all five jobs
+successfully.
 
-The application is intentionally local and single-operator. It has no
-authentication or tenant isolation; bind to `127.0.0.1` and do not expose it
-directly to an untrusted network. R22 hosted multi-user operation remains the
-next implementation project.
+Local mode remains intentionally single-operator and unauthenticated: bind it
+to `127.0.0.1` and never expose it directly. R22's optional hosted path adds
+authentication, tenant/role isolation, CSRF/throttling/audit, a lease-based
+single-writer supervisor, durable snapshots, and deployment assets without
+changing engine semantics or schema. Exact local Compose evidence at
+`53081f2` passed TLS readiness, tenant isolation, immutable S3 snapshots and
+cold restore, atomic database-password rotation, Prometheus scraping, and a
+200-request load probe with 80 enforced cross-tenant denials and zero failures.
+PR #19 head `1cf1d0a` then passed the six-job dashboard, hosted PostgreSQL/S3,
+and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`. No public
+production deployment is claimed.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

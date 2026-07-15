@@ -10,7 +10,7 @@ const SUGGESTIONS = [
   "Will the market index fall by 15% within 30 ticks?",
 ];
 
-export function OraclePanel({ oracle, act }) {
+export function OraclePanel({ oracle, act, readOnly = false }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
   const [asking, setAsking] = useState(false);
@@ -41,12 +41,12 @@ export function OraclePanel({ oracle, act }) {
               {answer.drivers?.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{answer.drivers.map(driver => <Badge key={String(driver)}>{typeof driver === "string" ? driver : driver.name || JSON.stringify(driver)}</Badge>)}</div>}
             </div>}
           </div>
-          <form onSubmit={ask} className="flex flex-col gap-2 sm:flex-row">
+          {readOnly ? <p className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-3 text-xs text-slate-500">Hosted access exposes existing sanitized forecasts. New Oracle questions are disabled.</p> : <><form onSubmit={ask} className="flex flex-col gap-2 sm:flex-row">
             <label className="sr-only" htmlFor="oracle-question">Question for the Oracle</label>
             <input id="oracle-question" className="field flex-1" value={question} onChange={event => setQuestion(event.target.value)} placeholder="Probability of a bank run within 30 ticks?" />
             <button className="button button-primary" disabled={asking || !question.trim()}>{asking ? "Analyzing…" : "Ask Oracle"}</button>
           </form>
-          <div className="mt-2 flex flex-wrap gap-1.5">{SUGGESTIONS.map(suggestion => <button key={suggestion} className="rounded-full border border-mint-300/10 px-2.5 py-1 text-[10px] text-slate-500 hover:border-mint-300/30 hover:text-mint-300" onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">{SUGGESTIONS.map(suggestion => <button key={suggestion} className="rounded-full border border-mint-300/10 px-2.5 py-1 text-[10px] text-slate-500 hover:border-mint-300/30 hover:text-mint-300" onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div></>}
         </div>
         <div className="scrollbar max-h-[380px] overflow-y-auto p-4">
           <div className="mb-3 flex items-center justify-between"><span className="text-[10px] uppercase tracking-wider text-slate-500">Forecast ledger</span>{score.mean_brier !== undefined && <span className="tabular text-xs text-slate-400">Brier {number(score.mean_brier, 3)}</span>}</div>

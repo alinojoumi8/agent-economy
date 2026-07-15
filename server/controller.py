@@ -60,7 +60,8 @@ class WebSocketHub:
 class RunController:
     """Own the live world's task, transitions, and dashboard notifications."""
 
-    def __init__(self, world: World, *, served_ticks: int | None = None) -> None:
+    def __init__(self, world: World, *, served_ticks: int | None = None,
+                 hosted_safe: bool = False) -> None:
         self.world = world
         self.store = world.store
         self.hub = WebSocketHub()
@@ -81,6 +82,7 @@ class RunController:
             else self.store.tick + int(served_ticks) if served_ticks is not None
             else None)
         self.acceptance_artifacts: dict = {}
+        self.hosted_safe = bool(hosted_safe)
 
     def is_running(self) -> bool:
         return bool(self.task and not self.task.done())
@@ -158,6 +160,10 @@ class RunController:
 
     def tick_payload(self, tick: int, summary: dict) -> dict:
         payload = build_tick_payload(self.world, tick, summary)
+        if self.hosted_safe:
+            payload.pop("report_path", None)
+            payload["report_artifact"] = {
+                "available": bool(self.world.last_report_path), "kind": "report"}
         payload.update({
             "running": self.is_running(),
             "target_tick": self.target_tick,
@@ -166,7 +172,7 @@ class RunController:
         return payload
 
     def run_status_payload(self, *, running: bool | None = None) -> dict:
-        return {
+        payload = {
             "type": "run_status",
             "tick": self.store.tick,
             "status": self.world.status,
@@ -175,8 +181,13 @@ class RunController:
             "remaining_ticks": self.remaining_ticks(),
             "governor": self.world.gateway.governor.status(),
             "pause_reason": self.world.last_pause_reason,
-            "report_path": self.world.last_report_path,
         }
+        if self.hosted_safe:
+            payload["report_artifact"] = {
+                "available": bool(self.world.last_report_path), "kind": "report"}
+        else:
+            payload["report_path"] = self.world.last_report_path
+        return payload
 
     async def _run_world(self, max_ticks: int | None) -> None:
         try:
@@ -446,9 +457,9 @@ class RunController:
             orchestration.update({
                 "authorized": self.acceptance_authorized,
                 "running": self.is_running(),
-                "artifacts": self.acceptance_artifacts,
+                "artifacts": {} if self.hosted_safe else self.acceptance_artifacts,
             })
-        return {
+        payload = {
             "run_id": meta["run_id"], "status": self.world.status,
             "tick": self.store.tick, "seed": meta["seed"],
             "active_tick": meta["active_tick"],
@@ -462,10 +473,15 @@ class RunController:
             "provider_readiness": self.world.gateway.readiness(),
             "rate_limit": self.world.gateway.rate_limit_status(),
             "pause_reason": self.world.last_pause_reason,
-            "report_path": self.world.last_report_path,
             "acceptance_orchestration": orchestration,
             "participant_active": self.participant.active_agent_id() is not None,
         }
+        if self.hosted_safe:
+            payload["report_artifact"] = {
+                "available": bool(self.world.last_report_path), "kind": "report"}
+        else:
+            payload["report_path"] = self.world.last_report_path
+        return payload
 
 
 def build_tick_payload(world: World, tick: int, summary: dict) -> dict:

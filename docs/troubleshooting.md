@@ -1,5 +1,82 @@
 # Troubleshooting
 
+## Hosted readiness fails
+
+Run the explicit redacted check and inspect only its named component results:
+
+```powershell
+python -m hosted.cli readiness --config config/hosted.example.yaml
+```
+
+Confirm PostgreSQL is reachable, both the web and supervisor logins are
+`NOSUPERUSER NOBYPASSRLS`, their configured role names match `current_user`,
+migrations are current, run/snapshot directories are absolute and separate,
+and the scoped artifact identity can read bucket location and snapshot objects.
+For Compose, inspect
+`docker compose -f deploy/compose.yaml ps` and the `migrate` job first. CLI
+failures intentionally print only the exception type so a DSN or object-store
+credential cannot leak into logs.
+
+## Hosted login or CSRF fails
+
+Registration requires an unexpired, unrevoked invitation for the same tenant.
+Login requires the tenant UUID as well as email/password. Mutations require the
+secure session cookie, the CSRF cookie, and the matching `X-AE-CSRF` header.
+HTTP 429 means the authentication throttle is active; respect `Retry-After`.
+Do not weaken same-site/secure cookies or disclose whether a tenant/email exists.
+
+If an active member is disabled, their sessions are revoked. Cross-tenant IDs
+return 404 by design and should not be diagnosed by bypassing tenant scope.
+
+## A hosted run reports lease loss
+
+Treat lease loss as a fail-closed pause, not as permission to start a second
+writer. Verify that only one supervisor instance owns the run, inspect the
+catalog lease/recovery audit, and confirm PostgreSQL time/connectivity. On
+restart, interrupted runs are recovered as paused and must be resumed through
+the authenticated control route. Never edit a hosted SQLite world while a
+supervisor handle may still own it.
+
+## Hosted snapshot verification or restore fails
+
+Verification checks immutable key, SHA-256, size, SQLite schema v11, and
+`quick_check`. Preserve both the suspect object and catalog metadata. Fix
+storage availability or permissions, then rerun `verify-snapshot`; never update
+metadata to match a changed object. Restore refuses path traversal, tenant/run
+mismatch, invalid SQLite, checksum drift, and replacement without `--replace`.
+Use the last independently verified snapshot and retain the failed artifact for
+incident review.
+
+## Hosted load probe fails
+
+Use at least two `--user TENANT_UUID,EMAIL,PASSWORD_ENV[,RUN_UUID]` arguments
+with distinct tenant UUIDs, and confirm every named password environment
+variable is set. Login failure aborts without printing credentials. Probe
+failures record only operation, expected/actual status, latency, and bounded
+body-validity metadata in the sanitized JSON receipt.
+
+Use 2–32 users and no more than 10,000 total requests. The per-user count must
+cover the full operation set at least once (three without run IDs, up to five
+with run IDs); a receipt with no completed cross-tenant denial cannot pass.
+
+Remote and plain-HTTP origins are rejected. For a local self-signed certificate,
+use an `https://localhost`/loopback origin with `--allow-insecure-loopback`; the
+flag intentionally fails for non-loopback hosts. Reduce `--concurrency` if the
+service or development machine is saturated, but keep the recorded values and
+failed receipt rather than silently rerunning until a result looks favorable.
+Timeouts must be finite and between 1 and 120 seconds. Evidence-bearing
+`--build-ref` values must be full lowercase Git object IDs; free-form labels,
+paths, e-mail addresses, and secret-shaped strings are rejected before login.
+
+## Hosted database login fails after editing `.env`
+
+PostgreSQL initializes role passwords only when its data volume is first
+created. Editing `POSTGRES_PASSWORD`, `APP_DATABASE_PASSWORD`, or
+`SUPERVISOR_DATABASE_PASSWORD` does not rotate an existing volume. Restore the
+last working values, then follow the profile-gated `rotate-database-passwords`
+procedure in the operator runbook. Do not delete the volume or place passwords
+on a command line.
+
 ## Provider preflight fails
 
 Run the exact profile explicitly:

@@ -79,10 +79,10 @@ export function ConversationsPanel({ conversations }) {
   );
 }
 
-export function EventsPanel({ events, onShock }) {
+export function EventsPanel({ events, onShock = null }) {
   const [raw, setRaw] = useState(false);
   return (
-    <Panel title="Event spine" eyebrow="If it is not here, it did not happen" className="col-span-full xl:col-span-4" action={<div className="flex gap-1"><button className="button !min-h-7 !px-2 !py-1" onClick={() => setRaw(value => !value)}>{raw ? "Human" : "Raw"}</button><button className="button !min-h-7 !px-2 !py-1" onClick={onShock}>Shock</button></div>}>
+    <Panel title="Event spine" eyebrow="If it is not here, it did not happen" className="col-span-full xl:col-span-4" action={<div className="flex gap-1"><button className="button !min-h-7 !px-2 !py-1" onClick={() => setRaw(value => !value)}>{raw ? "Human" : "Raw"}</button>{onShock && <button className="button !min-h-7 !px-2 !py-1" onClick={onShock}>Shock</button>}</div>}>
       <div className="scrollbar max-h-[390px] overflow-y-auto px-4 font-mono">
         {events.length ? events.map(event => <article key={event.id} className="grid grid-cols-[2.5rem_1fr] gap-2 border-b border-mint-300/[.07] py-2 text-[11px] last:border-0">
           <span className="tabular text-slate-600">d{event.tick}</span>
