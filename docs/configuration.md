@@ -14,7 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
-| `runs/oracle/v2-seed-7311-control.yaml` … `v2-seed-7320-rumor.yaml` | Fixed v2 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, conservative 3x metering, capped at $25 per run |
+| `runs/oracle/v3-seed-7321-control.yaml` … `v3-seed-7330-rumor.yaml` | Fixed v3 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, conservative 3x metering, capped at $25 per run |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -244,10 +244,10 @@ malformed, or duplicate completion references fail closed. Markerless stored
 configs retain the legacy answer-call calculation for replay compatibility.
 
 The multi-run Oracle calibration release gate is separate from one run's
-`acceptance` block. The active `oracle-calibration-v2` corpus uses fresh seeds
-7311–7320 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
+`acceptance` block. The active `oracle-calibration-v3` corpus uses fresh seeds
+7321–7330 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
 and a $25 per-run cap. Its schema-v1 manifest is based on
-`runs/oracle/manifest-v2.template.yaml` and explicitly records campaign ID and
+`runs/oracle/manifest-v3.template.yaml` and explicitly records campaign ID and
 version plus every run's ID, seed, source/replay database paths, profile path,
 and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
 ready-to-copy manifest entry for one predeclared profile.
@@ -263,9 +263,21 @@ The archived `oracle-calibration-v1-s7301` source completed tick 335 with valid
 live-provider provenance, but replay diverged at the first arrival because its
 staged genesis did not persist the persona RNG stream. Checkpoint inspection
 also retained SQLite WAL/SHM sidecars. It is diagnostic evidence only and must
-not be listed in a v2 manifest. The draft release-gate branch now persists and
-validates both semantics-7 RNG streams, finalizes standalone SQLite checkpoints,
-and enforces the replay target tick; focused and full verification pass.
+not be listed in a release manifest. The preceding replay-integrity revision
+persists and validates both semantics-7 RNG streams, finalizes standalone SQLite
+checkpoints, and enforces the replay target tick; its focused and full
+verification passed.
+
+The immutable v2 seed-7311 source and generated offline replay both reached
+tick 335 and crossed that arrival without the v1 divergence. Canonical
+verification returned `exact: true` with `differences: []`. Its receipt failed
+because checkpoint integrity counted all stored agent rows rather than
+validating the bounded living population and reconciling it with preserved
+deceased rows. V2 is diagnostic evidence and must not be listed in the v3
+manifest. The v3 receipt contract validates living/deceased census consistency,
+chronological death/schedule/arrival linkage, `NIGHT_CLOSE` event and subject
+provenance, one-time consumption of due schedules, and the profile-locked
+5–20-tick replacement delay.
 
 ## Rumor targeting
 

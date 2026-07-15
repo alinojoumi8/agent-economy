@@ -11,7 +11,7 @@
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
   python run.py --acceptance-report RUNID               # evaluate persisted production evidence
   python run.py --oracle-calibration-report MANIFEST    # curated Oracle campaign evidence
-  python run.py --config runs/oracle/v2-seed-7311-control.yaml --oracle-campaign-run --approve-live-inference
+  python run.py --config runs/oracle/v3-seed-7321-control.yaml --oracle-campaign-run --approve-live-inference
   python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
 One process: FastAPI serves the static dashboard and drives the world loop.

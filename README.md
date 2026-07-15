@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v2-seed-7311-control.yaml` ... `v2-seed-7320-rumor.yaml` | Predeclared v2 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
+| `runs/oracle/v3-seed-7321-control.yaml` ... `v3-seed-7330-rumor.yaml` | Predeclared v3 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -337,9 +337,10 @@ after its exact-head dashboard plus Ubuntu/Windows Python 3.11/3.12 matrix
 passed. Post-merge CI run `29368193807` repeated all five jobs successfully.
 Tagging and publication remain separate release decisions.
 
-The corrected release-gate branch passed 590 Python tests with 8 skipped, 23
-dashboard tests, a fresh 603-module dashboard build, and checksum verification
-for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
+The final v3 receipt-hardening tree passed 599 Python tests with 8 skipped in
+1,618.07 seconds. The preceding replay-integrity revision separately passed 590
+with 8 skipped, 23 dashboard tests, a fresh 603-module dashboard build, and
+checksum verification for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
 `881ed41994` completed 365 ticks
 with 100 living agents, zero spend, balanced ledger state, zero operational
 failures, six completed and resolved Oracle checkpoints, all five shock traces,
@@ -350,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v3 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -360,14 +361,26 @@ resolved forecasts and valid live-provider provenance, but its offline replay
 diverged at the first arrival. The cause was a staged-genesis persona RNG stream
 that was not checkpointed/restored; read-only checkpoint inspection also left
 SQLite WAL/SHM sidecars. That source is diagnostic evidence only and is not
-eligible acceptance evidence. The current draft release-gate branch persists
+eligible acceptance evidence. The preceding replay-integrity revision persists
 and validates both semantics-7 RNG streams, finalizes standalone checkpoints
 without SQLite sidecars, and fails replay when its target tick is not reached.
-Focused, representative aggregate, and full-suite verification are green.
+Its focused, representative aggregate, and full-suite verification passed.
 
-Oracle campaign tooling is implemented. The corrected v2 corpus uses fresh
-seeds 7311–7320, `kimi-for-coding-highspeed`, conservative 3x cost metering, and
-`runs/oracle/manifest-v2.template.yaml` with a $25 per-run safety cap. It feeds
+Oracle campaign tooling is implemented. The archived v2 seed-7311 source and
+its generated offline replay both reached tick 335 and crossed the first
+arrival without the v1 divergence. Canonical verification returned
+`exact: true` with `differences: []`; receipt creation then failed because the
+checkpoint audit counted all preserved agent rows instead of validating the
+bounded living population separately from deceased rows: after one death and
+its replacement arrival, the correct census was 101 stored rows, 100 living,
+and one deceased. V2 is immutable diagnostic evidence and is never resumed,
+rewritten, or reused. The corrected receipt contract validates the
+living/deceased census, requires each death, schedule, and arrival to link in
+chronological order, authenticates their `NIGHT_CLOSE` phase and agent subject
+provenance, consumes every due schedule exactly once, and enforces the fixed
+5–20-tick replacement delay. The fresh v3 corpus uses seeds 7321–7330,
+`kimi-for-coding-highspeed`, conservative 3x cost metering, and
+`runs/oracle/manifest-v3.template.yaml` with a $25 per-run safety cap. It feeds
 the read-only `--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
 finalized source, exact companion replay, and source receipt without applying
 the whole-world all-live-provider gate. Each receipt chain binds the immutable
@@ -375,7 +388,7 @@ pre-run claim and initialized marker, clean Git commit/tree, committed config,
 canonical source/replay paths, required checkpoint manifests, and an execution
 tracker proving exact one-time source-call consumption with zero compatibility
 fallback or live replay dispatch. Passing evidence still requires the ten
-fresh v2 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
+fresh v3 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
 60 seconds, and Brier below 0.25. See the
 [operator runbook](docs/operator-runbook.md).
 

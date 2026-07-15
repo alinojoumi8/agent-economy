@@ -108,8 +108,8 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
-The active release calibration design therefore preregisters ten fixed v2
-profiles under `runs/oracle`, six forecasts per run, fresh seeds 7311–7320, and
+The active release calibration design therefore preregisters ten fixed v3
+profiles under `runs/oracle`, six forecasts per run, fresh seeds 7321–7330, and
 alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
 live; background behavior remains scripted so the campaign isolates the
 forecast surface. Treatment windows publish a one-person rumor
@@ -131,10 +131,20 @@ The archived `oracle-calibration-v1-s7301` source is not part of that evidence.
 It completed tick 335 with valid provider provenance, but replay diverged at the
 first arrival because staged genesis reset an uncheckpointed persona RNG
 stream; checkpoint inspection also retained SQLite sidecars. It is preserved as
-diagnostic evidence only. The draft release-gate branch now persists and
+diagnostic evidence only. The preceding replay-integrity revision persists and
 validates both semantics-7 RNG streams, finalizes standalone checkpoints, and
-enforces the replay target tick; focused and full verification pass. V2 uses
-conservative 3x metering and a $25 per-run cap.
+enforces the replay target tick; its focused and full verification passed.
+
+The immutable v2 seed-7311 source and generated replay both reached tick 335 and
+crossed that arrival without divergence. Canonical verification returned
+`exact: true` with `differences: []`. Its receipt failed for a different reason:
+checkpoint integrity counted all stored agent rows rather than the
+bounded living population after a deceased row was preserved and a replacement
+arrival was added. V2 is diagnostic evidence and is never reused. The v3
+receipt contract validates living/deceased census consistency; chronological
+death/schedule/arrival linkage; `NIGHT_CLOSE` event and subject provenance;
+one-time due-schedule consumption; and the fixed 5–20-tick replacement delay.
+It uses conservative 3x metering and retains a $25 per-run cap.
 
 ## Evidence hierarchy
 
@@ -152,7 +162,7 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-The successful v2 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+Completion of the v3 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
 run, and final provenance audit are separate pending gates. The release pull
 request stays draft; merging, tagging, publication, and public deployment need
 separate authorization. After those gates:

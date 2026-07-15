@@ -1,0 +1,17 @@
+# Fresh pre-run commitment after v2 seed 7311 completed source and exact replay
+# but exposed a receipt-only population census defect. The v2 evidence remains
+# immutable and excluded; no response or seed is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v3
+campaign_version: 3
+runs:
+  - {seed: 7321, run_id: oracle-calibration-v3-s7321, profile: v3-seed-7321-control.yaml, effective_config_sha256: 7d05b74fa9f45ff7133c0891e312d7aa7de49b8c9fea4d970e4ff942af7f0683}
+  - {seed: 7322, run_id: oracle-calibration-v3-s7322, profile: v3-seed-7322-rumor.yaml, effective_config_sha256: 1829b86335b26770ea557e867911f0f6f9750c42dd962080dbd49c8e05c4a72d}
+  - {seed: 7323, run_id: oracle-calibration-v3-s7323, profile: v3-seed-7323-control.yaml, effective_config_sha256: df3a91211ca1b8cd3125eae2b6737a2f5b0c3dd522593082f3ad8fe28e389dc2}
+  - {seed: 7324, run_id: oracle-calibration-v3-s7324, profile: v3-seed-7324-rumor.yaml, effective_config_sha256: c937ee5c78d12f21c7e4b70a26dd5824840d0c2db177481b8c450b089a32a8f3}
+  - {seed: 7325, run_id: oracle-calibration-v3-s7325, profile: v3-seed-7325-control.yaml, effective_config_sha256: b24a9fa2fd813eda2908503c0df0b7763a9a495a657924b86b92aca83b2895b8}
+  - {seed: 7326, run_id: oracle-calibration-v3-s7326, profile: v3-seed-7326-rumor.yaml, effective_config_sha256: ce1053b2d81146b6161d45cf7fae5ba02efd13032b20649f4b9d8152db9fce0c}
+  - {seed: 7327, run_id: oracle-calibration-v3-s7327, profile: v3-seed-7327-control.yaml, effective_config_sha256: fa24e45ff04083f2690e6552dc0646c53ef6d192a75dba4faee2714ce2e4609b}
+  - {seed: 7328, run_id: oracle-calibration-v3-s7328, profile: v3-seed-7328-rumor.yaml, effective_config_sha256: ed7658e9ed1aa9ad3204e20f6e029691818e368af20f7ea2dcef377d809f296d}
+  - {seed: 7329, run_id: oracle-calibration-v3-s7329, profile: v3-seed-7329-control.yaml, effective_config_sha256: f76adab6fc296eda540322c4a3329fb521f6586c9fe1a6063db6a9bfce6ab509}
+  - {seed: 7330, run_id: oracle-calibration-v3-s7330, profile: v3-seed-7330-rumor.yaml, effective_config_sha256: cb4d9fb40a71b80b945def3edc470f02c6a97cf41ab5ac63b17dc70277f9ea22}

@@ -177,8 +177,8 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. The active `oracle-calibration-v2` commitment uses
-fresh seeds 7311–7320. Its ten predeclared profiles keep background behavior
+whole-world acceptance run. The active `oracle-calibration-v3` commitment uses
+fresh seeds 7321–7330. Its ten predeclared profiles keep background behavior
 scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
 metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
 seed or switch control/treatment arms after seeing outcomes. Treatment profiles
@@ -206,19 +206,33 @@ resolved forecasts and valid provider provenance. Its replay nonetheless
 diverged at the first arrival because staged genesis reset an uncheckpointed
 persona RNG stream, and checkpoint inspection retained SQLite WAL/SHM sidecars.
 It is diagnostic evidence only: do not resume it, copy it into a manifest, or
-reuse its responses. The draft branch fixes for persona RNG restore,
+reuse its responses. The preceding branch fixes for persona RNG restore,
 standalone checkpoint finalization, replay target-tick enforcement, and
 column-specific pre-dispatch RNG validation pass the focused and full gates.
 
+The immutable `oracle-calibration-v2-s7311` source and generated offline replay
+both reached tick 335 and crossed the arrival that invalidated v1. Canonical
+verification returned `exact: true` with `differences: []`. Receipt generation
+then failed because checkpoint integrity required exactly 100 total
+agent rows. Lifecycle correctly preserved one deceased row and created its
+replacement arrival, yielding 101 stored rows, 100 living, and one deceased.
+Do not resume, rewrite, or reuse any v2 source, replay, claim, checkpoint, or
+response. V3 uses a fresh precommit and validates the bounded living population,
+requires stored total to equal living plus deceased, and rejects invalid
+lifecycle state. It also requires each death to create one chronologically valid
+schedule, each due schedule to produce exactly one linked arrival, the fixed
+5–20-tick delay, and authentic `NIGHT_CLOSE` phase plus agent-subject provenance
+for death and arrival events.
+
 Then preflight and execute each profile from
-`v2-seed-7311-control.yaml` through `v2-seed-7320-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7311
+`v3-seed-7321-control.yaml` through `v3-seed-7330-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7321
 produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v2-seed-7311-control.yaml --preflight
-python run.py --config runs/oracle/v2-seed-7311-control.yaml --preflight-live
-python run.py --config runs/oracle/v2-seed-7311-control.yaml `
+python run.py --config runs/oracle/v3-seed-7321-control.yaml --preflight
+python run.py --config runs/oracle/v3-seed-7321-control.yaml --preflight-live
+python run.py --config runs/oracle/v3-seed-7321-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -267,13 +281,13 @@ The campaign command does the offline replay itself; do not invoke a separate
 manual `--replay` and substitute it into the corpus. After each command exits,
 confirm the emitted source receipt reports finalized source/replay databases and
 no `-wal` or `-shm` sidecar. Copy
-`runs/oracle/manifest-v2.template.yaml` to a run-specific evidence manifest and
+`runs/oracle/manifest-v3.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v2.template.yaml runs/oracle/manifest-v2.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v2.yaml
+Copy-Item runs/oracle/manifest-v3.template.yaml runs/oracle/manifest-v3.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v3.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -440,7 +454,7 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep the release pull request draft until the v2 Oracle campaign, capped
+Keep the release pull request draft until the v3 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
 publication, and public deployment require separate authorization.

@@ -102,6 +102,9 @@ def _write_checkpoint(
         "DELETE FROM acceptance_checkpoints WHERE scheduled_tick>?", (tick,))
     checkpoint.execute("DELETE FROM transactions WHERE tick>?", (tick,))
     checkpoint.execute("DELETE FROM ledger_entries WHERE tick>?", (tick,))
+    checkpoint.execute("DELETE FROM agents WHERE arrived_tick>?", (tick,))
+    checkpoint.execute(
+        "UPDATE agents SET alive=1,died_tick=NULL WHERE died_tick>?", (tick,))
     engine = random.Random(seed).getstate()
     persona = random.Random(seed ^ 0xA11CE).getstate()
     lifecycle = random.Random(seed ^ 0x5F5E5F).getstate()
@@ -126,6 +129,7 @@ def _write_run(
     tmp_path: Path, index: int, *, invalid_provider: bool = False,
     invalid_evidence: bool = False,
     planner_retry: bool = False,
+    lifecycle_replacement: bool = False,
     receipt_dir: Path | None = None,
 ) -> dict:
     seed = RELEASE_SEEDS[index]
@@ -174,6 +178,22 @@ def _write_run(
         store.insert(
             "firms", name=f"Firm {firm_index}", sector="unit",
             status="private", product_json="{}")
+    if lifecycle_replacement:
+        store.execute(
+            "UPDATE agents SET alive=0,died_tick=207 WHERE id=1")
+        arrival_id = store.insert(
+            "agents", name="Replacement Citizen", kind="citizen", alive=1,
+            arrived_tick=221, population_tier="core", pinned_core=1)
+        store.log_event(207, "death", {
+            "agent_id": 1, "name": "Citizen 0", "cause": "natural",
+        }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=1)
+        schedule_event_id = store.log_event(
+            207, "arrival_scheduled", {"due_tick": 221},
+            phase="NIGHT_CLOSE")
+        store.log_event(221, "arrival", {
+            "agent_id": arrival_id, "name": "Replacement Citizen",
+            "schedule_event_id": schedule_event_id,
+        }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=arrival_id)
     outcome = index % 2
     question_ticks = {
         int(item["at_tick"])
@@ -860,37 +880,37 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v2.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v3.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v2_commitment_and_highspeed_contract_are_pinned():
+def test_checked_in_v3_commitment_and_highspeed_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7311: "6cb7cbb0c5a90259e818bea4119d01a506d60d74677e255088e4523b181889df",
-        7312: "0bb2e8c36a367b21a0db73bbed7b09ff3f8994521c0b1f153503d8f9942eca6c",
-        7313: "1884ff177ee7921f876ff3b6253b4f78b490313860ca9e21024f02b36733d50e",
-        7314: "3fec681995f250633a846ce9569364916ef28c781d647bd604cb603b43cac182",
-        7315: "5dd7ac8b9f502de35dd778b6b7b7c661256c5ca01bc4be4e5c0d3992915a2eef",
-        7316: "6e96e78924e317af3f09fa5c5862a707ed850bf80394397a31062711d633bad1",
-        7317: "9b2d4b6d533a9d505c48355f106b6e478bb097196944d7036e96723160d43534",
-        7318: "40be05557ce3cb4db92300cb4a773f79d738a08033b0df1cc6815968fee1d0d1",
-        7319: "45c3f9c6e7feda52c110de7ce64f7b422cf5493451436ff337f2d0ff05368e5d",
-        7320: "9c53aa67458a1ca06af298b5f7d3ab47a5b58cddea70bb39784f2c7523fe1083",
+        7321: "7d05b74fa9f45ff7133c0891e312d7aa7de49b8c9fea4d970e4ff942af7f0683",
+        7322: "1829b86335b26770ea557e867911f0f6f9750c42dd962080dbd49c8e05c4a72d",
+        7323: "df3a91211ca1b8cd3125eae2b6737a2f5b0c3dd522593082f3ad8fe28e389dc2",
+        7324: "c937ee5c78d12f21c7e4b70a26dd5824840d0c2db177481b8c450b089a32a8f3",
+        7325: "b24a9fa2fd813eda2908503c0df0b7763a9a495a657924b86b92aca83b2895b8",
+        7326: "ce1053b2d81146b6161d45cf7fae5ba02efd13032b20649f4b9d8152db9fce0c",
+        7327: "fa24e45ff04083f2690e6552dc0646c53ef6d192a75dba4faee2714ce2e4609b",
+        7328: "ed7658e9ed1aa9ad3204e20f6e029691818e368af20f7ea2dcef377d809f296d",
+        7329: "f76adab6fc296eda540322c4a3329fb521f6586c9fe1a6063db6a9bfce6ab509",
+        7330: "cb4d9fb40a71b80b945def3edc470f02c6a97cf41ab5ac63b17dc70277f9ea22",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v2"
-    assert RELEASE_CAMPAIGN_VERSION == 2
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v3"
+    assert RELEASE_CAMPAIGN_VERSION == 3
     assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
     assert RELEASE_ORACLE_PRICING == {
         "in": 2.85, "out": 12.00, "cache": 0.57,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "b4472251736b64800d2f43666e4387772cf06043ef102886aaf25bc9f86867b9")
+        "34b3c50cba5fbdaa86d1bf54c7c816340a44ea4cdad2eb562020d73d663a64f8")
 
-    commitment_path = root / "commitment-v2.yaml"
+    commitment_path = root / "commitment-v3.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -915,6 +935,14 @@ def test_checked_in_v2_commitment_and_highspeed_contract_are_pinned():
         assert config["llm"]["pricing"] == {
             RELEASE_ORACLE_MODEL: RELEASE_ORACLE_PRICING,
         }
+        assert config["lifecycle"] == {
+            "retirement_age": 65,
+            "medical_cost_cents": 5000,
+            "housing_cost_cents": 75000,
+            "population_mode": "stable",
+            "arrival_delay_min": 5,
+            "arrival_delay_max": 20,
+        }
 
 
 def test_oracle_campaign_profile_cannot_change_predeclared_arm():
@@ -922,6 +950,15 @@ def test_oracle_campaign_profile_cannot_change_predeclared_arm():
     profile["shocks"][0]["params"]["n_agents"] = 2
 
     with pytest.raises(OracleCampaignError, match="predeclared campaign arm"):
+        validate_oracle_campaign_profile(profile)
+
+
+def test_oracle_campaign_profile_pins_replacement_arrival_delay():
+    profile = load_config(_FIRST_PROFILE)
+    profile["lifecycle"]["arrival_delay_min"] = 4
+
+    with pytest.raises(
+            OracleCampaignError, match="fixed replacement-arrival schedule"):
         validate_oracle_campaign_profile(profile)
 
 
@@ -1116,6 +1153,249 @@ def test_release_prng_validators_enforce_column_specific_shapes():
     assert not oracle_campaign._valid_semantics7_prng_state(single_json)
 
 
+def test_checkpoint_population_tracks_living_agents_not_preserved_rows():
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE agents (id INTEGER PRIMARY KEY, alive INTEGER)")
+    connection.executemany(
+        "INSERT INTO agents(alive) VALUES (?)", [(1,)] * 100)
+
+    baseline = oracle_campaign._checkpoint_population_evidence(connection)
+    assert baseline == {
+        "total": 100, "living": 100, "deceased": 0, "invalid": 0,
+    }
+    assert oracle_campaign._valid_release_checkpoint_population(baseline)
+
+    connection.execute("UPDATE agents SET alive=0 WHERE id=1")
+    before_arrival = oracle_campaign._checkpoint_population_evidence(connection)
+    assert before_arrival == {
+        "total": 100, "living": 99, "deceased": 1, "invalid": 0,
+    }
+    assert oracle_campaign._valid_release_checkpoint_population(before_arrival)
+
+    connection.execute("INSERT INTO agents(alive) VALUES (1)")
+    after_arrival = oracle_campaign._checkpoint_population_evidence(connection)
+    assert after_arrival == {
+        "total": 101, "living": 100, "deceased": 1, "invalid": 0,
+    }
+    assert oracle_campaign._valid_release_checkpoint_population(after_arrival)
+
+    connection.execute("INSERT INTO agents(alive) VALUES (2)")
+    invalid = oracle_campaign._checkpoint_population_evidence(connection)
+    assert invalid["invalid"] == 1
+    assert not oracle_campaign._valid_release_checkpoint_population(invalid)
+    connection.execute("UPDATE agents SET alive=NULL WHERE id=2")
+    null_alive = oracle_campaign._checkpoint_population_evidence(connection)
+    assert null_alive["invalid"] == 2
+    assert not oracle_campaign._valid_release_checkpoint_population(null_alive)
+    connection.close()
+
+
+def test_source_receipt_accepts_retained_death_and_linked_replacement(tmp_path):
+    entry = _write_run(tmp_path, 0, lifecycle_replacement=True)
+    assert entry["run_id"] == _FIRST_RUN_ID
+
+    store = Store(
+        str(tmp_path / f"{_FIRST_RUN_ID}.db"), create=False, read_only=True)
+    try:
+        evidence, reasons = oracle_campaign._source_integrity(
+            store, load_config(_FIRST_PROFILE), 335)
+    finally:
+        store.close()
+    assert reasons == []
+    assert evidence["population"]["current"] == {
+        "total": 101, "living": 100, "deceased": 1, "invalid": 0,
+    }
+    assert evidence["population"]["baseline_total"] == 100
+    assert evidence["population"]["event_links_valid"] is True
+    checkpoints = {
+        item["tick"]: item for item in evidence["checkpoints"]["files"]
+    }
+    assert checkpoints[5]["population"] == {
+        "total": 100, "living": 100, "deceased": 0, "invalid": 0,
+    }
+    assert checkpoints[210]["population"] == {
+        "total": 100, "living": 99, "deceased": 1, "invalid": 0,
+    }
+    assert checkpoints[230]["population"] == {
+        "total": 101, "living": 100, "deceased": 1, "invalid": 0,
+    }
+    assert all(
+        item["lifecycle"]["event_links_valid"] for item in checkpoints.values())
+
+
+def test_lifecycle_provenance_rejects_future_or_misattributed_events():
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE agents (id INTEGER PRIMARY KEY, kind TEXT, role TEXT, "
+        "alive INTEGER, arrived_tick INTEGER, died_tick INTEGER)")
+    connection.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, tick INTEGER, phase TEXT, "
+        "kind TEXT, subject_type TEXT, subject_id INTEGER, payload_json TEXT)")
+    connection.executemany(
+        "INSERT INTO agents(kind,role,alive,arrived_tick,died_tick) "
+        "VALUES ('citizen',NULL,1,0,NULL)", [()] * 100)
+    connection.execute(
+        "UPDATE agents SET alive=0,died_tick=3 WHERE id=1")
+    connection.execute(
+        "INSERT INTO agents(id,kind,role,alive,arrived_tick,died_tick) "
+        "VALUES (101,'citizen',NULL,1,8,NULL)")
+    connection.execute(
+        "INSERT INTO events(id,tick,phase,kind,subject_type,subject_id,payload_json) "
+        "VALUES (1,3,'NIGHT_CLOSE','death','agent',1,?)",
+        (json.dumps({"agent_id": 1}),))
+    connection.execute(
+        "INSERT INTO events(id,tick,phase,kind,subject_type,subject_id,payload_json) "
+        "VALUES (2,3,'NIGHT_CLOSE','arrival_scheduled',NULL,NULL,?)",
+        (json.dumps({"due_tick": 8}),))
+    connection.execute(
+        "INSERT INTO events(id,tick,phase,kind,subject_type,subject_id,payload_json) "
+        "VALUES (3,8,'NIGHT_CLOSE','arrival','agent',101,?)",
+        (json.dumps({"agent_id": 101, "schedule_event_id": 2}),))
+
+    valid = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=8)
+    assert valid["event_links_valid"] is True
+
+    future = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=7)
+    assert future["invalid_agent_rows"] > 0
+    assert future["invalid_event_envelopes"] > 0
+    assert future["event_links_valid"] is False
+
+    connection.execute(
+        "UPDATE agents SET arrived_tick=7 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 7}),))
+    connection.execute(
+        "UPDATE events SET tick=7 WHERE kind='arrival'")
+    too_early = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=7)
+    assert too_early["invalid_event_envelopes"] == 1
+    assert too_early["event_links_valid"] is False
+
+    connection.execute(
+        "UPDATE agents SET arrived_tick=23 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 23}),))
+    connection.execute(
+        "UPDATE events SET tick=23 WHERE kind='arrival'")
+    upper_bound = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=23)
+    assert upper_bound["event_links_valid"] is True
+
+    connection.execute(
+        "UPDATE agents SET arrived_tick=24 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 24}),))
+    connection.execute(
+        "UPDATE events SET tick=24 WHERE kind='arrival'")
+    too_late = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=24)
+    assert too_late["invalid_event_envelopes"] == 1
+    assert too_late["event_links_valid"] is False
+
+    connection.execute(
+        "UPDATE agents SET arrived_tick=8 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 8}),))
+    connection.execute(
+        "UPDATE events SET tick=8 WHERE kind='arrival'")
+
+    connection.execute(
+        "UPDATE events SET payload_json='{}' WHERE kind='arrival_scheduled'")
+    malformed_payload = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=8)
+    assert malformed_payload["invalid_event_payloads"] == 1
+    assert malformed_payload["event_links_valid"] is False
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 8}),))
+
+    connection.execute(
+        "UPDATE agents SET arrived_tick='not-a-tick' WHERE id=101")
+    malformed_agent = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=8)
+    assert malformed_agent["invalid_agent_conversions"] == 1
+    assert malformed_agent["event_links_valid"] is False
+    connection.execute(
+        "UPDATE agents SET arrived_tick=8 WHERE id=101")
+
+    connection.execute(
+        "UPDATE agents SET died_tick=3.5 WHERE id=1")
+    connection.execute(
+        "UPDATE agents SET arrived_tick=8.5 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET tick=3.5 WHERE kind IN ('death','arrival_scheduled')")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 8.5}),))
+    connection.execute(
+        "UPDATE events SET tick=8.5 WHERE kind='arrival'")
+    fractional = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=9)
+    assert fractional["invalid_agent_conversions"] == 2
+    assert fractional["invalid_event_payloads"] == 3
+    assert fractional["event_links_valid"] is False
+    connection.execute(
+        "UPDATE agents SET died_tick=3 WHERE id=1")
+    connection.execute(
+        "UPDATE agents SET arrived_tick=8 WHERE id=101")
+    connection.execute(
+        "UPDATE events SET tick=3 WHERE kind IN ('death','arrival_scheduled')")
+    connection.execute(
+        "UPDATE events SET payload_json=? WHERE kind='arrival_scheduled'",
+        (json.dumps({"due_tick": 8}),))
+    connection.execute(
+        "UPDATE events SET tick=8 WHERE kind='arrival'")
+
+    connection.execute(
+        "UPDATE agents SET role=? WHERE id=2", (sqlite3.Binary(b"bad-role"),))
+    blob_role = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=8)
+    assert blob_role["invalid_agent_conversions"] == 1
+    assert blob_role["event_links_valid"] is False
+    assert all(
+        type(kind) is str and (role is None or type(role) is str)
+        for kind, role in blob_role["baseline_census"])
+    connection.execute("UPDATE agents SET role=NULL WHERE id=2")
+
+    connection.execute(
+        "UPDATE events SET subject_id=999 WHERE kind='arrival'")
+    misattributed = oracle_campaign._source_population_evidence(
+        connection, horizon_tick=8)
+    assert misattributed["invalid_event_envelopes"] == 1
+    assert misattributed["event_links_valid"] is False
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("living", "accepted"), ((94, False), (95, True), (105, True), (106, False)))
+def test_release_population_living_boundaries(living, accepted):
+    total = max(100, living)
+    evidence = {
+        "total": total, "living": living, "deceased": total - living,
+        "invalid": 0,
+    }
+    assert oracle_campaign._valid_release_checkpoint_population(
+        evidence) is accepted
+
+
+def test_release_population_rejects_negative_or_non_integer_components():
+    assert not oracle_campaign._valid_release_checkpoint_population({
+        "total": 100, "living": 105, "deceased": -5, "invalid": 0,
+    })
+    assert not oracle_campaign._valid_release_checkpoint_population({
+        "total": 100.0, "living": 100, "deceased": 0, "invalid": 0,
+    })
+    for value in (True, 1.0, "1"):
+        with pytest.raises(ValueError, match="exact integer"):
+            oracle_campaign._evidence_integer(value)
+
+
 def test_claim_and_initialized_marker_publication_never_clobbers_existing_bytes(
         tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
@@ -1246,9 +1526,8 @@ def test_every_checkpoint_hash_schema_and_prng_state_is_receipt_bound(tmp_path):
         campaign_version=oracle_campaign.RELEASE_CAMPAIGN_VERSION,
         commitment_sha256=RELEASE_COMMITMENT_SHA256)
     assert run["eligible"] is False
-    assert (
-        "source checkpoint schema/state/PRNG/core/ledger binding is invalid"
-        in run["reasons"])
+    assert "source checkpoint population census is invalid at tick 5" in run[
+        "reasons"]
 
 
 def test_global_llm_audit_allows_local_background_but_no_other_live_calls(

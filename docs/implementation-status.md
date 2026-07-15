@@ -44,9 +44,10 @@ and PR #19 merged as `1806294d4fecbe13ddbdf615c459755c74293599`.
 These are code-complete, locally accepted surfaces, not proof of a public
 production deployment.
 
-The corrected release-gate branch passed 590 Python tests with 8 skipped, 23
+The preceding replay-integrity revision passed 590 Python tests with 8 skipped, 23
 dashboard tests, a fresh 603-module dashboard build, and checksum verification
-for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
+for the pinned FRED/BLS/SCF/SUSB datasets. The final v3 receipt-hardening tree
+passes 599 Python tests with 8 skipped in 1,618.07 seconds. Free production-workflow rehearsal
 `881ed41994` completed 365 ticks;
 its detailed evidence is recorded below.
 
@@ -54,7 +55,7 @@ its detailed evidence is recorded below.
 
 | Surface | Implemented contract | Repository evidence | Final evidence state |
 |---|---|---|---|
-| Versioning | Maintained profiles select semantics 7; stored semantics 1–6 retain historical behavior; explicit forks may opt in; schema remains v11. The persisted `population.baseline_citizens_core` marker makes non-regional semantics-7 households fully scheduled, while markerless stored semantics-7 runs retain their historical peripheral tier. Unsupported future semantics and schemas fail closed. | [Base profile](../runs/base.yaml), [v2 profile](../runs/v2.yaml), replay compatibility tests | **Passed:** 86 initial focused, 93 final adversarial, 280-test closure, 303-test post-merge cleanup, and current 590-test release-gate suites; 8 environment-gated skips |
+| Versioning | Maintained profiles select semantics 7; stored semantics 1–6 retain historical behavior; explicit forks may opt in; schema remains v11. The persisted `population.baseline_citizens_core` marker makes non-regional semantics-7 households fully scheduled, while markerless stored semantics-7 runs retain their historical peripheral tier. Unsupported future semantics and schemas fail closed. | [Base profile](../runs/base.yaml), [v2 profile](../runs/v2.yaml), replay compatibility tests | **Passed:** 86 initial focused, 93 final adversarial, 280-test closure, 303-test post-merge cleanup, the preceding 590-test release-gate suite, and the current 599-test v3 receipt-hardening suite; 8 environment-gated skips |
 | Bank defaults | Eligible collateral is seized first. Only unrecovered principal is posted from the bank's currency-matched equity account to `SYS_LOSS` through balanced `loan_loss_chargeoff`; the existing default event reports recovered and net charged-off cents. | [Credit engine](../engine/credit.py), [semantics-7 credit tests](../tests/test_credit_semantics7.py) | **Passed:** live 120,000 NSD default, 5,000 recovery, 115,000 net charge-off |
 | Retirement | `withdraw_savings{amount}` is retiree-only and moves funds between the actor's own declared, same-currency savings/checking accounts. Config `retirement_liquidity_target_cents` becomes public `retirement_drawdown_target_cents` beside `savings_balance`; pre-consumption drawdown, no job search, retired cadence, and stronger conversation participation are semantics-7-only. | [Action executor](../engine/actions.py), [lifecycle](../engine/lifecycle.py), [retirement tests](../tests/test_retirement_semantics7.py) | **Passed:** five targeted live withdrawals; no rejected proposals |
 | Arrivals and personas | Due arrivals spawn deterministically during `NIGHT_CLOSE`, use visible population inflow and a 70/30 checking/savings split, then receive exactly one governed `role=persona,purpose=persona` call before their first morning decision. Enrichment is bounded; malformed success falls back deterministically; provider/budget pauses resume; missing recorded replay responses fail closed. | [Owned persona wrapper](../agents/personas/library.py), [world loop](../world/loop.py), [arrival tests](../tests/test_arrival_personas.py) | **Passed:** exact 70/30 live split, one enriched persona call, zero provenance defects |
@@ -142,13 +143,26 @@ completed tick 335 with valid live-provider provenance, but its offline replay
 diverged at the first arrival because staged genesis reset an uncheckpointed
 persona RNG stream. Checkpoint inspection also retained SQLite WAL/SHM
 sidecars. The source is diagnostic evidence only and is not acceptance
-evidence. The current draft branch now persists and validates both semantics-7
+evidence. The preceding replay-integrity revision persists and validates both semantics-7
 RNG streams, finalizes standalone checkpoints without sidecars, and enforces the
 replay target tick. Focused, representative aggregate, and full gates pass.
 
+The immutable v2 seed-7311 source and generated offline replay both reached
+tick 335 and crossed the first arrival without the v1 divergence. Canonical
+verification returned `exact: true` with `differences: []`. Receipt generation
+then failed because checkpoint integrity required exactly 100 total
+agent rows even after lifecycle correctly preserved one deceased row and added
+its replacement arrival, yielding 101 stored rows, 100 living, and one deceased.
+V2 is retained as diagnostic evidence and is never resumed, rewritten, or
+reused. The current correction validates the bounded living population and
+reconciles living plus deceased rows to the stored total. It also validates
+chronological death/schedule/arrival linkage, `NIGHT_CLOSE` phase and subject
+provenance, one-time due-schedule consumption, and the fixed 5–20-tick delay;
+its verification is part of the fresh campaign gate.
+
 Four release-quality workstreams remain after the extension closure:
 
-1. run the fresh v2 ten-profile Oracle evidence campaign with seeds 7311–7320,
+1. run the fresh v3 ten-profile Oracle evidence campaign with seeds 7321–7330,
    `kimi-for-coding-highspeed`, conservative 3x metering, and a $25 per-run cap;
    its explicit read-only manifest evaluator, 60-forecast floor,
    outcome-diversity gate,
@@ -173,7 +187,7 @@ are pinned; unrelated optional sources remain separate.
 |---|---|
 | Checkpoint baseline | Existing six-feature work was checkpointed after **231 Python tests**, **16 dashboard tests**, dashboard build, and `git diff --check` passed. |
 | Focused semantics-7 tests | **Passed:** 86 tests across credit, retirement, arrival/persona, R20, replay, cache, memory ranking, pause/resume, and portability; then 93 integrated adversarial tests after final fixes. |
-| Full Python / data | **Passed:** 590 passed / 8 skipped in 1,612.34 seconds with pinned FRED/BLS/SCF/SUSB verification. Historical receipts: semantics-7 closure 280, post-merge cleanup 303, and R21 integrated gate 328; compileall green. |
+| Full Python / data | **Passed:** current tree 599 passed / 8 skipped in 1,618.07 seconds. The preceding replay-integrity tree passed 590 / 8 with pinned FRED/BLS/SCF/SUSB verification. Historical receipts: semantics-7 closure 280, post-merge cleanup 303, and R21 integrated gate 328; compileall green. |
 | Dashboard / hygiene | **Passed:** current branch 23 tests and a fresh 603-module build. Historical closure evidence: 16 tests, npm audit 0, license notice check, 599-module build byte-identical twice, static bundle fresh, clean diff. |
 | Portable `fd0adc5dc1` fixture | **Passed:** sanitized v2 artifact restored/replayed offline with networking prohibited under stored semantics 5 and normalized hash `2efcabed…f9170`. |
 | Free closure rehearsal | **Passed:** `5a0d40d773`, all targets, six checkpoints, balanced currencies, exact replay. |
@@ -184,8 +198,9 @@ are pinned; unrelated optional sources remain separate.
 | R22 code/integration surface | **Passed:** exact local stack evidence at `53081f2` covered TLS, tenant isolation, immutable S3 snapshots/cold restore, password rotation, Prometheus, and 200/200 load requests with 80 cross-tenant denials; PR #19 head `1cf1d0a` passed dashboard, hosted PostgreSQL/S3, and Ubuntu/Windows Python 3.11/3.12 in run `29409250171`. |
 | R22 merge / post-merge runner | **Merged:** PR #19 became `1806294d4fecbe13ddbdf615c459755c74293599`. Push run `29411023992` has six zero-step jobs; GitHub's annotations identify account billing/spending-limit state, so no repository code was executed. |
 | Archived Oracle v1 seed 7301 | **Failed acceptance / retained diagnostic:** the source completed tick 335 with six resolved forecasts and valid live-provider provenance, but its replay diverged at the first arrival because staged genesis reset an uncheckpointed persona RNG stream. Read-only checkpoint inspection also retained SQLite sidecars. It is not reusable acceptance evidence. |
-| Replay-integrity correction | **Passed locally:** engine plus persona RNG state persists under semantics 7; staged genesis and checkpoints require column-specific valid RNG shapes; standalone SQLite checkpoints contain no WAL/SHM sidecars; replay fails when the target tick is not reached. Focused regressions, representative aggregate receipts, and the 590-test full gate pass. |
-| Oracle campaign tooling | **Passed locally; v2 live evidence pending:** ten fresh profiles for seeds 7311–7320 and `runs/oracle/manifest-v2.template.yaml` are checked in. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. No v1 run enters the v2 corpus. |
+| Replay-integrity correction | **Passed locally:** engine plus persona RNG state persists under semantics 7; staged genesis and checkpoints require column-specific valid RNG shapes; standalone SQLite checkpoints contain no WAL/SHM sidecars; replay fails when the target tick is not reached. Focused regressions, representative aggregate receipts, the preceding 590-test gate, and the current 599-test gate pass. |
+| Archived Oracle v2 seed 7311 | **Failed receipt / retained diagnostic:** source and generated replay reached tick 335 and canonical verification returned `exact: true` with `differences: []`, but the receipt incorrectly treated total stored rows as living population after a deceased row was preserved and a replacement arrived. The immutable v2 evidence is never reused. |
+| Oracle campaign tooling | **Implemented; v3 live evidence pending:** ten fresh profiles for seeds 7321–7330 and `runs/oracle/manifest-v3.template.yaml` are checked in. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. The corrected receipt validates living/deceased census consistency, chronological death/schedule/arrival linkage, `NIGHT_CLOSE` subject provenance, one-time due-schedule consumption, and the fixed 5–20-tick delay. No v1 or v2 run enters the v3 corpus. |
 | Oracle free arm rehearsal | **Passed mechanics:** control `9fb8985f97` resolved six negatives; treatment `bb877a0d89` fired all six public precursors and all six larger rumors and resolved six positives. Both reconciled with zero provider/budget/report failures; their combined scripted Brier score was `0.19469025`. Treatment replay `replay-bb877a0d89-385256e2a1` matched tick 335 and hash `0ff7685e…2fa9ed` with `differences: []`. Scripted provenance remains intentionally ineligible for the live receipt. |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay:** `881ed41994` passed 19/20 acceptance checks with only scripted `real_providers` false; 100 living agents, six resolved Oracle checkpoints, every shock trace, experiment evidence, and three reviewed phenomena. `replay-881ed41994-3465cb3101` matched tick 365 and hash `37d18cf4…498786ed` with every deterministic table exact and `differences: []`. |
 | Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
@@ -223,9 +238,13 @@ public tag.
   deployment is not claimed.
 - The archived v1 seed-7301 Oracle source is failed diagnostic evidence, not a
   partial campaign pass. Its persona-RNG replay divergence and SQLite sidecars
-  must be corrected and fully verified before fresh live dispatch.
-- The v2 explicit-manifest Oracle latency/calibration campaign uses fresh seeds
-  7311–7320, `kimi-for-coding-highspeed`, conservative 3x metering, and a $25
+  were corrected and verified by the preceding replay-integrity revision.
+- The archived v2 seed-7311 source and replay reached tick 335, including the
+  first arrival, and verified as `exact: true` with `differences: []`, but
+  receipt generation exposed the total-row versus
+  living-population census bug. The immutable evidence is not reused.
+- The v3 explicit-manifest Oracle latency/calibration campaign uses fresh seeds
+  7321–7330, `kimi-for-coding-highspeed`, conservative 3x metering, and a $25
   per-run cap. It, the 30-day rumor gate, and the 365-day/$200 acceptance run
   require separate execution and evidence. The
   Oracle campaign cannot pass below ten eligible runs, 60 resolved forecasts,

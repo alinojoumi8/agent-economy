@@ -57,11 +57,11 @@ DEFAULT_MINIMUM_RUNS = 10
 DEFAULT_MINIMUM_FORECASTS = 60
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v2"
-RELEASE_CAMPAIGN_VERSION = 2
-RELEASE_SEEDS = tuple(range(7311, 7321))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v3"
+RELEASE_CAMPAIGN_VERSION = 3
+RELEASE_SEEDS = tuple(range(7321, 7331))
 RELEASE_PROFILES = {
-    seed: f"v2-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v3-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "kimi"
@@ -83,7 +83,7 @@ RELEASE_ORACLE_ADAPTER = {
 RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v2.yaml"
+    / "commitment-v3.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -92,9 +92,13 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "b4472251736b64800d2f43666e4387772cf06043ef102886aaf25bc9f86867b9"
+    "34b3c50cba5fbdaa86d1bf54c7c816340a44ea4cdad2eb562020d73d663a64f8"
 )
 RELEASE_HORIZON_TICKS = 335
+RELEASE_MIN_LIVING_AGENTS = 95
+RELEASE_MAX_LIVING_AGENTS = 105
+RELEASE_ARRIVAL_DELAY_MIN = 5
+RELEASE_ARRIVAL_DELAY_MAX = 20
 RELEASE_QUESTION = "What is the probability of a bank run within 30 ticks?"
 RELEASE_QUESTION_TICKS = (5, 65, 125, 185, 245, 305)
 RELEASE_RULE = {"type": "bank_run", "window": 5, "deposit_drop": 0.30}
@@ -464,6 +468,12 @@ def validate_oracle_campaign_profile(
             or config.get("checkpoint_dir") != "data/checkpoints"):
         raise OracleCampaignError(
             "release campaign changed its fixed population/bank/checkpoint design")
+    lifecycle = config.get("lifecycle", {})
+    if (lifecycle.get("population_mode") != "stable"
+            or lifecycle.get("arrival_delay_min") != RELEASE_ARRIVAL_DELAY_MIN
+            or lifecycle.get("arrival_delay_max") != RELEASE_ARRIVAL_DELAY_MAX):
+        raise OracleCampaignError(
+            "release campaign changed its fixed replacement-arrival schedule")
     budget = config.get("budget", {})
     if (budget.get("conversation_pairs") != 0
             or budget.get("oracle_reserve_usd") != 25
@@ -477,7 +487,8 @@ def validate_oracle_campaign_profile(
         raise OracleCampaignError(
             "release campaign requires the public bank-information boundary")
     fixed_acceptance = {
-        "min_agents": 95, "max_agents": 105,
+        "min_agents": RELEASE_MIN_LIVING_AGENTS,
+        "max_agents": RELEASE_MAX_LIVING_AGENTS,
         "required_shocks": [], "require_oracle_scoring": True,
         "require_experiment": False, "require_phenomena": False,
     }
@@ -1214,6 +1225,200 @@ def _valid_semantics7_prng_state(raw: Any) -> bool:
         return False
 
 
+def _checkpoint_population_evidence(
+        connection: sqlite3.Connection) -> dict[str, int]:
+    row = connection.execute(
+        "SELECT COUNT(*) AS total,"
+        "SUM(CASE WHEN alive=1 THEN 1 ELSE 0 END) AS living,"
+        "SUM(CASE WHEN alive=0 THEN 1 ELSE 0 END) AS deceased,"
+        "SUM(CASE WHEN alive IS NULL OR alive NOT IN (0,1) "
+        "THEN 1 ELSE 0 END) AS invalid FROM agents"
+    ).fetchone()
+    return {
+        "total": int(row[0] or 0),
+        "living": int(row[1] or 0),
+        "deceased": int(row[2] or 0),
+        "invalid": int(row[3] or 0),
+    }
+
+
+def _valid_release_checkpoint_population(population: dict[str, int]) -> bool:
+    values = tuple(population.get(key) for key in (
+        "total", "living", "deceased", "invalid"))
+    return (
+        all(type(value) is int and value >= 0 for value in values)
+        and population.get("invalid") == 0
+        and population.get("total", 0) >= 100
+        and population.get("total") == (
+            population.get("living", 0) + population.get("deceased", 0))
+        and RELEASE_MIN_LIVING_AGENTS
+        <= population.get("living", 0)
+        <= RELEASE_MAX_LIVING_AGENTS
+    )
+
+
+def _evidence_integer(value: Any) -> int:
+    if type(value) is not int:
+        raise ValueError("evidence value is not an exact integer")
+    return value
+
+
+def _source_population_evidence(
+        connection: sqlite3.Connection, *,
+        horizon_tick: int = RELEASE_HORIZON_TICKS) -> dict[str, Any]:
+    population = _checkpoint_population_evidence(connection)
+    baseline_rows = connection.execute(
+        "SELECT kind,role,COUNT(*) AS n FROM agents WHERE arrived_tick=0 "
+        "GROUP BY kind,role ORDER BY kind,role"
+    ).fetchall()
+    baseline_census: dict[tuple[str, str | None], int] = {}
+    invalid_agent_conversions = 0
+    for row in baseline_rows:
+        try:
+            if type(row[0]) is not str or (
+                    row[1] is not None and type(row[1]) is not str):
+                raise ValueError("agent kind/role is not text")
+            baseline_census[(row[0], row[1])] = _evidence_integer(row[2])
+        except (TypeError, ValueError, OverflowError):
+            invalid_agent_conversions += 1
+            kind = row[0] if type(row[0]) is str else "<invalid-kind>"
+            role = (row[1] if row[1] is None or type(row[1]) is str
+                    else "<invalid-role>")
+            try:
+                count = _evidence_integer(row[2])
+            except (TypeError, ValueError, OverflowError):
+                count = 0
+            baseline_census[(kind, role)] = (
+                baseline_census.get((kind, role), 0) + count)
+    arrivals: list[dict[str, Any]] = []
+    deaths: list[dict[str, int]] = []
+    for row in connection.execute(
+            "SELECT id,arrived_tick,kind,role FROM agents "
+            "WHERE arrived_tick>0 ORDER BY id").fetchall():
+        try:
+            if type(row[2]) is not str or (
+                    row[3] is not None and type(row[3]) is not str):
+                raise ValueError("agent kind/role is not text")
+            arrivals.append({
+                "agent_id": _evidence_integer(row[0]),
+                "tick": _evidence_integer(row[1]),
+                "kind": row[2],
+                "role": row[3],
+            })
+        except (TypeError, ValueError, OverflowError):
+            invalid_agent_conversions += 1
+    for row in connection.execute(
+            "SELECT id,died_tick FROM agents WHERE alive=0 "
+            "AND died_tick IS NOT NULL ORDER BY id").fetchall():
+        try:
+            deaths.append({
+                "agent_id": _evidence_integer(row[0]),
+                "tick": _evidence_integer(row[1]),
+            })
+        except (TypeError, ValueError, OverflowError):
+            invalid_agent_conversions += 1
+
+    event_links: dict[str, list[tuple[int, int]]] = {
+        "arrival": [], "death": [],
+    }
+    arrival_schedule_links: list[tuple[int, int, int]] = []
+    schedules: dict[int, dict[str, int]] = {}
+    invalid_event_payloads = 0
+    invalid_event_envelopes = 0
+    for row in connection.execute(
+            "SELECT id,tick,phase,kind,subject_type,subject_id,payload_json "
+            "FROM events WHERE kind IN "
+            "('arrival_scheduled','arrival','death') ORDER BY tick,id").fetchall():
+        try:
+            event_id = _evidence_integer(row[0])
+            event_tick = _evidence_integer(row[1])
+            if type(row[3]) is not str:
+                raise ValueError("event kind is not text")
+            kind = row[3]
+            payload = load_json(row[6], None)
+            if event_tick < 0 or event_tick > horizon_tick:
+                invalid_event_envelopes += 1
+            if not isinstance(payload, dict):
+                raise ValueError("invalid payload")
+            if kind == "arrival_scheduled":
+                due_tick = _evidence_integer(payload["due_tick"])
+                schedules[event_id] = {
+                    "event_id": event_id,
+                    "created_tick": event_tick,
+                    "due_tick": due_tick,
+                }
+                delay = due_tick - event_tick
+                if (row[2] != "NIGHT_CLOSE" or row[4] is not None
+                        or row[5] is not None
+                        or not RELEASE_ARRIVAL_DELAY_MIN
+                        <= delay <= RELEASE_ARRIVAL_DELAY_MAX):
+                    invalid_event_envelopes += 1
+                continue
+
+            agent_id = _evidence_integer(payload["agent_id"])
+            if (row[2] != "NIGHT_CLOSE" or row[4] != "agent"
+                    or row[5] is None
+                    or _evidence_integer(row[5]) != agent_id):
+                invalid_event_envelopes += 1
+            event_links[kind].append((agent_id, event_tick))
+            if kind == "arrival":
+                arrival_schedule_links.append((
+                    agent_id, event_tick,
+                    _evidence_integer(payload["schedule_event_id"])))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            invalid_event_payloads += 1
+
+    arrival_links = sorted(
+        (item["agent_id"], item["tick"]) for item in arrivals)
+    death_links = sorted(
+        (item["agent_id"], item["tick"]) for item in deaths)
+    invalid_agent_rows = invalid_agent_conversions + int(connection.execute(
+        "SELECT COUNT(*) FROM agents WHERE arrived_tick IS NULL "
+        "OR arrived_tick<0 OR arrived_tick>? "
+        "OR alive IS NULL OR alive NOT IN (0,1) "
+        "OR (alive=1 AND died_tick IS NOT NULL) "
+        "OR (alive=0 AND died_tick IS NULL) "
+        "OR died_tick>? OR (died_tick IS NOT NULL AND died_tick<arrived_tick) "
+        "OR (arrived_tick>0 AND (kind!='citizen' OR role IS NOT NULL))",
+        (horizon_tick, horizon_tick),
+    ).fetchone()[0])
+    referenced_schedules = [item[2] for item in arrival_schedule_links]
+    due_schedules = sorted(
+        event_id for event_id, item in schedules.items()
+        if item["due_tick"] <= horizon_tick)
+    schedule_links_valid = (
+        len(referenced_schedules) == len(set(referenced_schedules))
+        and sorted(referenced_schedules) == due_schedules
+        and all(
+            schedule_id in schedules
+            and schedules[schedule_id]["due_tick"] == event_tick
+            for _, event_tick, schedule_id in arrival_schedule_links)
+        and sorted(item["tick"] for item in deaths) == sorted(
+            item["created_tick"] for item in schedules.values())
+    )
+    event_links_valid = (
+        invalid_event_payloads == 0
+        and invalid_event_envelopes == 0
+        and invalid_agent_rows == 0
+        and arrival_links == sorted(event_links["arrival"])
+        and death_links == sorted(event_links["death"])
+        and schedule_links_valid
+    )
+    return {
+        "current": population,
+        "baseline_total": sum(baseline_census.values()),
+        "baseline_census": baseline_census,
+        "arrivals": arrivals,
+        "deaths": deaths,
+        "schedules": [schedules[key] for key in sorted(schedules)],
+        "invalid_agent_rows": invalid_agent_rows,
+        "invalid_agent_conversions": invalid_agent_conversions,
+        "invalid_event_payloads": invalid_event_payloads,
+        "invalid_event_envelopes": invalid_event_envelopes,
+        "event_links_valid": event_links_valid,
+    }
+
+
 def _checkpoint_integrity(
         store: Store, *, run_id: str, seed: int) -> tuple[dict, list[str]]:
     reasons: list[str] = []
@@ -1286,6 +1491,9 @@ def _checkpoint_integrity(
             governor = load_json(meta["governor_json"], None) if meta else None
             core = rebuilt_manifest["core"]
             counts = core["counts"]
+            population_evidence = _source_population_evidence(
+                connection, horizon_tick=tick)
+            population = population_evidence["current"]
             banks = [int(item["id"]) for item in connection.execute(
                 "SELECT id FROM banks ORDER BY id").fetchall()]
             complete_deposit_metrics = True
@@ -1298,6 +1506,17 @@ def _checkpoint_integrity(
             checkpoint_store = Store(
                 str(path), create=False, read_only=True)
             reconciled, ledger_evidence = Ledger(checkpoint_store).reconcile()
+            if not _valid_release_checkpoint_population(population):
+                reasons.append(
+                    f"source checkpoint population census is invalid at tick {tick}")
+                continue
+            if (population_evidence["baseline_total"] != 100
+                    or population_evidence["baseline_census"]
+                    != _EXPECTED_AGENT_CENSUS
+                    or not population_evidence["event_links_valid"]):
+                reasons.append(
+                    f"source checkpoint lifecycle provenance is invalid at tick {tick}")
+                continue
             if (quick.lower() != "ok" or meta is None
                     or str(meta["run_id"]) != run_id
                     or int(meta["seed"]) != seed
@@ -1318,7 +1537,6 @@ def _checkpoint_integrity(
                     or meta["fork_tick"] is not None
                     or rebuilt_manifest.get("quick_check", "").lower() != "ok"
                     or rebuilt_manifest.get("database") != str(path)
-                    or counts.get("agents") != 100
                     or counts.get("firms") != 14
                     or counts.get("banks") != 2
                     or counts.get("accounts", 0) < 6
@@ -1354,6 +1572,14 @@ def _checkpoint_integrity(
                 "schema_sha256": schema["sha256"],
                 "state_sha256": rebuilt_manifest["state_sha256"],
                 "core_sha256": rebuilt_manifest["core_sha256"],
+                "population": population,
+                "lifecycle": {
+                    key: population_evidence[key] for key in (
+                        "baseline_total", "arrivals", "deaths", "schedules",
+                        "invalid_agent_rows", "invalid_agent_conversions",
+                        "invalid_event_payloads",
+                        "invalid_event_envelopes", "event_links_valid")
+                },
                 "ledger_sha256": _canonical_value_sha256(ledger_evidence),
             }
             files.append(file_evidence)
@@ -1513,8 +1739,9 @@ def _source_integrity(store: Store, config: dict, min_ticks: int) -> tuple[dict,
     if not reconciled:
         reasons.append("source ledger does not reconcile")
     acceptance = config.get("acceptance", {})
-    living_agents = int(store.scalar(
-        "SELECT COUNT(*) FROM agents WHERE alive=1", default=0))
+    population_evidence = _source_population_evidence(store.conn)
+    population = population_evidence["current"]
+    living_agents = int(population["living"])
     minimum_agents = int(acceptance.get("min_agents", 95))
     maximum_agents = int(acceptance.get("max_agents", 105))
     if not minimum_agents <= living_agents <= maximum_agents:
@@ -1526,20 +1753,16 @@ def _source_integrity(store: Store, config: dict, min_ticks: int) -> tuple[dict,
     if (len(genesis_rows) != 1 or int(genesis_rows[0]["tick"]) != 0
             or genesis != {"banks": 2, "agents": 100, "firms": 14}):
         reasons.append("source genesis census is missing or differs from the fixed corpus")
-    census = {
-        (str(row["kind"]), row["role"]): int(row["n"])
-        for row in store.query(
-            "SELECT kind,role,COUNT(*) AS n FROM agents "
-            "GROUP BY kind,role ORDER BY kind,role")
-    }
+    census = population_evidence["baseline_census"]
     if census != _EXPECTED_AGENT_CENSUS:
         reasons.append("source institutional agent census differs from genesis")
-    if (int(store.scalar("SELECT COUNT(*) FROM agents", default=0)) != 100
-            or int(store.scalar(
-                "SELECT COUNT(*) FROM agents WHERE alive=1 AND arrived_tick=0",
-                default=0)) != 100
+    if (population_evidence["baseline_total"] != 100
             or int(store.scalar("SELECT COUNT(*) FROM firms", default=0)) != 14):
-        reasons.append("source population/firm census changed during campaign")
+        reasons.append("source genesis population/firm census changed during campaign")
+    if not _valid_release_checkpoint_population(population):
+        reasons.append("source current living/deceased population census is invalid")
+    if not population_evidence["event_links_valid"]:
+        reasons.append("source arrival/death lifecycle provenance is invalid")
     metric_count = int(store.scalar("SELECT COUNT(*) FROM metrics", default=0))
     transaction_count = int(store.scalar("SELECT COUNT(*) FROM transactions", default=0))
     if metric_count <= 0 or transaction_count <= 0:
@@ -1620,6 +1843,15 @@ def _source_integrity(store: Store, config: dict, min_ticks: int) -> tuple[dict,
         "ledger": ledger,
         "living_agents": living_agents,
         "population_range": [minimum_agents, maximum_agents],
+        "population": {
+            **population_evidence,
+            "baseline_census": {
+                f"{kind}:{role or 'none'}": count
+                for (kind, role), count in sorted(
+                    population_evidence["baseline_census"].items(),
+                    key=lambda item: (item[0][0], item[0][1] or ""))
+            },
+        },
         "metrics": metric_count,
         "transactions": transaction_count,
         "genesis": genesis,
