@@ -209,7 +209,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 |---|---|---|
 | Ledger reconciliation failures per run | 0 | 0 |
 | Simulated days achieved within $200 (default config) | ≥ 365 | ≥ 1,000 |
-| Oracle response time (p90) | < 60s | < 20s |
+| Oracle scheduled end-to-end response time (p90; all six governed plan + answer samples) | < 60s | < 20s |
 | Distinct emergent phenomena reproduced (documented, not scripted) | 3 | 5 |
 | Shock → traceable downstream effect (pilot experiments passing) | 5/5 shock types | — |
 

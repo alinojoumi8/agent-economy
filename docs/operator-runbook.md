@@ -166,8 +166,12 @@ python run.py --config runs/acceptance/production.yaml `
 ```
 
 The driver runs to scheduled Oracle checkpoints and then the configured
-365-tick horizon. It schedules six questions and requires at least five Oracle
-latency samples. The profile is uncapped for runtime continuity but has a
+365-tick horizon. It schedules six questions and requires all six persisted
+`scheduled_e2e_v1` latency samples. Each sample starts before Oracle planning,
+ends after the forecast contract is validated, and is bound to the exact
+prediction, campaign key, question, and tick. Manual calls cannot satisfy the
+gate; a missing, dangling, malformed, or duplicate completion reference marks
+the checkpoint invalid. The profile is uncapped for runtime continuity but has a
 separate $200 efficiency completion gate. On success it writes the complete
 HTML report plus JSON and Markdown acceptance receipts.
 

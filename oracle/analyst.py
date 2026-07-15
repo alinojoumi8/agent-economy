@@ -11,11 +11,13 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
 from llm.gateway import Gateway, LLMRequest
+from .rules import ResolutionRuleError, validate_resolution_rule
 from .tools import OracleToolError, OracleTools
 
 PLANNER_SYSTEM = """You are the read-only query planner for an economic analyst.
@@ -39,7 +41,9 @@ Valid resolution_rule types (machine-checkable):
   {"type":"metric_above","metric":"name","threshold":X}          — named metric exceeds threshold before deadline
   {"type":"metric_below","metric":"name","threshold":X}
 If the question cannot be given a checkable rule from world state, reply
-{"insufficient_data": true, "reason": "..."} instead. Never fabricate."""
+{"insufficient_data": true, "reason": "..."} instead. Never fabricate.
+When governed_forecast_contract is supplied, use its resolution_rule and
+deadline_tick exactly; it defines the scheduled question being measured."""
 
 
 class Oracle:
@@ -50,10 +54,20 @@ class Oracle:
         self.config = config
         self.tools = OracleTools(economy)
         self.default_horizon = int(config.get("oracle", {}).get("default_horizon_ticks", 30))
+        self.strict_resolution_rules = bool(
+            config.get("oracle", {}).get("strict_resolution_rules", False))
+
+    def _metric_exists(self, name: str) -> bool:
+        return self.store.query_one(
+            "SELECT 1 FROM metrics WHERE name=? LIMIT 1", (name,)) is not None
 
     # ── ask ──────────────────────────────────────────────────────────────────
-    async def ask(self, question: str) -> dict:
+    async def ask(
+        self, question: str, *, governed_contract: dict | None = None,
+    ) -> dict:
         tick = self.store.tick
+        governed_contract = self._normalize_governed_contract(
+            governed_contract, tick=tick)
         digest = self._world_digest(tick)
         legacy_replay = self._legacy_replay_at(tick)
         evidence = []
@@ -67,6 +81,8 @@ class Oracle:
                     "read_only": True,
                 },
             }
+            if governed_contract is not None:
+                base_planning_context["governed_forecast_contract"] = governed_contract
             validation_error = None
             attempts = self._planner_attempt_limit(tick, question)
             for _attempt in range(attempts):
@@ -97,6 +113,8 @@ class Oracle:
                         importance=1.5)
         context = {**digest, "question": question, "tick": tick,
                    "default_horizon": self.default_horizon}
+        if governed_contract is not None:
+            context["governed_forecast_contract"] = governed_contract
         if not legacy_replay:
             context["evidence"] = evidence
         user_payload = (
@@ -104,7 +122,9 @@ class Oracle:
             if legacy_replay else
             json.dumps({
                 "question": question, "world": digest,
-                "read_only_evidence": evidence})[:12000])
+                "read_only_evidence": evidence,
+                **({"governed_forecast_contract": governed_contract}
+                   if governed_contract is not None else {})})[:12000])
         req = LLMRequest(role="oracle", purpose="oracle", system=ANSWER_SYSTEM,
                          user=user_payload,
                          context=context, tick=tick, max_tokens=500, temperature=0.3)
@@ -123,20 +143,60 @@ class Oracle:
 
         # Validate the contract; refuse rather than store garbage.
         try:
+            if isinstance(ans.get("p"), bool):
+                raise ValueError("forecast probability must be a finite number")
             p = float(ans["p"])
-            if not 0.0 <= p <= 1.0:
+            if not math.isfinite(p) or not 0.0 <= p <= 1.0:
                 raise ValueError("forecast probability must be between 0 and 1")
             rule = ans.get("resolution_rule") or {}
-            if not isinstance(rule, dict) or not rule.get("type"):
+            if self.strict_resolution_rules:
+                rule = validate_resolution_rule(
+                    rule, metric_exists=self._metric_exists)
+            elif not isinstance(rule, dict) or not rule.get("type"):
                 raise ValueError("resolution_rule.type is required")
-            deadline = int(ans.get("deadline_tick") or (tick + self.default_horizon))
+            confidence = str(ans.get("confidence", "med"))
+            if self.strict_resolution_rules and confidence not in {"low", "med", "high"}:
+                raise ValueError("confidence must be low, med, or high")
+            drivers = ans.get("drivers", [])
+            if self.strict_resolution_rules and not (
+                isinstance(drivers, list) and 1 <= len(drivers) <= 10
+                and all(isinstance(driver, str) and driver.strip()
+                        and len(driver) <= 300 for driver in drivers)
+            ):
+                raise ValueError("drivers must contain 1 to 10 bounded strings")
+            raw_deadline = ans.get("deadline_tick")
+            if raw_deadline is None:
+                raw_deadline = tick + self.default_horizon
+            if isinstance(raw_deadline, bool):
+                raise ValueError("deadline_tick must be an integer")
+            deadline = int(raw_deadline)
+            if isinstance(raw_deadline, float) and raw_deadline != deadline:
+                raise ValueError("deadline_tick must be an integer")
             if deadline <= tick:
                 raise ValueError("deadline_tick must be in the future")
-        except (KeyError, TypeError, ValueError):
+            if self.strict_resolution_rules:
+                max_horizon = int(
+                    self.config.get("oracle", {}).get("max_horizon_ticks", 365))
+                if deadline > tick + max_horizon:
+                    raise ValueError(
+                        f"deadline_tick exceeds the {max_horizon}-tick limit")
+            if governed_contract is not None:
+                if rule != governed_contract["resolution_rule"]:
+                    raise ValueError(
+                        "resolution_rule does not match governed forecast contract")
+                if deadline != governed_contract["deadline_tick"]:
+                    raise ValueError(
+                        "deadline_tick does not match governed forecast contract")
+        except (KeyError, TypeError, ValueError, ResolutionRuleError) as exc:
             pid = self.store.insert(
                 "predictions", asked_tick=tick, question=question, p=None,
                 reasoning="answer did not meet the contract",
                 evidence_json=json.dumps(evidence), status="insufficient_data")
+            if self.strict_resolution_rules:
+                self.store.log_event(tick, "oracle_rule_rejected", {
+                    "prediction_id": pid, "question": question,
+                    "reason": str(exc)[:300],
+                }, phase=None, importance=2.0)
             return {"insufficient_data": True,
                     "reason": "The analyst could not produce a checkable prediction.",
                     "prediction_id": pid, "evidence": evidence}
@@ -144,8 +204,8 @@ class Oracle:
         pid = self.store.insert(
             "predictions", asked_tick=tick, question=question, p=p,
             reasoning=str(ans.get("reasoning", ""))[:2000],
-            drivers_json=json.dumps(ans.get("drivers", [])),
-            confidence=str(ans.get("confidence", "med")),
+            drivers_json=json.dumps(drivers),
+            confidence=confidence,
             resolution_rule_json=json.dumps(rule), deadline_tick=deadline,
             evidence_json=json.dumps(evidence), status="open")
         self.store.log_event(tick, "oracle_prediction", {
@@ -155,6 +215,50 @@ class Oracle:
                 "confidence": ans.get("confidence", "med"), "resolution_rule": rule,
                 "deadline_tick": deadline, "reasoning": ans.get("reasoning", ""),
                 "evidence": evidence}
+
+    def _normalize_governed_contract(
+        self, contract: dict | None, *, tick: int,
+    ) -> dict | None:
+        """Validate engine-owned schedule facts before they enter either prompt."""
+        if contract is None:
+            return None
+        if not isinstance(contract, dict):
+            raise ValueError("governed forecast contract must be an object")
+        required = {
+            "campaign_id", "campaign_version", "campaign_key", "scheduled_tick",
+            "resolution_rule", "deadline_tick",
+        }
+        if set(contract) != required:
+            raise ValueError("governed forecast contract fields are invalid")
+        if not isinstance(contract["campaign_id"], str) or not contract["campaign_id"]:
+            raise ValueError("governed forecast campaign_id is invalid")
+        if not isinstance(contract["campaign_key"], str) or not contract["campaign_key"]:
+            raise ValueError("governed forecast campaign_key is invalid")
+        version = contract["campaign_version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("governed forecast campaign_version is invalid")
+        scheduled_tick = contract["scheduled_tick"]
+        deadline_tick = contract["deadline_tick"]
+        if (isinstance(scheduled_tick, bool) or not isinstance(scheduled_tick, int)
+                or scheduled_tick != tick):
+            raise ValueError("governed forecast scheduled_tick is invalid")
+        if (isinstance(deadline_tick, bool) or not isinstance(deadline_tick, int)
+                or deadline_tick <= tick):
+            raise ValueError("governed forecast deadline_tick is invalid")
+        max_horizon = int(
+            self.config.get("oracle", {}).get("max_horizon_ticks", 365))
+        if deadline_tick > tick + max_horizon:
+            raise ValueError("governed forecast deadline exceeds configured horizon")
+        rule = validate_resolution_rule(
+            contract["resolution_rule"], metric_exists=self._metric_exists)
+        return {
+            "campaign_id": contract["campaign_id"],
+            "campaign_version": version,
+            "campaign_key": contract["campaign_key"],
+            "scheduled_tick": scheduled_tick,
+            "resolution_rule": rule,
+            "deadline_tick": deadline_tick,
+        }
 
     def _planner_attempt_limit(self, tick: int, question: str) -> int:
         if not self.gw.replay or self.gw.replay_conn is None:
@@ -219,6 +323,19 @@ class Oracle:
         resolved = []
         for pred in self.store.query("SELECT * FROM predictions WHERE status='open'"):
             rule = load_json(pred["resolution_rule_json"], {}) or {}
+            if self.strict_resolution_rules:
+                try:
+                    validate_resolution_rule(
+                        rule, metric_exists=self._metric_exists)
+                except ResolutionRuleError as exc:
+                    self.store.update(
+                        "predictions", int(pred["id"]), status="insufficient_data",
+                        reasoning="stored resolution rule is not machine-checkable")
+                    self.store.log_event(tick, "oracle_resolution_invalid", {
+                        "prediction_id": int(pred["id"]),
+                        "question": pred["question"], "reason": str(exc)[:300],
+                    }, importance=3.0)
+                    continue
             deadline = int(pred["deadline_tick"] or 0)
             outcome = self._check_rule(rule, int(pred["asked_tick"]), min(tick, deadline))
             final = None

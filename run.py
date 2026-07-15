@@ -332,7 +332,26 @@ async def replay_headless(world: World, target_tick: int) -> None:
 
         for prediction in predictions_by_tick.get(action_tick, []):
             source_prediction_id = int(prediction["id"])
-            result = await world.oracle.ask(str(prediction["question"]))
+            checkpoint = checkpoints.get(source_prediction_id)
+            governed_contract = None
+            acceptance = world.config.get("acceptance", {})
+            if (checkpoint is not None
+                    and acceptance.get("oracle_latency_source") == "scheduled_e2e_v1"):
+                matching_items = [
+                    item for item in acceptance.get("oracle_questions", [])
+                    if int(item.get("at_tick", -1)) == int(checkpoint["scheduled_tick"])
+                    and str(item.get("question", "")) == str(checkpoint["question"])
+                ]
+                if len(matching_items) != 1:
+                    raise RuntimeError(
+                        "recorded governed Oracle checkpoint has no unique schedule item")
+                from reports.acceptance import _scheduled_contract
+
+                governed_contract = _scheduled_contract(
+                    acceptance, matching_items[0])
+            result = await world.oracle.ask(
+                str(prediction["question"]),
+                governed_contract=governed_contract)
             try:
                 replay_prediction_id = int(result["prediction_id"])
             except (KeyError, TypeError, ValueError) as exc:
@@ -340,7 +359,6 @@ async def replay_headless(world: World, target_tick: int) -> None:
                     "replayed Oracle call produced no valid prediction reference"
                 ) from exc
 
-            checkpoint = checkpoints.get(source_prediction_id)
             if checkpoint is not None:
                 from reports.acceptance import _record_checkpoint
 

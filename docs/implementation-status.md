@@ -113,8 +113,9 @@ All P0/P1 and R18–R22 code surfaces are implemented. Four release-quality
 workstreams remain after the extension closure:
 
 1. run the corrected 30-day live rumor gate;
-2. bind Oracle latency to scheduled end-to-end predictions and curate the
-   eligible calibration corpus before running that campaign;
+2. run the Oracle evidence campaign over its explicit eligible corpus; the
+   scheduled prediction-bound end-to-end timer, six-sample contract, strict
+   resolution-rule validation, and fail-closed provenance checks are implemented;
 3. correct acceptance-profile population sizing/living-agent evaluation before
    running the explicitly authorized 365-day/$200 campaign; and
 4. a fresh release-candidate provenance/license/dependency/secret audit before

@@ -100,8 +100,10 @@ from the source-data fit at tick 0.
 
 Oracle questions are read-only. A prediction stores probability, drivers,
 confidence, bounded tool evidence, a resolution rule, deadline, outcome, and
-Brier score. Production acceptance schedules six questions and requires at
-least five latency samples before enforcing p90.
+Brier score. Production acceptance schedules six questions and requires all
+six prediction-bound end-to-end planning-and-answer latency samples before
+enforcing p90. Unknown or malformed resolution rules fail as insufficient data
+and never age into a scored negative outcome.
 
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.

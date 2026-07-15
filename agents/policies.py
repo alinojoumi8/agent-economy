@@ -670,8 +670,13 @@ def oracle_answer(context: dict) -> dict:
     else:
         return {"insufficient_data": True,
                 "reason": "No machine-checkable resolution rule can be derived from world state."}
+    governed = context.get("governed_forecast_contract")
+    deadline_tick = tick + horizon
+    if isinstance(governed, dict):
+        rule = governed.get("resolution_rule", rule)
+        deadline_tick = governed.get("deadline_tick", deadline_tick)
     return {"p": round(p, 3), "drivers": drivers, "confidence": "med",
-            "resolution_rule": rule, "deadline_tick": tick + horizon,
+            "resolution_rule": rule, "deadline_tick": deadline_tick,
             "reasoning": "Estimated from current world state and simple structural drivers."}
 
 

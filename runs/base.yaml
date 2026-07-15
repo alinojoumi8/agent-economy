@@ -111,6 +111,8 @@ budget:
 
 oracle:
   default_horizon_ticks: 30
+  max_horizon_ticks: 365
+  strict_resolution_rules: true
 
 reports:
   narrative_max_tokens: 600

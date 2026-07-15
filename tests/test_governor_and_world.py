@@ -8,6 +8,7 @@ import pytest
 
 from engine.store import Store
 from llm.gateway import GatewayInterrupted, Governor, LLMRequest
+from oracle.rules import ResolutionRuleError, validate_resolution_rule
 from world.loop import World
 
 
@@ -290,3 +291,59 @@ def test_oracle_prediction_and_resolution(tmp_path):
     stored = w.store.query_one(
         "SELECT p, status FROM predictions WHERE id=?", (invalid["prediction_id"],))
     assert stored["p"] is None and stored["status"] == "insufficient_data"
+
+
+@pytest.mark.parametrize("rule", [
+    {"type": "invented_rule"},
+    {"type": "bank_run", "window": 1.5, "deposit_drop": 0.3},
+    {"type": "bank_run", "window": 5, "deposit_drop": float("nan")},
+    {"type": "metric_above", "metric": "missing metric", "threshold": 1},
+    {"type": "bank_failure", "unexpected": True},
+])
+def test_resolution_rule_contract_rejects_unknown_or_unbounded_rules(rule):
+    with pytest.raises(ResolutionRuleError):
+        validate_resolution_rule(rule, metric_exists=lambda _name: False)
+
+
+def test_strict_unknown_resolution_rule_fails_closed_without_false_score(tmp_path):
+    world = _fresh_world(
+        tmp_path, "strict-oracle.db",
+        oracle={"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                "strict_resolution_rules": True})
+    world.gateway.scripted.register("oracle", lambda context: {
+        "p": 0.8,
+        "drivers": ["bounded evidence"],
+        "confidence": "med",
+        "resolution_rule": {"type": "invented_rule"},
+        "deadline_tick": int(context["tick"]) + 30,
+        "reasoning": "unsupported contract",
+    })
+    rejected = asyncio.run(world.oracle.ask("Will an invented event happen?"))
+    assert rejected["insufficient_data"] is True
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_rule_rejected'") == 1
+
+    strict_id = world.store.insert(
+        "predictions", asked_tick=0, question="strict stored rule", p=0.8,
+        resolution_rule_json=json.dumps({"type": "invented_rule"}),
+        deadline_tick=1, status="open")
+    assert world.oracle.resolve_open(1) == []
+    strict = world.store.query_one(
+        "SELECT status,outcome,brier FROM predictions WHERE id=?", (strict_id,))
+    assert strict["status"] == "insufficient_data"
+    assert strict["outcome"] is None and strict["brier"] is None
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_resolution_invalid'") == 1
+
+    # Markerless/stored historical configs retain the old resolver behavior.
+    world.oracle.strict_resolution_rules = False
+    legacy_id = world.store.insert(
+        "predictions", asked_tick=0, question="legacy stored rule", p=0.8,
+        resolution_rule_json=json.dumps({"type": "invented_rule"}),
+        deadline_tick=1, status="open")
+    resolved = world.oracle.resolve_open(1)
+    assert resolved == [{"id": legacy_id, "outcome": 0, "brier": pytest.approx(0.64)}]
+    legacy = world.store.query_one(
+        "SELECT status,outcome,brier FROM predictions WHERE id=?", (legacy_id,))
+    assert legacy["status"] == "resolved"
+    assert legacy["outcome"] == 0 and legacy["brier"] == pytest.approx(0.64)

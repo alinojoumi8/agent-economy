@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import experiments.harness as experiment_harness
 import research.counterfactual as counterfactual_runner
 import research.scenarios as scenarios
+import reports.acceptance as acceptance_report
 import run as cli
 from engine.store import Store
 from reports.acceptance import (
@@ -37,6 +38,33 @@ def _config(**over):
     }
     config.update(over)
     return config
+
+
+def _strict_oracle_acceptance_config(*, min_ticks=2, latency_limit_ms=60_000):
+    question = "What is the probability of a bank run within 30 ticks?"
+    return _config(
+        oracle={"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                "strict_resolution_rules": True},
+        acceptance={
+            "min_ticks": min_ticks, "min_agents": 0, "max_agents": 100,
+            "max_spend_usd": 200.0, "efficiency_target_usd": 200.0,
+            "oracle_p90_ms": latency_limit_ms,
+            "oracle_min_latency_samples": 1,
+            "oracle_latency_source": "scheduled_e2e_v1",
+            "oracle_campaign_id": "test-oracle-campaign",
+            "oracle_campaign_version": 1,
+            "required_shocks": [], "require_oracle_scoring": False,
+            "require_experiment": False, "require_phenomena": False,
+            "oracle_questions": [{
+                "at_tick": 1, "campaign_key": "bank_run_t001",
+                "horizon_ticks": 30,
+                "expected_rule": {
+                    "type": "bank_run", "window": 5, "deposit_drop": 0.30,
+                },
+                "question": question,
+            }],
+        },
+    )
 
 
 def _passing_evidence(tmp_path):
@@ -470,6 +498,149 @@ def test_completed_acceptance_orchestration_replays_exactly(tmp_path):
             source_world.close()
 
 
+def test_scheduled_e2e_latency_is_prediction_bound_and_replay_exact(
+        tmp_path, monkeypatch):
+    config = _strict_oracle_acceptance_config()
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    clock = iter((10_000_000_000, 11_500_000_000))
+    monkeypatch.setattr(
+        acceptance_report.time, "perf_counter_ns", lambda: next(clock))
+    seen_contracts = []
+
+    def governed_answer(context):
+        contract = context["governed_forecast_contract"]
+        seen_contracts.append(contract)
+        return {
+            "p": 0.2, "drivers": ["reserve ratio", "deposit trust"],
+            "confidence": "med",
+            "resolution_rule": contract["resolution_rule"],
+            "deadline_tick": contract["deadline_tick"],
+            "reasoning": "used the engine-owned schedule contract",
+        }
+
+    source_world.gateway.scripted.register("oracle", governed_answer)
+    try:
+        asyncio.run(execute_acceptance_run(source_world, target_tick=2))
+        assert seen_contracts == [{
+            "campaign_id": "test-oracle-campaign",
+            "campaign_version": 1,
+            "campaign_key": "bank_run_t001",
+            "scheduled_tick": 1,
+            "resolution_rule": {
+                "type": "bank_run", "window": 5, "deposit_drop": 0.30,
+            },
+            "deadline_tick": 31,
+        }]
+        source_event = source_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'")
+        payload = json.loads(source_event["payload_json"])
+        assert payload["latency_ms"] == 1500
+        assert payload["latency_kind"] == "scheduled_e2e_v1"
+        assert payload["campaign_key"] == "bank_run_t001"
+        assert {call["purpose"] for call in payload["model_calls"]} >= {
+            "oracle_plan", "oracle"}
+        source_status = acceptance_schedule_status(
+            source_store, config, target_tick=2)
+        assert source_status["state"] == "completed"
+        assert source_status["checkpoints"][0]["latency_ms"] == 1500
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+        replay_payload = json.loads(replay_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'")["payload_json"])
+        assert replay_payload == payload
+        replay_status = acceptance_schedule_status(
+            replay_store, replay_world.config, target_tick=2)
+        assert replay_status["checkpoints"][0]["latency_ms"] == 1500
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
+def _seed_strict_latency_fixture(path, *, event_prediction_id=1, latency_ms=1500):
+    config = _strict_oracle_acceptance_config(latency_limit_ms=1000)
+    store = Store(str(path))
+    store.init_run_meta("strict-latency", config["seed"], config)
+    store.set_meta(tick=2, status="paused")
+    store.insert(
+        "llm_calls", tick=0, role="oracle", purpose="oracle",
+        provider="minimax", model="MiniMax-M3", latency_ms=1)
+    prediction_id = store.insert(
+        "predictions", asked_tick=1,
+        question=config["acceptance"]["oracle_questions"][0]["question"],
+        p=0.2, reasoning="bounded forecast",
+        drivers_json=json.dumps(["reserve ratio", "deposit trust"]),
+        confidence="med",
+        resolution_rule_json=json.dumps({
+            "type": "bank_run", "window": 5, "deposit_drop": 0.30,
+        }),
+        deadline_tick=31,
+        evidence_json=json.dumps([{"tool": "query_metrics", "result": []}]),
+        status="open")
+    store.insert(
+        "acceptance_checkpoints", scheduled_tick=1,
+        question=config["acceptance"]["oracle_questions"][0]["question"],
+        status="completed", prediction_id=prediction_id)
+    payload = {
+        "scheduled_tick": 1,
+        "question": config["acceptance"]["oracle_questions"][0]["question"],
+        "prediction_id": event_prediction_id,
+        "latency_ms": latency_ms,
+        "latency_kind": "scheduled_e2e_v1",
+        "campaign_id": "test-oracle-campaign",
+        "campaign_version": 1,
+        "campaign_key": "bank_run_t001",
+        "model_calls": [
+            {"purpose": "oracle_plan", "provider": "minimax", "model": "MiniMax-M3"},
+            {"purpose": "oracle", "provider": "minimax", "model": "MiniMax-M3"},
+        ],
+    }
+    store.log_event(1, "acceptance_checkpoint_completed", payload)
+    store.commit()
+    return store, config, payload
+
+
+def test_strict_latency_ignores_manual_calls_and_duplicate_references_fail(tmp_path):
+    store, config, payload = _seed_strict_latency_fixture(tmp_path / "strict.db")
+    receipt = write_acceptance_package(store.path, out_dir=tmp_path / "out")
+    latency = next(check for check in receipt["checks"] if check["id"] == "oracle_latency")
+    assert not latency["passed"]
+    assert latency["evidence"] == {
+        "samples": 1, "p90_ms": 1500, "minimum_samples": 1,
+        "limit_ms": 1000, "latency_source": "scheduled_e2e_v1",
+    }
+
+    store.log_event(1, "acceptance_checkpoint_completed", payload)
+    store.commit()
+    schedule = acceptance_schedule_status(store, config, target_tick=2)
+    assert schedule["state"] == "invalid"
+    assert "duplicate" in schedule["checkpoints"][0]["validation_error"]
+    store.close()
+
+
+def test_strict_latency_rejects_a_dangling_completion_reference(tmp_path):
+    store, config, _ = _seed_strict_latency_fixture(
+        tmp_path / "dangling.db", event_prediction_id=999)
+    schedule = acceptance_schedule_status(store, config, target_tick=2)
+    assert schedule["state"] == "invalid"
+    assert "dangling" in schedule["checkpoints"][0]["validation_error"]
+    assert schedule["checkpoints"][0]["prediction_id"] is None
+    store.close()
+
+
 def test_missed_acceptance_checkpoint_replays_exactly(tmp_path):
     question = "Will a bank run happen?"
     config = _config(acceptance={
@@ -720,8 +891,15 @@ def test_live_acceptance_profile_is_explicitly_uncapped():
     assert config["budget"]["cap_usd"] is None
     assert config["acceptance"]["max_spend_usd"] is None
     assert config["acceptance"]["efficiency_target_usd"] == 200
-    assert config["acceptance"]["oracle_min_latency_samples"] == 5
+    assert config["acceptance"]["oracle_min_latency_samples"] == 6
+    assert config["acceptance"]["oracle_latency_source"] == "scheduled_e2e_v1"
+    assert config["acceptance"]["oracle_campaign_version"] == 1
     assert len(config["acceptance"]["oracle_questions"]) == 6
+    assert len({
+        item["campaign_key"] for item in config["acceptance"]["oracle_questions"]
+    }) == 6
+    assert all(item["expected_rule"]["type"] == "bank_run"
+               for item in config["acceptance"]["oracle_questions"])
     assert config["information"]["citizen_bank_visibility"] == "public_status"
 
 

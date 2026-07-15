@@ -165,9 +165,9 @@ shock. Regenerate with `--acceptance-report` only after the underlying evidence
 exists; report regeneration cannot make a failed gate pass.
 
 A legacy run without `belief_updated` history fails the rumor gate by design;
-the evaluator will not assume a universal initial trust value. A single Oracle
-sample also cannot satisfy the production p90 gate, even when its latency is
-below the limit.
+the evaluator will not assume a universal initial trust value. Fewer than all
+six governed scheduled Oracle samples cannot satisfy the production p90 gate,
+even when every available sample is below the limit.
 
 ## I need per-call diagnostics
 

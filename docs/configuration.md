@@ -216,12 +216,20 @@ The `acceptance` block is evidence policy rather than call authorization:
 
 - `min_ticks`, `min_agents`, `max_agents`;
 - `max_spend_usd` and independent `efficiency_target_usd`;
-- `oracle_p90_ms` and `oracle_min_latency_samples`;
-- `oracle_questions` with exact scheduled ticks;
+- `oracle_p90_ms`, `oracle_min_latency_samples`, and `oracle_latency_source`;
+- `oracle_campaign_id` plus its positive integer `oracle_campaign_version`;
+- `oracle_questions` with exact scheduled ticks, unique `campaign_key` values,
+  bounded horizons, and expected machine-checkable rules;
 - optional `required_shocks`, `require_oracle_scoring`,
   `require_experiment`, and `require_phenomena` for bounded pilots.
 
 Live acceptance additionally requires `--approve-live-inference` at the CLI.
+The maintained production profile uses `scheduled_e2e_v1`: each latency sample
+is bound to the exact scheduled prediction and covers Oracle planning, bounded
+reads, answering, and contract validation. Manual Oracle calls and raw
+`llm_calls.latency_ms` rows do not enter this gate. Missing, dangling,
+malformed, or duplicate completion references fail closed. Markerless stored
+configs retain the legacy answer-call calculation for replay compatibility.
 
 ## Rumor targeting
 

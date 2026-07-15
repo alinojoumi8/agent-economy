@@ -85,6 +85,9 @@ provider rate limits control throughput.
 - [x] Use one inherited production-acceptance config for 365 ticks, about 100
   agents, the five required shock types, and an automatically scored Oracle
   prediction; require six latency samples and a separate $200 efficiency gate.
+- [x] Bind all six Oracle latency samples to their scheduled predictions across
+  planning and answer validation; reject unsupported rules and dangling,
+  malformed, or duplicate completion provenance without changing old replays.
 - [x] Add research-valid public information boundaries, dynamic depositor-targeted
   rumors, bounded/provenance-bearing beliefs, and fail-closed relative trust evidence.
 - [x] Separate final-goods output from labor income and expose correctly windowed
