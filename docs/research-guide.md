@@ -79,6 +79,23 @@ they use true year-over-year inflation.
 
 These are simulation measures, not national-accounting statistics.
 
+## R21 calibrated initialization
+
+`runs/r21-real-us.yaml` replaces the synthetic starting distributions with
+weighted draws from pinned public statistics while leaving the simulation's
+people and firms fictional. The Federal Reserve 2022 SCF summary extract supplies
+annual income, work status, and liquid financial assets; Census 2022 SUSB
+supplies national employer-firm size classes. Every draw records its source
+support and the run reports fixed-quantile distance against the same-seed
+synthetic baseline.
+
+This is an initialization calibration, not a forecast of the United States.
+SCF `NETWORTH` is retained as an engine-owned, off-ledger calibration baseline
+and exposed through agent provenance, but it is not posted to bank accounts
+because it includes property, business assets, and debt. Use paired seeds to
+compare synthetic and `real_us` arms and keep later endogenous outcomes separate
+from the source-data fit at tick 0.
+
 ## Oracle evidence
 
 Oracle questions are read-only. A prediction stores probability, drivers,
@@ -111,5 +128,5 @@ After the capped live rumor pilot and v1 acceptance:
 - formalize experiment preregistration;
 - report confidence intervals and standardized effect sizes;
 - expand Oracle calibration across diverse questions and runs;
-- calibrate parameters against versioned real-world data only with explicit
-  provenance and separation from the deterministic mechanics contract.
+- use the pinned R21 mode for preregistered initialization-sensitivity studies,
+  keeping calibration provenance separate from endogenous mechanics.

@@ -236,6 +236,35 @@ Single chokepoint through which every call flows. Responsibilities:
 - A trade opportunity requires an effective contract between distinct-region firms, exporter inventory, and importer funds. The invoice is denominated in the importer's currency so the existing FX/settlement path can execute. A scripted founder creates at most one bounded shipment per decision; delivery and payment remain deterministic domain operations.
 - Migration is available only on career cadence to a healthy, unemployed, non-retired citizen with no disqualifying credit exposure. The numeraire-adjusted wage gain must meet the configured threshold. Authorization, destination, contract, funds, credit exposure, and currency checks fail closed and remain auditable.
 
+### 9.3 Real-U.S. calibration mode (PRD R21)
+
+- `calibration.mode` is `synthetic` when absent. The explicit `real_us` mode
+  requires semantics 7 and two verified, pinned targets: the Federal Reserve
+  2022 SCF summary-extract family support and Census 2022 SUSB national
+  employer-firm size support. Missing, malformed, non-finite, wrong-version, or
+  unverified inputs fail before genesis. No database-schema or REST-contract
+  migration is required.
+- The SCF adapter requires five unique public implicates for every `YY1` family,
+  sums their published weights, averages numeric amounts, and uses a stable mode
+  for work/occupation categories. Deterministic integer cumulative sampling
+  overlays age, work status, annual income, dependents, liquid holdings, and an
+  engine-owned total-net-worth calibration baseline on otherwise fictional
+  personas. `LIQ` funds the existing 70/30 checking/savings split. `NETWORTH`,
+  including negative and non-liquid wealth, is persisted on the event spine and
+  exposed by the agent inspector without being silently converted into deposits.
+- The SUSB adapter excludes overlapping subtotal classes and weights mutually
+  exclusive national size classes by `FIRM`. Sampled representative employment
+  sets each initial firm target, bounded by configured labor capacity; requested
+  and realized headcounts are both recorded. Sampled annual income sets the
+  initial pay-interval wage within configured limits.
+- Dataset rows are ingested before fresh genesis. Replay removes the mutable
+  manifest path, restores the source run's `dataset_manifests` and
+  `calibration_targets`, and rebuilds only from those recorded inputs. A
+  dedicated seed-derived PRNG isolates calibration draws so synthetic mode is
+  unchanged. Events retain per-agent/per-firm source references plus fixed-
+  quantile evidence for income, modeled liquid wealth, total net worth, and
+  realized firm size against the same-seed synthetic baseline where comparable.
+
 ## 10. Newsroom + conversations
 
 - Reporters receive only an explicit allowlist of public/reportable event kinds and a bounded public projection of each payload; private beliefs, participant controls, prompts, and provider diagnostics never reach a desk. Within that boundary the digest is ordered by newsworthiness (money size, rarity, entity prominence), reporters draft 2–4 stories, and the editor selects/frames per outlet slant. Stories cite `source_event_ids`; every citation must resolve locally or the complete provider article fails closed to a deterministic grounded brief. The report can later audit how coverage diverged from ground truth (fun metric: *distortion index*).

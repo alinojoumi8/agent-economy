@@ -53,7 +53,12 @@ export function InstitutionalPulse({ legal, politics, information, datasets }) {
       <div className="eyebrow mb-2 mt-4">Information diffusion</div>
       <p className="text-slate-400">{number(information?.exposure_count || 0, 0)} recorded exposures. Claims retain source-event provenance and agents update beliefs only after exposure.</p>
       <div className="eyebrow mb-2 mt-4">Pinned research grounding</div>
-      <p className="text-slate-400">{datasets?.manifests?.length || 0} verified dataset snapshots · {datasets?.targets?.length || 0} aggregate calibration targets. Simulated people and firms remain fictional.</p>
+      <p className="text-slate-400">
+        {datasets?.manifests?.length || 0} verified dataset snapshots · {datasets?.targets?.length || 0} calibration targets.
+        {datasets?.r21_calibration
+          ? ` R21 ${datasets.r21_calibration.mode} initialization sampled ${datasets.r21_calibration.households_sampled} households and ${datasets.r21_calibration.firms_sampled} firms from pinned statistical supports; identities remain fictional.`
+          : " This run uses fictional synthetic people and firms."}
+      </p>
     </div>
   </Panel>;
 }

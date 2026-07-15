@@ -265,10 +265,29 @@ def create_app(world: World, *, served_ticks: int | None = None) -> FastAPI:
                 "ORDER BY id DESC LIMIT 10", (agent_id,))]
         persona = {k: load_json(a[k], None) for k in
                    ("personality_json", "media_diet_json", "cadence_json")}
+        calibration_event = store.query_one(
+            "SELECT id,tick,payload_json FROM events "
+            "WHERE kind='r21_household_sampled' AND subject_type='agent' "
+            "AND subject_id=? ORDER BY id DESC LIMIT 1", (agent_id,))
+        calibration_profile = None
+        if calibration_event:
+            payload = load_json(calibration_event["payload_json"], {})
+            if not isinstance(payload, dict):
+                payload = {}
+            calibration_profile = dict(payload)
+            if ("non_liquid_net_worth_cents" not in calibration_profile
+                    and "net_worth_cents" in calibration_profile
+                    and "liquid_wealth_cents" in calibration_profile):
+                calibration_profile["non_liquid_net_worth_cents"] = (
+                    int(calibration_profile["net_worth_cents"])
+                    - int(calibration_profile["liquid_wealth_cents"]))
+            calibration_profile["event_id"] = int(calibration_event["id"])
+            calibration_profile["tick"] = int(calibration_event["tick"])
         return {"agent": dict(a), "persona": persona, "accounts": accounts, "loans": loans,
                 "beliefs": beliefs, "belief_history": belief_history,
                 "memories": memories, "shares": shares,
-                "recent_decisions": decisions}
+                "recent_decisions": decisions,
+                "calibration_profile": calibration_profile}
 
     @app.get("/api/banks")
     async def banks():

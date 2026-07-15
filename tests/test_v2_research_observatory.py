@@ -73,6 +73,74 @@ def test_dataset_manifest_fails_closed_on_checksum_and_missing_vintage(tmp_path:
         verify_manifest(manifest)
 
 
+def test_dataset_manifest_verifies_declared_raw_source_checksum(tmp_path: Path):
+    source_checksum = "ab" * 32
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps({
+        "dataset_key": "source-pinned",
+        "vintage_date": "2020-01-01",
+        "raw_sha256": source_checksum,
+        "targets": [],
+    }), encoding="utf-8")
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text(yaml.safe_dump({
+        "manifest_version": 1,
+        "datasets": [{
+            "key": "source-pinned",
+            "source_url": "https://example.invalid/raw-data",
+            "release_date": "2020-01-01",
+            "vintage_date": "2020-01-01",
+            "retrieval_time": "2020-01-02T00:00:00Z",
+            "checksum_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+            "transform_version": "test-v1",
+            "usage_terms": "test",
+            "snapshot_path": snapshot.name,
+            "metadata": {"source_checksum_sha256": source_checksum},
+        }],
+    }), encoding="utf-8")
+
+    assert verify_manifest(manifest)["ok"] is True
+
+
+@pytest.mark.parametrize(("manifest_checksum", "snapshot_checksum", "message"), [
+    ("ab" * 32, None, "snapshot raw_sha256 is required"),
+    ("ab" * 32, "cd" * 32, "snapshot raw_sha256 does not match"),
+    ("AB" * 32, "ab" * 32, "manifest source_checksum_sha256 must be"),
+    ("ab" * 32, "AB" * 32, "snapshot raw_sha256 must be"),
+])
+def test_dataset_manifest_rejects_invalid_declared_raw_source_checksum(
+        tmp_path: Path, manifest_checksum: str, snapshot_checksum: str | None,
+        message: str):
+    snapshot_payload = {
+        "dataset_key": "source-pinned",
+        "vintage_date": "2020-01-01",
+        "targets": [],
+    }
+    if snapshot_checksum is not None:
+        snapshot_payload["raw_sha256"] = snapshot_checksum
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps(snapshot_payload), encoding="utf-8")
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text(yaml.safe_dump({
+        "manifest_version": 1,
+        "datasets": [{
+            "key": "source-pinned",
+            "source_url": "https://example.invalid/raw-data",
+            "release_date": "2020-01-01",
+            "vintage_date": "2020-01-01",
+            "retrieval_time": "2020-01-02T00:00:00Z",
+            "checksum_sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+            "transform_version": "test-v1",
+            "usage_terms": "test",
+            "snapshot_path": snapshot.name,
+            "metadata": {"source_checksum_sha256": manifest_checksum},
+        }],
+    }), encoding="utf-8")
+
+    with pytest.raises(DatasetError, match=message):
+        verify_manifest(manifest)
+
+
 def test_fred_refresh_transforms_csv_deterministically(tmp_path: Path, monkeypatch):
     snapshot = tmp_path / "fred.json"
     manifest = tmp_path / "manifest.yaml"

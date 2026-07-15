@@ -134,10 +134,20 @@ retrieval time, release date, vintage date, SHA-256 checksum, transform version,
 usage terms, and snapshot path. Missing required vintages and checksum mismatches
 fail closed.
 
-The repository pins small FRED and BLS 2020 aggregate targets. SCF, SUSB, EDGAR,
-and Congress adapters remain explicitly marked optional/unpinned until a release
-operator performs the source-specific refresh and provenance review. Normal runs
-and tests never access the network. `--refresh-datasets` is the only refresh path.
+The repository pins small FRED/BLS 2020 aggregate targets, a 4,595-family
+derivative of the Federal Reserve 2022 SCF public summary extract, and Census
+2022 SUSB national employer-firm size classes. EDGAR and Congress remain
+optional/unpinned. Normal runs and tests never access the network.
+`--refresh-datasets` is the only refresh path; repeat
+`--refresh-dataset-key KEY` to refresh selected immutable sources without
+repinning unrelated fixtures.
+
+`runs/r21-real-us.yaml` opts into deterministic integer-weight sampling. SCF
+`LIQ` funds opening deposits, while `NETWORTH` is an engine-owned off-ledger
+calibration baseline because the household ledger models liquid accounts rather
+than property and business assets. The agent inspector and event spine expose
+the total/liquid/non-liquid split, per-draw sources, and calibrated-versus-
+synthetic quantile evidence.
 
 Dataset provenance is persisted in schema-v10 tables, returned by `/api/v2/datasets`,
 shown in the observatory, and embedded in static replay exports.
@@ -437,9 +447,9 @@ The focused named gate passed 86 tests before the final hardening pass; a
 93-test integrated adversarial gate passed afterward, and the semantics-7
 closure suite passed 280 tests in 165.73 seconds. The post-merge
 compatibility/replay cleanup suite passes 303 tests in 178.22 seconds. Python
-compilation and pinned-dataset
-verification were green: FRED and BLS each supplied three required targets, and
-the four optional sources remained explicitly unpinned. Dashboard verification
+compilation and pinned-dataset verification were green. At that closure point,
+FRED and BLS each supplied three required targets and the four later sources
+remained explicitly unpinned. Dashboard verification
 installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
 high-severity audit vulnerabilities, built 599 Vite modules, confirmed the
 committed static bundle was fresh, and passed `git diff --check`.
@@ -479,7 +489,7 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 
 The closure audit also passed the universal hash-locked Python install and
 advisory scan, generated dashboard notice freshness/full-text review (including
-Vite/Rolldown helpers emitted into the bundle), pinned FRED/BLS terms and
+Vite/Rolldown helpers emitted into the bundle), then-current FRED/BLS terms and
 checksum verification, pinned persona prior-art attribution with no copied
 upstream code, and both current-tree and full-history secret scans. These checks
 authorized PR #15's merge to `main` as
@@ -487,10 +497,16 @@ authorized PR #15's merge to `main` as
 repeated all five jobs successfully. Repeat the audits against any future
 release candidate.
 
-R21 real-US microdata, R22 hosted multi-user operation, the 30-day rumor gate,
-Oracle latency/calibration campaign, and 365-day/$200 acceptance run remain
-separate. PR #15 is merged; tagging and publication were not authorized by that
-merge and remain separate release decisions.
+R21 real-U.S. initialization is now available through
+`runs/r21-real-us.yaml`. It uses pinned 2022 SCF family and SUSB firm-size
+supports, persists every logical draw and calibration-distance summary, and
+replays from source-recorded targets even when the manifest is unavailable.
+Recorded gate `24d8dc242e` completed five free ticks with 70 household and 12
+realized-firm draws, zero reconciliation failures, and exact offline replay
+`replay-24d8dc242e-a9ed4f2910` at hash `95b4b8bd…0cee369a`.
+R22 hosted multi-user operation, the 30-day rumor gate, Oracle
+latency/calibration campaign, and 365-day/$200 acceptance run remain separate.
+Tagging and publication remain separate release decisions.
 
 ## Release checklist
 

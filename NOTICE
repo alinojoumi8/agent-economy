@@ -1,9 +1,9 @@
 Agent Economy
 Copyright 2026 Agent Economy contributors
 
-The repository contains small, transformed aggregate calibration snapshots from
-the following sources. Apache-2.0 covers Agent Economy code, not third-party
-source content or service terms.
+The repository contains transformed calibration snapshots from the following
+sources. Apache-2.0 covers Agent Economy code, not third-party source content or
+service terms.
 
 Federal Funds Effective Rate [FEDFUNDS]
 - Source: Board of Governors of the Federal Reserve System (US), H.15 Selected
@@ -27,3 +27,25 @@ Civilian unemployment rate [LNS14000000]
   copyrighted photographs and illustrations; BLS requests source citation.
   The pinned snapshot uses the 2021-01-08 vintage and records January, April,
   and December 2020 monthly values.
+
+2022 Survey of Consumer Finances (SCF) Summary Extract Public Data
+- Source: Board of Governors of the Federal Reserve System.
+- Survey, files, documentation, and disclosure-avoidance notice:
+  https://www.federalreserve.gov/econres/scfindex.htm
+- The checked-in derivative uses the public CSV updated April 3, 2024. It
+  requires and collapses five implicates for each of 4,595 public families,
+  preserves the published survey-weight mass, and retains only the bounded
+  initialization variables declared in `config/data-manifest.yaml`.
+- Public family IDs are sampling support keys, not identities. Simulated names,
+  traits, relationships, and behavior remain fictional.
+
+2022 Statistics of U.S. Businesses (SUSB)
+- Source: U.S. Census Bureau, 2022 SUSB annual detailed enterprise-size table,
+  released April 2025:
+  https://www.census.gov/data/tables/2022/econ/susb/2022-susb-annual.html
+- The checked-in derivative contains national employer-firm counts and
+  representative employment for mutually exclusive size classes. Overlapping
+  subtotal rows and state/industry detail are excluded.
+- Census statistical data are U.S. government works; preserve the source,
+  table, reference year, release date, and checksum attribution recorded in the
+  manifest.

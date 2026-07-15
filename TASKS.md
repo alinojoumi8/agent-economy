@@ -134,11 +134,11 @@ provider rate limits control throughput.
 
 - [x] Pin aggregate FRED/BLS calibration fixtures with checksums, precise source
   metadata/terms, deterministic refresh validation, and offline tests.
-- [ ] Add versioned, provenance-bearing dataset adapters for income, wealth, and
+- [x] Add versioned, provenance-bearing dataset adapters for income, wealth, and
   firm-size distributions, with validation and an offline fixture.
-- [ ] Initialize deterministically from a pinned dataset snapshot and report
+- [x] Initialize deterministically from a pinned dataset snapshot and report
   calibration distance against synthetic mode.
-- [ ] Test malformed/missing data, deterministic sampling, provenance, and
+- [x] Test malformed/missing data, deterministic sampling, provenance, and
   backward compatibility; then pass the full gate.
 
 ## Task 6 — R22 Hosted multi-user deployment

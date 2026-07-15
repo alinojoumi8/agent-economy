@@ -1,0 +1,251 @@
+{
+  "dataset_key": "census-susb",
+  "raw_sha256": "f07eef547763a7a21cb453bf6f4119f768f5939dc499a65850a532ea74489ccf",
+  "targets": [
+    {
+      "dimensions": {
+        "geography": "United States",
+        "reference_year": 2022
+      },
+      "key": "firm_size_distribution.classes",
+      "unit": "employer_firm_count",
+      "value": {
+        "class_count": 23,
+        "classes": [
+          {
+            "code": "02",
+            "description": "02: <5",
+            "employment": 6295615,
+            "employment_noise_flag": "G",
+            "firm_count": 4029041,
+            "max_employees": 4,
+            "min_employees": 1,
+            "representative_employees": 2
+          },
+          {
+            "code": "03",
+            "description": "03: 5-9",
+            "employment": 6810300,
+            "employment_noise_flag": "G",
+            "firm_count": 1034135,
+            "max_employees": 9,
+            "min_employees": 5,
+            "representative_employees": 7
+          },
+          {
+            "code": "04",
+            "description": "04:10-14",
+            "employment": 5015443,
+            "employment_noise_flag": "G",
+            "firm_count": 428589,
+            "max_employees": 14,
+            "min_employees": 10,
+            "representative_employees": 12
+          },
+          {
+            "code": "05",
+            "description": "05: 15-19",
+            "employment": 3828826,
+            "employment_noise_flag": "G",
+            "firm_count": 228328,
+            "max_employees": 19,
+            "min_employees": 15,
+            "representative_employees": 17
+          },
+          {
+            "code": "06",
+            "description": "07: 20-24",
+            "employment": 3114197,
+            "employment_noise_flag": "G",
+            "firm_count": 142888,
+            "max_employees": 24,
+            "min_employees": 20,
+            "representative_employees": 22
+          },
+          {
+            "code": "07",
+            "description": "08: 25-29",
+            "employment": 2549379,
+            "employment_noise_flag": "G",
+            "firm_count": 95073,
+            "max_employees": 29,
+            "min_employees": 25,
+            "representative_employees": 27
+          },
+          {
+            "code": "08",
+            "description": "09: 30-34",
+            "employment": 2171535,
+            "employment_noise_flag": "G",
+            "firm_count": 68222,
+            "max_employees": 34,
+            "min_employees": 30,
+            "representative_employees": 32
+          },
+          {
+            "code": "09",
+            "description": "10: 35-39",
+            "employment": 1872661,
+            "employment_noise_flag": "G",
+            "firm_count": 50819,
+            "max_employees": 39,
+            "min_employees": 35,
+            "representative_employees": 37
+          },
+          {
+            "code": "10",
+            "description": "11: 40-49",
+            "employment": 3118666,
+            "employment_noise_flag": "G",
+            "firm_count": 70770,
+            "max_employees": 49,
+            "min_employees": 40,
+            "representative_employees": 44
+          },
+          {
+            "code": "11",
+            "description": "12: 50-74",
+            "employment": 5366080,
+            "employment_noise_flag": "G",
+            "firm_count": 89207,
+            "max_employees": 74,
+            "min_employees": 50,
+            "representative_employees": 60
+          },
+          {
+            "code": "12",
+            "description": "13: 75-99",
+            "employment": 3784183,
+            "employment_noise_flag": "G",
+            "firm_count": 44181,
+            "max_employees": 99,
+            "min_employees": 75,
+            "representative_employees": 86
+          },
+          {
+            "code": "13",
+            "description": "14: 100-149",
+            "employment": 4922865,
+            "employment_noise_flag": "G",
+            "firm_count": 40744,
+            "max_employees": 149,
+            "min_employees": 100,
+            "representative_employees": 121
+          },
+          {
+            "code": "14",
+            "description": "15: 150-199",
+            "employment": 3340620,
+            "employment_noise_flag": "G",
+            "firm_count": 19444,
+            "max_employees": 199,
+            "min_employees": 150,
+            "representative_employees": 172
+          },
+          {
+            "code": "15",
+            "description": "16: 200-299",
+            "employment": 4561498,
+            "employment_noise_flag": "G",
+            "firm_count": 18798,
+            "max_employees": 299,
+            "min_employees": 200,
+            "representative_employees": 243
+          },
+          {
+            "code": "16",
+            "description": "17: 300-399",
+            "employment": 3068601,
+            "employment_noise_flag": "G",
+            "firm_count": 8904,
+            "max_employees": 399,
+            "min_employees": 300,
+            "representative_employees": 345
+          },
+          {
+            "code": "17",
+            "description": "18: 400-499",
+            "employment": 2430087,
+            "employment_noise_flag": "G",
+            "firm_count": 5451,
+            "max_employees": 499,
+            "min_employees": 400,
+            "representative_employees": 446
+          },
+          {
+            "code": "18",
+            "description": "20: 500-749",
+            "employment": 4237717,
+            "employment_noise_flag": "G",
+            "firm_count": 6974,
+            "max_employees": 749,
+            "min_employees": 500,
+            "representative_employees": 608
+          },
+          {
+            "code": "19",
+            "description": "21: 750-999",
+            "employment": 2963606,
+            "employment_noise_flag": "G",
+            "firm_count": 3426,
+            "max_employees": 999,
+            "min_employees": 750,
+            "representative_employees": 865
+          },
+          {
+            "code": "31",
+            "description": "22: 1,000-1,499",
+            "employment": 4151589,
+            "employment_noise_flag": "G",
+            "firm_count": 3412,
+            "max_employees": 1499,
+            "min_employees": 1000,
+            "representative_employees": 1217
+          },
+          {
+            "code": "22",
+            "description": "23: 1,500-1,999",
+            "employment": 3069744,
+            "employment_noise_flag": "G",
+            "firm_count": 1777,
+            "max_employees": 1999,
+            "min_employees": 1500,
+            "representative_employees": 1727
+          },
+          {
+            "code": "23",
+            "description": "24: 2,000-2,499",
+            "employment": 2443736,
+            "employment_noise_flag": "G",
+            "firm_count": 1091,
+            "max_employees": 2499,
+            "min_employees": 2000,
+            "representative_employees": 2240
+          },
+          {
+            "code": "24",
+            "description": "25: 2,500-4,999",
+            "employment": 7321331,
+            "employment_noise_flag": "G",
+            "firm_count": 2099,
+            "max_employees": 4999,
+            "min_employees": 2500,
+            "representative_employees": 3488
+          },
+          {
+            "code": "25",
+            "description": "26: 5,000+",
+            "employment": 49310128,
+            "employment_noise_flag": "G",
+            "firm_count": 2262,
+            "max_employees": null,
+            "min_employees": 5000,
+            "representative_employees": 21799
+          }
+        ],
+        "total_firms": 6395635
+      }
+    }
+  ],
+  "vintage_date": "2022-12-31"
+}

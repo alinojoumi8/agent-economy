@@ -171,7 +171,7 @@ def test_v3_exact_replay_includes_belief_provenance_events(tmp_path):
     assert replay_belief_events == source_belief_events
     assert proof["exact"], proof["differences"]
     source_store.close()
-    replay_store.close()
+    replay_world.close()
 
 
 def test_rumor_selector_targets_current_depositors_of_largest_bank(tmp_path):

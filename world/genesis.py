@@ -10,21 +10,27 @@ from __future__ import annotations
 
 import json
 import random
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from engine.core import Economy
 from engine.ledger import SYS_EXTERNAL, SYS_INFLOW
 from agents.memory import Memory
 from agents.personas.library import Persona, sample_persona, sample_population
 
+if TYPE_CHECKING:
+    from research.r21 import R21Calibration
+
 
 class Genesis:
-    def __init__(self, economy: Economy, config: dict, persona_prng: random.Random):
+    def __init__(self, economy: Economy, config: dict, persona_prng: random.Random,
+                 *, calibration: "R21Calibration | None" = None):
         self.e = economy
         self.store = economy.store
         self.config = config
         self.prng = economy.prng
         self.persona_prng = persona_prng
+        self.calibration = calibration
+        self.r21_income_by_agent: dict[int, int] = {}
         self.memory = Memory(self.store, config)
         self.bank_ids: list[int] = []
         self.outlets = config.get("outlets", [
@@ -172,9 +178,14 @@ class Genesis:
         else:
             reserved_health = 0
             size = int(pop_cfg.get("size", 70))
-        personas = sample_population(self.persona_prng, size, n_outlets=len(self.outlets))
+        calibrated = bool(self.calibration and self.calibration.enabled)
+        household_samples = (self.calibration.sample_households(
+            self.persona_prng, size, len(self.outlets)) if calibrated else [])
+        personas = ([sample.persona for sample in household_samples] if calibrated
+                    else sample_population(
+                        self.persona_prng, size, n_outlets=len(self.outlets)))
         # Guarantee at least one lawyer occupation exists among citizens too.
-        for p in personas:
+        for index, p in enumerate(personas):
             if self.e.regions.enabled:
                 region_id = self.e.regions.region_for_new_citizen(
                     reserved_northstar=reserved_health)
@@ -194,6 +205,14 @@ class Genesis:
                 region_id=region_id, population_tier="periphery", pinned_core=0)
             self._open_accounts(agent_id, bank_id, checking, savings)
             self._seed_beliefs(agent_id, bank_id)
+            if calibrated:
+                sample = household_samples[index]
+                self.r21_income_by_agent[agent_id] = sample.annual_income_cents
+                self.store.log_event(
+                    0, "r21_household_sampled",
+                    {"agent_id": agent_id, **sample.provenance()},
+                    phase="NIGHT_CLOSE", subject_type="agent",
+                    subject_id=agent_id, importance=0.5)
 
     def _cadence_for(self, p: Persona) -> dict:
         if (int(self.config.get("engine_semantics_version", 1)) >= 7
@@ -208,6 +227,10 @@ class Genesis:
         return {"act": 3, "portfolio": 7, "career": 30}
 
     def _is_retired(self, p: Persona) -> bool:
+        calibration = getattr(self, "calibration", None)
+        if calibration and calibration.enabled \
+                and "r21_retired" in p.extra:
+            return bool(p.extra["r21_retired"])
         retirement_age = 65
         if int(self.config.get("engine_semantics_version", 1)) >= 7:
             retirement_age = int(
@@ -225,7 +248,11 @@ class Genesis:
         founders = [int(r["id"]) for r in candidates]
         self.prng.shuffle(founders)
         n_listed = int(firm_cfg.get("listed", 3))
-        for i in range(min(count, len(founders))):
+        actual_count = min(count, len(founders))
+        calibrated = bool(self.calibration and self.calibration.enabled)
+        firm_samples = (self.calibration.sample_firms(actual_count)
+                        if calibrated else [])
+        for i in range(actual_count):
             founder = founders[i]
             sector = sectors[i % len(sectors)]
             price = self.prng.randint(300, 900)
@@ -246,24 +273,54 @@ class Genesis:
                 memo=f"seed firm {firm_id}")
             self.store.update("firms", firm_id, inventory=self.prng.randint(10, 40))
             # Initial employees.
-            self._staff_firm(firm_id, product["unit_price_cents"])
+            target_headcount = firm_samples[i].requested_employees if calibrated else None
+            realized_headcount = self._staff_firm(
+                firm_id, product["unit_price_cents"],
+                target_headcount=target_headcount)
+            if calibrated:
+                self.calibration.record_realized_firm(
+                    firm_samples[i], realized_headcount)
+                self.store.log_event(
+                    0, "r21_firm_size_sampled",
+                    {"firm_id": firm_id, "realized_employees": realized_headcount,
+                     **firm_samples[i].provenance()},
+                    phase="NIGHT_CLOSE", subject_type="firm",
+                    subject_id=firm_id, importance=0.5)
             if i < n_listed:
                 self._list_firm(firm_id, price)
+        if calibrated:
+            self.store.log_event(
+                0, "r21_calibration_applied", self.calibration.evidence(),
+                phase="NIGHT_CLOSE", importance=3.0)
 
-    def _staff_firm(self, firm_id: int, price: int) -> None:
+    def _staff_firm(self, firm_id: int, price: int, *,
+                    target_headcount: int | None = None) -> int:
         wage = max(250_000, price * 400)
         firm = self.e.firms.get(firm_id)
-        pool = self.store.query(
-            "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
-            "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT 3",
-            (firm["region_id"], firm["region_id"]))
+        if target_headcount is None:
+            pool = self.store.query(
+                "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
+                "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT 3",
+                (firm["region_id"], firm["region_id"]))
+        else:
+            pool = self.store.query(
+                "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
+                "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT ?",
+                (firm["region_id"], firm["region_id"], max(0, int(target_headcount))))
         pay_interval = int(self.config.get("firms", {}).get("pay_interval_ticks", 30))
         for r in pool:
             aid = int(r["id"])
+            employee_wage = wage
+            if target_headcount is not None:
+                employee_wage = max(
+                    self.calibration.minimum_wage_per_interval_cents,
+                    min(self.calibration.maximum_wage_per_interval_cents,
+                        int(round(self.r21_income_by_agent.get(aid, wage) / 12))))
             self.store.insert("employments", firm_id=firm_id, agent_id=aid, title="worker",
-                              wage_cents=wage, start_tick=0, status="active",
+                              wage_cents=employee_wage, start_tick=0, status="active",
                               pay_interval_ticks=pay_interval, next_pay_tick=pay_interval)
             self.store.execute("UPDATE agents SET employer_id=? WHERE id=?", (firm_id, aid))
+        return len(pool)
 
     def _list_firm(self, firm_id: int, price: int) -> None:
         firm = self.e.firms.get(firm_id)

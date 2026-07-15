@@ -55,6 +55,7 @@ adding it to the observatory's frequent polling payload.
 | `GET` | `/api/events?limit=80&min_importance=0` | Recent append-only event spine |
 | `GET` | `/api/trades?limit=50` | Latest executed exchange trades |
 | `GET` | `/api/cost` | Governor plus model/purpose/agent cost breakdown |
+| `GET` | `/api/v2/datasets` | Verified manifests/targets plus the latest R21 source and calibrated-versus-synthetic distance summary |
 
 Default macro metrics include `gdp_proxy` (daily final-goods sales),
 `gdp_proxy_30d`, `labor_income`, `cpi`, `inflation_30d`, true `cpi_yoy` after

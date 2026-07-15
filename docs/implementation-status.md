@@ -14,7 +14,7 @@
 ## Executive verdict
 
 The PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
-and R20 regional extensions are implemented. The semantics-7 closure completes
+R20 regional, and R21 real-U.S. calibration extensions are implemented. The semantics-7 closure completes
 the remaining code contracts for bank loss recognition, retirement liquidity,
 deterministic arrival/persona handling, autonomous regional trade/migration,
 portable recorded replay, provider cache modes, and additive memory ranking.
@@ -48,7 +48,7 @@ repeated all five jobs successfully.
 | **R18 — Participant mode** | Implemented extension | One controlled citizen uses the normal action validator/ledger with durable queued/executed/rejected/cancelled history and replay-safe provenance. | Participant-influenced runs remain disqualified from observer-only acceptance. |
 | **R19 — 1,000-agent scale** | Implemented extension | Deterministic core/periphery population, promotion/demotion, regional genesis, conserved balances, replay, observatory, and recorded performance gate exist. | Downstream release hardware should publish its own benchmark. |
 | **R20 — Regions, trade, migration, FX** | Implemented extension | Multicurrency ledgers, regional markets, FX inventory, shipments, migration, API/UI/report/replay surfaces, and semantics-7 autonomous opportunity context are implemented. | Five-tick rehearsal/live gates and exact replay passed. |
-| **R21 — Real-data calibration** | Deferred | Aggregate pinned FRED/BLS fixtures exist; real-US income/wealth/firm-size microdata mode is not implemented. | Separate provenance, licensing, calibration-distance, and offline-fixture project. |
+| **R21 — Real-data calibration** | Implemented extension | Explicit `real_us` mode deterministically samples pinned 2022 SCF income, liquid-holding, and total-net-worth records plus 2022 SUSB employer-firm classes, records per-draw provenance and distance evidence, and replays from recorded targets without a manifest. | `LIQ` funds deposits; SCF total net worth is an engine-owned off-ledger calibration baseline visible in the inspector. Identities stay fictional and default mode stays synthetic. |
 | **R22 — Hosted multi-user service** | Deferred | Local single-process observatory only; no auth, tenancy, hosted persistence, or tenant isolation. | Separate architecture, security, operations, and load-test project. |
 
 ## Historical recorded-run evidence
@@ -109,7 +109,8 @@ still operational rather than missing code:
    tagging or publication.
 
 The five-tick semantics-7 pilot supplements those gates; it does not replace
-them. Optional external datasets remain separate.
+them. R21's SCF/SUSB supports are pinned; unrelated optional sources remain
+separate.
 
 ## Semantics-7 verification snapshot
 
@@ -117,12 +118,13 @@ them. Optional external datasets remain separate.
 |---|---|
 | Checkpoint baseline | Existing six-feature work was checkpointed after **231 Python tests**, **16 dashboard tests**, dashboard build, and `git diff --check` passed. |
 | Focused semantics-7 tests | **Passed:** 86 tests across credit, retirement, arrival/persona, R20, replay, cache, memory ranking, pause/resume, and portability; then 93 integrated adversarial tests after final fixes. |
-| Full Python / data | **Passed:** semantics-7 closure 280 tests in 165.73 seconds; post-merge compatibility/replay cleanup 303 tests in 178.22 seconds; compileall green; FRED/BLS three required targets each, four optional sources explicitly unpinned. |
+| Full Python / data | **Passed:** semantics-7 closure 280 tests in 165.73 seconds; post-merge compatibility/replay cleanup 303 tests in 178.22 seconds; R21 integrated gate 328 tests in 140.24 seconds; compileall green; FRED/BLS/SCF/SUSB fixtures verified. |
 | Dashboard / hygiene | **Passed:** 16 tests; npm audit 0; license notice check; 599-module build byte-identical twice; static bundle fresh; clean diff. |
 | Portable `fd0adc5dc1` fixture | **Passed:** sanitized v2 artifact restored/replayed offline with networking prohibited under stored semantics 5 and normalized hash `2efcabed…f9170`. |
 | Free closure rehearsal | **Passed:** `5a0d40d773`, all targets, six checkpoints, balanced currencies, exact replay. |
 | Bounded live pilot | **Passed:** MiniMax ready; `b4832032ba`, `$0.01121124`, all 42 proposals accepted, zero provider/privacy/provenance failures. |
 | Live offline replay | **Passed:** `replay-b4832032ba-8d99c25c56`, tick/hash identical, `differences: []`. |
+| R21 recorded replay | **Passed:** `24d8dc242e` sampled 70 households and 12 realized firms through tick 5 with zero reconciliation failures; `replay-24d8dc242e-a9ed4f2910` matched hash `95b4b8bd…0cee369a`. |
 | CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
 
 ## Closure audit evidence
@@ -133,8 +135,10 @@ them. Optional external datasets remain separate.
 - Dashboard notices contain full license texts for runtime dependencies plus
   Vite/Rolldown helpers emitted into the artifact. Notice generation/freshness,
   high-severity npm audit, and two consecutive byte-identical builds pass.
-- FRED/BLS snapshots verify against checksums with precise source/terms metadata.
-  R21 income/wealth/firm-size microdata remains explicitly unimplemented.
+- FRED/BLS aggregate snapshots plus the SCF/SUSB R21 supports verify against
+  checksums with precise source/terms metadata. Adapter, malformed-input,
+  deterministic-sampling, provenance, reconciliation, API, and exact-replay
+  regressions are committed in `tests/test_r21_calibration.py`.
 - The persona generator is locally authored synthetic heuristic code with pinned
   prior-art attribution; no upstream persona source was copied or vendored.
 - Narrow Gitleaks allowlisting preserves the generic-key rule. Current-tree and
@@ -148,7 +152,8 @@ public tag.
 
 - PR #15 merged after its exact-head matrix passed, and post-merge CI run
   `29368193807` passed all five jobs. No tag or publication was performed.
-- R21 real-US microdata and R22 hosted multi-user operation remain deferred.
+- R21 real-U.S. calibration is implemented; R22 hosted multi-user operation
+  remains outstanding.
 - The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
   acceptance run require separate execution and evidence.
 - Generated databases and reports corroborate findings but do not outrank

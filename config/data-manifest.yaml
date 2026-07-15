@@ -1,103 +1,143 @@
 manifest_version: 1
-model_boundary: Aggregate calibration only. Simulated firms and people remain fictional.
+model_boundary: Simulated people and firms remain fictional. Aggregate FRED/BLS targets
+  are available to every v2 run; the explicit R21 real_us profile additionally samples
+  distributions from disclosure-protected SCF family records and SUSB employer-firm
+  size classes. It never represents sampled records as identities.
 datasets:
-  - key: fred-fedfunds-2020
-    source_url: https://fred.stlouisfed.org/series/FEDFUNDS
-    refresh_url: https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2020-01-01&coed=2020-12-31
-    release_date: "2021-01-08"
-    vintage_date: "2021-01-08"
-    retrieval_time: "2026-07-13T00:00:00Z"
-    checksum_sha256: b91d23814cc884a54452aecd11c5e6005600c1e8281a260f19a113b094420c07
-    transform_version: fred-monthly-targets-v1
-    refresh_vintage_policy: retrieval_date
-    usage_terms: >-
-      Source: Board of Governors of the Federal Reserve System (US), Federal
-      Funds Effective Rate [FEDFUNDS], retrieved from FRED, Federal Reserve Bank
-      of St. Louis. Preserve that attribution. FRED content is not relicensed by
-      this repository; use remains subject to the current FRED Services Terms of
-      Use and any underlying-series restrictions at
-      https://fred.stlouisfed.org/legal/terms/.
-    metadata:
-      series_id: FEDFUNDS
-      source_agency: Board of Governors of the Federal Reserve System (US)
-      release: H.15 Selected Interest Rates
-      frequency: monthly
-      seasonal_adjustment: not seasonally adjusted
-      copyright_status: "Public Domain: Citation Requested"
-      revision_policy: >-
-        The checked-in snapshot is the stated 2021-01-08 vintage. Explicit
-        refresh uses FRED's current graph CSV and resets vintage_date to the
-        UTC retrieval date; it does not claim an ALFRED real-time vintage.
-      target_key_prefix: policy_rate
-      target_months:
-        - "2020-01"
-        - "2020-04"
-        - "2020-12"
-    snapshot_path: ../research/data/fred-fedfunds-2020.json
-    required: true
-  - key: bls-unemployment-2020
-    source_url: https://data.bls.gov/timeseries/LNS14000000
-    release_date: "2021-01-08"
-    vintage_date: "2021-01-08"
-    retrieval_time: "2026-07-13T00:00:00Z"
-    checksum_sha256: 2536fd028ff6b396499f6bbd322144157339a1afbd96248cd4252312762efdb8
-    transform_version: bls-labor-targets-v1
-    usage_terms: >-
-      Source: U.S. Bureau of Labor Statistics, Labor Force Statistics from the
-      Current Population Survey, unemployment rate series LNS14000000. BLS
-      publications are public domain except identified previously copyrighted
-      photographs and illustrations; BLS requests source citation. See
-      https://www.bls.gov/opub/copyright-information.htm.
-    metadata:
-      series_id: LNS14000000
-      source_agency: U.S. Bureau of Labor Statistics
-      program: Labor Force Statistics from the Current Population Survey
-      frequency: monthly
-      seasonal_adjustment: seasonally adjusted
-    snapshot_path: ../research/data/bls-unemployment-2020.json
-    refresh_mode: manual
-    required: true
-  - key: federal-reserve-scf
-    source_url: https://www.federalreserve.gov/econres/scf-databases.htm
-    release_date: pending-refresh
-    vintage_date: pending-refresh
-    retrieval_time: pending-refresh
-    checksum_sha256: ""
-    transform_version: scf-household-distributions-v1
-    usage_terms: Federal Reserve SCF terms and citation guidance apply.
-    snapshot_path: ""
-    refresh_mode: manual
-    required: false
-  - key: census-susb
-    source_url: https://www.census.gov/programs-surveys/susb/data.html
-    release_date: pending-refresh
-    vintage_date: pending-refresh
-    retrieval_time: pending-refresh
-    checksum_sha256: ""
-    transform_version: susb-firm-size-sector-v1
-    usage_terms: U.S. Census Bureau data-use guidance applies.
-    snapshot_path: ""
-    refresh_mode: manual
-    required: false
-  - key: sec-edgar-sector-distributions
-    source_url: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
-    release_date: pending-refresh
-    vintage_date: pending-refresh
-    retrieval_time: pending-refresh
-    checksum_sha256: ""
-    transform_version: edgar-anonymized-sector-v1
-    usage_terms: SEC fair-access policy and API guidance apply.
-    snapshot_path: ""
-    refresh_mode: manual
-    required: false
-  - key: congress-procedural-fixtures
-    source_url: https://api.congress.gov/
-    release_date: pending-refresh
-    vintage_date: pending-refresh
-    retrieval_time: pending-refresh
-    checksum_sha256: ""
-    transform_version: congress-procedure-v1
-    usage_terms: Congress.gov API terms apply; an API key is required for refresh.
-    snapshot_path: ""
-    refresh_mode: manual
-    required: false
+- key: fred-fedfunds-2020
+  source_url: https://fred.stlouisfed.org/series/FEDFUNDS
+  refresh_url: https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS&cosd=2020-01-01&coed=2020-12-31
+  release_date: '2021-01-08'
+  vintage_date: '2021-01-08'
+  retrieval_time: '2026-07-13T00:00:00Z'
+  checksum_sha256: b91d23814cc884a54452aecd11c5e6005600c1e8281a260f19a113b094420c07
+  transform_version: fred-monthly-targets-v1
+  refresh_vintage_policy: retrieval_date
+  usage_terms: 'Source: Board of Governors of the Federal Reserve System (US), Federal
+    Funds Effective Rate [FEDFUNDS], retrieved from FRED, Federal Reserve Bank of
+    St. Louis. Preserve that attribution. FRED content is not relicensed by this repository;
+    use remains subject to the current FRED Services Terms of Use and any underlying-series
+    restrictions at https://fred.stlouisfed.org/legal/terms/.'
+  metadata:
+    series_id: FEDFUNDS
+    source_agency: Board of Governors of the Federal Reserve System (US)
+    release: H.15 Selected Interest Rates
+    frequency: monthly
+    seasonal_adjustment: not seasonally adjusted
+    copyright_status: 'Public Domain: Citation Requested'
+    revision_policy: The checked-in snapshot is the stated 2021-01-08 vintage. Explicit
+      refresh uses FRED's current graph CSV and resets vintage_date to the UTC retrieval
+      date; it does not claim an ALFRED real-time vintage.
+    target_key_prefix: policy_rate
+    target_months:
+    - 2020-01
+    - 2020-04
+    - 2020-12
+  snapshot_path: ../research/data/fred-fedfunds-2020.json
+  required: true
+- key: bls-unemployment-2020
+  source_url: https://data.bls.gov/timeseries/LNS14000000
+  release_date: '2021-01-08'
+  vintage_date: '2021-01-08'
+  retrieval_time: '2026-07-13T00:00:00Z'
+  checksum_sha256: 2536fd028ff6b396499f6bbd322144157339a1afbd96248cd4252312762efdb8
+  transform_version: bls-labor-targets-v1
+  usage_terms: 'Source: U.S. Bureau of Labor Statistics, Labor Force Statistics from
+    the Current Population Survey, unemployment rate series LNS14000000. BLS publications
+    are public domain except identified previously copyrighted photographs and illustrations;
+    BLS requests source citation. See https://www.bls.gov/opub/copyright-information.htm.'
+  metadata:
+    series_id: LNS14000000
+    source_agency: U.S. Bureau of Labor Statistics
+    program: Labor Force Statistics from the Current Population Survey
+    frequency: monthly
+    seasonal_adjustment: seasonally adjusted
+  snapshot_path: ../research/data/bls-unemployment-2020.json
+  refresh_mode: manual
+  required: true
+- key: federal-reserve-scf
+  source_url: https://www.federalreserve.gov/econres/scfindex.htm
+  refresh_url: https://www.federalreserve.gov/econres/files/scfp2022excel.zip
+  release_date: '2024-04-03'
+  vintage_date: '2022-12-31'
+  retrieval_time: '2026-07-15T07:18:09.521557+00:00'
+  checksum_sha256: 9c8e075dc42e5309085291cd27983e1718780449959dba535915fb2115eed3fb
+  transform_version: scf-household-distributions-v1
+  refresh_vintage_policy: preserve
+  usage_terms: 'Source: Board of Governors of the Federal Reserve System, 2022 Survey
+    of Consumer Finances Summary Extract Public Data, CSV update dated April 3, 2024.
+    Preserve this attribution and the disclosure-avoidance warning. The checked-in
+    derivative collapses the five public implicates per family and contains no direct
+    identifiers. See https://www.federalreserve.gov/econres/scfindex.htm.'
+  metadata:
+    survey_year: 2022
+    archive_member: SCFP2022.csv
+    implicates_per_family: 5
+    expected_public_families: 4595
+    source_checksum_sha256: 9721aa73ef1df237d0c5a7ce2578ff9a45c8e5a2ef8efc4fab132c6885ace050
+    variables:
+    - YY1
+    - Y1
+    - WGT
+    - AGE
+    - KIDS
+    - OCCAT1
+    - OCCAT2
+    - INCOME
+    - LIQ
+    - NETWORTH
+    implicate_policy: Group by public family identifier YY1, require five unique implicates,
+      sum the published implicate weights, average numeric amounts, and use a stable
+      mode for bounded work-status categories. This creates one representative support
+      record per public family for deterministic simulation sampling, not inference.
+  snapshot_path: ../research/data/federal-reserve-scf-2022.json
+  required: true
+- key: census-susb
+  source_url: https://www.census.gov/data/tables/2022/econ/susb/2022-susb-annual.html
+  refresh_url: https://www2.census.gov/programs-surveys/susb/tables/2022/us_state_naics_detailedsizes_2022.txt
+  release_date: '2025-04-10'
+  vintage_date: '2022-12-31'
+  retrieval_time: '2026-07-15T07:18:33.067349+00:00'
+  checksum_sha256: 94dfa6d5edf454734620b33f23b2fc71a4c55ef9112333d46fa60bf607758303
+  transform_version: susb-firm-size-sector-v1
+  refresh_vintage_policy: preserve
+  usage_terms: 'Source: U.S. Census Bureau, 2022 Statistics of U.S. Businesses annual
+    detailed enterprise-size table, released April 2025. Census statistical data are
+    public U.S. government works; preserve source and vintage attribution. The derivative
+    uses national employer-firm counts only. See https://www.census.gov/data/tables/2022/econ/susb/2022-susb-annual.html.'
+  metadata:
+    reference_year: 2022
+    encoding: windows-1252
+    source_checksum_sha256: f07eef547763a7a21cb453bf6f4119f768f5939dc499a65850a532ea74489ccf
+    geography_filter:
+      STATE: '00'
+      NAICS: --
+    measure: FIRM
+    subtotal_codes_excluded:
+    - '01'
+    - '33'
+    - '37'
+  snapshot_path: ../research/data/census-susb-firm-size-2022.json
+  required: true
+- key: sec-edgar-sector-distributions
+  source_url: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
+  release_date: pending-refresh
+  vintage_date: pending-refresh
+  retrieval_time: pending-refresh
+  checksum_sha256: ''
+  transform_version: edgar-anonymized-sector-v1
+  usage_terms: SEC fair-access policy and API guidance apply.
+  snapshot_path: ''
+  refresh_mode: manual
+  required: false
+- key: congress-procedural-fixtures
+  source_url: https://api.congress.gov/
+  release_date: pending-refresh
+  vintage_date: pending-refresh
+  retrieval_time: pending-refresh
+  checksum_sha256: ''
+  transform_version: congress-procedure-v1
+  usage_terms: Congress.gov API terms apply; an API key is required for refresh.
+  snapshot_path: ''
+  refresh_mode: manual
+  required: false

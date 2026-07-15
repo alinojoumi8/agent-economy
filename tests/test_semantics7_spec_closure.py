@@ -139,6 +139,7 @@ def test_five_tick_closure_rehearsal_exercises_every_effect_and_replays_exactly(
         tmp_path):
     config, source_store, source_world, source_id, payload = _open_rehearsal(tmp_path)
     replay_store = None
+    replay_world = None
     try:
         asyncio.run(source_world.run(max_ticks=5))
         assert source_store.tick == 5
@@ -208,5 +209,5 @@ def test_five_tick_closure_rehearsal_exercises_every_effect_and_replays_exactly(
         assert proof["source_hash"] == proof["replay_hash"]
     finally:
         source_store.close()
-        if replay_store is not None:
-            replay_store.close()
+        if replay_world is not None:
+            replay_world.close()
