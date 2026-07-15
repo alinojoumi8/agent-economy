@@ -1,0 +1,20 @@
+# Corrected pre-run commitment for the release Oracle calibration corpus.
+#
+# V1 seed 7301 remains preserved as failed evidence: staged genesis reset the
+# arrival persona stream, its replay paused at tick 313, and its checkpoint
+# packaging retained transient SQLite sidecars. V2 uses fixed code, fresh seeds,
+# and a separately claimed HighSpeed serving tier. No v1 sample is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v2
+campaign_version: 2
+runs:
+  - {seed: 7311, run_id: oracle-calibration-v2-s7311, profile: v2-seed-7311-control.yaml, effective_config_sha256: 6cb7cbb0c5a90259e818bea4119d01a506d60d74677e255088e4523b181889df}
+  - {seed: 7312, run_id: oracle-calibration-v2-s7312, profile: v2-seed-7312-rumor.yaml, effective_config_sha256: 0bb2e8c36a367b21a0db73bbed7b09ff3f8994521c0b1f153503d8f9942eca6c}
+  - {seed: 7313, run_id: oracle-calibration-v2-s7313, profile: v2-seed-7313-control.yaml, effective_config_sha256: 1884ff177ee7921f876ff3b6253b4f78b490313860ca9e21024f02b36733d50e}
+  - {seed: 7314, run_id: oracle-calibration-v2-s7314, profile: v2-seed-7314-rumor.yaml, effective_config_sha256: 3fec681995f250633a846ce9569364916ef28c781d647bd604cb603b43cac182}
+  - {seed: 7315, run_id: oracle-calibration-v2-s7315, profile: v2-seed-7315-control.yaml, effective_config_sha256: 5dd7ac8b9f502de35dd778b6b7b7c661256c5ca01bc4be4e5c0d3992915a2eef}
+  - {seed: 7316, run_id: oracle-calibration-v2-s7316, profile: v2-seed-7316-rumor.yaml, effective_config_sha256: 6e96e78924e317af3f09fa5c5862a707ed850bf80394397a31062711d633bad1}
+  - {seed: 7317, run_id: oracle-calibration-v2-s7317, profile: v2-seed-7317-control.yaml, effective_config_sha256: 9b2d4b6d533a9d505c48355f106b6e478bb097196944d7036e96723160d43534}
+  - {seed: 7318, run_id: oracle-calibration-v2-s7318, profile: v2-seed-7318-rumor.yaml, effective_config_sha256: 40be05557ce3cb4db92300cb4a773f79d738a08033b0df1cc6815968fee1d0d1}
+  - {seed: 7319, run_id: oracle-calibration-v2-s7319, profile: v2-seed-7319-control.yaml, effective_config_sha256: 45c3f9c6e7feda52c110de7ce64f7b422cf5493451436ff337f2d0ff05368e5d}
+  - {seed: 7320, run_id: oracle-calibration-v2-s7320, profile: v2-seed-7320-rumor.yaml, effective_config_sha256: 9c53aa67458a1ca06af298b5f7d3ab47a5b58cddea70bb39784f2c7523fe1083}

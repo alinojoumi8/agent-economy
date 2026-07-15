@@ -217,10 +217,12 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The outstanding live 30-day rumor, ten-profile Oracle, and 365-day acceptance
-campaigns remain separate operational gates. No live inference is run without
-`--approve-live-inference`. An unperformed live gate must be reported as
-pending, never treated as passed.
+The outstanding successful v2 ten-profile Oracle campaign, live 30-day rumor
+pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
+operational gates. No live inference is run without `--approve-live-inference`.
+An unperformed or failed live gate must be reported as pending or failed, never
+treated as passed. The release pull request stays draft; merge, tag,
+publication, and public deployment require separate authorization.
 
 ## Hybrid live pilot
 
@@ -464,7 +466,7 @@ installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
 high-severity audit vulnerabilities, built 599 Vite modules, confirmed the
 committed static bundle was fresh, and passed `git diff --check`.
 
-The current release-gate branch subsequently passed 582 Python tests with 8
+The current release-gate branch subsequently passed 590 Python tests with 8
 skipped, 23 dashboard tests, a fresh 603-module dashboard build, and checksum
 verification for the pinned FRED/BLS/SCF/SUSB datasets. The older counts above remain the historical
 semantics-7 merge receipt rather than the current branch total.
@@ -512,7 +514,7 @@ mechanics and evidence plumbing; it does not satisfy live-provider acceptance.
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
-| Current release-gate branch | **Passed** | 582 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
+| Current release-gate branch | **Passed** | 590 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay** | `881ed41994`; 19/20 checks, with only scripted `real_providers` false; replay matched tick/hash with every table exact and `differences: []` |
 | GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
@@ -579,9 +581,20 @@ the account for billing/spending-limit reasons; no code ran in that push event.
 Any public production deployment remains a separate operational decision and
 is not claimed here.
 
-The release Oracle campaign is separately precommitted to ten fixed arms. Before
-live dispatch, each arm consumes an immutable claim bound to its clean Git
-commit/tree, committed effective config, run ID, seed, initialized-state marker,
+The archived v1 seed-7301 Oracle source completed tick 335 with valid
+live-provider provenance but is not acceptance evidence. Its replay diverged
+at the first arrival because staged genesis reset an uncheckpointed persona RNG
+stream, and checkpoint inspection retained SQLite WAL/SHM sidecars. The current
+draft branch now persists and validates both semantics-7 RNG streams, finalizes
+standalone checkpoints, and enforces the replay target tick; focused and full
+verification pass, and no v1 sample is reused.
+
+The replacement `oracle-calibration-v2` campaign is separately precommitted to
+ten fixed arms with fresh seeds 7311–7320. It routes only the Oracle to
+`kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
+route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
+immutable claim bound to its clean Git commit/tree, committed effective config,
+run ID, seed, initialized-state marker,
 and canonical data location. Source receipts bind every required checkpoint
 manifest and the companion replay tracker; eligibility requires exact one-time
 source-call consumption with zero compatibility fallback and zero live replay
@@ -589,9 +602,10 @@ dispatch. The local no-clobber receipt chain is strong accident/tamper evidence,
 but a public claim still requires independent signing or a separately
 administered append-only transparency log.
 
-The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
-acceptance run also remain separate release evidence. Tagging and publication
-remain separate release decisions.
+The successful v2 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+run, and final provenance audit remain separate release evidence. The pull
+request stays draft. Merging, tagging, publication, and public deployment remain
+separate release decisions.
 
 ## Release checklist
 

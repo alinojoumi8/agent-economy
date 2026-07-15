@@ -108,10 +108,11 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
-The release calibration design therefore preregisters ten fixed profiles under
-`runs/oracle`, six forecasts per run, and alternating control/rumor arms. Only
-the Kimi Oracle is live; background behavior remains scripted so the campaign
-isolates the forecast surface. Treatment windows publish a one-person rumor
+The active release calibration design therefore preregisters ten fixed v2
+profiles under `runs/oracle`, six forecasts per run, fresh seeds 7311–7320, and
+alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
+live; background behavior remains scripted so the campaign isolates the
+forecast surface. Treatment windows publish a one-person rumor
 precursor one tick before each forecast and apply the larger depositor-targeted
 rumor one tick afterward; controls receive neither. This makes arm evidence
 observable at forecast time while keeping the later scored response distinct,
@@ -125,6 +126,15 @@ runs, at least
 and Brier below the naive p=0.5 score of 0.25. Every finalized source must also
 replay exactly offline. This evidence says nothing by itself about the cost or
 stability of the separate 365-day live-agent acceptance run.
+
+The archived `oracle-calibration-v1-s7301` source is not part of that evidence.
+It completed tick 335 with valid provider provenance, but replay diverged at the
+first arrival because staged genesis reset an uncheckpointed persona RNG
+stream; checkpoint inspection also retained SQLite sidecars. It is preserved as
+diagnostic evidence only. The draft release-gate branch now persists and
+validates both semantics-7 RNG streams, finalizes standalone checkpoints, and
+enforces the replay target tick; focused and full verification pass. V2 uses
+conservative 3x metering and a $25 per-run cap.
 
 ## Evidence hierarchy
 
@@ -142,8 +152,10 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-The capped rumor pilot, explicit Oracle campaign, and 365-day acceptance run
-are separate pending gates. After those gates:
+The successful v2 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+run, and final provenance audit are separate pending gates. The release pull
+request stays draft; merging, tagging, publication, and public deployment need
+separate authorization. After those gates:
 
 - add a causal explorer from exposure to belief to action to metric;
 - formalize experiment preregistration;

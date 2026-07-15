@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/seed-7301-control.yaml` ... `seed-7310-rumor.yaml` | Predeclared 10-run/60-forecast calibration corpus | Scripted world; live Kimi Oracle only; $25/run cap |
+| `runs/oracle/v2-seed-7311-control.yaml` ... `v2-seed-7320-rumor.yaml` | Predeclared v2 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -337,7 +337,7 @@ after its exact-head dashboard plus Ubuntu/Windows Python 3.11/3.12 matrix
 passed. Post-merge CI run `29368193807` repeated all five jobs successfully.
 Tagging and publication remain separate release decisions.
 
-The current release-gate branch passed 582 Python tests with 8 skipped, 23
+The corrected release-gate branch passed 590 Python tests with 8 skipped, 23
 dashboard tests, a fresh 603-module dashboard build, and checksum verification
 for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
 `881ed41994` completed 365 ticks
@@ -350,19 +350,32 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
-five-tick pilot or scripted 365-tick rehearsal.
-Oracle campaign tooling is implemented: ten fixed profiles and
-`runs/oracle/manifest-v1.template.yaml` feed the read-only
-`--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
+five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
+dependency, and secret audit is also required before any public release.
+
+The archived `oracle-calibration-v1-s7301` source completed tick 335 with six
+resolved forecasts and valid live-provider provenance, but its offline replay
+diverged at the first arrival. The cause was a staged-genesis persona RNG stream
+that was not checkpointed/restored; read-only checkpoint inspection also left
+SQLite WAL/SHM sidecars. That source is diagnostic evidence only and is not
+eligible acceptance evidence. The current draft release-gate branch persists
+and validates both semantics-7 RNG streams, finalizes standalone checkpoints
+without SQLite sidecars, and fails replay when its target tick is not reached.
+Focused, representative aggregate, and full-suite verification are green.
+
+Oracle campaign tooling is implemented. The corrected v2 corpus uses fresh
+seeds 7311–7320, `kimi-for-coding-highspeed`, conservative 3x cost metering, and
+`runs/oracle/manifest-v2.template.yaml` with a $25 per-run safety cap. It feeds
+the read-only `--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
 finalized source, exact companion replay, and source receipt without applying
 the whole-world all-live-provider gate. Each receipt chain binds the immutable
 pre-run claim and initialized marker, clean Git commit/tree, committed config,
 canonical source/replay paths, required checkpoint manifests, and an execution
 tracker proving exact one-time source-call consumption with zero compatibility
 fallback or live replay dispatch. Passing evidence still requires the ten
-fixed source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
+fresh v2 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
 60 seconds, and Brier below 0.25. See the
 [operator runbook](docs/operator-runbook.md).
 
@@ -396,6 +409,9 @@ and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`, and merged as
 `29411023992` was not executed: GitHub rejected every zero-step job because of
 the repository account's billing/spending-limit state. That external runner
 block is not a code-test failure. No public production deployment is claimed.
+The active release pull request remains draft; do not merge, tag, publish, or
+deploy publicly until every pending live gate and the final provenance audit
+passes under separate authorization.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

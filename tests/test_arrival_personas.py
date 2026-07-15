@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+from pathlib import Path
 
 import pytest
 
 from agents.personas.library import (
     PERSONA_SCHEMA_HINT, Persona, configured_outlet_ids, persona_request,
 )
+from engine.checkpoint_manifest import build_checkpoint_manifest
 from engine.ledger import SYS_INFLOW
 from engine.store import Store
 from llm.gateway import BudgetExceeded, LLMRequest, ProviderUnavailable
@@ -351,3 +354,75 @@ def test_replay_consumes_recorded_persona_response(tmp_path):
         default=0) == 1
     replay.gateway.replay_conn.close()
     replay.store.close()
+
+
+def test_resumed_genesis_preserves_arrival_persona_and_exact_replay(tmp_path):
+    source = _world(tmp_path, "resumed-source.db")
+    config = source.config
+    source_path = source.store.path
+    persisted_state = json.loads(source.store.get_meta()["prng_state"])
+    assert set(persisted_state) == {"engine", "persona"}
+    source.close()
+
+    resumed_store = Store(source_path)
+    resumed = World(resumed_store, config)
+    resumed.restore_prng_state()
+    source_arrival, source_payload = _spawn_one(resumed)
+    asyncio.run(resumed.runtime.enrich_pending_arrivals(1))
+    source_engine_owned = tuple(source_arrival[key] for key in (
+        "name", "age", "dependents", "region_id", "checking_account_id",
+        "savings_account_id"))
+    source_openings = (
+        _opening_delta(resumed.store, int(source_arrival["checking_account_id"])),
+        _opening_delta(resumed.store, int(source_arrival["savings_account_id"])),
+    )
+    resumed.store.commit()
+    resumed.close()
+
+    replay = _world(tmp_path, "resumed-replay.db", replay_source=source_path)
+    replay_arrival, replay_payload = _spawn_one(replay)
+    asyncio.run(replay.runtime.enrich_pending_arrivals(1))
+    replay_engine_owned = tuple(replay_arrival[key] for key in (
+        "name", "age", "dependents", "region_id", "checking_account_id",
+        "savings_account_id"))
+    replay_openings = (
+        _opening_delta(replay.store, int(replay_arrival["checking_account_id"])),
+        _opening_delta(replay.store, int(replay_arrival["savings_account_id"])),
+    )
+    tracker = replay.gateway.replay_execution_stats()
+
+    assert replay_engine_owned == source_engine_owned
+    assert replay_payload == source_payload
+    assert replay_openings == source_openings
+    assert tracker["exact_key_matches"] == 1
+    assert tracker["compatibility_fallback_matches"] == 0
+    replay.close()
+
+
+def test_semantics1_through_6_keep_legacy_prng_state_shape(tmp_path):
+    for semantics in range(1, 7):
+        world = _world(
+            tmp_path, f"legacy-prng-{semantics}.db", semantics=semantics)
+        world._save_prng_state()
+        state = json.loads(world.store.get_meta()["prng_state"])
+        assert isinstance(state, list)
+        assert len(state) == 3
+        world.close()
+
+
+def test_runtime_checkpoint_is_finalized_before_manifest(tmp_path):
+    world = _world(tmp_path, "checkpoint-source.db")
+    checkpoint = Path(world.checkpoint(0))
+
+    assert checkpoint.is_file()
+    assert not Path(f"{checkpoint}-wal").exists()
+    assert not Path(f"{checkpoint}-shm").exists()
+    assert Path(f"{checkpoint}.manifest.json").is_file()
+    first = build_checkpoint_manifest(checkpoint)
+    second = build_checkpoint_manifest(checkpoint)
+    assert first == second
+    assert not Path(f"{checkpoint}-wal").exists()
+    assert not Path(f"{checkpoint}-shm").exists()
+    with sqlite3.connect(str(checkpoint)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    world.close()

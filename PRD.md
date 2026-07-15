@@ -154,7 +154,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Answers probability questions with: point estimate, key drivers, confidence, and an auto-created resolution criterion + deadline.
 - Predictions logged; resolved automatically when determinable from world state; Brier score tracked over the run.
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
-- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay.
+- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The active v2 commitment uses fresh seeds 7311–7320 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -202,10 +202,21 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. The real-container image/Compose/load gate passed locally; all six exact-head PR #19 jobs passed in run `29409250171`; and PR #19 merged as `1806294d4fecbe13ddbdf615c459755c74293599`. Post-merge run `29411023992` executed no repository steps because GitHub blocked the account for billing/spending-limit reasons. A public production deployment remains a separate release action and is not claimed.)*
 
 After P0/P1 and R18–R22, no additional functional feature gap remains in this
-PRD. The outstanding work is release evidence and operations: land the
-release-gate tooling, run the live 30-day rumor and ten-profile Oracle
-campaigns, pass the 365-day acceptance run, repeat the final public-release
-audit, and deploy publicly only when separately authorized.
+PRD. The archived v1 seed-7301 Oracle source completed with valid live-provider
+provenance, but its replay diverged because staged genesis did not preserve the
+persona RNG stream; checkpoint inspection also left SQLite WAL/SHM sidecars.
+It is diagnostic evidence only, not acceptance evidence. The draft release-gate
+branch now persists and restores both semantics-7 RNG streams, finalizes every
+SQLite checkpoint without WAL/SHM sidecars, enforces the replay target tick, and
+validates column-specific RNG state before live dispatch. The full gate passes
+590 tests with 8 skipped.
+
+The outstanding work is release evidence and operations: pass the fresh v2
+ten-profile Oracle campaign (seeds 7311–7320 using
+`kimi-for-coding-highspeed` with conservative 3x metering), run the live 30-day
+rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
+public-release provenance audit. The pull request stays draft; merging,
+tagging, publication, or public deployment requires separate authorization.
 
 ---
 

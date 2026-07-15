@@ -22,7 +22,13 @@ import reports.oracle_campaign as oracle_campaign
 import run as run_cli
 from reports.oracle_campaign import (
     OracleCampaignError,
+    RELEASE_CAMPAIGN_ID,
+    RELEASE_CAMPAIGN_VERSION,
     RELEASE_COMMITMENT_SHA256,
+    RELEASE_ORACLE_MODEL,
+    RELEASE_ORACLE_PRICING,
+    RELEASE_PROFILES,
+    RELEASE_SEEDS,
     _expected_replay_tracker,
     _openai_metering_evidence,
     effective_config_sha256,
@@ -55,6 +61,11 @@ from world.replay_verify import verify_replay
 
 
 _TEST_REVISION = {"git_commit": "1" * 40, "git_tree": "2" * 40}
+_FIRST_SEED = RELEASE_SEEDS[0]
+_SECOND_SEED = RELEASE_SEEDS[1]
+_FIRST_PROFILE = f"runs/oracle/{RELEASE_PROFILES[_FIRST_SEED]}"
+_SECOND_PROFILE = f"runs/oracle/{RELEASE_PROFILES[_SECOND_SEED]}"
+_FIRST_RUN_ID = f"{RELEASE_CAMPAIGN_ID}-s{_FIRST_SEED}"
 
 
 @pytest.fixture(autouse=True)
@@ -92,11 +103,16 @@ def _write_checkpoint(
     checkpoint.execute("DELETE FROM transactions WHERE tick>?", (tick,))
     checkpoint.execute("DELETE FROM ledger_entries WHERE tick>?", (tick,))
     engine = random.Random(seed).getstate()
+    persona = random.Random(seed ^ 0xA11CE).getstate()
     lifecycle = random.Random(seed ^ 0x5F5E5F).getstate()
+    engine_state = [engine[0], list(engine[1]), engine[2]]
+    persona_state = [persona[0], list(persona[1]), persona[2]]
     checkpoint.set_meta(
         tick=tick, status="running", phase="FINALIZE", active_tick=None,
         next_phase="NIGHT_CLOSE", phase_state_json="{}",
-        prng_state=json.dumps([engine[0], list(engine[1]), engine[2]]),
+        prng_state=json.dumps({
+            "engine": engine_state, "persona": persona_state,
+        }),
         lifecycle_prng_state=json.dumps(
             [lifecycle[0], list(lifecycle[1]), lifecycle[2]]),
         governor_json="{}")
@@ -112,10 +128,9 @@ def _write_run(
     planner_retry: bool = False,
     receipt_dir: Path | None = None,
 ) -> dict:
-    seed = 7301 + index
-    run_id = f"oracle-calibration-v1-s{seed}"
-    arm = "rumor" if seed % 2 == 0 else "control"
-    profile_path = (Path("runs/oracle") / f"seed-{seed}-{arm}.yaml").resolve()
+    seed = RELEASE_SEEDS[index]
+    run_id = f"{RELEASE_CAMPAIGN_ID}-s{seed}"
+    profile_path = (Path("runs/oracle") / RELEASE_PROFILES[seed]).resolve()
     profile = load_config(profile_path)
     claim = prepare_oracle_campaign_run(
         profile, profile_path, data_dir=tmp_path)
@@ -209,8 +224,8 @@ def _write_run(
         tick = int(item["at_tick"])
         provider = "made-up-provider" if invalid_provider and tick == 5 else "kimi"
         governed_contract = {
-            "campaign_id": "oracle-calibration-v1",
-            "campaign_version": 1,
+            "campaign_id": RELEASE_CAMPAIGN_ID,
+            "campaign_version": RELEASE_CAMPAIGN_VERSION,
             "campaign_key": item["campaign_key"],
             "scheduled_tick": tick,
             "resolution_rule": item["expected_rule"],
@@ -279,7 +294,7 @@ def _write_run(
             system = PLANNER_SYSTEM if purpose == "oracle_plan" else ANSWER_SYSTEM
             cache_key = hashlib.sha1(json.dumps({
                 "t": tick, "a": None, "p": purpose,
-                "m": "kimi-for-coding",
+                "m": RELEASE_ORACLE_MODEL,
                 "msgs": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_text},
@@ -287,7 +302,7 @@ def _write_run(
             }, sort_keys=True).encode()).hexdigest()
             store.insert(
                 "llm_calls", tick=tick, role="oracle", purpose=purpose,
-                provider=provider, model="kimi-for-coding",
+                provider=provider, model=RELEASE_ORACLE_MODEL,
                 cache_key=cache_key,
                 request_json=json.dumps({
                     "system": system, "user": user_text,
@@ -298,7 +313,7 @@ def _write_run(
                     "raw": {
                         "id": (
                             f"chatcmpl-{run_id}-{tick}-{purpose}-{plan_number}"),
-                        "model": "kimi-for-coding",
+                        "model": RELEASE_ORACLE_MODEL,
                         "object": "chat.completion",
                         "usage": {
                             "prompt_tokens": 10, "completion_tokens": 10,
@@ -307,11 +322,13 @@ def _write_run(
                     },
                     "cached_in_tokens": 0,
                 }),
-                in_tokens=10, out_tokens=10, cost_usd=0.0000495,
+                in_tokens=10, out_tokens=10, cost_usd=(
+                    10 * RELEASE_ORACLE_PRICING["in"] / 1_000_000
+                    + 10 * RELEASE_ORACLE_PRICING["out"] / 1_000_000),
                 latency_ms=10)
             model_calls.append({
                 "purpose": purpose, "provider": provider,
-                "model": "kimi-for-coding",
+                "model": RELEASE_ORACLE_MODEL,
                 "request_key": cache_key, "call_latency_ms": 10,
             })
             if (planner_retry and tick == 5 and purpose == "oracle_plan"
@@ -361,8 +378,8 @@ def _write_run(
             "prediction_id": prediction_id,
             "latency_ms": 100 + index,
             "latency_kind": "scheduled_e2e_v1",
-            "campaign_id": "oracle-calibration-v1",
-            "campaign_version": 1,
+            "campaign_id": RELEASE_CAMPAIGN_ID,
+            "campaign_version": RELEASE_CAMPAIGN_VERSION,
             "campaign_key": item["campaign_key"],
             "model_calls": model_calls,
             "latency_measurement": "continuous_monotonic",
@@ -433,8 +450,8 @@ def _manifest(
     path = tmp_path / "oracle-campaign.yaml"
     path.write_text(yaml.safe_dump({
         "schema_version": 1,
-        "campaign_id": "oracle-calibration-v1",
-        "campaign_version": 1,
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
         "minimum_runs": 10,
         "minimum_forecasts": 60,
@@ -506,8 +523,7 @@ def test_curated_oracle_campaign_excludes_non_live_run_with_reasons(tmp_path):
 
     assert receipt["passed"] is False
     assert receipt["calibration"]["n"] == 54
-    assert receipt["excluded_runs"][0]["run_id"] == (
-        "oracle-calibration-v1-s7301")
+    assert receipt["excluded_runs"][0]["run_id"] == _FIRST_RUN_ID
     excluded = next(run for run in receipt["runs"] if not run["eligible"])
     assert any(
         "configured Oracle route" in reason or "model-call route" in reason
@@ -523,8 +539,8 @@ def test_oracle_campaign_manifest_cannot_weaken_release_sample_floor(tmp_path):
     manifest = tmp_path / "too-small.yaml"
     manifest.write_text(yaml.safe_dump({
         "schema_version": 1,
-        "campaign_id": "oracle-calibration-v1",
-        "campaign_version": 1,
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
         "minimum_runs": 1,
         "minimum_forecasts": 1,
@@ -539,8 +555,8 @@ def test_oracle_campaign_manifest_cannot_weaken_latency_gate(tmp_path):
     manifest = tmp_path / "weak-latency.yaml"
     manifest.write_text(yaml.safe_dump({
         "schema_version": 1,
-        "campaign_id": "oracle-calibration-v1",
-        "campaign_version": 1,
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
         "minimum_runs": 10,
         "minimum_forecasts": 60,
@@ -648,7 +664,7 @@ def test_oracle_campaign_rejects_positive_metering_with_empty_provider_raw(tmp_p
 
     _mutate_manifest_pair(manifest, 0, erase_raw)
     receipt = evaluate_oracle_campaign(manifest)
-    first = next(run for run in receipt["runs"] if run["seed"] == 7301)
+    first = next(run for run in receipt["runs"] if run["seed"] == _FIRST_SEED)
     assert any(
         "provider response usage is missing" in reason
         for reason in first["forecasts"][0]["reasons"])
@@ -667,7 +683,7 @@ def test_oracle_campaign_rejects_provider_usage_mismatch(tmp_path):
 
     _mutate_manifest_pair(manifest, 0, alter_usage)
     receipt = evaluate_oracle_campaign(manifest)
-    first = next(run for run in receipt["runs"] if run["seed"] == 7301)
+    first = next(run for run in receipt["runs"] if run["seed"] == _FIRST_SEED)
     assert any(
         "does not reconcile to persisted token totals" in reason
         for reason in first["forecasts"][0]["reasons"])
@@ -683,19 +699,24 @@ def test_oracle_campaign_rejects_forged_positive_cost(tmp_path):
 
     _mutate_manifest_pair(manifest, 0, forge_cost)
     receipt = evaluate_oracle_campaign(manifest)
-    first = next(run for run in receipt["runs"] if run["seed"] == 7301)
+    first = next(run for run in receipt["runs"] if run["seed"] == _FIRST_SEED)
     assert any(
         "pinned Kimi pricing" in reason
         for reason in first["forecasts"][0]["reasons"])
 
 
 def test_openai_metering_accepts_valid_direct_and_gateway_repair_shapes():
+    direct_cost = round(
+        (10 * RELEASE_ORACLE_PRICING["in"]
+         + 10 * RELEASE_ORACLE_PRICING["out"]) / 1_000_000,
+        8,
+    )
     direct_row = {
-        "in_tokens": 10, "out_tokens": 10, "cost_usd": 0.0000495,
+        "in_tokens": 10, "out_tokens": 10, "cost_usd": direct_cost,
     }
     direct_response = {
         "cached_in_tokens": 0,
-        "raw": {"id": "chatcmpl-direct", "model": "kimi-for-coding",
+        "raw": {"id": "chatcmpl-direct", "model": RELEASE_ORACLE_MODEL,
                 "object": "chat.completion", "usage": {
             "prompt_tokens": 10, "completion_tokens": 10,
             "prompt_tokens_details": {"cached_tokens": 0},
@@ -707,21 +728,27 @@ def test_openai_metering_accepts_valid_direct_and_gateway_repair_shapes():
     assert direct == {
         "shape": "direct", "response_ids": ["chatcmpl-direct"],
         "prompt_tokens": 10, "completion_tokens": 10,
-        "cached_in_tokens": 0, "expected_cost_usd": 0.0000495,
+        "cached_in_tokens": 0, "expected_cost_usd": direct_cost,
     }
 
+    repair_cost = round(
+        (8 * RELEASE_ORACLE_PRICING["in"]
+         + 2 * RELEASE_ORACLE_PRICING["cache"]
+         + 10 * RELEASE_ORACLE_PRICING["out"]) / 1_000_000,
+        8,
+    )
     repair_row = {
-        "in_tokens": 10, "out_tokens": 10, "cost_usd": 0.00004798,
+        "in_tokens": 10, "out_tokens": 10, "cost_usd": repair_cost,
     }
     repair_response = {
         "cached_in_tokens": 2,
         "raw": {"provider_calls": 2, "repair": {
-            "initial": {"id": "chatcmpl-initial", "model": "kimi-for-coding",
+            "initial": {"id": "chatcmpl-initial", "model": RELEASE_ORACLE_MODEL,
                         "object": "chat.completion", "usage": {
                 "prompt_tokens": 4, "completion_tokens": 3,
                 "prompt_tokens_details": {"cached_tokens": 1},
             }},
-            "final": {"id": "chatcmpl-final", "model": "kimi-for-coding",
+            "final": {"id": "chatcmpl-final", "model": RELEASE_ORACLE_MODEL,
                       "object": "chat.completion", "usage": {
                 "prompt_tokens": 6, "completion_tokens": 7,
                 "prompt_tokens_details": {"cached_tokens": 1},
@@ -736,6 +763,7 @@ def test_openai_metering_accepts_valid_direct_and_gateway_repair_shapes():
     assert repair["prompt_tokens"] == 10
     assert repair["completion_tokens"] == 10
     assert repair["cached_in_tokens"] == 2
+    assert repair["expected_cost_usd"] == repair_cost
 
 
 def test_oracle_campaign_requires_governed_call_request_identity(tmp_path):
@@ -770,7 +798,7 @@ def test_oracle_campaign_requires_governed_call_request_identity(tmp_path):
 def test_oracle_campaign_requires_predeclared_treatment_to_fire(tmp_path):
     manifest = _manifest(tmp_path)
     payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    entry = payload["runs"][1]  # seed 7302, treatment arm
+    entry = payload["runs"][1]  # _SECOND_SEED, treatment arm
     for field in ("database", "replay_database"):
         database = tmp_path / entry[field]
         store = Store(str(database), create=False)
@@ -791,19 +819,19 @@ def test_oracle_campaign_requires_predeclared_treatment_to_fire(tmp_path):
 
 def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     root = Path("runs/oracle")
-    profiles = sorted(root.glob("seed-*.yaml"))
+    profiles = [root / RELEASE_PROFILES[seed] for seed in RELEASE_SEEDS]
     assert len(profiles) == 10
     configs = [load_config(path) for path in profiles]
-    assert {config["seed"] for config in configs} == set(range(7301, 7311))
+    assert {config["seed"] for config in configs} == set(RELEASE_SEEDS)
     for config in configs:
         acceptance = config["acceptance"]
         assert acceptance["min_ticks"] == 335
-        assert acceptance["oracle_campaign_id"] == "oracle-calibration-v1"
-        assert acceptance["oracle_campaign_version"] == 1
+        assert acceptance["oracle_campaign_id"] == RELEASE_CAMPAIGN_ID
+        assert acceptance["oracle_campaign_version"] == RELEASE_CAMPAIGN_VERSION
         assert acceptance["oracle_latency_source"] == "scheduled_e2e_v1"
         assert len(acceptance["oracle_questions"]) == 6
         assert config["llm"]["routes"]["oracle"] == {
-            "provider": "kimi", "model": "kimi-for-coding",
+            "provider": "kimi", "model": RELEASE_ORACLE_MODEL,
         }
         assert {
             route["provider"] for role, route in config["llm"]["routes"].items()
@@ -832,15 +860,65 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v1.template.yaml").read_text(encoding="utf-8"))
-    assert [entry["seed"] for entry in manifest["runs"]] == list(range(7301, 7311))
+        (root / "manifest-v2.template.yaml").read_text(encoding="utf-8"))
+    assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
+def test_checked_in_v2_commitment_and_highspeed_contract_are_pinned():
+    root = Path("runs/oracle")
+    expected_hashes = {
+        7311: "6cb7cbb0c5a90259e818bea4119d01a506d60d74677e255088e4523b181889df",
+        7312: "0bb2e8c36a367b21a0db73bbed7b09ff3f8994521c0b1f153503d8f9942eca6c",
+        7313: "1884ff177ee7921f876ff3b6253b4f78b490313860ca9e21024f02b36733d50e",
+        7314: "3fec681995f250633a846ce9569364916ef28c781d647bd604cb603b43cac182",
+        7315: "5dd7ac8b9f502de35dd778b6b7b7c661256c5ca01bc4be4e5c0d3992915a2eef",
+        7316: "6e96e78924e317af3f09fa5c5862a707ed850bf80394397a31062711d633bad1",
+        7317: "9b2d4b6d533a9d505c48355f106b6e478bb097196944d7036e96723160d43534",
+        7318: "40be05557ce3cb4db92300cb4a773f79d738a08033b0df1cc6815968fee1d0d1",
+        7319: "45c3f9c6e7feda52c110de7ce64f7b422cf5493451436ff337f2d0ff05368e5d",
+        7320: "9c53aa67458a1ca06af298b5f7d3ab47a5b58cddea70bb39784f2c7523fe1083",
+    }
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v2"
+    assert RELEASE_CAMPAIGN_VERSION == 2
+    assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
+    assert RELEASE_ORACLE_PRICING == {
+        "in": 2.85, "out": 12.00, "cache": 0.57,
+    }
+    assert RELEASE_COMMITMENT_SHA256 == (
+        "b4472251736b64800d2f43666e4387772cf06043ef102886aaf25bc9f86867b9")
+
+    commitment_path = root / "commitment-v2.yaml"
+    commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
+    assert oracle_campaign._canonical_value_sha256(
+        commitment) == RELEASE_COMMITMENT_SHA256
+    assert commitment["campaign_id"] == RELEASE_CAMPAIGN_ID
+    assert commitment["campaign_version"] == RELEASE_CAMPAIGN_VERSION
+    assert [entry["seed"] for entry in commitment["runs"]] == list(
+        RELEASE_SEEDS)
+    assert {
+        entry["seed"]: entry["effective_config_sha256"]
+        for entry in commitment["runs"]
+    } == expected_hashes
+
+    for entry in commitment["runs"]:
+        seed = entry["seed"]
+        assert entry["run_id"] == f"{RELEASE_CAMPAIGN_ID}-s{seed}"
+        assert entry["profile"] == RELEASE_PROFILES[seed]
+        config = load_config(root / entry["profile"])
+        assert effective_config_sha256(config) == expected_hashes[seed]
+        assert config["llm"]["routes"]["oracle"] == {
+            "provider": "kimi", "model": RELEASE_ORACLE_MODEL,
+        }
+        assert config["llm"]["pricing"] == {
+            RELEASE_ORACLE_MODEL: RELEASE_ORACLE_PRICING,
+        }
+
+
 def test_oracle_campaign_profile_cannot_change_predeclared_arm():
-    profile = load_config("runs/oracle/seed-7302-rumor.yaml")
+    profile = load_config(_SECOND_PROFILE)
     profile["shocks"][0]["params"]["n_agents"] = 2
 
     with pytest.raises(OracleCampaignError, match="predeclared campaign arm"):
@@ -848,7 +926,7 @@ def test_oracle_campaign_profile_cannot_change_predeclared_arm():
 
 
 def test_oracle_campaign_profile_requires_official_kimi_endpoint():
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
+    profile = load_config(_FIRST_PROFILE)
     profile["llm"]["providers"]["kimi"]["base_url"] = "http://127.0.0.1:9999/v1"
 
     with pytest.raises(OracleCampaignError, match="official Kimi API"):
@@ -856,25 +934,25 @@ def test_oracle_campaign_profile_requires_official_kimi_endpoint():
 
 
 def test_resumed_oracle_campaign_rejects_wrong_profile_before_dispatch(tmp_path):
-    stored = load_config("runs/oracle/seed-7301-control.yaml")
-    requested = load_config("runs/oracle/seed-7302-rumor.yaml")
+    stored = load_config(_FIRST_PROFILE)
+    requested = load_config(_SECOND_PROFILE)
     store = Store(str(tmp_path / "wrong-resume.db"))
     store.init_run_meta("wrong-resume", stored["seed"], stored)
 
     with pytest.raises(OracleCampaignError, match="checked-in predeclared"):
         validate_open_oracle_campaign_source(
-            store, requested, "runs/oracle/seed-7302-rumor.yaml")
+            store, requested, _SECOND_PROFILE)
     assert store.scalar("SELECT COUNT(*) FROM llm_calls", default=0) == 0
     store.close()
 
 
 def test_oracle_campaign_profile_cannot_change_question_or_horizon():
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
+    profile = load_config(_FIRST_PROFILE)
     profile["acceptance"]["oracle_questions"][0]["question"] = "Different?"
     with pytest.raises(OracleCampaignError, match="governed forecast contract"):
         validate_oracle_campaign_profile(profile)
 
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
+    profile = load_config(_FIRST_PROFILE)
     profile["acceptance"]["min_ticks"] = 334
     with pytest.raises(OracleCampaignError, match="fixed 335-tick horizon"):
         validate_oracle_campaign_profile(profile)
@@ -883,7 +961,7 @@ def test_oracle_campaign_profile_cannot_change_question_or_horizon():
 @pytest.mark.parametrize("forbidden", ["model", "messages"])
 def test_oracle_campaign_rejects_request_defaults_that_override_wire_identity(
         forbidden):
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
+    profile = load_config(_FIRST_PROFILE)
     profile["llm"]["providers"]["kimi"]["request_defaults"][forbidden] = (
         "attacker-model" if forbidden == "model" else [])
 
@@ -892,13 +970,13 @@ def test_oracle_campaign_rejects_request_defaults_that_override_wire_identity(
 
 
 def test_oracle_campaign_pins_complete_provider_and_pricing_contract():
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
+    profile = load_config(_FIRST_PROFILE)
     profile["llm"]["providers"]["kimi"]["unexpected"] = True
     with pytest.raises(OracleCampaignError, match="official Kimi API"):
         validate_oracle_campaign_profile(profile)
 
-    profile = load_config("runs/oracle/seed-7301-control.yaml")
-    profile["llm"]["pricing"]["kimi-for-coding"]["out"] = 0.0
+    profile = load_config(_FIRST_PROFILE)
+    profile["llm"]["pricing"][RELEASE_ORACLE_MODEL]["out"] = 0.0
     with pytest.raises(OracleCampaignError, match="pinned Kimi pricing"):
         validate_oracle_campaign_profile(profile)
 
@@ -930,12 +1008,12 @@ def test_manifest_requires_precommitted_resolved_configuration_hash(tmp_path):
 
 
 def test_pre_run_commitment_allows_resume_but_blocks_resampling(tmp_path):
-    profile_path = Path("runs/oracle/seed-7301-control.yaml")
+    profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     first = prepare_oracle_campaign_run(
         profile, profile_path, data_dir=tmp_path)
 
-    assert first["run_id"] == "oracle-calibration-v1-s7301"
+    assert first["run_id"] == _FIRST_RUN_ID
     assert Path(first["claim_path"]).is_file()
     resumed = prepare_oracle_campaign_run(
         profile, profile_path, data_dir=tmp_path,
@@ -946,7 +1024,7 @@ def test_pre_run_commitment_allows_resume_but_blocks_resampling(tmp_path):
 
 
 def test_claim_crash_recovery_never_resamples_initialized_or_partial_slot(tmp_path):
-    profile_path = Path("runs/oracle/seed-7301-control.yaml")
+    profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     claim = prepare_oracle_campaign_run(
         profile, profile_path, data_dir=tmp_path)
@@ -975,7 +1053,7 @@ def test_claim_crash_recovery_never_resamples_initialized_or_partial_slot(tmp_pa
 def test_unique_genesis_staging_quarantines_corrupt_pending_before_publication(
         tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
-    profile_path = Path("runs/oracle/seed-7301-control.yaml")
+    profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     claim = prepare_oracle_campaign_run(
         profile, profile_path, data_dir=tmp_path)
@@ -1000,12 +1078,50 @@ def test_unique_genesis_staging_quarantines_corrupt_pending_before_publication(
     store.close()
 
 
+@pytest.mark.parametrize("missing_column", [
+    "prng_state", "lifecycle_prng_state",
+])
+def test_claimed_genesis_requires_both_prng_streams_before_dispatch(
+        tmp_path, monkeypatch, missing_column):
+    monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
+    profile_path = Path(_FIRST_PROFILE)
+    profile = load_config(profile_path)
+    claim = prepare_oracle_campaign_run(
+        profile, profile_path, data_dir=tmp_path)
+    source = _initialize_claimed_oracle_genesis(
+        profile, claim, data_dir=tmp_path)
+
+    store = Store(str(source), create=False)
+    store.set_meta(**{missing_column: None})
+    store.commit()
+    store.close()
+    finalize_sqlite_artifact(source)
+
+    with pytest.raises(
+            OracleCampaignError, match="complete deterministic zero-call genesis"):
+        oracle_campaign.validate_claimed_oracle_genesis(
+            source, claim, profile)
+
+
+def test_release_prng_validators_enforce_column_specific_shapes():
+    state = random.Random(7311).getstate()
+    single = [state[0], list(state[1]), state[2]]
+    envelope = {"engine": single, "persona": single}
+    single_json = json.dumps(single)
+    envelope_json = json.dumps(envelope)
+
+    assert oracle_campaign._valid_single_prng_state(single_json)
+    assert not oracle_campaign._valid_single_prng_state(envelope_json)
+    assert oracle_campaign._valid_semantics7_prng_state(envelope_json)
+    assert not oracle_campaign._valid_semantics7_prng_state(single_json)
+
+
 def test_claim_and_initialized_marker_publication_never_clobbers_existing_bytes(
         tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
-    profile_path = Path("runs/oracle/seed-7301-control.yaml")
+    profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
-    run_id = "oracle-calibration-v1-s7301"
+    run_id = _FIRST_RUN_ID
     claim_path = tmp_path / "oracle-commitments" / f"{run_id}.json"
     claim_path.parent.mkdir(parents=True, exist_ok=True)
     real_link = oracle_campaign.os.link
@@ -1044,7 +1160,7 @@ def test_claim_and_initialized_marker_publication_never_clobbers_existing_bytes(
 def test_campaign_execution_lock_rejects_overlap_and_releases_after_process_crash(
         tmp_path):
     claim = {
-        "run_id": "oracle-calibration-v1-s7301", "seed": 7301,
+        "run_id": _FIRST_RUN_ID, "seed": _FIRST_SEED,
     }
     with oracle_campaign.oracle_campaign_execution_lock(
             claim, data_dir=tmp_path):
@@ -1107,11 +1223,15 @@ def test_every_checkpoint_hash_schema_and_prng_state_is_receipt_bound(tmp_path):
     empty.init_run_meta(entry["run_id"], entry["seed"], load_config(entry["profile"]))
     tick = int(checkpoint_manifest["files"][0]["tick"])
     engine = random.Random(entry["seed"]).getstate()
+    persona = random.Random(entry["seed"] ^ 0xA11CE).getstate()
     lifecycle = random.Random(entry["seed"] ^ 0x5F5E5F).getstate()
     empty.set_meta(
         tick=tick, status="running", phase="FINALIZE", active_tick=None,
         next_phase="NIGHT_CLOSE", phase_state_json="{}",
-        prng_state=json.dumps([engine[0], list(engine[1]), engine[2]]),
+        prng_state=json.dumps({
+            "engine": [engine[0], list(engine[1]), engine[2]],
+            "persona": [persona[0], list(persona[1]), persona[2]],
+        }),
         lifecycle_prng_state=json.dumps(
             [lifecycle[0], list(lifecycle[1]), lifecycle[2]]),
         governor_json="{}")
@@ -1138,7 +1258,7 @@ def test_global_llm_audit_allows_local_background_but_no_other_live_calls(
         for purpose in ("oracle_plan", "oracle"):
             store.insert(
                 "llm_calls", tick=tick, role="oracle", purpose=purpose,
-                provider="kimi", model="kimi-for-coding", cache_key=(
+                provider="kimi", model=RELEASE_ORACLE_MODEL, cache_key=(
                     f"{tick}-{purpose}"))
     store.insert(
         "llm_calls", tick=1, role="citizen", purpose="decide",
@@ -1150,7 +1270,7 @@ def test_global_llm_audit_allows_local_background_but_no_other_live_calls(
 
     store.insert(
         "llm_calls", tick=5, role="citizen", purpose="decide",
-        provider="kimi", model="kimi-for-coding", cache_key="smuggled-live")
+        provider="kimi", model=RELEASE_ORACLE_MODEL, cache_key="smuggled-live")
     evidence, reasons = oracle_campaign._llm_call_integrity(store)
     store.close()
     assert evidence["invalid_live_call_ids"]
@@ -1271,7 +1391,7 @@ def test_replay_execution_receipt_tamper_is_ineligible(tmp_path):
         yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
     campaign = evaluate_oracle_campaign(manifest)
-    run = next(item for item in campaign["runs"] if item["seed"] == 7301)
+    run = next(item for item in campaign["runs"] if item["seed"] == _FIRST_SEED)
     assert run["eligible"] is False
     assert "replay receipt tracker does not prove exact consumption" in run["reasons"]
 
@@ -1299,7 +1419,7 @@ def test_independent_metrics_reject_joint_source_and_replay_outcome_tamper(tmp_p
 
     _mutate_manifest_pair(manifest, 0, flip_outcome)
     receipt = evaluate_oracle_campaign(manifest)
-    run = next(item for item in receipt["runs"] if item["seed"] == 7301)
+    run = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
     assert any(
         "independent metric resolution" in reason
         for reason in run["forecasts"][0]["reasons"])
@@ -1308,14 +1428,15 @@ def test_independent_metrics_reject_joint_source_and_replay_outcome_tamper(tmp_p
 def test_planner_empty_attempt_then_valid_retry_is_bound_and_eligible(tmp_path):
     receipt = evaluate_oracle_campaign(
         _manifest(tmp_path, planner_retry=True))
-    first = next(item for item in receipt["runs"] if item["seed"] == 7301)
+    first = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
     assert first["forecasts"][0]["eligible"] is True
     assert receipt["passed"] is True
 
 
 def test_answer_prompt_structurally_bounds_maximum_evidence_without_losing_contract():
     contract = {
-        "campaign_id": "oracle-calibration-v1", "campaign_version": 1,
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "campaign_key": "bank_run_t005", "scheduled_tick": 5,
         "resolution_rule": {"type": "bank_run", "window": 5,
                             "deposit_drop": 0.30},
@@ -1407,6 +1528,31 @@ def test_actual_small_open_run_replay_tracks_every_source_call_once(tmp_path):
     assert tracker["live_dispatch_count"] == 0
 
 
+def test_replay_headless_fails_if_world_pauses_before_target(tmp_path, monkeypatch):
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    source_store, source_world, source_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    try:
+        asyncio.run(source_world.run(max_ticks=1))
+    finally:
+        _close_run(source_world, source_store)
+
+    replay_store, replay_world, _ = open_run(
+        config, None, source_id, data_dir=tmp_path)
+
+    async def pause_without_progress(*, max_ticks):
+        assert max_ticks == 1
+
+    monkeypatch.setattr(replay_world, "run", pause_without_progress)
+    try:
+        with pytest.raises(
+                RuntimeError, match="replay stopped at tick 0 before target tick 1"):
+            asyncio.run(replay_headless(replay_world, 1))
+    finally:
+        _close_run(replay_world, replay_store)
+
+
 def test_semantics6_oversized_oracle_transcript_replays_with_recorded_shape(tmp_path):
     config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
     config["engine_semantics_version"] = 6
@@ -1477,7 +1623,8 @@ def test_oracle_runtime_records_empty_plan_rejection_before_valid_retry(tmp_path
     gateway = RetryGateway()
     world.oracle.gw = gateway
     contract = {
-        "campaign_id": "oracle-calibration-v1", "campaign_version": 1,
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "campaign_key": "bank_run_t000", "scheduled_tick": store.tick,
         "resolution_rule": {
             "type": "bank_run", "window": 5, "deposit_drop": 0.30},

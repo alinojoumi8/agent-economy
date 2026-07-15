@@ -11,7 +11,7 @@
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
   python run.py --acceptance-report RUNID               # evaluate persisted production evidence
   python run.py --oracle-calibration-report MANIFEST    # curated Oracle campaign evidence
-  python run.py --config runs/oracle/seed-7301-control.yaml --oracle-campaign-run --approve-live-inference
+  python run.py --config runs/oracle/v2-seed-7311-control.yaml --oracle-campaign-run --approve-live-inference
   python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
 One process: FastAPI serves the static dashboard and drives the world loop.
@@ -431,6 +431,10 @@ async def replay_headless(world: World, target_tick: int) -> None:
             f"checkpoints={missing_checkpoints}, events={missing_events}")
     if world.store.tick < target_tick:
         await world.run(max_ticks=target_tick - world.store.tick)
+    if world.store.tick != target_tick:
+        raise RuntimeError(
+            f"replay stopped at tick {world.store.tick} before target tick "
+            f"{target_tick}")
 
 
 def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> None:

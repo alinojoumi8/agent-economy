@@ -27,7 +27,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
-from engine.checkpoint_manifest import write_checkpoint_manifest
+from engine.checkpoint_manifest import (
+    finalize_sqlite_artifact,
+    write_checkpoint_manifest,
+)
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.semantics import semantics_version
 from engine.store import Store, load_json
@@ -117,6 +120,10 @@ class World:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
+        if self.engine_semantics_version >= 7:
+            # Genesis consumes the persona stream. Persist it immediately so a
+            # resume before tick 1 cannot reset arrival identities.
+            self._save_prng_state()
         self.store.commit()
         operational_log(logger, logging.INFO, "world.initialized",
                         run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
@@ -610,6 +617,7 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
+            finalize_sqlite_artifact(dest)
             write_checkpoint_manifest(dest)
             self.store.insert("checkpoints", tick=tick, path=str(dest),
                               created_at=__import__("datetime").datetime.now(
@@ -626,15 +634,28 @@ class World:
             return None
 
     def _save_prng_state(self) -> None:
+        engine_state = _prng_state(self.engine_prng)
+        if self.engine_semantics_version >= 7:
+            engine_state = {
+                "engine": engine_state,
+                "persona": _prng_state(self.persona_prng),
+            }
         self.store.set_meta(
-            prng_state=json.dumps(_prng_state(self.engine_prng)),
+            prng_state=json.dumps(engine_state),
             lifecycle_prng_state=json.dumps(_prng_state(self.lifecycle_prng)),
             governor_json=json.dumps(self.gateway.governor.status()))
 
     def restore_prng_state(self) -> None:
         meta = self.store.get_meta()
         if meta["prng_state"]:
-            self.engine_prng.setstate(_from_state(json.loads(meta["prng_state"])))
+            engine_state = json.loads(meta["prng_state"])
+            if isinstance(engine_state, dict):
+                self.engine_prng.setstate(_from_state(engine_state["engine"]))
+                self.persona_prng.setstate(_from_state(engine_state["persona"]))
+            else:
+                # Stored semantics 1-6 and pre-fix semantics-7 runs retain the
+                # historical list-form resume contract.
+                self.engine_prng.setstate(_from_state(engine_state))
         if meta["lifecycle_prng_state"]:
             self.lifecycle_prng.setstate(_from_state(json.loads(meta["lifecycle_prng_state"])))
 

@@ -27,6 +27,8 @@ from engine.checkpoint_manifest import (
     build_checkpoint_manifest,
     canonical_json_bytes as checkpoint_manifest_bytes,
     checkpoint_manifest_path,
+    finalize_sqlite_artifact as _finalize_sqlite_artifact,
+    SQLiteArtifactError,
     sqlite_schema_evidence,
 )
 from engine.schema import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION
@@ -55,15 +57,15 @@ DEFAULT_MINIMUM_RUNS = 10
 DEFAULT_MINIMUM_FORECASTS = 60
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v1"
-RELEASE_CAMPAIGN_VERSION = 1
-RELEASE_SEEDS = tuple(range(7301, 7311))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v2"
+RELEASE_CAMPAIGN_VERSION = 2
+RELEASE_SEEDS = tuple(range(7311, 7321))
 RELEASE_PROFILES = {
-    seed: f"seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v2-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "kimi"
-RELEASE_ORACLE_MODEL = "kimi-for-coding"
+RELEASE_ORACLE_MODEL = "kimi-for-coding-highspeed"
 RELEASE_ORACLE_ADAPTER = {
     "kind": "openai_compat",
     "base_url": "https://api.kimi.com/coding/v1",
@@ -78,10 +80,10 @@ RELEASE_ORACLE_ADAPTER = {
     },
     "timeout_s": 180,
 }
-RELEASE_ORACLE_PRICING = {"in": 0.95, "out": 4.00, "cache": 0.19}
+RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v1.yaml"
+    / "commitment-v2.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -90,7 +92,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "4f0baa8a46cce1192eb53bd979577b42c79d9b53b213aee811e06b4c02957c97"
+    "b4472251736b64800d2f43666e4387772cf06043ef102886aaf25bc9f86867b9"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_QUESTION = "What is the probability of a bank run within 30 ticks?"
@@ -571,6 +573,9 @@ def validate_claimed_oracle_genesis(
                 or meta["parent_run_id"] is not None
                 or meta["fork_tick"] is not None
                 or int(meta["participant_influenced"] or 0) != 0
+                or not _valid_semantics7_prng_state(meta["prng_state"])
+                or not _valid_single_prng_state(
+                    meta["lifecycle_prng_state"])
                 or not genesis_tick_valid
                 or genesis != expected_genesis
                 or int(store.scalar(
@@ -1184,7 +1189,7 @@ _EXPECTED_AGENT_CENSUS = {
 }
 
 
-def _valid_prng_state(raw: Any) -> bool:
+def _valid_single_prng_state(raw: Any) -> bool:
     try:
         parsed = json.loads(raw)
         if not isinstance(parsed, list) or len(parsed) != 3:
@@ -1192,6 +1197,19 @@ def _valid_prng_state(raw: Any) -> bool:
         state = (parsed[0], tuple(parsed[1]), parsed[2])
         random.Random().setstate(state)
         return True
+    except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
+        return False
+
+
+def _valid_semantics7_prng_state(raw: Any) -> bool:
+    try:
+        parsed = json.loads(raw)
+        return (
+            isinstance(parsed, dict)
+            and set(parsed) == {"engine", "persona"}
+            and all(_valid_single_prng_state(json.dumps(parsed[key]))
+                    for key in ("engine", "persona"))
+        )
     except (TypeError, ValueError, OverflowError, json.JSONDecodeError):
         return False
 
@@ -1291,8 +1309,9 @@ def _checkpoint_integrity(
                     or str(meta["next_phase"]) != "NIGHT_CLOSE"
                     or str(meta["phase"]) != "FINALIZE"
                     or phase_state != {}
-                    or not _valid_prng_state(meta["prng_state"])
-                    or not _valid_prng_state(meta["lifecycle_prng_state"])
+                    or not _valid_semantics7_prng_state(meta["prng_state"])
+                    or not _valid_single_prng_state(
+                        meta["lifecycle_prng_state"])
                     or not isinstance(governor, dict)
                     or int(meta["participant_influenced"] or 0) != 0
                     or meta["parent_run_id"] is not None
@@ -2687,28 +2706,11 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
 
 
 def finalize_sqlite_artifact(path: str | Path) -> Path:
-    """Checkpoint WAL state and leave one immutable-manifest-ready DB file."""
-    database = Path(path).resolve()
-    if not database.is_file():
-        raise OracleCampaignError(f"run database not found: {database}")
-    connection = sqlite3.connect(str(database), isolation_level=None)
+    """Finalize a campaign DB while preserving the campaign error contract."""
     try:
-        connection.execute("PRAGMA busy_timeout = 5000")
-        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        mode = str(connection.execute(
-            "PRAGMA journal_mode = DELETE").fetchone()[0]).lower()
-        if mode != "delete":
-            raise OracleCampaignError(
-                f"could not finalize SQLite journal mode for {database}")
-    finally:
-        connection.close()
-    for sidecar in (Path(f"{database}-wal"), Path(f"{database}-shm")):
-        if sidecar.exists():
-            if sidecar.stat().st_size:
-                raise OracleCampaignError(
-                    f"non-empty SQLite sidecar remains after finalization: {sidecar}")
-            sidecar.unlink()
-    return database
+        return _finalize_sqlite_artifact(path)
+    except SQLiteArtifactError as exc:
+        raise OracleCampaignError(str(exc)) from exc
 
 
 def load_existing_oracle_source_receipt(

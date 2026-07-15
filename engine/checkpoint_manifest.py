@@ -13,6 +13,47 @@ from typing import Any
 CHECKPOINT_MANIFEST_VERSION = 1
 
 
+class SQLiteArtifactError(RuntimeError):
+    """A SQLite file could not be reduced to one finalized database artifact."""
+
+
+def finalize_sqlite_artifact(path: str | Path) -> Path:
+    """Checkpoint WAL state and leave one immutable-manifest-ready DB file.
+
+    This is safe only after every writer has released the database.  A
+    non-empty sidecar after checkpointing remains fatal because deleting it
+    could discard committed evidence.
+    """
+    database = Path(path).resolve()
+    if not database.is_file():
+        raise SQLiteArtifactError(f"run database not found: {database}")
+    connection = sqlite3.connect(str(database), isolation_level=None)
+    try:
+        connection.execute("PRAGMA busy_timeout = 5000")
+        checkpoint = connection.execute(
+            "PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is None or int(checkpoint[0]) != 0:
+            raise SQLiteArtifactError(
+                f"could not checkpoint SQLite WAL for {database}")
+        mode = str(connection.execute(
+            "PRAGMA journal_mode = DELETE").fetchone()[0]).lower()
+        if mode != "delete":
+            raise SQLiteArtifactError(
+                f"could not finalize SQLite journal mode for {database}")
+    except sqlite3.Error as exc:
+        raise SQLiteArtifactError(
+            f"could not finalize SQLite artifact {database}: {exc}") from exc
+    finally:
+        connection.close()
+    for sidecar in (Path(f"{database}-wal"), Path(f"{database}-shm")):
+        if sidecar.exists():
+            if sidecar.stat().st_size:
+                raise SQLiteArtifactError(
+                    f"non-empty SQLite sidecar remains after finalization: {sidecar}")
+            sidecar.unlink()
+    return database
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(
         value, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)

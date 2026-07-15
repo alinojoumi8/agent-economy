@@ -1,0 +1,22 @@
+# Fill only with the ten fresh v2 profiles below. Replace each whole row with
+# the runner-emitted manifest_entry so claim, initialized claim, Git revision,
+# replay receipt, source receipt, checkpoint manifest, and every SHA are bound.
+schema_version: 1
+campaign_id: oracle-calibration-v2
+campaign_version: 2
+commitment_sha256: b4472251736b64800d2f43666e4387772cf06043ef102886aaf25bc9f86867b9
+minimum_runs: 10
+minimum_forecasts: 60
+p90_limit_ms: 60000
+naive_brier: 0.25
+runs:
+  - {run_id: oracle-calibration-v2-s7311, seed: 7311, database: ../../data/runs/oracle-calibration-v2-s7311.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7311.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7311-control.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 6cb7cbb0c5a90259e818bea4119d01a506d60d74677e255088e4523b181889df}
+  - {run_id: oracle-calibration-v2-s7312, seed: 7312, database: ../../data/runs/oracle-calibration-v2-s7312.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7312.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7312-rumor.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 0bb2e8c36a367b21a0db73bbed7b09ff3f8994521c0b1f153503d8f9942eca6c}
+  - {run_id: oracle-calibration-v2-s7313, seed: 7313, database: ../../data/runs/oracle-calibration-v2-s7313.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7313.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7313-control.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 1884ff177ee7921f876ff3b6253b4f78b490313860ca9e21024f02b36733d50e}
+  - {run_id: oracle-calibration-v2-s7314, seed: 7314, database: ../../data/runs/oracle-calibration-v2-s7314.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7314.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7314-rumor.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 3fec681995f250633a846ce9569364916ef28c781d647bd604cb603b43cac182}
+  - {run_id: oracle-calibration-v2-s7315, seed: 7315, database: ../../data/runs/oracle-calibration-v2-s7315.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7315.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7315-control.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 5dd7ac8b9f502de35dd778b6b7b7c661256c5ca01bc4be4e5c0d3992915a2eef}
+  - {run_id: oracle-calibration-v2-s7316, seed: 7316, database: ../../data/runs/oracle-calibration-v2-s7316.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7316.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7316-rumor.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 6e96e78924e317af3f09fa5c5862a707ed850bf80394397a31062711d633bad1}
+  - {run_id: oracle-calibration-v2-s7317, seed: 7317, database: ../../data/runs/oracle-calibration-v2-s7317.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7317.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7317-control.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 9b2d4b6d533a9d505c48355f106b6e478bb097196944d7036e96723160d43534}
+  - {run_id: oracle-calibration-v2-s7318, seed: 7318, database: ../../data/runs/oracle-calibration-v2-s7318.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7318.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7318-rumor.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 40be05557ce3cb4db92300cb4a773f79d738a08033b0df1cc6815968fee1d0d1}
+  - {run_id: oracle-calibration-v2-s7319, seed: 7319, database: ../../data/runs/oracle-calibration-v2-s7319.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7319.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7319-control.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 45c3f9c6e7feda52c110de7ce64f7b422cf5493451436ff337f2d0ff05368e5d}
+  - {run_id: oracle-calibration-v2-s7320, seed: 7320, database: ../../data/runs/oracle-calibration-v2-s7320.db, database_sha256: FILL_SHA256, replay_database: ../../data/runs/REPLAY_RUN_ID_7320.db, replay_database_sha256: FILL_SHA256, profile: v2-seed-7320-rumor.yaml, profile_sha256: FILL_SHA256, effective_config_sha256: 9c53aa67458a1ca06af298b5f7d3ab47a5b58cddea70bb39784f2c7523fe1083}

@@ -177,10 +177,12 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. Its ten predeclared seed profiles keep background
-behavior scripted and route only the Oracle to live Kimi. Do not replace a seed
-or switch control/treatment arms after seeing outcomes. Treatment profiles lock
-a one-person public precursor one tick before each forecast and the larger
+whole-world acceptance run. The active `oracle-calibration-v2` commitment uses
+fresh seeds 7311–7320. Its ten predeclared profiles keep background behavior
+scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
+metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
+seed or switch control/treatment arms after seeing outcomes. Treatment profiles
+lock a one-person public precursor one tick before each forecast and the larger
 depositor-targeted rumor one tick after it; control profiles contain neither.
 
 First run the free 335-tick control and treatment rehearsals. They exercise the
@@ -199,14 +201,24 @@ acceptance command may return nonzero because scripted-provider provenance is
 ineligible; inspect and resolve any other failed check. The live campaign
 profiles below must still satisfy their stricter source checks.
 
+The archived `oracle-calibration-v1-s7301` source completed tick 335 with six
+resolved forecasts and valid provider provenance. Its replay nonetheless
+diverged at the first arrival because staged genesis reset an uncheckpointed
+persona RNG stream, and checkpoint inspection retained SQLite WAL/SHM sidecars.
+It is diagnostic evidence only: do not resume it, copy it into a manifest, or
+reuse its responses. The draft branch fixes for persona RNG restore,
+standalone checkpoint finalization, replay target-tick enforcement, and
+column-specific pre-dispatch RNG validation pass the focused and full gates.
+
 Then preflight and execute each profile from
-`seed-7301-control.yaml` through `seed-7310-rumor.yaml`. The first run is shown;
-repeat it for the exact ten checked-in profiles:
+`v2-seed-7311-control.yaml` through `v2-seed-7320-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7311
+produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/seed-7301-control.yaml --preflight
-python run.py --config runs/oracle/seed-7301-control.yaml --preflight-live
-python run.py --config runs/oracle/seed-7301-control.yaml `
+python run.py --config runs/oracle/v2-seed-7311-control.yaml --preflight
+python run.py --config runs/oracle/v2-seed-7311-control.yaml --preflight-live
+python run.py --config runs/oracle/v2-seed-7311-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -255,13 +267,13 @@ The campaign command does the offline replay itself; do not invoke a separate
 manual `--replay` and substitute it into the corpus. After each command exits,
 confirm the emitted source receipt reports finalized source/replay databases and
 no `-wal` or `-shm` sidecar. Copy
-`runs/oracle/manifest-v1.template.yaml` to a run-specific evidence manifest and
+`runs/oracle/manifest-v2.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v1.template.yaml runs/oracle/manifest-v1.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v1.yaml
+Copy-Item runs/oracle/manifest-v2.template.yaml runs/oracle/manifest-v2.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v2.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -427,3 +439,8 @@ For a release candidate, retain:
 
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
+
+Keep the release pull request draft until the v2 Oracle campaign, capped
+30-day rumor pilot, 365-day/$200 acceptance run, and final
+provenance/license/dependency/secret audit all pass. Merging, tagging,
+publication, and public deployment require separate authorization.

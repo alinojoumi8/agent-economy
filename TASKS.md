@@ -6,6 +6,11 @@ long-horizon acceptance campaign. Live inference requires explicit operator
 approval; the acceptance profile is uncapped and records actual spend while
 provider rate limits control throughput.
 
+P0/P1 and the R18–R22 functional surfaces are complete. The active pull
+request remains draft while release evidence is rebuilt; do not merge, tag,
+publish, or deploy publicly until the pending live gates and final provenance
+audit pass under separate authorization.
+
 ## Legal-Economy v2 semantics-7 closure
 
 ### Implementation
@@ -45,7 +50,7 @@ provider rate limits control throughput.
   closure suite passed 280 in 165.73 seconds. The post-merge
   compatibility/replay cleanup suite passes 303 in 178.22 seconds, with
   compilation and dataset verification green.
-- [x] Current release-gate branch: 582 Python tests passed with 8 skipped, 23
+- [x] Current release-gate branch: 590 Python tests passed with 8 skipped, 23
   dashboard tests and a fresh 603-module build passed, and pinned
   FRED/BLS/SCF/SUSB verification passed.
 - [x] Historical closure dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
@@ -104,11 +109,22 @@ provider rate limits control throughput.
 - [x] Rehearse both 335-tick Oracle arms for free: six control negatives and six
   treatment positives resolved with zero operational failures, exact ledger
   reconciliation, and a combined scripted Brier score of `0.19469025`.
-- [ ] Run the ten predeclared live-Kimi Oracle profiles through
+- [x] Preserve `oracle-calibration-v1-s7301` as failed diagnostic evidence. Its
+  source completed tick 335 with valid live-provider provenance, but replay
+  diverged at the first arrival because staged genesis reset an uncheckpointed
+  persona RNG stream; checkpoint inspection also retained SQLite sidecars. It
+  is not acceptance evidence and no v1 sample may enter the replacement corpus.
+- [x] Land and verify the current-branch fixes for persona RNG checkpoint and
+  restore, standalone SQLite checkpoint finalization, and replay target-tick
+  enforcement. Column-specific genesis/checkpoint RNG validation, focused
+  regressions, representative aggregate receipts, and the full suite pass.
+- [ ] Run the ten fresh v2 live-Kimi Oracle profiles (seeds 7311–7320,
+  `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
   `--oracle-campaign-run`, which
   finalizes each source and exact offline companion and hashes those artifacts
   plus the checked-in profile; then pass the emitted entries through
-  `--oracle-calibration-report` without exclusions.
+  `--oracle-calibration-report` using `runs/oracle/manifest-v2.template.yaml`
+  without exclusions.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
@@ -207,3 +223,7 @@ provider rate limits control throughput.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
+- [ ] Keep the release pull request draft until the successful v2 Oracle
+  campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
+  provenance/license/dependency/secret audit are complete. Merge, tag,
+  publication, and public deployment require separate authorization.
