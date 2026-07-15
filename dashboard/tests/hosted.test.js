@@ -154,4 +154,3 @@ test("dashboard source contains no persistent browser credential storage", () =>
   assert.doesNotMatch(source, /\b(?:localStorage|sessionStorage|indexedDB)\b/);
   assert.doesNotMatch(source, /setItem\s*\(/);
 });
-

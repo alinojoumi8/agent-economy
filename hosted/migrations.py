@@ -64,12 +64,16 @@ def load_migrations(directory: str | Path = DEFAULT_MIGRATIONS_DIR) -> tuple[Mig
         if match is None:  # guarded above; keeps type checkers honest
             continue
         raw = path.read_bytes()
+        # Git checkouts may materialize the same committed text with LF or
+        # CRLF. Migration identity must be repository-content stable across
+        # Windows/Linux, while every other byte remains exact and fail-closed.
+        canonical = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         migrations.append(
             Migration(
                 version=int(match.group("version")),
                 name=match.group("name"),
-                checksum_sha256=hashlib.sha256(raw).hexdigest(),
-                sql=raw.decode("utf-8"),
+                checksum_sha256=hashlib.sha256(canonical).hexdigest(),
+                sql=canonical.decode("utf-8"),
                 path=path,
             )
         )

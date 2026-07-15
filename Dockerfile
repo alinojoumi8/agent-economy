@@ -34,4 +34,3 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=4 \
 
 ENTRYPOINT ["python", "-m", "hosted.cli"]
 CMD ["serve", "--config", "/app/config/hosted.docker.yaml", "--host", "0.0.0.0", "--port", "8000"]
-

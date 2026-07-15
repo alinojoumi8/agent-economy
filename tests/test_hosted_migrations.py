@@ -115,6 +115,21 @@ def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
     assert "m.status = 'active'" in migration.sql
 
 
+def test_migration_identity_is_stable_across_lf_and_crlf_checkouts(tmp_path):
+    lf_dir = tmp_path / "lf"
+    crlf_dir = tmp_path / "crlf"
+    lf_dir.mkdir()
+    crlf_dir.mkdir()
+    source = b"CREATE TABLE example (id integer);\nSELECT 1;\n"
+    (lf_dir / "001_example.sql").write_bytes(source)
+    (crlf_dir / "001_example.sql").write_bytes(source.replace(b"\n", b"\r\n"))
+
+    lf = load_migrations(lf_dir)[0]
+    crlf = load_migrations(crlf_dir)[0]
+    assert lf.checksum_sha256 == crlf.checksum_sha256
+    assert lf.sql == crlf.sql == source.decode("utf-8")
+
+
 def test_migration_runner_is_ordered_atomic_and_idempotent():
     connection = MigrationConnection()
 

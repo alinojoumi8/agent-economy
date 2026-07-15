@@ -79,4 +79,3 @@ export function Observatory({ hostedSession = null }) {
     {!hosted && replayOpen && <ReplayModal onClose={() => setReplayOpen(false)} />}
   </div>;
 }
-
