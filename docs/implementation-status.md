@@ -162,7 +162,7 @@ its verification is part of the fresh campaign gate.
 
 Four release-quality workstreams remain after the extension closure:
 
-1. run the fresh v3 ten-profile Oracle evidence campaign with seeds 7321–7330,
+1. run the fresh v4 ten-profile Oracle evidence campaign with seeds 7331–7340,
    `kimi-for-coding-highspeed`, conservative 3x metering, and a $25 per-run cap;
    its explicit read-only manifest evaluator, 60-forecast floor,
    outcome-diversity gate,
@@ -200,7 +200,8 @@ are pinned; unrelated optional sources remain separate.
 | Archived Oracle v1 seed 7301 | **Failed acceptance / retained diagnostic:** the source completed tick 335 with six resolved forecasts and valid live-provider provenance, but its replay diverged at the first arrival because staged genesis reset an uncheckpointed persona RNG stream. Read-only checkpoint inspection also retained SQLite sidecars. It is not reusable acceptance evidence. |
 | Replay-integrity correction | **Passed locally:** engine plus persona RNG state persists under semantics 7; staged genesis and checkpoints require column-specific valid RNG shapes; standalone SQLite checkpoints contain no WAL/SHM sidecars; replay fails when the target tick is not reached. Focused regressions, representative aggregate receipts, the preceding 590-test gate, and the current 599-test gate pass. |
 | Archived Oracle v2 seed 7311 | **Failed receipt / retained diagnostic:** source and generated replay reached tick 335 and canonical verification returned `exact: true` with `differences: []`, but the receipt incorrectly treated total stored rows as living population after a deceased row was preserved and a replacement arrived. The immutable v2 evidence is never reused. |
-| Oracle campaign tooling | **Implemented; v3 live evidence pending:** ten fresh profiles for seeds 7321–7330 and `runs/oracle/manifest-v3.template.yaml` are checked in. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. The corrected receipt validates living/deceased census consistency, chronological death/schedule/arrival linkage, `NIGHT_CLOSE` subject provenance, one-time due-schedule consumption, and the fixed 5–20-tick delay. No v1 or v2 run enters the v3 corpus. |
+| Archived Oracle v3 seed 7321 | **Failed receipt / excluded diagnostic:** source and exact companion replay completed, but the original receipt admitted only four of six forecasts because it applied accepted-plan validation to authenticated rejected planner attempts. The original receipt records the pre-inspection source hash. The local source artifact was later write-opened during diagnosis and is not admissible; no v3 artifact is reused. |
+| Oracle campaign tooling | **Implemented; v4 live evidence pending:** ten fresh profiles for seeds 7331–7340 and `runs/oracle/manifest-v4.template.yaml` are checked in. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. The corrected receipt validates living/deceased census consistency, chronological death/schedule/arrival linkage, `NIGHT_CLOSE` subject provenance, one-time due-schedule consumption, the fixed 5–20-tick delay, and exact rejection-event provenance for planner retries while validating only the accepted plan as executed evidence. No v1, v2, or v3 run enters the v4 corpus. |
 | Oracle free arm rehearsal | **Passed mechanics:** control `9fb8985f97` resolved six negatives; treatment `bb877a0d89` fired all six public precursors and all six larger rumors and resolved six positives. Both reconciled with zero provider/budget/report failures; their combined scripted Brier score was `0.19469025`. Treatment replay `replay-bb877a0d89-385256e2a1` matched tick 335 and hash `0ff7685e…2fa9ed` with `differences: []`. Scripted provenance remains intentionally ineligible for the live receipt. |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay:** `881ed41994` passed 19/20 acceptance checks with only scripted `real_providers` false; 100 living agents, six resolved Oracle checkpoints, every shock trace, experiment evidence, and three reviewed phenomena. `replay-881ed41994-3465cb3101` matched tick 365 and hash `37d18cf4…498786ed` with every deterministic table exact and `differences: []`. |
 | Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
@@ -243,8 +244,11 @@ public tag.
   first arrival, and verified as `exact: true` with `differences: []`, but
   receipt generation exposed the total-row versus
   living-population census bug. The immutable evidence is not reused.
-- The v3 explicit-manifest Oracle latency/calibration campaign uses fresh seeds
-  7321–7330, `kimi-for-coding-highspeed`, conservative 3x metering, and a $25
+- V3 seed 7321 is excluded diagnostic evidence. Its original failed receipt
+  records the pre-inspection source hash, but diagnosis later write-opened the
+  local source artifact; it is not admissible and is never reused.
+- The v4 explicit-manifest Oracle latency/calibration campaign uses fresh seeds
+  7331–7340, `kimi-for-coding-highspeed`, conservative 3x metering, and a $25
   per-run cap. It, the 30-day rumor gate, and the 365-day/$200 acceptance run
   require separate execution and evidence. The
   Oracle campaign cannot pass below ten eligible runs, 60 resolved forecasts,

@@ -45,6 +45,7 @@ from oracle.tools import (
     canonical_oracle_json,
     oracle_tool_definitions,
     validate_bounded_oracle_evidence,
+    validate_oracle_plan,
     validate_oracle_tool_args,
 )
 from run_config import load_config
@@ -57,11 +58,15 @@ DEFAULT_MINIMUM_RUNS = 10
 DEFAULT_MINIMUM_FORECASTS = 60
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v3"
-RELEASE_CAMPAIGN_VERSION = 3
-RELEASE_SEEDS = tuple(range(7321, 7331))
+_GATEWAY_CANONICAL_NOOP = {
+    "actions": [{"type": "do_nothing"}],
+    "reasoning": "unparseable output; no-op",
+}
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v4"
+RELEASE_CAMPAIGN_VERSION = 4
+RELEASE_SEEDS = tuple(range(7331, 7341))
 RELEASE_PROFILES = {
-    seed: f"v3-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v4-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "kimi"
@@ -83,7 +88,7 @@ RELEASE_ORACLE_ADAPTER = {
 RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v3.yaml"
+    / "commitment-v4.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -92,7 +97,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "34b3c50cba5fbdaa86d1bf54c7c816340a44ea4cdad2eb562020d73d663a64f8"
+    "a2dac4421baf8290e4119287d94cfd82c0104ef4f38f1bd9fa9cdb450a109e51"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -2081,6 +2086,39 @@ def _campaign_arm_integrity(store: Store, seed: int) -> tuple[dict, list[str]]:
     }, reasons
 
 
+def _planner_query_validation_errors(plan: dict, *, tick: int) -> list[str]:
+    """Return deterministic contract errors for one persisted planner response."""
+    try:
+        queries = validate_oracle_plan(
+            plan, max_queries=OracleTools.MAX_QUERIES)
+    except OracleToolError as exc:
+        return [str(exc)]
+
+    errors: list[str] = []
+    for query in queries:
+        try:
+            if not isinstance(query, dict) or set(query) != {"tool", "args"}:
+                raise OracleCampaignError("planner query shape is invalid")
+            validate_oracle_tool_args(query["tool"], query["args"])
+            for key in ("from_tick", "to_tick"):
+                value = query["args"].get(key)
+                if value is not None and not 0 <= value <= tick:
+                    raise OracleCampaignError(
+                        "planner query tick is outside the governed range")
+        except (KeyError, TypeError, OracleCampaignError, OracleToolError) as exc:
+            errors.append(str(exc))
+    return errors
+
+
+def _planner_runtime_validation_error(plan: dict) -> str | None:
+    """Return the shared pre-execution error for a rejected response."""
+    try:
+        validate_oracle_plan(plan, max_queries=OracleTools.MAX_QUERIES)
+    except OracleToolError as exc:
+        return str(exc)
+    return None
+
+
 def _forecast_evidence(
     store: Store, *, item: dict, acceptance: dict,
     expected_provider: str, expected_model: str,
@@ -2306,6 +2344,9 @@ def _forecast_evidence(
     if plan_ids and answer_ids and max(plan_ids) >= min(answer_ids):
         reasons.append("scheduled forecast answer preceded its successful plan")
     parsed_plans: list[dict] = []
+    planner_contexts: list[dict | None] = []
+    planner_query_errors: list[list[str]] = []
+    planner_runtime_errors: list[str | None] = []
     call_metering: list[dict] = []
     for row in calls:
         request = load_json(row["request_json"], None)
@@ -2368,6 +2409,10 @@ def _forecast_evidence(
             reasons.append("scheduled forecast call response text is not valid JSON")
             continue
         if str(row["purpose"]) == "oracle_plan":
+            if (parsed_text == _GATEWAY_CANONICAL_NOOP
+                    and metering.get("shape") != "repair"):
+                reasons.append(
+                    "canonical no-op planner response lacks repair-call provenance")
             if user != context:
                 reasons.append(
                     "scheduled planner user prompt differs from governed context")
@@ -2381,24 +2426,14 @@ def _forecast_evidence(
                     != oracle_tool_definitions(store)
                     or context.get("constraints") != expected_constraints):
                 reasons.append("scheduled planner tool catalog/constraints are invalid")
-            if not isinstance(parsed_text, dict) or not isinstance(
-                    parsed_text.get("queries"), list):
-                reasons.append("scheduled forecast planner response is invalid")
-            else:
-                parsed_plans.append(parsed_text)
-                for query in parsed_text["queries"]:
-                    try:
-                        if not isinstance(query, dict) or set(query) != {"tool", "args"}:
-                            raise OracleCampaignError("planner query shape is invalid")
-                        validate_oracle_tool_args(query["tool"], query["args"])
-                        for key in ("from_tick", "to_tick"):
-                            value = query["args"].get(key)
-                            if value is not None and not 0 <= value <= tick:
-                                raise OracleCampaignError(
-                                    "planner query tick is outside the governed range")
-                    except (KeyError, TypeError, OracleCampaignError,
-                            OracleToolError) as exc:
-                        reasons.append(f"scheduled planner query is invalid: {exc}")
+            normalized_plan = parsed_text if isinstance(parsed_text, dict) else {}
+            parsed_plans.append(normalized_plan)
+            planner_contexts.append(
+                context if isinstance(context, dict) else None)
+            planner_query_errors.append(
+                _planner_query_validation_errors(normalized_plan, tick=tick))
+            planner_runtime_errors.append(
+                _planner_runtime_validation_error(normalized_plan))
         elif str(row["purpose"]) == "oracle":
             if (not isinstance(context, dict)
                     or context.get("evidence") != evidence
@@ -2432,6 +2467,12 @@ def _forecast_evidence(
     if len(parsed_plans) != purpose_counts.get("oracle_plan", 0):
         reasons.append("scheduled forecast has an unparsable planner attempt")
     elif parsed_plans:
+        first_context = planner_contexts[0]
+        if (isinstance(first_context, dict)
+                and ("previous_plan_error" in first_context
+                     or "instruction" in first_context
+                     or "planner_attempt" in first_context)):
+            reasons.append("initial planner request carries retry-only state")
         expected_queries = [
             {"tool": item.get("tool"), "args": item.get("args")}
             for item in evidence if isinstance(item, dict)
@@ -2440,6 +2481,10 @@ def _forecast_evidence(
         if not expected_queries or final_queries != expected_queries:
             reasons.append(
                 "last successful planner tools/args do not match stored evidence")
+        reasons.extend(
+            f"scheduled planner query is invalid: {error}"
+            for error in planner_query_errors[-1]
+        )
         rejected = [
             payload for payload in _event_payloads(
                 store, "oracle_tool_plan_rejected", tick)
@@ -2452,11 +2497,32 @@ def _forecast_evidence(
         else:
             for attempt, (plan, event) in enumerate(
                     zip(prior_plans, rejected), start=1):
-                if (event.get("attempt") != attempt
+                if (type(event.get("attempt")) is not int
+                        or event.get("attempt") != attempt
                         or event.get("plan_sha256")
                         != _canonical_value_sha256(plan)):
                     reasons.append(
                         "planner rejection event does not bind its rejected response")
+                event_error = event.get("error")
+                expected_error = planner_runtime_errors[attempt - 1]
+                if (expected_error is None
+                        or event_error != expected_error[:500]):
+                    reasons.append(
+                        "planner rejection error is not independently reproducible")
+                next_context = planner_contexts[attempt]
+                if (not isinstance(event_error, str) or not event_error
+                        or len(event_error) > 500
+                        or not isinstance(next_context, dict)
+                        or not isinstance(
+                            next_context.get("previous_plan_error"), str)
+                        or next_context["previous_plan_error"] != expected_error
+                        or type(next_context.get("planner_attempt")) is not int
+                        or next_context["planner_attempt"] != attempt + 1
+                        or next_context.get("instruction") != (
+                            "Return a corrected plan that satisfies every supplied "
+                            "constraint.")):
+                    reasons.append(
+                        "planner retry context does not bind its rejection error")
     if completion is not None:
         recorded_calls = completion.get("model_calls")
         if (not isinstance(recorded_calls, list) or not recorded_calls
@@ -3041,6 +3107,12 @@ def write_replay_execution_receipt(
             (source, "source"), (replay, "replay"), (profile, "profile")):
         if not path.is_file():
             raise OracleCampaignError(f"Oracle {label} artifact is missing: {path}")
+    for database, label in ((source, "source"), (replay, "replay")):
+        if any(Path(f"{database}{suffix}").exists()
+               for suffix in ("-wal", "-shm")):
+            raise OracleCampaignError(
+                f"Oracle {label} database is not a finalized standalone "
+                "SQLite artifact")
     revision = get_clean_git_revision()
     claim_body = _claim_body(campaign_claim)
     if (source.parent != RELEASE_DATA_DIR

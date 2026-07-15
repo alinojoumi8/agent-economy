@@ -217,7 +217,7 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The pending v3 ten-profile Oracle campaign, live 30-day rumor
+The pending v4 ten-profile Oracle campaign, live 30-day rumor
 pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
 operational gates. No live inference is run without `--approve-live-inference`.
 An unperformed or failed live gate must be reported as pending or failed, never
@@ -607,8 +607,15 @@ authenticates chronological death/schedule/arrival linkage, `NIGHT_CLOSE` phase
 and agent-subject provenance, one-time due-schedule consumption, and the fixed
 5–20-tick replacement delay.
 
-The fresh `oracle-calibration-v3` campaign is separately precommitted to ten
-fixed arms with seeds 7321–7330. It routes only the Oracle to
+V3 seed 7321 completed its source and exact companion replay, but its original
+receipt admitted only four of six forecasts after applying accepted-plan
+validation to authenticated rejected planner attempts. The original receipt
+records the pre-inspection source hash; the local source artifact was later
+write-opened during diagnosis and is not admissible. It remains excluded
+diagnostic evidence and is never reused.
+
+The fresh `oracle-calibration-v4` campaign is separately precommitted to ten
+fixed arms with seeds 7331–7340. It routes only the Oracle to
 `kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
 route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
 immutable claim bound to its clean Git commit/tree, committed effective config,
@@ -620,7 +627,7 @@ dispatch. The local no-clobber receipt chain is strong accident/tamper evidence,
 but a public claim still requires independent signing or a separately
 administered append-only transparency log.
 
-Completion of the v3 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+Completion of the v4 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
 run, and final provenance audit remain separate release evidence. The pull
 request stays draft. Merging, tagging, publication, and public deployment remain
 separate release decisions.

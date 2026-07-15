@@ -25,6 +25,7 @@ from .tools import (
     OracleTools,
     bound_oracle_evidence,
     canonical_oracle_json,
+    validate_oracle_plan,
 )
 
 PLANNER_SYSTEM = """You are the read-only query planner for an economic analyst.
@@ -146,6 +147,8 @@ class Oracle:
                     planning_context["previous_plan_error"] = validation_error
                     planning_context["instruction"] = (
                         "Return a corrected plan that satisfies every supplied constraint.")
+                    if hardened_evidence:
+                        planning_context["planner_attempt"] = _attempt + 1
                 plan_req = LLMRequest(
                     role="oracle", purpose="oracle_plan", system=PLANNER_SYSTEM,
                     user=(canonical_oracle_json(planning_context)
@@ -156,10 +159,14 @@ class Oracle:
                 plan_resp = await self.gw.complete(
                     plan_req, schema_hint='{"queries":[]}')
                 plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
-                queries = plan.get("queries", [])
                 try:
+                    queries = plan.get("queries", [])
                     if not queries:
-                        raise OracleToolError("at least one evidence query is required")
+                        raise OracleToolError(
+                            "at least one evidence query is required")
+                    if hardened_evidence:
+                        queries = validate_oracle_plan(
+                            plan, max_queries=self.tools.MAX_QUERIES)
                     evidence = (
                         self.tools.execute_plan(queries)
                         if hardened_evidence else

@@ -108,8 +108,8 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
-The active release calibration design therefore preregisters ten fixed v3
-profiles under `runs/oracle`, six forecasts per run, fresh seeds 7321–7330, and
+The active release calibration design therefore preregisters ten fixed v4
+profiles under `runs/oracle`, six forecasts per run, fresh seeds 7331–7340, and
 alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
 live; background behavior remains scripted so the campaign isolates the
 forecast surface. Treatment windows publish a one-person rumor
@@ -140,11 +140,21 @@ crossed that arrival without divergence. Canonical verification returned
 `exact: true` with `differences: []`. Its receipt failed for a different reason:
 checkpoint integrity counted all stored agent rows rather than the
 bounded living population after a deceased row was preserved and a replacement
-arrival was added. V2 is diagnostic evidence and is never reused. The v3
-receipt contract validates living/deceased census consistency; chronological
+arrival was added. V2 is diagnostic evidence and is never reused. The receipt
+contract validates living/deceased census consistency; chronological
 death/schedule/arrival linkage; `NIGHT_CLOSE` event and subject provenance;
 one-time due-schedule consumption; and the fixed 5–20-tick replacement delay.
 It uses conservative 3x metering and retains a $25 per-run cap.
+
+V3 seed 7321 completed its source and exact companion replay, but its original
+receipt admitted only four of six forecasts because authenticated rejected
+planner attempts were incorrectly treated as invalid accepted plans. The
+original receipt records the pre-inspection source hash. The local source
+artifact was later write-opened during diagnosis, so v3 is excluded diagnostic
+evidence and cannot enter the v4 corpus. V4 uses entirely fresh seeds and binds
+each rejected attempt to its independently reproduced error and persisted
+rejection event. A monotonic retry ordinal prevents durable-cache collisions;
+only the final accepted plan is validated as executed evidence.
 
 ## Evidence hierarchy
 
@@ -162,7 +172,7 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-Completion of the v3 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+Completion of the v4 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
 run, and final provenance audit are separate pending gates. The release pull
 request stays draft; merging, tagging, publication, and public deployment need
 separate authorization. After those gates:

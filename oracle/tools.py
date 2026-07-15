@@ -192,6 +192,39 @@ def validate_oracle_tool_args(name: str, args: dict[str, Any]) -> None:
             _plain_int(args["depth"], "depth", minimum=1, maximum=20)
 
 
+def validate_oracle_plan(
+        plan: Any, *, max_queries: int = 8) -> list[dict]:
+    """Normalize and preflight one planner response exactly as runtime does.
+
+    JSON values other than objects are normalized to an empty plan. The
+    returned queries have passed every deterministic check that occurs before
+    a read-only tool is executed. Tool-state failures remain runtime errors;
+    release receipts deliberately do not treat those as independently proven
+    planner rejections.
+    """
+    normalized = plan if isinstance(plan, dict) else {}
+    queries = normalized.get("queries", [])
+    if not queries:
+        raise OracleToolError("at least one evidence query is required")
+    if not isinstance(queries, list):
+        raise OracleToolError("queries must be a list")
+    if len(queries) > max_queries:
+        raise OracleToolError(
+            f"at most {max_queries} tool queries are allowed")
+    for request in queries:
+        if not isinstance(request, dict):
+            raise OracleToolError("each query must be an object")
+        name = str(request.get("tool", ""))
+        args = request.get("args", {})
+        validate_oracle_tool_args(name, args)
+        from_tick = args.get("from_tick")
+        to_tick = args.get("to_tick")
+        if (from_tick is not None and to_tick is not None
+                and from_tick > to_tick):
+            raise OracleToolError("invalid tick range")
+    return queries
+
+
 def oracle_tool_definitions(store) -> list[dict]:
     """Canonical governed tool catalog shared by runtime and evidence audit."""
     bank_ids = [int(row["id"]) for row in store.query(

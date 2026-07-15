@@ -128,17 +128,21 @@ audit pass under separate authorization.
   the checkpoint audit required exactly 100 stored agent rows even after a
   deceased row was preserved and its replacement arrival restored 100 living
   agents. Do not resume, rewrite, or reuse the v2 evidence.
-- [ ] Verify the corrected checkpoint receipt contract, which validates the
+- [x] Verify the corrected checkpoint receipt contract, which validates the
   bounded living population and reconciles living plus deceased rows to the
   stored total; authenticates chronological death/schedule/arrival linkage and
   `NIGHT_CLOSE` subject provenance; consumes each due schedule exactly once;
   and enforces the fixed 5–20-tick replacement delay.
-- [ ] Run the ten fresh v3 live-Kimi Oracle profiles (seeds 7321–7330,
+- [x] Retain v3 seed 7321 as excluded diagnostic evidence. Its original receipt
+  records the pre-inspection source hash and four of six forecasts as eligible;
+  diagnosis later write-opened the local source artifact, so it is not
+  admissible and no v3 response, claim, checkpoint, replay, or seed is reused.
+- [ ] Run the ten fresh v4 live-Kimi Oracle profiles (seeds 7331–7340,
   `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
   `--oracle-campaign-run`, which
   finalizes each source and exact offline companion and hashes those artifacts
   plus the checked-in profile; then pass the emitted entries through
-  `--oracle-calibration-report` using `runs/oracle/manifest-v3.template.yaml`
+  `--oracle-calibration-report` using `runs/oracle/manifest-v4.template.yaml`
   without exclusions.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
@@ -238,7 +242,7 @@ audit pass under separate authorization.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep the release pull request draft until the successful v3 Oracle
+- [ ] Keep the release pull request draft until the successful v4 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
   publication, and public deployment require separate authorization.

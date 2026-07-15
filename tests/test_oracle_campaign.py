@@ -46,9 +46,10 @@ from oracle.analyst import (
     _answer_user_json, _bound_prompt_evidence,
 )
 from oracle.tools import (
-    MAX_PROMPT_EVIDENCE_CHARS, bound_oracle_evidence,
+    MAX_PROMPT_EVIDENCE_CHARS, OracleToolError, bound_oracle_evidence,
     canonical_oracle_json, oracle_tool_definitions,
-    validate_bounded_oracle_evidence, validate_oracle_tool_args,
+    validate_bounded_oracle_evidence, validate_oracle_plan,
+    validate_oracle_tool_args,
 )
 from run import (
     _close_run, _initialize_claimed_oracle_genesis, main, open_run,
@@ -129,9 +130,23 @@ def _write_run(
     tmp_path: Path, index: int, *, invalid_provider: bool = False,
     invalid_evidence: bool = False,
     planner_retry: bool = False,
+    planner_retry_invalid_args: bool = False,
+    planner_retry_shape: str = "empty_queries",
+    planner_retry_twice: bool = False,
+    planner_retry_same_error: bool = False,
+    planner_rejection_state: str = "valid",
+    planner_rejection_attempt: int | float | bool = 1,
     lifecycle_replacement: bool = False,
     receipt_dir: Path | None = None,
 ) -> dict:
+    if planner_retry_shape not in {
+            "empty_queries", "canonical_noop", "non_list", "invalid_args",
+            "long_error", "valid"}:
+        raise ValueError(f"unsupported planner retry shape: {planner_retry_shape}")
+    if planner_rejection_state not in {
+            "valid", "missing", "missing_second", "mismatched_error",
+            "forged_pair", "misordered_second", "truncated_context"}:
+        raise ValueError(f"unsupported planner rejection state: {planner_rejection_state}")
     seed = RELEASE_SEEDS[index]
     run_id = f"{RELEASE_CAMPAIGN_ID}-s{seed}"
     profile_path = (Path("runs/oracle") / RELEASE_PROFILES[seed]).resolve()
@@ -251,8 +266,59 @@ def _write_run(
             "resolution_rule": item["expected_rule"],
             "deadline_tick": tick + 30,
         }
+        selected_retry_shape = (
+            "invalid_args" if planner_retry_invalid_args
+            else planner_retry_shape)
+        retry_plan_by_shape = {
+            "empty_queries": {"queries": []},
+            "canonical_noop": {
+                "actions": [{"type": "do_nothing"}],
+                "reasoning": "unparseable output; no-op",
+            },
+            "non_list": {"queries": "invalid"},
+            "invalid_args": {
+                "queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {
+                        "entity_type": "agent", "entity_id": 1,
+                        "from_tick": 0, "to_tick": tick,
+                    },
+                }],
+            },
+            "long_error": {
+                "queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {
+                        "entity_type": "agent", "entity_id": 1,
+                        **{
+                            f"unexpected_argument_{argument:03d}": argument
+                            for argument in range(40)
+                        },
+                    },
+                }],
+            },
+            "valid": {
+                "queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["unit_metric"]},
+                }],
+            },
+        }
+        rejected_plans = [retry_plan_by_shape[selected_retry_shape]]
+        if planner_retry_twice:
+            rejected_plans.append(
+                retry_plan_by_shape[selected_retry_shape]
+                if planner_retry_same_error else {"queries": []})
+        rejection_errors: list[str] = []
+        for rejected_plan in rejected_plans:
+            try:
+                validate_oracle_plan(rejected_plan)
+            except OracleToolError as exc:
+                rejection_errors.append(str(exc))
+            else:
+                rejection_errors.append("forged planner rejection error")
         purposes = (
-            ("oracle_plan", "oracle_plan", "oracle")
+            tuple(["oracle_plan"] * (len(rejected_plans) + 1) + ["oracle"])
             if planner_retry and tick == 5 else ("oracle_plan", "oracle"))
         model_calls = []
         plan_number = 0
@@ -264,8 +330,10 @@ def _write_run(
             if purpose == "oracle_plan":
                 plan_number += 1
             response = (
-                ({"queries": []} if planner_retry and tick == 5
-                 and purpose == "oracle_plan" and plan_number == 1 else
+                (rejected_plans[plan_number - 1]
+                 if planner_retry and tick == 5
+                 and purpose == "oracle_plan"
+                 and plan_number <= len(rejected_plans) else
                  {"queries": [{
                     "tool": "query_metrics",
                     "args": {"names": ["unit_metric"]},
@@ -291,10 +359,16 @@ def _write_run(
                         "maximum_queries": 8, "read_only": True,
                     },
                 }
-                if planner_retry and tick == 5 and plan_number == 2:
+                if (planner_retry and tick == 5 and plan_number > 1
+                        and plan_number <= len(rejected_plans) + 1):
+                    retry_error = rejection_errors[plan_number - 2]
+                    if planner_rejection_state == "forged_pair":
+                        retry_error = "jointly forged planner rejection error"
+                    elif planner_rejection_state == "truncated_context":
+                        retry_error = retry_error[:500]
                     context.update({
-                        "previous_plan_error": (
-                            "at least one evidence query is required"),
+                        "previous_plan_error": retry_error,
+                        "planner_attempt": plan_number,
                         "instruction": (
                             "Return a corrected plan that satisfies every supplied constraint."),
                     })
@@ -320,6 +394,31 @@ def _write_run(
                     {"role": "user", "content": user_text},
                 ],
             }, sort_keys=True).encode()).hexdigest()
+            response_id = f"chatcmpl-{run_id}-{tick}-{purpose}-{plan_number}"
+
+            def provider_payload(suffix: str = "") -> dict:
+                return {
+                    "id": f"{response_id}{suffix}",
+                    "model": RELEASE_ORACLE_MODEL,
+                    "object": "chat.completion",
+                    "usage": {
+                        "prompt_tokens": 10, "completion_tokens": 10,
+                        "prompt_tokens_details": {"cached_tokens": 0},
+                    },
+                }
+
+            is_canonical_noop = response == {
+                "actions": [{"type": "do_nothing"}],
+                "reasoning": "unparseable output; no-op",
+            }
+            raw_response = (
+                {"provider_calls": 2, "repair": {
+                    "initial": provider_payload("-initial"),
+                    "final": provider_payload("-final"),
+                }}
+                if is_canonical_noop else provider_payload())
+            token_multiplier = 2 if is_canonical_noop else 1
+            prompt_tokens = completion_tokens = 10 * token_multiplier
             store.insert(
                 "llm_calls", tick=tick, role="oracle", purpose=purpose,
                 provider=provider, model=RELEASE_ORACLE_MODEL,
@@ -330,21 +429,14 @@ def _write_run(
                 }),
                 response_json=json.dumps({
                     "text": json.dumps(response),
-                    "raw": {
-                        "id": (
-                            f"chatcmpl-{run_id}-{tick}-{purpose}-{plan_number}"),
-                        "model": RELEASE_ORACLE_MODEL,
-                        "object": "chat.completion",
-                        "usage": {
-                            "prompt_tokens": 10, "completion_tokens": 10,
-                            "prompt_tokens_details": {"cached_tokens": 0},
-                        },
-                    },
+                    "raw": raw_response,
                     "cached_in_tokens": 0,
                 }),
-                in_tokens=10, out_tokens=10, cost_usd=(
-                    10 * RELEASE_ORACLE_PRICING["in"] / 1_000_000
-                    + 10 * RELEASE_ORACLE_PRICING["out"] / 1_000_000),
+                in_tokens=prompt_tokens, out_tokens=completion_tokens,
+                cost_usd=(
+                    prompt_tokens * RELEASE_ORACLE_PRICING["in"] / 1_000_000
+                    + completion_tokens
+                    * RELEASE_ORACLE_PRICING["out"] / 1_000_000),
                 latency_ms=10)
             model_calls.append({
                 "purpose": purpose, "provider": provider,
@@ -352,14 +444,30 @@ def _write_run(
                 "request_key": cache_key, "call_latency_ms": 10,
             })
             if (planner_retry and tick == 5 and purpose == "oracle_plan"
-                    and plan_number == 1):
+                    and plan_number <= len(rejected_plans)
+                    and planner_rejection_state != "missing"
+                    and not (planner_rejection_state == "missing_second"
+                             and plan_number == 2)):
                 plan_hash = hashlib.sha256(json.dumps(
                     response, sort_keys=True, separators=(",", ":"),
                 ).encode("utf-8")).hexdigest()
+                event_error = rejection_errors[plan_number - 1]
+                if planner_rejection_state == "mismatched_error":
+                    event_error = "forged planner rejection error"
+                elif planner_rejection_state == "forged_pair":
+                    event_error = "jointly forged planner rejection error"
+                else:
+                    event_error = event_error[:500]
+                event_attempt = (
+                    1 if planner_rejection_state == "misordered_second"
+                    and plan_number == 2
+                    else planner_rejection_attempt
+                    if plan_number == 1 else plan_number)
                 store.log_event(tick, "oracle_tool_plan_rejected", {
-                    "question": item["question"], "attempt": 1,
+                    "question": item["question"],
+                    "attempt": event_attempt,
                     "plan_sha256": plan_hash,
-                    "error": "at least one evidence query is required",
+                    "error": event_error,
                 })
         prediction_id = store.insert(
             "predictions", asked_tick=tick, question=item["question"],
@@ -458,13 +566,22 @@ def _manifest(
     tmp_path: Path, *, invalid_provider: bool = False,
     invalid_evidence: bool = False,
     planner_retry: bool = False,
+    planner_retry_invalid_args: bool = False,
+    planner_rejection_state: str = "valid",
+    planner_rejection_attempt: int | float | bool = 1,
 ) -> Path:
     runs = [
         _write_run(
             tmp_path, index,
             invalid_provider=invalid_provider and index == 0,
             invalid_evidence=invalid_evidence and index == 0,
-            planner_retry=planner_retry and index == 0)
+            planner_retry=planner_retry and index == 0,
+            planner_retry_invalid_args=(
+                planner_retry_invalid_args and index == 0),
+            planner_rejection_state=(
+                planner_rejection_state if index == 0 else "valid"),
+            planner_rejection_attempt=(
+                planner_rejection_attempt if index == 0 else 1))
         for index in range(10)
     ]
     path = tmp_path / "oracle-campaign.yaml"
@@ -880,37 +997,37 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v3.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v4.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v3_commitment_and_highspeed_contract_are_pinned():
+def test_checked_in_v4_commitment_and_highspeed_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7321: "7d05b74fa9f45ff7133c0891e312d7aa7de49b8c9fea4d970e4ff942af7f0683",
-        7322: "1829b86335b26770ea557e867911f0f6f9750c42dd962080dbd49c8e05c4a72d",
-        7323: "df3a91211ca1b8cd3125eae2b6737a2f5b0c3dd522593082f3ad8fe28e389dc2",
-        7324: "c937ee5c78d12f21c7e4b70a26dd5824840d0c2db177481b8c450b089a32a8f3",
-        7325: "b24a9fa2fd813eda2908503c0df0b7763a9a495a657924b86b92aca83b2895b8",
-        7326: "ce1053b2d81146b6161d45cf7fae5ba02efd13032b20649f4b9d8152db9fce0c",
-        7327: "fa24e45ff04083f2690e6552dc0646c53ef6d192a75dba4faee2714ce2e4609b",
-        7328: "ed7658e9ed1aa9ad3204e20f6e029691818e368af20f7ea2dcef377d809f296d",
-        7329: "f76adab6fc296eda540322c4a3329fb521f6586c9fe1a6063db6a9bfce6ab509",
-        7330: "cb4d9fb40a71b80b945def3edc470f02c6a97cf41ab5ac63b17dc70277f9ea22",
+        7331: "86fb8c95a7a5ae186dfd672c68b0f0b114cf3b5ce5df7ef0cc69f3280c00caef",
+        7332: "91437776f7e49c28dfeee71fbf7133a4706a2bba023952b26ac1247258c8e7b1",
+        7333: "0626de4e61c14ab873e575a317ea1b406af6fc3ce7db7159fdc2b6830d2de49c",
+        7334: "87090481866d5f47d0d5ca2de78354837167e6f0b4e5f593fbf05b0594bd9139",
+        7335: "561b786cb51bd3a0e0b20af901e8170585b1fb87dc2d9e3401b6c0bf44623825",
+        7336: "d1343b947fb45732c5101518edbcdd7c6bed2c7a47b04822c430640e98bde4ac",
+        7337: "4e11d4341b635fb875d9ce055320861451040ab564aba6d46a4eb1ab12fef666",
+        7338: "2cb9d9a48cd856065a38061ba7c30bec62c43b4114e2ae53ba23d90257ec6b08",
+        7339: "207d5c5c74bfc463eb2ead8e1e4376bdda9fd6a0134c655b98df761c10f9ba3a",
+        7340: "65e48a2c5b4170b1678b74d89e39dbde6faecf8e71ff4d372120cd93a22be56f",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v3"
-    assert RELEASE_CAMPAIGN_VERSION == 3
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v4"
+    assert RELEASE_CAMPAIGN_VERSION == 4
     assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
     assert RELEASE_ORACLE_PRICING == {
         "in": 2.85, "out": 12.00, "cache": 0.57,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "34b3c50cba5fbdaa86d1bf54c7c816340a44ea4cdad2eb562020d73d663a64f8")
+        "a2dac4421baf8290e4119287d94cfd82c0104ef4f38f1bd9fa9cdb450a109e51")
 
-    commitment_path = root / "commitment-v3.yaml"
+    commitment_path = root / "commitment-v4.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1580,6 +1697,22 @@ def test_receipts_are_idempotent_no_clobber_and_replay_path_is_canonical(
         campaign_claim=claim, out_dir=replay_receipt_path.parent)
     assert source_repeated["artifact_sha256"] == entry["source_receipt_sha256"]
 
+    for database in (source, replay):
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(f"{database}{suffix}")
+            sidecar.write_bytes(b"unexpected sidecar")
+            try:
+                with pytest.raises(
+                        OracleCampaignError,
+                        match="finalized standalone SQLite artifact"):
+                    write_replay_execution_receipt(
+                        source, replay, profile_path, replay_tracker=tracker,
+                        campaign_claim=claim,
+                        out_dir=replay_receipt_path.parent)
+            finally:
+                sidecar.unlink()
+            assert replay_receipt_path.read_bytes() == original
+
     alternate = tmp_path / "alternate-replay.db"
     shutil.copyfile(replay, alternate)
     with pytest.raises(OracleCampaignError, match="different contents"):
@@ -1710,6 +1843,227 @@ def test_planner_empty_attempt_then_valid_retry_is_bound_and_eligible(tmp_path):
     first = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
     assert first["forecasts"][0]["eligible"] is True
     assert receipt["passed"] is True
+
+
+def test_planner_invalid_args_attempt_then_valid_retry_is_eligible(tmp_path):
+    receipt = evaluate_oracle_campaign(_manifest(
+        tmp_path, planner_retry=True, planner_retry_invalid_args=True))
+
+    first = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
+    forecast = first["forecasts"][0]
+    assert forecast["eligible"] is True
+    assert forecast["reasons"] == []
+    assert receipt["passed"] is True
+
+
+def _first_forecast_evidence(entry: dict) -> tuple[dict, list[str]]:
+    with oracle_campaign._private_store(Path(entry["database"])) as store:
+        config = load_config(entry["profile"])
+        item = config["acceptance"]["oracle_questions"][0]
+        return oracle_campaign._forecast_evidence(
+            store, item=item, acceptance=config["acceptance"],
+            expected_provider=oracle_campaign.RELEASE_ORACLE_PROVIDER,
+            expected_model=RELEASE_ORACLE_MODEL)
+
+
+@pytest.mark.parametrize("shape", ["canonical_noop", "non_list"])
+def test_normalized_invalid_planner_json_can_retry_and_remain_eligible(
+        tmp_path, shape):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True, planner_retry_shape=shape)
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is True
+    assert reasons == []
+
+
+def test_canonical_noop_planner_response_requires_repair_metering(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True,
+        planner_retry_shape="canonical_noop")
+    store = Store(entry["database"], create=False)
+    row = store.query_one(
+        "SELECT * FROM llm_calls WHERE tick=5 AND role='oracle' "
+        "AND purpose='oracle_plan' ORDER BY id LIMIT 1")
+    response = json.loads(row["response_json"])
+    response["raw"] = response["raw"]["repair"]["initial"]
+    direct_cost = (
+        10 * RELEASE_ORACLE_PRICING["in"] / 1_000_000
+        + 10 * RELEASE_ORACLE_PRICING["out"] / 1_000_000)
+    store.update(
+        "llm_calls", int(row["id"]), response_json=json.dumps(response),
+        in_tokens=10, out_tokens=10, cost_usd=direct_cost)
+    config = load_config(entry["profile"])
+    item = config["acceptance"]["oracle_questions"][0]
+
+    forecast, reasons = oracle_campaign._forecast_evidence(
+        store, item=item, acceptance=config["acceptance"],
+        expected_provider=oracle_campaign.RELEASE_ORACLE_PROVIDER,
+        expected_model=RELEASE_ORACLE_MODEL)
+    store.close()
+
+    assert forecast["eligible"] is False
+    assert (
+        "canonical no-op planner response lacks repair-call provenance"
+        in reasons)
+
+
+def test_jointly_forged_rejection_and_retry_context_fail_closed(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True,
+        planner_retry_invalid_args=True,
+        planner_rejection_state="forged_pair")
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is False
+    assert "planner rejection error is not independently reproducible" in reasons
+
+
+def test_long_rejection_requires_the_full_retry_error_context(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True, planner_retry_shape="long_error",
+        planner_rejection_state="truncated_context")
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is False
+    assert "planner retry context does not bind its rejection error" in reasons
+
+
+def test_valid_plan_cannot_be_recast_as_a_rejected_attempt(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True, planner_retry_shape="valid")
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is False
+    assert "planner rejection error is not independently reproducible" in reasons
+
+
+def test_two_bound_rejections_then_third_plan_are_eligible(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True,
+        planner_retry_invalid_args=True, planner_retry_twice=True)
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is True
+    assert reasons == []
+
+
+def test_identical_rejections_have_distinct_bound_retry_attempts(tmp_path):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True,
+        planner_retry_invalid_args=True, planner_retry_twice=True,
+        planner_retry_same_error=True)
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is True
+    assert reasons == []
+
+
+@pytest.mark.parametrize(
+    "rejection_state", ["missing_second", "misordered_second"])
+def test_two_retry_chain_requires_ordered_complete_rejections(
+        tmp_path, rejection_state):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True,
+        planner_retry_invalid_args=True, planner_retry_twice=True,
+        planner_rejection_state=rejection_state)
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is False
+    assert any(
+        "planner retry attempts" in reason
+        or "planner rejection event" in reason
+        for reason in reasons)
+
+
+@pytest.mark.parametrize("rejection_state", ["missing", "mismatched_error"])
+def test_planner_invalid_retry_requires_authenticated_rejection(
+        tmp_path, rejection_state):
+    receipt = evaluate_oracle_campaign(_manifest(
+        tmp_path, planner_retry=True, planner_retry_invalid_args=True,
+        planner_rejection_state=rejection_state))
+
+    first = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
+    forecast = first["forecasts"][0]
+    assert forecast["eligible"] is False
+    assert any(
+        "planner retry" in reason or "planner rejection" in reason
+        for reason in forecast["reasons"])
+    assert receipt["passed"] is False
+
+
+@pytest.mark.parametrize("attempt", [True, 1.0])
+def test_planner_rejection_attempt_requires_exact_integer_type(tmp_path, attempt):
+    receipt = evaluate_oracle_campaign(_manifest(
+        tmp_path, planner_retry=True, planner_retry_invalid_args=True,
+        planner_rejection_attempt=attempt))
+
+    first = next(item for item in receipt["runs"] if item["seed"] == _FIRST_SEED)
+    forecast = first["forecasts"][0]
+    assert forecast["eligible"] is False
+    assert "planner rejection event does not bind its rejected response" in (
+        forecast["reasons"])
+    assert receipt["passed"] is False
+
+
+def test_final_planner_attempt_still_requires_valid_tool_arguments(tmp_path):
+    entry = _write_run(tmp_path, 0)
+    store = Store(entry["database"], create=False)
+    row = store.query_one(
+        "SELECT * FROM llm_calls WHERE tick=5 AND role='oracle' "
+        "AND purpose='oracle_plan' ORDER BY id DESC LIMIT 1")
+    response = json.loads(row["response_json"])
+    response["text"] = json.dumps({
+        "queries": [{
+            "tool": "get_ledger_summary",
+            "args": {
+                "entity_type": "agent", "entity_id": 1,
+                "from_tick": 0, "to_tick": 5,
+            },
+        }],
+    })
+    store.update(
+        "llm_calls", int(row["id"]), response_json=json.dumps(response))
+    config = load_config(entry["profile"])
+    item = config["acceptance"]["oracle_questions"][0]
+
+    forecast, reasons = oracle_campaign._forecast_evidence(
+        store, item=item, acceptance=config["acceptance"],
+        expected_provider=oracle_campaign.RELEASE_ORACLE_PROVIDER,
+        expected_model=RELEASE_ORACLE_MODEL)
+
+    assert forecast["eligible"] is False
+    assert any(
+        reason == (
+            "scheduled planner query is invalid: invalid arguments for "
+            "get_ledger_summary: unexpected from_tick, to_tick")
+        for reason in reasons)
+
+    response["text"] = json.dumps({
+        "queries": [{
+            "tool": "query_metrics",
+            "args": {
+                "names": ["unit_metric"], "from_tick": 5, "to_tick": 1,
+            },
+        }],
+    })
+    store.update(
+        "llm_calls", int(row["id"]), response_json=json.dumps(response))
+    forecast, reasons = oracle_campaign._forecast_evidence(
+        store, item=item, acceptance=config["acceptance"],
+        expected_provider=oracle_campaign.RELEASE_ORACLE_PROVIDER,
+        expected_model=RELEASE_ORACLE_MODEL)
+    store.close()
+
+    assert forecast["eligible"] is False
+    assert "scheduled planner query is invalid: invalid tick range" in reasons
 
 
 def test_answer_prompt_structurally_bounds_maximum_evidence_without_losing_contract():
@@ -1883,7 +2237,7 @@ def test_oracle_runtime_records_empty_plan_rejection_before_valid_retry(tmp_path
             self.requests.append(request)
             plans = [item for item in self.requests
                      if item.purpose == "oracle_plan"]
-            if request.purpose == "oracle_plan" and len(plans) == 1:
+            if request.purpose == "oracle_plan" and len(plans) <= 2:
                 return SimpleNamespace(parsed={"queries": []})
             if request.purpose == "oracle_plan":
                 return SimpleNamespace(parsed={"queries": [{
@@ -1915,12 +2269,17 @@ def test_oracle_runtime_records_empty_plan_rejection_before_valid_retry(tmp_path
 
     assert result["p"] == 0.2
     assert [request.purpose for request in gateway.requests] == [
-        "oracle_plan", "oracle_plan", "oracle"]
-    rejection = json.loads(store.query_one(
-        "SELECT payload_json FROM events WHERE kind='oracle_tool_plan_rejected'"
-    )["payload_json"])
-    assert rejection["attempt"] == 1
-    assert len(rejection["plan_sha256"]) == 64
+        "oracle_plan", "oracle_plan", "oracle_plan", "oracle"]
+    plan_requests = gateway.requests[:3]
+    assert "planner_attempt" not in plan_requests[0].context
+    assert [request.context["planner_attempt"] for request in plan_requests[1:]] == [
+        2, 3]
+    assert len({request.user for request in plan_requests}) == 3
+    rejections = [json.loads(row["payload_json"]) for row in store.query(
+        "SELECT payload_json FROM events "
+        "WHERE kind='oracle_tool_plan_rejected' ORDER BY id")]
+    assert [rejection["attempt"] for rejection in rejections] == [1, 2]
+    assert all(len(rejection["plan_sha256"]) == 64 for rejection in rejections)
     answer_user = json.loads(gateway.requests[-1].user)
     assert answer_user["governed_forecast_contract"] == contract
     assert answer_user["read_only_evidence"] == result["evidence"]

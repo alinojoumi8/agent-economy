@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v3-seed-7321-control.yaml` ... `v3-seed-7330-rumor.yaml` | Predeclared v3 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
+| `runs/oracle/v4-seed-7331-control.yaml` ... `v4-seed-7340-rumor.yaml` | Predeclared v4 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v3 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v4 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -378,9 +378,17 @@ rewritten, or reused. The corrected receipt contract validates the
 living/deceased census, requires each death, schedule, and arrival to link in
 chronological order, authenticates their `NIGHT_CLOSE` phase and agent subject
 provenance, consumes every due schedule exactly once, and enforces the fixed
-5–20-tick replacement delay. The fresh v3 corpus uses seeds 7321–7330,
-`kimi-for-coding-highspeed`, conservative 3x cost metering, and
-`runs/oracle/manifest-v3.template.yaml` with a $25 per-run safety cap. It feeds
+5–20-tick replacement delay. V3 seed 7321 then completed its source and exact
+companion replay, but its original receipt admitted only four of six forecasts:
+the receipt incorrectly applied accepted-plan validation to authenticated
+planner attempts that had been rejected before a valid retry. The original
+receipt preserves the pre-inspection source SHA-256. The local source artifact
+was later write-opened during diagnosis, so it is excluded diagnostic evidence
+and is not admissible in any release manifest.
+
+The fresh v4 corpus uses seeds 7331–7340, `kimi-for-coding-highspeed`,
+conservative 3x cost metering, and
+`runs/oracle/manifest-v4.template.yaml` with a $25 per-run safety cap. It feeds
 the read-only `--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
 finalized source, exact companion replay, and source receipt without applying
 the whole-world all-live-provider gate. Each receipt chain binds the immutable
@@ -388,7 +396,7 @@ pre-run claim and initialized marker, clean Git commit/tree, committed config,
 canonical source/replay paths, required checkpoint manifests, and an execution
 tracker proving exact one-time source-call consumption with zero compatibility
 fallback or live replay dispatch. Passing evidence still requires the ten
-fresh v3 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
+fresh v4 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
 60 seconds, and Brier below 0.25. See the
 [operator runbook](docs/operator-runbook.md).
 

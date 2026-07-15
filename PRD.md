@@ -154,7 +154,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Answers probability questions with: point estimate, key drivers, confidence, and an auto-created resolution criterion + deadline.
 - Predictions logged; resolved automatically when determinable from world state; Brier score tracked over the run.
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
-- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The active v3 commitment uses fresh seeds 7321–7330 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run.
+- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The active v4 commitment uses fresh seeds 7331–7340 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -221,11 +221,17 @@ death row and replacement arrival. That v2 evidence remains diagnostic and is
 never reused. The corrected contract validates the bounded living/deceased
 census; chronological death, schedule, and arrival linkage; `NIGHT_CLOSE`
 phase and subject provenance; one-time consumption of every due schedule; and
-the fixed 5–20-tick replacement delay. Its verification is part of the fresh
-v3 gate.
+the fixed 5–20-tick replacement delay.
 
-The outstanding work is release evidence and operations: pass the fresh v3
-ten-profile Oracle campaign (seeds 7321–7330 using
+V3 seed 7321 completed its source and exact companion replay, but the original
+receipt admitted only four of six forecasts because it treated authenticated
+rejected planner attempts as invalid accepted plans. The original receipt
+records the pre-inspection source hash; the local source artifact was later
+write-opened during diagnosis and is not admissible. V3 is excluded diagnostic
+evidence, and no v1, v2, or v3 run is reused by the fresh v4 gate.
+
+The outstanding work is release evidence and operations: pass the fresh v4
+ten-profile Oracle campaign (seeds 7331–7340 using
 `kimi-for-coding-highspeed` with conservative 3x metering), run the live 30-day
 rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
 public-release provenance audit. The pull request stays draft; merging,
