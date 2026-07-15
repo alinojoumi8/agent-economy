@@ -200,6 +200,7 @@ baseline and fails closed when history is missing.
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
 | `runs/v2-spec-closure-rehearsal.yaml` | Five-tick semantics-7 closure fixture | Scripted, free, deterministic |
 | `runs/v2-spec-closure-live.yaml` | Five-tick bounded semantics-7 pilot | MiniMax persona/strategic roles; scripted background; $1 cap |
+| `runs/r21-real-us.yaml` | SCF/SUSB calibrated fictional genesis | Scripted, free, deterministic |
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
@@ -292,8 +293,8 @@ documents.
 
 ## Current status and limits
 
-All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent, and
-R20 multi-region extensions are implemented. The semantics-7 code closure adds
+All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
+R20 multi-region, and R21 real-U.S. calibration extensions are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
 
@@ -317,10 +318,23 @@ Tagging and publication remain separate release decisions.
 The 30-day rumor gate, Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by this pilot.
 
+R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve
+SCF fixture supplies income, liquid-financial-asset, and total-net-worth draws;
+`LIQ` funds modeled deposits while `NETWORTH` is retained as an engine-owned
+off-ledger calibration baseline. The pinned 2022 Census SUSB fixture supplies
+employer-firm headcounts, and exact replay uses recorded targets without
+reopening the manifest. Simulated identities remain fictional.
+
+The recorded five-tick R21 gate `24d8dc242e` sampled 70 households and 12
+realized firms, retired no under-age SCF category-3 respondent, had zero
+reconciliation failures, and replayed offline as
+`replay-24d8dc242e-a9ed4f2910` with identical hash
+`95b4b8bd…0cee369a`. The integrated Python gate passes 328 tests.
+
 The application is intentionally local and single-operator. It has no
 authentication or tenant isolation; bind to `127.0.0.1` and do not expose it
-directly to an untrusted network. R21 real-US microdata calibration and R22
-hosted multi-user operation remain deferred.
+directly to an untrusted network. R22 hosted multi-user operation remains the
+next implementation project.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

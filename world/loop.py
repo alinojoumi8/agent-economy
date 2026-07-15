@@ -93,16 +93,23 @@ class World:
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
-        Genesis(self.economy, self.config, self.persona_prng).build()
+        # Fresh R21 runs ingest verified supports before genesis. Replays remove
+        # the mutable manifest path and restore these rows from the source DB.
+        if self.config.get("dataset_manifest"):
+            from research.datasets import ingest_manifest
+            ingest_manifest(self.store, self.config["dataset_manifest"])
+        from research.r21 import R21Calibration
+        calibration = R21Calibration(
+            self.store, self.config, int(self.config.get("seed", 42)))
+        Genesis(
+            self.economy, self.config, self.persona_prng,
+            calibration=calibration).build()
         if self.config.get("behavioral_fixture", {}).get("enabled"):
             from world.behavioral_fixture import BehavioralFixtureSeeder
             BehavioralFixtureSeeder(self.economy, self.config).seed()
         if self.config.get("spec_closure_fixture", {}).get("enabled"):
             from world.spec_closure_fixture import SpecClosureFixtureSeeder
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
-        if self.config.get("dataset_manifest"):
-            from research.datasets import ingest_manifest
-            ingest_manifest(self.store, self.config["dataset_manifest"])
         self.shocks.load_from_config()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:

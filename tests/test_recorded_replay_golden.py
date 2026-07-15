@@ -98,4 +98,4 @@ def test_fd0adc5dc1_recorded_responses_replay_exactly_without_network(
         assert proof["source_hash"] == proof["replay_hash"]
         assert replay_store.scalar("SELECT COUNT(*) FROM llm_calls") == 48
     finally:
-        replay_store.close()
+        replay_world.close()

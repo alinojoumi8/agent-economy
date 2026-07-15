@@ -666,7 +666,7 @@ def test_engine_semantics_version_preserves_markerless_runs(tmp_path):
     assert replay_world.phases == LEGACY_PHASES
     assert json.loads(replay_store.get_meta()["config_json"])[
         "engine_semantics_version"] == 1
-    replay_store.close()
+    replay_world.close()
 
 
 def test_exact_replay_rebuilds_fresh_database_and_proves_every_table(tmp_path):
@@ -730,6 +730,7 @@ def test_exact_replay_uses_recorded_inputs_without_current_manifest(
         _config(tmp_path, dataset_manifest=str(manifest)),
         None, None, data_dir=tmp_path)
     replay_store = None
+    replay_world = None
     try:
         assert source_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
         assert source_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
@@ -750,8 +751,8 @@ def test_exact_replay_uses_recorded_inputs_without_current_manifest(
         assert replay_store.scalar("SELECT COUNT(*) FROM dataset_manifests") == 1
         assert replay_store.scalar("SELECT COUNT(*) FROM calibration_targets") == 1
     finally:
-        if replay_store is not None:
-            replay_store.close()
+        if replay_world is not None:
+            replay_world.close()
         source_store.close()
 
 

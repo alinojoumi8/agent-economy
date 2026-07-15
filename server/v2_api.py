@@ -132,11 +132,44 @@ def install_v2_routes(app, world, controller) -> None:
             "SELECT * FROM dataset_manifests ORDER BY dataset_key")]
         for item in manifests:
             item["metadata"] = load_json(item.pop("metadata_json", None), {})
+        targets = []
+        for row in store.query(
+                "SELECT c.id,c.dataset_manifest_id,c.target_key,c.unit,"
+                "c.dimensions_json,d.dataset_key,"
+                "json_type(c.value_json) AS value_type,"
+                "CASE WHEN json_type(c.value_json) IN "
+                "('integer','real','text','true','false','null') "
+                "THEN json_extract(c.value_json,'$') END AS scalar_value,"
+                "json_extract(c.value_json,'$.record_count') AS record_count,"
+                "json_extract(c.value_json,'$.class_count') AS class_count,"
+                "json_extract(c.value_json,'$.total_firms') AS total_firms "
+                "FROM calibration_targets c "
+                "JOIN dataset_manifests d ON d.id=c.dataset_manifest_id "
+                "ORDER BY d.dataset_key,c.target_key,c.id"):
+            item = dict(row)
+            value_type = str(item.pop("value_type") or "unknown")
+            scalar_value = item.pop("scalar_value")
+            summary: dict[str, Any] = {"type": value_type}
+            if value_type in {"integer", "real", "text", "true", "false", "null"}:
+                summary["value"] = scalar_value
+            for key in ("record_count", "class_count", "total_firms"):
+                value = item.pop(key)
+                if value is not None:
+                    summary[key] = int(value)
+            item["dimensions"] = load_json(item.pop("dimensions_json", None), {})
+            item["value_summary"] = summary
+            targets.append(item)
+        calibration = store.query_one(
+            "SELECT id,tick,payload_json FROM events "
+            "WHERE kind='r21_calibration_applied' ORDER BY id DESC LIMIT 1")
         return {"manifests": manifests,
-                "targets": [dict(row) for row in store.query(
-                    "SELECT c.*,d.dataset_key FROM calibration_targets c "
-                    "JOIN dataset_manifests d ON d.id=c.dataset_manifest_id ORDER BY d.dataset_key,c.target_key")],
-                "scenarios": [dict(row) for row in store.query("SELECT * FROM scenario_packs ORDER BY id")]}
+                "targets": targets,
+                "scenarios": [dict(row) for row in store.query(
+                    "SELECT * FROM scenario_packs ORDER BY id")],
+                "r21_calibration": ({"event_id": int(calibration["id"]),
+                                     "tick": int(calibration["tick"]),
+                                     **load_json(calibration["payload_json"], {})}
+                                    if calibration else None)}
 
     @router.get("/causal/{event_id}")
     async def causal_trace(event_id: int):

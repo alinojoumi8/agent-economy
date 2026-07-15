@@ -1,0 +1,17 @@
+extends: base.yaml
+
+# Explicit R21 mode. Fictional identities and behavior remain synthetic; only
+# initialization distributions come from the pinned public SCF/SUSB supports.
+seed: 42
+engine_semantics_version: 7
+dataset_manifest: config/data-manifest.yaml
+
+calibration:
+  mode: real_us
+  household_dataset_key: federal-reserve-scf
+  firm_dataset_key: census-susb
+  max_initial_firm_employees: 50
+  minimum_wage_per_interval_cents: 50000
+  maximum_wage_per_interval_cents: 5000000
+
+checkpoint_every: 10

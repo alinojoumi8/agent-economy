@@ -14,6 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
+| `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 
 Profiles never silently change provider, model, endpoint, or credential type.
 
@@ -49,6 +50,32 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
+
+## R21 real-U.S. initialization
+
+The default is `calibration.mode: synthetic`. Opt in only with pinned verified
+supports:
+
+```yaml
+engine_semantics_version: 7
+dataset_manifest: config/data-manifest.yaml
+calibration:
+  mode: real_us
+  household_dataset_key: federal-reserve-scf
+  firm_dataset_key: census-susb
+  max_initial_firm_employees: 50
+  minimum_wage_per_interval_cents: 50000
+  maximum_wage_per_interval_cents: 5000000
+```
+
+Fresh runs verify and ingest the manifest before genesis. Replays ignore that
+path and use the source run's recorded targets. `real_us` changes initialization
+only: SCF income/work-status/liquid-holding/total-net-worth draws and SUSB
+headcounts are applied to fictional personas and firms through dedicated
+seed-derived PRNG streams. `LIQ` funds deposits; `NETWORTH` remains an
+engine-owned off-ledger calibration baseline visible in agent provenance.
+Missing supports, wrong adapter versions, malformed values, or non-verified
+manifest rows fail closed.
 
 ## Information and beliefs
 

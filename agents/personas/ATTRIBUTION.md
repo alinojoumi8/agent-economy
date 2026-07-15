@@ -16,8 +16,12 @@ non-trivial source lines between the implementations.
 
 The local occupation weights, income medians, age bands, wealth formula, names,
 and trait priors are hand-authored synthetic heuristics for fictional simulation
-initialization. They do not use Census, BLS, SCF, or other microdata and are not
-empirically calibrated or representative of a real population.
+initialization. This base sampler does not use Census, BLS, SCF, or other
+microdata and is not empirically representative. The optional R21 initializer
+in `research/r21.py` separately overlays pinned SCF/SUSB age, work, income,
+liquid-wealth, and firm-size fields while retaining fictional identity and
+traits; its source terms and transformations live in the dataset manifest and
+repository `NOTICE`.
 
 `agents/personas/library.py` is the stable application-owned boundary and adds
 Agent Economy's governed arrival-enrichment contract.

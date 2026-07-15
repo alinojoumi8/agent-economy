@@ -97,10 +97,10 @@ belief-event, and macro-metric behavior so historical runs remain replayable.
 - V1 is a local single-process app with no authentication. Bind to localhost.
 - SQLite, approximately 100 agents, one region, and one operator remain the
   intentional v1 acceptance baseline.
-- R18 participant mode, R19 deterministic 1,000-agent core/periphery scale, and
-  R20 regions/FX/trade/migration are implemented optional extensions. R21
-  real-US microdata calibration and R22 hosted multi-user operation remain
-  separate future work.
+- R18 participant mode, R19 deterministic 1,000-agent core/periphery scale,
+  R20 regions/FX/trade/migration, and opt-in R21 SCF/SUSB initialization are
+  implemented extensions. R21 reuses schema-v10 provenance tables and the
+  schema-v11 engine; R22 hosted multi-user operation remains separate work.
 - The Oracle is read-only and CLI-backed models are restricted to Oracle/dev
   purposes.
 

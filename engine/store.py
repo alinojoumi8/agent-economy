@@ -6,9 +6,12 @@ rest of the code never writes raw SQL boilerplate.
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 import sqlite3
+import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,9 +29,15 @@ def open_read_only_connection(
     """Open an existing SQLite database without permitting file mutations."""
     # Do not use immutable=1: an active recorded run may have committed calls
     # in its WAL, and immutable connections are allowed to ignore that file.
-    uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+    uri = f"{Path(path).resolve().as_uri()}?mode=ro&cache=private"
     conn = sqlite3.connect(
-        uri, uri=True, isolation_level=None, check_same_thread=check_same_thread)
+        uri, uri=True, isolation_level=None,
+        check_same_thread=check_same_thread,
+        # Recorded-source connections are low-volume and short-lived.  Avoid
+        # CPython's statement cache so close() finalizes every prepared
+        # statement immediately; otherwise Python 3.11 on Windows can retain
+        # a source-file handle until a later GC cycle after an exact replay.
+        cached_statements=0)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only = ON")
@@ -39,6 +48,94 @@ def open_read_only_connection(
     except BaseException:
         conn.close()
         raise
+
+
+class ReadOnlyReplaySnapshot:
+    """A transactionally consistent private copy of a replay source.
+
+    CPython 3.11's Windows SQLite wrapper can retain a read handle after a
+    connection has been closed, which prevents operators from rotating or
+    archiving the recorded source.  Replays on Windows therefore query a
+    private SQLite-backup copy.  The source handle exists only while the
+    backup is made, and committed WAL content is included by SQLite itself.
+    """
+
+    def __init__(self, source_path: str):
+        self.source_path = str(Path(source_path).resolve())
+        self.path: Path | None = None
+        self.conn: sqlite3.Connection | None = None
+        self._closed = False
+
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="agent-economy-replay-", suffix=".sqlite3")
+        os.close(descriptor)
+        self.path = Path(temporary_name)
+        source: sqlite3.Connection | None = None
+        snapshot: sqlite3.Connection | None = None
+        try:
+            source = open_read_only_connection(self.source_path)
+            snapshot = sqlite3.connect(
+                str(self.path), isolation_level=None, check_same_thread=False,
+                cached_statements=0)
+            source.backup(snapshot)
+            snapshot.row_factory = sqlite3.Row
+            snapshot.execute("PRAGMA query_only = ON").close()
+            snapshot.execute("PRAGMA foreign_keys = ON").close()
+            snapshot.execute("PRAGMA busy_timeout = 5000").close()
+            assert_schema_compatible(snapshot)
+            self.conn = snapshot
+            snapshot = None
+        except BaseException:
+            if snapshot is not None:
+                snapshot.close()
+            self._remove_files(strict=False)
+            raise
+        finally:
+            if source is not None:
+                source.close()
+            # Drop the final wrapper reference before returning.  This is the
+            # compatibility barrier for Windows CPython builds whose sqlite3
+            # finalizers otherwise lag behind Connection.close().
+            source = None
+            gc.collect()
+
+    def _remove_files(self, *, strict: bool) -> None:
+        if self.path is None:
+            return
+        last_error: PermissionError | None = None
+        for attempt in range(5):
+            try:
+                for candidate in (
+                        self.path.with_name(self.path.name + "-wal"),
+                        self.path.with_name(self.path.name + "-shm"),
+                        self.path):
+                    candidate.unlink(missing_ok=True)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                gc.collect()
+                if attempt < 4:
+                    time.sleep(0.01)
+        if strict and last_error is not None:
+            raise last_error
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        connection = self.conn
+        self.conn = None
+        if connection is not None:
+            connection.close()
+        connection = None
+        gc.collect()
+        self._remove_files(strict=True)
+
+    def __enter__(self) -> "ReadOnlyReplaySnapshot":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
 
 
 class Store:

@@ -150,10 +150,14 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     config["engine_semantics_version"] = semantics_version(config, default=2)
     run_id = new_run_id()
     store = Store(str(data_dir / f"{run_id}.db"))
-    store.init_run_meta(run_id, int(config.get("seed", 42)), config)
-    world = World(store, config)
-    world.initialize()
-    return store, world, run_id
+    try:
+        store.init_run_meta(run_id, int(config.get("seed", 42)), config)
+        world = World(store, config)
+        world.initialize()
+        return store, world, run_id
+    except BaseException:
+        store.close()
+        raise
 
 
 def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | None = None) -> str:
@@ -411,6 +415,8 @@ def main() -> None:
                     help="override a scenario pack's horizon")
     ap.add_argument("--refresh-datasets", default=None,
                     help="explicitly refresh and repin a dataset manifest (networked)")
+    ap.add_argument("--refresh-dataset-key", action="append", default=None,
+                    help="with --refresh-datasets, refresh only this dataset key (repeatable)")
     ap.add_argument("--verify-datasets", default=None,
                     help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
@@ -445,7 +451,8 @@ def main() -> None:
 
     if args.refresh_datasets:
         from research.datasets import refresh_datasets
-        print(json.dumps(refresh_datasets(args.refresh_datasets), indent=2))
+        selected = set(args.refresh_dataset_key) if args.refresh_dataset_key else None
+        print(json.dumps(refresh_datasets(args.refresh_datasets, keys=selected), indent=2))
         return
 
     if args.verify_datasets:
