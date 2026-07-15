@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from engine.store import open_read_only_connection
+from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
@@ -516,6 +517,7 @@ class Gateway:
         meta = store.get_meta()
         self.run_id = str(meta["run_id"]) if meta else "uninitialized"
         self.replay_conn: Optional[sqlite3.Connection] = None
+        self._replay_snapshot: ReadOnlyReplaySnapshot | None = None
         self._replay_positions: dict[str, int] = {}
         self._replay_used_call_ids: set[int] = set()
         self._replay_event_id_map: dict[int, int] = {}
@@ -523,14 +525,25 @@ class Gateway:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
                 raise ProviderConfigurationError(["replay_source_path is required for exact replay"])
-            self.replay_conn = open_read_only_connection(
-                source, check_same_thread=False)
+            if os.name == "nt":
+                # Windows CPython 3.11 can retain the recorded source handle
+                # after close.  Query a private SQLite backup instead so the
+                # source remains immediately rotatable and archivable.
+                self._replay_snapshot = ReadOnlyReplaySnapshot(source)
+                self.replay_conn = self._replay_snapshot.conn
+            else:
+                self.replay_conn = open_read_only_connection(
+                    source, check_same_thread=False)
 
     def close(self) -> None:
         """Release replay resources; safe to call repeatedly during teardown."""
         replay_conn = self.replay_conn
         self.replay_conn = None
-        if replay_conn is not None:
+        replay_snapshot = self._replay_snapshot
+        self._replay_snapshot = None
+        if replay_snapshot is not None:
+            replay_snapshot.close()
+        elif replay_conn is not None:
             replay_conn.close()
 
     @property

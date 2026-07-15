@@ -4,7 +4,7 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
-from engine.store import open_read_only_connection
+from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from run import open_run
 
 from .recorded_replay_fixture import SOURCE_RUN_ID, restore_recorded_source
@@ -86,5 +86,45 @@ def test_read_only_replay_connection_sees_committed_wal_rows(tmp_path):
             assert row is not None and row[0] == "committed in wal"
         finally:
             reader.close()
+    finally:
+        writer.close()
+
+
+def test_private_replay_snapshot_releases_and_freezes_source(tmp_path):
+    source_path = tmp_path / "recorded-source.db"
+    writer = sqlite3.connect(source_path)
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE recorded_calls (id INTEGER PRIMARY KEY, text TEXT)")
+        writer.execute("INSERT INTO recorded_calls(text) VALUES ('recorded')")
+        writer.commit()
+        writer.close()
+
+        snapshot = ReadOnlyReplaySnapshot(str(source_path))
+        try:
+            assert snapshot.conn is not None
+            assert snapshot.conn.execute(
+                "SELECT text FROM recorded_calls WHERE id=1").fetchone()[0] == "recorded"
+
+            # The source can be rotated while the private replay connection is
+            # still live, and later source writes cannot change replay input.
+            moved = source_path.with_suffix(".moved")
+            source_path.replace(moved)
+            moved.replace(source_path)
+            later_writer = sqlite3.connect(source_path)
+            try:
+                later_writer.execute(
+                    "INSERT INTO recorded_calls(text) VALUES ('later')")
+                later_writer.commit()
+            finally:
+                later_writer.close()
+            assert snapshot.conn.execute(
+                "SELECT COUNT(*) FROM recorded_calls").fetchone()[0] == 1
+        finally:
+            private_path = snapshot.path
+            snapshot.close()
+            snapshot.close()
+        assert private_path is not None and not private_path.exists()
     finally:
         writer.close()
