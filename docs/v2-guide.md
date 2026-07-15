@@ -538,9 +538,14 @@ PostgreSQL 17, MinIO, an explicit migration job, Caddy TLS, and Prometheus.
 password rotation, snapshot, verify, restore, and readiness operations. Real PostgreSQL/MinIO integration tests are
 part of the code gate. `python -m hosted.load_test` adds a bounded HTTPS
 own-scope/cross-tenant probe with environment-sourced credentials and sanitized
-JSON output; its three focused tests pass. Final image/Compose smoke, recorded real-container multi-user
-load/isolation evidence, exact-head CI, and any public production deployment
-remain pending verification; the repository does not claim them yet.
+JSON output; its three focused tests pass. Image/Compose smoke, recorded
+real-container multi-user load/isolation evidence, and exact-head CI are
+complete. Exact local stack
+evidence at `53081f2` passed TLS readiness, two-tenant isolation, immutable S3
+snapshot/restore, atomic database-password rotation, Prometheus scraping, and
+200/200 bounded load requests including 80 cross-tenant denials. PR #19 head
+`1cf1d0a` passed all six jobs in run `29409250171`. Any public production
+deployment remains a separate operational decision and is not claimed here.
 
 The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
 acceptance run also remain separate release evidence. Tagging and publication

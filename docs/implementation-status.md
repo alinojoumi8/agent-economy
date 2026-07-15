@@ -8,10 +8,9 @@
 > **Database / maintained engine contract:** schema v11 / semantics 7
 >
 > **Release state:** R21 PR #18 passed all five PR jobs and is merged; post-merge
-> main run `29403186283` also passed all five jobs. R22 code
-> is implemented on its branch; final hosted image/Compose smoke, multi-user
-> load evidence, exact-head CI, and public deployment remain pending. Tagging
-> and publication remain separate actions.
+> main run `29403186283` also passed all five jobs. R22 code, exact local
+> image/Compose/load evidence, and the six-job PR #19 matrix are complete.
+> Public deployment, tagging, and publication remain separate actions.
 
 ## Executive verdict
 
@@ -60,7 +59,7 @@ These are code-complete surfaces, not proof of a public production deployment.
 | **R19 — 1,000-agent scale** | Implemented extension | Deterministic core/periphery population, promotion/demotion, regional genesis, conserved balances, replay, observatory, and recorded performance gate exist. | Downstream release hardware should publish its own benchmark. |
 | **R20 — Regions, trade, migration, FX** | Implemented extension | Multicurrency ledgers, regional markets, FX inventory, shipments, migration, API/UI/report/replay surfaces, and semantics-7 autonomous opportunity context are implemented. | Five-tick rehearsal/live gates and exact replay passed. |
 | **R21 — Real-data calibration** | Implemented extension | Explicit `real_us` mode deterministically samples pinned 2022 SCF income, liquid-holding, and total-net-worth records plus 2022 SUSB employer-firm classes, records per-draw provenance and distance evidence, and replays from recorded targets without a manifest. | `LIQ` funds deposits; SCF total net worth is an engine-owned off-ledger calibration baseline visible in the inspector. Identities stay fictional and default mode stays synthetic. |
-| **R22 — Hosted multi-user service** | Implemented extension; acceptance pending | PostgreSQL tenant/user/membership/session/invite/run/lease/audit catalog with forced RLS; invite-only observer/admin auth; CSRF/throttling; single-writer supervisor; one SQLite v11 world per run; immutable local/S3 snapshots; hosted dashboard; Compose/Caddy/Prometheus; migrations and backup/verify/restore CLI; isolated PostgreSQL/MinIO integration coverage; bounded sanitized HTTPS load/isolation probe. | Load-probe unit tests pass, but final image/Compose smoke, recorded real-container multi-user evidence, exact-head CI, and any public deployment remain pending. Local mode and engine schema/semantics are unchanged. |
+| **R22 — Hosted multi-user service** | Implemented extension; local acceptance passed | PostgreSQL tenant/user/membership/session/invite/run/lease/audit catalog with forced RLS; invite-only observer/admin auth; CSRF/throttling; single-writer supervisor; one SQLite v11 world per run; immutable local/S3 snapshots; hosted dashboard; Compose/Caddy/Prometheus; migrations and backup/verify/restore CLI; isolated PostgreSQL/MinIO integration coverage; bounded sanitized HTTPS load/isolation probe. | Exact local Compose/load/restore/rotation evidence passed at `53081f2`; all six PR #19 jobs passed at `1cf1d0a` in run `29409250171`. Local mode and engine schema/semantics are unchanged. Public deployment is not claimed. |
 
 ## Historical recorded-run evidence
 
@@ -110,14 +109,15 @@ returned `differences: []` with hash
 
 ## PRD-v1 acceptance boundary
 
-All P0/P1 and R18–R22 code surfaces are implemented. Five release-quality proof areas are
-still operational rather than missing code:
+All P0/P1 and R18–R22 code surfaces are implemented. Four release-quality
+workstreams remain after the extension closure:
 
-1. final R22 hosted image/Compose smoke, multi-user load/isolation evidence, and exact-head CI;
-2. the corrected 30-day live rumor gate;
-3. representative Oracle p50/p90 latency and a resolved calibration corpus;
-4. the explicitly authorized 365-day/$200 live acceptance campaign; and
-5. a fresh release-candidate provenance/license/dependency/secret audit before
+1. run the corrected 30-day live rumor gate;
+2. bind Oracle latency to scheduled end-to-end predictions and curate the
+   eligible calibration corpus before running that campaign;
+3. correct acceptance-profile population sizing/living-agent evaluation before
+   running the explicitly authorized 365-day/$200 campaign; and
+4. a fresh release-candidate provenance/license/dependency/secret audit before
    tagging or publication.
 
 The five-tick semantics-7 pilot supplements those gates; it does not replace
@@ -138,7 +138,7 @@ separate.
 | Live offline replay | **Passed:** `replay-b4832032ba-8d99c25c56`, tick/hash identical, `differences: []`. |
 | R21 recorded replay | **Passed:** `24d8dc242e` sampled 70 households and 12 realized firms through tick 5 with zero reconciliation failures; `replay-24d8dc242e-a9ed4f2910` matched hash `95b4b8bd…0cee369a`. |
 | R21 merge | **Passed:** PR #18 passed all five PR jobs and merged as `21bbf30051e3de8c9b5b7a50e48a0e342d94676a`; post-merge main run `29403186283` repeated all five successfully. |
-| R22 code/integration surface | **Implemented, final gate pending:** hosted catalog/auth/RLS, supervisor, artifact adapters, dashboard, operations/deployment assets, PostgreSQL/MinIO integration tests, and a sanitized load/isolation probe are present; its three focused tests pass. Final image/Compose smoke, real-container load evidence, and exact-head CI are not yet recorded here. |
+| R22 code/integration surface | **Passed:** exact local stack evidence at `53081f2` covered TLS, tenant isolation, immutable S3 snapshots/cold restore, password rotation, Prometheus, and 200/200 load requests with 80 cross-tenant denials; PR #19 head `1cf1d0a` passed dashboard, hosted PostgreSQL/S3, and Ubuntu/Windows Python 3.11/3.12 in run `29409250171`. |
 | Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
 
 ## Closure audit evidence
@@ -168,8 +168,8 @@ public tag.
   `29368193807` passed all five jobs. No tag or publication was performed.
 - R21 real-U.S. calibration merged through five-job-green PR #18, and
   post-merge main run `29403186283` passed all five jobs. R22 hosted
-  multi-user code is implemented; its final deployment smoke, load/isolation
-  evidence, exact-head CI, and public deployment remain outstanding proof.
+  multi-user code and local acceptance evidence are complete, and PR #19 run
+  `29409250171` passed all six jobs. Public deployment is not claimed.
 - The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
   acceptance run require separate execution and evidence.
 - Generated databases and reports corroborate findings but do not outrank

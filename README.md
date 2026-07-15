@@ -354,9 +354,13 @@ Local mode remains intentionally single-operator and unauthenticated: bind it
 to `127.0.0.1` and never expose it directly. R22's optional hosted path adds
 authentication, tenant/role isolation, CSRF/throttling/audit, a lease-based
 single-writer supervisor, durable snapshots, and deployment assets without
-changing engine semantics or schema. Final hosted image/Compose smoke,
-multi-user load evidence, exact-head CI, and any public deployment remain
-pending verification; no production deployment is claimed.
+changing engine semantics or schema. Exact local Compose evidence at
+`53081f2` passed TLS readiness, tenant isolation, immutable S3 snapshots and
+cold restore, atomic database-password rotation, Prometheus scraping, and a
+200-request load probe with 80 enforced cross-tenant denials and zero failures.
+PR #19 head `1cf1d0a` then passed the six-job dashboard, hosted PostgreSQL/S3,
+and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`. No public
+production deployment is claimed.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

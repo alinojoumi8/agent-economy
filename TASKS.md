@@ -158,8 +158,9 @@ provider rate limits control throughput.
 - [x] Add a bounded, credential-redacted HTTPS load/isolation probe with
   per-tenant own-scope reads, cross-tenant denial checks, and sanitized JSON
   evidence output.
-- [ ] Record the final real-container image/Compose smoke and multi-user load
-  receipt, and pass the exact-head hosted CI job.
+- [x] Record the final real-container image/Compose smoke and multi-user load
+  receipt at `53081f2`, then pass all six exact-head hosted CI jobs in run
+  `29409250171` at `1cf1d0a`.
 - [ ] Pass the complete local and hosted acceptance gate before release.
 
 ## Closure merge receipt
