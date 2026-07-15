@@ -111,10 +111,12 @@ def test_hosted_runtime_config_references_environment_secrets_only() -> None:
 
 
 def test_postgres_runtime_role_is_forced_non_privileged() -> None:
-    source = (ROOT / "deploy" / "postgres" / "init" / "001_roles.sh").read_text(
-        encoding="utf-8"
-    )
+    script = ROOT / "deploy" / "postgres" / "init" / "001_roles.sh"
+    raw = script.read_bytes()
+    source = raw.decode("utf-8")
 
+    assert raw.startswith(b"#!/bin/sh\n")
+    assert b"\r\n" not in raw
     assert "NOSUPERUSER" in source
     assert "NOCREATEDB" in source
     assert "NOCREATEROLE" in source

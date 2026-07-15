@@ -1,12 +1,5 @@
-* text=auto
-
-*.py text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.json text eol=lf
-*.html text eol=lf
-*.md text eol=lf
-*.txt text eol=lf
-
-*.db binary
-*.zst binary
+.gitattributes text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
+deploy/Caddyfile text eol=lf
