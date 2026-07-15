@@ -1521,6 +1521,16 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
         tools.execute_plan([
             {"tool": "read_news", "args": {"limit": 1}}
             for _ in range(9)])
+    legacy = tools.execute_plan_legacy([{
+        "tool": "read_news",
+        "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+    }])
+    assert len(legacy) == 1
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([{
+            "tool": "read_news",
+            "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+        }])
 
     answer = asyncio.run(world.oracle.ask(
         "What is the probability of a bank run within 30 ticks?"))

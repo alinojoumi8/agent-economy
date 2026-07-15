@@ -76,10 +76,9 @@ recreate the app.
 
 Verify `/health/live`, `/health/ready`, TLS, login, an observer invitation,
 cross-tenant denial, one admin-controlled shared run, and Prometheus scraping.
-The current branch contains the deployment and integration-test surfaces, but
-final image/Compose smoke, recorded multi-user load evidence, and public
-production deployment are still pending; do not treat this runbook as a
-certification claim.
+The exact local image/Compose/load acceptance gate is recorded at `53081f2`, and
+all six PR #19 jobs passed before merge. A public production deployment remains
+pending; local evidence and this runbook are not a public certification claim.
 
 Record a bounded authenticated load/isolation receipt with at least two users
 from distinct tenants. Repeat `--user` as
@@ -108,8 +107,9 @@ isolation probe.
 `--allow-insecure-loopback` disables certificate verification only for an HTTPS
 loopback origin and is restricted to local smoke testing; it never permits
 remote or plain-HTTP probes. The JSON receipt is sanitized: it contains no
-passwords, cookies, email addresses, response bodies, or provider data. A real
-container receipt is still required before marking hosted acceptance complete.
+passwords, cookies, email addresses, response bodies, or provider data. Retain a
+fresh real-container receipt before accepting any new or public deployment; the
+recorded `53081f2` receipt already satisfies the merged local R22 code gate.
 
 Operational commands use the same image/CLI:
 
@@ -134,6 +134,26 @@ python run.py --config runs/acceptance/rehearsal.yaml `
   --experiment-evidence reports/out/experiment_rumor_vs_control.json
 ```
 
+The first pass intentionally lacks run-bound reviewed phenomena and uses only
+scripted providers. After it reaches tick 365, copy the template, set its
+top-level `run_id` to the exact rehearsal run, and document three distinct
+phenomena from that run before regenerating the receipt:
+
+```powershell
+Copy-Item runs/acceptance/phenomena.template.yaml `
+  reports/out/rehearsal_<RUN_ID>_phenomena.yaml
+# Review and edit the copied YAML; do not reuse evidence from another run.
+python run.py --acceptance-report <RUN_ID> `
+  --experiment-evidence reports/out/experiment_rumor_vs_control.json `
+  --phenomena-evidence reports/out/rehearsal_<RUN_ID>_phenomena.yaml
+python run.py --replay <RUN_ID>
+```
+
+The completed scripted rehearsal should fail only `real_providers`. Reaching
+the replay horizon is not exact-replay proof: retain the verifier output and
+require `exact: true`, identical source/replay ticks and hashes, and
+`differences: []` before marking replay complete.
+
 ## Capped research-validity pilot
 
 The 30-tick pilot is the first paid gate. It targets the current depositors of
@@ -153,6 +173,112 @@ prediction. Omit `--serve` only for unattended headless execution.
 Do not start the full run unless this receipt passes its rumor, conversation,
 belief-history, deposit-outflow, ledger, provider, latency, and spend gates. Do
 not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
+
+## Oracle calibration campaign
+
+This campaign measures Oracle latency and calibration; it is not the 365-day
+whole-world acceptance run. Its ten predeclared seed profiles keep background
+behavior scripted and route only the Oracle to live Kimi. Do not replace a seed
+or switch control/treatment arms after seeing outcomes. Treatment profiles lock
+a one-person public precursor one tick before each forecast and the larger
+depositor-targeted rumor one tick after it; control profiles contain neither.
+
+First run the free 335-tick control and treatment rehearsals. They exercise the
+same six governed questions and resolution horizon but are deliberately
+ineligible for a live campaign receipt because their Oracle is scripted:
+
+```powershell
+python run.py --config runs/oracle/calibration-control-rehearsal.yaml `
+  --acceptance-run
+python run.py --config runs/oracle/calibration-rehearsal.yaml `
+  --acceptance-run
+```
+
+This rehearsal is mechanics evidence, not a release receipt. The generic
+acceptance command may return nonzero because scripted-provider provenance is
+ineligible; inspect and resolve any other failed check. The live campaign
+profiles below must still satisfy their stricter source checks.
+
+Then preflight and execute each profile from
+`seed-7301-control.yaml` through `seed-7310-rumor.yaml`. The first run is shown;
+repeat it for the exact ten checked-in profiles:
+
+```powershell
+python run.py --config runs/oracle/seed-7301-control.yaml --preflight
+python run.py --config runs/oracle/seed-7301-control.yaml --preflight-live
+python run.py --config runs/oracle/seed-7301-control.yaml `
+  --oracle-campaign-run --approve-live-inference
+```
+
+`--oracle-campaign-run` is the profile-specific source path: it runs the six
+checkpoints, writes the report, finalizes the source SQLite database, replays it
+offline, finalizes the replay database, verifies exact hashes/provenance, and
+writes a source receipt plus a ready-to-copy manifest entry. It exits nonzero if
+the source or companion replay is ineligible.
+
+Start and resume these runs only from a completely clean Git worktree. The
+exclusive sample claim binds `HEAD`, `HEAD^{tree}`, and the canonical
+`data/runs` location before genesis. Claim and initialized-state files are
+fsynced as temporary artifacts and atomically published into no-clobber slots.
+The command holds one OS-backed per-seed execution lock from initialization
+through source/replay receipt publication; a concurrent resume exits before it
+can dispatch, and an exited or crashed process releases the lock automatically.
+
+Genesis is built under a unique temporary directory, finalized, and validated
+as reconciled tick-0 state with zero model calls. It is then atomically
+hard-linked through canonical pending and final no-clobber slots. A valid pending
+genesis resumes without rebuilding. A partial/corrupt pending publication is
+quarantined and only the deterministic zero-call genesis is rebuilt; a missing
+database after initialization or a partial final database still fails closed.
+Source and replay databases must both remain directly under canonical
+`data/runs`.
+
+The replay execution receipt records every consumed logical source call, its
+digest, exact-key versus compatibility-fallback counts, and live-dispatch count;
+release evidence requires complete one-time consumption, zero fallback, and zero
+dispatch. Every required checkpoint is independently quick-checked, matched to
+the full schema, bound to the source run/config/tick and valid engine/lifecycle
+PRNG state, then hashed into the replay and source receipts. All persisted model
+calls are audited globally: only the six scheduled governed Oracle sessions may
+use the pinned live Kimi route. Claims, markers, replay receipts, source receipts,
+and final campaign receipts are immutable no-clobber publications; an identical
+rerun may reuse an existing receipt, while any differing artifact fails.
+
+These controls are strong local accident/tamper evidence only. They are not an
+administrator-proof attestation: an administrator who can rewrite the code,
+databases, claims, and receipts can forge a new internally consistent local
+package. Public release evidence **requires** independent external signing or a
+separately administered append-only transparency log; the local CLI receipt
+alone is insufficient for that claim.
+
+The campaign command does the offline replay itself; do not invoke a separate
+manual `--replay` and substitute it into the corpus. After each command exits,
+confirm the emitted source receipt reports finalized source/replay databases and
+no `-wal` or `-shm` sidecar. Copy
+`runs/oracle/manifest-v1.template.yaml` to a run-specific evidence manifest and
+replace its ten placeholders with the exact manifest entries emitted by the
+source receipts, then evaluate it:
+
+```powershell
+Copy-Item runs/oracle/manifest-v1.template.yaml runs/oracle/manifest-v1.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v1.yaml
+```
+
+The command reads disposable copies rather than opening the sources directly,
+never scans a directory for candidates, recomputes every companion replay proof,
+and writes deterministic JSON and Markdown receipts under `reports/out`. A
+release PASS requires all ten runs to remain eligible, at least 60 resolved
+forecasts spanning outcomes 0 and 1,
+nearest-rank `scheduled_e2e_v1` p90 strictly below 60,000 ms, aggregate Brier
+strictly below the fixed p=0.5 baseline of 0.25, and unchanged source/profile
+hashes. Any excluded run fails the complete-manifest gate.
+
+Run aggregate verification serially on a machine with at least 6 GB of free
+memory. A measured 335-tick scripted source contained 129,764 events and 31,880
+model-call rows in a roughly 0.48 GB database; its full exact-table proof took
+about 136 seconds and peaked near 4.1 GB working set on the development machine.
+The evaluator releases each pair before opening the next, but parallel campaign
+verification is not the supported operator path.
 
 ## Production acceptance
 
@@ -174,6 +300,11 @@ gate; a missing, dangling, malformed, or duplicate completion reference marks
 the checkpoint invalid. The profile is uncapped for runtime continuity but has a
 separate $200 efficiency completion gate. On success it writes the complete
 HTML report plus JSON and Markdown acceptance receipts.
+
+A passing acceptance receipt is not an exact-replay receipt. After the source
+run closes, execute `python run.py --replay <RUN_ID>`, retain the companion
+database and verifier output, and require `exact: true`, identical source/replay
+ticks and hashes, and `differences: []`.
 
 The production profile starts with exactly 100 living agents: 63 sampled
 citizens plus engine-owned institutional and health-economy actors. The
@@ -288,10 +419,11 @@ an evidence receipt from persisted run data without advancing the simulation.
 For a release candidate, retain:
 
 1. `data/runs/<run-id>.db` and its latest checkpoint;
-2. the HTML report and JSON/Markdown acceptance receipts;
-3. the experiment JSON/Markdown/HTML artifacts;
-4. the reviewed phenomena YAML and shock traces;
-5. the exact Git commit, resolved profile, and provider preflight result.
+2. the finalized companion replay database and captured exact-verifier output;
+3. the HTML report and JSON/Markdown acceptance receipts;
+4. the experiment JSON/Markdown/HTML artifacts;
+5. the reviewed phenomena YAML and shock traces;
+6. the exact Git commit, resolved profile, and provider preflight result.
 
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.

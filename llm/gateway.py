@@ -27,6 +27,36 @@ from observability import get_logger, log_event as operational_log, safe_fields
 logger = get_logger("llm")
 
 
+REPLAY_OPERATIONAL_PURPOSES = frozenset({"report_narrative"})
+
+
+def _logical_replay_call(row: Any) -> str:
+    """Canonicalize one source call without its local SQLite surrogate id."""
+    record: dict[str, Any] = {}
+    keys = row.keys() if hasattr(row, "keys") else row
+    for column in keys:
+        if column in {"id", "created_at", "updated_at"}:
+            continue
+        value = row[column]
+        if column.endswith("_json") and isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                pass
+        record[str(column)] = value
+    return json.dumps(
+        record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False)
+
+
+def _logical_replay_digest(records: list[str]) -> str:
+    digest = hashlib.sha256()
+    for record in sorted(records):
+        digest.update(record.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 PRIVATE_REASONING_FIELDS = frozenset({
     "analysis",
     "chain_of_thought",
@@ -521,6 +551,10 @@ class Gateway:
         self._replay_positions: dict[str, int] = {}
         self._replay_used_call_ids: set[int] = set()
         self._replay_event_id_map: dict[int, int] = {}
+        self._replay_exact_key_count = 0
+        self._replay_compatibility_fallback_count = 0
+        self._replay_consumed_calls: list[tuple[int, str, str]] = []
+        self._live_dispatch_count = 0
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
@@ -545,6 +579,76 @@ class Gateway:
             replay_snapshot.close()
         elif replay_conn is not None:
             replay_conn.close()
+
+    def replay_execution_stats(self) -> dict[str, Any]:
+        """Attest what this in-memory replay execution actually consumed.
+
+        The digest deliberately excludes physical call ids and timestamps. It
+        covers the same deterministic call contents used by exact replay while
+        preserving multiplicity through newline-delimited sorted records.
+        """
+        if not self.replay or self.replay_conn is None:
+            raise RuntimeError("replay execution stats require an open replay source")
+        placeholders = ",".join("?" for _ in REPLAY_OPERATIONAL_PURPOSES)
+        rows = self.replay_conn.execute(
+            "SELECT * FROM llm_calls WHERE COALESCE(purpose,'') NOT IN "
+            f"({placeholders}) ORDER BY id",
+            tuple(sorted(REPLAY_OPERATIONAL_PURPOSES)),
+        ).fetchall()
+        expected = [
+            (int(row["id"]), _logical_replay_call(row), str(row["purpose"] or ""))
+            for row in rows
+        ]
+        consumed = list(self._replay_consumed_calls)
+        expected_ids = {item[0] for item in expected}
+        consumed_ids = [item[0] for item in consumed]
+        duplicate_consumptions = len(consumed_ids) - len(set(consumed_ids))
+
+        def purpose_counts(items: list[tuple[int, str, str]]) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for _call_id, _logical, purpose in items:
+                counts[purpose] = counts.get(purpose, 0) + 1
+            return dict(sorted(counts.items()))
+
+        oracle_expected = [
+            logical for _call_id, logical, purpose in expected
+            if purpose in {"oracle_plan", "oracle"}
+        ]
+        oracle_consumed = [
+            logical for _call_id, logical, purpose in consumed
+            if purpose in {"oracle_plan", "oracle"}
+        ]
+        missing = expected_ids - set(consumed_ids)
+        unexpected = set(consumed_ids) - expected_ids
+        return {
+            "schema_version": 1,
+            "source_nonoperational_calls": len(expected),
+            "consumed_source_calls": len(consumed),
+            "source_logical_calls_sha256": _logical_replay_digest(
+                [item[1] for item in expected]),
+            "consumed_logical_calls_sha256": _logical_replay_digest(
+                [item[1] for item in consumed]),
+            "source_purpose_counts": purpose_counts(expected),
+            "consumed_purpose_counts": purpose_counts(consumed),
+            "oracle_source_calls": len(oracle_expected),
+            "oracle_consumed_calls": len(oracle_consumed),
+            "oracle_source_calls_sha256": _logical_replay_digest(oracle_expected),
+            "oracle_consumed_calls_sha256": _logical_replay_digest(oracle_consumed),
+            "exact_key_matches": self._replay_exact_key_count,
+            "compatibility_fallback_matches": (
+                self._replay_compatibility_fallback_count),
+            "live_dispatch_count": self._live_dispatch_count,
+            "missing_source_calls": len(missing),
+            "unexpected_source_calls": len(unexpected),
+            "duplicate_source_consumptions": duplicate_consumptions,
+            "all_nonoperational_calls_consumed_once": bool(
+                not missing and not unexpected and duplicate_consumptions == 0
+                and len(expected) == len(consumed)),
+            "all_oracle_calls_consumed_once": bool(
+                len(oracle_expected) == len(oracle_consumed)
+                and _logical_replay_digest(oracle_expected)
+                == _logical_replay_digest(oracle_consumed)),
+        }
 
     @property
     def scripted(self):
@@ -887,6 +991,7 @@ class Gateway:
                     if active_task is not None:
                         self._active_adapter_tasks.add(active_task)
                     try:
+                        self._live_dispatch_count += 1
                         result = await adapter.complete(
                             model, messages, purpose=req.purpose, context=req.context,
                             max_tokens=req.max_tokens, temperature=temperature,
@@ -1046,6 +1151,7 @@ class Gateway:
             return None
         position = self._replay_positions.get(cache_key, 0)
         row = None
+        match_mode = "exact_key"
         while True:
             candidate = self.replay_conn.execute(
                 "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
@@ -1071,6 +1177,7 @@ class Gateway:
                  if int(candidate["id"]) not in self._replay_used_call_ids),
                 None)
             if row is not None:
+                match_mode = "compatibility_fallback"
                 operational_log(
                     logger, logging.WARNING, "llm.replay.compatibility_fallback",
                     run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
@@ -1078,7 +1185,14 @@ class Gateway:
                     source_call_id=int(row["id"]))
         if not row:
             return None
-        self._replay_used_call_ids.add(int(row["id"]))
+        source_call_id = int(row["id"])
+        self._replay_used_call_ids.add(source_call_id)
+        if match_mode == "exact_key":
+            self._replay_exact_key_count += 1
+        else:
+            self._replay_compatibility_fallback_count += 1
+        self._replay_consumed_calls.append((
+            source_call_id, _logical_replay_call(row), str(row["purpose"] or "")))
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:

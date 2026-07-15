@@ -19,7 +19,7 @@ def _config(tmp_path, *, semantics: int = 7, replay_source=None) -> dict:
     config = {
         "seed": 718,
         "engine_semantics_version": semantics,
-        "population": {"size": 6},
+        "population": {"size": 6, "baseline_citizens_core": True},
         "banks": {"count": 2},
         "firms": {"count": 1, "listed": 0},
         "outlets": [
@@ -94,6 +94,8 @@ def test_semantics7_arrival_uses_70_30_inflow_accounts(tmp_path):
     assert savings == int(payload["savings_cents"])
     assert checking_source == SYS_INFLOW
     assert savings_source == SYS_INFLOW
+    assert arrival["population_tier"] == "core"
+    assert int(arrival["pinned_core"]) == 1
     assert json.loads(arrival["media_diet_json"])[0] in {10, 20}
     ok, diagnostic = world.economy.ledger.reconcile()
     assert ok, diagnostic
@@ -263,6 +265,8 @@ def test_semantics6_arrival_contract_remains_legacy(tmp_path, monkeypatch):
     assert arrival["savings_account_id"] is None
     assert "checking_cents" not in payload and "savings_cents" not in payload
     assert source == SYS_INFLOW
+    assert arrival["population_tier"] == "periphery"
+    assert int(arrival["pinned_core"]) == 0
     assert world.store.scalar(
         "SELECT COUNT(*) FROM llm_calls WHERE purpose='persona'", default=0) == 0
     # Legacy arrivals retain the old 60% checking-only endowment.

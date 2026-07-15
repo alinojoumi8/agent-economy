@@ -108,6 +108,24 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
+The release calibration design therefore preregisters ten fixed profiles under
+`runs/oracle`, six forecasts per run, and alternating control/rumor arms. Only
+the Kimi Oracle is live; background behavior remains scripted so the campaign
+isolates the forecast surface. Treatment windows publish a one-person rumor
+precursor one tick before each forecast and apply the larger depositor-targeted
+rumor one tick afterward; controls receive neither. This makes arm evidence
+observable at forecast time while keeping the later scored response distinct,
+and profile validation locks the schedule before any live run. The explicit manifest binds run IDs, seeds,
+source/replay database paths, profile paths, and hashes. Each fixed profile is
+executed with `--oracle-campaign-run`, which finalizes the source, creates and
+finalizes its exact offline replay, and emits the manifest entry; a separately
+invoked manual replay is not campaign evidence. Passing requires 10 eligible
+runs, at least
+60 resolved forecasts, both outcome classes, end-to-end p90 below 60 seconds,
+and Brier below the naive p=0.5 score of 0.25. Every finalized source must also
+replay exactly offline. This evidence says nothing by itself about the cost or
+stability of the separate 365-day live-agent acceptance run.
+
 ## Evidence hierarchy
 
 Strongest to weakest:
@@ -124,11 +142,13 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-After the capped live rumor pilot and v1 acceptance:
+The capped rumor pilot, explicit Oracle campaign, and 365-day acceptance run
+are separate pending gates. After those gates:
 
 - add a causal explorer from exposure to belief to action to metric;
 - formalize experiment preregistration;
 - report confidence intervals and standardized effect sizes;
-- expand Oracle calibration across diverse questions and runs;
+- extend the predeclared Oracle corpus only through a new versioned campaign,
+  never by adding post-hoc runs to a completed manifest;
 - use the pinned R21 mode for preregistered initialization-sensitivity studies,
   keeping calibration provenance separate from endogenous mechanics.

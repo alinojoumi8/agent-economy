@@ -1,0 +1,16 @@
+# Free deterministic rehearsal of the bounded 30-tick live pilot.
+# Inherits the pilot's population, rumor, Oracle checkpoint, and acceptance
+# requirements while routing every model role through the local scripted adapter.
+extends: pilot.yaml
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes:
+    citizen:        {provider: scripted, model: scripted}
+    founder:        {provider: scripted, model: scripted}
+    central_banker: {provider: scripted, model: scripted}
+    credit_officer: {provider: scripted, model: scripted}
+    reporter:       {provider: scripted, model: scripted}
+    editor:         {provider: scripted, model: scripted}
+    vc_partner:     {provider: scripted, model: scripted}
+    oracle:         {provider: scripted, model: scripted}

@@ -233,6 +233,45 @@ def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
     assert ok, diag
 
 
+def test_semantics7_baseline_citizens_are_active_core_without_r19(tmp_path):
+    maintained = _fresh_world(
+        tmp_path, "sem7-baseline.db", engine_semantics_version=7,
+        population={"size": 12, "baseline_citizens_core": True})
+    citizens = maintained.store.query(
+        "SELECT id,population_tier,pinned_core FROM agents "
+        "WHERE role IS NULL ORDER BY id")
+
+    assert citizens
+    assert {row["population_tier"] for row in citizens} == {"core"}
+    assert {int(row["pinned_core"]) for row in citizens} == {1}
+    scheduled_ids = {
+        int(agent["id"])
+        for tick in range(1, 31)
+        for agent in maintained.runtime.scheduler.scheduled_agents(tick)
+        if agent["role"] is None
+    }
+    assert scheduled_ids == {int(row["id"]) for row in citizens}
+
+    # Markerless stored semantics 7 and every semantics 1-6 run retain the
+    # historical implicit peripheral tier.
+    unmarked = _fresh_world(
+        tmp_path, "sem7-unmarked.db", engine_semantics_version=7,
+        population={"size": 12})
+    assert unmarked.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='core'", default=0) == 0
+
+    legacy = _fresh_world(
+        tmp_path, "sem6-baseline.db", engine_semantics_version=6,
+        population={"size": 12, "baseline_citizens_core": True})
+    assert legacy.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='core'", default=0) == 0
+    assert legacy.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='periphery'", default=0) > 0
+
+
 # ── checkpoint / resume ──────────────────────────────────────────────────────
 def test_checkpoint_and_resume(tmp_path):
     w = _fresh_world(tmp_path, "ck.db", checkpoint_every=5,

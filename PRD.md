@@ -154,6 +154,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Answers probability questions with: point estimate, key drivers, confidence, and an auto-created resolution criterion + deadline.
 - Predictions logged; resolved automatically when determinable from world state; Brier score tracked over the run.
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
+- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -188,17 +189,23 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R12. Government fiscal layer + elections.** Flat income tax funding unemployment benefits; periodic elections where agents vote based on beliefs/economic experience; election outcomes shift fiscal policy within bounds. *(The "political views" outcome Ali wants — first-class but not needed to prove the core loop.)*
 **R13. VC / private funding track.** Pitch → partner evaluation → term sheet → equity on cap table → follow-on or write-off. Founding via bank loan works in P0; VC adds the risk-capital channel.
 **R14. Experiment harness.** Define experiment = {config, seed set, shock schedule, metrics of interest}; run N seeds; produce a comparison report with outcome distributions.
-**R15. Oracle calibration dashboard.** Reliability curves and Brier decomposition across many predictions and runs.
+**R15. Oracle calibration dashboard.** Reliability curves and Brier decomposition across many predictions and runs. The release workflow uses the predeclared `runs/oracle` corpus and a read-only explicit-manifest evaluator that verifies source/profile hashes and writes deterministic JSON and Markdown receipts without scanning arbitrary databases.
 **R16. Replay mode.** Re-watch any past run tick-by-tick from stored events without re-running LLMs.
 **R17. Health economy.** Hospitals/doctors as firms, health insurance products, epidemics as a trend-type shock — builds on R11's health states.
 
 ### P2 — Future (design so we don't preclude them)
 
 **R18. Participant mode.** Ali (or an external LLM) plays an in-world agent through the same action API agents use. *(Implemented extension; participant-influenced runs remain disqualified from observer-only acceptance.)*
-**R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
+**R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. The optional regional living-world policy owns promotion/demotion. Non-regional semantics-7 maintained profiles instead persist `population.baseline_citizens_core: true` so baseline households and arrivals remain fully scheduled; markerless stored semantics-7 runs preserve their historical peripheral assignment for exact replay. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
 **R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
 **R21. Real-data calibration mode** — initialize distributions from real US statistical data (income, wealth, firm size). *(Implemented as the explicit `real_us` profile: disclosure-protected 2022 SCF family records supply income, liquid-financial-asset, and total-net-worth draws, while 2022 SUSB national employer-firm classes supply initial headcounts. `LIQ` funds the modeled bank accounts; `NETWORTH` is persisted as an engine-owned, off-ledger calibration baseline visible through agent provenance, so property/business assets and debt are not silently minted as deposits. Fictional names, traits, behavior, and relationships remain synthetic; default profiles remain replay-identical.)*
-**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. Public deployment, multi-user load evidence, and final hosted CI remain acceptance evidence rather than completed product claims.)*
+**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. The real-container image/Compose/load gate passed locally; all six exact-head PR #19 jobs passed in run `29409250171`; and PR #19 merged as `1806294d4fecbe13ddbdf615c459755c74293599`. Post-merge run `29411023992` executed no repository steps because GitHub blocked the account for billing/spending-limit reasons. A public production deployment remains a separate release action and is not claimed.)*
+
+After P0/P1 and R18–R22, no additional functional feature gap remains in this
+PRD. The outstanding work is release evidence and operations: land the
+release-gate tooling, run the live 30-day rumor and ten-profile Oracle
+campaigns, pass the 365-day acceptance run, repeat the final public-release
+audit, and deploy publicly only when separately authorized.
 
 ---
 
@@ -221,7 +228,9 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 | Cross-seed experiment (N=5) produces interpretable outcome distribution | ≥ 1 written-up experiment |
 | Ali still using it weekly a month after v1 (qualitative north star) | Yes |
 
-**Measurement**: all metrics computed from the run database; no manual counting.
+**Measurement**: run metrics are computed from persisted databases; cross-run
+Oracle calibration is computed from an explicit manifest of hashed, finalized
+run databases and profiles. No manual counting or directory pooling is allowed.
 
 ---
 

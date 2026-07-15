@@ -264,6 +264,8 @@ class Newsroom:
         """Reporter stage: draft 2–4 candidate stories from the day's true events."""
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "rng_seed": tick * 37 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         system = ("You are a reporter in a simulated economy. From the given TRUE events draft "
                   "2-4 short candidate stories as JSON: {\"stories\": [{\"headline\":..., "
                   "\"body\":..., \"tone\": -1..1, \"kind\":..., \"source_event_ids\":[...]}]}. "
@@ -286,6 +288,8 @@ class Newsroom:
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "drafts": drafts or [], "directive": directive,
                    "rng_seed": tick * 31 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         user = json.dumps({"outlet": outlet, "drafts": drafts or [], "events": events,
                            "directive": directive})[:3000]
         system = ("You are the editor of a simulated-economy news outlet. Pick the ONE candidate "

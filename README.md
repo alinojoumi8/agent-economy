@@ -34,7 +34,10 @@ than background flavor:
 - Maintained profiles run engine semantics 7: defaults recognize only net bank
   losses after collateral, retirees can draw their own savings, arrivals receive
   governed persona enrichment, and qualified trade and migration opportunities
-  become autonomous actions. Stored semantics 1–6 retain their original rules.
+  become autonomous actions. Non-regional maintained profiles persist
+  `population.baseline_citizens_core: true` so baseline households and arrivals
+  remain fully scheduled; markerless semantics-7 sources and stored semantics
+  1–6 retain their original tier/rule behavior during replay.
 - The observatory adds a living economic map, legal/political/startup surfaces,
   causal traces, God-mode actions through the normal validator, and static replay export.
 - Pinned dataset manifests and paired-seed scenario packs support model-conditional
@@ -108,8 +111,9 @@ agents then perceive, decide, trade, publish, converse, update memory, and
 finalize a reconciled day. Maintained semantics-7 profiles preserve the
 research-valid information boundary while adding net loan charge-offs,
 retirement liquidity, deterministic arrivals, governed arrival personas, and
-autonomous regional trade/migration. Markerless and stored semantics 1–6 runs
-are never silently upgraded.
+autonomous regional trade/migration. Stored semantics 1–6 runs are never
+silently upgraded, and a markerless stored semantics-7 source keeps its
+historical citizen-tier assignment.
 
 ## Five-minute offline start
 
@@ -204,6 +208,8 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
+| `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
+| `runs/oracle/seed-7301-control.yaml` ... `seed-7310-rumor.yaml` | Predeclared 10-run/60-forecast calibration corpus | Scripted world; live Kimi Oracle only; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -314,7 +320,7 @@ surfaces are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
 
-The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
+The historical semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
 every target effect through tick 5 at zero spend and replayed exactly with hash
 `fa190b0d…e8cffc34`. The live run `b4832032ba` completed five semantics-7 ticks
 with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
@@ -331,8 +337,34 @@ after its exact-head dashboard plus Ubuntu/Windows Python 3.11/3.12 matrix
 passed. Post-merge CI run `29368193807` repeated all five jobs successfully.
 Tagging and publication remain separate release decisions.
 
+The current release-gate branch passed 582 Python tests with 8 skipped, 23
+dashboard tests, a fresh 603-module dashboard build, and checksum verification
+for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
+`881ed41994` completed 365 ticks
+with 100 living agents, zero spend, balanced ledger state, zero operational
+failures, six completed and resolved Oracle checkpoints, all five shock traces,
+the five-seed experiment, and three run-bound reviewed phenomena. Its acceptance
+receipt passed 19 of 20 checks; only `real_providers` was false because every
+route was intentionally scripted. Companion replay
+`replay-881ed41994-3465cb3101` matched tick 365 and hash
+`37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
+all deterministic tables matched and `differences: []`.
+
 The 30-day rumor gate, Oracle latency/calibration campaign, and
-365-day/$200 acceptance run remain separate and are not replaced by this pilot.
+365-day/$200 acceptance run remain separate and are not replaced by the
+five-tick pilot or scripted 365-tick rehearsal.
+Oracle campaign tooling is implemented: ten fixed profiles and
+`runs/oracle/manifest-v1.template.yaml` feed the read-only
+`--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
+finalized source, exact companion replay, and source receipt without applying
+the whole-world all-live-provider gate. Each receipt chain binds the immutable
+pre-run claim and initialized marker, clean Git commit/tree, committed config,
+canonical source/replay paths, required checkpoint manifests, and an execution
+tracker proving exact one-time source-call consumption with zero compatibility
+fallback or live replay dispatch. Passing evidence still requires the ten
+fixed source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
+60 seconds, and Brier below 0.25. See the
+[operator runbook](docs/operator-runbook.md).
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve
 SCF fixture supplies income, liquid-financial-asset, and total-net-worth draws;
@@ -359,8 +391,11 @@ changing engine semantics or schema. Exact local Compose evidence at
 cold restore, atomic database-password rotation, Prometheus scraping, and a
 200-request load probe with 80 enforced cross-tenant denials and zero failures.
 PR #19 head `1cf1d0a` then passed the six-job dashboard, hosted PostgreSQL/S3,
-and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`. No public
-production deployment is claimed.
+and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`, and merged as
+`1806294d4fecbe13ddbdf615c459755c74293599`. The post-merge push run
+`29411023992` was not executed: GitHub rejected every zero-step job because of
+the repository account's billing/spending-limit state. That external runner
+block is not a code-test failure. No public production deployment is claimed.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

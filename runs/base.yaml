@@ -31,6 +31,10 @@ beliefs:
   enforce_reserved_ranges: true
 
 population:
+  # Persisted semantics-7 opt-in: baseline citizens remain fully active unless
+  # the optional R19 living-world core/periphery mode is explicitly enabled.
+  # Missing stays on the historical semantics-7 tier contract for exact replay.
+  baseline_citizens_core: true
   size: 70                      # citizens (staff + founders come on top → ~100 agents)
 
 banks:

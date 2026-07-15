@@ -73,9 +73,9 @@ change the local entry point or simulation semantics.
 | 7 | `MEMORY` | Each active agent's day is compressed to a summary; importance scoring; belief updates extracted | Yes (cheap) |
 | 8 | `FINALIZE` | Idempotent completed-day metrics snapshot, Oracle resolution, and reconciliation after every settled action | No |
 
-`engine_semantics_version: 2` selects the completed-day contract. Version `3` retains it and adds research-valid information/metric semantics: final-goods GDP, separate labor income, 30-day inflation, true 365-day YoY CPI, and explicit belief provenance. Semantics 4 adds legal/political institutions; semantics 5 adds regions, currencies, FX, shipments, and migration; semantics 6 adds bilateral hiring, agent-priced IPOs, and actor-provenanced lender-of-last-resort decisions. Maintained semantics 7 adds net bank loss recognition, retirement liquidity/cadence, deterministic arrivals with governed persona enrichment, and autonomous qualified R20 actions. Database schema remains v11. Markerless and stored semantics 1–6 retain their historical behavior; only an explicit fork may upgrade.
+`engine_semantics_version: 2` selects the completed-day contract. Version `3` retains it and adds research-valid information/metric semantics: final-goods GDP, separate labor income, 30-day inflation, true 365-day YoY CPI, and explicit belief provenance. Semantics 4 adds legal/political institutions; semantics 5 adds regions, currencies, FX, shipments, and migration; semantics 6 adds bilateral hiring, agent-priced IPOs, and actor-provenanced lender-of-last-resort decisions. Maintained semantics 7 adds net bank loss recognition, retirement liquidity/cadence, deterministic arrivals with governed persona enrichment, and autonomous qualified R20 actions. Database schema remains v11. Stored semantics 1–6 retain their historical behavior, and only an explicit fork may upgrade. The separate persisted `population.baseline_citizens_core: true` marker activates fully scheduled non-regional baseline citizens, health founders, and later arrivals under semantics 7. It is ignored by older semantics and regional R19 worlds; markerless stored semantics-7 runs retain their historical peripheral assignment for exact replay.
 
-**Agent cadences (cost + realism):** every agent acts *only when scheduled* — shopping ~daily, portfolio review weekly, career decisions monthly, plus **event-triggered wakeups** (your bank is in the news, you got fired, someone told you something with high salience). Institutional agents act every tick. This is the single biggest cost lever (see §12).
+**Agent cadences (cost + realism):** every agent acts *only when scheduled* — shopping ~daily, portfolio review weekly, career decisions monthly, plus **event-triggered wakeups** (your bank is in the news, you got fired, someone told you something with high salience). Institutional agents act every tick. In non-regional semantics-7 maintained profiles, `population.baseline_citizens_core` keeps baseline households on this scheduler; R19 regional profiles instead use their explicit core/periphery policy. This is the single biggest cost lever (see §12).
 
 ## 4. Data model (SQLite)
 
@@ -318,6 +318,9 @@ Single chokepoint through which every call flows. Responsibilities:
 - Answer contract: `{p: 0.xx, drivers: [...], confidence: low|med|high, resolution_rule, deadline_tick}`. Maintained profiles validate finite probability/deadline values, bounded drivers, confidence, and an allowlisted machine-checkable rule before admitting the forecast. Supported rules are `bank_failure`, `firm_bankruptcy`, `bank_run`, `index_drop`, `unemployment_above`, `cpi_above`, `metric_above`, and `metric_below`; generic metric rules must name a persisted series. If the question cannot be given a checkable rule, the Oracle returns `insufficient_data` and says why.
 - A resolver job checks open predictions each tick; on resolution, Brier score = `(p − outcome)²` written to `predictions`. An unsupported or malformed stored rule becomes `insufficient_data` and is never converted into a false outcome. This stricter contract is configuration-gated, so stored historical profiles retain their original replay semantics.
 - Governed acceptance checkpoints persist `scheduled_e2e_v1` latency in their prediction-bound `acceptance_checkpoint_completed` event. The timer begins before read planning and ends only after the answer is validated and linked to the scheduled forecast. Campaign ID, version, unique key, scheduled tick, question, and logical plan/answer provider evidence are persisted with the sample; missing, dangling, malformed, or duplicate completion references fail the schedule. Replay copies this measured evidence instead of timing offline calls.
+- The release calibration corpus is predeclared under `runs/oracle`: ten fixed control/rumor seed profiles run scripted background behavior with only the Kimi Oracle live. Each treatment window has a one-person public rumor precursor one tick before the forecast, followed by the larger depositor-targeted rumor one tick after it; this gives the Oracle observable treatment evidence without letting the precursor itself define the scored outcome. Control arms have neither shock. The validator locks this schedule, question, horizon, rule, route, seed/arm mapping, and Kimi's official OpenAI-compatible endpoint/key contract before execution. Eligible calls require prediction-bound governed request context, nonempty sanitized JSON responses, positive token/cost/latency telemetry, and an exact completion-event call summary; a provider/model label alone is not live evidence. `--oracle-campaign-run` executes one fixed arm, finalizes its source, produces an exact offline replay, and writes a source receipt. `--oracle-calibration-report` accepts a schema-v1 manifest that names every source/replay pair, seed, standalone database, resolved profile, and SHA-256. It never discovers databases by directory scan. Sources must be finalized with no SQLite WAL/SHM sidecars; evaluation opens disposable read-only copies, recomputes exact replay, and proves all source/profile/replay hashes remain unchanged. Forks, participant runs, incomplete schedules, route mismatches, provider failures, invalid provenance, or config/profile mismatches exclude the whole run.
+- Before any live dispatch, each fixed campaign arm consumes an immutable pre-run claim bound to the clean Git commit/tree, committed effective config, run ID, seed, and canonical data location. The receipt chain also binds the initialized-state marker, canonical source/replay paths, every required checkpoint manifest, and the actual replay execution tracker. Release eligibility requires each non-operational source call to be consumed exactly once with zero compatibility fallback and zero live replay dispatch. Claim, replay, source, and aggregate receipts are no-clobber artifacts; local consistency is not administrator-proof, so public evidence still requires independent signing or a separately administered append-only transparency log.
+- Campaign gates are immutable: exactly the ten predeclared seeds, at least 60 resolved forecasts, both binary outcome classes, nearest-rank `scheduled_e2e_v1` p90 strictly below 60,000 ms, and aggregate Brier strictly below the fixed p=0.5 baseline of 0.25. Every source must include a finalized companion database that the evaluator recomputes as `exact: true` with identical ticks/hashes and `differences: []`. This Oracle-only 335-tick corpus measures forecast latency/calibration and does not satisfy the separate 365-day whole-world acceptance gate.
 - Capped profiles reserve an Oracle carve-out (default: $10 of $200) so questions never starve the world. The uncapped production profile meters Oracle spend without applying a ceiling.
 
 ## 12. Cost model (planning estimate; 365-day gate pending)
@@ -379,7 +382,7 @@ discount is excluded from the projection; event-heavy days may spike usage.
   dependency advisories and current/full-history secrets are scanned. These
   audits are repeated against a release candidate before tagging/publication.
 
-Current semantics-7 closure receipt: the final integrated adversarial gate
+Historical semantics-7 closure receipt: the final integrated adversarial gate
 passed 93 tests and the closure suite passed 280 in 165.73 seconds. The
 post-merge compatibility/replay cleanup suite passes 303 in 178.22 seconds,
 including compatibility, provenance, privacy, cache, dataset-refresh, and
@@ -400,10 +403,30 @@ R21 subsequently merged through PR #18 at
 `21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs passed.
 Post-merge main run `29403186283` repeated the dashboard and Ubuntu/Windows
 Python 3.11/3.12 jobs successfully.
-R22 code and integration coverage are present on its implementation branch;
-final hosted image/Compose smoke, multi-user load evidence, exact-head CI, and
-public deployment remain pending verification and must not be inferred from
-the local implementation.
+R22 then merged through PR #19 as
+`1806294d4fecbe13ddbdf615c459755c74293599`. Its real-container image/Compose,
+restore/rotation, and multi-user load evidence passed locally, and all six
+exact-head jobs passed at `1cf1d0a` in run `29409250171`. Post-merge run
+`29411023992` executed zero repository steps because GitHub blocked the account
+for billing/spending-limit reasons; it is not a failed code test. No public
+production deployment is claimed. After P0/P1 and R18–R22, the specification
+has no remaining functional feature gap; the pending rumor, Oracle, 365-day,
+and final public-release audit/deployment work is release evidence and
+operations.
+
+Current release-gate branch verification on 2026-07-15 passed 582 Python tests
+with 8 skipped, 23 dashboard tests, a fresh 603-module dashboard build, and
+checksum verification for the pinned FRED/BLS/SCF/SUSB datasets. Free
+production-workflow rehearsal `881ed41994`
+completed 365 ticks with 100 living agents, zero spend, balanced ledger state,
+zero operational failures, six completed and resolved Oracle checkpoints, all
+five shock traces, the five-seed experiment, and three run-bound reviewed
+phenomena. Its receipt passed 19 of 20 checks; only `real_providers` was false
+because every route was intentionally scripted. This is mechanics evidence,
+not the live 365-day release gate. Companion replay
+`replay-881ed41994-3465cb3101` matched tick 365 and hash
+`37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
+every deterministic table was exact and `differences: []`.
 
 ## 15. Prior art and borrowed components
 

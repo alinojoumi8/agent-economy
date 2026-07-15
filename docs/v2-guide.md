@@ -49,6 +49,14 @@ Maintained profiles use semantics 7 for net loan-loss recognition, retirement
 liquidity and cadence, deterministic arrival/persona contracts, and autonomous
 qualified regional trade and migration. Schema remains v11.
 
+Non-regional maintained profiles also persist
+`population.baseline_citizens_core: true`, which pins baseline citizens, health
+founders, and later arrivals to the fully scheduled core tier under semantics 7.
+Regional R19 profiles retain their own core/periphery policy. The marker is
+ignored by semantics 1–6, and markerless stored semantics-7 runs retain their
+historical peripheral assignment, so replay does not silently acquire new
+household decisions.
+
 Old runs retain their stored semantics. A run is never silently upgraded. Use
 an explicit child fork:
 
@@ -97,7 +105,8 @@ from office, ownership, wealth, litigation, exposure, and activity. Controlled
 participants are pinned.
 
 On the reference Windows development machine, the verified 1,000-agent genesis
-completed in about 2.1 seconds. The final offline 365-tick gate completed on
+completed in about 2.1 seconds. The final offline R19 1,000-agent 365-tick
+performance gate completed on
 2026-07-13 in 384.651 seconds (6 minutes 25 seconds) with a measured 52.25 MB
 peak Python working set and a 643.68 MB SQLite database. It finished at tick 365
 with five checkpoints, zero paid spend, exactly 1,000 living agents, exactly 100
@@ -208,9 +217,10 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-Provider calls and the outstanding paid-model v1 acceptance run remain separate
-operational gates. No live inference is run without `--approve-live-inference`.
-An unperformed paid gate must be reported as pending, never treated as passed.
+The outstanding live 30-day rumor, ten-profile Oracle, and 365-day acceptance
+campaigns remain separate operational gates. No live inference is run without
+`--approve-live-inference`. An unperformed live gate must be reported as
+pending, never treated as passed.
 
 ## Hybrid live pilot
 
@@ -454,6 +464,11 @@ installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
 high-severity audit vulnerabilities, built 599 Vite modules, confirmed the
 committed static bundle was fresh, and passed `git diff --check`.
 
+The current release-gate branch subsequently passed 582 Python tests with 8
+skipped, 23 dashboard tests, a fresh 603-module dashboard build, and checksum
+verification for the pinned FRED/BLS/SCF/SUSB datasets. The older counts above remain the historical
+semantics-7 merge receipt rather than the current branch total.
+
 Free rehearsal `5a0d40d773` completed five ticks at `$0` and exercised every
 target effect with zero rejected actions or provider failures. It wrote six
 checkpoints and reconciled every currency to zero. Offline replay
@@ -478,6 +493,18 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 `differences: []` and hash
 `ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
 
+Free production-workflow rehearsal `881ed41994` then completed 365 ticks with
+exactly 100 living agents, zero spend, balanced ledger state, zero operational
+failures, six completed and resolved Oracle checkpoints, all five required
+shock traces including the scandal-citing article, the reconciled five-seed
+experiment, and three run-bound reviewed phenomena. Its acceptance receipt
+passed 19 of 20 checks; only `real_providers` was false because every route was
+intentionally scripted. Companion replay `replay-881ed41994-3465cb3101`
+matched tick 365 and hash
+`37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
+every deterministic table was exact and `differences: []`. This rehearsal validates
+mechanics and evidence plumbing; it does not satisfy live-provider acceptance.
+
 | Gate | Status | Evidence |
 |---|---|---|
 | Focused + full Python | **Passed** | 86 initial focused / 93 final adversarial / 280 closure / 303 post-merge cleanup; compile and datasets green |
@@ -485,6 +512,8 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
+| Current release-gate branch | **Passed** | 582 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
+| Free 365-tick workflow rehearsal | **Passed mechanics + replay** | `881ed41994`; 19/20 checks, with only scripted `real_providers` false; replay matched tick/hash with every table exact and `differences: []` |
 | GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
 The closure audit also passed the universal hash-locked Python install and
@@ -544,8 +573,21 @@ complete. Exact local stack
 evidence at `53081f2` passed TLS readiness, two-tenant isolation, immutable S3
 snapshot/restore, atomic database-password rotation, Prometheus scraping, and
 200/200 bounded load requests including 80 cross-tenant denials. PR #19 head
-`1cf1d0a` passed all six jobs in run `29409250171`. Any public production
-deployment remains a separate operational decision and is not claimed here.
+`1cf1d0a` passed all six jobs in run `29409250171` and merged as `1806294d4`.
+Post-merge run `29411023992` contains six zero-step jobs because GitHub blocked
+the account for billing/spending-limit reasons; no code ran in that push event.
+Any public production deployment remains a separate operational decision and
+is not claimed here.
+
+The release Oracle campaign is separately precommitted to ten fixed arms. Before
+live dispatch, each arm consumes an immutable claim bound to its clean Git
+commit/tree, committed effective config, run ID, seed, initialized-state marker,
+and canonical data location. Source receipts bind every required checkpoint
+manifest and the companion replay tracker; eligibility requires exact one-time
+source-call consumption with zero compatibility fallback and zero live replay
+dispatch. The local no-clobber receipt chain is strong accident/tamper evidence,
+but a public claim still requires independent signing or a separately
+administered append-only transparency log.
 
 The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
 acceptance run also remain separate release evidence. Tagging and publication

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
+from engine.checkpoint_manifest import write_checkpoint_manifest
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.semantics import semantics_version
 from engine.store import Store, load_json
@@ -514,13 +515,20 @@ class World:
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
                 if self.economy.regions.enabled else self.engine_prng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
+            baseline_core = (
+                self.engine_semantics_version >= 7
+                and bool(self.config.get("population", {}).get(
+                    "baseline_citizens_core", False))
+                and not self.economy.regions.enabled)
             agent_id = self.store.insert(
                 "agents", name=p.name, kind="citizen", occupation=p.occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                model_tier="citizen",
+                population_tier="core" if baseline_core else "periphery",
+                pinned_core=1 if baseline_core else 0, region_id=region_id,
                 alive=1, retired=0, arrived_tick=tick)
             if self.engine_semantics_version >= 7:
                 checking_cents = int(p.wealth_cents * 0.7)
@@ -602,6 +610,7 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
+            write_checkpoint_manifest(dest)
             self.store.insert("checkpoints", tick=tick, path=str(dest),
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())

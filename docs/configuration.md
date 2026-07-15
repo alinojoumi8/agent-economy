@@ -13,6 +13,8 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/rehearsal.yaml` | Free 365-tick acceptance rehearsal | None |
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
+| `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
+| `runs/oracle/seed-7301-control.yaml` … `seed-7310-rumor.yaml` | Fixed Oracle calibration corpus | Scripted background, live Kimi Oracle, capped at $25 per run |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -53,6 +55,7 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | `seed` | World, persona, targeting, and lifecycle reproducibility |
 | `engine_semantics_version` | Runtime compatibility contract; maintained profiles use `7` |
 | `population.size` | Sampled citizen count; institutional/founder agents are added |
+| `population.baseline_citizens_core` | Persisted semantics-7 opt-in that pins non-regional baseline citizens and later arrivals to the fully scheduled core tier |
 | `banks`, `firms`, `exchange` | Deterministic banking, production, and market parameters |
 | `central_bank` | Policy target, neutral rate, and step bounds |
 | `lifecycle`, `government`, `vc`, `health` | Optional P1 systems |
@@ -66,6 +69,15 @@ engine-owned institutional and health-economy actors, producing exactly 100
 living agents at genesis. Acceptance evaluates the living population; deceased
 rows remain available for historical and replay evidence without inflating that
 gate.
+
+Maintained non-regional profiles also persist
+`population.baseline_citizens_core: true`. Under semantics 7 this makes baseline
+citizens, health founders, and later arrivals fully scheduled core agents, which
+is required for household rumor responses and other autonomous decisions. The
+marker is ignored by semantics 1–6 and by an enabled regional R19 living world;
+an older markerless semantics-7 database retains its historical peripheral tier
+assignment during replay. Do not add the marker to a stored source config unless
+creating an explicit new run or fork.
 
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
@@ -230,6 +242,20 @@ reads, answering, and contract validation. Manual Oracle calls and raw
 `llm_calls.latency_ms` rows do not enter this gate. Missing, dangling,
 malformed, or duplicate completion references fail closed. Markerless stored
 configs retain the legacy answer-call calculation for replay compatibility.
+
+The multi-run Oracle calibration release gate is separate from one run's
+`acceptance` block. Its schema-v1 manifest is based on
+`runs/oracle/manifest-v1.template.yaml` and explicitly records campaign ID and
+version plus every run's ID, seed, source/replay database paths, profile path,
+and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
+ready-to-copy manifest entry for one predeclared profile.
+The evaluator will not discover databases or weaken its floors below 10 runs
+and 60 forecasts. Every database must be a finalized standalone SQLite file
+with no `-wal` or `-shm` sidecar. `--oracle-calibration-report` reads disposable
+copies, verifies that source/profile/replay hashes remain unchanged, recomputes
+the exact companion replay proof, and requires both
+outcome classes, `scheduled_e2e_v1` p90 below 60 seconds, and Brier below 0.25.
+Exact replay of each source is a mandatory manifest-bound companion artifact.
 
 ## Rumor targeting
 

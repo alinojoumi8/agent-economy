@@ -40,12 +40,15 @@ provider rate limits control throughput.
 
 ### Evidence gates
 
-- [x] Focused semantics-7 gate passed 86 tests before final hardening; a
+- [x] Historical semantics-7 closure gates passed 86 tests before final hardening; a
   93-test integrated adversarial gate passed afterward, and the semantics-7
   closure suite passed 280 in 165.73 seconds. The post-merge
   compatibility/replay cleanup suite passes 303 in 178.22 seconds, with
   compilation and dataset verification green.
-- [x] Dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
+- [x] Current release-gate branch: 582 Python tests passed with 8 skipped, 23
+  dashboard tests and a fresh 603-module build passed, and pinned
+  FRED/BLS/SCF/SUSB verification passed.
+- [x] Historical closure dashboard gate: 80 packages installed with zero vulnerabilities, 16 tests
   passed, high-severity audit found zero vulnerabilities, the 599-module Vite
   build and committed static bundle matched, and `git diff --check` passed.
 - [x] Free rehearsal `5a0d40d773` reached tick 5 at zero spend, exercised every
@@ -88,12 +91,24 @@ provider rate limits control throughput.
 - [x] Bind all six Oracle latency samples to their scheduled predictions across
   planning and answer validation; reject unsupported rules and dangling,
   malformed, or duplicate completion provenance without changing old replays.
+- [x] Add a versioned explicit-manifest Oracle calibration evaluator plus ten
+  predeclared control/rumor seed profiles. Enforce immutable floors of ten
+  eligible runs, 60 resolved forecasts, both outcome classes, end-to-end p90
+  below 60 seconds, and aggregate Brier score below the naive 0.25 baseline.
 - [x] Add research-valid public information boundaries, dynamic depositor-targeted
   rumors, bounded/provenance-bearing beliefs, and fail-closed relative trust evidence.
 - [x] Separate final-goods output from labor income and expose correctly windowed
   30-day and year-over-year inflation without changing legacy replay semantics.
 - [ ] With explicit approval, pass the capped 30-day live rumor pilot before
   authorizing a new full production acceptance run.
+- [x] Rehearse both 335-tick Oracle arms for free: six control negatives and six
+  treatment positives resolved with zero operational failures, exact ledger
+  reconciliation, and a combined scripted Brier score of `0.19469025`.
+- [ ] Run the ten predeclared live-Kimi Oracle profiles through
+  `--oracle-campaign-run`, which
+  finalizes each source and exact offline companion and hashes those artifacts
+  plus the checked-in profile; then pass the emitted entries through
+  `--oracle-calibration-report` without exclusions.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
@@ -101,6 +116,16 @@ provider rate limits control throughput.
   reconciled comparison artifact.
 - [x] Pass focused tests, the full Python suite, dashboard tests/build, live
   dashboard/API smoke, autoreview, and diff checks.
+- [x] Complete free 365-tick production-workflow rehearsal `881ed41994`: 100
+  living agents, zero spend, balanced ledger state, zero operational failures,
+  six completed/resolved Oracle checkpoints, all five shock traces, the
+  five-seed experiment, and three run-bound reviewed phenomena. Its acceptance
+  receipt passed 19/20 checks; only scripted `real_providers` was intentionally
+  false, so this is mechanics evidence rather than live acceptance.
+- [x] Finalize and record companion replay
+  `replay-881ed41994-3465cb3101`: source/replay tick 365 and hash
+  `37d18cf4…498786ed` matched, every deterministic table was exact, and
+  `differences: []`.
 - [ ] With explicit live-inference approval, pass provider preflight and the
   uncapped 365-tick run with every evidence gate green.
 
@@ -119,6 +144,9 @@ provider rate limits control throughput.
 - [x] Implement a fully simulated core plus a statistically simulated periphery
   with deterministic seeded cohort transitions and conserved aggregate money.
 - [x] Make promotion/demotion between tiers explicit, observable, and replayable.
+- [x] Persist the semantics-7 `population.baseline_citizens_core` opt-in for
+  maintained non-regional profiles so household decisions stay scheduled while
+  markerless semantics-7 and stored semantics 1–6 remain replay-identical.
 - [x] Prove economic invariants and define a recorded 1,000-agent performance
   baseline before passing the full live-test/autoreview/commit gate.
 
@@ -164,10 +192,18 @@ provider rate limits control throughput.
 - [x] Record the final real-container image/Compose smoke and multi-user load
   receipt at `53081f2`, then pass all six exact-head hosted CI jobs in run
   `29409250171` at `1cf1d0a`.
-- [ ] Pass the complete local and hosted acceptance gate before release.
+- [x] Pass the complete local hosted acceptance gate and merge PR #19 as
+  `1806294d4fecbe13ddbdf615c459755c74293599`. Post-merge run `29411023992`
+  executed zero repository steps because GitHub blocked the account for
+  billing/spending-limit reasons; this is external to the code gate.
+- [ ] Before public release, repeat the final provenance/license/dependency/
+  secret audit and validate the separately authorized public deployment. No
+  public production deployment, tag, or publication is currently claimed.
 
 ## Closure merge receipt
 
 - [x] Re-audit PRD promises against routes, workers, persistence, tests, docs,
   runtime evidence, licenses, dependencies, and secrets; classify R21/R22 and
   long-horizon acceptance as separate work rather than hidden merge blockers.
+- [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
+  gap; the release-gate tooling and pending live campaigns are evidence work.

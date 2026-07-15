@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from typing import Optional
@@ -18,7 +19,13 @@ from engine.core import Economy
 from engine.store import load_json
 from llm.gateway import Gateway, LLMRequest
 from .rules import ResolutionRuleError, validate_resolution_rule
-from .tools import OracleToolError, OracleTools
+from .tools import (
+    MAX_PROMPT_EVIDENCE_CHARS,
+    OracleToolError,
+    OracleTools,
+    bound_oracle_evidence,
+    canonical_oracle_json,
+)
 
 PLANNER_SYSTEM = """You are the read-only query planner for an economic analyst.
 Choose only from the supplied tool definitions. Return JSON:
@@ -45,6 +52,51 @@ If the question cannot be given a checkable rule from world state, reply
 When governed_forecast_contract is supplied, use its resolution_rule and
 deadline_tick exactly; it defines the scheduled question being measured."""
 
+MAX_ANSWER_USER_CHARS = 12_000
+MAX_PROMPT_WORLD_CHARS = 2_500
+
+
+def _canonical_json(value) -> str:
+    return canonical_oracle_json(value)
+
+
+def _json_sha256(value) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _bounded_json_value(value, limit: int):
+    serialized = _canonical_json(value)
+    if len(serialized) <= limit:
+        return value
+    prefix_limit = max(0, limit - 160)
+    return {
+        "truncated": True,
+        "sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        "json_prefix": serialized[:prefix_limit],
+    }
+
+
+def _bound_prompt_evidence(evidence: list[dict]) -> list[dict]:
+    """Compatibility wrapper around the canonical tool transcript contract."""
+    return bound_oracle_evidence(evidence)
+
+
+def _answer_user_json(*, question: str, tick: int, world: dict,
+                      evidence: list[dict], governed_contract: dict | None) -> tuple[str, dict]:
+    """Build valid bounded JSON with engine-owned forecast facts first."""
+    prompt_world = _bounded_json_value(world, MAX_PROMPT_WORLD_CHARS)
+    payload = {}
+    if governed_contract is not None:
+        payload["governed_forecast_contract"] = governed_contract
+    payload["question"] = question
+    payload["tick"] = tick
+    payload["read_only_evidence"] = evidence
+    payload["world"] = prompt_world
+    encoded = canonical_oracle_json(payload)
+    if len(encoded) > MAX_ANSWER_USER_CHARS:
+        raise ValueError("Oracle answer prompt exceeds its structural bound")
+    return encoded, prompt_world
+
 
 class Oracle:
     def __init__(self, economy: Economy, gateway: Gateway, config: dict):
@@ -54,6 +106,8 @@ class Oracle:
         self.config = config
         self.tools = OracleTools(economy)
         self.default_horizon = int(config.get("oracle", {}).get("default_horizon_ticks", 30))
+        self.engine_semantics_version = int(
+            config.get("engine_semantics_version", 2))
         self.strict_resolution_rules = bool(
             config.get("oracle", {}).get("strict_resolution_rules", False))
 
@@ -70,6 +124,7 @@ class Oracle:
             governed_contract, tick=tick)
         digest = self._world_digest(tick)
         legacy_replay = self._legacy_replay_at(tick)
+        hardened_evidence = self._hardened_evidence_at(tick, question)
         evidence = []
         if not legacy_replay:
             base_planning_context = {
@@ -93,7 +148,10 @@ class Oracle:
                         "Return a corrected plan that satisfies every supplied constraint.")
                 plan_req = LLMRequest(
                     role="oracle", purpose="oracle_plan", system=PLANNER_SYSTEM,
-                    user=json.dumps(planning_context)[:5000], context=planning_context,
+                    user=(canonical_oracle_json(planning_context)
+                          if hardened_evidence else
+                          json.dumps(planning_context)[:5000]),
+                    context=planning_context,
                     tick=tick, max_tokens=350, temperature=0.1)
                 plan_resp = await self.gw.complete(
                     plan_req, schema_hint='{"queries":[]}')
@@ -102,14 +160,24 @@ class Oracle:
                 try:
                     if not queries:
                         raise OracleToolError("at least one evidence query is required")
-                    evidence = self.tools.execute_plan(queries)
+                    evidence = (
+                        self.tools.execute_plan(queries)
+                        if hardened_evidence else
+                        self.tools.execute_plan_legacy(queries))
                     break
                 except OracleToolError as exc:
                     validation_error = str(exc)
                     evidence = [{"error": validation_error, "queries_rejected": True}]
+                    rejection = {
+                        "question": question, "error": validation_error[:500],
+                    }
+                    if hardened_evidence:
+                        rejection.update({
+                            "attempt": _attempt + 1,
+                            "plan_sha256": _json_sha256(plan),
+                        })
                     self.store.log_event(
-                        tick, "oracle_tool_plan_rejected",
-                        {"question": question, "error": validation_error[:500]},
+                        tick, "oracle_tool_plan_rejected", rejection,
                         importance=1.5)
         context = {**digest, "question": question, "tick": tick,
                    "default_horizon": self.default_horizon}
@@ -117,14 +185,20 @@ class Oracle:
             context["governed_forecast_contract"] = governed_contract
         if not legacy_replay:
             context["evidence"] = evidence
-        user_payload = (
-            json.dumps({"question": question, "world": digest})[:6000]
-            if legacy_replay else
-            json.dumps({
+        if legacy_replay:
+            user_payload = json.dumps({"question": question, "world": digest})[:6000]
+        elif hardened_evidence:
+            user_payload, prompt_world = _answer_user_json(
+                question=question, tick=tick, world=digest, evidence=evidence,
+                governed_contract=governed_contract)
+            context["prompt_world"] = prompt_world
+        else:
+            user_payload = json.dumps({
                 "question": question, "world": digest,
                 "read_only_evidence": evidence,
                 **({"governed_forecast_contract": governed_contract}
-                   if governed_contract is not None else {})})[:12000])
+                   if governed_contract is not None else {}),
+            })[:12000]
         req = LLMRequest(role="oracle", purpose="oracle", system=ANSWER_SYSTEM,
                          user=user_payload,
                          context=context, tick=tick, max_tokens=500, temperature=0.3)
@@ -285,6 +359,33 @@ class Oracle:
             "SELECT 1 FROM llm_calls WHERE tick=? AND purpose='oracle_plan' LIMIT 1",
             (tick,)).fetchone()
         return row is None
+
+    def _hardened_evidence_at(self, tick: int, question: str) -> bool:
+        """Gate the new prompt shape and preserve recorded pre-hardening calls."""
+        if self.engine_semantics_version < 7:
+            return False
+        if not self.gw.replay or self.gw.replay_conn is None:
+            return True
+        rows = self.gw.replay_conn.execute(
+            "SELECT request_json FROM llm_calls WHERE tick=? AND role='oracle' "
+            "AND purpose='oracle' ORDER BY id", (tick,)).fetchall()
+        for row in rows:
+            request = load_json(row["request_json"], {})
+            context = request.get("context") if isinstance(request, dict) else None
+            try:
+                user = json.loads(request.get("user", "")) \
+                    if isinstance(request, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError):
+                user = None
+            if (isinstance(context, dict) and context.get("question") == question
+                    and isinstance(user, dict)):
+                return bool(
+                    user.get("tick") == tick
+                    and "prompt_world" in context
+                    and user.get("world") == context.get("prompt_world"))
+        # A recorded answer must exist whenever an oracle_plan call exists.
+        # Missing evidence fails closed through the gateway lookup path.
+        return False
 
     # ── world digest (read-only tools rolled into one) ───────────────────────
     def _world_digest(self, tick: int) -> dict:

@@ -169,6 +169,32 @@ the evaluator will not assume a universal initial trust value. Fewer than all
 six governed scheduled Oracle samples cannot satisfy the production p90 gate,
 even when every available sample is below the limit.
 
+## Oracle campaign receipt fails
+
+Run `python run.py --oracle-calibration-report <MANIFEST>` and inspect
+`excluded_runs` plus the six named checks in the JSON receipt. Do not replace a
+predeclared run after observing its outcome. Common exclusions are a run/profile
+hash mismatch, a SQLite `-wal` or `-shm` sidecar, scripted or otherwise
+ineligible Oracle provenance, a fork/replay/participant source, an incomplete
+six-question schedule, provider failures, or a stored config that differs from
+the resolved checked-in profile. Shut down all processes using a database before
+hashing it; the evaluator requires a finalized standalone source and will not
+repair or migrate it.
+
+The manifest cannot lower the floors below ten eligible unique runs and 60
+resolved forecasts. It also fails unless both outcomes are present, nearest-rank
+`scheduled_e2e_v1` p90 is strictly below 60 seconds, and aggregate Brier is
+strictly below 0.25. Per-run exact replay is mandatory release evidence but is
+created by `--oracle-campaign-run` and recomputed from the manifest-bound
+companion database by the aggregate evaluator. Do not substitute a separately
+invoked manual replay.
+
+Exact verification canonicalizes every deterministic row and is deliberately
+more memory-intensive than ordinary read-only reporting. Allow at least 6 GB of
+free memory and do not launch manifest evaluations in parallel. The recorded
+335-tick development benchmark peaked near 4.1 GB while comparing one source
+and replay pair.
+
 ## I need per-call diagnostics
 
 Normal INFO output reports run-level milestones, checkpoints, repairs, pauses,

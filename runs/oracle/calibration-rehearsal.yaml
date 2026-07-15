@@ -1,0 +1,9 @@
+# Free deterministic rehearsal for the treatment arm. It is never eligible for
+# the live calibration receipt because the Oracle provider is scripted.
+extends: calibration-rumor.yaml
+
+seed: 7399
+
+llm:
+  routes:
+    oracle: {provider: scripted, model: scripted}
