@@ -14,7 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
-| `runs/oracle/v6-seed-7351-control.yaml` … `v6-seed-7360-rumor.yaml` | Fixed v6 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, occurrence-aware replay citations, conservative 3x metering, capped at $25 per run |
+| `runs/oracle/v7-seed-7361-control.yaml` … `v7-seed-7370-rumor.yaml` | Current pending v7 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, governed answer repair, occurrence-aware replay citations, conservative 3x metering, capped at $25 per run; no live evidence claimed yet |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -244,10 +244,10 @@ malformed, or duplicate completion references fail closed. Markerless stored
 configs retain the legacy answer-call calculation for replay compatibility.
 
 The multi-run Oracle calibration release gate is separate from one run's
-`acceptance` block. The active `oracle-calibration-v6` corpus uses fresh seeds
-7351–7360 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
+`acceptance` block. The current pending `oracle-calibration-v7` corpus uses fresh
+seeds 7361–7370 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
 and a $25 per-run cap. Its schema-v1 manifest is based on
-`runs/oracle/manifest-v6.template.yaml` and explicitly records campaign ID and
+`runs/oracle/manifest-v7.template.yaml` and explicitly records campaign ID and
 version plus every run's ID, seed, source/replay database paths, profile path,
 and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
 ready-to-copy manifest entry for one predeclared profile.
@@ -258,6 +258,8 @@ copies, verifies that source/profile/replay hashes remain unchanged, recomputes
 the exact companion replay proof, and requires both
 outcome classes, `scheduled_e2e_v1` p90 below 60 seconds, and Brier below 0.25.
 Exact replay of each source is a mandatory manifest-bound companion artifact.
+No v7 evidence is claimed until all ten predeclared live arms and the aggregate
+receipt satisfy these checks.
 
 The archived `oracle-calibration-v1-s7301` source completed tick 335 with valid
 live-provider provenance, but replay diverged at the first arrival because its
@@ -327,11 +329,20 @@ manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
 manifests; and the ignored compact final exact receipt. Seed 7348 remains
 excluded and has no eligible source/replay receipt or retained replay database.
 
-V6 maps a recorded public-event citation by its deterministic source occurrence
-within the equivalence class and still fails closed when the class is missing or
-inconsistent. Its base extends the acceptance rehearsal directly, never a v5
-profile. No v5 source, response, claim, initialized marker, checkpoint, replay,
-receipt, profile, commitment, manifest entry, run identity, or seed enters v6.
+V6 mapped a recorded public-event citation by its deterministic source
+occurrence within the equivalence class and still failed closed when the class
+was missing or inconsistent. Its first arm, seed 7351, stopped at tick 65 when a
+successful Kimi answer used `confidence: "medium"` instead of `low|med|high`.
+The runtime persisted a rule rejection, an `insufficient_data` prediction, and a
+missed checkpoint. Spend was $0.18351, with no provider, budget, or
+tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
+run.
+
+V7 extends the acceptance rehearsal directly, uses fresh seeds 7361–7370, and
+validates governed answer semantics inside the existing bounded repair call
+before persistence. No v6 source, response, claim, initialized marker,
+checkpoint, replay, receipt, profile, commitment, manifest entry, run identity,
+or seed enters v7. No v7 live evidence is claimed yet.
 
 ## Rumor targeting
 

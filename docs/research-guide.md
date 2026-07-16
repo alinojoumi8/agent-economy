@@ -108,8 +108,8 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
-The active release calibration design therefore preregisters ten fixed v6
-profiles under `runs/oracle`, six forecasts per run, fresh seeds 7351–7360, and
+The current pending release calibration design therefore preregisters ten fixed
+v7 profiles under `runs/oracle`, six forecasts per run, fresh seeds 7361–7370, and
 alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
 live; background behavior remains scripted so the campaign isolates the
 forecast surface. Treatment windows publish a one-person rumor
@@ -117,9 +117,11 @@ precursor one tick before each forecast and apply the larger depositor-targeted
 rumor one tick afterward; controls receive neither. This makes arm evidence
 observable at forecast time while keeping the later scored response distinct,
 and profile validation locks the schedule before any live run. The explicit manifest binds run IDs, seeds,
-source/replay database paths, profile paths, and hashes. V6 also uses
+source/replay database paths, profile paths, and hashes. V7 also uses
 occurrence-aware public-citation identity so payload-equivalent articles at
-different source events remain distinct during replay. Each fixed profile is
+different source events remain distinct during replay, and it validates governed
+answer semantics inside the existing bounded repair call before persistence.
+Each fixed profile is
 executed with `--oracle-campaign-run`, which finalizes the source, creates and
 finalizes its exact offline replay, and emits the manifest entry; a separately
 invoked manual replay is not campaign evidence. Passing requires 10 eligible
@@ -128,6 +130,7 @@ runs, at least
 and Brier below the naive p=0.5 score of 0.25. Every finalized source must also
 replay exactly offline. This evidence says nothing by itself about the cost or
 stability of the separate 365-day live-agent acceptance run.
+No v7 live evidence is claimed before the ten arms and aggregate receipt pass.
 
 The archived `oracle-calibration-v1-s7301` source is not part of that evidence.
 It completed tick 335 with valid provider provenance, but replay diverged at the
@@ -167,7 +170,7 @@ post-preflight execution failure as `oracle_tool_plan_rejected`. Attempt 2 was
 the independently reproducible `names must contain 1 to 10 valid metric names`
 error, and attempt 3 succeeded. The receipt could not independently reproduce
 or bind attempt 1 and therefore excluded the evidence. No v4 source, response,
-claim, checkpoint, replay, or seed entered v5, and none enters v6.
+claim, checkpoint, replay, or seed entered v5 or a later campaign.
 
 V5 shared one state-aware plan preflight between live runtime and receipt audit.
 The scheduled-tick catalog bounds historical entity IDs and tick ranges,
@@ -185,7 +188,7 @@ produced four replay-only newsroom-grounder fallbacks and differences across
 nine information tables. LLM calls, actions, schedules, and the source artifact
 remained exact, which isolated the defect to citation identity rather than live
 provider behavior. Seeds 7349 and 7350 were never run. V5 is diagnostic only;
-no v5 artifact enters v6. The seven receipt-bound replay databases and fourteen
+no v5 artifact enters a later campaign. The seven receipt-bound replay databases and fourteen
 Oracle source/replay receipts belong only to seeds 7341–7347; seed 7348 has no
 eligible replay database or Oracle source/replay receipt. Final corrected
 offline replay `replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335
@@ -200,6 +203,14 @@ source/replay receipts for seeds 7341–7347; all source-checkpoint
 manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
 manifests; and the ignored compact final exact receipt. Seed 7348 remains
 excluded and has no eligible source/replay receipt or retained replay database.
+
+V6 seed 7351 stopped at tick 65 after a successful Kimi answer returned
+`confidence: "medium"` instead of the strict `low|med|high` value. Runtime
+persisted a rule rejection, an `insufficient_data` prediction, and a missed
+checkpoint. The arm spent $0.18351 and recorded no provider, budget, or
+tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
+run, and no v6 source, response, claim, checkpoint, replay, receipt, profile,
+manifest entry, run identity, or seed enters v7.
 
 ## Evidence hierarchy
 
@@ -217,7 +228,7 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-Completion of the v6 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+Completion of the v7 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
 run, and final provenance audit are separate pending gates. The release pull
 request stays draft; merging, tagging, publication, and public deployment need
 separate authorization. After those gates:

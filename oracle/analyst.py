@@ -252,7 +252,29 @@ class Oracle:
         req = LLMRequest(role="oracle", purpose="oracle", system=ANSWER_SYSTEM,
                          user=user_payload,
                          context=context, tick=tick, max_tokens=500, temperature=0.3)
-        resp = await self.gw.complete(req)
+
+        def answer_contract_error(value) -> str | None:
+            if not isinstance(value, dict):
+                return "forecast answer must be a JSON object"
+            if value.get("insufficient_data"):
+                return (
+                    "governed forecast must provide a checkable prediction"
+                    if governed_contract is not None else None)
+            try:
+                self._validated_answer_contract(
+                    value, tick=tick, governed_contract=governed_contract)
+            except (KeyError, TypeError, ValueError, ResolutionRuleError) as exc:
+                return str(exc)
+            return None
+
+        semantic_answer_repair = bool(
+            self.engine_semantics_version >= 7
+            and governed_contract is not None
+            and governed_contract["campaign_version"] >= 7)
+        resp = await self.gw.complete(
+            req,
+            parsed_validator=(answer_contract_error if semantic_answer_repair else None),
+        )
         ans = resp.parsed if isinstance(resp.parsed, dict) else {}
 
         if ans.get("insufficient_data"):
@@ -267,50 +289,8 @@ class Oracle:
 
         # Validate the contract; refuse rather than store garbage.
         try:
-            if isinstance(ans.get("p"), bool):
-                raise ValueError("forecast probability must be a finite number")
-            p = float(ans["p"])
-            if not math.isfinite(p) or not 0.0 <= p <= 1.0:
-                raise ValueError("forecast probability must be between 0 and 1")
-            rule = ans.get("resolution_rule") or {}
-            if self.strict_resolution_rules:
-                rule = validate_resolution_rule(
-                    rule, metric_exists=self._metric_exists)
-            elif not isinstance(rule, dict) or not rule.get("type"):
-                raise ValueError("resolution_rule.type is required")
-            confidence = str(ans.get("confidence", "med"))
-            if self.strict_resolution_rules and confidence not in {"low", "med", "high"}:
-                raise ValueError("confidence must be low, med, or high")
-            drivers = ans.get("drivers", [])
-            if self.strict_resolution_rules and not (
-                isinstance(drivers, list) and 1 <= len(drivers) <= 10
-                and all(isinstance(driver, str) and driver.strip()
-                        and len(driver) <= 300 for driver in drivers)
-            ):
-                raise ValueError("drivers must contain 1 to 10 bounded strings")
-            raw_deadline = ans.get("deadline_tick")
-            if raw_deadline is None:
-                raw_deadline = tick + self.default_horizon
-            if isinstance(raw_deadline, bool):
-                raise ValueError("deadline_tick must be an integer")
-            deadline = int(raw_deadline)
-            if isinstance(raw_deadline, float) and raw_deadline != deadline:
-                raise ValueError("deadline_tick must be an integer")
-            if deadline <= tick:
-                raise ValueError("deadline_tick must be in the future")
-            if self.strict_resolution_rules:
-                max_horizon = int(
-                    self.config.get("oracle", {}).get("max_horizon_ticks", 365))
-                if deadline > tick + max_horizon:
-                    raise ValueError(
-                        f"deadline_tick exceeds the {max_horizon}-tick limit")
-            if governed_contract is not None:
-                if rule != governed_contract["resolution_rule"]:
-                    raise ValueError(
-                        "resolution_rule does not match governed forecast contract")
-                if deadline != governed_contract["deadline_tick"]:
-                    raise ValueError(
-                        "deadline_tick does not match governed forecast contract")
+            validated = self._validated_answer_contract(
+                ans, tick=tick, governed_contract=governed_contract)
         except (KeyError, TypeError, ValueError, ResolutionRuleError) as exc:
             pid = self.store.insert(
                 "predictions", asked_tick=tick, question=question, p=None,
@@ -324,6 +304,12 @@ class Oracle:
             return {"insufficient_data": True,
                     "reason": "The analyst could not produce a checkable prediction.",
                     "prediction_id": pid, "evidence": evidence}
+
+        p = validated["p"]
+        rule = validated["resolution_rule"]
+        confidence = validated["confidence"]
+        drivers = validated["drivers"]
+        deadline = validated["deadline_tick"]
 
         pid = self.store.insert(
             "predictions", asked_tick=tick, question=question, p=p,
@@ -339,6 +325,62 @@ class Oracle:
                 "confidence": ans.get("confidence", "med"), "resolution_rule": rule,
                 "deadline_tick": deadline, "reasoning": ans.get("reasoning", ""),
                 "evidence": evidence}
+
+    def _validated_answer_contract(
+        self, ans: dict, *, tick: int, governed_contract: dict | None,
+    ) -> dict:
+        """Validate and type the persisted Oracle forecast contract."""
+        if isinstance(ans.get("p"), bool):
+            raise ValueError("forecast probability must be a finite number")
+        p = float(ans["p"])
+        if not math.isfinite(p) or not 0.0 <= p <= 1.0:
+            raise ValueError("forecast probability must be between 0 and 1")
+        rule = ans.get("resolution_rule") or {}
+        if self.strict_resolution_rules:
+            rule = validate_resolution_rule(
+                rule, metric_exists=self._metric_exists)
+        elif not isinstance(rule, dict) or not rule.get("type"):
+            raise ValueError("resolution_rule.type is required")
+        confidence = str(ans.get("confidence", "med"))
+        if self.strict_resolution_rules and confidence not in {"low", "med", "high"}:
+            raise ValueError("confidence must be low, med, or high")
+        drivers = ans.get("drivers", [])
+        if self.strict_resolution_rules and not (
+            isinstance(drivers, list) and 1 <= len(drivers) <= 10
+            and all(isinstance(driver, str) and driver.strip()
+                    and len(driver) <= 300 for driver in drivers)
+        ):
+            raise ValueError("drivers must contain 1 to 10 bounded strings")
+        raw_deadline = ans.get("deadline_tick")
+        if raw_deadline is None:
+            raw_deadline = tick + self.default_horizon
+        if isinstance(raw_deadline, bool):
+            raise ValueError("deadline_tick must be an integer")
+        deadline = int(raw_deadline)
+        if isinstance(raw_deadline, float) and raw_deadline != deadline:
+            raise ValueError("deadline_tick must be an integer")
+        if deadline <= tick:
+            raise ValueError("deadline_tick must be in the future")
+        if self.strict_resolution_rules:
+            max_horizon = int(
+                self.config.get("oracle", {}).get("max_horizon_ticks", 365))
+            if deadline > tick + max_horizon:
+                raise ValueError(
+                    f"deadline_tick exceeds the {max_horizon}-tick limit")
+        if governed_contract is not None:
+            if rule != governed_contract["resolution_rule"]:
+                raise ValueError(
+                    "resolution_rule does not match governed forecast contract")
+            if deadline != governed_contract["deadline_tick"]:
+                raise ValueError(
+                    "deadline_tick does not match governed forecast contract")
+        return {
+            "p": p,
+            "resolution_rule": rule,
+            "confidence": confidence,
+            "drivers": drivers,
+            "deadline_tick": deadline,
+        }
 
     def _normalize_governed_contract(
         self, contract: dict | None, *, tick: int,

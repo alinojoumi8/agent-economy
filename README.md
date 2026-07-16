@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v6-seed-7351-control.yaml` ... `v6-seed-7360-rumor.yaml` | Active predeclared v6 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap |
+| `runs/oracle/v7-seed-7361-control.yaml` ... `v7-seed-7370-rumor.yaml` | Current pending v7 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; governed answer repair; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap; no live evidence claimed yet |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v6 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v7 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -417,9 +417,16 @@ manifests; and the ignored compact final exact receipt. Seed 7348 remains
 excluded and has no eligible source/replay receipt or retained replay database.
 No v5 evidence is pooled into a later release corpus.
 
-The active fresh v6 corpus uses seeds 7351–7360,
+V6's first arm, seed 7351, stopped at tick 65 after a successful Kimi response
+used `confidence: "medium"` instead of the strict `low|med|high` contract. The
+runtime persisted a rule rejection, an `insufficient_data` prediction, and a
+missed acceptance checkpoint. The arm spent $0.18351 and recorded no provider,
+budget, or tool-execution failure. Preserve v6 as excluded diagnostic evidence;
+seeds 7352–7360 were never run, and no v6 artifact may enter a later corpus.
+
+The current pending v7 precommit uses fresh seeds 7361–7370,
 `kimi-for-coding-highspeed`, conservative 3x cost metering, and
-`runs/oracle/manifest-v6.template.yaml` with a $25 per-run safety cap. Runtime
+`runs/oracle/manifest-v7.template.yaml` with a $25 per-run safety cap. Runtime
 and receipt verification share a state-aware preflight that advertises only
 historical executable entity/range targets, maps `gov` to the treasury account,
 and keeps a genuine post-preflight execution failure out of the planner-retry
@@ -432,11 +439,13 @@ gate. Each receipt chain binds the immutable pre-run claim and initialized
 marker, clean Git commit/tree, committed config, canonical source/replay paths,
 required checkpoint manifests, and an execution tracker proving exact one-time
 source-call consumption with zero compatibility fallback or live replay
-dispatch. No v5 source, response, claim, initialized marker, checkpoint, replay,
-receipt, profile, commitment, manifest entry, run identity, or seed enters v6.
-Passing evidence still requires the ten fresh v6 source/replay pairs,
+dispatch. V7 validates the governed answer semantics within the existing
+bounded repair call before persistence. No v6 source, response, claim,
+initialized marker, checkpoint, replay, receipt, profile, commitment, manifest
+entry, run identity, or seed enters v7. Passing evidence still requires the ten
+fresh v7 source/replay pairs,
 60 resolved forecasts across both outcomes, p90 below 60 seconds, and Brier
-below 0.25. See the
+below 0.25; no v7 live evidence is claimed before that gate passes. See the
 [operator runbook](docs/operator-runbook.md).
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve

@@ -1048,37 +1048,37 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v6.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v7.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v6_commitment_and_highspeed_contract_are_pinned():
+def test_checked_in_v7_commitment_and_highspeed_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7351: "f31ffb8204b701eb8d724935e36cf6c4bb98b236c8b455df2eeba3fe055df52b",
-        7352: "8fe19716cc14df7a34b759cedcbeff4e08a9ebf6cdaf69bccee4fafd2bba2956",
-        7353: "0053e39ee2a0539f1f1cdbc2d062cf7a8a1ba0a8ef2a3192ed64b301a1aee96e",
-        7354: "c2a76dc708fc0879689b64ae2115e4ace78ef6bd116e2e325a82c5f5f57b0bcc",
-        7355: "463c4f48449e9733dc5ed82953f28bb36134b1a41945a1975cae485ebda43371",
-        7356: "f1e78a37ae09f4ee9b2d12b9f24c4204504c0496b4b6fd80d3548058104a0a2c",
-        7357: "65967b4eb5995a2d0be384eacfb86d7af38b82e6665e379e3f9576fd4407b806",
-        7358: "e1724cbe2f02e6773f9564402bbeff28b7867a8f6dfa6e22086b98a062c318f9",
-        7359: "347178b98098c6dcd6e495921868fe43d370e622454506f896039a461857dba5",
-        7360: "9a3f9a39dc74dd3fd06c63508662379952d6d667434404d97bfce465487051db",
+        7361: "cb80115b4c4fc13bfccb8a83b8828936a31cbef2e06c35bec794277671937968",
+        7362: "956f35356f2764a87c1639460846fe52e5032b6c482c881a385be6cfaebd86d0",
+        7363: "a2106b03012c59e72db7c0db617e469927072e972a03b27dc9d040a5d10e5654",
+        7364: "2d2c203629b754a5b62401bb6e585b06e5dea232e23e17ec0b7ce9fbcde3f0da",
+        7365: "7b8c1c30b5841ff39b4c05d8498a865a23e69443ebf3f2f420c93ce83e1a942e",
+        7366: "0fa305bab3b06cff0258800f04b40becd0fc64f464f1f2f43d6e7a8ab3a59030",
+        7367: "3a6d5b20b810af0a9b9f9212095762d2144b04da35626ab833433528f32dc65c",
+        7368: "08f8593a6049bfa01b1858c0979c5fc0d58253be86cd78873769e5e0f9daea11",
+        7369: "853807cf48e4c8bce8cecd6626cce30368368af95fffc7193d6fb20c89750014",
+        7370: "21e5b7f86d8e4fa12eacf0178c9c5fb86918b8fa71893a67675be3b4d813cd6e",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v6"
-    assert RELEASE_CAMPAIGN_VERSION == 6
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v7"
+    assert RELEASE_CAMPAIGN_VERSION == 7
     assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
     assert RELEASE_ORACLE_PRICING == {
         "in": 2.85, "out": 12.00, "cache": 0.57,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "c34c0cfe000ade888aca937a110afd24e799efe7a030635134212472e4686963")
+        "99fc30f9777c311bd435c1b2f11290b699cdaf1204c32028f59c6b008bed4b2a")
 
-    commitment_path = root / "commitment-v6.yaml"
+    commitment_path = root / "commitment-v7.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1111,6 +1111,47 @@ def test_checked_in_v6_commitment_and_highspeed_contract_are_pinned():
             "arrival_delay_min": 5,
             "arrival_delay_max": 20,
         }
+
+
+def test_v6_archive_commitment_and_profiles_remain_pinned():
+    root = Path("runs/oracle")
+    expected_hashes = {
+        7351: "f31ffb8204b701eb8d724935e36cf6c4bb98b236c8b455df2eeba3fe055df52b",
+        7352: "8fe19716cc14df7a34b759cedcbeff4e08a9ebf6cdaf69bccee4fafd2bba2956",
+        7353: "0053e39ee2a0539f1f1cdbc2d062cf7a8a1ba0a8ef2a3192ed64b301a1aee96e",
+        7354: "c2a76dc708fc0879689b64ae2115e4ace78ef6bd116e2e325a82c5f5f57b0bcc",
+        7355: "463c4f48449e9733dc5ed82953f28bb36134b1a41945a1975cae485ebda43371",
+        7356: "f1e78a37ae09f4ee9b2d12b9f24c4204504c0496b4b6fd80d3548058104a0a2c",
+        7357: "65967b4eb5995a2d0be384eacfb86d7af38b82e6665e379e3f9576fd4407b806",
+        7358: "e1724cbe2f02e6773f9564402bbeff28b7867a8f6dfa6e22086b98a062c318f9",
+        7359: "347178b98098c6dcd6e495921868fe43d370e622454506f896039a461857dba5",
+        7360: "9a3f9a39dc74dd3fd06c63508662379952d6d667434404d97bfce465487051db",
+    }
+    commitment = yaml.safe_load(
+        (root / "commitment-v6.yaml").read_text(encoding="utf-8"))
+    manifest = yaml.safe_load(
+        (root / "manifest-v6.template.yaml").read_text(encoding="utf-8"))
+    commitment_hash = (
+        "c34c0cfe000ade888aca937a110afd24e799efe7a030635134212472e4686963")
+    assert oracle_campaign._canonical_value_sha256(commitment) == commitment_hash
+    assert manifest["commitment_sha256"] == commitment_hash
+    for payload in (commitment, manifest):
+        assert payload["campaign_id"] == "oracle-calibration-v6"
+        assert payload["campaign_version"] == 6
+        assert [int(entry["seed"]) for entry in payload["runs"]] == list(
+            range(7351, 7361))
+    assert {
+        int(entry["seed"]): entry["effective_config_sha256"]
+        for entry in commitment["runs"]
+    } == expected_hashes
+
+    for entry in commitment["runs"]:
+        seed = int(entry["seed"])
+        condition = "rumor" if seed % 2 == 0 else "control"
+        assert entry["run_id"] == f"oracle-calibration-v6-s{seed}"
+        assert entry["profile"] == f"v6-seed-{seed}-{condition}.yaml"
+        assert effective_config_sha256(
+            load_config(root / entry["profile"])) == expected_hashes[seed]
 
 
 def test_v5_archive_commitment_and_profiles_remain_pinned():
@@ -1149,13 +1190,16 @@ def test_v5_archive_commitment_and_profiles_remain_pinned():
 
 def test_v6_campaign_has_no_v5_profile_or_evidence_ancestry():
     root = Path("runs/oracle")
+    v6_seeds = tuple(range(7351, 7361))
     base = yaml.safe_load(
         (root / "calibration-base-v6.yaml").read_text(encoding="utf-8"))
     assert base["extends"] == "../acceptance/rehearsal.yaml"
 
-    for seed in RELEASE_SEEDS:
+    for seed in v6_seeds:
+        profile_name = (
+            f"v6-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml")
         profile = yaml.safe_load(
-            (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
+            (root / profile_name).read_text(encoding="utf-8"))
         assert profile["extends"] == "calibration-base-v6.yaml"
 
     v5_commitment = yaml.safe_load(
@@ -1168,24 +1212,82 @@ def test_v6_campaign_has_no_v5_profile_or_evidence_ancestry():
     v6_manifest = yaml.safe_load(
         (root / "manifest-v6.template.yaml").read_text(encoding="utf-8"))
     previous_seeds = set(range(7301, 7351))
-    assert set(RELEASE_SEEDS).isdisjoint(previous_seeds)
-    assert v6_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
+    assert set(v6_seeds).isdisjoint(previous_seeds)
+    assert v6_manifest["commitment_sha256"] == (
+        "c34c0cfe000ade888aca937a110afd24e799efe7a030635134212472e4686963")
     for payload in (v6_commitment, v6_manifest):
         assert payload["campaign_id"] == "oracle-calibration-v6"
         assert payload["campaign_version"] == 6
         assert [entry["seed"] for entry in payload["runs"]] == list(
-            RELEASE_SEEDS)
+            v6_seeds)
 
     commitment_rows = {
         int(entry["seed"]): entry for entry in v6_commitment["runs"]}
     manifest_rows = {
         int(entry["seed"]): entry for entry in v6_manifest["runs"]}
-    assert set(commitment_rows) == set(manifest_rows) == set(RELEASE_SEEDS)
-    for seed in RELEASE_SEEDS:
+    assert set(commitment_rows) == set(manifest_rows) == set(v6_seeds)
+    for seed in v6_seeds:
+        profile_name = (
+            f"v6-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml")
         for key in ("seed", "run_id", "profile", "effective_config_sha256"):
             assert manifest_rows[seed][key] == commitment_rows[seed][key]
-        assert manifest_rows[seed]["run_id"] == f"{RELEASE_CAMPAIGN_ID}-s{seed}"
-        assert manifest_rows[seed]["profile"] == RELEASE_PROFILES[seed]
+        assert manifest_rows[seed]["run_id"] == f"oracle-calibration-v6-s{seed}"
+        assert manifest_rows[seed]["profile"] == profile_name
+
+
+def test_v7_campaign_has_no_v6_profile_or_evidence_ancestry():
+    root = Path("runs/oracle")
+    base = yaml.safe_load(
+        (root / "calibration-base-v7.yaml").read_text(encoding="utf-8"))
+    assert base["extends"] == "../acceptance/rehearsal.yaml"
+
+    for seed in RELEASE_SEEDS:
+        profile = yaml.safe_load(
+            (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
+        assert profile["extends"] == "calibration-base-v7.yaml"
+
+    v6_commitment = yaml.safe_load(
+        (root / "commitment-v6.yaml").read_text(encoding="utf-8"))
+    v7_commitment = yaml.safe_load(
+        (root / "commitment-v7.yaml").read_text(encoding="utf-8"))
+    v7_manifest = yaml.safe_load(
+        (root / "manifest-v7.template.yaml").read_text(encoding="utf-8"))
+    v6_rows = {int(entry["seed"]): entry for entry in v6_commitment["runs"]}
+    v7_commitment_rows = {
+        int(entry["seed"]): entry for entry in v7_commitment["runs"]}
+    v7_manifest_rows = {
+        int(entry["seed"]): entry for entry in v7_manifest["runs"]}
+    v6_config_hashes = {
+        row["effective_config_sha256"] for row in v6_rows.values()}
+    v7_config_hashes = {
+        row["effective_config_sha256"]
+        for row in v7_commitment_rows.values()}
+
+    assert set(RELEASE_SEEDS).isdisjoint(v6_rows)
+    assert v7_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
+    assert v7_config_hashes.isdisjoint(v6_config_hashes)
+    for payload in (v7_commitment, v7_manifest):
+        assert payload["campaign_id"] == RELEASE_CAMPAIGN_ID
+        assert payload["campaign_version"] == RELEASE_CAMPAIGN_VERSION
+        assert [int(entry["seed"]) for entry in payload["runs"]] == list(
+            RELEASE_SEEDS)
+
+    assert set(v7_commitment_rows) == set(v7_manifest_rows) == set(
+        RELEASE_SEEDS)
+    for seed in RELEASE_SEEDS:
+        committed = v7_commitment_rows[seed]
+        manifest = v7_manifest_rows[seed]
+        for key in ("seed", "run_id", "profile", "effective_config_sha256"):
+            assert manifest[key] == committed[key]
+        assert committed["run_id"] == f"{RELEASE_CAMPAIGN_ID}-s{seed}"
+        assert committed["profile"] == RELEASE_PROFILES[seed]
+        assert manifest["database"] == (
+            f"../../data/runs/{RELEASE_CAMPAIGN_ID}-s{seed}.db")
+        assert manifest["replay_database"] == (
+            f"../../data/runs/REPLAY_RUN_ID_{seed}.db")
+        assert effective_config_sha256(
+            load_config(root / committed["profile"])) == (
+                committed["effective_config_sha256"])
 
 
 def test_oracle_campaign_profile_cannot_change_predeclared_arm():

@@ -177,8 +177,8 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. The active `oracle-calibration-v6` commitment uses
-fresh seeds 7351–7360. Its ten predeclared profiles keep background behavior
+whole-world acceptance run. The current pending `oracle-calibration-v7`
+commitment uses fresh seeds 7361–7370. Its ten predeclared profiles keep background behavior
 scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
 metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
 seed or switch control/treatment arms after seeing outcomes. Treatment profiles
@@ -286,24 +286,33 @@ and fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint
 manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
 manifests; and the ignored compact final exact receipt. Seed 7348 remains
 excluded and has no eligible source/replay receipt or retained replay database. Do not
-resume the fixed corpus or copy any v5 artifact into v6.
+resume the fixed corpus or copy any v5 artifact into a later campaign.
 
-V6 retains the shared preflight and maps duplicate public-event citations by
+V6 retained the shared preflight and mapped duplicate public-event citations by
 their deterministic source occurrence. Missing, out-of-range, or inconsistent
-equivalence classes still fail closed. Its profiles have fresh seeds and direct
-acceptance-rehearsal ancestry; no v5 run identity, response, claim, initialized
-marker, checkpoint, replay, receipt, profile, commitment, manifest entry, or
-seed is eligible for the v6 manifest.
+equivalence classes still failed closed. Its first arm, seed 7351, stopped at
+tick 65 after a successful Kimi answer returned `confidence: "medium"` instead
+of the strict `low|med|high` value. Runtime persisted `oracle_rule_rejected`, an
+`insufficient_data` prediction, and `acceptance_checkpoint_missed`. Spend was
+$0.18351, with no provider, budget, or tool-execution failure. Preserve v6 as
+excluded diagnostic evidence; do not resume, rewrite, repair, or substitute
+seed 7351. Seeds 7352–7360 were never run and must remain unused by v6.
+
+V7 has direct acceptance-rehearsal ancestry, validates governed answer semantics
+inside the existing bounded repair call before persistence, and uses fresh seeds
+7361–7370. No v6 run identity, response, claim, initialized marker, checkpoint,
+replay, receipt, profile, commitment, manifest entry, or seed is eligible for
+the v7 manifest. No v7 live evidence is claimed before the complete gate passes.
 
 Then preflight and execute each profile from
-`v6-seed-7351-control.yaml` through `v6-seed-7360-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7351
+`v7-seed-7361-control.yaml` through `v7-seed-7370-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7361
 produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v6-seed-7351-control.yaml --preflight
-python run.py --config runs/oracle/v6-seed-7351-control.yaml --preflight-live
-python run.py --config runs/oracle/v6-seed-7351-control.yaml `
+python run.py --config runs/oracle/v7-seed-7361-control.yaml --preflight
+python run.py --config runs/oracle/v7-seed-7361-control.yaml --preflight-live
+python run.py --config runs/oracle/v7-seed-7361-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -356,13 +365,13 @@ storage cleanup.
 
 Run the ten arms sequentially and use this checkpoint retention boundary:
 
-- Keep every `oracle-calibration-v6-s*_t*.db` source checkpoint body and its
+- Keep every `oracle-calibration-v7-s*_t*.db` source checkpoint body and its
   `.manifest.json` through the aggregate report. The evaluator reopens each
   physical source checkpoint, rebuilds its runtime manifest, runs SQLite and
   ledger checks, and rejects a missing body; a receipt hash alone is not enough.
 - After one arm has emitted a passed source receipt and its manifest entry is
   durably recorded, archive or prune only that arm's
-  `replay-oracle-calibration-v6-*_t*.db` checkpoint bodies. Retain their tiny
+  `replay-oracle-calibration-v7-*_t*.db` checkpoint bodies. Retain their tiny
   manifests, the final replay database under `data/runs`, the final source
   database, and all source checkpoint bodies. Resolve and verify the exact
   replay run ID and checkpoint-directory paths before removal; never use a broad
@@ -372,18 +381,18 @@ Run the ten arms sequentially and use this checkpoint retention boundary:
   bodies keeps the ten-arm peak near `110–114 GiB`; monitor free space before
   each arm and stop before the safety margin is exhausted.
 - Only after the aggregate JSON/Markdown receipt has passed and the evidence
-  package is durably archived may all ten arms' 400 v6 source checkpoint
+  package is durably archived may all ten arms' 400 v7 source checkpoint
   database bodies (40 per arm) be pruned. Retain their manifests, final
   source/replay databases, claims, and receipts.
 
 Only after all ten source claims and runs finish, copy
-`runs/oracle/manifest-v6.template.yaml` to a run-specific evidence manifest and
+`runs/oracle/manifest-v7.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v6.template.yaml runs/oracle/manifest-v6.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v6.yaml
+Copy-Item runs/oracle/manifest-v7.template.yaml runs/oracle/manifest-v7.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v7.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -550,7 +559,7 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep the release pull request draft until the v6 Oracle campaign, capped
+Keep the release pull request draft until the v7 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
 publication, and public deployment require separate authorization.

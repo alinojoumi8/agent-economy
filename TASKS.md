@@ -153,7 +153,7 @@ audit pass under separate authorization.
   receipts belong only to seeds 7341–7347; seed 7348 has no eligible replay
   database or Oracle source/replay receipt. Preserve v5 as diagnostic evidence
   only: retain final sources, claims, reports, and all 320 checkpoint manifests
-  and hashes. Never reuse its identities or evidence in v6.
+  and hashes. Never reuse its identities or evidence in a later campaign.
 - [x] Prove the occurrence-aware correction against immutable seed 7348. Final
   offline replay `replay-oracle-calibration-v5-s7348-5220b912ae` reached tick
   335 with `exact: true`, identical logical hash `fee77b65…b378`, all 82
@@ -168,18 +168,28 @@ audit pass under separate authorization.
   and reports; the 160 fixed-code replay checkpoint manifests; and the ignored
   compact final exact receipt. Seed 7348 remains excluded and has no eligible
   source/replay receipt or retained replay database.
-- [ ] Run the ten fresh v6 live-Kimi Oracle profiles (seeds 7351–7360,
+- [x] Preserve and exclude v6 after its first arm failed the immutable gate.
+  Seed 7351 stopped at tick 65 when a successful Kimi answer returned
+  `confidence: "medium"` instead of `low|med|high`; the runtime persisted a rule
+  rejection, an `insufficient_data` prediction, and a missed checkpoint. Spend
+  was $0.18351, with no provider, budget, or tool-execution failure. Seeds
+  7352–7360 were never run. Do not resume, rewrite, substitute, or reuse any v6
+  evidence in v7.
+- [ ] Run the ten fresh v7 live-Kimi Oracle profiles (seeds 7361–7370,
   `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
-  `--oracle-campaign-run`. V6 uses one shared state-aware preflight for runtime
+  `--oracle-campaign-run`. V7 uses one shared state-aware preflight for runtime
   and receipt verification, advertises only historical executable entity/range
   targets, maps `gov` to the system-owned treasury account, and keeps genuine
   post-preflight execution failures out of the retry provenance channel.
   Duplicate public-event citations map by deterministic source occurrence while
-  missing or inconsistent equivalence classes fail closed. Each
+  missing or inconsistent equivalence classes fail closed. Governed answer
+  semantics are validated inside the existing bounded repair call before
+  persistence. Each
   arm finalizes its source and exact offline companion and hashes those
   artifacts plus the checked-in profile; pass the emitted entries through
-  `--oracle-calibration-report` using `runs/oracle/manifest-v6.template.yaml`
-  without exclusions.
+  `--oracle-calibration-report` using `runs/oracle/manifest-v7.template.yaml`
+  without exclusions. Do not claim v7 evidence until all ten arms and the
+  aggregate gate pass.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
@@ -278,7 +288,7 @@ audit pass under separate authorization.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep the release pull request draft until the successful v6 Oracle
+- [ ] Keep the release pull request draft until the successful v7 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
   publication, and public deployment require separate authorization.

@@ -154,7 +154,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Answers probability questions with: point estimate, key drivers, confidence, and an auto-created resolution criterion + deadline.
 - Predictions logged; resolved automatically when determinable from world state; Brier score tracked over the run.
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
-- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The active v6 commitment uses fresh seeds 7351–7360 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run. Its shared state-aware planner preflight binds the advertised historical tool catalog and valid entity/range targets before any read tool executes, so every retryable rejection remains independently reproducible; duplicate public-event citation classes resolve by deterministic source occurrence while missing or inconsistent classes still fail closed.
+- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The current pending v7 precommit uses fresh seeds 7361–7370 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run. Its shared state-aware planner preflight binds the advertised historical tool catalog and valid entity/range targets before any read tool executes, so every retryable rejection remains independently reproducible; duplicate public-event citation classes resolve by deterministic source occurrence while missing or inconsistent classes still fail closed. No v7 evidence is claimed until all predeclared live arms and their exact companion replays pass the manifest gate.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -260,14 +260,24 @@ source/replay receipts for seeds 7341–7347; all source-checkpoint
 manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
 manifests; and the ignored compact final exact receipt. Seed 7348 remains
 excluded and has no eligible source/replay receipt or retained replay database.
-No v5 source, response, claim, initialized marker,
-checkpoint, replay, receipt, profile, commitment, manifest entry, run identity,
-or seed is reused by v6. The active v6 gate starts a fresh ten-profile corpus at
-seeds 7351–7360 after the occurrence-aware citation fix, with one shared
-state-aware preflight used by runtime and receipt verification.
+No v5 source, response, claim, initialized marker, checkpoint, replay, receipt,
+profile, commitment, manifest entry, run identity, or seed was reused by v6.
+V6's first arm, seed 7351, stopped at tick 65 after a successful Kimi response
+used `confidence: "medium"` instead of the strict `low|med|high` contract. The
+rule rejection persisted, the scheduled prediction became `insufficient_data`,
+and the checkpoint was missed. The arm spent $0.18351 and recorded no provider,
+budget, or tool-execution failure. V6 is preserved and excluded; seeds
+7352–7360 were never run and may not be substituted into that campaign.
 
-The outstanding work is release evidence and operations: pass the fresh v6
-ten-profile Oracle campaign (seeds 7351–7360 using
+The current v7 precommit starts a new ten-profile corpus at seeds 7361–7370,
+retains the occurrence-aware citation and shared state-aware preflight fixes,
+and validates the governed answer contract within the existing bounded repair
+call before persistence. No v6 source, response, claim, initialized marker,
+checkpoint, replay, receipt, profile, commitment, manifest entry, run identity,
+or seed enters v7, and no v7 live evidence is claimed yet.
+
+The outstanding work is release evidence and operations: pass the fresh v7
+ten-profile Oracle campaign (seeds 7361–7370 using
 `kimi-for-coding-highspeed` with conservative 3x metering), run the live 30-day
 rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
 public-release provenance audit. The pull request stays draft; merging,

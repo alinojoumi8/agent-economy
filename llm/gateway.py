@@ -837,6 +837,7 @@ class Gateway:
     async def complete(
             self, req: LLMRequest, *, schema_hint: str = "",
             parsed_transform: Optional[Callable[[Any], Any]] = None,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None,
             ) -> LLMResponse:
         provider, model = self.route(req.role, req.purpose)
         adapter = self.adapters.get(provider)
@@ -854,7 +855,7 @@ class Gateway:
 
         if self.replay:
             replayed = self._replay_lookup(
-                cache_key, req, schema_hint, parsed_transform)
+                cache_key, req, schema_hint, parsed_transform, parsed_validator)
             if replayed is not None:
                 response, source_row = replayed
                 response.call_id = self._log_replay_call(req, cache_key, source_row)
@@ -869,7 +870,8 @@ class Gateway:
                 "replay", model, req.purpose,
                 f"stored response missing for cache key {cache_key}", attempts=0)
 
-        resumed = self._durable_lookup(cache_key, schema_hint)
+        resumed = self._durable_lookup(
+            cache_key, schema_hint, parsed_validator)
         if resumed is not None:
             if parsed_transform is not None:
                 resumed.parsed = parsed_transform(resumed.parsed)
@@ -924,8 +926,13 @@ class Gateway:
         parsed, ok = self._parse(result.text)
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        validation_error = (
+            self._parsed_validation_error(parsed, parsed_validator) if ok else None)
+        if validation_error is not None:
+            ok = False
         if not ok and provider not in ("scripted", "mock"):
-            # One repair retry with the parse error appended (TECH-SPEC §8 failure policy).
+            # One repair retry with the parse/contract error appended
+            # (TECH-SPEC §8 failure policy).
             operational_log(logger, logging.WARNING, "llm.repair.started",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -936,7 +943,9 @@ class Gateway:
                 user=(req.user
                       + "\n\nYour previous reply did not match the required JSON contract. "
                         "Reply ONLY with the JSON object."
-                      + (f" Required shape: {schema_hint}" if schema_hint else "")),
+                      + (f" Required shape: {schema_hint}" if schema_hint else "")
+                      + (f" Contract error: {validation_error}"
+                         if validation_error else "")),
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
 
@@ -1006,6 +1015,11 @@ class Gateway:
             parsed, ok = self._parse(result.text)
             if ok and schema_hint:
                 ok = self._matches_schema(parsed, schema_hint)
+            validation_error = (
+                self._parsed_validation_error(parsed, parsed_validator)
+                if ok else None)
+            if validation_error is not None:
+                ok = False
             operational_log(logger, logging.INFO, "llm.repair.completed",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -1123,6 +1137,21 @@ class Gateway:
             return False
         return all(key in parsed for key in expected)
 
+    @staticmethod
+    def _parsed_validation_error(
+            parsed: Any,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]],
+            ) -> Optional[str]:
+        """Return one bounded semantic-contract error for gateway repair."""
+        if parsed_validator is None:
+            return None
+        error = parsed_validator(parsed)
+        if error is None:
+            return None
+        if not isinstance(error, str) or not error.strip():
+            return "response failed semantic contract validation"
+        return error.strip()[:500]
+
     # ── caching + cost ───────────────────────────────────────────────────────
     def _price(self, model: str, in_tok: int, out_tok: int, cached_in: int,
                pricing: dict) -> tuple[bool, float]:
@@ -1234,7 +1263,8 @@ class Gateway:
 
     def _replay_lookup(
             self, cache_key: str, req: LLMRequest, schema_hint: str = "",
-            parsed_transform: Optional[Callable[[Any], Any]] = None):
+            parsed_transform: Optional[Callable[[Any], Any]] = None,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
@@ -1272,6 +1302,8 @@ class Gateway:
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok and self._parsed_validation_error(parsed, parsed_validator) is not None:
+            ok = False
         if ok:
             parsed = self._localize_replay_event_references(parsed)
         if not ok:
@@ -1302,7 +1334,10 @@ class Gateway:
             source_call_id, _logical_replay_call(row), str(row["purpose"] or "")))
         return response, row
 
-    def _durable_lookup(self, cache_key: str, schema_hint: str = "") -> Optional[LLMResponse]:
+    def _durable_lookup(
+            self, cache_key: str, schema_hint: str = "",
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None,
+            ) -> Optional[LLMResponse]:
         """Reuse a completed same-run call when an interrupted phase is retried."""
         row = self.store.query_one(
             "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1",
@@ -1313,6 +1348,8 @@ class Gateway:
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok and self._parsed_validation_error(parsed, parsed_validator) is not None:
+            ok = False
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}
