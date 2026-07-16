@@ -14,7 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
-| `runs/oracle/v4-seed-7331-control.yaml` … `v4-seed-7340-rumor.yaml` | Fixed v4 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, conservative 3x metering, capped at $25 per run |
+| `runs/oracle/v5-seed-7341-control.yaml` … `v5-seed-7350-rumor.yaml` | Fixed v5 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, conservative 3x metering, capped at $25 per run |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -244,10 +244,10 @@ malformed, or duplicate completion references fail closed. Markerless stored
 configs retain the legacy answer-call calculation for replay compatibility.
 
 The multi-run Oracle calibration release gate is separate from one run's
-`acceptance` block. The active `oracle-calibration-v4` corpus uses fresh seeds
-7331–7340 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
+`acceptance` block. The active `oracle-calibration-v5` corpus uses fresh seeds
+7341–7350 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
 and a $25 per-run cap. Its schema-v1 manifest is based on
-`runs/oracle/manifest-v4.template.yaml` and explicitly records campaign ID and
+`runs/oracle/manifest-v5.template.yaml` and explicitly records campaign ID and
 version plus every run's ID, seed, source/replay database paths, profile path,
 and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
 ready-to-copy manifest entry for one predeclared profile.
@@ -273,19 +273,36 @@ tick 335 and crossed that arrival without the v1 divergence. Canonical
 verification returned `exact: true` with `differences: []`. Its receipt failed
 because checkpoint integrity counted all stored agent rows rather than
 validating the bounded living population and reconciling it with preserved
-deceased rows. V2 is diagnostic evidence and must not be listed in the v4
+deceased rows. V2 is diagnostic evidence and must not be listed in the active
 manifest. V3 seed 7321 subsequently completed its source and exact companion
 replay, but its original receipt applied accepted-plan validation to
 authenticated rejected planner attempts and admitted only four of six
 forecasts. That receipt records the pre-inspection source hash; the local source
-artifact was later write-opened during diagnosis and is not admissible. The v4
-receipt contract retains the living/deceased census, chronological
+artifact was later write-opened during diagnosis and is not admissible.
+
+V4 seeds 7331 and 7332 produced eligible exact source/replay receipts, but they
+remain diagnostic and are never reused. Seed 7333 completed an exact pair but
+failed receipt eligibility at the tick-125 forecast. Its first planner attempt
+requested the government ledger. Runtime queried only
+`accounts.owner_type='gov'`, missed the actual system-owned `sys:gov` treasury,
+returned `entity ledger accounts not found`, and incorrectly persisted and
+retried that post-preflight execution failure as a planner rejection. The
+second attempt failed the independently reproducible metric-name contract and
+the third succeeded; the receipt correctly rejected the first retry binding and
+therefore the run and fixed corpus. No v4 source, response, claim, checkpoint,
+replay, or seed enters v5.
+
+The v5 receipt/runtime contract retains the living/deceased census, chronological
 death/schedule/arrival linkage, `NIGHT_CLOSE` event and subject provenance,
 one-time due-schedule consumption, and profile-locked 5–20-tick delay checks. It
-also binds rejected planner attempts to independently reproduced errors and
-matching rejection events. Full errors and monotonic attempt ordinals make
-retry requests unique, while only the final accepted plan is validated as
-executed evidence. No v1, v2, or v3 run enters the v4 manifest.
+also shares a scheduled-tick, catalog-aware plan preflight between runtime and
+receipt audit. That preflight validates historical tick ranges and advertised
+entity IDs before any read executes; government ledger reads map to the
+system-owned `sys:gov` treasury. Post-preflight failures are execution failures,
+not retryable planner rejections. Full independently reproduced errors,
+matching rejection events, and monotonic attempt ordinals make legitimate retry
+requests unique, while only the final accepted plan is validated as executed
+evidence. No v1, v2, v3, or v4 run enters the v5 manifest.
 
 ## Rumor targeting
 

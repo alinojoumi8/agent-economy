@@ -6,11 +6,15 @@ import json
 import re
 from typing import Any, Callable, Optional
 
+from engine.ledger import SYS_GOV
+
+
 class OracleToolError(ValueError):
     pass
 
 
 MAX_PROMPT_EVIDENCE_CHARS = 8_000
+ORACLE_PREFLIGHT_CONTRACT = "state_bound_v1"
 MAX_PROMPT_RESULT_CHARS = 700
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -193,14 +197,16 @@ def validate_oracle_tool_args(name: str, args: dict[str, Any]) -> None:
 
 
 def validate_oracle_plan(
-        plan: Any, *, max_queries: int = 8) -> list[dict]:
+        plan: Any, *, max_queries: int = 8,
+        current_tick: int | None = None,
+        tool_catalog: list[dict] | None = None) -> list[dict]:
     """Normalize and preflight one planner response exactly as runtime does.
 
-    JSON values other than objects are normalized to an empty plan. The
-    returned queries have passed every deterministic check that occurs before
-    a read-only tool is executed. Tool-state failures remain runtime errors;
-    release receipts deliberately do not treat those as independently proven
-    planner rejections.
+    JSON values other than objects are normalized to an empty plan. Static
+    shape and argument checks always run. Semantics-7 callers additionally
+    supply the scheduled tick and the engine-generated historical tool catalog
+    so every retryable range/entity failure is reproducible before any read
+    tool executes.
     """
     normalized = plan if isinstance(plan, dict) else {}
     queries = normalized.get("queries", [])
@@ -214,6 +220,9 @@ def validate_oracle_plan(
     for request in queries:
         if not isinstance(request, dict):
             raise OracleToolError("each query must be an object")
+        if ((current_tick is not None or tool_catalog is not None)
+                and set(request) != {"tool", "args"}):
+            raise OracleToolError("planner query shape is invalid")
         name = str(request.get("tool", ""))
         args = request.get("args", {})
         validate_oracle_tool_args(name, args)
@@ -222,14 +231,70 @@ def validate_oracle_plan(
         if (from_tick is not None and to_tick is not None
                 and from_tick > to_tick):
             raise OracleToolError("invalid tick range")
+
+    catalog_by_name: dict[str, dict] = {}
+    if tool_catalog is not None:
+        if not isinstance(tool_catalog, list) or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("name"), str)
+                for item in tool_catalog):
+            raise OracleToolError("Oracle tool catalog is invalid")
+        catalog_by_name = {
+            str(item["name"]): item for item in tool_catalog
+        }
+    if current_tick is not None:
+        if (isinstance(current_tick, bool)
+                or not isinstance(current_tick, int) or current_tick < 0):
+            raise OracleToolError("current tick is invalid")
+
+    # This second pass mirrors execution order after every static query has
+    # passed. It therefore preserves the first runtime-visible deterministic
+    # error while guaranteeing that no read tool has executed yet.
+    for request in queries:
+        name = str(request.get("tool", ""))
+        args = request.get("args", {})
+        if current_tick is not None and name in {
+                "query_metrics", "read_news", "sample_conversations"}:
+            end = current_tick if args.get("to_tick") is None \
+                else int(args["to_tick"])
+            start = max(0, end - 30) if args.get("from_tick") is None \
+                else int(args["from_tick"])
+            if start < 0 or end < start or end > current_tick:
+                raise OracleToolError("invalid tick range")
+        if tool_catalog is None:
+            continue
+        catalog = catalog_by_name.get(name)
+        if not isinstance(catalog, dict):
+            raise OracleToolError(
+                f"unknown or non-read-only Oracle tool: {name!r}")
+        if name in {"sample_conversations", "inspect_agent"}:
+            agent_id = args.get("agent_id")
+            if (agent_id is not None and agent_id not in
+                    catalog.get("available_agent_ids", [])):
+                raise OracleToolError("agent not found")
+        elif name == "get_ledger_summary":
+            entity_type = args.get("entity_type")
+            entity_id = args.get("entity_id")
+            if entity_type in {"agent", "firm", "bank"}:
+                available = catalog.get("available_entity_ids", {})
+                if (not isinstance(available, dict)
+                        or entity_id not in available.get(entity_type, [])):
+                    raise OracleToolError("entity ledger accounts not found")
+            elif entity_type not in catalog.get("available_entity_types", []):
+                raise OracleToolError("entity ledger accounts not found")
+        elif name == "read_order_book":
+            firm_id = args.get("firm_id")
+            if (firm_id is not None and firm_id not in
+                    catalog.get("available_firm_ids", [])):
+                raise OracleToolError("firm not found")
     return queries
 
 
-def oracle_tool_definitions(store) -> list[dict]:
+def oracle_tool_definitions(store, *, tick: int | None = None) -> list[dict]:
     """Canonical governed tool catalog shared by runtime and evidence audit."""
     bank_ids = [int(row["id"]) for row in store.query(
         "SELECT id FROM banks ORDER BY id LIMIT 20")]
-    return [
+    legacy = [
         {"name": "query_metrics", "args": {
             "names": "list[str]", "from_tick": "int|null",
             "to_tick": "int|null", "limit": "1..200"}},
@@ -247,6 +312,71 @@ def oracle_tool_definitions(store) -> list[dict]:
          "available_entity_ids": {"bank": bank_ids}},
         {"name": "read_order_book", "args": {
             "firm_id": "int|null", "depth": "1..20"}},
+    ]
+    # Markerless and stored semantics 1-6 prompts keep their exact historical
+    # catalog. Supplying a scheduled tick explicitly opts semantics 7 into the
+    # richer, historically reproducible catalog used by release receipts.
+    if tick is None:
+        return legacy
+
+    catalog_tick = int(tick)
+    max_ids = 100
+    agent_ids = [int(row["id"]) for row in store.query(
+        "SELECT id FROM agents WHERE COALESCE(arrived_tick,0)<=? "
+        "ORDER BY id LIMIT ?", (catalog_tick, max_ids))]
+    firm_ids = [int(row["id"]) for row in store.query(
+        "SELECT id FROM firms WHERE COALESCE(founded_tick,0)<=? "
+        "ORDER BY id LIMIT ?", (catalog_tick, max_ids))]
+    ledger_agent_ids = [int(row["id"]) for row in store.query(
+        "SELECT DISTINCT a.id FROM agents a JOIN accounts x "
+        "ON x.owner_type='agent' AND x.owner_id=a.id "
+        "WHERE COALESCE(a.arrived_tick,0)<=? ORDER BY a.id LIMIT ?",
+        (catalog_tick, max_ids))]
+    ledger_firm_ids = [int(row["id"]) for row in store.query(
+        "SELECT DISTINCT f.id FROM firms f JOIN accounts x "
+        "ON x.owner_type='firm' AND x.owner_id=f.id "
+        "WHERE COALESCE(f.founded_tick,0)<=? ORDER BY f.id LIMIT ?",
+        (catalog_tick, max_ids))]
+    ledger_bank_ids = [int(row["id"]) for row in store.query(
+        "SELECT DISTINCT b.id FROM banks b JOIN accounts x "
+        "ON x.owner_type='bank' AND x.owner_id=b.id "
+        "ORDER BY b.id LIMIT 20")]
+    available_entity_types: list[str] = []
+    if store.query_one(
+            "SELECT 1 FROM accounts WHERE owner_type='gov' OR "
+            "(owner_type='system' AND label=?) LIMIT 1", (SYS_GOV,)):
+        available_entity_types.append("gov")
+    for entity_type in ("central_bank", "system"):
+        if store.query_one(
+                "SELECT 1 FROM accounts WHERE owner_type=? LIMIT 1",
+                (entity_type,)):
+            available_entity_types.append(entity_type)
+    return [
+        {"name": "query_metrics", "args": {
+            "names": "list[str]", "from_tick": "int|null",
+            "to_tick": "int|null", "limit": "1..200"}},
+        {"name": "read_news", "args": {
+            "from_tick": "int|null", "to_tick": "int|null", "limit": "1..20"}},
+        {"name": "sample_conversations", "args": {
+            "agent_id": "int|null", "from_tick": "int|null",
+            "to_tick": "int|null", "limit": "1..20"},
+         "available_agent_ids": agent_ids},
+        {"name": "inspect_agent", "args": {"agent_id": "int"},
+         "available_agent_ids": agent_ids},
+        {"name": "get_ledger_summary", "args": {
+            "entity_type": "agent|firm|bank|gov|central_bank|system",
+            "entity_id": (
+                "existing int required for agent|firm|bank; "
+                "omit for gov|central_bank|system")},
+         "available_entity_ids": {
+             "agent": ledger_agent_ids,
+             "firm": ledger_firm_ids,
+             "bank": ledger_bank_ids,
+         },
+         "available_entity_types": available_entity_types},
+        {"name": "read_order_book", "args": {
+            "firm_id": "int|null", "depth": "1..20"},
+         "available_firm_ids": firm_ids},
     ]
 
 
@@ -274,7 +404,9 @@ class OracleTools:
     def definitions(self) -> list[dict]:
         return oracle_tool_definitions(self.store)
 
-    def execute_plan(self, queries: list[dict]) -> list[dict]:
+    def execute_plan(
+            self, queries: list[dict], *,
+            treasury_alias: bool | None = None) -> list[dict]:
         if not isinstance(queries, list):
             raise OracleToolError("queries must be a list")
         if len(queries) > self.MAX_QUERIES:
@@ -289,7 +421,16 @@ class OracleTools:
                 raise OracleToolError(f"unknown or non-read-only Oracle tool: {name!r}")
             validate_oracle_tool_args(name, args)
             try:
-                result = self._tools[name](**args)
+                if (name == "get_ledger_summary"
+                        and args.get("entity_type") == "gov"):
+                    use_treasury_alias = (
+                        self.e.engine_semantics_version >= 7
+                        if treasury_alias is None else treasury_alias)
+                    result = self._get_ledger_summary(
+                        "gov", args.get("entity_id"),
+                        treasury_alias=use_treasury_alias)
+                else:
+                    result = self._tools[name](**args)
             except TypeError as exc:
                 raise OracleToolError(
                     f"invalid arguments for {name}: {exc}") from exc
@@ -297,7 +438,9 @@ class OracleTools:
             transcript.append(item)
         return bound_oracle_evidence(transcript)
 
-    def execute_plan_legacy(self, queries: list[dict]) -> list[dict]:
+    def execute_plan_legacy(
+            self, queries: list[dict], *,
+            treasury_alias: bool | None = None) -> list[dict]:
         """Preserve the semantics 1-6/pre-hardening transcript contract."""
         if not isinstance(queries, list):
             raise OracleToolError("queries must be a list")
@@ -316,7 +459,17 @@ class OracleTools:
             if not isinstance(args, dict):
                 raise OracleToolError("tool args must be an object")
             try:
-                result = self._tools[name](**args)
+                if (name == "get_ledger_summary"
+                        and args.get("entity_type") == "gov"
+                        and set(args).issubset({"entity_type", "entity_id"})):
+                    use_treasury_alias = (
+                        self.e.engine_semantics_version >= 7
+                        if treasury_alias is None else treasury_alias)
+                    result = self._get_ledger_summary(
+                        "gov", args.get("entity_id"),
+                        treasury_alias=use_treasury_alias)
+                else:
+                    result = self._tools[name](**args)
             except TypeError as exc:
                 raise OracleToolError(
                     f"invalid arguments for {name}: {exc}") from exc
@@ -425,11 +578,29 @@ class OracleTools:
                 "ORDER BY id DESC LIMIT 12", (aid,))],
         }
 
-    def get_ledger_summary(self, entity_type: str, entity_id: Optional[int] = None) -> dict:
+    def get_ledger_summary(
+            self, entity_type: str, entity_id: Optional[int] = None) -> dict:
+        return self._get_ledger_summary(
+            entity_type, entity_id,
+            treasury_alias=self.e.engine_semantics_version >= 7)
+
+    def _get_ledger_summary(
+            self, entity_type: str, entity_id: Optional[int], *,
+            treasury_alias: bool) -> dict:
         kind = str(entity_type)
         if kind not in self.ENTITY_TYPES:
             raise OracleToolError("unsupported entity type")
-        if kind in {"gov", "central_bank", "system"}:
+        if kind == "gov":
+            if treasury_alias:
+                rows = self.store.query(
+                    "SELECT id,kind,label,balance_cents,bank_id FROM accounts "
+                    "WHERE owner_type='gov' OR "
+                    "(owner_type='system' AND label=?) ORDER BY id", (SYS_GOV,))
+            else:
+                rows = self.store.query(
+                    "SELECT id,kind,label,balance_cents,bank_id FROM accounts "
+                    "WHERE owner_type='gov' ORDER BY id")
+        elif kind in {"central_bank", "system"}:
             rows = self.store.query(
                 "SELECT id,kind,label,balance_cents,bank_id FROM accounts "
                 "WHERE owner_type=? ORDER BY id", (kind,))

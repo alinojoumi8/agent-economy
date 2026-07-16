@@ -42,6 +42,7 @@ from oracle.calibration import calibration_from_pairs
 from oracle.tools import OracleToolError, OracleTools
 from oracle.tools import (
     MAX_PROMPT_EVIDENCE_CHARS,
+    ORACLE_PREFLIGHT_CONTRACT,
     canonical_oracle_json,
     oracle_tool_definitions,
     validate_bounded_oracle_evidence,
@@ -62,11 +63,11 @@ _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v4"
-RELEASE_CAMPAIGN_VERSION = 4
-RELEASE_SEEDS = tuple(range(7331, 7341))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v5"
+RELEASE_CAMPAIGN_VERSION = 5
+RELEASE_SEEDS = tuple(range(7341, 7351))
 RELEASE_PROFILES = {
-    seed: f"v4-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v5-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "kimi"
@@ -88,7 +89,7 @@ RELEASE_ORACLE_ADAPTER = {
 RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v4.yaml"
+    / "commitment-v5.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -97,7 +98,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "a2dac4421baf8290e4119287d94cfd82c0104ef4f38f1bd9fa9cdb450a109e51"
+    "00b1b2a9e00168920a89f24f0d914b0d34efe8b232120e412364e29bf7865595"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -149,7 +150,7 @@ FORBIDDEN_PERSISTED_MARKERS = (
 _NON_LIVE_PROVIDERS = {"", "scripted", "mock", "local", "recorded"}
 _FAILURE_EVENTS = {
     "provider_failure", "provider_pause", "budget_pause",
-    "reconciliation_failure", "report_failed",
+    "reconciliation_failure", "report_failed", "oracle_tool_execution_failed",
 }
 
 
@@ -2086,11 +2087,13 @@ def _campaign_arm_integrity(store: Store, seed: int) -> tuple[dict, list[str]]:
     }, reasons
 
 
-def _planner_query_validation_errors(plan: dict, *, tick: int) -> list[str]:
+def _planner_query_validation_errors(
+        plan: dict, *, tick: int, tool_catalog: list[dict]) -> list[str]:
     """Return deterministic contract errors for one persisted planner response."""
     try:
         queries = validate_oracle_plan(
-            plan, max_queries=OracleTools.MAX_QUERIES)
+            plan, max_queries=OracleTools.MAX_QUERIES,
+            current_tick=tick, tool_catalog=tool_catalog)
     except OracleToolError as exc:
         return [str(exc)]
 
@@ -2110,10 +2113,13 @@ def _planner_query_validation_errors(plan: dict, *, tick: int) -> list[str]:
     return errors
 
 
-def _planner_runtime_validation_error(plan: dict) -> str | None:
+def _planner_runtime_validation_error(
+        plan: dict, *, tick: int, tool_catalog: list[dict]) -> str | None:
     """Return the shared pre-execution error for a rejected response."""
     try:
-        validate_oracle_plan(plan, max_queries=OracleTools.MAX_QUERIES)
+        validate_oracle_plan(
+            plan, max_queries=OracleTools.MAX_QUERIES,
+            current_tick=tick, tool_catalog=tool_catalog)
     except OracleToolError as exc:
         return str(exc)
     return None
@@ -2317,6 +2323,7 @@ def _forecast_evidence(
         "resolution_rule": item.get("expected_rule"),
         "deadline_tick": tick + int(item.get("horizon_ticks", 30)),
     }
+    expected_tool_catalog = oracle_tool_definitions(store, tick=tick)
     calls = store.query(
         "SELECT id,provider,purpose,model,request_json,response_json,in_tokens,"
         "out_tokens,cost_usd,latency_ms FROM llm_calls "
@@ -2422,8 +2429,10 @@ def _forecast_evidence(
                 "read_only": True,
             }
             if (not isinstance(context, dict)
+                    or context.get("preflight_contract")
+                    != ORACLE_PREFLIGHT_CONTRACT
                     or context.get("available_tools")
-                    != oracle_tool_definitions(store)
+                    != expected_tool_catalog
                     or context.get("constraints") != expected_constraints):
                 reasons.append("scheduled planner tool catalog/constraints are invalid")
             normalized_plan = parsed_text if isinstance(parsed_text, dict) else {}
@@ -2431,9 +2440,13 @@ def _forecast_evidence(
             planner_contexts.append(
                 context if isinstance(context, dict) else None)
             planner_query_errors.append(
-                _planner_query_validation_errors(normalized_plan, tick=tick))
+                _planner_query_validation_errors(
+                    normalized_plan, tick=tick,
+                    tool_catalog=expected_tool_catalog))
             planner_runtime_errors.append(
-                _planner_runtime_validation_error(normalized_plan))
+                _planner_runtime_validation_error(
+                    normalized_plan, tick=tick,
+                    tool_catalog=expected_tool_catalog))
         elif str(row["purpose"]) == "oracle":
             if (not isinstance(context, dict)
                     or context.get("evidence") != evidence
@@ -2510,12 +2523,15 @@ def _forecast_evidence(
                     reasons.append(
                         "planner rejection error is not independently reproducible")
                 next_context = planner_contexts[attempt]
+                retry_context_error = (
+                    expected_error if expected_error is not None else event_error)
                 if (not isinstance(event_error, str) or not event_error
                         or len(event_error) > 500
                         or not isinstance(next_context, dict)
                         or not isinstance(
                             next_context.get("previous_plan_error"), str)
-                        or next_context["previous_plan_error"] != expected_error
+                        or next_context["previous_plan_error"]
+                        != retry_context_error
                         or type(next_context.get("planner_attempt")) is not int
                         or next_context["planner_attempt"] != attempt + 1
                         or next_context.get("instruction") != (
@@ -2690,11 +2706,14 @@ def _evaluate_run(entry: dict, *, manifest_dir: Path, campaign_id: str,
             if int(meta["tick"]) < min_ticks or str(meta["status"]) not in {
                     "paused", "finished"}:
                 reasons.append("run did not complete its configured horizon")
+            failure_events = tuple(sorted(_FAILURE_EVENTS))
+            placeholders = ",".join("?" for _ in failure_events)
             failure_count = int(store.scalar(
-                "SELECT COUNT(*) FROM events WHERE kind IN (?,?,?,?,?)",
-                tuple(sorted(_FAILURE_EVENTS)), default=0))
+                f"SELECT COUNT(*) FROM events WHERE kind IN ({placeholders})",
+                failure_events, default=0))
             if failure_count:
-                reasons.append("run contains provider/budget/reconciliation failures")
+                reasons.append(
+                    "run contains provider/budget/reconciliation/execution failures")
             integrity, integrity_reasons = _source_integrity(
                 store, config, min_ticks)
             reasons.extend(integrity_reasons)

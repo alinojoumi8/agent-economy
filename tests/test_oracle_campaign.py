@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from engine.ledger import Leg, Ledger
+from engine.ledger import Leg, Ledger, SYS_GOV
 from engine.checkpoint_manifest import write_checkpoint_manifest
 from engine.store import Store
 import reports.oracle_campaign as oracle_campaign
@@ -46,7 +46,8 @@ from oracle.analyst import (
     _answer_user_json, _bound_prompt_evidence,
 )
 from oracle.tools import (
-    MAX_PROMPT_EVIDENCE_CHARS, OracleToolError, bound_oracle_evidence,
+    MAX_PROMPT_EVIDENCE_CHARS, ORACLE_PREFLIGHT_CONTRACT,
+    OracleToolError, bound_oracle_evidence,
     canonical_oracle_json, oracle_tool_definitions,
     validate_bounded_oracle_evidence, validate_oracle_plan,
     validate_oracle_tool_args,
@@ -141,7 +142,8 @@ def _write_run(
 ) -> dict:
     if planner_retry_shape not in {
             "empty_queries", "canonical_noop", "non_list", "invalid_args",
-            "long_error", "valid"}:
+            "long_error", "missing_entity", "future_tick",
+            "extra_query_field", "valid"}:
         raise ValueError(f"unsupported planner retry shape: {planner_retry_shape}")
     if planner_rejection_state not in {
             "valid", "missing", "missing_second", "mismatched_error",
@@ -297,6 +299,28 @@ def _write_run(
                     },
                 }],
             },
+            "missing_entity": {
+                "queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": 99999},
+                }],
+            },
+            "future_tick": {
+                "queries": [{
+                    "tool": "query_metrics",
+                    "args": {
+                        "names": ["unit_metric"],
+                        "from_tick": tick, "to_tick": tick + 1,
+                    },
+                }],
+            },
+            "extra_query_field": {
+                "queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["unit_metric"]},
+                    "comment": "untrusted planner annotation",
+                }],
+            },
             "valid": {
                 "queries": [{
                     "tool": "query_metrics",
@@ -310,9 +334,12 @@ def _write_run(
                 retry_plan_by_shape[selected_retry_shape]
                 if planner_retry_same_error else {"queries": []})
         rejection_errors: list[str] = []
+        tool_catalog = oracle_tool_definitions(store, tick=tick)
         for rejected_plan in rejected_plans:
             try:
-                validate_oracle_plan(rejected_plan)
+                validate_oracle_plan(
+                    rejected_plan, current_tick=tick,
+                    tool_catalog=tool_catalog)
             except OracleToolError as exc:
                 rejection_errors.append(str(exc))
             else:
@@ -353,7 +380,8 @@ def _write_run(
             if purpose == "oracle_plan":
                 context = {
                     **base_context,
-                    "available_tools": oracle_tool_definitions(store),
+                    "preflight_contract": ORACLE_PREFLIGHT_CONTRACT,
+                    "available_tools": tool_catalog,
                     "constraints": {
                         "tick_range": {"minimum": 0, "maximum": tick},
                         "maximum_queries": 8, "read_only": True,
@@ -747,6 +775,29 @@ def test_oracle_campaign_requires_exact_companion_replay(tmp_path):
     assert "companion replay is not exact for this source run" in excluded["reasons"]
 
 
+def test_oracle_campaign_rejects_post_preflight_execution_failure_event(
+        tmp_path):
+    manifest = _manifest(tmp_path)
+
+    def inject_failure(store):
+        store.log_event(5, "oracle_tool_execution_failed", {
+            "question": oracle_campaign.RELEASE_QUESTION,
+            "error": "forced authenticated execution failure",
+            "plan_sha256": "0" * 64,
+        })
+
+    entry = _mutate_manifest_pair(manifest, 0, inject_failure)
+    receipt = evaluate_oracle_campaign(manifest)
+    run = next(
+        item for item in receipt["runs"]
+        if item["run_id"] == entry["run_id"])
+
+    assert run["eligible"] is False
+    assert (
+        "run contains provider/budget/reconciliation/execution failures"
+        in run["reasons"])
+
+
 def test_oracle_campaign_requires_replay_source_markers(tmp_path):
     manifest = _manifest(tmp_path)
     payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
@@ -997,37 +1048,37 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v4.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v5.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v4_commitment_and_highspeed_contract_are_pinned():
+def test_checked_in_v5_commitment_and_highspeed_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7331: "86fb8c95a7a5ae186dfd672c68b0f0b114cf3b5ce5df7ef0cc69f3280c00caef",
-        7332: "91437776f7e49c28dfeee71fbf7133a4706a2bba023952b26ac1247258c8e7b1",
-        7333: "0626de4e61c14ab873e575a317ea1b406af6fc3ce7db7159fdc2b6830d2de49c",
-        7334: "87090481866d5f47d0d5ca2de78354837167e6f0b4e5f593fbf05b0594bd9139",
-        7335: "561b786cb51bd3a0e0b20af901e8170585b1fb87dc2d9e3401b6c0bf44623825",
-        7336: "d1343b947fb45732c5101518edbcdd7c6bed2c7a47b04822c430640e98bde4ac",
-        7337: "4e11d4341b635fb875d9ce055320861451040ab564aba6d46a4eb1ab12fef666",
-        7338: "2cb9d9a48cd856065a38061ba7c30bec62c43b4114e2ae53ba23d90257ec6b08",
-        7339: "207d5c5c74bfc463eb2ead8e1e4376bdda9fd6a0134c655b98df761c10f9ba3a",
-        7340: "65e48a2c5b4170b1678b74d89e39dbde6faecf8e71ff4d372120cd93a22be56f",
+        7341: "39dab7ce006da45c98dcf77c76e954255adc494e6c0ae981ee767e208f069475",
+        7342: "79432c3e0aa20c7ab087fecf895ff65b22cbccfb8091f1772b95492d7c63d86a",
+        7343: "ec6ab27f6f39b7e32bbd6f4f6959b4d51a75f9a1d0e50435a369999e14e30af1",
+        7344: "5ab1b70cc758a754ca8b9049f7153da56faf894f2e7f8e3e42ddbc9b6426842f",
+        7345: "86b1d654b29c3ae08a460a9c1dc175376db730e11c743bbb9b9520f4adfc049e",
+        7346: "4daf98343b6454e15192f78188545189d826410946c6253aed7cd340d5c16879",
+        7347: "61d4112301b3f715dcbe236c5aff4eeb09bde33ad688e51d95ce335d54005cb9",
+        7348: "2f3d8296378c8568b56d1660af88e8359be88ec16ab19a257b2e4c266afe5346",
+        7349: "ed9044731fea81e0251bc73c4f42ad46ddb1d4bbbbff87ce6ba2aacb6643cc2d",
+        7350: "ab17ae80033168f1825974898a7bdec48eb7ac76711dd6c1a172662eaef21ccd",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v4"
-    assert RELEASE_CAMPAIGN_VERSION == 4
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v5"
+    assert RELEASE_CAMPAIGN_VERSION == 5
     assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
     assert RELEASE_ORACLE_PRICING == {
         "in": 2.85, "out": 12.00, "cache": 0.57,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "a2dac4421baf8290e4119287d94cfd82c0104ef4f38f1bd9fa9cdb450a109e51")
+        "00b1b2a9e00168920a89f24f0d914b0d34efe8b232120e412364e29bf7865595")
 
-    commitment_path = root / "commitment-v4.yaml"
+    commitment_path = root / "commitment-v5.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1878,6 +1929,19 @@ def test_normalized_invalid_planner_json_can_retry_and_remain_eligible(
     assert reasons == []
 
 
+@pytest.mark.parametrize(
+    "shape", ["missing_entity", "future_tick", "extra_query_field"])
+def test_shared_preflight_planner_errors_can_retry_and_remain_eligible(
+        tmp_path, shape):
+    entry = _write_run(
+        tmp_path, 0, planner_retry=True, planner_retry_shape=shape)
+
+    forecast, reasons = _first_forecast_evidence(entry)
+
+    assert forecast["eligible"] is True
+    assert reasons == []
+
+
 def test_canonical_noop_planner_response_requires_repair_metering(tmp_path):
     entry = _write_run(
         tmp_path, 0, planner_retry=True,
@@ -2219,6 +2283,87 @@ def test_semantics6_oversized_oracle_transcript_replays_with_recorded_shape(tmp_
     assert verify_replay(source_path, replay_path)["exact"] is True
 
 
+@pytest.mark.parametrize(("semantics_version", "hardened_evidence"), [
+    (6, False), (7, False), (7, True),
+])
+def test_pre_state_bound_government_rejection_replays_with_legacy_shape(
+        tmp_path, semantics_version, hardened_evidence):
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    config["engine_semantics_version"] = semantics_version
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    source_store, source_world, source_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    if semantics_version == 7:
+        source_world.oracle._state_bound_preflight_at = (
+            lambda _tick, _question: False)
+        if not hardened_evidence:
+            source_world.oracle._hardened_evidence_at = (
+                lambda _tick, _question: False)
+    else:
+        for legacy_args in (
+                {"entity_type": "gov", "_treasury_alias": True},
+                {"entity_type": "agent", "entity_id": 1,
+                 "_treasury_alias": True}):
+            with pytest.raises(OracleToolError, match="_treasury_alias"):
+                source_world.oracle.tools.execute_plan_legacy([{
+                    "tool": "get_ledger_summary", "args": legacy_args,
+                }])
+    scripted = source_world.gateway.adapters["scripted"]
+
+    def legacy_plan(context):
+        if "previous_plan_error" not in context:
+            return {"queries": [{
+                "tool": "get_ledger_summary",
+                "args": {"entity_type": "gov"},
+            }]}
+        return {"queries": [{
+            "tool": "query_metrics",
+            "args": {"names": ["unemployment_rate"],
+                     "from_tick": 0, "to_tick": 0, "limit": 10},
+        }]}
+
+    scripted.register("oracle_plan", legacy_plan)
+    question = "Will unemployment rise?"
+    try:
+        result = asyncio.run(source_world.oracle.ask(question))
+        source_path = Path(source_store.path)
+        purposes = [str(row["purpose"]) for row in source_store.query(
+            "SELECT purpose FROM llm_calls WHERE role='oracle' ORDER BY id")]
+        planner_contexts = [
+            json.loads(row["request_json"])["context"]
+            for row in source_store.query(
+                "SELECT request_json FROM llm_calls "
+                "WHERE role='oracle' AND purpose='oracle_plan' ORDER BY id")]
+        rejections = [json.loads(row["payload_json"])
+                      for row in source_store.query(
+                          "SELECT payload_json FROM events "
+                          "WHERE kind='oracle_tool_plan_rejected' ORDER BY id")]
+    finally:
+        _close_run(source_world, source_store)
+
+    assert result["evidence"][0]["tool"] == "query_metrics"
+    assert purposes == ["oracle_plan", "oracle_plan", "oracle"]
+    assert all("preflight_contract" not in item for item in planner_contexts)
+    assert [item["error"] for item in rejections] == [
+        "entity ledger accounts not found"]
+    assert ("attempt" in rejections[0]) is hardened_evidence
+    assert ("plan_sha256" in rejections[0]) is hardened_evidence
+
+    replay_store, replay_world, _ = open_run(
+        config, None, source_id, data_dir=tmp_path)
+    replay_path = Path(replay_store.path)
+    try:
+        replay_result = asyncio.run(replay_world.oracle.ask(question))
+        tracker = replay_world.gateway.replay_execution_stats()
+    finally:
+        _close_run(replay_world, replay_store)
+
+    assert replay_result == result
+    assert tracker["compatibility_fallback_matches"] == 0
+    assert tracker["exact_key_matches"] == tracker["consumed_source_calls"]
+    assert verify_replay(source_path, replay_path)["exact"] is True
+
+
 def test_oracle_runtime_records_empty_plan_rejection_before_valid_retry(tmp_path):
     config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
     store = Store(str(tmp_path / "runtime-retry.db"))
@@ -2283,6 +2428,163 @@ def test_oracle_runtime_records_empty_plan_rejection_before_valid_retry(tmp_path
     answer_user = json.loads(gateway.requests[-1].user)
     assert answer_user["governed_forecast_contract"] == contract
     assert answer_user["read_only_evidence"] == result["evidence"]
+    store.close()
+
+
+def test_historical_tool_catalog_and_government_treasury_are_executable(tmp_path):
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "historical-tool-catalog.db"))
+    store.init_run_meta("historical-tool-catalog", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    future_agent_id = store.insert(
+        "agents", name="Future Arrival", kind="citizen", arrived_tick=10)
+    Ledger(store).create_account(
+        "agent", future_agent_id, "checking", label="future checking")
+
+    legacy = oracle_tool_definitions(store)
+    at_five = oracle_tool_definitions(store, tick=5)
+    at_ten = oracle_tool_definitions(store, tick=10)
+    ledger_at_five = next(
+        item for item in at_five if item["name"] == "get_ledger_summary")
+    ledger_at_ten = next(
+        item for item in at_ten if item["name"] == "get_ledger_summary")
+    government = world.oracle.tools.get_ledger_summary("gov")
+
+    legacy_conversations = next(
+        item for item in legacy if item["name"] == "sample_conversations")
+    legacy_ledger = next(
+        item for item in legacy if item["name"] == "get_ledger_summary")
+    assert "available_agent_ids" not in legacy_conversations
+    assert set(legacy_ledger["available_entity_ids"]) == {"bank"}
+    assert future_agent_id not in ledger_at_five["available_entity_ids"]["agent"]
+    assert future_agent_id in ledger_at_ten["available_entity_ids"]["agent"]
+    assert "gov" in ledger_at_five["available_entity_types"]
+    assert any(account["label"] == SYS_GOV for account in government["accounts"])
+    store.close()
+
+
+def test_semantics7_unknown_entity_retry_is_shared_preflight(tmp_path):
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "catalog-retry.db"))
+    store.init_run_meta("catalog-retry", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    bank_id = int(store.scalar("SELECT MIN(id) FROM banks"))
+
+    class CatalogRetryGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, request, **_kwargs):
+            self.requests.append(request)
+            plans = [item for item in self.requests
+                     if item.purpose == "oracle_plan"]
+            if request.purpose == "oracle_plan" and len(plans) == 1:
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": 99999},
+                }]})
+            if request.purpose == "oracle_plan":
+                assert request.context["previous_plan_error"] == (
+                    "entity ledger accounts not found")
+                assert request.context["planner_attempt"] == 2
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "get_ledger_summary",
+                    "args": {"entity_type": "bank", "entity_id": bank_id},
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.2, "drivers": ["stable deposits"],
+                "confidence": "med", "resolution_rule": {
+                    "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+                "deadline_tick": store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = CatalogRetryGateway()
+    world.oracle.gw = gateway
+    contract = {
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
+        "campaign_key": "bank_run_t000", "scheduled_tick": store.tick,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+        "deadline_tick": store.tick + 30,
+    }
+
+    result = asyncio.run(world.oracle.ask(
+        "What is the probability of a bank run within 30 ticks?",
+        governed_contract=contract))
+    rejections = store.query(
+        "SELECT payload_json FROM events "
+        "WHERE kind='oracle_tool_plan_rejected' ORDER BY id")
+
+    assert result["evidence"][0]["result"]["entity_id"] == bank_id
+    assert [request.purpose for request in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle"]
+    assert len(rejections) == 1
+    assert json.loads(rejections[0]["payload_json"])["error"] == (
+        "entity ledger accounts not found")
+    store.close()
+
+
+@pytest.mark.parametrize("failure_type", [OracleToolError, RuntimeError])
+def test_semantics7_post_preflight_tool_failure_does_not_retry(
+        tmp_path, failure_type):
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "execution-failure.db"))
+    store.init_run_meta("execution-failure", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    class OnePlanGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, request, **_kwargs):
+            self.requests.append(request)
+            return SimpleNamespace(parsed={"queries": [{
+                "tool": "query_metrics",
+                "args": {"names": ["gdp_proxy"], "from_tick": 0,
+                         "to_tick": store.tick, "limit": 10},
+            }]})
+
+    def fail_after_preflight(**_kwargs):
+        raise failure_type("forced post-preflight failure")
+
+    gateway = OnePlanGateway()
+    world.oracle.gw = gateway
+    world.oracle.tools._tools["query_metrics"] = fail_after_preflight
+    contract = {
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
+        "campaign_key": "bank_run_t000", "scheduled_tick": store.tick,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+        "deadline_tick": store.tick + 30,
+    }
+
+    with pytest.raises(failure_type, match="forced post-preflight failure"):
+        asyncio.run(world.oracle.ask(
+            "What is the probability of a bank run within 30 ticks?",
+            governed_contract=contract))
+
+    assert [request.purpose for request in gateway.requests] == ["oracle_plan"]
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='oracle_tool_plan_rejected'") == 0
+    failures = store.query(
+        "SELECT payload_json FROM events "
+        "WHERE kind='oracle_tool_execution_failed'")
+    assert len(failures) == 1
+    assert json.loads(failures[0]["payload_json"])["error_type"] == (
+        failure_type.__name__)
     store.close()
 
 

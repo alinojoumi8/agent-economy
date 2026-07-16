@@ -21,10 +21,12 @@ from llm.gateway import Gateway, LLMRequest
 from .rules import ResolutionRuleError, validate_resolution_rule
 from .tools import (
     MAX_PROMPT_EVIDENCE_CHARS,
+    ORACLE_PREFLIGHT_CONTRACT,
     OracleToolError,
     OracleTools,
     bound_oracle_evidence,
     canonical_oracle_json,
+    oracle_tool_definitions,
     validate_oracle_plan,
 )
 
@@ -126,17 +128,24 @@ class Oracle:
         digest = self._world_digest(tick)
         legacy_replay = self._legacy_replay_at(tick)
         hardened_evidence = self._hardened_evidence_at(tick, question)
+        state_bound_preflight = self._state_bound_preflight_at(tick, question)
         evidence = []
         if not legacy_replay:
+            planning_catalog = (
+                oracle_tool_definitions(self.store, tick=tick)
+                if state_bound_preflight else self.tools.definitions)
             base_planning_context = {
                 "question": question, "tick": tick,
-                "available_tools": self.tools.definitions,
+                "available_tools": planning_catalog,
                 "constraints": {
                     "tick_range": {"minimum": 0, "maximum": tick},
                     "maximum_queries": self.tools.MAX_QUERIES,
                     "read_only": True,
                 },
             }
+            if state_bound_preflight:
+                base_planning_context["preflight_contract"] = (
+                    ORACLE_PREFLIGHT_CONTRACT)
             if governed_contract is not None:
                 base_planning_context["governed_forecast_contract"] = governed_contract
             validation_error = None
@@ -159,6 +168,37 @@ class Oracle:
                 plan_resp = await self.gw.complete(
                     plan_req, schema_hint='{"queries":[]}')
                 plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
+                if state_bound_preflight:
+                    try:
+                        queries = validate_oracle_plan(
+                            plan, max_queries=self.tools.MAX_QUERIES,
+                            current_tick=tick, tool_catalog=planning_catalog)
+                    except OracleToolError as exc:
+                        validation_error = str(exc)
+                        evidence = [{
+                            "error": validation_error,
+                            "queries_rejected": True,
+                        }]
+                        self.store.log_event(
+                            tick, "oracle_tool_plan_rejected", {
+                                "question": question,
+                                "error": validation_error[:500],
+                                "attempt": _attempt + 1,
+                                "plan_sha256": _json_sha256(plan),
+                            }, importance=1.5)
+                        continue
+                    try:
+                        evidence = self.tools.execute_plan(queries)
+                    except Exception as exc:
+                        self.store.log_event(
+                            tick, "oracle_tool_execution_failed", {
+                                "question": question,
+                                "error": str(exc)[:500],
+                                "error_type": type(exc).__name__,
+                                "plan_sha256": _json_sha256(plan),
+                            }, importance=3.0)
+                        raise
+                    break
                 try:
                     queries = plan.get("queries", [])
                     if not queries:
@@ -167,10 +207,13 @@ class Oracle:
                     if hardened_evidence:
                         queries = validate_oracle_plan(
                             plan, max_queries=self.tools.MAX_QUERIES)
-                    evidence = (
-                        self.tools.execute_plan(queries)
-                        if hardened_evidence else
-                        self.tools.execute_plan_legacy(queries))
+                        evidence = self.tools.execute_plan(
+                            queries, treasury_alias=False)
+                    elif self.engine_semantics_version >= 7:
+                        evidence = self.tools.execute_plan_legacy(
+                            queries, treasury_alias=False)
+                    else:
+                        evidence = self.tools.execute_plan_legacy(queries)
                     break
                 except OracleToolError as exc:
                     validation_error = str(exc)
@@ -392,6 +435,26 @@ class Oracle:
                     and user.get("world") == context.get("prompt_world"))
         # A recorded answer must exist whenever an oracle_plan call exists.
         # Missing evidence fails closed through the gateway lookup path.
+        return False
+
+    def _state_bound_preflight_at(self, tick: int, question: str) -> bool:
+        """Preserve recorded semantics-7 calls made before state-bound v1."""
+        if self.engine_semantics_version < 7:
+            return False
+        if not self.gw.replay or self.gw.replay_conn is None:
+            return True
+        rows = self.gw.replay_conn.execute(
+            "SELECT request_json FROM llm_calls WHERE tick=? AND role='oracle' "
+            "AND purpose='oracle_plan' ORDER BY id", (tick,)).fetchall()
+        for row in rows:
+            request = load_json(row["request_json"], {})
+            context = request.get("context") if isinstance(request, dict) else None
+            if (isinstance(context, dict)
+                    and context.get("question") == question
+                    and context.get("tick") == tick):
+                return context.get("preflight_contract") == (
+                    ORACLE_PREFLIGHT_CONTRACT)
+        # Missing recorded plan evidence fails closed through gateway lookup.
         return False
 
     # ── world digest (read-only tools rolled into one) ───────────────────────

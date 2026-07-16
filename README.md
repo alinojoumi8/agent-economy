@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v4-seed-7331-control.yaml` ... `v4-seed-7340-rumor.yaml` | Predeclared v4 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; conservative 3x metering; $25/run cap |
+| `runs/oracle/v5-seed-7341-control.yaml` ... `v5-seed-7350-rumor.yaml` | Active predeclared v5 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; shared state-aware preflight; conservative 3x metering; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v4 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v5 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -386,18 +386,30 @@ receipt preserves the pre-inspection source SHA-256. The local source artifact
 was later write-opened during diagnosis, so it is excluded diagnostic evidence
 and is not admissible in any release manifest.
 
-The fresh v4 corpus uses seeds 7331–7340, `kimi-for-coding-highspeed`,
-conservative 3x cost metering, and
-`runs/oracle/manifest-v4.template.yaml` with a $25 per-run safety cap. It feeds
-the read-only `--oracle-calibration-report` command. `--oracle-campaign-run` now creates each
-finalized source, exact companion replay, and source receipt without applying
-the whole-world all-live-provider gate. Each receipt chain binds the immutable
-pre-run claim and initialized marker, clean Git commit/tree, committed config,
-canonical source/replay paths, required checkpoint manifests, and an execution
-tracker proving exact one-time source-call consumption with zero compatibility
-fallback or live replay dispatch. Passing evidence still requires the ten
-fresh v4 source/replay pairs, 60 resolved forecasts across both outcomes, p90 below
-60 seconds, and Brier below 0.25. See the
+V4 seeds 7331 and 7332 completed with exact companion replays but remain
+diagnostic evidence only. Seed 7333 exposed a governed-tool mismatch: `gov` was
+advertised as a ledger target, while execution looked under the wrong account
+owner instead of the system-owned treasury account. That state-dependent
+failure was mislabeled as a preflight plan rejection, so the receipt correctly
+excluded the run. No v4 source, response, claim, initialized marker,
+checkpoint, replay, profile, commitment, manifest entry, or seed is reused.
+
+The active fresh v5 corpus uses seeds 7341–7350,
+`kimi-for-coding-highspeed`, conservative 3x cost metering, and
+`runs/oracle/manifest-v5.template.yaml` with a $25 per-run safety cap. Runtime
+and receipt verification share a state-aware preflight that advertises only
+historical executable entity/range targets, maps `gov` to the treasury account,
+and keeps a genuine post-preflight execution failure out of the planner-retry
+provenance channel. It feeds the read-only `--oracle-calibration-report`
+command. `--oracle-campaign-run` creates each finalized source, exact companion
+replay, and source receipt without applying the whole-world all-live-provider
+gate. Each receipt chain binds the immutable pre-run claim and initialized
+marker, clean Git commit/tree, committed config, canonical source/replay paths,
+required checkpoint manifests, and an execution tracker proving exact one-time
+source-call consumption with zero compatibility fallback or live replay
+dispatch. Passing evidence still requires the ten fresh v5 source/replay pairs,
+60 resolved forecasts across both outcomes, p90 below 60 seconds, and Brier
+below 0.25. See the
 [operator runbook](docs/operator-runbook.md).
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve

@@ -108,8 +108,8 @@ and never age into a scored negative outcome.
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
-The active release calibration design therefore preregisters ten fixed v4
-profiles under `runs/oracle`, six forecasts per run, fresh seeds 7331–7340, and
+The active release calibration design therefore preregisters ten fixed v5
+profiles under `runs/oracle`, six forecasts per run, fresh seeds 7341–7350, and
 alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
 live; background behavior remains scripted so the campaign isolates the
 forecast surface. Treatment windows publish a one-person rumor
@@ -151,10 +151,29 @@ receipt admitted only four of six forecasts because authenticated rejected
 planner attempts were incorrectly treated as invalid accepted plans. The
 original receipt records the pre-inspection source hash. The local source
 artifact was later write-opened during diagnosis, so v3 is excluded diagnostic
-evidence and cannot enter the v4 corpus. V4 uses entirely fresh seeds and binds
-each rejected attempt to its independently reproduced error and persisted
-rejection event. A monotonic retry ordinal prevents durable-cache collisions;
-only the final accepted plan is validated as executed evidence.
+evidence and cannot enter the active corpus.
+
+V4 seeds 7331 and 7332 produced eligible exact source/replay receipts. They are
+preserved as diagnostic evidence and are not reused. Seed 7333 also completed
+an exact source/replay pair, but the receipt correctly made its tick-125
+forecast, run, and fixed campaign ineligible. Attempt 1 asked
+`get_ledger_summary` for `entity_type: gov`; the runtime looked only for
+`accounts.owner_type='gov'`, while the treasury is
+`owner_type='system', label='sys:gov'`, and returned
+`entity ledger accounts not found`. Runtime then mislabeled and retried that
+post-preflight execution failure as `oracle_tool_plan_rejected`. Attempt 2 was
+the independently reproducible `names must contain 1 to 10 valid metric names`
+error, and attempt 3 succeeded. The receipt could not independently reproduce
+or bind attempt 1 and therefore excluded the evidence. No v4 source, response,
+claim, checkpoint, replay, or seed enters v5.
+
+V5 shares one state-aware plan preflight between live runtime and receipt audit.
+The scheduled-tick catalog bounds historical entity IDs and tick ranges,
+government ledger reads map to the system-owned `sys:gov` treasury, and a
+failure after successful preflight is recorded as a tool execution failure
+rather than a retryable planner rejection. Rejected plans still bind their full
+independently reproduced error, persisted rejection event, and monotonic retry
+ordinal; only the final accepted plan is validated as executed evidence.
 
 ## Evidence hierarchy
 
@@ -172,7 +191,7 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-Completion of the v4 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+Completion of the v5 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
 run, and final provenance audit are separate pending gates. The release pull
 request stays draft; merging, tagging, publication, and public deployment need
 separate authorization. After those gates:

@@ -137,12 +137,22 @@ audit pass under separate authorization.
   records the pre-inspection source hash and four of six forecasts as eligible;
   diagnosis later write-opened the local source artifact, so it is not
   admissible and no v3 response, claim, checkpoint, replay, or seed is reused.
-- [ ] Run the ten fresh v4 live-Kimi Oracle profiles (seeds 7331–7340,
+- [x] Retire v4 from release eligibility. Seeds 7331 and 7332 completed with
+  exact companion replays but remain diagnostic only. Seed 7333 exposed an
+  advertised `gov` ledger target that mapped to the wrong account-owner
+  representation; its state-dependent execution failure was mislabeled as a
+  preflight rejection, so the receipt correctly excluded the run. Do not reuse
+  any v4 source, response, claim, initialized marker, checkpoint, replay,
+  profile, commitment, manifest entry, or seed in the replacement campaign.
+- [ ] Run the ten fresh v5 live-Kimi Oracle profiles (seeds 7341–7350,
   `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
-  `--oracle-campaign-run`, which
-  finalizes each source and exact offline companion and hashes those artifacts
-  plus the checked-in profile; then pass the emitted entries through
-  `--oracle-calibration-report` using `runs/oracle/manifest-v4.template.yaml`
+  `--oracle-campaign-run`. V5 uses one shared state-aware preflight for runtime
+  and receipt verification, advertises only historical executable entity/range
+  targets, maps `gov` to the system-owned treasury account, and keeps genuine
+  post-preflight execution failures out of the retry provenance channel. Each
+  arm finalizes its source and exact offline companion and hashes those
+  artifacts plus the checked-in profile; pass the emitted entries through
+  `--oracle-calibration-report` using `runs/oracle/manifest-v5.template.yaml`
   without exclusions.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
@@ -242,7 +252,7 @@ audit pass under separate authorization.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep the release pull request draft until the successful v4 Oracle
+- [ ] Keep the release pull request draft until the successful v5 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
   publication, and public deployment require separate authorization.

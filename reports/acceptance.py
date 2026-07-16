@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 REQUIRED_SHOCKS = ("policy_rate", "oil", "rumor", "slant", "scandal")
 FAILURE_EVENTS = (
     "provider_failure", "provider_pause", "reconciliation_failure",
-    "budget_pause", "report_failed",
+    "budget_pause", "report_failed", "oracle_tool_execution_failed",
 )
 SCHEDULED_E2E_LATENCY_KIND = "scheduled_e2e_v1"
 _SCHEDULED_TIMER_DETAIL_KIND = "scheduled_e2e_timer_v1"
@@ -858,8 +858,9 @@ def evaluate_acceptance(
             (tick,), default=0,
         ))
         hard_failures = sum(
-            failures[kind] for kind in ("reconciliation_failure", "budget_pause", "report_failed")
-        )
+            failures[kind] for kind in (
+                "reconciliation_failure", "budget_pause", "report_failed",
+                "oracle_tool_execution_failed"))
         failure_evidence = {
             "counts": failures,
             "provider_incidents": provider_incidents,

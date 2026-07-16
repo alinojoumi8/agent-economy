@@ -217,12 +217,29 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The pending v4 ten-profile Oracle campaign, live 30-day rumor
+The pending v5 ten-profile Oracle campaign, live 30-day rumor
 pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
-operational gates. No live inference is run without `--approve-live-inference`.
-An unperformed or failed live gate must be reported as pending or failed, never
-treated as passed. The release pull request stays draft; merge, tag,
-publication, and public deployment require separate authorization.
+operational gates. V5 uses fresh seeds 7341–7350; no v4 source, response, claim,
+checkpoint, replay, or seed is reused. V4 seeds 7331 and 7332 produced eligible
+exact source/replay receipts but remain diagnostic evidence because the fixed
+campaign did not survive seed 7333.
+
+V4 seed 7333 completed an exact source/replay pair, but its tick-125 forecast
+was correctly excluded. Planner attempt 1 requested the government ledger;
+runtime returned `entity ledger accounts not found` because the treasury is a
+system-owned `sys:gov` account, then incorrectly recorded and retried that
+post-preflight execution failure as a planner rejection. Attempt 2 failed the
+independently reproducible metric-name contract and attempt 3 succeeded, so the
+receipt could not reproduce or bind the first rejection. The v5 boundary uses
+one tick- and catalog-aware preflight in runtime and receipt audit, maps
+government reads to the actual treasury account, and treats a genuine
+post-preflight tool failure as an execution failure rather than a retryable plan
+rejection.
+
+No live inference is run without `--approve-live-inference`. An unperformed or
+failed live gate must be reported as pending or failed, never treated as passed.
+The release pull request stays draft; merge, tag, publication, and public
+deployment require separate authorization.
 
 ## Hybrid live pilot
 
@@ -614,8 +631,13 @@ records the pre-inspection source hash; the local source artifact was later
 write-opened during diagnosis and is not admissible. It remains excluded
 diagnostic evidence and is never reused.
 
-The fresh `oracle-calibration-v4` campaign is separately precommitted to ten
-fixed arms with seeds 7331–7340. It routes only the Oracle to
+V4 seeds 7331 and 7332 retain eligible exact source/replay receipts as
+diagnostic evidence, while seed 7333 and the fixed v4 corpus remain excluded for
+the government-ledger retry/provenance failure described above. None of those
+sources, responses, claims, checkpoints, replays, or seeds is reused.
+
+The fresh `oracle-calibration-v5` campaign is separately precommitted to ten
+fixed arms with seeds 7341–7350. It routes only the Oracle to
 `kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
 route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
 immutable claim bound to its clean Git commit/tree, committed effective config,
@@ -627,7 +649,7 @@ dispatch. The local no-clobber receipt chain is strong accident/tamper evidence,
 but a public claim still requires independent signing or a separately
 administered append-only transparency log.
 
-Completion of the v4 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+Completion of the v5 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
 run, and final provenance audit remain separate release evidence. The pull
 request stays draft. Merging, tagging, publication, and public deployment remain
 separate release decisions.

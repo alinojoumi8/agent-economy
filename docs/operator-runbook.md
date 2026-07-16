@@ -177,8 +177,8 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. The active `oracle-calibration-v4` commitment uses
-fresh seeds 7331–7340. Its ten predeclared profiles keep background behavior
+whole-world acceptance run. The active `oracle-calibration-v5` commitment uses
+fresh seeds 7341–7350. Its ten predeclared profiles keep background behavior
 scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
 metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
 seed or switch control/treatment arms after seeing outcomes. Treatment profiles
@@ -231,22 +231,44 @@ that had been rejected before valid retries. The original receipt records the
 pre-inspection source SHA-256. The local source artifact was later write-opened
 during diagnosis, so it is not admissible even as a corrected v3 sample. Do not
 resume it, regenerate its no-clobber receipt, or reuse any v3 response, claim,
-checkpoint, replay, or seed. V4 uses a fresh precommit and fresh seeds; its
-receipt binds each rejected planner attempt to the matching rejection event and
-independently reproduces its deterministic error. Each retry carries the full
-error and a monotonic attempt ordinal so durable cache keys remain unique; only
-the final accepted plan is validated as executed evidence. Replay-receipt
-creation also rejects source or replay WAL/SHM sidecars immediately.
+checkpoint, replay, or seed.
+
+V4 seeds 7331 and 7332 produced eligible exact source/replay receipts. Preserve
+them as diagnostic evidence only: do not resume, rewrite, regenerate, list, or
+reuse any v4 source, response, claim, checkpoint, replay, or seed. V4 seed 7333
+also completed an exact source/replay pair, but the receipt correctly excluded
+its tick-125 forecast, run, and fixed campaign. Planner attempt 1 requested
+`get_ledger_summary` for `entity_type: gov`. Runtime queried only
+`accounts.owner_type='gov'`, while the treasury is stored as
+`owner_type='system', label='sys:gov'`, returned
+`entity ledger accounts not found`, and then incorrectly labeled and retried
+that post-preflight execution failure as `oracle_tool_plan_rejected`. Attempt 2
+failed the independently reproducible
+`names must contain 1 to 10 valid metric names` contract; attempt 3 succeeded.
+The receipt could not independently reproduce or bind attempt 1 and therefore
+failed closed. Do not regenerate the no-clobber v4 receipts or substitute a
+later v4 arm.
+
+V5 uses one scheduled-tick, catalog-aware preflight in both runtime and receipt
+audit. It validates historical tick bounds and the advertised agent, firm,
+bank, and ledger entity IDs before any read executes. Government ledger reads
+map to the system-owned `sys:gov` treasury, so the catalog and executor agree.
+A failure after successful preflight is logged as a tool execution failure and
+is not retried as a planner rejection. Legitimate rejected plans still bind the
+full independently reproduced error, matching rejection event, plan hash, and
+monotonic attempt ordinal; only the final accepted plan is validated as
+executed evidence. Replay-receipt creation continues to reject source or replay
+WAL/SHM sidecars immediately.
 
 Then preflight and execute each profile from
-`v4-seed-7331-control.yaml` through `v4-seed-7340-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7331
+`v5-seed-7341-control.yaml` through `v5-seed-7350-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7341
 produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v4-seed-7331-control.yaml --preflight
-python run.py --config runs/oracle/v4-seed-7331-control.yaml --preflight-live
-python run.py --config runs/oracle/v4-seed-7331-control.yaml `
+python run.py --config runs/oracle/v5-seed-7341-control.yaml --preflight
+python run.py --config runs/oracle/v5-seed-7341-control.yaml --preflight-live
+python run.py --config runs/oracle/v5-seed-7341-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -295,13 +317,13 @@ The campaign command does the offline replay itself; do not invoke a separate
 manual `--replay` and substitute it into the corpus. After each command exits,
 confirm the emitted source receipt reports finalized source/replay databases and
 no `-wal` or `-shm` sidecar. Only after all ten source claims and runs finish,
-copy `runs/oracle/manifest-v4.template.yaml` to a run-specific evidence manifest and
+copy `runs/oracle/manifest-v5.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v4.template.yaml runs/oracle/manifest-v4.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v4.yaml
+Copy-Item runs/oracle/manifest-v5.template.yaml runs/oracle/manifest-v5.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v5.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -468,7 +490,7 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep the release pull request draft until the v4 Oracle campaign, capped
+Keep the release pull request draft until the v5 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
 publication, and public deployment require separate authorization.

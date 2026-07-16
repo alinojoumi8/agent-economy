@@ -309,10 +309,18 @@ def test_acceptance_distinguishes_recovered_provider_incidents(tmp_path):
     assert check["evidence"]["unrecovered_provider_incidents"] == 1
 
 
-def test_acceptance_never_waives_reconciliation_failure(tmp_path):
+@pytest.mark.parametrize(("kind", "payload"), [
+    ("reconciliation_failure", {"grand_sum_cents": 1}),
+    ("oracle_tool_execution_failed", {
+        "question": "Will a bank run happen?",
+        "error": "forced authenticated execution failure",
+        "plan_sha256": "0" * 64,
+    }),
+])
+def test_acceptance_never_waives_hard_failure(tmp_path, kind, payload):
     db, experiment, phenomena = _passing_evidence(tmp_path)
     store = Store(str(db))
-    store.log_event(1, "reconciliation_failure", {"grand_sum_cents": 1})
+    store.log_event(1, kind, payload)
     store.commit()
     store.close()
 
@@ -322,7 +330,7 @@ def test_acceptance_never_waives_reconciliation_failure(tmp_path):
     )
     check = next(check for check in receipt["checks"] if check["id"] == "failure_events")
     assert not check["passed"]
-    assert check["evidence"]["counts"]["reconciliation_failure"] == 1
+    assert check["evidence"]["counts"][kind] == 1
 
 
 def test_acceptance_runner_schedules_oracle_once_and_resumes(tmp_path):
