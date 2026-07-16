@@ -14,7 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
-| `runs/oracle/v5-seed-7341-control.yaml` … `v5-seed-7350-rumor.yaml` | Fixed v5 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, conservative 3x metering, capped at $25 per run |
+| `runs/oracle/v6-seed-7351-control.yaml` … `v6-seed-7360-rumor.yaml` | Fixed v6 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, occurrence-aware replay citations, conservative 3x metering, capped at $25 per run |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -244,10 +244,10 @@ malformed, or duplicate completion references fail closed. Markerless stored
 configs retain the legacy answer-call calculation for replay compatibility.
 
 The multi-run Oracle calibration release gate is separate from one run's
-`acceptance` block. The active `oracle-calibration-v5` corpus uses fresh seeds
-7341–7350 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
+`acceptance` block. The active `oracle-calibration-v6` corpus uses fresh seeds
+7351–7360 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
 and a $25 per-run cap. Its schema-v1 manifest is based on
-`runs/oracle/manifest-v5.template.yaml` and explicitly records campaign ID and
+`runs/oracle/manifest-v6.template.yaml` and explicitly records campaign ID and
 version plus every run's ID, seed, source/replay database paths, profile path,
 and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
 ready-to-copy manifest entry for one predeclared profile.
@@ -303,6 +303,35 @@ not retryable planner rejections. Full independently reproduced errors,
 matching rejection events, and monotonic attempt ordinals make legitimate retry
 requests unique, while only the final accepted plan is validated as executed
 evidence. No v1, v2, v3, or v4 run enters the v5 manifest.
+
+V5 seeds 7341–7347 produced passed, eligible source receipts with exact
+companion replays. Seed 7348 finalized its source, but two same-tick loan
+defaults at tick 301 and three at tick 331 shared the same bounded public
+payload and importance. Replay therefore treated the recorded citations as
+ambiguous and failed closed four articles to deterministic daily briefs; the
+changed content and virality propagated through nine information tables. Seeds
+7349–7350 were never run. V5 is retained as diagnostic evidence only. The seven
+receipt-bound replay databases and fourteen Oracle source/replay receipts belong
+only to seeds 7341–7347; seed 7348 has no eligible replay database or Oracle
+source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; this post-source fix remains diagnostic and
+creates no eligible v5 receipt. Completed cleanup removed 320 v5
+source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies,
+four derived fixed-replay final databases, and the superseded partial seed-7343
+replay: 485 database files and `111.945217 GiB` total. Retained artifacts are all
+authoritative final sources; the seven eligible replay databases and fourteen
+source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database.
+
+V6 maps a recorded public-event citation by its deterministic source occurrence
+within the equivalence class and still fails closed when the class is missing or
+inconsistent. Its base extends the acceptance rehearsal directly, never a v5
+profile. No v5 source, response, claim, initialized marker, checkpoint, replay,
+receipt, profile, commitment, manifest entry, run identity, or seed enters v6.
 
 ## Rumor targeting
 

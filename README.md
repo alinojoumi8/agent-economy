@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v5-seed-7341-control.yaml` ... `v5-seed-7350-rumor.yaml` | Active predeclared v5 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; shared state-aware preflight; conservative 3x metering; $25/run cap |
+| `runs/oracle/v6-seed-7351-control.yaml` ... `v6-seed-7360-rumor.yaml` | Active predeclared v6 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v5 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v6 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -394,20 +394,47 @@ failure was mislabeled as a preflight plan rejection, so the receipt correctly
 excluded the run. No v4 source, response, claim, initialized marker,
 checkpoint, replay, profile, commitment, manifest entry, or seed is reused.
 
-The active fresh v5 corpus uses seeds 7341–7350,
+V5 seeds 7341–7347 then produced passed, eligible source receipts with exact
+companion replays. Seed 7348 finalized its source, but replay encountered
+duplicate same-tick loan-default events with indistinguishable public citation
+identities. The two outlets failed closed to daily briefs at ticks 301 and 331
+(four articles total), and the changed virality propagated through nine
+information tables. Seeds 7349–7350 were never run. The seven receipt-bound
+replay databases and fourteen Oracle source/replay receipts belong only to
+seeds 7341–7347; seed 7348 has no eligible replay database or Oracle
+source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; this post-source fix is diagnostic proof
+only and creates no eligible v5 receipt. Completed cleanup removed 320 v5
+source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies,
+four derived fixed-replay final databases, and the superseded partial seed-7343
+replay: 485 database files and `111.945217 GiB` total. Retained artifacts are all
+authoritative final sources; the seven eligible replay databases and fourteen
+source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database.
+No v5 evidence is pooled into a later release corpus.
+
+The active fresh v6 corpus uses seeds 7351–7360,
 `kimi-for-coding-highspeed`, conservative 3x cost metering, and
-`runs/oracle/manifest-v5.template.yaml` with a $25 per-run safety cap. Runtime
+`runs/oracle/manifest-v6.template.yaml` with a $25 per-run safety cap. Runtime
 and receipt verification share a state-aware preflight that advertises only
 historical executable entity/range targets, maps `gov` to the treasury account,
 and keeps a genuine post-preflight execution failure out of the planner-retry
-provenance channel. It feeds the read-only `--oracle-calibration-report`
+provenance channel. Duplicate public-event citation classes are mapped by their
+deterministic source occurrence, while missing or inconsistent classes still
+fail closed. It feeds the read-only `--oracle-calibration-report`
 command. `--oracle-campaign-run` creates each finalized source, exact companion
 replay, and source receipt without applying the whole-world all-live-provider
 gate. Each receipt chain binds the immutable pre-run claim and initialized
 marker, clean Git commit/tree, committed config, canonical source/replay paths,
 required checkpoint manifests, and an execution tracker proving exact one-time
 source-call consumption with zero compatibility fallback or live replay
-dispatch. Passing evidence still requires the ten fresh v5 source/replay pairs,
+dispatch. No v5 source, response, claim, initialized marker, checkpoint, replay,
+receipt, profile, commitment, manifest entry, run identity, or seed enters v6.
+Passing evidence still requires the ten fresh v6 source/replay pairs,
 60 resolved forecasts across both outcomes, p90 below 60 seconds, and Brier
 below 0.25. See the
 [operator runbook](docs/operator-runbook.md).

@@ -63,11 +63,11 @@ _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v5"
-RELEASE_CAMPAIGN_VERSION = 5
-RELEASE_SEEDS = tuple(range(7341, 7351))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v6"
+RELEASE_CAMPAIGN_VERSION = 6
+RELEASE_SEEDS = tuple(range(7351, 7361))
 RELEASE_PROFILES = {
-    seed: f"v5-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v6-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "kimi"
@@ -89,7 +89,7 @@ RELEASE_ORACLE_ADAPTER = {
 RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v5.yaml"
+    / "commitment-v6.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -98,7 +98,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "00b1b2a9e00168920a89f24f0d914b0d34efe8b232120e412364e29bf7865595"
+    "c34c0cfe000ade888aca937a110afd24e799efe7a030635134212472e4686963"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95

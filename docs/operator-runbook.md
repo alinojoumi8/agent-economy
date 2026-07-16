@@ -177,8 +177,8 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. The active `oracle-calibration-v5` commitment uses
-fresh seeds 7341–7350. Its ten predeclared profiles keep background behavior
+whole-world acceptance run. The active `oracle-calibration-v6` commitment uses
+fresh seeds 7351–7360. Its ten predeclared profiles keep background behavior
 scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
 metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
 seed or switch control/treatment arms after seeing outcomes. Treatment profiles
@@ -249,7 +249,7 @@ The receipt could not independently reproduce or bind attempt 1 and therefore
 failed closed. Do not regenerate the no-clobber v4 receipts or substitute a
 later v4 arm.
 
-V5 uses one scheduled-tick, catalog-aware preflight in both runtime and receipt
+V5 introduced one scheduled-tick, catalog-aware preflight in both runtime and receipt
 audit. It validates historical tick bounds and the advertised agent, firm,
 bank, and ledger entity IDs before any read executes. Government ledger reads
 map to the system-owned `sys:gov` treasury, so the catalog and executor agree.
@@ -260,15 +260,50 @@ monotonic attempt ordinal; only the final accepted plan is validated as
 executed evidence. Replay-receipt creation continues to reject source or replay
 WAL/SHM sidecars immediately.
 
+Conservative storage cleanup for the earlier v2–v4 diagnostics removed 200
+superseded checkpoint database bodies—40 for v2, 40 for v3, and 120 for v4—and
+recovered `45.369270 GiB`. All 200 runtime checkpoint manifests and every final
+source/replay database remain.
+
+V5 seeds 7341–7347 produced passed, eligible source receipts with exact
+companion replays. Seed 7348 finalized its source, but duplicate same-tick loan
+defaults shared one bounded public citation identity. The two editor responses
+at tick 301 each matched two candidates and the two at tick 331 each matched
+three; replay failed closed those four articles to daily briefs and nine
+information tables diverged. Seeds 7349–7350 were never run. The seven
+receipt-bound replay databases and fourteen Oracle source/replay receipts belong
+only to seeds 7341–7347; seed 7348 has no eligible replay database or Oracle
+source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; it is post-source diagnostic proof and
+creates no eligible v5 receipt. Verified cleanup removed 320 v5
+source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies,
+four derived fixed-replay final databases, and the superseded partial seed-7343
+replay: 485 database files and `111.945217 GiB` total. The retained archive
+contains all authoritative final sources; the seven eligible replay databases
+and fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database. Do not
+resume the fixed corpus or copy any v5 artifact into v6.
+
+V6 retains the shared preflight and maps duplicate public-event citations by
+their deterministic source occurrence. Missing, out-of-range, or inconsistent
+equivalence classes still fail closed. Its profiles have fresh seeds and direct
+acceptance-rehearsal ancestry; no v5 run identity, response, claim, initialized
+marker, checkpoint, replay, receipt, profile, commitment, manifest entry, or
+seed is eligible for the v6 manifest.
+
 Then preflight and execute each profile from
-`v5-seed-7341-control.yaml` through `v5-seed-7350-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7341
+`v6-seed-7351-control.yaml` through `v6-seed-7360-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7351
 produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v5-seed-7341-control.yaml --preflight
-python run.py --config runs/oracle/v5-seed-7341-control.yaml --preflight-live
-python run.py --config runs/oracle/v5-seed-7341-control.yaml `
+python run.py --config runs/oracle/v6-seed-7351-control.yaml --preflight
+python run.py --config runs/oracle/v6-seed-7351-control.yaml --preflight-live
+python run.py --config runs/oracle/v6-seed-7351-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -316,14 +351,39 @@ alone is insufficient for that claim.
 The campaign command does the offline replay itself; do not invoke a separate
 manual `--replay` and substitute it into the corpus. After each command exits,
 confirm the emitted source receipt reports finalized source/replay databases and
-no `-wal` or `-shm` sidecar. Only after all ten source claims and runs finish,
-copy `runs/oracle/manifest-v5.template.yaml` to a run-specific evidence manifest and
+no `-wal` or `-shm` sidecar. Preserve the emitted manifest entry before any
+storage cleanup.
+
+Run the ten arms sequentially and use this checkpoint retention boundary:
+
+- Keep every `oracle-calibration-v6-s*_t*.db` source checkpoint body and its
+  `.manifest.json` through the aggregate report. The evaluator reopens each
+  physical source checkpoint, rebuilds its runtime manifest, runs SQLite and
+  ledger checks, and rejects a missing body; a receipt hash alone is not enough.
+- After one arm has emitted a passed source receipt and its manifest entry is
+  durably recorded, archive or prune only that arm's
+  `replay-oracle-calibration-v6-*_t*.db` checkpoint bodies. Retain their tiny
+  manifests, the final replay database under `data/runs`, the final source
+  database, and all source checkpoint bodies. Resolve and verify the exact
+  replay run ID and checkpoint-directory paths before removal; never use a broad
+  campaign wildcard.
+- At v5 artifact sizes, retaining all twenty source/replay checkpoint families
+  would consume about `192–198 GiB`. Sequentially pruning replay checkpoint
+  bodies keeps the ten-arm peak near `110–114 GiB`; monitor free space before
+  each arm and stop before the safety margin is exhausted.
+- Only after the aggregate JSON/Markdown receipt has passed and the evidence
+  package is durably archived may all ten arms' 400 v6 source checkpoint
+  database bodies (40 per arm) be pruned. Retain their manifests, final
+  source/replay databases, claims, and receipts.
+
+Only after all ten source claims and runs finish, copy
+`runs/oracle/manifest-v6.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v5.template.yaml runs/oracle/manifest-v5.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v5.yaml
+Copy-Item runs/oracle/manifest-v6.template.yaml runs/oracle/manifest-v6.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v6.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -490,7 +550,7 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep the release pull request draft until the v5 Oracle campaign, capped
+Keep the release pull request draft until the v6 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
 publication, and public deployment require separate authorization.

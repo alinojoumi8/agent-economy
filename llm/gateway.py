@@ -14,9 +14,10 @@ import os
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
@@ -326,6 +327,15 @@ class GatewayInterrupted(Exception):
     """The operator interrupted an in-flight provider cooldown."""
 
 
+class ReplayReferenceError(ProviderUnavailable):
+    """Recorded replay provenance cannot be bound to one local event."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            "replay", "recorded-provenance", "event_reference", message,
+            attempts=0)
+
+
 @dataclass
 class LLMRequest:
     role: str                       # citizen|central_banker|credit_officer|editor|reporter|oracle|...
@@ -580,6 +590,51 @@ class Gateway:
         elif replay_conn is not None:
             replay_conn.close()
 
+    @contextmanager
+    def replay_admission(self, name: str):
+        """Roll back one replay operation when downstream validation pauses."""
+        if not self.replay:
+            yield
+            return
+        snapshot = {
+            "positions": dict(self._replay_positions),
+            "used": set(self._replay_used_call_ids),
+            "event_map": dict(self._replay_event_id_map),
+            "exact": self._replay_exact_key_count,
+            "fallback": self._replay_compatibility_fallback_count,
+            "consumed": list(self._replay_consumed_calls),
+            "governor": (
+                self.governor._last_call_id,
+                self.governor._total_spend_usd,
+                self.governor._oracle_spend_usd,
+                self.governor._report_spend_usd,
+                self.governor._world_spend_usd,
+                self.governor._level,
+            ),
+        }
+        try:
+            with self.store.savepoint(name):
+                yield
+        except BaseException:
+            self._replay_positions.clear()
+            self._replay_positions.update(snapshot["positions"])
+            self._replay_used_call_ids.clear()
+            self._replay_used_call_ids.update(snapshot["used"])
+            self._replay_event_id_map.clear()
+            self._replay_event_id_map.update(snapshot["event_map"])
+            self._replay_exact_key_count = snapshot["exact"]
+            self._replay_compatibility_fallback_count = snapshot["fallback"]
+            self._replay_consumed_calls[:] = snapshot["consumed"]
+            (
+                self.governor._last_call_id,
+                self.governor._total_spend_usd,
+                self.governor._oracle_spend_usd,
+                self.governor._report_spend_usd,
+                self.governor._world_spend_usd,
+                self.governor._level,
+            ) = snapshot["governor"]
+            raise
+
     def replay_execution_stats(self) -> dict[str, Any]:
         """Attest what this in-memory replay execution actually consumed.
 
@@ -779,7 +834,10 @@ class Gateway:
                 "live_ready": live_ready, "checks": checks}
 
     # ── main entry ───────────────────────────────────────────────────────────
-    async def complete(self, req: LLMRequest, *, schema_hint: str = "") -> LLMResponse:
+    async def complete(
+            self, req: LLMRequest, *, schema_hint: str = "",
+            parsed_transform: Optional[Callable[[Any], Any]] = None,
+            ) -> LLMResponse:
         provider, model = self.route(req.role, req.purpose)
         adapter = self.adapters.get(provider)
         if adapter is None:
@@ -795,7 +853,8 @@ class Gateway:
                         tick=req.tick, replay=self.replay)
 
         if self.replay:
-            replayed = self._replay_lookup(cache_key, req, schema_hint)
+            replayed = self._replay_lookup(
+                cache_key, req, schema_hint, parsed_transform)
             if replayed is not None:
                 response, source_row = replayed
                 response.call_id = self._log_replay_call(req, cache_key, source_row)
@@ -812,6 +871,8 @@ class Gateway:
 
         resumed = self._durable_lookup(cache_key, schema_hint)
         if resumed is not None:
+            if parsed_transform is not None:
+                resumed.parsed = parsed_transform(resumed.parsed)
             operational_log(
                 logger, logging.DEBUG, "llm.resume.hit",
                 run_id=self.run_id, provider=resumed.provider, model=resumed.model,
@@ -961,6 +1022,8 @@ class Gateway:
             model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
         call_id = self._log_call(
             req, provider, model, cache_key, result, cost, cached, latency_ms)
+        if parsed_transform is not None:
+            parsed = parsed_transform(parsed)
         operational_log(logger, logging.DEBUG, "llm.request.completed",
                         run_id=self.run_id, provider=provider, model=model,
                         role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -1106,23 +1169,47 @@ class Gateway:
             "SELECT tick,phase,kind,subject_type,subject_id,importance,payload_json "
             "FROM events WHERE id=?", (source_id,)).fetchone()
         if source is None:
-            return source_id
-        candidates = self.store.query(
+            # Never carry an allocatable positive surrogate through replay. Even
+            # if it is currently absent locally, an earlier ordered action could
+            # create that row before this action executes and turn a source-
+            # invalid reference into a valid local one.
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} is dangling in source")
+        source_candidates = self.replay_conn.execute(
+            "SELECT id,importance,payload_json FROM events "
+            "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
+            "AND subject_id IS ? AND id<=? ORDER BY id",
+            (int(source["tick"]), source["phase"], source["kind"],
+             source["subject_type"], source["subject_id"], source_id)).fetchall()
+        local_candidates = self.store.query(
             "SELECT id,importance,payload_json FROM events "
             "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
             "AND subject_id IS ? ORDER BY id",
             (int(source["tick"]), source["phase"], source["kind"],
              source["subject_type"], source["subject_id"]))
         source_payload = self._event_payload_identity(source["payload_json"])
-        matches = [
-            int(candidate["id"]) for candidate in candidates
+        source_matches = [
+            int(candidate["id"]) for candidate in source_candidates
             if float(candidate["importance"]) == float(source["importance"])
             and self._event_payload_identity(candidate["payload_json"]) == source_payload
         ]
-        if len(matches) == 1:
-            self._replay_event_id_map[source_id] = matches[0]
-            return matches[0]
-        return source_id
+        local_matches = [
+            int(candidate["id"]) for candidate in local_candidates
+            if float(candidate["importance"]) == float(source["importance"])
+            and self._event_payload_identity(candidate["payload_json"]) == source_payload
+        ]
+        if source_id not in source_matches:
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} has no source occurrence")
+        occurrence = source_matches.index(source_id)
+        if occurrence >= len(local_matches):
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} full-payload occurrence "
+                f"ordinal {occurrence} is unavailable locally "
+                f"(source_prefix={len(source_matches)}, local={len(local_matches)})")
+        local_id = local_matches[occurrence]
+        self._replay_event_id_map[source_id] = local_id
+        return local_id
 
     def _localize_replay_event_references(self, value):
         """Localize event provenance embedded in a recorded model response."""
@@ -1145,8 +1232,9 @@ class Gateway:
             return [self._localize_replay_event_references(item) for item in value]
         return value
 
-    def _replay_lookup(self, cache_key: str, req: LLMRequest,
-                       schema_hint: str = ""):
+    def _replay_lookup(
+            self, cache_key: str, req: LLMRequest, schema_hint: str = "",
+            parsed_transform: Optional[Callable[[Any], Any]] = None):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
@@ -1162,7 +1250,6 @@ class Gateway:
             if int(candidate["id"]) not in self._replay_used_call_ids:
                 row = candidate
                 break
-        self._replay_positions[cache_key] = position
         if row is None:
             # Historical replay must survive prompt/context improvements. Fall
             # back only to the next unused call with the same deterministic
@@ -1178,21 +1265,9 @@ class Gateway:
                 None)
             if row is not None:
                 match_mode = "compatibility_fallback"
-                operational_log(
-                    logger, logging.WARNING, "llm.replay.compatibility_fallback",
-                    run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
-                    role=req.role, purpose=req.purpose,
-                    source_call_id=int(row["id"]))
         if not row:
             return None
         source_call_id = int(row["id"])
-        self._replay_used_call_ids.add(source_call_id)
-        if match_mode == "exact_key":
-            self._replay_exact_key_count += 1
-        else:
-            self._replay_compatibility_fallback_count += 1
-        self._replay_consumed_calls.append((
-            source_call_id, _logical_replay_call(row), str(row["purpose"] or "")))
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
@@ -1202,11 +1277,29 @@ class Gateway:
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}
+        if parsed_transform is not None:
+            parsed = parsed_transform(parsed)
         response = LLMResponse(
             text=resp.get("text", ""), parsed=parsed, provider=row["provider"],
             model=row["model"], in_tokens=int(row["in_tokens"]),
             out_tokens=int(row["out_tokens"]), cost_usd=float(row["cost_usd"]),
             cached=bool(row["cached"]), ok=ok)
+        # Replay consumption is transactional with parsing and provenance
+        # localization. A pause must retry the same recorded call rather than
+        # skip a corrupt response and silently consume a later duplicate.
+        self._replay_positions[cache_key] = position
+        self._replay_used_call_ids.add(source_call_id)
+        if match_mode == "exact_key":
+            self._replay_exact_key_count += 1
+        else:
+            self._replay_compatibility_fallback_count += 1
+            operational_log(
+                logger, logging.WARNING, "llm.replay.compatibility_fallback",
+                run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
+                role=req.role, purpose=req.purpose,
+                source_call_id=source_call_id)
+        self._replay_consumed_calls.append((
+            source_call_id, _logical_replay_call(row), str(row["purpose"] or "")))
         return response, row
 
     def _durable_lookup(self, cache_key: str, schema_hint: str = "") -> Optional[LLMResponse]:

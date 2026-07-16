@@ -217,10 +217,10 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The pending v5 ten-profile Oracle campaign, live 30-day rumor
+The pending v6 ten-profile Oracle campaign, live 30-day rumor
 pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
-operational gates. V5 uses fresh seeds 7341–7350; no v4 source, response, claim,
-checkpoint, replay, or seed is reused. V4 seeds 7331 and 7332 produced eligible
+operational gates. V6 uses fresh seeds 7351–7360; no v1–v5 source, response,
+claim, checkpoint, replay, seed, or receipt is reused. V4 seeds 7331 and 7332 produced eligible
 exact source/replay receipts but remain diagnostic evidence because the fixed
 campaign did not survive seed 7333.
 
@@ -230,11 +230,35 @@ runtime returned `entity ledger accounts not found` because the treasury is a
 system-owned `sys:gov` account, then incorrectly recorded and retried that
 post-preflight execution failure as a planner rejection. Attempt 2 failed the
 independently reproducible metric-name contract and attempt 3 succeeded, so the
-receipt could not reproduce or bind the first rejection. The v5 boundary uses
+receipt could not reproduce or bind the first rejection. The v5 boundary used
 one tick- and catalog-aware preflight in runtime and receipt audit, maps
 government reads to the actual treasury account, and treats a genuine
 post-preflight tool failure as an execution failure rather than a retryable plan
 rejection.
+
+V5 seeds 7341–7347 subsequently produced eligible exact receipts for their
+source/replay pairs. Seed 7348 completed its source but failed exact replay when
+duplicated public citation classes at ticks 301 and 331 were mapped through
+ambiguous surrogate candidates. Four replay-only newsroom-grounder fallbacks
+then propagated into nine information tables; LLM calls, actions, and schedules
+still matched. Seeds 7349 and 7350 were never run. The entire v5 campaign is
+diagnostic only. The seven receipt-bound replay databases and fourteen Oracle
+source/replay receipts belong only to seeds 7341–7347; seed 7348 has no eligible
+replay database or Oracle source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; this post-source fix remains diagnostic and
+creates no eligible v5 receipt. Cleanup of the v5 database bodies is complete:
+320 source checkpoints, 160 fixed-code replay checkpoints, four derived
+fixed-replay final databases, and the superseded partial seed-7343 replay were
+removed—485 database files and `111.945217 GiB` total. Retained artifacts are
+all authoritative final sources; the seven eligible replay databases and
+fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database. V6 uses
+occurrence-aware citation identity and an independently precommitted seed range,
+so no v5 artifact can contaminate its evidence.
 
 No live inference is run without `--approve-live-inference`. An unperformed or
 failed live gate must be reported as pending or failed, never treated as passed.
@@ -636,8 +660,8 @@ diagnostic evidence, while seed 7333 and the fixed v4 corpus remain excluded for
 the government-ledger retry/provenance failure described above. None of those
 sources, responses, claims, checkpoints, replays, or seeds is reused.
 
-The fresh `oracle-calibration-v5` campaign is separately precommitted to ten
-fixed arms with seeds 7341–7350. It routes only the Oracle to
+The fresh `oracle-calibration-v6` campaign is separately precommitted to ten
+fixed arms with seeds 7351–7360. It routes only the Oracle to
 `kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
 route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
 immutable claim bound to its clean Git commit/tree, committed effective config,
@@ -645,11 +669,13 @@ run ID, seed, initialized-state marker,
 and canonical data location. Source receipts bind every required checkpoint
 manifest and the companion replay tracker; eligibility requires exact one-time
 source-call consumption with zero compatibility fallback and zero live replay
-dispatch. The local no-clobber receipt chain is strong accident/tamper evidence,
+dispatch. Occurrence-aware citation mapping keeps repeated public article
+classes distinct under exact replay, and the v6 commitment excludes every v5
+profile and evidence path. The local no-clobber receipt chain is strong accident/tamper evidence,
 but a public claim still requires independent signing or a separately
 administered append-only transparency log.
 
-Completion of the v5 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+Completion of the v6 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
 run, and final provenance audit remain separate release evidence. The pull
 request stays draft. Merging, tagging, publication, and public deployment remain
 separate release decisions.

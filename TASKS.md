@@ -144,15 +144,41 @@ audit pass under separate authorization.
   preflight rejection, so the receipt correctly excluded the run. Do not reuse
   any v4 source, response, claim, initialized marker, checkpoint, replay,
   profile, commitment, manifest entry, or seed in the replacement campaign.
-- [ ] Run the ten fresh v5 live-Kimi Oracle profiles (seeds 7341–7350,
+- [x] Retire v5 from release eligibility. Seeds 7341–7347 produced passed,
+  eligible source receipts with exact companion replays. Seed 7348 finalized its
+  source, but duplicate same-tick loan-default events created ambiguous public
+  newsroom citations; four replay articles failed closed at ticks 301 and 331
+  and cascaded through nine information tables. Seeds 7349–7350 were never run.
+  The seven receipt-bound replay databases and fourteen Oracle source/replay
+  receipts belong only to seeds 7341–7347; seed 7348 has no eligible replay
+  database or Oracle source/replay receipt. Preserve v5 as diagnostic evidence
+  only: retain final sources, claims, reports, and all 320 checkpoint manifests
+  and hashes. Never reuse its identities or evidence in v6.
+- [x] Prove the occurrence-aware correction against immutable seed 7348. Final
+  offline replay `replay-oracle-calibration-v5-s7348-5220b912ae` reached tick
+  335 with `exact: true`, identical logical hash `fee77b65…b378`, all 82
+  deterministic tables exact, and `differences: []`. This post-source proof is
+  diagnostic only and creates no eligible v5 receipt.
+- [x] Complete verified v5 storage cleanup. Removed 320 source-checkpoint
+  database bodies, 160 fixed-code replay checkpoint bodies, four derived
+  fixed-replay final databases, and the superseded partial seed-7343 replay: 485
+  database files and `111.945217 GiB` total. Retained all authoritative final
+  sources; the seven eligible replay databases and fourteen source/replay
+  receipts for seeds 7341–7347; all source-checkpoint manifests/hashes, claims,
+  and reports; the 160 fixed-code replay checkpoint manifests; and the ignored
+  compact final exact receipt. Seed 7348 remains excluded and has no eligible
+  source/replay receipt or retained replay database.
+- [ ] Run the ten fresh v6 live-Kimi Oracle profiles (seeds 7351–7360,
   `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
-  `--oracle-campaign-run`. V5 uses one shared state-aware preflight for runtime
+  `--oracle-campaign-run`. V6 uses one shared state-aware preflight for runtime
   and receipt verification, advertises only historical executable entity/range
   targets, maps `gov` to the system-owned treasury account, and keeps genuine
-  post-preflight execution failures out of the retry provenance channel. Each
+  post-preflight execution failures out of the retry provenance channel.
+  Duplicate public-event citations map by deterministic source occurrence while
+  missing or inconsistent equivalence classes fail closed. Each
   arm finalizes its source and exact offline companion and hashes those
   artifacts plus the checked-in profile; pass the emitted entries through
-  `--oracle-calibration-report` using `runs/oracle/manifest-v5.template.yaml`
+  `--oracle-calibration-report` using `runs/oracle/manifest-v6.template.yaml`
   without exclusions.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
@@ -252,7 +278,7 @@ audit pass under separate authorization.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep the release pull request draft until the successful v5 Oracle
+- [ ] Keep the release pull request draft until the successful v6 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
   publication, and public deployment require separate authorization.
