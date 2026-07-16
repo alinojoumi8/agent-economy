@@ -323,15 +323,20 @@ def _scheduled_timer_marker(
     return start_ns, False
 
 
+def _scheduled_latency_ms(elapsed_ns: int, calls: list[dict]) -> int:
+    """Clamp a measured interval to its conservatively rounded call floor."""
+    measured_ms = max(0, math.ceil(int(elapsed_ns) / 1_000_000))
+    # Protect the evidence from a backwards wall-clock adjustment.  Persisted
+    # provider latencies use separately sampled wall clocks, so their sum can
+    # sit a few milliseconds above the enclosing monotonic interval.
+    call_floor_ms = sum(int(call.get("call_latency_ms", 0)) for call in calls)
+    return max(measured_ms, call_floor_ms)
+
+
 def _resumed_scheduled_latency_ms(started_epoch_ns: int, calls: list[dict]) -> int:
     """Measure resumed E2E time without pretending durable call reuse was free."""
-    wall_ms = max(
-        0, math.ceil((time.time_ns() - int(started_epoch_ns)) / 1_000_000))
-    # Protect the evidence from a backwards wall-clock adjustment.  Persisted
-    # provider latency is only a floor: planning/tool/persistence time still
-    # belongs to the scheduled end-to-end interval.
-    call_floor_ms = sum(int(call.get("call_latency_ms", 0)) for call in calls)
-    return max(wall_ms, call_floor_ms)
+    return _scheduled_latency_ms(
+        time.time_ns() - int(started_epoch_ns), calls)
 
 
 def _valid_scheduled_prediction(
@@ -1419,9 +1424,8 @@ async def advance_acceptance_run(
                     int(started_epoch_ns), model_calls)
                 latency_measurement = "resumed_wall_clock"
             else:
-                latency_ms = max(
-                    0, math.ceil(
-                        (time.perf_counter_ns() - started_ns) / 1_000_000))
+                latency_ms = _scheduled_latency_ms(
+                    time.perf_counter_ns() - started_ns, model_calls)
                 latency_measurement = "continuous_monotonic"
             _finalize_scheduled_checkpoint(
                 world.store, item=item, acceptance=acceptance,

@@ -762,6 +762,109 @@ def _seed_strict_latency_fixture(path, *, event_prediction_id=1, latency_ms=1500
     return store, config, payload
 
 
+def test_scheduled_latency_clamps_individual_rounding_to_call_floor():
+    calls = [
+        {"call_latency_ms": 8_877},
+        {"call_latency_ms": 4_783},
+    ]
+
+    # Seed 7365 measured one enclosing interval at 13,658 ms while the two
+    # independently measured governed calls summed to 13,660 ms. Persist the
+    # conservative call floor so valid evidence cannot fail its own validator.
+    assert acceptance_report._scheduled_latency_ms(
+        13_658_000_000, calls) == 13_660
+    assert acceptance_report._scheduled_latency_ms(
+        13_700_000_000, calls) == 13_700
+
+
+def test_scheduled_latency_call_floor_remains_valid_evidence(tmp_path):
+    store, config, payload = _seed_strict_latency_fixture(
+        tmp_path / "rounded-call-floor.db")
+    call_rows = store.query(
+        "SELECT id FROM llm_calls "
+        "WHERE tick=1 AND role='oracle' ORDER BY id")
+    call_latencies = [8_877, 4_783]
+    for row, latency in zip(call_rows, call_latencies):
+        store.execute(
+            "UPDATE llm_calls SET latency_ms=? WHERE id=?",
+            (latency, int(row["id"])))
+    for call, latency in zip(payload["model_calls"], call_latencies):
+        call["call_latency_ms"] = latency
+    payload["latency_ms"] = acceptance_report._scheduled_latency_ms(
+        13_658_000_000, payload["model_calls"])
+    store.execute(
+        "UPDATE events SET payload_json=? "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1",
+        (json.dumps(payload),))
+    store.commit()
+
+    try:
+        status = acceptance_schedule_status(store, config, target_tick=2)
+        assert status["state"] == "completed"
+        assert status["checkpoints"][0]["latency_ms"] == 13_660
+    finally:
+        store.close()
+
+
+def test_call_floor_dominant_scheduled_latency_replays_exactly(tmp_path):
+    config = _strict_oracle_acceptance_config()
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    try:
+        asyncio.run(execute_acceptance_run(source_world, target_tick=2))
+        event = source_store.query_one(
+            "SELECT id,payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed' AND tick=1")
+        payload = json.loads(event["payload_json"])
+        call_rows = source_store.query(
+            "SELECT id FROM llm_calls "
+            "WHERE tick=1 AND role='oracle' ORDER BY id")
+        call_latencies = [8_877, 4_783]
+        assert len(call_rows) == len(call_latencies)
+        for row, latency in zip(call_rows, call_latencies):
+            source_store.execute(
+                "UPDATE llm_calls SET latency_ms=? WHERE id=?",
+                (latency, int(row["id"])))
+        for call, latency in zip(payload["model_calls"], call_latencies):
+            call["call_latency_ms"] = latency
+        payload["latency_ms"] = acceptance_report._scheduled_latency_ms(
+            13_658_000_000, payload["model_calls"])
+        source_store.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(payload), int(event["id"])))
+        source_store.commit()
+
+        source_status = acceptance_schedule_status(
+            source_store, config, target_tick=2)
+        assert source_status["state"] == "completed"
+        assert source_status["checkpoints"][0]["latency_ms"] == 13_660
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+        replay_payload = json.loads(replay_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed' AND tick=1")[
+                "payload_json"])
+        assert replay_payload == payload
+        replay_status = acceptance_schedule_status(
+            replay_store, replay_world.config, target_tick=2)
+        assert replay_status["state"] == "completed"
+        assert replay_status["checkpoints"][0]["latency_ms"] == 13_660
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
 def test_strict_latency_ignores_manual_calls_and_duplicate_references_fail(tmp_path):
     store, config, payload = _seed_strict_latency_fixture(tmp_path / "strict.db")
     receipt = write_acceptance_package(store.path, out_dir=tmp_path / "out")

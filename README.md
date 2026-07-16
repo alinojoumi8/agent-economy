@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v7-seed-7361-control.yaml` ... `v7-seed-7370-rumor.yaml` | Current pending v7 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; governed answer repair; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap; no live evidence claimed yet |
+| `runs/oracle/v8-seed-7371-control.yaml` ... `v8-seed-7380-rumor.yaml` | Current pending v8 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; governed answer repair; scheduled-latency call floor; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap; no live evidence claimed yet |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v7 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v8 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -424,29 +424,53 @@ missed acceptance checkpoint. The arm spent $0.18351 and recorded no provider,
 budget, or tool-execution failure. Preserve v6 as excluded diagnostic evidence;
 seeds 7352–7360 were never run, and no v6 artifact may enter a later corpus.
 
-The current pending v7 precommit uses fresh seeds 7361–7370,
-`kimi-for-coding-highspeed`, conservative 3x cost metering, and
-`runs/oracle/manifest-v7.template.yaml` with a $25 per-run safety cap. Runtime
-and receipt verification share a state-aware preflight that advertises only
-historical executable entity/range targets, maps `gov` to the treasury account,
-and keeps a genuine post-preflight execution failure out of the planner-retry
-provenance channel. Duplicate public-event citation classes are mapped by their
-deterministic source occurrence, while missing or inconsistent classes still
-fail closed. It feeds the read-only `--oracle-calibration-report`
-command. `--oracle-campaign-run` creates each finalized source, exact companion
-replay, and source receipt without applying the whole-world all-live-provider
-gate. Each receipt chain binds the immutable pre-run claim and initialized
-marker, clean Git commit/tree, committed config, canonical source/replay paths,
-required checkpoint manifests, and an execution tracker proving exact one-time
-source-call consumption with zero compatibility fallback or live replay
-dispatch. V7 validates the governed answer semantics within the existing
-bounded repair call before persistence. No v6 source, response, claim,
+V7 is now archived and excluded. Seeds 7361–7364 produced passed, eligible
+source receipts with exact tick-335 companion replays. Seed 7365 remains paused
+at tick 335 in `FINALIZE` with 32,114 persisted calls, 12 governed Oracle calls,
+six resolved forecasts/checkpoints, balanced USD ledger state, no critical
+events, and `$0.2754108` spend. Its authoritative database is 518,561,792 bytes;
+SHA-256 is
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`;
+immutable SQLite `quick_check` is `ok`, with no WAL/SHM sidecars. The completion
+event recorded 13,658 ms while the two governed calls summed to 13,660 ms, so
+receipt validation correctly rejected the continuous scheduled-latency floor
+before any replay or source receipt was published. This is the continuous scheduled-latency floor defect. Because the source claim is
+bound to commit `7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`, seed 7365 is never resumed,
+repaired, substituted, or post-fix receipted. The claim SHA-256 is
+`705dadfe8e9ed8588d0a4329bf0e681ce2f83e2a531ff40ee94c783d83f1f18e` and the
+initialized-marker SHA-256 is
+`f07efa9e3ff5452aa4aea6ff560a4974c86c839fac7b9aa9e5c78aeb0f900bfd`.
+Seeds 7366–7370 were never run.
+There is no V7 aggregate manifest or receipt. The eight source/replay receipt
+JSONs for seeds 7361–7364 remain diagnostic only; no V7 response, claim,
 initialized marker, checkpoint, replay, receipt, profile, commitment, manifest
-entry, run identity, or seed enters v7. Passing evidence still requires the ten
-fresh v7 source/replay pairs,
-60 resolved forecasts across both outcomes, p90 below 60 seconds, and Brier
-below 0.25; no v7 live evidence is claimed before that gate passes. See the
+entry, run identity, artifact, or seed enters v8.
+
+The producer now clamps both continuous-monotonic and resumed-wall-clock
+scheduled latency to at least the conservatively rounded sum of the persisted
+governed-call latencies. V8 precommits fresh seeds 7371–7380 with odd control
+and even rumor arms under campaign `oracle-calibration-v8`, version 8,
+`kimi-for-coding-highspeed`, conservative 3x metering,
+`runs/oracle/manifest-v8.template.yaml`, and a $25 per-run cap. Runtime and
+receipt verification retain the shared state-aware preflight, deterministic
+occurrence-aware citation mapping, bounded governed-answer repair, immutable
+claims, exact one-time replay consumption, and zero fallback/live replay
+dispatch. Passing still requires ten fresh source/replay pairs, 60 resolved
+forecasts across both outcomes, p90 below 60 seconds, and Brier below 0.25. No
+v8 live evidence is claimed before the aggregate gate passes. See the
 [operator runbook](docs/operator-runbook.md).
+
+After the V7 archive inventory is durable, storage cleanup is restricted to the
+200 source checkpoint database bodies under `data/checkpoints` matching anchored
+regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`—40 per source. That exact set
+is 49,647,239,168 bytes (`46.237595 GiB`).
+Retain all 360 source/replay checkpoint manifests and hashes, five final source
+databases, four final replay databases, eight source/replay receipt JSON files,
+the five existing claim/initialized-marker pairs for seeds 7361–7365, profiles,
+commitments, template, base
+configuration, reports, and the authoritative seed-7365 database. Never use a
+broad V7 wildcard. The body cleanup remains pending.
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve
 SCF fixture supplies income, liquid-financial-asset, and total-net-worth draws;
@@ -478,9 +502,10 @@ and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`, and merged as
 `29411023992` was not executed: GitHub rejected every zero-step job because of
 the repository account's billing/spending-limit state. That external runner
 block is not a code-test failure. No public production deployment is claimed.
-The active release pull request remains draft; do not merge, tag, publish, or
-deploy publicly until every pending live gate and the final provenance audit
-passes under separate authorization.
+PR #20 remains draft; do not merge, tag, publish, or deploy publicly until every
+pending live gate and the final provenance audit passes under separate
+authorization. GitHub Actions billing/spending-limit blocks are external
+runner state, not repository test evidence, and do not waive any required job.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

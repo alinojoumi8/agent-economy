@@ -1,6 +1,6 @@
 # Agent Economy — Product Requirements Document
 
-**Version:** 1.1 · **Date:** 2026-07-15 · **Owner:** Ali · **Status:** Maintained implementation contract
+**Version:** 1.1 · **Date:** 2026-07-16 · **Owner:** Ali · **Status:** Maintained implementation contract
 
 ---
 
@@ -154,7 +154,9 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Answers probability questions with: point estimate, key drivers, confidence, and an auto-created resolution criterion + deadline.
 - Predictions logged; resolved automatically when determinable from world state; Brier score tracked over the run.
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
-- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The current pending v7 precommit uses fresh seeds 7361–7370 and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route, with a $25 safety cap per run. Its shared state-aware planner preflight binds the advertised historical tool catalog and valid entity/range targets before any read tool executes, so every retryable rejection remains independently reproducible; duplicate public-event citation classes resolve by deterministic source occurrence while missing or inconsistent classes still fail closed. No v7 evidence is claimed until all predeclared live arms and their exact companion replays pass the manifest gate.
+- Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The persisted scheduled interval is conservatively clamped to at least the sum of its governed planning/answer call latencies, preventing separately rounded provider clocks from making the enclosing completion event shorter than its own calls.
+- Oracle campaign V7 is excluded diagnostic evidence. Seeds 7361–7364 produced passed, eligible source receipts with exact tick-335 companion replays. Seed 7365 remains paused at tick 335 in `FINALIZE`; its continuously measured completion latency was 13,658 ms while its governed calls summed to 13,660 ms, so receipt validation correctly rejected that two-millisecond floor violation before any replay or source receipt was published. This is the continuous scheduled-latency floor defect. The source is claim-bound to the original clean Git revision and is never resumed, repaired, substituted, or post-fix receipted. Seeds 7366–7370 were never run, and no V7 artifact or seed enters a later corpus.
+- The current pending `oracle-calibration-v8` precommit, campaign version 8, uses fresh seeds 7371–7380, alternating odd control/even rumor arms, and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route with a $25 safety cap per run. Its shared state-aware planner preflight binds the advertised historical tool catalog and valid entity/range targets before any read tool executes, so every retryable rejection remains independently reproducible; duplicate public-event citation classes resolve by deterministic source occurrence while missing or inconsistent classes still fail closed. No V8 live evidence is claimed until all predeclared arms and their exact companion replays pass the manifest gate.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -269,19 +271,43 @@ and the checkpoint was missed. The arm spent $0.18351 and recorded no provider,
 budget, or tool-execution failure. V6 is preserved and excluded; seeds
 7352–7360 were never run and may not be substituted into that campaign.
 
-The current v7 precommit starts a new ten-profile corpus at seeds 7361–7370,
-retains the occurrence-aware citation and shared state-aware preflight fixes,
-and validates the governed answer contract within the existing bounded repair
-call before persistence. No v6 source, response, claim, initialized marker,
-checkpoint, replay, receipt, profile, commitment, manifest entry, run identity,
-or seed enters v7, and no v7 live evidence is claimed yet.
+V7 is archived as an incomplete diagnostic campaign. Seeds 7361–7364 retain
+passed, eligible source receipts and exact 335-tick companion replays with zero
+differences. Seed 7365 remains paused at tick 335 in `FINALIZE`; its authoritative
+518,561,792-byte standalone database has SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`, no
+WAL/SHM sidecars, 32,114 calls, 12 Oracle calls, six resolved
+forecasts/checkpoints, balanced USD, no critical events, and `$0.2754108` spend.
+Its 13,658 ms persisted E2E measurement fell below the 13,660 ms governed-call
+sum. The claim-bound source cannot resume or mint an eligible post-fix receipt;
+seed 7365 has no replay or receipt, seeds 7366–7370 were never run, and no V7
+aggregate manifest or receipt exists. No V7 artifact or seed enters V8.
 
-The outstanding work is release evidence and operations: pass the fresh v7
-ten-profile Oracle campaign (seeds 7361–7370 using
-`kimi-for-coding-highspeed` with conservative 3x metering), run the live 30-day
+After the V7 archive/hash inventory is durable, remove only the 200 source
+checkpoint database bodies matching anchored regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
+(`46.237595 GiB`). Retain all 360 source/replay checkpoint manifests and hashes,
+five final source databases, four final replay databases, eight source/replay receipts for seeds
+7361–7364, the five existing claim/initialized-marker pairs for seeds 7361–7365,
+profiles, commitments, template,
+base, reports, and the authoritative seed-7365 database. This cleanup is pending;
+a broad V7 wildcard is prohibited.
+
+The current `oracle-calibration-v8` campaign-version-8 precommit starts a fresh
+ten-profile corpus at seeds 7371–7380,
+with odd control/even rumor arms, `kimi-for-coding-highspeed`, conservative 3x
+metering, and a $25 per-run cap. It retains occurrence-aware citations, shared
+state-aware preflight, governed-answer repair, and the fixed scheduled-latency
+producer. Engine semantics 7 and database schema 11 are unchanged. No V8 live
+evidence is claimed yet.
+
+The outstanding work is release evidence and operations: pass the fresh V8
+ten-profile Oracle campaign, run the live 30-day
 rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
-public-release provenance audit. The pull request stays draft; merging,
-tagging, publication, or public deployment requires separate authorization.
+public-release provenance audit. Release-gate PR #20 stays draft; GitHub account
+billing is an external operational blocker and does not waive required CI.
+Merging, tagging, publication, or public deployment requires separate
+authorization.
 
 ---
 

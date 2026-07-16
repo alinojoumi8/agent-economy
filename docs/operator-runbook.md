@@ -177,8 +177,10 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. The current pending `oracle-calibration-v7`
-commitment uses fresh seeds 7361–7370. Its ten predeclared profiles keep background behavior
+whole-world acceptance run. V7 is archived as an incomplete diagnostic campaign
+after seed 7365 exposed the continuous scheduled-latency floor defect. The
+current pending `oracle-calibration-v8` commitment uses fresh seeds 7371–7380:
+odd seeds are control and even seeds are rumor arms. Its ten predeclared profiles keep background behavior
 scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
 metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
 seed or switch control/treatment arms after seeing outcomes. Treatment profiles
@@ -298,21 +300,48 @@ $0.18351, with no provider, budget, or tool-execution failure. Preserve v6 as
 excluded diagnostic evidence; do not resume, rewrite, repair, or substitute
 seed 7351. Seeds 7352–7360 were never run and must remain unused by v6.
 
-V7 has direct acceptance-rehearsal ancestry, validates governed answer semantics
-inside the existing bounded repair call before persistence, and uses fresh seeds
-7361–7370. No v6 run identity, response, claim, initialized marker, checkpoint,
-replay, receipt, profile, commitment, manifest entry, or seed is eligible for
-the v7 manifest. No v7 live evidence is claimed before the complete gate passes.
+V7 seeds 7361–7364 each produced passed, eligible source receipts and exact
+335-tick companion replays with zero differences. Preserve them as diagnostic
+evidence only. Seed 7365 is paused at tick 335 in `FINALIZE`; its authoritative
+standalone database is `data/runs/oracle-calibration-v7-s7365.db`, 518,561,792
+bytes, SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`.
+Opening it with SQLite URI `mode=ro&immutable=1` and `query_only=ON` returns
+`quick_check: ok`. It has no WAL/SHM sidecars and records
+32,114 persisted calls, 12 Oracle calls, six resolved forecasts/checkpoints, no
+critical events, balanced USD, and `$0.2754108` spend. Receipt production found
+persisted scheduled E2E of 13,658 ms below the 13,660 ms governed-call sum.
+Seed 7365 has no replay database or receipt, seeds 7366–7370 were never run, and
+there is no V7 aggregate manifest or receipt.
+
+The common scheduled-latency producer now clamps both continuous monotonic and
+resumed wall-clock duration to at least the sum of conservatively rounded
+governed call latencies. Seed 7365's claim binds commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`. The claim SHA-256 is
+`705dadfe8e9ed8588d0a4329bf0e681ce2f83e2a531ff40ee94c783d83f1f18e`; the
+initialized-marker SHA-256 is
+`f07efa9e3ff5452aa4aea6ff560a4974c86c839fac7b9aa9e5c78aeb0f900bfd`.
+Because the campaign command is the
+only receipt path and re-preparation requires the clean revision to match that
+claim byte-for-byte, never resume it or mint a post-fix eligible receipt. A
+post-fix replay may be retained only as diagnostic evidence. No V7 artifact or
+seed enters V8.
+
+V8 has the same direct acceptance-rehearsal ancestry and governed-answer repair
+contract, campaign version 8, fresh seeds 7371–7380, and the fixed latency
+producer. It retains engine semantics 7 and database schema 11.
+No V8 live evidence is claimed yet; the complete gate must pass first.
 
 Then preflight and execute each profile from
-`v7-seed-7361-control.yaml` through `v7-seed-7370-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7361
+`v8-seed-7371-control.yaml` through `v8-seed-7380-rumor.yaml`. The first run is
+shown; repeat it for the exact ten checked-in profiles only after seed 7371
 produces an eligible exact source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v7-seed-7361-control.yaml --preflight
-python run.py --config runs/oracle/v7-seed-7361-control.yaml --preflight-live
-python run.py --config runs/oracle/v7-seed-7361-control.yaml `
+python run.py --config runs/oracle/v8-seed-7371-control.yaml --preflight
+python run.py --config runs/oracle/v8-seed-7371-control.yaml --preflight-live
+python run.py --config runs/oracle/v8-seed-7371-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -365,13 +394,13 @@ storage cleanup.
 
 Run the ten arms sequentially and use this checkpoint retention boundary:
 
-- Keep every `oracle-calibration-v7-s*_t*.db` source checkpoint body and its
+- Keep every `oracle-calibration-v8-s*_t*.db` source checkpoint body and its
   `.manifest.json` through the aggregate report. The evaluator reopens each
   physical source checkpoint, rebuilds its runtime manifest, runs SQLite and
   ledger checks, and rejects a missing body; a receipt hash alone is not enough.
 - After one arm has emitted a passed source receipt and its manifest entry is
   durably recorded, archive or prune only that arm's
-  `replay-oracle-calibration-v7-*_t*.db` checkpoint bodies. Retain their tiny
+  `replay-oracle-calibration-v8-*_t*.db` checkpoint bodies. Retain their tiny
   manifests, the final replay database under `data/runs`, the final source
   database, and all source checkpoint bodies. Resolve and verify the exact
   replay run ID and checkpoint-directory paths before removal; never use a broad
@@ -381,18 +410,35 @@ Run the ten arms sequentially and use this checkpoint retention boundary:
   bodies keeps the ten-arm peak near `110–114 GiB`; monitor free space before
   each arm and stop before the safety margin is exhausted.
 - Only after the aggregate JSON/Markdown receipt has passed and the evidence
-  package is durably archived may all ten arms' 400 v7 source checkpoint
+  package is durably archived may all ten arms' 400 V8 source checkpoint
   database bodies (40 per arm) be pruned. Retain their manifests, final
   source/replay databases, claims, and receipts.
 
+The separate V7 archive cleanup is narrower and remains pending until its
+archive/hash inventory is durable. Remove exactly the 200 source checkpoint
+database bodies in `data/checkpoints` matching anchored filename regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`. The verified reclaim is
+49,647,239,168 bytes (`46.237595 GiB`): seed 7361 has 40 bodies totaling
+9,700,835,328 bytes (`9.034607 GiB`); 7362 has 40 totaling 10,008,035,328
+(`9.320709 GiB`); 7363 has 40 totaling 9,875,501,056 (`9.197277 GiB`); 7364
+has 40 totaling 10,006,319,104 (`9.319111 GiB`); and 7365 has 40 totaling
+10,056,548,352 (`9.365891 GiB`). Every body has a sibling manifest and none has
+a sidecar. Never
+use a broad V7 wildcard. Retain all 360 source/replay checkpoint manifests and
+hashes, five final source databases, four final replay databases, eight
+source/replay receipt JSONs for seeds 7361–7364, the five existing
+claim/initialized-marker pairs for seeds 7361–7365, profiles, commitments,
+template, base configuration, reports, and the
+authoritative seed-7365 database.
+
 Only after all ten source claims and runs finish, copy
-`runs/oracle/manifest-v7.template.yaml` to a run-specific evidence manifest and
+`runs/oracle/manifest-v8.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v7.template.yaml runs/oracle/manifest-v7.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v7.yaml
+Copy-Item runs/oracle/manifest-v8.template.yaml runs/oracle/manifest-v8.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v8.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -428,7 +474,9 @@ The driver runs to scheduled Oracle checkpoints and then the configured
 ends after the forecast contract is validated, and is bound to the exact
 prediction, campaign key, question, and tick. Manual calls cannot satisfy the
 gate; a missing, dangling, malformed, or duplicate completion reference marks
-the checkpoint invalid. The profile is uncapped for runtime continuity but has a
+the checkpoint invalid. Continuous monotonic and resumed wall-clock measurements
+are both clamped to at least the sum of conservatively rounded governed call
+latencies. The profile is uncapped for runtime continuity but has a
 separate $200 efficiency completion gate. On success it writes the complete
 HTML report plus JSON and Markdown acceptance receipts.
 
@@ -559,7 +607,9 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep the release pull request draft until the v7 Oracle campaign, capped
+Keep release-gate PR #20 draft until the V8 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
-publication, and public deployment require separate authorization.
+publication, and public deployment require separate authorization. GitHub
+account billing is an external operational blocker and does not waive any
+required CI job.

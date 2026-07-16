@@ -103,21 +103,27 @@ confidence, bounded tool evidence, a resolution rule, deadline, outcome, and
 Brier score. Production acceptance schedules six questions and requires all
 six prediction-bound end-to-end planning-and-answer latency samples before
 enforcing p90. Unknown or malformed resolution rules fail as insufficient data
-and never age into a scored negative outcome.
+and never age into a scored negative outcome. The scheduled-latency producer
+uses continuous monotonic duration for an uninterrupted checkpoint and resumed
+wall-clock duration after a pause, then clamps either measurement to at least
+the sum of conservatively rounded governed call latencies.
 
 Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
 The current pending release calibration design therefore preregisters ten fixed
-v7 profiles under `runs/oracle`, six forecasts per run, fresh seeds 7361–7370, and
-alternating control/rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
-live; background behavior remains scripted so the campaign isolates the
+V8 profiles under `runs/oracle` for campaign `oracle-calibration-v8`, version 8,
+six forecasts per run, fresh seeds 7371–7380,
+and odd-control/even-rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
+live, conservatively metered at 3x with a $25 per-run cap; background behavior
+remains scripted so the campaign isolates the
 forecast surface. Treatment windows publish a one-person rumor
 precursor one tick before each forecast and apply the larger depositor-targeted
 rumor one tick afterward; controls receive neither. This makes arm evidence
 observable at forecast time while keeping the later scored response distinct,
-and profile validation locks the schedule before any live run. The explicit manifest binds run IDs, seeds,
-source/replay database paths, profile paths, and hashes. V7 also uses
+and profile validation locks the schedule before any live run. The explicit
+version-8 manifest binds run IDs, seeds, source/replay database paths, profile
+paths, and hashes. V8 also uses
 occurrence-aware public-citation identity so payload-equivalent articles at
 different source events remain distinct during replay, and it validates governed
 answer semantics inside the existing bounded repair call before persistence.
@@ -130,7 +136,8 @@ runs, at least
 and Brier below the naive p=0.5 score of 0.25. Every finalized source must also
 replay exactly offline. This evidence says nothing by itself about the cost or
 stability of the separate 365-day live-agent acceptance run.
-No v7 live evidence is claimed before the ten arms and aggregate receipt pass.
+No V8 live evidence is claimed before the ten arms and aggregate receipt pass.
+The campaign retains engine semantics 7 and database schema 11.
 
 The archived `oracle-calibration-v1-s7301` source is not part of that evidence.
 It completed tick 335 with valid provider provenance, but replay diverged at the
@@ -209,8 +216,37 @@ V6 seed 7351 stopped at tick 65 after a successful Kimi answer returned
 persisted a rule rejection, an `insufficient_data` prediction, and a missed
 checkpoint. The arm spent $0.18351 and recorded no provider, budget, or
 tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
-run, and no v6 source, response, claim, checkpoint, replay, receipt, profile,
-manifest entry, run identity, or seed enters v7.
+run, and no V6 artifact or seed enters a later corpus.
+
+V7 is also archived as an incomplete diagnostic campaign. Seeds 7361–7364 each
+retain passed, eligible source receipts and exact 335-tick companion replays with
+zero differences. Seed 7365 stopped paused at tick 335 in `FINALIZE`; its
+authoritative 518,561,792-byte standalone database has SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`,
+passes immutable read-only `quick_check`, has no WAL/SHM sidecars, and records
+32,114 calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical
+events, balanced USD, and `$0.2754108` spend. Receipt production exposed the
+continuous scheduled-latency floor defect: persisted E2E was 13,658 ms versus a
+13,660 ms governed-call sum. Seed 7365 has no replay or receipt, seeds
+7366–7370 were never run, and there is no aggregate V7 manifest or receipt.
+
+The corrected producer does not rehabilitate seed 7365. Its claim binds commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`; the sole receipt path requires the
+clean revision to match that claim, so the source cannot resume or mint an
+eligible post-fix receipt. A post-fix replay would be diagnostic only. No V7
+artifact or seed is reused in V8.
+
+After the V7 archive/hash inventory is durable, the approved storage cleanup is
+exactly 200 source checkpoint database bodies matching anchored regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
+(`46.237595 GiB`). A broad V7 wildcard is prohibited. Retain all 360
+source/replay checkpoint manifests and hashes, five final source databases, four
+final replay databases, eight source/replay receipt JSONs for seeds 7361–7364,
+the five existing claim/initialized-marker pairs for seeds 7361–7365, the
+profiles, commitments, template,
+base configuration, reports, and authoritative seed-7365 database. The body
+cleanup remains pending.
 
 ## Evidence hierarchy
 
@@ -228,10 +264,11 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-Completion of the v7 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
-run, and final provenance audit are separate pending gates. The release pull
-request stays draft; merging, tagging, publication, and public deployment need
-separate authorization. After those gates:
+Completion of the V8 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+run, and final provenance audit are separate pending gates. Release-gate PR #20
+stays draft; merging, tagging, publication, and public deployment need separate
+authorization. GitHub account billing is an external operational blocker and
+does not waive required CI. After those gates:
 
 - add a causal explorer from exposure to belief to action to metric;
 - formalize experiment preregistration;

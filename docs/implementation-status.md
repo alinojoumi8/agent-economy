@@ -1,6 +1,6 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Assessment date:** 2026-07-15
+> **Assessment date:** 2026-07-16
 >
 > **Merged baseline:** `main` includes R22 PR #19 at
 > `1806294d4fecbe13ddbdf615c459755c74293599`
@@ -11,8 +11,9 @@
 > main run `29403186283` also passed all five jobs. R22 code, exact local
 > image/Compose/load evidence, and the six-job PR #19 matrix are complete, and
 > PR #19 is merged. Post-merge run `29411023992` executed no steps because
-> GitHub blocked the account for billing/spending-limit reasons.
-> The active release-gate pull request remains draft. Public deployment,
+> GitHub blocked the account for billing/spending-limit reasons. That external
+> operational blocker does not waive any required CI job.
+> The active release-gate PR #20 remains draft. Public deployment,
 > merging that pull request, tagging, and publication remain separate actions.
 
 ## Executive verdict
@@ -162,7 +163,7 @@ its verification is part of the fresh campaign gate.
 
 Four release-quality workstreams remain after the extension closure:
 
-1. run the fresh v7 ten-profile Oracle evidence campaign with seeds 7361–7370,
+1. run the fresh v8 ten-profile Oracle evidence campaign with seeds 7371–7380,
    `kimi-for-coding-highspeed`, conservative 3x metering, and a $25 per-run cap;
    its explicit read-only manifest evaluator, 60-forecast floor,
    outcome-diversity gate,
@@ -174,7 +175,7 @@ Four release-quality workstreams remain after the extension closure:
    from preserved deceased rows; and
 4. a fresh release-candidate provenance/license/dependency/secret audit.
 
-The active pull request stays draft. Merge, tag, publication, and public
+Release-gate PR #20 stays draft. Merge, tag, publication, and public
 deployment require separate authorization after these gates pass.
 
 The five-tick semantics-7 pilot and scripted 365-tick rehearsal supplement
@@ -204,8 +205,11 @@ are pinned; unrelated optional sources remain separate.
 | Archived Oracle v4 seeds 7331–7333 | **Excluded fixed corpus / retained diagnostic:** seeds 7331 and 7332 produced eligible exact source/replay receipts, but no v4 campaign evidence is reused. Seed 7333 completed an exact pair, yet its tick-125 forecast was correctly ineligible. Attempt 1 asked for the government ledger; runtime looked only for `accounts.owner_type='gov'`, missed the system-owned `sys:gov` treasury, returned `entity ledger accounts not found`, and mislabeled/retried that post-preflight execution failure as a planner rejection. Attempt 2 failed the independently reproducible metric-name contract and attempt 3 succeeded, so the receipt could not reproduce or bind attempt 1. The forecast, run, and fixed v4 corpus remain excluded; no v4 source, response, claim, checkpoint, replay, or seed is reused. |
 | Oracle v2–v4 storage archive | **Completed conservative cleanup:** 200 superseded checkpoint database bodies were removed after diagnosis—40 for v2, 40 for v3, and 120 for v4—recovering `45.369270 GiB`. All 200 runtime checkpoint manifests and every final source/replay database remain. These campaigns stay excluded diagnostic evidence. |
 | Archived Oracle v5 seeds 7341–7350 | **Excluded fixed corpus / retained diagnostic:** seeds 7341–7347 produced passed, eligible source receipts with exact companion replays. Seed 7348 finalized its source, but duplicate same-tick loan defaults collapsed to ambiguous public citation classes during replay. Four newsroom articles failed closed to deterministic daily briefs at ticks 301 and 331, cascading through nine information tables. Seeds 7349–7350 were never run. Final corrected offline replay `replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with `exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic tables exact, and `differences: []`; the post-source fix is diagnostic proof only and creates no eligible v5 receipt. Completed cleanup removed 320 v5 source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies, four derived fixed-replay final databases, and the superseded partial seed-7343 replay: 485 database files and `111.945217 GiB` total. Retained artifacts are all authoritative final sources; the seven eligible replay databases and fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint manifests; and the ignored compact final exact receipt. Seed 7348 remains excluded and has no eligible source/replay receipt or retained replay database. No v5 artifact or seed enters a later corpus. |
-| Archived Oracle v6 seeds 7351–7360 | **Excluded after first arm / retained diagnostic:** seed 7351 stopped at tick 65 after a successful Kimi answer returned `confidence: "medium"` instead of the strict `low|med|high` value. Runtime persisted `oracle_rule_rejected`, an `insufficient_data` prediction, and `acceptance_checkpoint_missed`. Spend was `$0.18351`; there was no provider, budget, or tool-execution failure. V6 is preserved and excluded, seeds 7352–7360 were never run, and no v6 artifact or seed enters v7. |
-| Oracle campaign tooling | **Implemented; v7 live evidence pending:** ten fresh profiles for seeds 7361–7370 and `runs/oracle/manifest-v7.template.yaml` define the current pending corpus. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. Runtime and receipt share a scheduled-tick, catalog-aware preflight for historical ranges and available entities; government ledger reads map to the actual system-owned `sys:gov` treasury, while genuine post-preflight failures are execution failures rather than retryable planner rejections. Duplicate public-event citation classes resolve by deterministic source occurrence, while missing or inconsistent classes fail closed. V7 validates governed answer semantics inside the existing bounded repair call before persistence. No v1–v6 run enters the v7 corpus, and no v7 evidence is claimed before all ten arms and the aggregate receipt pass. |
+| Archived Oracle v6 seeds 7351–7360 | **Excluded after first arm / retained diagnostic:** seed 7351 stopped at tick 65 after a successful Kimi answer returned `confidence: "medium"` instead of the strict `low|med|high` value. Runtime persisted `oracle_rule_rejected`, an `insufficient_data` prediction, and `acceptance_checkpoint_missed`. Spend was `$0.18351`; there was no provider, budget, or tool-execution failure. V6 is preserved and excluded, seeds 7352–7360 were never run, and no v6 artifact or seed enters a later corpus. |
+| Scheduled-latency producer | **Corrected for the current tree:** `scheduled_e2e_v1` still covers Oracle planning, bounded reads, answering, and validation. Its common producer now clamps both continuous monotonic and resumed wall-clock duration to at least the sum of conservatively rounded governed call latencies. Engine semantics 7 and database schema 11 are unchanged. |
+| Archived Oracle v7 seeds 7361–7370 | **Incomplete / retained diagnostic:** seeds 7361–7364 each produced passed, eligible source receipts and exact 335-tick companion replays with zero differences. Seed 7365's authoritative 518,561,792-byte standalone database (`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`) passes immutable read-only `quick_check`, has no WAL/SHM sidecars, and remains paused at tick 335 in `FINALIZE`. It records 32,114 calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical events, balanced USD, and `$0.2754108` spend. Receipt production exposed the continuous scheduled-latency floor defect: persisted E2E was 13,658 ms versus a 13,660 ms governed-call sum. Seed 7365 has no replay database or receipt; seeds 7366–7370 were never run; no aggregate V7 manifest or receipt exists. Its claim binds commit `7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree `d9e02a64efd555fb6d0a5c1414351a6db238ad62`, so it cannot resume or mint an eligible post-fix receipt. No V7 artifact or seed enters V8. |
+| Oracle v7 storage archive | **Inventory complete; body cleanup pending:** after the archive/hash record is durable, remove exactly the 200 source checkpoint database bodies in `data/checkpoints` matching anchored regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes (`46.237595 GiB`). Never use a broad V7 wildcard. Retain all 360 source/replay checkpoint manifests and hashes, five final source databases, four final replay databases, eight source/replay receipt JSONs for seeds 7361–7364, the five existing claim/initialized-marker pairs for seeds 7361–7365, the profiles/commitments/template/base, reports, and authoritative seed 7365 database. |
+| Oracle campaign tooling | **Implemented; V8 live evidence pending:** ten fresh profiles for seeds 7371–7380 and `runs/oracle/manifest-v8.template.yaml` define campaign `oracle-calibration-v8`, version 8. Odd seeds are control and even seeds rumor arms. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. Runtime and receipt share the fixed scheduled-latency producer and existing fail-closed preflight/provenance rules. No prior campaign artifact or seed enters V8, and no V8 live evidence is claimed before all ten arms and the aggregate receipt pass. |
 | Oracle free arm rehearsal | **Passed mechanics:** control `9fb8985f97` resolved six negatives; treatment `bb877a0d89` fired all six public precursors and all six larger rumors and resolved six positives. Both reconciled with zero provider/budget/report failures; their combined scripted Brier score was `0.19469025`. Treatment replay `replay-bb877a0d89-385256e2a1` matched tick 335 and hash `0ff7685e…2fa9ed` with `differences: []`. Scripted provenance remains intentionally ineligible for the live receipt. |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay:** `881ed41994` passed 19/20 acceptance checks with only scripted `real_providers` false; 100 living agents, six resolved Oracle checkpoints, every shock trace, experiment evidence, and three reviewed phenomena. `replay-881ed41994-3465cb3101` matched tick 365 and hash `37d18cf4…498786ed` with every deterministic table exact and `differences: []`. |
 | Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
@@ -280,16 +284,39 @@ public tag.
   persisted a rule rejection, an `insufficient_data` prediction, and a missed
   checkpoint. Spend was $0.18351, with no provider, budget, or tool-execution
   failure. V6 is preserved and excluded; seeds 7352–7360 were never run, and no
-  v6 artifact enters v7.
-- The current pending v7 explicit-manifest Oracle latency/calibration campaign
-  uses fresh seeds 7361–7370, `kimi-for-coding-highspeed`, conservative 3x
+  v6 artifact enters a later corpus.
+- V7 seeds 7361–7364 each retain passed, eligible source receipts and exact
+  335-tick companion replays with zero differences, but the campaign is
+  archived and incomplete. Seed 7365 is paused at tick 335 in `FINALIZE`; its
+  immutable standalone database has SHA-256
+  `b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`,
+  no sidecars, 32,114 calls, 12 Oracle calls, six resolved forecasts/checkpoints,
+  balanced USD, and `$0.2754108` spend. Receipt production measured 13,658 ms
+  scheduled E2E against a 13,660 ms governed-call sum. The common producer now
+  clamps continuous and resumed durations to the conservatively rounded call
+  sum, but seed 7365's commit/tree-bound claim prevents post-fix resume or an
+  eligible receipt. It has no replay or receipt, seeds 7366–7370 were never run,
+  and no aggregate V7 manifest or receipt exists. No V7 artifact or seed is
+  reused in V8.
+- After the V7 archive/hash record is durable, remove only the 200 source
+  checkpoint database bodies matching
+  `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
+  (`46.237595 GiB`). Keep the complete manifest/hash inventory and all final,
+  claim, initialized-marker, receipt, profile, commitment, template, base,
+  report, and authoritative seed-7365 artifacts. This cleanup is pending; a
+  broad V7 wildcard is prohibited.
+- The current pending V8 explicit-manifest Oracle latency/calibration campaign
+  uses fresh seeds 7371–7380, odd control/even rumor arms,
+  `kimi-for-coding-highspeed`, conservative 3x
   metering, and a $25
   per-run cap. It, the 30-day rumor gate, and the 365-day/$200 acceptance run
   require separate execution and evidence. The
   Oracle campaign cannot pass below ten eligible runs, 60 resolved forecasts,
   both outcomes, p90 under 60 seconds, Brier under 0.25, and exact replay of
-  every finalized source. No v7 evidence is claimed yet.
-- The release pull request remains draft. Do not merge, tag, publish, or deploy
+  every finalized source. No V8 evidence is claimed yet.
+- Release-gate PR #20 remains draft. GitHub account billing is an external
+  operational blocker and does not waive any required CI job. Do not merge,
+  tag, publish, or deploy
   publicly until those gates and a fresh provenance/license/dependency/secret
   audit pass under separate authorization.
 - Generated databases and reports corroborate findings but do not outrank

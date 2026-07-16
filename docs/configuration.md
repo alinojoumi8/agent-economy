@@ -14,7 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
-| `runs/oracle/v7-seed-7361-control.yaml` … `v7-seed-7370-rumor.yaml` | Current pending v7 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, governed answer repair, occurrence-aware replay citations, conservative 3x metering, capped at $25 per run; no live evidence claimed yet |
+| `runs/oracle/v8-seed-7371-control.yaml` … `v8-seed-7380-rumor.yaml` | Current pending v8 Oracle calibration corpus | Scripted background, live `kimi-for-coding-highspeed` Oracle, governed answer repair, occurrence-aware replay citations, conservative 3x metering, capped at $25 per run; no live evidence claimed yet |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
@@ -241,13 +241,17 @@ is bound to the exact scheduled prediction and covers Oracle planning, bounded
 reads, answering, and contract validation. Manual Oracle calls and raw
 `llm_calls.latency_ms` rows do not enter this gate. Missing, dangling,
 malformed, or duplicate completion references fail closed. Markerless stored
-configs retain the legacy answer-call calculation for replay compatibility.
+configs retain the legacy answer-call calculation for replay compatibility. The
+common scheduled-latency producer conservatively rounds each governed call's
+persisted latency and clamps both continuous monotonic and resumed wall-clock
+duration to at least their sum. This prevents measured end-to-end scheduling
+jitter from producing a value below its governed-call components.
 
 The multi-run Oracle calibration release gate is separate from one run's
-`acceptance` block. The current pending `oracle-calibration-v7` corpus uses fresh
-seeds 7361–7370 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
+`acceptance` block. The current pending `oracle-calibration-v8` corpus uses fresh
+seeds 7371–7380 and `kimi-for-coding-highspeed`, with conservative 3x cost metering
 and a $25 per-run cap. Its schema-v1 manifest is based on
-`runs/oracle/manifest-v7.template.yaml` and explicitly records campaign ID and
+`runs/oracle/manifest-v8.template.yaml` and explicitly records campaign ID and
 version plus every run's ID, seed, source/replay database paths, profile path,
 and SHA-256 hashes. `--oracle-campaign-run` produces the finalized pair and a
 ready-to-copy manifest entry for one predeclared profile.
@@ -258,7 +262,7 @@ copies, verifies that source/profile/replay hashes remain unchanged, recomputes
 the exact companion replay proof, and requires both
 outcome classes, `scheduled_e2e_v1` p90 below 60 seconds, and Brier below 0.25.
 Exact replay of each source is a mandatory manifest-bound companion artifact.
-No v7 evidence is claimed until all ten predeclared live arms and the aggregate
+No v8 evidence is claimed until all ten predeclared live arms and the aggregate
 receipt satisfy these checks.
 
 The archived `oracle-calibration-v1-s7301` source completed tick 335 with valid
@@ -338,11 +342,39 @@ missed checkpoint. Spend was $0.18351, with no provider, budget, or
 tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
 run.
 
-V7 extends the acceptance rehearsal directly, uses fresh seeds 7361–7370, and
-validates governed answer semantics inside the existing bounded repair call
-before persistence. No v6 source, response, claim, initialized marker,
-checkpoint, replay, receipt, profile, commitment, manifest entry, run identity,
-or seed enters v7. No v7 live evidence is claimed yet.
+V7 is archived as an incomplete diagnostic campaign. Seeds 7361–7364 each have
+passed, eligible source receipts and exact 335-tick companion replays with zero
+differences. Seed 7365 stopped paused at tick 335 in `FINALIZE`; its authoritative
+standalone database is 518,561,792 bytes with SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`,
+passes immutable read-only `quick_check`, has no WAL/SHM sidecars, and records
+32,114 calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical
+events, balanced USD, and `$0.2754108` spend. Receipt production exposed the
+continuous scheduled-latency floor defect: persisted end-to-end latency was
+13,658 ms while the governed call-latency sum was 13,660 ms. Seed 7365 has no
+replay database or receipt, seeds 7366–7370 were never run, and the campaign has
+no aggregate manifest or receipt. Its claim is bound to commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`, so the committed producer fix means
+that source cannot be resumed or mint an eligible receipt. No V7 artifact or
+seed is reused in V8.
+
+After the V7 archive/hash inventory is durable, the approved cleanup is exactly
+the 200 source checkpoint database bodies in `data/checkpoints` matching anchored
+filename regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`. This reclaims
+49,647,239,168 bytes (`46.237595 GiB`). Do not use a broad V7 wildcard. Retain
+all 360 source/replay checkpoint manifests and hashes, five final source
+databases, four final replay databases, eight source/replay receipt JSON files
+for seeds 7361–7364, the five existing claim/initialized-marker pairs for seeds
+7361–7365, the profiles,
+commitments, template, base configuration, reports, and the authoritative seed
+7365 database. This cleanup remains pending until the durable archive record is
+confirmed.
+
+V8 extends the same acceptance rehearsal with campaign version 8, fresh seeds
+7371–7380, odd control/even rumor arms, and the fixed scheduled-latency producer.
+It retains engine semantics 7 and database schema 11. No V8 live evidence is
+claimed yet.
 
 ## Rumor targeting
 
@@ -368,3 +400,7 @@ withdrawals.
 4. Start with a short headless run.
 5. Inspect report, failure events, ledger reconciliation, and acceptance status.
 6. Archive the resolved config, commit, seed, database, and evidence together.
+
+Release-gate PR #20 remains draft. GitHub account billing is an external
+operational blocker and does not waive any required CI job; merge, tag,
+publication, and public deployment remain separately authorized actions.

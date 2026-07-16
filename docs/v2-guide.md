@@ -217,11 +217,12 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The pending v7 ten-profile Oracle campaign, live 30-day rumor
+The pending V8 ten-profile Oracle campaign, live 30-day rumor
 pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
-operational gates. V7 uses fresh seeds 7361–7370; no v1–v6 source, response,
-claim, checkpoint, replay, seed, or receipt is reused. No v7 evidence is claimed
-before all ten arms and the aggregate receipt pass. V4 seeds 7331 and 7332 produced eligible
+operational gates. V8 uses fresh seeds 7371–7380 in odd-control/even-rumor arms;
+no earlier campaign source, response, claim, checkpoint, replay, seed, or receipt
+is reused. No V8 evidence is claimed before all ten arms and the aggregate
+receipt pass. V4 seeds 7331 and 7332 produced eligible
 exact source/replay receipts but remain diagnostic evidence because the fixed
 campaign did not survive seed 7333.
 
@@ -264,14 +265,44 @@ V6 seed 7351 stopped at tick 65 after a successful Kimi answer returned
 persisted `oracle_rule_rejected`, an `insufficient_data` prediction, and
 `acceptance_checkpoint_missed`. Spend was $0.18351, with no provider, budget, or
 tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
-run. V7 retains occurrence-aware citation identity, uses an independently
-precommitted fresh seed range, and validates governed answer semantics inside
-the existing bounded repair call before persistence. No v6 artifact can
-contaminate its evidence.
+run, and no V6 artifact enters a later corpus.
+
+V7 is archived as an incomplete diagnostic campaign. Seeds 7361–7364 each
+retain passed, eligible source receipts and exact 335-tick companion replays with
+zero differences. Seed 7365 remains paused at tick 335 in `FINALIZE`; its
+authoritative 518,561,792-byte standalone database has SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`, passes
+immutable read-only `quick_check`, has no WAL/SHM sidecars, and records 32,114
+calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical events,
+balanced USD, and `$0.2754108` spend. Receipt production exposed the continuous scheduled-latency floor defect: persisted E2E was 13,658 ms versus a 13,660 ms
+governed-call sum. Seed 7365 has no replay or receipt, seeds 7366–7370 were never
+run, and V7 has no aggregate manifest or receipt.
+
+The common scheduled-latency producer now clamps both continuous monotonic and
+resumed wall-clock duration to at least the sum of conservatively rounded
+governed call latencies. Seed 7365's claim binds commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`, so the source cannot resume or mint
+an eligible post-fix receipt. Any post-fix replay would be diagnostic only. No
+V7 artifact or seed is reused in V8.
+
+After the archive/hash inventory is durable, remove exactly the 200 V7 source
+checkpoint database bodies matching anchored regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
+(`46.237595 GiB`). Never use a broad V7 wildcard. Retain all 360 source/replay
+checkpoint manifests and hashes, five final source databases, four final replay
+databases, eight source/replay receipt JSONs for seeds 7361–7364, the five
+existing claim/initialized-marker pairs for seeds 7361–7365, the profiles,
+commitments, template, base, reports, and
+authoritative seed-7365 database. The body cleanup remains pending.
+
+V8 retains occurrence-aware citation identity and governed-answer repair, uses
+campaign version 8, and keeps engine semantics 7 and database schema 11.
+No V8 live evidence is claimed yet; the complete gate must pass first.
 
 No live inference is run without `--approve-live-inference`. An unperformed or
 failed live gate must be reported as pending or failed, never treated as passed.
-The release pull request stays draft; merge, tag, publication, and public
+Release-gate PR #20 stays draft; merge, tag, publication, and public
 deployment require separate authorization.
 
 ## Hybrid live pilot
@@ -669,8 +700,9 @@ diagnostic evidence, while seed 7333 and the fixed v4 corpus remain excluded for
 the government-ledger retry/provenance failure described above. None of those
 sources, responses, claims, checkpoints, replays, or seeds is reused.
 
-The current pending `oracle-calibration-v7` campaign is separately precommitted
-to ten fixed arms with seeds 7361–7370. It routes only the Oracle to
+The current pending `oracle-calibration-v8` campaign is separately precommitted
+to ten fixed arms with fresh seeds 7371–7380, odd control and even rumor. It
+routes only the Oracle to
 `kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
 route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
 immutable claim bound to its clean Git commit/tree, committed effective config,
@@ -680,15 +712,18 @@ manifest and the companion replay tracker; eligibility requires exact one-time
 source-call consumption with zero compatibility fallback and zero live replay
 dispatch. Occurrence-aware citation mapping keeps repeated public article
 classes distinct under exact replay, governed answer semantics use the existing
-bounded repair call before persistence, and the v7 commitment excludes every
-v6 profile and evidence path. The local no-clobber receipt chain is strong accident/tamper evidence,
+bounded repair call before persistence, and the scheduled-latency producer
+clamps both continuous monotonic and resumed wall-clock duration to the
+conservatively rounded governed-call sum. The V8 commitment excludes every
+earlier campaign profile and evidence path. The local no-clobber receipt chain is strong accident/tamper evidence,
 but a public claim still requires independent signing or a separately
 administered append-only transparency log.
 
-Completion of the v7 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
-run, and final provenance audit remain separate release evidence. The pull
-request stays draft. Merging, tagging, publication, and public deployment remain
-separate release decisions.
+Completion of the V8 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+run, and final provenance audit remain separate release evidence. Release-gate
+PR #20 stays draft. GitHub account billing is an external operational blocker
+and does not waive any required CI job. Merging, tagging, publication, and public
+deployment remain separate release decisions.
 
 ## Release checklist
 

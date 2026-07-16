@@ -6,10 +6,12 @@ long-horizon acceptance campaign. Live inference requires explicit operator
 approval; the acceptance profile is uncapped and records actual spend while
 provider rate limits control throughput.
 
-P0/P1 and the R18–R22 functional surfaces are complete. The active pull
-request remains draft while release evidence is rebuilt; do not merge, tag,
-publish, or deploy publicly until the pending live gates and final provenance
-audit pass under separate authorization.
+P0/P1 and the R18–R22 functional surfaces are complete. PR #20 remains draft
+while release evidence is rebuilt; do not merge, tag, publish, or deploy
+publicly until the pending live gates and final provenance audit pass under
+separate authorization. GitHub Actions billing/spending-limit blocks are
+external runner state, not a passing or failing repository test result, and do
+not waive any required CI job.
 
 ## Legal-Economy v2 semantics-7 closure
 
@@ -173,23 +175,41 @@ audit pass under separate authorization.
   `confidence: "medium"` instead of `low|med|high`; the runtime persisted a rule
   rejection, an `insufficient_data` prediction, and a missed checkpoint. Spend
   was $0.18351, with no provider, budget, or tool-execution failure. Seeds
-  7352–7360 were never run. Do not resume, rewrite, substitute, or reuse any v6
-  evidence in v7.
-- [ ] Run the ten fresh v7 live-Kimi Oracle profiles (seeds 7361–7370,
-  `kimi-for-coding-highspeed`, conservative 3x metering, $25 per-run cap) through
-  `--oracle-campaign-run`. V7 uses one shared state-aware preflight for runtime
-  and receipt verification, advertises only historical executable entity/range
-  targets, maps `gov` to the system-owned treasury account, and keeps genuine
-  post-preflight execution failures out of the retry provenance channel.
-  Duplicate public-event citations map by deterministic source occurrence while
-  missing or inconsistent equivalence classes fail closed. Governed answer
-  semantics are validated inside the existing bounded repair call before
-  persistence. Each
-  arm finalizes its source and exact offline companion and hashes those
-  artifacts plus the checked-in profile; pass the emitted entries through
-  `--oracle-calibration-report` using `runs/oracle/manifest-v7.template.yaml`
-  without exclusions. Do not claim v7 evidence until all ten arms and the
-  aggregate gate pass.
+  7352–7360 were never run. Do not resume, rewrite, substitute, or reuse any V6
+  evidence in a later corpus.
+- [x] Archive and exclude V7 after its fifth arm exposed the continuous scheduled-latency floor defect. Seeds 7361–7364 retain passed, eligible
+  source receipts with exact tick-335 companion replays, but are diagnostic
+  only. Seed 7365 remains paused at tick 335 in `FINALIZE`; its completion
+  event recorded 13,658 ms while its governed calls summed to 13,660 ms, so no
+  replay or source receipt was published. Preserve source SHA-256
+  `b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`,
+  `quick_check: ok`, and the no-sidecar finding. Do not resume, repair,
+  substitute, or post-fix receipt seed 7365. Seeds 7366–7370 were never run;
+  no v7 artifact or seed enters v8.
+- [x] Fix the producer contract by clamping continuous-monotonic and
+  resumed-wall-clock scheduled latency to at least the conservatively rounded
+  sum of the persisted governed-call latencies. The completion validator keeps
+  rejecting any event shorter than its own call floor.
+- [ ] After the V7 archive inventory is durable, prune only the 200 source
+  checkpoint database bodies matching anchored regex
+  `^oracle-calibration-v7-s736[1-5]_t\d+\.db$` (40 each), reclaiming exactly
+  49,647,239,168 bytes (`46.237595 GiB`). Retain all 360 source/replay
+  checkpoint manifests/hashes, five final source databases, four final replay
+  databases, eight source/replay receipt JSON files, the five existing
+  claim/initialized-marker pairs for seeds 7361–7365, profiles, commitments,
+  template, base configuration,
+  reports, and the authoritative seed-7365 source. Never use a broad V7
+  wildcard.
+- [ ] Run the ten fresh V8 live-Kimi Oracle profiles for campaign
+  `oracle-calibration-v8`, version 8 (seeds 7371–7380, odd
+  control/even rumor, `kimi-for-coding-highspeed`, conservative 3x metering,
+  $25 per-run cap) through `--oracle-campaign-run`. V8 retains the shared
+  state-aware preflight, deterministic occurrence-aware citation mapping,
+  bounded governed-answer repair, and exact replay contract. Each arm finalizes
+  its source and offline companion and hashes those artifacts plus the checked-
+  in profile; pass the emitted entries through `--oracle-calibration-report`
+  using `runs/oracle/manifest-v8.template.yaml` without exclusions.
+  No V8 live evidence is claimed yet; all ten arms and the aggregate gate must pass first.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
@@ -288,7 +308,8 @@ audit pass under separate authorization.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep the release pull request draft until the successful v7 Oracle
+- [ ] Keep PR #20 draft until the successful v8 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
-  publication, and public deployment require separate authorization.
+  publication, and public deployment require separate authorization. External
+  GitHub billing state does not waive the complete CI matrix.
