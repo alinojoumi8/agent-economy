@@ -1197,6 +1197,27 @@ def _openai_metering_evidence(
     }, reasons
 
 
+def _parse_governed_json_text(text: str) -> object | None:
+    """Parse one governed JSON document, including a single Markdown fence."""
+    if not isinstance(text, str):
+        return None
+    value = text.strip()
+    if value.startswith("```"):
+        lines = value.splitlines()
+        if len(lines) < 3 or lines[-1].strip() != "```":
+            return None
+        language = lines[0].strip()[3:].strip().lower()
+        if language not in {"", "json"}:
+            return None
+        value = "\n".join(lines[1:-1]).strip()
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 _EXPECTED_AGENT_CENSUS = {
     ("citizen", None): 65,
     ("staff", "central_banker"): 1,
@@ -2421,9 +2442,8 @@ def _forecast_evidence(
         if not isinstance(text, str) or not text.strip():
             reasons.append("scheduled forecast call has no sanitized response text")
             continue
-        try:
-            parsed_text = json.loads(text)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        parsed_text = _parse_governed_json_text(text)
+        if parsed_text is None:
             reasons.append("scheduled forecast call response text is not valid JSON")
             continue
         if str(row["purpose"]) == "oracle_plan":

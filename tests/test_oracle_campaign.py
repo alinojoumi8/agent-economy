@@ -33,6 +33,7 @@ from reports.oracle_campaign import (
     RELEASE_PROFILES,
     RELEASE_SEEDS,
     _expected_replay_tracker,
+    _parse_governed_json_text,
     _openai_metering_evidence,
     effective_config_sha256,
     evaluate_oracle_campaign,
@@ -994,6 +995,15 @@ def test_openai_metering_enforces_pinned_standard_pricing_tier_boundary():
 
         assert evidence["max_prompt_tokens"] == prompt_tokens
         assert (tier_reason in reasons) is rejected
+
+
+def test_governed_json_parser_accepts_one_json_fence_and_fails_closed():
+    payload = {"queries": [{"tool": "read_news", "args": {}}]}
+    encoded = json.dumps(payload, separators=(",", ":"))
+    assert _parse_governed_json_text(f"```json\n{encoded}\n```") == payload
+    assert _parse_governed_json_text(encoded) == payload
+    assert _parse_governed_json_text(f"```python\n{encoded}\n```") is None
+    assert _parse_governed_json_text(f"```json\n{encoded}\n``` trailing") is None
 
 
 def test_oracle_campaign_requires_governed_call_request_identity(tmp_path):
