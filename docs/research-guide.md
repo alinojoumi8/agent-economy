@@ -112,18 +112,25 @@ Calibration improves only after many resolved live predictions. One run can
 prove wiring and scoring, not forecast quality.
 
 The current pending release calibration design therefore preregisters ten fixed
-V8 profiles under `runs/oracle` for campaign `oracle-calibration-v8`, version 8,
-six forecasts per run, fresh seeds 7371–7380,
-and odd-control/even-rumor arms. Only the `kimi-for-coding-highspeed` Oracle is
-live, conservatively metered at 3x with a $25 per-run cap; background behavior
-remains scripted so the campaign isolates the
-forecast surface. Treatment windows publish a one-person rumor
+V9 profiles under `runs/oracle` for campaign `oracle-calibration-v9`, version 9,
+six forecasts per run, fresh seeds 7381–7390, and odd-control/even-rumor arms.
+Only the `MiniMax-M3` Oracle is live; background behavior remains scripted so
+the campaign isolates the forecast surface. The route uses the exact
+`openai_compat` adapter at `https://api.minimax.io/v1`,
+key environment `MINIMAX_API_KEY`, `/models` healthcheck, 180-second timeout,
+`max_tokens_field: max_completion_tokens`, request defaults
+`max_completion_tokens: 4096` and `reasoning_split: true`, and
+`prompt_cache_mode: provider_automatic`. Standard MiniMax ≤512k pricing is `$0.30/M` input,
+`$1.20/M` output, and `$0.06/M` cache reads, with a `$25` per-run cap.
+Treatment windows publish a one-person rumor
 precursor one tick before each forecast and apply the larger depositor-targeted
 rumor one tick afterward; controls receive neither. This makes arm evidence
 observable at forecast time while keeping the later scored response distinct,
 and profile validation locks the schedule before any live run. The explicit
-version-8 manifest binds run IDs, seeds, source/replay database paths, profile
-paths, and hashes. V8 also uses
+version-9 manifest binds run IDs, seeds, source/replay database paths, profile
+paths, and hashes. Its commitment SHA-256 is
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+V9 also uses
 occurrence-aware public-citation identity so payload-equivalent articles at
 different source events remain distinct during replay, and it validates governed
 answer semantics inside the existing bounded repair call before persistence.
@@ -136,7 +143,7 @@ runs, at least
 and Brier below the naive p=0.5 score of 0.25. Every finalized source must also
 replay exactly offline. This evidence says nothing by itself about the cost or
 stability of the separate 365-day live-agent acceptance run.
-No V8 live evidence is claimed before the ten arms and aggregate receipt pass.
+No V9 live evidence is claimed before the ten arms and aggregate receipt pass.
 The campaign retains engine semantics 7 and database schema 11.
 
 The archived `oracle-calibration-v1-s7301` source is not part of that evidence.
@@ -237,16 +244,36 @@ clean revision to match that claim, so the source cannot resume or mint an
 eligible post-fix receipt. A post-fix replay would be diagnostic only. No V7
 artifact or seed is reused in V8.
 
-After the V7 archive/hash inventory is durable, the approved storage cleanup is
-exactly 200 source checkpoint database bodies matching anchored regex
+After the V7 archive/hash inventory became durable, the approved storage cleanup
+removed exactly 200 source checkpoint database bodies matching anchored regex
 `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
 (`46.237595 GiB`). A broad V7 wildcard is prohibited. Retain all 360
 source/replay checkpoint manifests and hashes, five final source databases, four
 final replay databases, eight source/replay receipt JSONs for seeds 7361–7364,
 the five existing claim/initialized-marker pairs for seeds 7361–7365, the
 profiles, commitments, template,
-base configuration, reports, and authoritative seed-7365 database. The body
-cleanup remains pending.
+base configuration, reports, and authoritative seed-7365 database. The exact
+post-cleanup inventory contains zero matching V7 checkpoint database bodies and
+zero matching SQLite sidecars.
+
+V8 is archived and excluded. Seeds 7371–7374 each produced passed, eligible
+source receipts and exact 335-tick companion replays. Seed 7375 stopped at tick
+245 after four of six forecasts when Kimi returned HTTP 403 for the exhausted
+billing-cycle quota. Its healthy standalone source persisted one
+`provider_failure` and `$0.19651848` spend. The fixed campaign is not resumed,
+repaired, substituted, or pooled into V9. The archive retains five source
+databases, four replay databases, eight source/replay receipt JSONs, and all
+checkpoint manifests. Only after its archive commit is durable may pending
+cleanup remove exactly 189 V8 source-checkpoint database bodies—40 each for
+seeds 7371–7374 and 29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189
+source checkpoint manifests, 160 replay checkpoint manifests, five claims,
+five initialized markers, and the final artifacts listed above. All 160 replay
+checkpoint bodies are already absent, and no V8 SQLite sidecars remain.
+
+The fresh V9 commitment uses seeds 7381–7390 and the exact MiniMax adapter and
+pricing described above. A disposable one-call MiniMax probe and a deliberately
+unclaimed five-tick Oracle rehearsal both succeeded. They show operational
+readiness only: neither is a claimed arm, receipt, or V9 corpus observation.
 
 ## Evidence hierarchy
 
@@ -264,7 +291,7 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 
 ## Current next research steps
 
-Completion of the V8 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
+Completion of the V9 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
 run, and final provenance audit are separate pending gates. Release-gate PR #20
 stays draft; merging, tagging, publication, and public deployment need separate
 authorization. GitHub account billing is an external operational blocker and

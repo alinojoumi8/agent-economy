@@ -200,16 +200,42 @@ not waive any required CI job.
   template, base configuration,
   reports, and the authoritative seed-7365 source. Never use a broad V7
   wildcard.
-- [ ] Run the ten fresh V8 live-Kimi Oracle profiles for campaign
-  `oracle-calibration-v8`, version 8 (seeds 7371–7380, odd
-  control/even rumor, `kimi-for-coding-highspeed`, conservative 3x metering,
-  $25 per-run cap) through `--oracle-campaign-run`. V8 retains the shared
-  state-aware preflight, deterministic occurrence-aware citation mapping,
-  bounded governed-answer repair, and exact replay contract. Each arm finalizes
-  its source and offline companion and hashes those artifacts plus the checked-
-  in profile; pass the emitted entries through `--oracle-calibration-report`
-  using `runs/oracle/manifest-v8.template.yaml` without exclusions.
-  No V8 live evidence is claimed yet; all ten arms and the aggregate gate must pass first.
+- [x] Archive and exclude V8 without substitution. Seeds 7371–7374 produced
+  passed, eligible receipts and exact companion replays. Seed 7375 stopped at
+  tick 245 after four of six forecasts when Kimi returned HTTP 403 for the
+  exhausted billing-cycle quota; it persisted one `provider_failure`, spent
+  `$0.19651848`, and retains a healthy standalone source database. Preserve
+  five sources, four replays, eight source/replay receipts, and all checkpoint
+  manifests. No V8 evidence enters V9.
+- [ ] After the V8 archive commit is durable, remove only the 189 source-
+  checkpoint bodies matching anchored regex
+  `^oracle-calibration-v8-s737[1-5]_t\d+\.db$` (40 each for 7371–7374 and 29
+  for 7375), totalling 43,999,223,808 bytes. Retain five source databases, four
+  replay databases, 189 source checkpoint manifests, 160 replay checkpoint
+  manifests, five claims, five initialized markers, eight source/replay
+  receipts, reports, and campaign configurations. All 160 replay checkpoint
+  bodies are already absent, and no V8 SQLite sidecars remain.
+- [x] Prove only V9 provider readiness with a disposable one-call MiniMax probe
+  and a deliberately unclaimed five-tick Oracle rehearsal through the exact
+  adapter. These successes are operational checks, not campaign evidence.
+- [x] Validate the fresh V9 precommit tree: 659 Python tests passed with 8
+  environment-gated skips, 23 dashboard tests passed, the 603-module production
+  build left the committed static bundle fresh, four pinned datasets verified,
+  dependency and Compose checks passed, and `git diff --check` was clean.
+- [ ] Run the ten fresh V9 live-MiniMax Oracle profiles for campaign
+  `oracle-calibration-v9`, version 9 (seeds 7381–7390, odd control/even rumor)
+  through `--oracle-campaign-run`. The commitment SHA-256 is
+  `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+  Route only the Oracle through the exact MiniMax `openai_compat` adapter at
+  `https://api.minimax.io/v1` with `MINIMAX_API_KEY`, `/models` healthcheck,
+  180-second timeout, `max_completion_tokens` field and 4096 request default,
+  `reasoning_split: true`, `MiniMax-M3`, automatic provider cache accounting,
+  and standard ≤512k pricing
+  (`$0.30/M` input, `$1.20/M` output, `$0.06/M` cache reads), and a `$25`
+  per-run cap. Pass all ten emitted entries without exclusions to
+  `--oracle-calibration-report` using
+  `runs/oracle/manifest-v9.template.yaml`. No V9 live evidence is claimed yet;
+  all ten arms and the aggregate gate must pass first.
 - [ ] Produce machine-readable JSON and reviewer-readable Markdown evidence
   covering run completion, provider route, spend, reconciliation, Oracle p90,
   shock effects, the rumor pilot, and three documented emergent phenomena.
@@ -308,7 +334,7 @@ not waive any required CI job.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep PR #20 draft until the successful v8 Oracle
+- [ ] Keep PR #20 draft until the successful v9 Oracle
   campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
   provenance/license/dependency/secret audit are complete. Merge, tag,
   publication, and public deployment require separate authorization. External

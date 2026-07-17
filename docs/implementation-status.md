@@ -48,7 +48,9 @@ production deployment.
 The preceding replay-integrity revision passed 590 Python tests with 8 skipped, 23
 dashboard tests, a fresh 603-module dashboard build, and checksum verification
 for the pinned FRED/BLS/SCF/SUSB datasets. The final v3 receipt-hardening tree
-passes 599 Python tests with 8 skipped in 1,618.07 seconds. Free production-workflow rehearsal
+passed 599 Python tests with 8 skipped in 1,618.07 seconds. The current V9
+precommit tree passes 659 Python tests with 8 environment-gated skips, 23
+dashboard tests, and a fresh 603-module build. Free production-workflow rehearsal
 `881ed41994` completed 365 ticks;
 its detailed evidence is recorded below.
 
@@ -56,7 +58,7 @@ its detailed evidence is recorded below.
 
 | Surface | Implemented contract | Repository evidence | Final evidence state |
 |---|---|---|---|
-| Versioning | Maintained profiles select semantics 7; stored semantics 1–6 retain historical behavior; explicit forks may opt in; schema remains v11. The persisted `population.baseline_citizens_core` marker makes non-regional semantics-7 households fully scheduled, while markerless stored semantics-7 runs retain their historical peripheral tier. Unsupported future semantics and schemas fail closed. | [Base profile](../runs/base.yaml), [v2 profile](../runs/v2.yaml), replay compatibility tests | **Passed:** 86 initial focused, 93 final adversarial, 280-test closure, 303-test post-merge cleanup, the preceding 590-test release-gate suite, and the current 599-test v3 receipt-hardening suite; 8 environment-gated skips |
+| Versioning | Maintained profiles select semantics 7; stored semantics 1–6 retain historical behavior; explicit forks may opt in; schema remains v11. The persisted `population.baseline_citizens_core` marker makes non-regional semantics-7 households fully scheduled, while markerless stored semantics-7 runs retain their historical peripheral tier. Unsupported future semantics and schemas fail closed. | [Base profile](../runs/base.yaml), [v2 profile](../runs/v2.yaml), replay compatibility tests | **Passed:** 86 initial focused, 93 final adversarial, 280-test closure, 303-test post-merge cleanup, the preceding 590-test release-gate suite, the 599-test v3 receipt-hardening suite, and the current 659-test V9 precommit suite; 8 environment-gated skips |
 | Bank defaults | Eligible collateral is seized first. Only unrecovered principal is posted from the bank's currency-matched equity account to `SYS_LOSS` through balanced `loan_loss_chargeoff`; the existing default event reports recovered and net charged-off cents. | [Credit engine](../engine/credit.py), [semantics-7 credit tests](../tests/test_credit_semantics7.py) | **Passed:** live 120,000 NSD default, 5,000 recovery, 115,000 net charge-off |
 | Retirement | `withdraw_savings{amount}` is retiree-only and moves funds between the actor's own declared, same-currency savings/checking accounts. Config `retirement_liquidity_target_cents` becomes public `retirement_drawdown_target_cents` beside `savings_balance`; pre-consumption drawdown, no job search, retired cadence, and stronger conversation participation are semantics-7-only. | [Action executor](../engine/actions.py), [lifecycle](../engine/lifecycle.py), [retirement tests](../tests/test_retirement_semantics7.py) | **Passed:** five targeted live withdrawals; no rejected proposals |
 | Arrivals and personas | Due arrivals spawn deterministically during `NIGHT_CLOSE`, use visible population inflow and a 70/30 checking/savings split, then receive exactly one governed `role=persona,purpose=persona` call before their first morning decision. Enrichment is bounded; malformed success falls back deterministically; provider/budget pauses resume; missing recorded replay responses fail closed. | [Owned persona wrapper](../agents/personas/library.py), [world loop](../world/loop.py), [arrival tests](../tests/test_arrival_personas.py) | **Passed:** exact 70/30 live split, one enriched persona call, zero provenance defects |
@@ -163,12 +165,16 @@ its verification is part of the fresh campaign gate.
 
 Four release-quality workstreams remain after the extension closure:
 
-1. run the fresh v8 ten-profile Oracle evidence campaign with seeds 7371–7380,
-   `kimi-for-coding-highspeed`, conservative 3x metering, and a $25 per-run cap;
+1. run the fresh v9 ten-profile Oracle evidence campaign with seeds 7381–7390,
+   only the Oracle live through `minimax/MiniMax-M3`, standard ≤512k pricing
+   pinned at $0.30/M input, $1.20/M output, and $0.06/M cached input,
+   `provider_automatic` caching, and a $25 per-run cap; commitment SHA-256 is
+   `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`;
    its explicit read-only manifest evaluator, 60-forecast floor,
    outcome-diversity gate,
    end-to-end timer, strict resolver/provenance checks, and deterministic
-   JSON/Markdown receipts are implemented, but live sources are not yet claimed;
+   JSON/Markdown receipts are implemented, but no V9 live evidence is yet
+   claimed;
 2. run the corrected 30-day live rumor gate;
 3. run the explicitly authorized 365-day/$200 campaign; production now starts
    with exactly 100 living agents and evaluates living population separately
@@ -188,7 +194,7 @@ are pinned; unrelated optional sources remain separate.
 |---|---|
 | Checkpoint baseline | Existing six-feature work was checkpointed after **231 Python tests**, **16 dashboard tests**, dashboard build, and `git diff --check` passed. |
 | Focused semantics-7 tests | **Passed:** 86 tests across credit, retirement, arrival/persona, R20, replay, cache, memory ranking, pause/resume, and portability; then 93 integrated adversarial tests after final fixes. |
-| Full Python / data | **Passed:** current tree 599 passed / 8 skipped in 1,618.07 seconds. The preceding replay-integrity tree passed 590 / 8 with pinned FRED/BLS/SCF/SUSB verification. Historical receipts: semantics-7 closure 280, post-merge cleanup 303, and R21 integrated gate 328; compileall green. |
+| Full Python / data | **Passed:** current V9 precommit tree 659 passed / 8 skipped, with exact CI compilation and pinned FRED/BLS/SCF/SUSB verification green. The historical v3 receipt-hardening tree passed 599 / 8 in 1,618.07 seconds and the preceding replay-integrity tree passed 590 / 8. Historical receipts: semantics-7 closure 280, post-merge cleanup 303, and R21 integrated gate 328. |
 | Dashboard / hygiene | **Passed:** current branch 23 tests and a fresh 603-module build. Historical closure evidence: 16 tests, npm audit 0, license notice check, 599-module build byte-identical twice, static bundle fresh, clean diff. |
 | Portable `fd0adc5dc1` fixture | **Passed:** sanitized v2 artifact restored/replayed offline with networking prohibited under stored semantics 5 and normalized hash `2efcabed…f9170`. |
 | Free closure rehearsal | **Passed:** `5a0d40d773`, all targets, six checkpoints, balanced currencies, exact replay. |
@@ -199,7 +205,7 @@ are pinned; unrelated optional sources remain separate.
 | R22 code/integration surface | **Passed:** exact local stack evidence at `53081f2` covered TLS, tenant isolation, immutable S3 snapshots/cold restore, password rotation, Prometheus, and 200/200 load requests with 80 cross-tenant denials; PR #19 head `1cf1d0a` passed dashboard, hosted PostgreSQL/S3, and Ubuntu/Windows Python 3.11/3.12 in run `29409250171`. |
 | R22 merge / post-merge runner | **Merged:** PR #19 became `1806294d4fecbe13ddbdf615c459755c74293599`. Push run `29411023992` has six zero-step jobs; GitHub's annotations identify account billing/spending-limit state, so no repository code was executed. |
 | Archived Oracle v1 seed 7301 | **Failed acceptance / retained diagnostic:** the source completed tick 335 with six resolved forecasts and valid live-provider provenance, but its replay diverged at the first arrival because staged genesis reset an uncheckpointed persona RNG stream. Read-only checkpoint inspection also retained SQLite sidecars. It is not reusable acceptance evidence. |
-| Replay-integrity correction | **Passed locally:** engine plus persona RNG state persists under semantics 7; staged genesis and checkpoints require column-specific valid RNG shapes; standalone SQLite checkpoints contain no WAL/SHM sidecars; replay fails when the target tick is not reached. Focused regressions, representative aggregate receipts, the preceding 590-test gate, and the current 599-test gate pass. |
+| Replay-integrity correction | **Passed locally:** engine plus persona RNG state persists under semantics 7; staged genesis and checkpoints require column-specific valid RNG shapes; standalone SQLite checkpoints contain no WAL/SHM sidecars; replay fails when the target tick is not reached. Focused regressions, representative aggregate receipts, the preceding 590-test gate, the 599-test v3 gate, and the current 659-test V9 precommit gate pass. |
 | Archived Oracle v2 seed 7311 | **Failed receipt / retained diagnostic:** source and generated replay reached tick 335 and canonical verification returned `exact: true` with `differences: []`, but the receipt incorrectly treated total stored rows as living population after a deceased row was preserved and a replacement arrived. The immutable v2 evidence is never reused. |
 | Archived Oracle v3 seed 7321 | **Failed receipt / excluded diagnostic:** source and exact companion replay completed, but the original receipt admitted only four of six forecasts because it applied accepted-plan validation to authenticated rejected planner attempts. The original receipt records the pre-inspection source hash. The local source artifact was later write-opened during diagnosis and is not admissible; no v3 artifact is reused. |
 | Archived Oracle v4 seeds 7331–7333 | **Excluded fixed corpus / retained diagnostic:** seeds 7331 and 7332 produced eligible exact source/replay receipts, but no v4 campaign evidence is reused. Seed 7333 completed an exact pair, yet its tick-125 forecast was correctly ineligible. Attempt 1 asked for the government ledger; runtime looked only for `accounts.owner_type='gov'`, missed the system-owned `sys:gov` treasury, returned `entity ledger accounts not found`, and mislabeled/retried that post-preflight execution failure as a planner rejection. Attempt 2 failed the independently reproducible metric-name contract and attempt 3 succeeded, so the receipt could not reproduce or bind attempt 1. The forecast, run, and fixed v4 corpus remain excluded; no v4 source, response, claim, checkpoint, replay, or seed is reused. |
@@ -208,8 +214,10 @@ are pinned; unrelated optional sources remain separate.
 | Archived Oracle v6 seeds 7351–7360 | **Excluded after first arm / retained diagnostic:** seed 7351 stopped at tick 65 after a successful Kimi answer returned `confidence: "medium"` instead of the strict `low|med|high` value. Runtime persisted `oracle_rule_rejected`, an `insufficient_data` prediction, and `acceptance_checkpoint_missed`. Spend was `$0.18351`; there was no provider, budget, or tool-execution failure. V6 is preserved and excluded, seeds 7352–7360 were never run, and no v6 artifact or seed enters a later corpus. |
 | Scheduled-latency producer | **Corrected for the current tree:** `scheduled_e2e_v1` still covers Oracle planning, bounded reads, answering, and validation. Its common producer now clamps both continuous monotonic and resumed wall-clock duration to at least the sum of conservatively rounded governed call latencies. Engine semantics 7 and database schema 11 are unchanged. |
 | Archived Oracle v7 seeds 7361–7370 | **Incomplete / retained diagnostic:** seeds 7361–7364 each produced passed, eligible source receipts and exact 335-tick companion replays with zero differences. Seed 7365's authoritative 518,561,792-byte standalone database (`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`) passes immutable read-only `quick_check`, has no WAL/SHM sidecars, and remains paused at tick 335 in `FINALIZE`. It records 32,114 calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical events, balanced USD, and `$0.2754108` spend. Receipt production exposed the continuous scheduled-latency floor defect: persisted E2E was 13,658 ms versus a 13,660 ms governed-call sum. Seed 7365 has no replay database or receipt; seeds 7366–7370 were never run; no aggregate V7 manifest or receipt exists. Its claim binds commit `7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree `d9e02a64efd555fb6d0a5c1414351a6db238ad62`, so it cannot resume or mint an eligible post-fix receipt. No V7 artifact or seed enters V8. |
-| Oracle v7 storage archive | **Inventory complete; body cleanup pending:** after the archive/hash record is durable, remove exactly the 200 source checkpoint database bodies in `data/checkpoints` matching anchored regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes (`46.237595 GiB`). Never use a broad V7 wildcard. Retain all 360 source/replay checkpoint manifests and hashes, five final source databases, four final replay databases, eight source/replay receipt JSONs for seeds 7361–7364, the five existing claim/initialized-marker pairs for seeds 7361–7365, the profiles/commitments/template/base, reports, and authoritative seed 7365 database. |
-| Oracle campaign tooling | **Implemented; V8 live evidence pending:** ten fresh profiles for seeds 7371–7380 and `runs/oracle/manifest-v8.template.yaml` define campaign `oracle-calibration-v8`, version 8. Odd seeds are control and even seeds rumor arms. They route only the Oracle to `kimi-for-coding-highspeed`, use conservative 3x metering, and retain a $25 per-run cap. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. Runtime and receipt share the fixed scheduled-latency producer and existing fail-closed preflight/provenance rules. No prior campaign artifact or seed enters V8, and no V8 live evidence is claimed before all ten arms and the aggregate receipt pass. |
+| Oracle v7 storage archive | **Completed conservative cleanup:** exactly 200 source checkpoint database bodies in `data/checkpoints` matching anchored regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$` were removed, reclaiming 49,647,239,168 bytes (`46.237595 GiB`). All 360 source/replay checkpoint manifests and hashes, five final source databases, four final replay databases, eight source/replay receipt JSONs for seeds 7361–7364, the five existing claim/initialized-marker pairs for seeds 7361–7365, the profiles/commitments/template/base, reports, and authoritative seed 7365 database remain retained. |
+| Archived Oracle v8 seeds 7371–7380 | **Excluded fixed corpus / retained diagnostic:** seeds 7371–7374 produced passed, eligible source receipts with exact tick-335 companion replays and zero differences. Seed 7375 stopped at tick 245 after Kimi returned a billing-cycle usage-limit failure. Its persisted `provider_failure` makes the arm ineligible, so V8 cannot satisfy its immutable ten-arm corpus and is never resumed, substituted, or pooled into V9. Seeds 7376–7380 were never run. |
+| Oracle v8 storage archive | **Inventory complete; source-body cleanup pending:** exactly 189 source checkpoint bodies match anchored regex `^oracle-calibration-v8-s737[1-5]_t\d+\.db$`—40 each for seeds 7371–7374 and 29 for seed 7375—totaling 43,999,223,808 bytes. Retain five source databases, four replay databases, 189 source checkpoint manifests, 160 replay checkpoint manifests, five claims, five initialized markers, eight source/replay receipts, reports, and campaign configurations. Replay checkpoint bodies remaining: zero. SQLite sidecars remaining: zero. |
+| Oracle campaign tooling | **Implemented; V9 live evidence pending:** ten fresh profiles for seeds 7381–7390 and `runs/oracle/manifest-v9.template.yaml` define campaign `oracle-calibration-v9`, version 9. Odd seeds are control and even seeds rumor arms. Only the Oracle is live through `minimax/MiniMax-M3`; background behavior remains scripted. The route pins standard ≤512k pricing at $0.30/M input, $1.20/M output, and $0.06/M cached input, uses `provider_automatic` caching, and retains a $25 per-run cap. Commitment SHA-256 is `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`. Claims bind clean Git commit/tree, committed config, initialized state, canonical source/replay paths, checkpoint manifests, and exact one-time replay consumption with zero fallback/live dispatch. Runtime and receipt share the fixed scheduled-latency producer and existing fail-closed preflight/provenance rules. No V8 artifact or seed enters V9, and no V9 live evidence is claimed before all ten arms and the aggregate receipt pass. Engine semantics 7 and schema 11 are unchanged. |
 | Oracle free arm rehearsal | **Passed mechanics:** control `9fb8985f97` resolved six negatives; treatment `bb877a0d89` fired all six public precursors and all six larger rumors and resolved six positives. Both reconciled with zero provider/budget/report failures; their combined scripted Brier score was `0.19469025`. Treatment replay `replay-bb877a0d89-385256e2a1` matched tick 335 and hash `0ff7685e…2fa9ed` with `differences: []`. Scripted provenance remains intentionally ineligible for the live receipt. |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay:** `881ed41994` passed 19/20 acceptance checks with only scripted `real_providers` false; 100 living agents, six resolved Oracle checkpoints, every shock trace, experiment evidence, and three reviewed phenomena. `replay-881ed41994-3465cb3101` matched tick 365 and hash `37d18cf4…498786ed` with every deterministic table exact and `differences: []`. |
 | Earlier closure CI / PR | **Passed:** PR #15 exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices; merge `255555c2`, post-merge run `29368193807`. |
@@ -298,22 +306,33 @@ public tag.
   eligible receipt. It has no replay or receipt, seeds 7366–7370 were never run,
   and no aggregate V7 manifest or receipt exists. No V7 artifact or seed is
   reused in V8.
-- After the V7 archive/hash record is durable, remove only the 200 source
-  checkpoint database bodies matching
-  `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
-  (`46.237595 GiB`). Keep the complete manifest/hash inventory and all final,
-  claim, initialized-marker, receipt, profile, commitment, template, base,
-  report, and authoritative seed-7365 artifacts. This cleanup is pending; a
-  broad V7 wildcard is prohibited.
-- The current pending V8 explicit-manifest Oracle latency/calibration campaign
-  uses fresh seeds 7371–7380, odd control/even rumor arms,
-  `kimi-for-coding-highspeed`, conservative 3x
-  metering, and a $25
-  per-run cap. It, the 30-day rumor gate, and the 365-day/$200 acceptance run
-  require separate execution and evidence. The
+- V7 archive cleanup removed exactly the 200 source checkpoint database bodies
+  matching `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming
+  49,647,239,168 bytes (`46.237595 GiB`), while retaining the complete
+  manifest/hash inventory and all final evidence.
+- V8 seeds 7371–7374 retain passed, eligible source receipts and exact tick-335
+  companion replays. Seed 7375 stopped at tick 245 after Kimi returned a
+  billing-cycle usage-limit failure; its persisted `provider_failure` excludes
+  the arm and the immutable ten-run V8 corpus. It is never resumed, substituted,
+  or pooled into V9; seeds 7376–7380 were never run.
+- V8 source-body cleanup remains pending for exactly 189 checkpoint databases
+  matching `^oracle-calibration-v8-s737[1-5]_t\d+\.db$` (40 each for seeds
+  7371–7374 and 29 for seed 7375), totaling 43,999,223,808 bytes. Retain five
+  sources, four replays, 189 source manifests, 160 replay manifests, five
+  claims, five initialized markers, eight source/replay receipts, reports, and
+  configurations. No replay checkpoint body or SQLite sidecar remains.
+- The current precommitted V9 explicit-manifest Oracle latency/calibration
+  campaign uses fresh seeds 7381–7390, odd control/even rumor arms, and only the
+  Oracle live through `minimax/MiniMax-M3`. Standard ≤512k pricing is pinned
+  at $0.30/M input, $1.20/M output, and $0.06/M cached input with
+  `provider_automatic` caching and a $25 per-run cap. Commitment SHA-256 is
+  `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+  V9, the 30-day rumor gate, and the 365-day/$200 acceptance run require
+  separate execution and evidence. The
   Oracle campaign cannot pass below ten eligible runs, 60 resolved forecasts,
   both outcomes, p90 under 60 seconds, Brier under 0.25, and exact replay of
-  every finalized source. No V8 evidence is claimed yet.
+  every finalized source. No V9 live evidence is claimed yet. Engine semantics
+  7 and database schema 11 remain unchanged.
 - Release-gate PR #20 remains draft. GitHub account billing is an external
   operational blocker and does not waive any required CI job. Do not merge,
   tag, publish, or deploy

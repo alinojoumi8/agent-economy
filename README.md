@@ -209,7 +209,7 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
-| `runs/oracle/v8-seed-7371-control.yaml` ... `v8-seed-7380-rumor.yaml` | Current pending v8 10-run/60-forecast calibration corpus | Scripted world; live `kimi-for-coding-highspeed` Oracle only; governed answer repair; scheduled-latency call floor; shared state-aware preflight; occurrence-aware replay citations; conservative 3x metering; $25/run cap; no live evidence claimed yet |
+| `runs/oracle/v9-seed-7381-control.yaml` ... `v9-seed-7390-rumor.yaml` | Current pending v9 10-run/60-forecast calibration corpus | Scripted world; live `MiniMax-M3` Oracle only through the exact `openai_compat` adapter; automatic cache accounting; governed answer repair; scheduled-latency call floor; shared state-aware preflight; occurrence-aware replay citations; $25/run cap; no v9 live evidence claimed yet |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -351,7 +351,7 @@ route was intentionally scripted. Companion replay
 `37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
 all deterministic tables matched and `differences: []`.
 
-The 30-day rumor gate, successful v8 Oracle latency/calibration campaign, and
+The 30-day rumor gate, successful v9 Oracle latency/calibration campaign, and
 365-day/$200 acceptance run remain separate and are not replaced by the
 five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
 dependency, and secret audit is also required before any public release.
@@ -449,28 +449,52 @@ entry, run identity, artifact, or seed enters v8.
 
 The producer now clamps both continuous-monotonic and resumed-wall-clock
 scheduled latency to at least the conservatively rounded sum of the persisted
-governed-call latencies. V8 precommits fresh seeds 7371–7380 with odd control
-and even rumor arms under campaign `oracle-calibration-v8`, version 8,
-`kimi-for-coding-highspeed`, conservative 3x metering,
-`runs/oracle/manifest-v8.template.yaml`, and a $25 per-run cap. Runtime and
-receipt verification retain the shared state-aware preflight, deterministic
-occurrence-aware citation mapping, bounded governed-answer repair, immutable
-claims, exact one-time replay consumption, and zero fallback/live replay
-dispatch. Passing still requires ten fresh source/replay pairs, 60 resolved
-forecasts across both outcomes, p90 below 60 seconds, and Brier below 0.25. No
-v8 live evidence is claimed before the aggregate gate passes. See the
+governed-call latencies. V8 is archived and excluded: seeds 7371–7374 each
+produced passed, eligible source receipts and exact tick-335 companion replays,
+while seed 7375 stopped at tick 245 after four of six forecasts when Kimi
+returned HTTP 403 for the exhausted billing-cycle quota. The source persisted
+one `provider_failure`, spent `$0.19651848`, and remains a healthy standalone
+SQLite database. It is not resumed or substituted. The archive retains five
+source databases, four replay databases, eight source/replay receipts, and all
+checkpoint manifests. Only after the archive commit is durable may the pending
+cleanup remove exactly 189 V8 source-checkpoint database bodies—40 each for
+seeds 7371–7374 and 29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189
+source checkpoint manifests, 160 replay checkpoint manifests, five claims,
+five initialized markers, and every final artifact listed above. All 160 replay
+checkpoint bodies are already absent, and no V8 SQLite sidecars remain. No V8
+evidence enters a later corpus.
+
+V9 is the current fresh commitment: campaign `oracle-calibration-v9`, version
+9, seeds 7381–7390 with odd control and even rumor arms, commitment SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`, and
+`runs/oracle/manifest-v9.template.yaml`. Only the Oracle is live, using
+`MiniMax-M3` through provider kind `openai_compat` at
+`https://api.minimax.io/v1`, key environment `MINIMAX_API_KEY`, `/models`
+healthcheck, 180-second timeout, `max_tokens_field: max_completion_tokens`,
+request defaults `max_completion_tokens: 4096` and `reasoning_split: true`,
+and `prompt_cache_mode: provider_automatic`.
+The standard MiniMax ≤512k rates are `$0.30/M` input, `$1.20/M` output, and
+`$0.06/M` automatic cache reads; every arm retains a `$25` cap. A disposable
+one-call MiniMax probe and a deliberately unclaimed five-tick Oracle rehearsal
+both succeeded through that exact adapter. They establish operational
+readiness only and are not V9 corpus evidence. Passing still requires all ten
+fresh exact source/replay pairs, 60 resolved forecasts across both outcomes,
+p90 below 60 seconds, and Brier below 0.25. No V9 live evidence is claimed
+before the aggregate gate passes. The fresh V9 precommit tree passed all 659
+Python tests with 8 environment-gated skips, 23 dashboard tests, the 603-module
+production build and static-bundle freshness check, pinned-dataset verification,
+dependency checks, and `git diff --check`. See the
 [operator runbook](docs/operator-runbook.md).
 
-After the V7 archive inventory is durable, storage cleanup is restricted to the
-200 source checkpoint database bodies under `data/checkpoints` matching anchored
+The completed V7 archive cleanup removed exactly the 200 source checkpoint
+database bodies under `data/checkpoints` matching anchored
 regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`—40 per source. That exact set
 is 49,647,239,168 bytes (`46.237595 GiB`).
-Retain all 360 source/replay checkpoint manifests and hashes, five final source
+All 360 source/replay checkpoint manifests and hashes, five final source
 databases, four final replay databases, eight source/replay receipt JSON files,
 the five existing claim/initialized-marker pairs for seeds 7361–7365, profiles,
-commitments, template, base
-configuration, reports, and the authoritative seed-7365 database. Never use a
-broad V7 wildcard. The body cleanup remains pending.
+commitments, template, base configuration, reports, and the authoritative
+seed-7365 database were retained. No broad V7 wildcard was used.
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve
 SCF fixture supplies income, liquid-financial-asset, and total-net-worth draws;

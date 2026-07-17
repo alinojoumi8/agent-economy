@@ -156,7 +156,8 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 - Acceptance: "What is the probability of a bank run within 30 ticks?" returns a structured prediction in < 60s; 30 ticks later it is scored without human input.
 - Release calibration evidence is evaluated only from an explicit, versioned manifest of finalized live-Oracle runs; directory pooling, replay/fork/dev runs, scripted Oracle calls, and post-hoc seed substitution are ineligible. The campaign floor is 10 unique runs and 60 resolved forecasts spanning both outcome classes, with prediction-bound end-to-end p90 < 60s and aggregate Brier score < the fixed p=0.5 baseline of 0.25. `--oracle-campaign-run` finalizes each source and creates its exact offline companion replay; the aggregate evaluator recomputes that proof rather than inferring replay fidelity or accepting an independently substituted replay. The persisted scheduled interval is conservatively clamped to at least the sum of its governed planning/answer call latencies, preventing separately rounded provider clocks from making the enclosing completion event shorter than its own calls.
 - Oracle campaign V7 is excluded diagnostic evidence. Seeds 7361–7364 produced passed, eligible source receipts with exact tick-335 companion replays. Seed 7365 remains paused at tick 335 in `FINALIZE`; its continuously measured completion latency was 13,658 ms while its governed calls summed to 13,660 ms, so receipt validation correctly rejected that two-millisecond floor violation before any replay or source receipt was published. This is the continuous scheduled-latency floor defect. The source is claim-bound to the original clean Git revision and is never resumed, repaired, substituted, or post-fix receipted. Seeds 7366–7370 were never run, and no V7 artifact or seed enters a later corpus.
-- The current pending `oracle-calibration-v8` precommit, campaign version 8, uses fresh seeds 7371–7380, alternating odd control/even rumor arms, and `kimi-for-coding-highspeed`, conservatively metered at 3x the standard Kimi route with a $25 safety cap per run. Its shared state-aware planner preflight binds the advertised historical tool catalog and valid entity/range targets before any read tool executes, so every retryable rejection remains independently reproducible; duplicate public-event citation classes resolve by deterministic source occurrence while missing or inconsistent classes still fail closed. No V8 live evidence is claimed until all predeclared arms and their exact companion replays pass the manifest gate.
+- Oracle campaign V8 is archived and excluded. Seeds 7371–7374 produced passed, eligible source receipts with exact tick-335 companion replays and zero differences. Seed 7375 stopped at tick 245 after Kimi returned a billing-cycle usage-limit failure; the persisted `provider_failure` makes that arm ineligible, so the immutable ten-arm V8 precommit cannot satisfy the corpus gate and is never resumed, substituted, or pooled into a later campaign.
+- The current precommitted `oracle-calibration-v9` campaign, version 9, uses fresh seeds 7381–7390 with alternating odd control/even rumor arms. Only the Oracle is live, routed to `minimax/MiniMax-M3`; background behavior remains scripted. The route pins MiniMax's standard ≤512k pricing at $0.30/M input, $1.20/M output, and $0.06/M cached input with `provider_automatic` caching and a $25 safety cap per run. Commitment SHA-256 is `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`. Shared state-aware preflight, occurrence-aware citations, governed-answer repair, and the scheduled-latency floor remain fail closed. Engine semantics 7 and database schema 11 are unchanged, and no V9 live evidence is claimed before all ten predeclared arms and their exact companion replays pass the manifest gate.
 
 **R7. Run control + cost governor**
 - Start/pause/resume/speed controls; automatic checkpoints every N ticks; phase-aware resume keeps the last fully completed tick plus the active tick/next-phase cursor.
@@ -283,25 +284,44 @@ sum. The claim-bound source cannot resume or mint an eligible post-fix receipt;
 seed 7365 has no replay or receipt, seeds 7366–7370 were never run, and no V7
 aggregate manifest or receipt exists. No V7 artifact or seed enters V8.
 
-After the V7 archive/hash inventory is durable, remove only the 200 source
-checkpoint database bodies matching anchored regex
+The V7 archive cleanup removed exactly the 200 source checkpoint database
+bodies matching anchored regex
 `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
-(`46.237595 GiB`). Retain all 360 source/replay checkpoint manifests and hashes,
-five final source databases, four final replay databases, eight source/replay receipts for seeds
-7361–7364, the five existing claim/initialized-marker pairs for seeds 7361–7365,
-profiles, commitments, template,
-base, reports, and the authoritative seed-7365 database. This cleanup is pending;
-a broad V7 wildcard is prohibited.
+(`46.237595 GiB`). All 360 source/replay checkpoint manifests and hashes, five
+final source databases, four final replay databases, eight source/replay
+receipts for seeds 7361–7364, the five existing claim/initialized-marker pairs
+for seeds 7361–7365, profiles, commitments, template, base, reports, and the
+authoritative seed-7365 database remain retained.
 
-The current `oracle-calibration-v8` campaign-version-8 precommit starts a fresh
-ten-profile corpus at seeds 7371–7380,
-with odd control/even rumor arms, `kimi-for-coding-highspeed`, conservative 3x
-metering, and a $25 per-run cap. It retains occurrence-aware citations, shared
-state-aware preflight, governed-answer repair, and the fixed scheduled-latency
-producer. Engine semantics 7 and database schema 11 are unchanged. No V8 live
-evidence is claimed yet.
+V8 is archived as an excluded diagnostic campaign. Seeds 7371–7374 each retain
+a passed, eligible source receipt and exact tick-335 companion replay with zero
+differences. Seed 7375 stopped at tick 245 when Kimi returned a billing-cycle
+usage-limit failure, and its persisted `provider_failure` makes the arm and
+therefore the precommitted ten-arm corpus ineligible. It is never resumed,
+substituted, or pooled into V9. Pending conservative cleanup is limited to the
+189 source checkpoint database bodies matching anchored regex
+`^oracle-calibration-v8-s737[1-5]_t\d+\.db$`: 40 each for seeds 7371–7374 and 29
+for seed 7375, totaling 43,999,223,808 bytes. Retain five source databases, four
+replay databases, 189 source checkpoint manifests, 160 replay checkpoint
+manifests, five claims, five initialized markers, eight source/replay receipts,
+reports, and campaign configurations. All 160 replay checkpoint bodies are
+already absent and no V8 SQLite sidecars remain.
 
-The outstanding work is release evidence and operations: pass the fresh V8
+The current `oracle-calibration-v9` campaign-version-9 precommit starts a fresh
+ten-profile corpus at seeds 7381–7390, with odd control/even rumor arms and only
+the Oracle routed live to `minimax/MiniMax-M3`. It pins MiniMax's standard
+≤512k prices at $0.30/M input, $1.20/M output, and $0.06/M cached input,
+uses `provider_automatic` caching, and retains a $25 per-run cap. Commitment
+SHA-256 is
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+Occurrence-aware citations, shared state-aware preflight, governed-answer
+repair, and the fixed scheduled-latency producer remain unchanged. Engine
+semantics 7 and database schema 11 are unchanged. No V9 live evidence is
+claimed yet. The fresh precommit tree passed 659 Python tests with 8
+environment-gated skips, 23 dashboard tests, a fresh 603-module build, pinned
+dataset verification, dependency checks, and `git diff --check`.
+
+The outstanding work is release evidence and operations: pass the fresh V9
 ten-profile Oracle campaign, run the live 30-day
 rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
 public-release provenance audit. Release-gate PR #20 stays draft; GitHub account

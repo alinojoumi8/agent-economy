@@ -217,12 +217,12 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-The pending V8 ten-profile Oracle campaign, live 30-day rumor
+The pending V9 ten-profile Oracle campaign, live 30-day rumor
 pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
-operational gates. V8 uses fresh seeds 7371–7380 in odd-control/even-rumor arms;
-no earlier campaign source, response, claim, checkpoint, replay, seed, or receipt
-is reused. No V8 evidence is claimed before all ten arms and the aggregate
-receipt pass. V4 seeds 7331 and 7332 produced eligible
+operational gates. V9 uses fresh seeds 7381–7390 in odd-control/even-rumor arms,
+routes only the Oracle to `MiniMax-M3`, and reuses no earlier campaign source,
+response, claim, checkpoint, replay, seed, or receipt. No V9 evidence is claimed
+before all ten arms and the aggregate receipt pass. V4 seeds 7331 and 7332 produced eligible
 exact source/replay receipts but remain diagnostic evidence because the fixed
 campaign did not survive seed 7333.
 
@@ -286,19 +286,45 @@ governed call latencies. Seed 7365's claim binds commit
 an eligible post-fix receipt. Any post-fix replay would be diagnostic only. No
 V7 artifact or seed is reused in V8.
 
-After the archive/hash inventory is durable, remove exactly the 200 V7 source
-checkpoint database bodies matching anchored regex
+The completed archive cleanup removed exactly the 200 V7 source checkpoint
+database bodies matching anchored regex
 `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
-(`46.237595 GiB`). Never use a broad V7 wildcard. Retain all 360 source/replay
+(`46.237595 GiB`). No broad V7 wildcard was used. All 360 source/replay
 checkpoint manifests and hashes, five final source databases, four final replay
 databases, eight source/replay receipt JSONs for seeds 7361–7364, the five
 existing claim/initialized-marker pairs for seeds 7361–7365, the profiles,
-commitments, template, base, reports, and
-authoritative seed-7365 database. The body cleanup remains pending.
+commitments, template, base, reports, and the authoritative seed-7365 database
+were retained.
 
-V8 retains occurrence-aware citation identity and governed-answer repair, uses
-campaign version 8, and keeps engine semantics 7 and database schema 11.
-No V8 live evidence is claimed yet; the complete gate must pass first.
+V8 is archived and excluded. Seeds 7371–7374 produced passed, eligible source
+receipts and exact tick-335 companion replays. Seed 7375 stopped at tick 245
+after four of six forecasts when Kimi returned HTTP 403 for its exhausted
+billing-cycle quota. Its healthy standalone source persisted one
+`provider_failure` and spent `$0.19651848`; it is not resumed, repaired, or
+substituted. Retain five source databases, four replay databases, eight
+source/replay receipts, and all checkpoint manifests. Only after the archive
+commit is durable may pending cleanup remove exactly 189 V8 source-checkpoint
+database bodies—40 each for seeds 7371–7374 and 29 for seed 7375—totalling
+43,999,223,808 bytes. Retain 189 source checkpoint manifests, 160 replay
+checkpoint manifests, five claims, five initialized markers, and every final
+artifact listed above. All 160 replay checkpoint bodies are already absent, and
+no V8 SQLite sidecars remain. No V8 evidence enters V9.
+
+V9 retains occurrence-aware citation identity, governed-answer repair, engine
+semantics 7, and database schema 11. Its fresh version-9 commitment uses seeds
+7381–7390 and SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+Only the Oracle is live through the exact MiniMax provider configuration:
+`kind: openai_compat`, `base_url: https://api.minimax.io/v1`,
+`api_key_env: MINIMAX_API_KEY`, `healthcheck_path: /models`, `timeout_s: 180`,
+`max_tokens_field: max_completion_tokens`, request defaults
+`max_completion_tokens: 4096` and `reasoning_split: true`,
+`prompt_cache_mode: provider_automatic`, and model `MiniMax-M3`. Standard ≤512k
+pricing is `$0.30/M` input, `$1.20/M` output, and `$0.06/M` automatic cache
+reads; each arm is capped at `$25`. A disposable one-call probe and a
+deliberately unclaimed five-tick Oracle rehearsal succeeded through the exact
+adapter, which establishes operational readiness but not V9 corpus evidence.
+The complete ten-arm and aggregate gate remains pending.
 
 No live inference is run without `--approve-live-inference`. An unperformed or
 failed live gate must be reported as pending or failed, never treated as passed.
@@ -555,6 +581,11 @@ semantics-7 merge receipt rather than the later revision total.
 The final v3 receipt-hardening tree then passed 599 Python tests with 8 skipped
 in 1,618.07 seconds.
 
+The fresh V9 precommit tree subsequently passed all 659 Python tests with 8
+environment-gated skips, 23 dashboard tests, the 603-module production build
+and static-bundle freshness check, pinned-dataset verification, dependency
+checks, and `git diff --check`.
+
 Free rehearsal `5a0d40d773` completed five ticks at `$0` and exercised every
 target effect with zero rejected actions or provider failures. It wrote six
 checkpoints and reconciled every currency to zero. Offline replay
@@ -599,7 +630,7 @@ mechanics and evidence plumbing; it does not satisfy live-provider acceptance.
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
 | Preceding replay-integrity revision | **Passed** | 590 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
-| Current v3 receipt-hardening tree | **Passed** | 599 Python passed / 8 skipped in 1,618.07 seconds; malformed and fractional lifecycle provenance fails closed |
+| Current V9 precommit tree | **Passed** | 659 Python passed / 8 skipped; 23 dashboard tests; 603-module build; pinned datasets and hygiene green |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay** | `881ed41994`; 19/20 checks, with only scripted `real_providers` false; replay matched tick/hash with every table exact and `differences: []` |
 | GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
@@ -700,26 +731,29 @@ diagnostic evidence, while seed 7333 and the fixed v4 corpus remain excluded for
 the government-ledger retry/provenance failure described above. None of those
 sources, responses, claims, checkpoints, replays, or seeds is reused.
 
-The current pending `oracle-calibration-v8` campaign is separately precommitted
-to ten fixed arms with fresh seeds 7371–7380, odd control and even rumor. It
-routes only the Oracle to
-`kimi-for-coding-highspeed`, conservatively meters it at 3x the standard Kimi
-route, and retains a $25 per-run cap. Before live dispatch, each arm consumes an
+V8 is now excluded for the seed-7375 Kimi quota failure described above; its
+four completed arms remain diagnostic only. The current pending
+`oracle-calibration-v9` campaign is separately precommitted to ten fixed arms
+with fresh seeds 7381–7390, odd control and even rumor. Its commitment SHA-256
+is `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`,
+and its manifest template is `runs/oracle/manifest-v9.template.yaml`. It routes
+only the Oracle to `MiniMax-M3` through the exact adapter documented above and
+retains a `$25` per-run cap. Before live dispatch, each arm consumes an
 immutable claim bound to its clean Git commit/tree, committed effective config,
-run ID, seed, initialized-state marker,
-and canonical data location. Source receipts bind every required checkpoint
-manifest and the companion replay tracker; eligibility requires exact one-time
-source-call consumption with zero compatibility fallback and zero live replay
-dispatch. Occurrence-aware citation mapping keeps repeated public article
-classes distinct under exact replay, governed answer semantics use the existing
-bounded repair call before persistence, and the scheduled-latency producer
-clamps both continuous monotonic and resumed wall-clock duration to the
-conservatively rounded governed-call sum. The V8 commitment excludes every
-earlier campaign profile and evidence path. The local no-clobber receipt chain is strong accident/tamper evidence,
-but a public claim still requires independent signing or a separately
-administered append-only transparency log.
+run ID, seed, initialized-state marker, and canonical data location. Source
+receipts bind every required checkpoint manifest and the companion replay
+tracker; eligibility requires exact one-time source-call consumption with zero
+compatibility fallback and zero live replay dispatch. Occurrence-aware citation
+mapping keeps repeated public article classes distinct under exact replay,
+governed answer semantics use the bounded repair call before persistence, and
+the scheduled-latency producer clamps both continuous monotonic and resumed
+wall-clock duration to the conservatively rounded governed-call sum. The V9
+commitment excludes every earlier campaign profile and evidence path. The local
+no-clobber receipt chain is strong accident/tamper evidence, but a public claim
+still requires independent signing or a separately administered append-only
+transparency log.
 
-Completion of the V8 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+Completion of the V9 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
 run, and final provenance audit remain separate release evidence. Release-gate
 PR #20 stays draft. GitHub account billing is an external operational blocker
 and does not waive any required CI job. Merging, tagging, publication, and public

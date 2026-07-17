@@ -177,13 +177,14 @@ not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 ## Oracle calibration campaign
 
 This campaign measures Oracle latency and calibration; it is not the 365-day
-whole-world acceptance run. V7 is archived as an incomplete diagnostic campaign
-after seed 7365 exposed the continuous scheduled-latency floor defect. The
-current pending `oracle-calibration-v8` commitment uses fresh seeds 7371–7380:
-odd seeds are control and even seeds are rumor arms. Its ten predeclared profiles keep background behavior
-scripted and route only the Oracle to `kimi-for-coding-highspeed`, conservatively
-metered at 3x the standard Kimi route under a $25 per-run cap. Do not replace a
-seed or switch control/treatment arms after seeing outcomes. Treatment profiles
+whole-world acceptance run. V7 and V8 are archived incomplete diagnostic
+campaigns. V8 seeds 7371–7374 passed individually, but seed 7375 exhausted the
+Kimi billing-cycle quota and made the fixed campaign ineligible. The current
+pending `oracle-calibration-v9` commitment uses fresh seeds 7381–7390: odd
+seeds are control and even seeds are rumor arms. Its ten predeclared profiles
+keep background behavior scripted and route only the Oracle to `MiniMax-M3`
+through the exact `openai_compat` adapter under a `$25` per-run cap. Do not
+replace a seed or switch control/treatment arms after seeing outcomes. Treatment profiles
 lock a one-person public precursor one tick before each forecast and the larger
 depositor-targeted rumor one tick after it; control profiles contain neither.
 
@@ -328,20 +329,51 @@ claim byte-for-byte, never resume it or mint a post-fix eligible receipt. A
 post-fix replay may be retained only as diagnostic evidence. No V7 artifact or
 seed enters V8.
 
-V8 has the same direct acceptance-rehearsal ancestry and governed-answer repair
-contract, campaign version 8, fresh seeds 7371–7380, and the fixed latency
-producer. It retains engine semantics 7 and database schema 11.
-No V8 live evidence is claimed yet; the complete gate must pass first.
+V8 is archived and excluded. Seeds 7371–7374 each produced passed, eligible
+source receipts and exact tick-335 companion replays. Seed 7375 stopped at tick
+245 after four of six forecasts when Kimi returned HTTP 403 for the exhausted
+billing-cycle quota. Its source persisted one `provider_failure`, spent
+`$0.19651848`, passes immutable SQLite health checks, and has no WAL/SHM
+sidecars. Do not resume, repair, substitute, or post-fix receipt that arm. The
+archive retains five source databases, four replay databases, eight
+source/replay receipts, and every checkpoint manifest. Only after the archive
+commit is durable may pending cleanup remove exactly 189 V8 source-checkpoint
+database bodies matching anchored regex
+`^oracle-calibration-v8-s737[1-5]_t\d+\.db$`—40 each for seeds 7371–7374 and
+29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189 source checkpoint manifests, 160 replay
+checkpoint manifests, five claims, five initialized markers, and the final
+artifacts listed above. All 160 replay checkpoint bodies are already absent,
+and no V8 SQLite sidecars remain. Never use a broad V8 wildcard. No V8 artifact
+or seed enters V9.
 
-Then preflight and execute each profile from
-`v8-seed-7371-control.yaml` through `v8-seed-7380-rumor.yaml`. The first run is
-shown; repeat it for the exact ten checked-in profiles only after seed 7371
-produces an eligible exact source/replay receipt:
+V9 has the same direct acceptance-rehearsal ancestry, governed-answer repair,
+fixed latency producer, engine semantics 7, and database schema 11. It is a
+fresh campaign/version/seed/config commitment: `oracle-calibration-v9`, version
+9, seeds 7381–7390, odd control/even rumor, and commitment SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+Only the Oracle is live. Its exact adapter is provider kind `openai_compat`,
+base URL `https://api.minimax.io/v1`, key environment `MINIMAX_API_KEY`,
+`healthcheck_path: /models`, 180-second timeout,
+`max_tokens_field: max_completion_tokens`, request defaults
+`max_completion_tokens: 4096` and `reasoning_split: true`, and
+`prompt_cache_mode: provider_automatic`, with model `MiniMax-M3`. Use the
+standard ≤512k prices configured in the profile: `$0.30/M` input, `$1.20/M`
+output, and `$0.06/M` automatic cache reads. The per-run cap is `$25`.
+
+A disposable one-call MiniMax probe and a deliberately unclaimed five-tick
+Oracle rehearsal both succeeded through this exact adapter. They establish
+operational readiness only; neither created a V9 corpus claim or receipt. No V9
+live evidence is claimed until all ten arms and the aggregate gate pass.
+
+Preflight and execute each profile from `v9-seed-7381-control.yaml` through
+`v9-seed-7390-rumor.yaml`. The first run is shown; repeat it for the exact ten
+checked-in profiles only after seed 7381 produces an eligible exact
+source/replay receipt:
 
 ```powershell
-python run.py --config runs/oracle/v8-seed-7371-control.yaml --preflight
-python run.py --config runs/oracle/v8-seed-7371-control.yaml --preflight-live
-python run.py --config runs/oracle/v8-seed-7371-control.yaml `
+python run.py --config runs/oracle/v9-seed-7381-control.yaml --preflight
+python run.py --config runs/oracle/v9-seed-7381-control.yaml --preflight-live
+python run.py --config runs/oracle/v9-seed-7381-control.yaml `
   --oracle-campaign-run --approve-live-inference
 ```
 
@@ -375,7 +407,7 @@ dispatch. Every required checkpoint is independently quick-checked, matched to
 the full schema, bound to the source run/config/tick and valid engine/lifecycle
 PRNG state, then hashed into the replay and source receipts. All persisted model
 calls are audited globally: only the six scheduled governed Oracle sessions may
-use the pinned live Kimi route. Claims, markers, replay receipts, source receipts,
+use the pinned live MiniMax route. Claims, markers, replay receipts, source receipts,
 and final campaign receipts are immutable no-clobber publications; an identical
 rerun may reuse an existing receipt, while any differing artifact fails.
 
@@ -394,13 +426,13 @@ storage cleanup.
 
 Run the ten arms sequentially and use this checkpoint retention boundary:
 
-- Keep every `oracle-calibration-v8-s*_t*.db` source checkpoint body and its
+- Keep every `oracle-calibration-v9-s*_t*.db` source checkpoint body and its
   `.manifest.json` through the aggregate report. The evaluator reopens each
   physical source checkpoint, rebuilds its runtime manifest, runs SQLite and
   ledger checks, and rejects a missing body; a receipt hash alone is not enough.
 - After one arm has emitted a passed source receipt and its manifest entry is
   durably recorded, archive or prune only that arm's
-  `replay-oracle-calibration-v8-*_t*.db` checkpoint bodies. Retain their tiny
+  `replay-oracle-calibration-v9-*_t*.db` checkpoint bodies. Retain their tiny
   manifests, the final replay database under `data/runs`, the final source
   database, and all source checkpoint bodies. Resolve and verify the exact
   replay run ID and checkpoint-directory paths before removal; never use a broad
@@ -410,35 +442,33 @@ Run the ten arms sequentially and use this checkpoint retention boundary:
   bodies keeps the ten-arm peak near `110–114 GiB`; monitor free space before
   each arm and stop before the safety margin is exhausted.
 - Only after the aggregate JSON/Markdown receipt has passed and the evidence
-  package is durably archived may all ten arms' 400 V8 source checkpoint
+  package is durably archived may all ten arms' 400 V9 source checkpoint
   database bodies (40 per arm) be pruned. Retain their manifests, final
   source/replay databases, claims, and receipts.
 
-The separate V7 archive cleanup is narrower and remains pending until its
-archive/hash inventory is durable. Remove exactly the 200 source checkpoint
-database bodies in `data/checkpoints` matching anchored filename regex
+The separate V7 archive cleanup is complete. It removed exactly the 200 source
+checkpoint database bodies in `data/checkpoints` matching anchored filename regex
 `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`. The verified reclaim is
 49,647,239,168 bytes (`46.237595 GiB`): seed 7361 has 40 bodies totaling
 9,700,835,328 bytes (`9.034607 GiB`); 7362 has 40 totaling 10,008,035,328
 (`9.320709 GiB`); 7363 has 40 totaling 9,875,501,056 (`9.197277 GiB`); 7364
 has 40 totaling 10,006,319,104 (`9.319111 GiB`); and 7365 has 40 totaling
 10,056,548,352 (`9.365891 GiB`). Every body has a sibling manifest and none has
-a sidecar. Never
-use a broad V7 wildcard. Retain all 360 source/replay checkpoint manifests and
-hashes, five final source databases, four final replay databases, eight
+a sidecar. No broad V7 wildcard was used. All 360 source/replay checkpoint
+manifests and hashes, five final source databases, four final replay databases, eight
 source/replay receipt JSONs for seeds 7361–7364, the five existing
 claim/initialized-marker pairs for seeds 7361–7365, profiles, commitments,
-template, base configuration, reports, and the
-authoritative seed-7365 database.
+template, base configuration, reports, and the authoritative seed-7365 database
+were retained.
 
 Only after all ten source claims and runs finish, copy
-`runs/oracle/manifest-v8.template.yaml` to a run-specific evidence manifest and
+`runs/oracle/manifest-v9.template.yaml` to a run-specific evidence manifest and
 replace its ten placeholders with the exact manifest entries emitted by the
 source receipts, then evaluate it:
 
 ```powershell
-Copy-Item runs/oracle/manifest-v8.template.yaml runs/oracle/manifest-v8.yaml
-python run.py --oracle-calibration-report runs/oracle/manifest-v8.yaml
+Copy-Item runs/oracle/manifest-v9.template.yaml runs/oracle/manifest-v9.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v9.yaml
 ```
 
 The command reads disposable copies rather than opening the sources directly,
@@ -607,7 +637,7 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep release-gate PR #20 draft until the V8 Oracle campaign, capped
+Keep release-gate PR #20 draft until the V9 Oracle campaign, capped
 30-day rumor pilot, 365-day/$200 acceptance run, and final
 provenance/license/dependency/secret audit all pass. Merging, tagging,
 publication, and public deployment require separate authorization. GitHub

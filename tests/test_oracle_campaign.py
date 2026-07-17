@@ -25,8 +25,11 @@ from reports.oracle_campaign import (
     RELEASE_CAMPAIGN_ID,
     RELEASE_CAMPAIGN_VERSION,
     RELEASE_COMMITMENT_SHA256,
+    RELEASE_MAX_STANDARD_PROMPT_TOKENS,
+    RELEASE_ORACLE_ADAPTER,
     RELEASE_ORACLE_MODEL,
     RELEASE_ORACLE_PRICING,
+    RELEASE_ORACLE_PROVIDER,
     RELEASE_PROFILES,
     RELEASE_SEEDS,
     _expected_replay_tracker,
@@ -259,7 +262,9 @@ def _write_run(
     probability = 0.9 if outcome else 0.1
     for item in profile["acceptance"]["oracle_questions"]:
         tick = int(item["at_tick"])
-        provider = "made-up-provider" if invalid_provider and tick == 5 else "kimi"
+        provider = (
+            "made-up-provider"
+            if invalid_provider and tick == 5 else RELEASE_ORACLE_PROVIDER)
         governed_contract = {
             "campaign_id": RELEASE_CAMPAIGN_ID,
             "campaign_version": RELEASE_CAMPAIGN_VERSION,
@@ -816,7 +821,7 @@ def test_oracle_campaign_requires_replay_source_markers(tmp_path):
     assert "companion replay source markers are invalid" in excluded["reasons"]
 
 
-def test_oracle_campaign_rejects_self_asserted_unmetered_kimi_calls(tmp_path):
+def test_oracle_campaign_rejects_self_asserted_unmetered_provider_calls(tmp_path):
     manifest = _manifest(tmp_path)
     payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     entry = payload["runs"][0]
@@ -889,7 +894,7 @@ def test_oracle_campaign_rejects_forged_positive_cost(tmp_path):
     receipt = evaluate_oracle_campaign(manifest)
     first = next(run for run in receipt["runs"] if run["seed"] == _FIRST_SEED)
     assert any(
-        "pinned Kimi pricing" in reason
+        "pinned release Oracle pricing" in reason
         for reason in first["forecasts"][0]["reasons"])
 
 
@@ -916,7 +921,8 @@ def test_openai_metering_accepts_valid_direct_and_gateway_repair_shapes():
     assert direct == {
         "shape": "direct", "response_ids": ["chatcmpl-direct"],
         "prompt_tokens": 10, "completion_tokens": 10,
-        "cached_in_tokens": 0, "expected_cost_usd": direct_cost,
+        "cached_in_tokens": 0, "max_prompt_tokens": 10,
+        "expected_cost_usd": direct_cost,
     }
 
     repair_cost = round(
@@ -951,7 +957,43 @@ def test_openai_metering_accepts_valid_direct_and_gateway_repair_shapes():
     assert repair["prompt_tokens"] == 10
     assert repair["completion_tokens"] == 10
     assert repair["cached_in_tokens"] == 2
+    assert repair["max_prompt_tokens"] == 6
     assert repair["expected_cost_usd"] == repair_cost
+
+
+def test_openai_metering_enforces_pinned_standard_pricing_tier_boundary():
+    assert RELEASE_MAX_STANDARD_PROMPT_TOKENS == 512_000
+    tier_reason = (
+        "provider prompt exceeds the pinned release Oracle pricing tier")
+
+    for prompt_tokens, rejected in ((512_000, False), (512_001, True)):
+        cost = round(
+            (prompt_tokens * RELEASE_ORACLE_PRICING["in"]
+             + RELEASE_ORACLE_PRICING["out"]) / 1_000_000,
+            8,
+        )
+        row = {
+            "in_tokens": prompt_tokens, "out_tokens": 1,
+            "cost_usd": cost,
+        }
+        response = {
+            "cached_in_tokens": 0,
+            "raw": {
+                "id": f"chatcmpl-tier-{prompt_tokens}",
+                "model": RELEASE_ORACLE_MODEL,
+                "object": "chat.completion",
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": 1,
+                    "prompt_tokens_details": {"cached_tokens": 0},
+                },
+            },
+        }
+
+        evidence, reasons = _openai_metering_evidence(row, response)
+
+        assert evidence["max_prompt_tokens"] == prompt_tokens
+        assert (tier_reason in reasons) is rejected
 
 
 def test_oracle_campaign_requires_governed_call_request_identity(tmp_path):
@@ -1019,7 +1061,7 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
         assert acceptance["oracle_latency_source"] == "scheduled_e2e_v1"
         assert len(acceptance["oracle_questions"]) == 6
         assert config["llm"]["routes"]["oracle"] == {
-            "provider": "kimi", "model": RELEASE_ORACLE_MODEL,
+            "provider": RELEASE_ORACLE_PROVIDER, "model": RELEASE_ORACLE_MODEL,
         }
         assert {
             route["provider"] for role, route in config["llm"]["routes"].items()
@@ -1048,37 +1090,51 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v8.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v9.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v8_commitment_and_highspeed_contract_are_pinned():
+def test_checked_in_v9_commitment_and_minimax_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7371: "2ee853cb5242c23f49bc55be90da5521550f9bf4955dd7e968d9c0fa99e1b90f",
-        7372: "d03cd3769427e5c589c16dde65572c52fcec0701a444b011e0790a54397afeb6",
-        7373: "161d60f3d4bfd27f4ab78534fc7f6c7819e032a78e2a7203aced40f11e953e51",
-        7374: "550de2c1de2b547041bb1f87ba13773439231440e6075d04bc5f3d93241642ba",
-        7375: "7141c9ed6362bbfc17d169e03c65f606dc525e48c1d4f4672efdb262711ca54a",
-        7376: "384003c86e6dad16d29bca3ed129a6fadc9d2837043d6acceb21213aba17c8b2",
-        7377: "930005057c6e6fe616b8ac294c55b223640f4ade369fae6ed71e25a1890fe3e2",
-        7378: "68773dfee2ae0f54fa317df36c87151347641da91d9648d988878dd766fb4c1a",
-        7379: "39fd382334a53a679d2db29d0f8137bc2ba1e94d785ff47679394e9d8d14f95f",
-        7380: "ee56fb3bc890a6aec4ac960138b2033b429706e1ce53598e0da295493b3a0db4",
+        7381: "9bc602916a0b687570d115e00968b26ba29bdc6c787e100db72a864d29763559",
+        7382: "d8f2e6cc8b4e8036776c9cd6b9d71c1da816c2bdfca6467b911b42dace981207",
+        7383: "be8b3d81040483fe2e174f75a10072edc8475606db963c8e7859c072ae4b6b36",
+        7384: "2bd23f5767a389f4771a6ae99750cf546e0ae3bb4b392d9f6125020c5a2a815a",
+        7385: "b701004b5e0768e50024ba0346b721735b356761e82cf51cfe4a3650d484e09a",
+        7386: "2548082efc81184eff8386311ad7bb932886d4f257fb01a42af92b2ea3d452b0",
+        7387: "50ab7f092ba07da4d9ab53bd625743f40626b37b75edbb82393879662cbd5aab",
+        7388: "29ce8812646452ead9d222059e24c9a62a6f239956cb3704b055018b57371aa3",
+        7389: "869e7e8958b66941f7d57d324edc752c18966315f96cdf6a9ff0559e801e8360",
+        7390: "b64642599ad61bc546e6deb25b94eeedaeef20a28781228f0826f95f3519a9a0",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v8"
-    assert RELEASE_CAMPAIGN_VERSION == 8
-    assert RELEASE_ORACLE_MODEL == "kimi-for-coding-highspeed"
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v9"
+    assert RELEASE_CAMPAIGN_VERSION == 9
+    assert RELEASE_ORACLE_PROVIDER == "minimax"
+    assert RELEASE_ORACLE_MODEL == "MiniMax-M3"
+    assert RELEASE_ORACLE_ADAPTER == {
+        "kind": "openai_compat",
+        "base_url": "https://api.minimax.io/v1",
+        "api_key_env": "MINIMAX_API_KEY",
+        "prompt_cache_mode": "provider_automatic",
+        "healthcheck_path": "/models",
+        "max_tokens_field": "max_completion_tokens",
+        "request_defaults": {
+            "max_completion_tokens": 4096,
+            "reasoning_split": True,
+        },
+        "timeout_s": 180,
+    }
     assert RELEASE_ORACLE_PRICING == {
-        "in": 2.85, "out": 12.00, "cache": 0.57,
+        "in": 0.30, "out": 1.20, "cache": 0.06,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "b0ef0afbc6bd39d9584a4db617ffac5943a263e5fbed4b2d7de5a7f7e0032faf")
+        "8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e")
 
-    commitment_path = root / "commitment-v8.yaml"
+    commitment_path = root / "commitment-v9.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1098,8 +1154,10 @@ def test_checked_in_v8_commitment_and_highspeed_contract_are_pinned():
         config = load_config(root / entry["profile"])
         assert effective_config_sha256(config) == expected_hashes[seed]
         assert config["llm"]["routes"]["oracle"] == {
-            "provider": "kimi", "model": RELEASE_ORACLE_MODEL,
+            "provider": RELEASE_ORACLE_PROVIDER, "model": RELEASE_ORACLE_MODEL,
         }
+        assert config["llm"]["providers"][RELEASE_ORACLE_PROVIDER] == (
+            RELEASE_ORACLE_ADAPTER)
         assert config["llm"]["pricing"] == {
             RELEASE_ORACLE_MODEL: RELEASE_ORACLE_PRICING,
         }
@@ -1111,6 +1169,75 @@ def test_checked_in_v8_commitment_and_highspeed_contract_are_pinned():
             "arrival_delay_min": 5,
             "arrival_delay_max": 20,
         }
+
+
+def test_v8_archive_commitment_and_profiles_remain_pinned():
+    root = Path("runs/oracle")
+    seeds = tuple(range(7371, 7381))
+    expected_hashes = {
+        7371: "2ee853cb5242c23f49bc55be90da5521550f9bf4955dd7e968d9c0fa99e1b90f",
+        7372: "d03cd3769427e5c589c16dde65572c52fcec0701a444b011e0790a54397afeb6",
+        7373: "161d60f3d4bfd27f4ab78534fc7f6c7819e032a78e2a7203aced40f11e953e51",
+        7374: "550de2c1de2b547041bb1f87ba13773439231440e6075d04bc5f3d93241642ba",
+        7375: "7141c9ed6362bbfc17d169e03c65f606dc525e48c1d4f4672efdb262711ca54a",
+        7376: "384003c86e6dad16d29bca3ed129a6fadc9d2837043d6acceb21213aba17c8b2",
+        7377: "930005057c6e6fe616b8ac294c55b223640f4ade369fae6ed71e25a1890fe3e2",
+        7378: "68773dfee2ae0f54fa317df36c87151347641da91d9648d988878dd766fb4c1a",
+        7379: "39fd382334a53a679d2db29d0f8137bc2ba1e94d785ff47679394e9d8d14f95f",
+        7380: "ee56fb3bc890a6aec4ac960138b2033b429706e1ce53598e0da295493b3a0db4",
+    }
+    commitment_hash = (
+        "b0ef0afbc6bd39d9584a4db617ffac5943a263e5fbed4b2d7de5a7f7e0032faf")
+    commitment = yaml.safe_load(
+        (root / "commitment-v8.yaml").read_text(encoding="utf-8"))
+    manifest = yaml.safe_load(
+        (root / "manifest-v8.template.yaml").read_text(encoding="utf-8"))
+    expected_adapter = {
+        "kind": "openai_compat",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "api_key_env": "KIMI_API_KEY",
+        "prompt_cache_mode": "off",
+        "healthcheck_path": "/models",
+        "max_tokens_field": "max_tokens",
+        "request_defaults": {
+            "max_tokens": 4096,
+            "reasoning_effort": "medium",
+            "temperature": 1.0,
+        },
+        "timeout_s": 180,
+    }
+
+    assert oracle_campaign._canonical_value_sha256(commitment) == commitment_hash
+    assert manifest["commitment_sha256"] == commitment_hash
+    for payload in (commitment, manifest):
+        assert payload["campaign_id"] == "oracle-calibration-v8"
+        assert payload["campaign_version"] == 8
+        assert [int(entry["seed"]) for entry in payload["runs"]] == list(seeds)
+    assert {
+        int(entry["seed"]): entry["effective_config_sha256"]
+        for entry in commitment["runs"]
+    } == expected_hashes
+
+    manifest_rows = {int(entry["seed"]): entry for entry in manifest["runs"]}
+    for entry in commitment["runs"]:
+        seed = int(entry["seed"])
+        condition = "rumor" if seed % 2 == 0 else "control"
+        profile = f"v8-seed-{seed}-{condition}.yaml"
+        config = load_config(root / profile)
+        assert entry["run_id"] == f"oracle-calibration-v8-s{seed}"
+        assert entry["profile"] == profile
+        assert effective_config_sha256(config) == expected_hashes[seed]
+        assert config["llm"]["routes"]["oracle"] == {
+            "provider": "kimi", "model": "kimi-for-coding-highspeed",
+        }
+        assert config["llm"]["providers"]["kimi"] == expected_adapter
+        assert config["llm"]["pricing"] == {
+            "kimi-for-coding-highspeed": {
+                "in": 2.85, "out": 12.00, "cache": 0.57,
+            },
+        }
+        for key in ("seed", "run_id", "profile", "effective_config_sha256"):
+            assert manifest_rows[seed][key] == entry[key]
 
 
 def test_v7_archive_commitment_and_profiles_remain_pinned():
@@ -1345,13 +1472,16 @@ def test_v7_campaign_has_no_v6_profile_or_evidence_ancestry():
 
 def test_v8_campaign_has_no_v7_profile_or_evidence_ancestry():
     root = Path("runs/oracle")
+    v8_seeds = tuple(range(7371, 7381))
     base = yaml.safe_load(
         (root / "calibration-base-v8.yaml").read_text(encoding="utf-8"))
     assert base["extends"] == "../acceptance/rehearsal.yaml"
 
-    for seed in RELEASE_SEEDS:
+    for seed in v8_seeds:
+        profile_name = (
+            f"v8-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml")
         profile = yaml.safe_load(
-            (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
+            (root / profile_name).read_text(encoding="utf-8"))
         assert profile["extends"] == "calibration-base-v8.yaml"
 
     v7_commitment = yaml.safe_load(
@@ -1371,20 +1501,78 @@ def test_v8_campaign_has_no_v7_profile_or_evidence_ancestry():
         row["effective_config_sha256"]
         for row in v8_commitment_rows.values()}
 
-    assert set(RELEASE_SEEDS).isdisjoint(v7_rows)
-    assert v8_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
+    assert set(v8_seeds).isdisjoint(v7_rows)
+    assert v8_manifest["commitment_sha256"] == (
+        "b0ef0afbc6bd39d9584a4db617ffac5943a263e5fbed4b2d7de5a7f7e0032faf")
     assert v8_config_hashes.isdisjoint(v7_config_hashes)
     for payload in (v8_commitment, v8_manifest):
+        assert payload["campaign_id"] == "oracle-calibration-v8"
+        assert payload["campaign_version"] == 8
+        assert [int(entry["seed"]) for entry in payload["runs"]] == list(
+            v8_seeds)
+
+    assert set(v8_commitment_rows) == set(v8_manifest_rows) == set(
+        v8_seeds)
+    for seed in v8_seeds:
+        committed = v8_commitment_rows[seed]
+        manifest = v8_manifest_rows[seed]
+        profile_name = (
+            f"v8-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml")
+        for key in ("seed", "run_id", "profile", "effective_config_sha256"):
+            assert manifest[key] == committed[key]
+        assert committed["run_id"] == f"oracle-calibration-v8-s{seed}"
+        assert committed["profile"] == profile_name
+        assert manifest["database"] == (
+            f"../../data/runs/oracle-calibration-v8-s{seed}.db")
+        assert manifest["replay_database"] == (
+            f"../../data/runs/REPLAY_RUN_ID_{seed}.db")
+        assert effective_config_sha256(
+            load_config(root / committed["profile"])) == (
+                committed["effective_config_sha256"])
+
+
+def test_v9_campaign_has_no_v8_profile_or_evidence_ancestry():
+    root = Path("runs/oracle")
+    base = yaml.safe_load(
+        (root / "calibration-base-v9.yaml").read_text(encoding="utf-8"))
+    assert base["extends"] == "../acceptance/rehearsal.yaml"
+
+    for seed in RELEASE_SEEDS:
+        profile = yaml.safe_load(
+            (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
+        assert profile["extends"] == "calibration-base-v9.yaml"
+
+    v8_commitment = yaml.safe_load(
+        (root / "commitment-v8.yaml").read_text(encoding="utf-8"))
+    v9_commitment = yaml.safe_load(
+        (root / "commitment-v9.yaml").read_text(encoding="utf-8"))
+    v9_manifest = yaml.safe_load(
+        (root / "manifest-v9.template.yaml").read_text(encoding="utf-8"))
+    v8_rows = {int(entry["seed"]): entry for entry in v8_commitment["runs"]}
+    v9_commitment_rows = {
+        int(entry["seed"]): entry for entry in v9_commitment["runs"]}
+    v9_manifest_rows = {
+        int(entry["seed"]): entry for entry in v9_manifest["runs"]}
+    v8_config_hashes = {
+        row["effective_config_sha256"] for row in v8_rows.values()}
+    v9_config_hashes = {
+        row["effective_config_sha256"]
+        for row in v9_commitment_rows.values()}
+
+    assert set(RELEASE_SEEDS).isdisjoint(v8_rows)
+    assert v9_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
+    assert v9_config_hashes.isdisjoint(v8_config_hashes)
+    for payload in (v9_commitment, v9_manifest):
         assert payload["campaign_id"] == RELEASE_CAMPAIGN_ID
         assert payload["campaign_version"] == RELEASE_CAMPAIGN_VERSION
         assert [int(entry["seed"]) for entry in payload["runs"]] == list(
             RELEASE_SEEDS)
 
-    assert set(v8_commitment_rows) == set(v8_manifest_rows) == set(
+    assert set(v9_commitment_rows) == set(v9_manifest_rows) == set(
         RELEASE_SEEDS)
     for seed in RELEASE_SEEDS:
-        committed = v8_commitment_rows[seed]
-        manifest = v8_manifest_rows[seed]
+        committed = v9_commitment_rows[seed]
+        manifest = v9_manifest_rows[seed]
         for key in ("seed", "run_id", "profile", "effective_config_sha256"):
             assert manifest[key] == committed[key]
         assert committed["run_id"] == f"{RELEASE_CAMPAIGN_ID}-s{seed}"
@@ -1415,11 +1603,12 @@ def test_oracle_campaign_profile_pins_replacement_arrival_delay():
         validate_oracle_campaign_profile(profile)
 
 
-def test_oracle_campaign_profile_requires_official_kimi_endpoint():
+def test_oracle_campaign_profile_requires_official_release_endpoint():
     profile = load_config(_FIRST_PROFILE)
-    profile["llm"]["providers"]["kimi"]["base_url"] = "http://127.0.0.1:9999/v1"
+    profile["llm"]["providers"][RELEASE_ORACLE_PROVIDER]["base_url"] = (
+        "http://127.0.0.1:9999/v1")
 
-    with pytest.raises(OracleCampaignError, match="official Kimi API"):
+    with pytest.raises(OracleCampaignError, match="official release Oracle API"):
         validate_oracle_campaign_profile(profile)
 
 
@@ -1452,22 +1641,23 @@ def test_oracle_campaign_profile_cannot_change_question_or_horizon():
 def test_oracle_campaign_rejects_request_defaults_that_override_wire_identity(
         forbidden):
     profile = load_config(_FIRST_PROFILE)
-    profile["llm"]["providers"]["kimi"]["request_defaults"][forbidden] = (
+    profile["llm"]["providers"][RELEASE_ORACLE_PROVIDER][
+        "request_defaults"][forbidden] = (
         "attacker-model" if forbidden == "model" else [])
 
-    with pytest.raises(OracleCampaignError, match="official Kimi API"):
+    with pytest.raises(OracleCampaignError, match="official release Oracle API"):
         validate_oracle_campaign_profile(profile)
 
 
 def test_oracle_campaign_pins_complete_provider_and_pricing_contract():
     profile = load_config(_FIRST_PROFILE)
-    profile["llm"]["providers"]["kimi"]["unexpected"] = True
-    with pytest.raises(OracleCampaignError, match="official Kimi API"):
+    profile["llm"]["providers"][RELEASE_ORACLE_PROVIDER]["unexpected"] = True
+    with pytest.raises(OracleCampaignError, match="official release Oracle API"):
         validate_oracle_campaign_profile(profile)
 
     profile = load_config(_FIRST_PROFILE)
     profile["llm"]["pricing"][RELEASE_ORACLE_MODEL]["out"] = 0.0
-    with pytest.raises(OracleCampaignError, match="pinned Kimi pricing"):
+    with pytest.raises(OracleCampaignError, match="pinned release Oracle pricing"):
         validate_oracle_campaign_profile(profile)
 
 
@@ -1542,7 +1732,9 @@ def test_claim_crash_recovery_never_resamples_initialized_or_partial_slot(tmp_pa
 
 def test_unique_genesis_staging_quarantines_corrupt_pending_before_publication(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
+    monkeypatch.setenv(
+        RELEASE_ORACLE_ADAPTER["api_key_env"], "unit-test-placeholder"
+    )
     profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     claim = prepare_oracle_campaign_run(
@@ -1573,7 +1765,9 @@ def test_unique_genesis_staging_quarantines_corrupt_pending_before_publication(
 ])
 def test_claimed_genesis_requires_both_prng_streams_before_dispatch(
         tmp_path, monkeypatch, missing_column):
-    monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
+    monkeypatch.setenv(
+        RELEASE_ORACLE_ADAPTER["api_key_env"], "unit-test-placeholder"
+    )
     profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     claim = prepare_oracle_campaign_run(
@@ -1851,7 +2045,9 @@ def test_release_population_rejects_negative_or_non_integer_components():
 
 def test_claim_and_initialized_marker_publication_never_clobbers_existing_bytes(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("KIMI_API_KEY", "unit-test-placeholder")
+    monkeypatch.setenv(
+        RELEASE_ORACLE_ADAPTER["api_key_env"], "unit-test-placeholder"
+    )
     profile_path = Path(_FIRST_PROFILE)
     profile = load_config(profile_path)
     run_id = _FIRST_RUN_ID
@@ -1990,7 +2186,8 @@ def test_global_llm_audit_allows_local_background_but_no_other_live_calls(
         for purpose in ("oracle_plan", "oracle"):
             store.insert(
                 "llm_calls", tick=tick, role="oracle", purpose=purpose,
-                provider="kimi", model=RELEASE_ORACLE_MODEL, cache_key=(
+                provider=RELEASE_ORACLE_PROVIDER, model=RELEASE_ORACLE_MODEL,
+                cache_key=(
                     f"{tick}-{purpose}"))
     store.insert(
         "llm_calls", tick=1, role="citizen", purpose="decide",
@@ -2002,7 +2199,8 @@ def test_global_llm_audit_allows_local_background_but_no_other_live_calls(
 
     store.insert(
         "llm_calls", tick=5, role="citizen", purpose="decide",
-        provider="kimi", model=RELEASE_ORACLE_MODEL, cache_key="smuggled-live")
+        provider=RELEASE_ORACLE_PROVIDER, model=RELEASE_ORACLE_MODEL,
+        cache_key="smuggled-live")
     evidence, reasons = oracle_campaign._llm_call_integrity(store)
     store.close()
     assert evidence["invalid_live_call_ids"]

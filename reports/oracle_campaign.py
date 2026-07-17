@@ -63,33 +63,33 @@ _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v8"
-RELEASE_CAMPAIGN_VERSION = 8
-RELEASE_SEEDS = tuple(range(7371, 7381))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v9"
+RELEASE_CAMPAIGN_VERSION = 9
+RELEASE_SEEDS = tuple(range(7381, 7391))
 RELEASE_PROFILES = {
-    seed: f"v8-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v9-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
-RELEASE_ORACLE_PROVIDER = "kimi"
-RELEASE_ORACLE_MODEL = "kimi-for-coding-highspeed"
+RELEASE_ORACLE_PROVIDER = "minimax"
+RELEASE_ORACLE_MODEL = "MiniMax-M3"
 RELEASE_ORACLE_ADAPTER = {
     "kind": "openai_compat",
-    "base_url": "https://api.kimi.com/coding/v1",
-    "api_key_env": "KIMI_API_KEY",
-    "prompt_cache_mode": "off",
+    "base_url": "https://api.minimax.io/v1",
+    "api_key_env": "MINIMAX_API_KEY",
+    "prompt_cache_mode": "provider_automatic",
     "healthcheck_path": "/models",
-    "max_tokens_field": "max_tokens",
+    "max_tokens_field": "max_completion_tokens",
     "request_defaults": {
-        "max_tokens": 4096,
-        "reasoning_effort": "medium",
-        "temperature": 1.0,
+        "max_completion_tokens": 4096,
+        "reasoning_split": True,
     },
     "timeout_s": 180,
 }
-RELEASE_ORACLE_PRICING = {"in": 2.85, "out": 12.00, "cache": 0.57}
+RELEASE_ORACLE_PRICING = {"in": 0.30, "out": 1.20, "cache": 0.06}
+RELEASE_MAX_STANDARD_PROMPT_TOKENS = 512_000
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v8.yaml"
+    / "commitment-v9.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -98,7 +98,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "b0ef0afbc6bd39d9584a4db617ffac5943a263e5fbed4b2d7de5a7f7e0032faf"
+    "8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -445,15 +445,17 @@ def validate_oracle_campaign_profile(
     if route != {
         "provider": RELEASE_ORACLE_PROVIDER, "model": RELEASE_ORACLE_MODEL,
     }:
-        raise OracleCampaignError("release campaign requires the configured Kimi Oracle route")
+        raise OracleCampaignError(
+            "release campaign requires the configured release Oracle route")
     provider_config = llm.get("providers", {}).get(RELEASE_ORACLE_PROVIDER, {})
     if provider_config != RELEASE_ORACLE_ADAPTER:
         raise OracleCampaignError(
-            "release campaign requires the official Kimi API adapter contract")
+            "release campaign requires the official release Oracle API "
+            "adapter contract")
     if llm.get("pricing") != {
             RELEASE_ORACLE_MODEL: RELEASE_ORACLE_PRICING}:
         raise OracleCampaignError(
-            "release campaign requires the pinned Kimi pricing contract")
+            "release campaign requires the pinned release Oracle pricing contract")
     default_route = llm.get("default_route", {})
     if default_route.get("provider") != "scripted" or any(
         role != "oracle" and isinstance(value, dict)
@@ -1100,15 +1102,18 @@ def _openai_metering_evidence(
         return {
             "shape": shape, "response_ids": [],
             "prompt_tokens": None, "completion_tokens": None,
-            "cached_in_tokens": None, "expected_cost_usd": None,
+            "cached_in_tokens": None, "max_prompt_tokens": None,
+            "expected_cost_usd": None,
         }, ["scheduled forecast call lacks provider response usage evidence"]
 
     response_ids: list[str] = []
-    prompt_total = completion_total = cached_total = 0
+    prompt_total = completion_total = cached_total = max_prompt_tokens = 0
     for payload in provider_payloads:
         response_id = payload.get("id")
         if payload.get("model") != RELEASE_ORACLE_MODEL:
-            reasons.append("provider response model differs from the pinned Kimi model")
+            reasons.append(
+                "provider response model differs from the pinned release "
+                "Oracle model")
         if payload.get("object") != "chat.completion":
             reasons.append("provider response object is not a chat completion")
         usage = payload.get("usage")
@@ -1127,6 +1132,10 @@ def _openai_metering_evidence(
             reasons.append(
                 "provider usage requires positive prompt_tokens and completion_tokens")
             continue
+        max_prompt_tokens = max(max_prompt_tokens, prompt)
+        if prompt > RELEASE_MAX_STANDARD_PROMPT_TOKENS:
+            reasons.append(
+                "provider prompt exceeds the pinned release Oracle pricing tier")
         details = usage.get("prompt_tokens_details")
         detailed_cached = (
             details.get("cached_tokens")
@@ -1175,13 +1184,15 @@ def _openai_metering_evidence(
     )
     if not math.isfinite(row_cost) or not math.isclose(
             row_cost, expected_cost, rel_tol=0.0, abs_tol=1e-12):
-        reasons.append("persisted call cost differs from pinned Kimi pricing")
+        reasons.append(
+            "persisted call cost differs from pinned release Oracle pricing")
     return {
         "shape": shape,
         "response_ids": response_ids,
         "prompt_tokens": prompt_total,
         "completion_tokens": completion_total,
         "cached_in_tokens": cached_total,
+        "max_prompt_tokens": max_prompt_tokens,
         "expected_cost_usd": expected_cost,
     }, reasons
 

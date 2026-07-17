@@ -1,0 +1,18 @@
+# Fresh pre-run commitment after v8 seed 7375 exhausted the Kimi billing-cycle
+# quota. V8 remains diagnostic and excluded; no response, claim, checkpoint,
+# replay, receipt, run identity, profile ancestry, manifest entry, artifact,
+# or seed is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v9
+campaign_version: 9
+runs:
+  - {seed: 7381, run_id: oracle-calibration-v9-s7381, profile: v9-seed-7381-control.yaml, effective_config_sha256: 9bc602916a0b687570d115e00968b26ba29bdc6c787e100db72a864d29763559}
+  - {seed: 7382, run_id: oracle-calibration-v9-s7382, profile: v9-seed-7382-rumor.yaml, effective_config_sha256: d8f2e6cc8b4e8036776c9cd6b9d71c1da816c2bdfca6467b911b42dace981207}
+  - {seed: 7383, run_id: oracle-calibration-v9-s7383, profile: v9-seed-7383-control.yaml, effective_config_sha256: be8b3d81040483fe2e174f75a10072edc8475606db963c8e7859c072ae4b6b36}
+  - {seed: 7384, run_id: oracle-calibration-v9-s7384, profile: v9-seed-7384-rumor.yaml, effective_config_sha256: 2bd23f5767a389f4771a6ae99750cf546e0ae3bb4b392d9f6125020c5a2a815a}
+  - {seed: 7385, run_id: oracle-calibration-v9-s7385, profile: v9-seed-7385-control.yaml, effective_config_sha256: b701004b5e0768e50024ba0346b721735b356761e82cf51cfe4a3650d484e09a}
+  - {seed: 7386, run_id: oracle-calibration-v9-s7386, profile: v9-seed-7386-rumor.yaml, effective_config_sha256: 2548082efc81184eff8386311ad7bb932886d4f257fb01a42af92b2ea3d452b0}
+  - {seed: 7387, run_id: oracle-calibration-v9-s7387, profile: v9-seed-7387-control.yaml, effective_config_sha256: 50ab7f092ba07da4d9ab53bd625743f40626b37b75edbb82393879662cbd5aab}
+  - {seed: 7388, run_id: oracle-calibration-v9-s7388, profile: v9-seed-7388-rumor.yaml, effective_config_sha256: 29ce8812646452ead9d222059e24c9a62a6f239956cb3704b055018b57371aa3}
+  - {seed: 7389, run_id: oracle-calibration-v9-s7389, profile: v9-seed-7389-control.yaml, effective_config_sha256: 869e7e8958b66941f7d57d324edc752c18966315f96cdf6a9ff0559e801e8360}
+  - {seed: 7390, run_id: oracle-calibration-v9-s7390, profile: v9-seed-7390-rumor.yaml, effective_config_sha256: b64642599ad61bc546e6deb25b94eeedaeef20a28781228f0826f95f3519a9a0}
