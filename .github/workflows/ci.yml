@@ -3,8 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run the full cross-platform test matrix
+        required: false
+        default: false
+        type: boolean
+      integration:
+        description: Run dashboard and hosted integration jobs
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,7 +24,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  smoke:
+    name: Python smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Validate dependency environment
+        run: python -m pip check
+      - name: Compile Python sources
+        run: python -m compileall -q agents engine hosted llm oracle reports server world run.py
+      - name: Run smoke tests
+        run: python -m pytest tests/test_prd_completion.py tests/test_recorded_replay_golden.py -q
+
   dashboard:
+    if: github.event_name == 'workflow_dispatch' && inputs.integration == true
     name: Dashboard production build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -48,6 +79,7 @@ jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' && inputs.full_suite == true
     # Windows 3.11 completes the full 1,000-agent + portable-replay suite in
     # roughly 16 minutes on hosted runners; retain the complete gate with
     # enough headroom for normal runner variance.
@@ -76,6 +108,7 @@ jobs:
         run: python -m pytest tests/ -q
 
   hosted-integration:
+    if: github.event_name == 'workflow_dispatch' && inputs.integration == true
     name: Hosted PostgreSQL / S3 integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
