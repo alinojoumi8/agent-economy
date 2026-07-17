@@ -456,13 +456,15 @@ returned HTTP 403 for the exhausted billing-cycle quota. The source persisted
 one `provider_failure`, spent `$0.19651848`, and remains a healthy standalone
 SQLite database. It is not resumed or substituted. The archive retains five
 source databases, four replay databases, eight source/replay receipts, and all
-checkpoint manifests. Only after the archive commit is durable may the pending
-cleanup remove exactly 189 V8 source-checkpoint database bodies—40 each for
+checkpoint manifests. After the archive commit became durable, conservative
+cleanup removed exactly 189 V8 source-checkpoint database bodies—40 each for
 seeds 7371–7374 and 29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189
 source checkpoint manifests, 160 replay checkpoint manifests, five claims,
-five initialized markers, and every final artifact listed above. All 160 replay
-checkpoint bodies are already absent, and no V8 SQLite sidecars remain. No V8
-evidence enters a later corpus.
+five initialized markers, and every final artifact listed above. The
+post-cleanup inventory contains zero source or replay checkpoint bodies and
+zero V8 SQLite sidecars. All retained final databases pass immutable read-only
+`quick_check`, and eligible source/replay hashes still match their receipts.
+No V8 evidence enters a later corpus.
 
 V9 is the current fresh commitment: campaign `oracle-calibration-v9`, version
 9, seeds 7381–7390 with odd control and even rumor arms, commitment SHA-256

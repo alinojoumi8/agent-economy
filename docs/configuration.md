@@ -388,13 +388,15 @@ billing-cycle quota. The source persisted one `provider_failure`, spent
 `$0.19651848`, and remains a healthy standalone database. It is never resumed,
 repaired, or substituted. The archive retains five source databases, four
 replay databases, eight source/replay receipts, and all checkpoint manifests.
-Only after the archive commit is durable may pending cleanup remove exactly 189
-V8 source-checkpoint database bodies matching anchored regex
+After the archive commit became durable, conservative cleanup removed exactly
+189 V8 source-checkpoint database bodies matching anchored regex
 `^oracle-calibration-v8-s737[1-5]_t\d+\.db$`—40 each for seeds 7371–7374 and 29
 for seed 7375—totalling 43,999,223,808 bytes. Retain 189 source checkpoint manifests,
 160 replay checkpoint manifests, five claims, five initialized markers, and the
-final artifacts listed above. All 160 replay checkpoint bodies are already
-absent, and no V8 SQLite sidecars remain. No V8 artifact or seed enters V9.
+final artifacts listed above. The verified post-cleanup inventory contains zero
+source/replay checkpoint bodies and zero V8 SQLite sidecars. All nine retained
+final databases pass immutable read-only `quick_check`, and eligible source/
+replay hashes match their receipts. No V8 artifact or seed enters V9.
 
 V9 retains the direct acceptance-rehearsal ancestry, fixed scheduled-latency
 producer, governed-answer repair, engine semantics 7, and database schema 11.

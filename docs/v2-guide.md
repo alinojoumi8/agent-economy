@@ -302,13 +302,15 @@ after four of six forecasts when Kimi returned HTTP 403 for its exhausted
 billing-cycle quota. Its healthy standalone source persisted one
 `provider_failure` and spent `$0.19651848`; it is not resumed, repaired, or
 substituted. Retain five source databases, four replay databases, eight
-source/replay receipts, and all checkpoint manifests. Only after the archive
-commit is durable may pending cleanup remove exactly 189 V8 source-checkpoint
+source/replay receipts, and all checkpoint manifests. After the archive commit
+became durable, conservative cleanup removed exactly 189 V8 source-checkpoint
 database bodies—40 each for seeds 7371–7374 and 29 for seed 7375—totalling
 43,999,223,808 bytes. Retain 189 source checkpoint manifests, 160 replay
 checkpoint manifests, five claims, five initialized markers, and every final
-artifact listed above. All 160 replay checkpoint bodies are already absent, and
-no V8 SQLite sidecars remain. No V8 evidence enters V9.
+artifact listed above. The verified post-cleanup inventory contains zero
+source/replay checkpoint bodies and zero V8 SQLite sidecars. All nine retained
+final databases pass immutable read-only `quick_check`, and eligible source/
+replay hashes match their receipts. No V8 evidence enters V9.
 
 V9 retains occurrence-aware citation identity, governed-answer repair, engine
 semantics 7, and database schema 11. Its fresh version-9 commitment uses seeds

@@ -207,14 +207,16 @@ not waive any required CI job.
   `$0.19651848`, and retains a healthy standalone source database. Preserve
   five sources, four replays, eight source/replay receipts, and all checkpoint
   manifests. No V8 evidence enters V9.
-- [ ] After the V8 archive commit is durable, remove only the 189 source-
+- [x] After the V8 archive commit became durable, remove exactly the 189 source-
   checkpoint bodies matching anchored regex
   `^oracle-calibration-v8-s737[1-5]_t\d+\.db$` (40 each for 7371–7374 and 29
   for 7375), totalling 43,999,223,808 bytes. Retain five source databases, four
   replay databases, 189 source checkpoint manifests, 160 replay checkpoint
   manifests, five claims, five initialized markers, eight source/replay
-  receipts, reports, and campaign configurations. All 160 replay checkpoint
-  bodies are already absent, and no V8 SQLite sidecars remain.
+  receipts, reports, and campaign configurations. The verified post-cleanup
+  inventory contains zero source/replay checkpoint bodies and zero V8 SQLite
+  sidecars; all nine retained final databases pass immutable read-only
+  `quick_check`, and eligible source/replay hashes match their receipts.
 - [x] Prove only V9 provider readiness with a disposable one-call MiniMax probe
   and a deliberately unclaimed five-tick Oracle rehearsal through the exact
   adapter. These successes are operational checks, not campaign evidence.

@@ -298,14 +298,16 @@ a passed, eligible source receipt and exact tick-335 companion replay with zero
 differences. Seed 7375 stopped at tick 245 when Kimi returned a billing-cycle
 usage-limit failure, and its persisted `provider_failure` makes the arm and
 therefore the precommitted ten-arm corpus ineligible. It is never resumed,
-substituted, or pooled into V9. Pending conservative cleanup is limited to the
-189 source checkpoint database bodies matching anchored regex
+substituted, or pooled into V9. Completed conservative cleanup removed exactly
+the 189 source checkpoint database bodies matching anchored regex
 `^oracle-calibration-v8-s737[1-5]_t\d+\.db$`: 40 each for seeds 7371–7374 and 29
 for seed 7375, totaling 43,999,223,808 bytes. Retain five source databases, four
 replay databases, 189 source checkpoint manifests, 160 replay checkpoint
 manifests, five claims, five initialized markers, eight source/replay receipts,
-reports, and campaign configurations. All 160 replay checkpoint bodies are
-already absent and no V8 SQLite sidecars remain.
+reports, and campaign configurations. The post-cleanup inventory contains zero
+source or replay checkpoint bodies and zero V8 SQLite sidecars; all retained
+final databases pass immutable read-only `quick_check`, and eligible source/
+replay hashes still match their receipts.
 
 The current `oracle-calibration-v9` campaign-version-9 precommit starts a fresh
 ten-profile corpus at seeds 7381–7390, with odd control/even rumor arms and only
