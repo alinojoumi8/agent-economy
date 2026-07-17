@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS pitches (
     founder_agent_id INTEGER NOT NULL,
     ask_cents        INTEGER NOT NULL,
     summary          TEXT,
-    status           TEXT NOT NULL DEFAULT 'pending', -- pending|funded|declined|expired|written_off
+    status           TEXT NOT NULL DEFAULT 'pending', -- pending|term_sheeted|funded|declined|expired|written_off
     decided_tick     INTEGER,
     vc_agent_id      INTEGER,
     invested_cents   INTEGER,

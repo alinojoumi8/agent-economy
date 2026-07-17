@@ -78,6 +78,14 @@ IPO actions: open_ipo{firm_id,shares_offered,reserve_price,minimum_subscription_
 place_ipo_bid{offering_id,qty,max_price}, close_ipo{offering_id}. Prices must be
 chosen by agents from supplied facts; never invent an offering or entity ID."""
 
+STARTUP_ACTIONS_SUFFIX = """
+Startup actions are available only when supplied in startup_work.eligible_actions:
+propose_term_sheet{firm_id,investor_agent_id,instrument_type,amount_cents,currency_code,
+pre_money_cents,equity_bps,liquidation_preference_bps,pro_rata,board_seat,metadata},
+accept_term_sheet{term_sheet_id}, run_due_diligence{term_sheet_id},
+close_funding_round{term_sheet_id}, register_ip{firm_id,creator_agent_id,asset_type,
+title,scope,valuation_cents,metadata}. Copy the supplied action exactly."""
+
 
 def _seed(agent_id: int, tick: int, salt: str = "") -> int:
     return int(hashlib.sha1(f"{agent_id}:{tick}:{salt}".encode()).hexdigest()[:12], 16)
@@ -124,6 +132,10 @@ class ContextBuilder:
             if self.engine_semantics_version >= 6:
                 ctx["firm_job_offers"] = self._firm_job_offers(int(firm["id"]))
             ctx["purpose"] = "founder"
+            if self.engine_semantics_version >= 7:
+                startup_work = self._startup_work(agent_row, tick, firm=firm)
+                if startup_work["eligible_actions"]:
+                    ctx["startup_work"] = startup_work
         elif self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
             ctx["purpose"] = role
             ctx["institutional_work"] = self._institutional_work(agent_row, tick)
@@ -179,11 +191,18 @@ class ContextBuilder:
             "SELECT * FROM employments WHERE agent_id=? AND status='active' LIMIT 1", (agent_id,))
         shares = {str(r["firm_id"]): int(r["qty"]) for r in self.store.query(
             "SELECT firm_id, qty FROM shares WHERE holder_type='agent' AND holder_id=?", (agent_id,))}
+        listed_firms = self._listed_firms(
+            tick, currency_code if self.local_currency_action_surfaces else None)
         beliefs = self.mem.get_beliefs(agent_id)
 
         cadence = load_json(a["cadence_json"], {}) or {}
         portfolio_every = int(cadence.get("portfolio", 7))
         portfolio_day = (tick % max(1, portfolio_every)) == (agent_id % max(1, portfolio_every))
+        price_discovery_day = self.engine_semantics_version >= 7 and any(
+            firm.get("last_price") is None
+            and int(shares.get(str(firm["firm_id"]), 0)) > 0
+            for firm in listed_firms)
+        portfolio_day = portfolio_day or price_discovery_day
         career_every = int(cadence.get("career", 30))
         career_day = (tick % max(1, career_every)) == (agent_id % max(1, career_every))
         if self.engine_semantics_version >= 7 and bool(a["retired"]):
@@ -222,8 +241,7 @@ class ContextBuilder:
             "jobs": ([] if self.engine_semantics_version >= 7 and bool(a["retired"])
                      else self._open_jobs(
                          currency_code if self.local_currency_action_surfaces else None)),
-            "listed_firms": self._listed_firms(
-                tick, currency_code if self.local_currency_action_surfaces else None),
+            "listed_firms": listed_firms,
             "banks": self._bank_views(
                 self.citizen_bank_visibility,
                 currency_code=currency_code if self.local_currency_action_surfaces else None),
@@ -237,6 +255,7 @@ class ContextBuilder:
         }
         if self.engine_semantics_version >= 7:
             context["savings_balance"] = savings_balance
+            context["actor_price_discovery_enabled"] = True
             context["retirement_drawdown_target_cents"] = max(0, int(
                 self.config.get("lifecycle", {}).get(
                     "retirement_liquidity_target_cents", 100_000)))
@@ -639,6 +658,11 @@ class ContextBuilder:
         pending_loan = self.store.query_one(
             "SELECT 1 FROM loan_applications WHERE borrower_type='firm' AND borrower_id=? AND status='pending'",
             (firm_id,))
+        recent_loan = None
+        if self.engine_semantics_version >= 7:
+            recent_loan = self.store.query_one(
+                "SELECT 1 FROM loan_applications WHERE borrower_type='firm' AND borrower_id=? "
+                "AND tick>? ORDER BY id DESC LIMIT 1", (firm_id, tick - 7))
         pending_pitch = self.store.query_one(
             "SELECT 1 FROM pitches WHERE firm_id=? AND status='pending'", (firm_id,))
         view = {
@@ -655,6 +679,8 @@ class ContextBuilder:
             "has_pending_pitch": pending_pitch is not None,
             "is_private": firm["status"] == "private",
         }
+        if self.engine_semantics_version >= 7:
+            view["has_recent_loan_application"] = recent_loan is not None
         if self.engine_semantics_version >= 6:
             qualification = self.e.firms.ipo_qualification(tick, firm_id)
             active_offering = self.store.query_one(
@@ -780,6 +806,98 @@ class ContextBuilder:
         income = max(revenue_30 * 12, cash)
         return income, cash
 
+    def _startup_work(self, a, tick: int, *, firm=None,
+                      pending_pitches: list[dict] | None = None,
+                      fund_cash: int = 0, fund_currency: str | None = None) -> dict:
+        """Return actor-authorized, state-derived startup actions.
+
+        The model or scripted policy may copy one action, but cannot invent a
+        firm, term sheet, amount, valuation, or lifecycle transition.
+        """
+        actor_id = int(a["id"])
+        role = a["role"] or ""
+        eligible: list[dict] = []
+
+        if role == "vc_partner":
+            closeable = self.store.query_one(
+                "SELECT ts.id FROM term_sheets ts WHERE ts.investor_agent_id=? "
+                "AND ts.status='accepted' AND ts.currency_code=? AND ts.amount_cents<=? "
+                "AND EXISTS (SELECT 1 FROM due_diligence_checks dd "
+                "WHERE dd.term_sheet_id=ts.id AND dd.status IN ('pass','qualified')) "
+                "AND NOT EXISTS (SELECT 1 FROM funding_rounds fr WHERE fr.term_sheet_id=ts.id) "
+                "ORDER BY ts.id LIMIT 1",
+                (actor_id, str(fund_currency or "USD"), int(fund_cash)))
+            if closeable:
+                eligible.append({"type": "close_funding_round",
+                                 "term_sheet_id": int(closeable["id"])})
+            else:
+                for pitch in pending_pitches or []:
+                    ask = int(pitch.get("ask_cents", 0))
+                    traction = (int(pitch.get("revenue_30", 0)) > 0
+                                or int(pitch.get("employees", 0)) > 0)
+                    affordable = ask > 0 and ask <= int(fund_cash * 0.4) and fund_cash >= ask
+                    if not traction or not affordable:
+                        continue
+                    dilution = min(
+                        1.0, ask / max(1, int(pitch.get("firm_cash", 0)) + ask))
+                    equity_bps = 1500 + int(1500 * dilution)
+                    pre_money = max(1, round(ask * (10000 - equity_bps) / equity_bps))
+                    eligible.append({
+                        "type": "propose_term_sheet",
+                        "firm_id": int(pitch["firm_id"]),
+                        "investor_agent_id": actor_id,
+                        "instrument_type": "preferred_equity",
+                        "amount_cents": ask,
+                        "currency_code": str(pitch.get("currency") or fund_currency or "USD"),
+                        "pre_money_cents": pre_money,
+                        "equity_bps": equity_bps,
+                        "liquidation_preference_bps": 10000,
+                        "pro_rata": True,
+                        "board_seat": False,
+                        "metadata": {"pitch_id": int(pitch["pitch_id"]),
+                                     "source": "state_derived_pitch"},
+                    })
+                    break
+        elif role == "lawyer":
+            sheet = self.store.query_one(
+                "SELECT ts.id FROM term_sheets ts "
+                "WHERE ts.status IN ('offered','accepted') "
+                "AND NOT EXISTS (SELECT 1 FROM due_diligence_checks dd "
+                "WHERE dd.term_sheet_id=ts.id) "
+                "ORDER BY CASE ts.status WHEN 'accepted' THEN 0 ELSE 1 END,ts.id LIMIT 1")
+            if sheet:
+                eligible.append({"type": "run_due_diligence",
+                                 "term_sheet_id": int(sheet["id"])})
+        elif firm is not None:
+            firm_id = int(firm["id"])
+            offered = self.store.query_one(
+                "SELECT id FROM term_sheets WHERE firm_id=? AND status='offered' "
+                "AND founder_accepted_tick IS NULL ORDER BY id LIMIT 1", (firm_id,))
+            if offered:
+                eligible.append({"type": "accept_term_sheet",
+                                 "term_sheet_id": int(offered["id"])})
+            else:
+                has_financing_work = bool(self.store.query_one(
+                    "SELECT 1 FROM pitches WHERE firm_id=? "
+                    "AND status IN ('pending','term_sheeted','funded') LIMIT 1", (firm_id,)))
+                has_ip = bool(self.store.query_one(
+                    "SELECT 1 FROM ip_assets WHERE firm_id=? AND status='registered' LIMIT 1",
+                    (firm_id,)))
+                if str(firm["sector"]).lower() in {"tech", "technology"} and has_financing_work and not has_ip:
+                    product = load_json(firm["product_json"], {}) or {}
+                    product_name = str(product.get("product") or firm["name"]).replace("_", " ").strip()
+                    eligible.append({
+                        "type": "register_ip", "firm_id": firm_id,
+                        "creator_agent_id": actor_id, "asset_type": "trade_secret",
+                        "title": product_name[:180],
+                        "scope": f"Registered product: {product_name}"[:1000],
+                        "valuation_cents": 0,
+                        "metadata": {"source": "declared_firm_product"},
+                    })
+
+        return {"eligible_actions": eligible,
+                "rule": "copy at most one supplied action exactly"}
+
     def _vc_partner_context(self, a, tick: int) -> dict:
         agent_id = int(a["id"])
         acct = self.e.ledger.agent_checking_id(agent_id)
@@ -810,12 +928,19 @@ class ContextBuilder:
                 "firm_cash": self.e.ledger.balance(int(p["firm_acct"])) if p["firm_acct"] else 0,
                 "revenue_30": revenue_30, "employees": employees,
                 "firm_age_ticks": tick - int(p["founded_tick"] or 0)})
-        return {"tick": tick, "purpose": "vc_partner", "rng_seed": _seed(agent_id, tick),
-                "agent": {"id": agent_id, "name": a["name"], "role": "vc_partner"},
-                "fund_cash": fund_cash, "fund_currency": fund_currency,
-                "pending_pitches": pending,
-                "portfolio": self.e.vc.portfolio(agent_id),
-                "metrics": self._metrics_snapshot(tick)}
+        ctx = {"tick": tick, "purpose": "vc_partner", "rng_seed": _seed(agent_id, tick),
+               "agent": {"id": agent_id, "name": a["name"], "role": "vc_partner"},
+               "fund_cash": fund_cash, "fund_currency": fund_currency,
+               "pending_pitches": pending,
+               "portfolio": self.e.vc.portfolio(agent_id),
+               "metrics": self._metrics_snapshot(tick)}
+        if self.engine_semantics_version >= 7:
+            startup_work = self._startup_work(
+                a, tick, pending_pitches=pending, fund_cash=fund_cash,
+                fund_currency=str(fund_currency or "USD"))
+            if startup_work["eligible_actions"]:
+                ctx["startup_work"] = startup_work
+        return ctx
 
     def _lawyer_context(self, a, tick: int) -> dict:
         agent_id = int(a["id"])
@@ -862,6 +987,10 @@ class ContextBuilder:
             })
         ctx["purpose"] = "lawyer"
         ctx["assigned_legal_matters"] = matters
+        if self.engine_semantics_version >= 7:
+            startup_work = self._startup_work(a, tick)
+            if startup_work["eligible_actions"]:
+                ctx["startup_work"] = startup_work
         return ctx
 
     def _central_banker_context(self, a, tick: int) -> dict:
@@ -1005,6 +1134,11 @@ class ContextBuilder:
                 "[INSTITUTIONAL WORK — ONLY eligible_actions MAY BE USED; COPY EVERY "
                 "FIELD, ID, AND VALUE EXACTLY] "
                 + json.dumps(context["institutional_work"], separators=(",", ":"))[:6000])
+        if context.get("startup_work"):
+            lines.append(
+                "[STARTUP WORK - ONLY eligible_actions MAY BE USED; COPY ONE ACTION "
+                "EXACTLY, INCLUDING EVERY ID, AMOUNT, TERM, AND METADATA FIELD] "
+                + json.dumps(context["startup_work"], separators=(",", ":"))[:6000])
         if context.get("insurance_offer") and not context.get("insured"):
             o = context["insurance_offer"]
             lines.append(f"[INSURANCE] {o['insurer']} offers health coverage: "
@@ -1038,7 +1172,10 @@ class ContextBuilder:
                          "approve_loan{application_id,rate_bps,term_ticks} or "
                          "deny_loan{application_id,reason}; otherwise do_nothing.")
         elif purpose == "founder":
-            lines.append("[TASK] Manage your firm from cash, unit cost, inventory, recent "
+            startup_instruction = ("First perform the supplied startup_work action exactly. "
+                                   if context.get("startup_work") else "")
+            lines.append("[TASK] " + startup_instruction
+                         + "Manage your firm from cash, unit cost, inventory, recent "
                          "sales, payroll, employee_roster, target headcount, and applicants. "
                          "Consider pricing, "
                          "hiring, funding, an IPO when qualified, or a deliberate do_nothing; "
@@ -1046,7 +1183,10 @@ class ContextBuilder:
                          "Normally change price by at most 10% per review and avoid pricing "
                          "below unit cost unless you are deliberately liquidating inventory.")
         elif purpose == "vc_partner":
-            lines.append("[TASK] Evaluate pending pitches or deliberately do_nothing. "
+            startup_instruction = ("Perform the first supplied startup_work action exactly. "
+                                   if context.get("startup_work") else "")
+            lines.append("[TASK] " + startup_instruction
+                         + "Evaluate remaining pending pitches or deliberately do_nothing. "
                          "Reply with the JSON envelope only.")
         elif purpose == "lawyer":
             lines.append("[TASK] Act only for an assigned matter and only from its bounded record. "
@@ -1055,8 +1195,10 @@ class ContextBuilder:
                          "integer agent id as filer_id, and supplied event_id values. If the "
                          "record is already in hearing, you may propose a settlement no larger "
                          "than the requested remedy. If an assigned matter has no supported "
-                         "next step, deliberately do_nothing. Only when there are no assigned "
-                         "matters may you make an ordinary household decision.")
+                         "next step and startup_work is supplied, copy its first eligible action "
+                         "exactly; otherwise deliberately do_nothing. Only when there are no "
+                         "assigned matters or startup work may you make an ordinary household "
+                         "decision.")
         elif purpose in INSTITUTIONAL_DECISION_ROLES:
             lines.append(
                 "[TASK] Perform at most one supplied institutional_work.eligible_actions "
@@ -1071,6 +1213,8 @@ class ContextBuilder:
             system += (SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX
                        if getattr(self, "engine_semantics_version", 2) >= 7
                        else INSTITUTIONAL_ACTIONS_SUFFIX)
+        if context.get("startup_work"):
+            system += STARTUP_ACTIONS_SUFFIX
         if getattr(self, "engine_semantics_version", 2) >= 6:
             system += LABOR_IPO_ACTIONS_SUFFIX
         if (getattr(self, "engine_semantics_version", 2) >= 7

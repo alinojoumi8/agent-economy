@@ -35,13 +35,16 @@ def test_typed_term_sheet_diligence_ip_and_round_close(store):
         "valuation_cents": 300_000,
     })
     assert ip["ok"]
+    pitch_id = economy.vc.pitch(1, target, founder, 250_000, "typed round")
     proposed = executor.execute_action(1, vc, {
         "type": "propose_term_sheet", "firm_id": target,
         "instrument_type": "preferred_equity", "amount_cents": 250_000,
         "pre_money_cents": 1_000_000, "equity_bps": 2000,
         "liquidation_preference_bps": 10000, "pro_rata": True,
+        "metadata": {"pitch_id": pitch_id},
     })
     sheet_id = proposed["term_sheet_id"]
+    assert store.scalar("SELECT status FROM pitches WHERE id=?", (pitch_id,)) == "term_sheeted"
     assert executor.execute_action(1, founder, {
         "type": "accept_term_sheet", "term_sheet_id": sheet_id})["status"] == "accepted"
     diligence = executor.execute_action(1, lawyer, {
@@ -56,6 +59,7 @@ def test_typed_term_sheet_diligence_ip_and_round_close(store):
     assert economy.ledger.balance(int(economy.firms.get(target)["account_id"])) == before + 250_000
     assert economy.startups.cap_table_reconciles(target)
     assert store.scalar("SELECT status FROM term_sheets WHERE id=?", (sheet_id,)) == "closed"
+    assert store.scalar("SELECT status FROM pitches WHERE id=?", (pitch_id,)) == "funded"
     assert economy.ledger.reconcile()[0]
 
 

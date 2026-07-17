@@ -30,6 +30,8 @@ class StartupLifecycle:
         firm_id = int(proposal.get("firm_id", 0))
         firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
         investor = int(proposal.get("investor_agent_id", actor_id))
+        metadata = proposal.get("metadata", {})
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
         actor = self.store.query_one("SELECT role, alive FROM agents WHERE id=?", (actor_id,))
         if not firm or firm["status"] != "private":
             return {"ok": False, "reason": "term sheets require a private firm"}
@@ -57,7 +59,16 @@ class StartupLifecycle:
             pro_rata=1 if proposal.get("pro_rata") else 0,
             board_seat=1 if proposal.get("board_seat") else 0, status="offered",
             investor_accepted_tick=tick, contract_id=proposal.get("contract_id"),
-            metadata_json=json.dumps(proposal.get("metadata", {}), sort_keys=True))
+            metadata_json=json.dumps(metadata, sort_keys=True))
+        pitch_id = int(metadata.get("pitch_id", 0) or 0)
+        if pitch_id:
+            pitch = self.store.query_one(
+                "SELECT id FROM pitches WHERE id=? AND firm_id=? AND status='pending'",
+                (pitch_id, firm_id))
+            if pitch:
+                self.store.update(
+                    "pitches", pitch_id, status="term_sheeted", decided_tick=tick,
+                    vc_agent_id=actor_id, equity_bps=equity_bps)
         self.store.log_event(tick, "term_sheet_offered", {
             "term_sheet_id": sheet_id, "firm_id": firm_id, "investor_agent_id": investor,
             "instrument_type": instrument, "amount_cents": amount, "equity_bps": equity_bps},
@@ -166,6 +177,27 @@ class StartupLifecycle:
             post_money_cents=(int(pre_money) + amount if pre_money is not None else None),
             transaction_id=txn_id, status="closed")
         self.store.update("term_sheets", term_sheet_id, status="closed")
+        metadata = json.loads(sheet["metadata_json"] or "{}")
+        pitch_id = int(metadata.get("pitch_id", 0) or 0) if isinstance(metadata, dict) else 0
+        if pitch_id:
+            pitch = self.store.query_one(
+                "SELECT id FROM pitches WHERE id=? AND firm_id=? "
+                "AND status IN ('pending','term_sheeted')",
+                (pitch_id, int(firm["id"])))
+            if pitch:
+                term_sheet = {
+                    "term_sheet_id": term_sheet_id,
+                    "instrument_type": sheet["instrument_type"],
+                    "amount_cents": amount,
+                    "currency_code": sheet["currency_code"],
+                    "pre_money_cents": pre_money,
+                    "equity_bps": equity_bps,
+                }
+                self.store.update(
+                    "pitches", pitch_id, status="funded", decided_tick=tick,
+                    vc_agent_id=actor_id, invested_cents=amount,
+                    equity_bps=equity_bps, shares_issued=new_shares,
+                    term_sheet_json=json.dumps(term_sheet, sort_keys=True))
         self.store.log_event(tick, "funding_round_closed", {
             "funding_round_id": round_id, "term_sheet_id": term_sheet_id,
             "firm_id": int(firm["id"]), "amount_cents": amount,

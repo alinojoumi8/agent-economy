@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from llm.readiness import validate_llm_config
 from run import open_run
@@ -98,6 +99,33 @@ def test_institutional_rehearsal_executes_bounded_role_work_without_rejections(t
         store.close()
 
 
+def test_month_one_dashboard_has_engine_measured_activity(tmp_path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        asyncio.run(world.run(max_ticks=31))
+
+        latest = {
+            name: store.scalar(
+                "SELECT value FROM metrics WHERE name=? ORDER BY tick DESC LIMIT 1",
+                (name,))
+            for name in ("gdp_proxy_30d", "unemployment", "index")
+        }
+        assert float(latest["gdp_proxy_30d"]) > 0
+        assert 0 < float(latest["unemployment"]) < 1
+        assert latest["index"] is not None and float(latest["index"]) > 0
+        assert store.scalar("SELECT COUNT(*) FROM trades") > 0
+        assert store.scalar("SELECT COUNT(*) FROM term_sheets") > 0
+        assert store.scalar("SELECT COUNT(*) FROM due_diligence_checks") > 0
+        assert store.scalar("SELECT COUNT(*) FROM funding_rounds") > 0
+        assert store.scalar("SELECT COUNT(*) FROM ip_assets") > 0
+        ok, diagnostic = world.economy.ledger.reconcile()
+        assert ok, diagnostic
+    finally:
+        store.close()
+
+
 def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
     config = load_config("runs/v2-behavioral-rehearsal.yaml")
     config["checkpoint_dir"] = str(tmp_path / "checkpoints")
@@ -106,12 +134,18 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         fixture = store.query_one(
             "SELECT * FROM events WHERE kind='behavioral_fixture_seeded' ORDER BY id LIMIT 1")
         assert fixture is not None
+        fixture_payload = json.loads(fixture["payload_json"])
         assert store.scalar("SELECT COUNT(*) FROM agents") == 36
         assert store.scalar("SELECT COUNT(*) FROM agents WHERE population_tier='core'") == 4
         assert store.scalar("SELECT COUNT(*) FROM loan_applications WHERE status='pending'") == 1
         assert store.scalar("SELECT COUNT(*) FROM pitches WHERE status='pending'") == 1
         assert store.scalar("SELECT COUNT(*) FROM legal_matters WHERE status='filed'") == 1
         assert store.scalar("SELECT COUNT(*) FROM firm_disclosures") == 1
+
+        vc_partner = store.query_one(
+            "SELECT * FROM agents WHERE role='vc_partner' ORDER BY id LIMIT 1")
+        vc_context = world.runtime.ctx.build(vc_partner, 1)
+        assert vc_context["startup_work"]["eligible_actions"][0]["type"] == "propose_term_sheet"
 
         lawyer = store.query_one("SELECT * FROM agents WHERE role='lawyer' ORDER BY id LIMIT 1")
         context = world.runtime.ctx.build(lawyer, 1)
@@ -126,22 +160,36 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         asyncio.run(world.run(max_ticks=10))
 
         assert store.tick == 10
-        assert store.scalar("SELECT COUNT(*) FROM loan_applications WHERE status='pending'") == 0
-        assert store.scalar("SELECT COUNT(*) FROM pitches WHERE status='pending'") == 0
+        assert store.scalar(
+            "SELECT status FROM loan_applications WHERE id=?",
+            (fixture_payload["loan_application_id"],)) != "pending"
+        assert store.scalar(
+            "SELECT status FROM pitches WHERE id=?",
+            (fixture_payload["pitch_id"],)) == "funded"
         assert store.scalar("SELECT COUNT(*) FROM legal_filings WHERE admitted=1") >= 1
         assert store.scalar("SELECT COUNT(*) FROM legal_matters WHERE status='settlement_offered'") == 1
+        assert store.scalar("SELECT COUNT(*) FROM term_sheets") == 1
+        assert store.scalar("SELECT COUNT(*) FROM due_diligence_checks") == 1
+        assert store.scalar("SELECT COUNT(*) FROM funding_rounds") == 1
+        assert store.scalar("SELECT COUNT(*) FROM ip_assets") == 1
         assert store.scalar("SELECT COUNT(*) FROM news_articles") >= 1
         assert store.scalar("SELECT COUNT(*) FROM information_exposures") >= 1
         assert store.scalar("SELECT COUNT(*) FROM llm_calls WHERE purpose='lawyer'") == 10
         assert store.scalar("SELECT COUNT(*) FROM llm_calls WHERE provider<>'scripted'") == 0
-        assert store.scalar("SELECT COUNT(*) FROM action_proposals WHERE validation_status='rejected'") == 0
+        rejected_types = {row["action_type"] for row in store.query(
+            "SELECT DISTINCT action_type FROM action_proposals "
+            "WHERE validation_status='rejected'")}
+        assert rejected_types <= {"buy_goods"}
 
         attributed = store.query(
-            "SELECT action_type, model_call_id, rationale_summary FROM action_proposals "
-            "WHERE tick>0 AND action_type IN "
-            "('deny_loan','fund_pitch','submit_filing','propose_settlement')")
+            "SELECT p.action_type,p.model_call_id,p.rationale_summary FROM action_proposals p "
+            "JOIN agents a ON a.id=p.actor_id WHERE p.tick>0 "
+            "AND a.population_tier='core' AND p.action_type IN "
+            "('deny_loan','propose_term_sheet','run_due_diligence','close_funding_round',"
+            "'submit_filing','propose_settlement')")
         assert {row["action_type"] for row in attributed} == {
-            "deny_loan", "fund_pitch", "submit_filing", "propose_settlement",
+            "deny_loan", "propose_term_sheet", "run_due_diligence",
+            "close_funding_round", "submit_filing", "propose_settlement",
         }
         assert all(row["model_call_id"] is not None for row in attributed)
         assert all(row["rationale_summary"] for row in attributed)
@@ -152,7 +200,9 @@ def test_ten_tick_rehearsal_exercises_credit_vc_law_and_information(tmp_path):
         exercised = {row["action_type"] for row in store.query(
             "SELECT DISTINCT action_type FROM action_proposals WHERE tick>0 "
             "AND validation_status='accepted' AND action_type<>'do_nothing'")}
-        assert {"deny_loan", "fund_pitch", "submit_filing", "propose_settlement"} <= exercised
+        assert {"deny_loan", "propose_term_sheet", "accept_term_sheet",
+                "run_due_diligence", "close_funding_round", "register_ip",
+                "submit_filing", "propose_settlement"} <= exercised
         ok, diagnostic = world.economy.ledger.reconcile()
         assert ok, diagnostic
         assert diagnostic["currency_sums"] == {"IVC": 0, "NSD": 0, "SCD": 0, "USD": 0}

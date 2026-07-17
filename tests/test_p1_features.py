@@ -6,6 +6,7 @@ from engine.government import Government
 from engine.ledger import Leg, SYS_EXTERNAL, SYS_GOV
 from engine.store import Store
 from world.loop import World
+from world.metrics import Metrics
 from tests.conftest import make_bank, make_agent
 
 
@@ -62,6 +63,19 @@ def test_unemployment_benefits_flow_to_jobless_only(economy):
     assert gov.treasury_balance() == -90_000                # deficit is visible
     ok, diag = economy.ledger.reconcile()
     assert ok, diag
+
+
+def test_unemployment_counts_an_employed_founder_only_once(economy):
+    bank = make_bank(economy)
+    founder, _ = make_agent(economy, bank, "Working Founder", 10_000)
+    make_agent(economy, bank, "Jobless", 0)
+    firm_id = economy.firms.found_firm(0, founder, "OverlapCo", "services")
+    economy.store.insert(
+        "employments", firm_id=firm_id, agent_id=founder, title="manager",
+        wage_cents=1000, start_tick=0, status="active",
+        pay_interval_ticks=30, next_pay_tick=999)
+
+    assert Metrics(economy, semantics_version=7)._unemployment() == 0.5
 
 
 def test_election_shifts_fiscal_policy_within_bounds(economy):

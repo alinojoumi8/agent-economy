@@ -27,7 +27,7 @@ from .personas.library import (
     validate_persona_enrichment,
 )
 from .prompts import ContextBuilder
-from .policies import register_scripted_policies
+from .policies import register_scripted_policies, scripted_decision
 from .scheduler import Scheduler
 from .participant import ParticipantService
 from observability import get_logger, log_event as operational_log
@@ -203,6 +203,11 @@ class AgentRuntime:
         context = self.ctx.build(a, tick)
         purpose = context.get("purpose", "decision")
         role = a["role"] or "citizen"
+        if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                and a["population_tier"] != "core"):
+            env = scripted_decision(purpose, context)
+            return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
+                    "reasoning": env.get("reasoning", ""), "llm_call_id": None}
         system, user = self.ctx.render_prompt(context)
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
                          agent_id=int(a["id"]), tick=tick,

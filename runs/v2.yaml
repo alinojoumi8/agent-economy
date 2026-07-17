@@ -20,6 +20,12 @@ banks:
     max_rate_bps: 3000
     default_rate_bps: 900
 
+# Regional currencies are settlement invariants in Semantics 7. Keep every
+# actor-facing goods, labor, credit, and equity surface in the primary wallet's
+# currency; cross-currency activity must use the FX market first.
+llm:
+  local_currency_action_surfaces: true
+
 living_world:
   enabled: true
   core_agents: 100

@@ -167,7 +167,10 @@ def citizen_decision(context: dict) -> dict:
                             "qty": qty, "max_price": reserve})
             reasons.append("submitting a priced IPO bid")
         listed = context.get("listed_firms", [])
-        if listed and cash > 50_000:
+        modern_price_discovery = bool(context.get("actor_price_discovery_enabled"))
+        if listed and not modern_price_discovery and cash > 50_000:
+            # Recorded Semantics-5/6 runs used a nominal 100.00 fallback. Keep
+            # that historical policy byte-for-byte compatible for replay.
             pick = rng.choice(listed)
             price = int(pick.get("last_price") or 10000)
             if sentiment > 0.15 and cash > price * 3:
@@ -175,8 +178,48 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "buy",
                                 "qty": qty, "limit_price": int(price * 1.02)})
                 reasons.append("bullish: buying equities")
-            elif sentiment < -0.15 and int(state.get("shares", {}).get(str(pick["firm_id"]), 0)) > 0:
+            elif (sentiment < -0.15
+                  and int(state.get("shares", {}).get(str(pick["firm_id"]), 0)) > 0):
                 held = int(state["shares"][str(pick["firm_id"])])
+                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "sell",
+                                "qty": min(held, 5), "limit_price": int(price * 0.98)})
+                reasons.append("bearish: trimming equities")
+        elif listed:
+            unpriced_holdings = [
+                firm for firm in listed
+                if firm.get("last_price") is None
+                and int(state.get("shares", {}).get(str(firm["firm_id"]), 0)) > 0
+            ]
+            # All holders coordinate on the oldest unpriced listing. Their
+            # independent valuations still set the first executable price.
+            pick = unpriced_holdings[0] if unpriced_holdings else rng.choice(listed)
+            last_price = pick.get("last_price")
+            fundamental_price = max(
+                1,
+                int(pick.get("book_value_per_share") or 0),
+                int(pick.get("goods_price") or 0),
+            )
+            price = int(last_price or fundamental_price)
+            held = int(state.get("shares", {}).get(str(pick["firm_id"]), 0))
+            risk = float(agent.get("risk_tolerance", 0.5))
+            # A modern bootstrap listing has no engine-invented first price.
+            # Existing shareholders with a cautious valuation supply the first
+            # ask while more risk-tolerant households supply a crossing bid.
+            if last_price is None and held > 0 and risk < 0.6:
+                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "sell",
+                                "qty": min(held, 5), "limit_price": price})
+                reasons.append("offering listed shares at a fundamental valuation")
+            elif last_price is None and cash > max(50_000, price * 3):
+                qty = max(1, min(5, cash // max(1, price * 4)))
+                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "buy",
+                                "qty": qty, "limit_price": max(1, (price * 101) // 100)})
+                reasons.append("bidding for an unpriced listing from fundamentals")
+            elif last_price is not None and sentiment > 0.15 and cash > max(50_000, price * 3):
+                qty = max(1, min(5, cash // (price * 4)))
+                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "buy",
+                                "qty": qty, "limit_price": int(price * 1.02)})
+                reasons.append("bullish: buying equities")
+            elif last_price is not None and sentiment < -0.15 and held > 0:
                 actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "sell",
                                 "qty": min(held, 5), "limit_price": int(price * 0.98)})
                 reasons.append("bearish: trimming equities")
@@ -201,10 +244,18 @@ def _safest_other_bank(context: dict, my_bank: int):
 # ─────────────────────────────────────────────────────────────────────────────
 # Firm founders / managers
 # ─────────────────────────────────────────────────────────────────────────────
+def _first_startup_action(context: dict):
+    eligible = list((context.get("startup_work") or {}).get("eligible_actions") or [])
+    return dict(eligible[0]) if eligible else None
+
+
 def founder_decision(context: dict) -> dict:
     firm = context.get("my_firm")
     if not firm:
         return citizen_decision(context)
+    startup_action = _first_startup_action(context)
+    if startup_action:
+        return _env(None, [startup_action], [], "performing the next authorized startup step")
     actions: list[dict] = []
     reasons: list[str] = []
     inv = int(firm.get("inventory", 0))
@@ -251,7 +302,8 @@ def founder_decision(context: dict) -> dict:
         reasons.append("posting a job")
 
     # Seek a loan when cash is thin relative to payroll.
-    if cash < payroll and not firm.get("has_pending_loan"):
+    recent_loan = bool(firm.get("has_recent_loan_application"))
+    if cash < payroll and not firm.get("has_pending_loan") and not recent_loan:
         bank = _pick_bank(context)
         if bank is not None:
             actions.append({"type": "apply_loan", "bank_id": bank, "amount": max(300_00, payroll * 2),
@@ -259,7 +311,8 @@ def founder_decision(context: dict) -> dict:
             reasons.append("applying for working-capital loan")
     # Run a venture round in parallel when bank credit is still pending (R13):
     # a private firm short of cash pitches the VC rather than waiting to die.
-    elif (cash < payroll and firm.get("is_private") and firm.get("has_pending_loan")
+    elif (cash < payroll and firm.get("is_private")
+            and (firm.get("has_pending_loan") or recent_loan)
             and not firm.get("has_pending_pitch")):
         actions.append({"type": "pitch_vc", "firm_id": firm["firm_id"],
                         "ask": max(500_00, payroll * 3),
@@ -343,6 +396,9 @@ def credit_officer_decision(context: dict) -> dict:
 def vc_partner_decision(context: dict) -> dict:
     """Scripted partner: fund pitches with traction at a risk-priced equity stake,
     keep dry powder, pass on the rest (R13)."""
+    startup_action = _first_startup_action(context)
+    if startup_action:
+        return _env(None, [startup_action], [], "advancing a state-qualified startup round")
     actions: list[dict] = []
     reasons: list[str] = []
     fund_cash = int(context.get("fund_cash", 0))
@@ -403,6 +459,9 @@ def lawyer_decision(context: dict) -> dict:
                 "terms": {"remedy": remedy},
             }], [], f"offer the requested bounded remedy in matter {matter_id}")
 
+    startup_action = _first_startup_action(context)
+    if startup_action:
+        return _env(None, [startup_action], [], "performing bounded startup legal work")
     if matters:
         return _env(None, [{"type": "do_nothing"}], [], "assigned matter has no supported next step")
     # Preserve the lawyer's ordinary household behavior when there is no case.
@@ -739,6 +798,11 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
     "oracle_plan": oracle_plan,
     "oracle": oracle_answer,
 }
+
+
+def scripted_decision(purpose: str, context: dict) -> dict:
+    """Run one local policy without entering the governed model-call path."""
+    return POLICIES.get(purpose, citizen_decision)(context)
 
 
 def register_scripted_policies(scripted_adapter) -> None:
