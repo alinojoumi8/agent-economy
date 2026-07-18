@@ -28,16 +28,17 @@ than background flavor:
 - A two-party legislature, elections, lobbying, agencies, and typed policy rules
   create endogenous economic-political feedback.
 - 1,000 agents inhabit Northstar, Ironvale, and Suncoast. One hundred strategic
-  agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
+  agents may use an LLM; 900 peripheral agents take scheduled, local
+  state-derived policy turns without creating model-call records.
 - Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
   trade, migration, and regional specialization remain exactly replayable.
 - Maintained profiles run engine semantics 7: defaults recognize only net bank
   losses after collateral, retirees can draw their own savings, arrivals receive
   governed persona enrichment, and qualified trade and migration opportunities
-  become autonomous actions. Non-regional maintained profiles persist
-  `population.baseline_citizens_core: true` so baseline households and arrivals
-  remain fully scheduled; markerless semantics-7 sources and stored semantics
-  1–6 retain their original tier/rule behavior during replay.
+  become autonomous actions. Peripheral policy turns, actor-created first stock
+  prices, the state-qualified startup funding chain, local-currency action
+  filtering, and unique-worker unemployment keep the observatory economically
+  active without weakening replay. Stored semantics 1–6 retain their original rules.
 - The observatory adds a living economic map, legal/political/startup surfaces,
   causal traces, God-mode actions through the normal validator, and static replay export.
 - Pinned dataset manifests and paired-seed scenario packs support model-conditional
@@ -267,12 +268,15 @@ normalized reconstructed replay hash is
 ```text
 run.py             CLI and local application entry point
 runs/              offline, production, acceptance, and experiment profiles
+config/            dataset manifests and hosted-service configuration
 engine/            deterministic ledger and economic mechanics
 agents/            personas, role contexts, scheduling, memory, decisions
 world/             genesis, phase loop, shocks, metrics, information layer
 llm/               adapters, routing, readiness, retry, metering, governor
 oracle/            evidence tools, prediction, resolution, calibration
 experiments/       treatment/control harness
+research/          calibrated initialization, hashes, and research utilities
+scenarios/         versioned counterfactual scenario packs
 server/            FastAPI, WebSocket, replay API, committed dashboard bundle
 hosted/            optional R22 catalog/auth/RLS, supervisor, artifacts, API, CLI
 deploy/            Compose, Caddy, Prometheus, PostgreSQL role initialization
@@ -320,7 +324,15 @@ surfaces are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
 
-The historical semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
+Current `main` at `c9f0b23` also restores measured economy activity in the
+semantics-7 observatory. Scheduled peripheral agents execute deterministic local
+policies with zero model-call rows; households form the first stock price from
+fundamentals through ordinary bids and asks; qualified partners, founders, and
+lawyers advance pitches through term sheet, diligence, round close, and IP;
+regional action contexts expose only local-currency opportunities until FX is
+performed; and unemployment counts each worker once, including employed founders.
+
+The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
 every target effect through tick 5 at zero spend and replayed exactly with hash
 `fa190b0d…e8cffc34`. The live run `b4832032ba` completed five semantics-7 ticks
 with 21 MiniMax plus 36 scripted calls, all 42 proposals accepted, `$0.01121124`
@@ -526,12 +538,12 @@ PR #19 head `1cf1d0a` then passed the six-job dashboard, hosted PostgreSQL/S3,
 and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`, and merged as
 `1806294d4fecbe13ddbdf615c459755c74293599`. The post-merge push run
 `29411023992` was not executed: GitHub rejected every zero-step job because of
-the repository account's billing/spending-limit state. That external runner
-block is not a code-test failure. No public production deployment is claimed.
-PR #20 remains draft; do not merge, tag, publish, or deploy publicly until every
-pending live gate and the final provenance audit passes under separate
-authorization. GitHub Actions billing/spending-limit blocks are external
-runner state, not repository test evidence, and do not waive any required job.
+the repository account's billing/spending-limit state. That historical runner
+block is not a code-test failure; handbook PR #24 subsequently passed the full
+six-job matrix. No public production deployment is claimed. The implementation
+in PR #20 is authorized for squash merge, while every pending live gate, the
+final provenance audit, tagging, publication, and public deployment remain
+separate release decisions.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

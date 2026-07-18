@@ -76,9 +76,11 @@ recreate the app.
 
 Verify `/health/live`, `/health/ready`, TLS, login, an observer invitation,
 cross-tenant denial, one admin-controlled shared run, and Prometheus scraping.
-The exact local image/Compose/load acceptance gate is recorded at `53081f2`, and
-all six PR #19 jobs passed before merge. A public production deployment remains
-pending; local evidence and this runbook are not a public certification claim.
+Exact local image/Compose evidence at `53081f2` passed those checks plus immutable
+S3 snapshot/cold restore, atomic password rotation, and 200/200 bounded load
+requests with 80 enforced cross-tenant denials. PR #19 head `1cf1d0a` passed all
+six CI jobs in run `29409250171`. This is local and CI acceptance evidence, not a
+claim that a public production deployment exists.
 
 Record a bounded authenticated load/isolation receipt with at least two users
 from distinct tenants. Repeat `--user` as
@@ -107,9 +109,9 @@ isolation probe.
 `--allow-insecure-loopback` disables certificate verification only for an HTTPS
 loopback origin and is restricted to local smoke testing; it never permits
 remote or plain-HTTP probes. The JSON receipt is sanitized: it contains no
-passwords, cookies, email addresses, response bodies, or provider data. Retain a
-fresh real-container receipt before accepting any new or public deployment; the
-recorded `53081f2` receipt already satisfies the merged local R22 code gate.
+passwords, cookies, email addresses, response bodies, or provider data. Record a
+new receipt for every candidate deployment; the historical `53081f2` receipt
+proves that exact local build only.
 
 Operational commands use the same image/CLI:
 
@@ -639,9 +641,8 @@ For a release candidate, retain:
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
 
-Keep release-gate PR #20 draft until the V9 Oracle campaign, capped
-30-day rumor pilot, 365-day/$200 acceptance run, and final
-provenance/license/dependency/secret audit all pass. Merging, tagging,
-publication, and public deployment require separate authorization. GitHub
-account billing is an external operational blocker and does not waive any
-required CI job.
+PR #20 implementation is authorized for squash merge after its complete local
+gate. Keep tagging, publication, and public deployment blocked until the V9
+Oracle campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and
+final provenance/license/dependency/secret audit all pass under separate
+authorization.

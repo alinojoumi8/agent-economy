@@ -24,11 +24,17 @@ class Scheduler:
             config.get("lifecycle", {}).get("retired_news_every", 1)))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
-        if int(self.config.get("engine_semantics_version", 1)) >= 5:
-            # In the living-world profile, only the promoted core receives an
-            # LLM/scripted strategic turn. Peripheral agents still participate
-            # in payroll, consumption, lifecycle, markets, exposure, and votes
-            # through deterministic engines.
+        semantics_version = int(self.config.get("engine_semantics_version", 1))
+        if semantics_version >= 7:
+            # Core and peripheral citizens share the same state-derived wakeup
+            # cadence. AgentRuntime keeps the promoted core on its configured
+            # provider while routing the periphery through local scripted
+            # policies, so households actually consume and trade without
+            # creating model calls for the long tail.
+            agents = self.store.query(
+                "SELECT * FROM agents WHERE alive=1 ORDER BY id")
+        elif semantics_version >= 5:
+            # Preserve the recorded Semantics-5/6 scheduling contract.
             agents = self.store.query(
                 "SELECT * FROM agents WHERE alive=1 AND population_tier='core' ORDER BY id")
         else:
@@ -71,6 +77,12 @@ class Scheduler:
 
     def _citizen_wakes(self, a, tick: int, cadence_multiplier: int) -> bool:
         agent_id = int(a["id"])
+        # A listing cannot form its first price unless at least two holders see
+        # the same book in the same session. Wake every holder while any of
+        # their listed positions is still genuinely unpriced; the actors still
+        # choose the bid/ask and therefore determine the price.
+        if self.engine_semantics_version >= 7 and self._holds_unpriced_listing(agent_id):
+            return True
         cadence = load_json(a["cadence_json"], {}) or {}
         act_every = max(1, int(cadence.get("act", self.base_act_every)) * max(1, cadence_multiplier))
         portfolio_every = max(1, int(cadence.get("portfolio", 7)) * max(1, cadence_multiplier))
@@ -97,6 +109,15 @@ class Scheduler:
             if not employed and tick % 2 == agent_id % 2:
                 return True
         return self._event_triggered(agent_id, tick)
+
+    def _holds_unpriced_listing(self, agent_id: int) -> bool:
+        return self.store.query_one(
+            "SELECT 1 FROM shares s JOIN firms f ON f.id=s.firm_id "
+            "WHERE s.holder_type='agent' AND s.holder_id=? AND s.qty>0 "
+            "AND f.status='listed' "
+            "AND NOT EXISTS (SELECT 1 FROM trades t WHERE t.firm_id=f.id) "
+            "AND NOT EXISTS (SELECT 1 FROM metrics m WHERE m.name='stock:' || f.id) "
+            "ORDER BY f.id LIMIT 1", (agent_id,)) is not None
 
     def _event_triggered(self, agent_id: int, tick: int) -> bool:
         row = self.store.query_one(

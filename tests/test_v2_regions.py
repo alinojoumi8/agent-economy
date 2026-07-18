@@ -508,6 +508,44 @@ def test_peripheral_agents_never_create_model_call_records(v2_world):
         "SELECT COUNT(*) FROM memories m JOIN agents a ON a.id=m.agent_id "
         "WHERE a.population_tier='periphery' AND m.kind='summary'"
     ) > 0
+    assert store.scalar(
+        "SELECT COUNT(*) FROM action_proposals p JOIN agents a ON a.id=p.actor_id "
+        "WHERE a.population_tier='periphery' AND p.action_type='buy_goods' "
+        "AND p.validation_status='accepted'"
+    ) > 0
+    assert store.scalar("SELECT COUNT(*) FROM trades") > 0
+    assert store.scalar(
+        "SELECT value FROM metrics WHERE name='index' ORDER BY tick DESC LIMIT 1"
+    ) is not None
+
+
+def test_scripted_households_form_a_first_stock_price_from_fundamentals():
+    common = {
+        "tick": 6, "purpose": "decision", "portfolio_day": True,
+        "actor_price_discovery_enabled": True,
+        "state": {"checking_balance": 1_000_000, "employed": True,
+                  "shares": {"7": 10}},
+        "beliefs": {"sentiment": 0.8}, "prices": [], "jobs": [],
+        "listed_firms": [{"firm_id": 7, "last_price": None,
+                           "book_value_per_share": 2_000,
+                           "goods_price": 500}],
+    }
+    seller = citizen_decision({
+        **common, "agent": {"id": 33, "health": "healthy",
+                              "risk_tolerance": 0.49}})
+    seller_order = next(action for action in seller["actions"]
+                        if action["type"] == "place_order")
+    assert seller_order == {"type": "place_order", "firm_id": 7, "side": "sell",
+                            "qty": 5, "limit_price": 2_000}
+
+    buyer_context = {**common, "state": {**common["state"], "shares": {}}}
+    buyer = citizen_decision({
+        **buyer_context, "agent": {"id": 30, "health": "healthy",
+                                    "risk_tolerance": 0.71}})
+    buyer_order = next(action for action in buyer["actions"]
+                       if action["type"] == "place_order")
+    assert buyer_order["side"] == "buy"
+    assert buyer_order["limit_price"] >= seller_order["limit_price"]
 
 
 def test_vc_opportunity_set_requires_matching_currency(v2_world):

@@ -78,6 +78,8 @@ class Exchange:
         """Match the open book for one firm. Returns the fills produced."""
         fills: list[Fill] = []
         prev_close = self.last_price(firm_id)   # breaker reference: previous close
+        firm_currency = str(self.store.scalar(
+            "SELECT currency_code FROM firms WHERE id=?", (firm_id,), default="USD") or "USD")
         while True:
             buys = self.store.query(
                 "SELECT * FROM orders WHERE firm_id=? AND side='buy' AND status IN ('open','partial') "
@@ -140,6 +142,22 @@ class Exchange:
             buyer_acct = self.ledger.agent_checking_id(buyer_id)
             if buyer_acct is None:
                 self._cancel_order(best_buy["id"]); continue
+            seller_acct = self.ledger.agent_checking_id(seller_id)
+            buyer_currency = str(self.store.scalar(
+                "SELECT currency_code FROM accounts WHERE id=?", (buyer_acct,),
+                default="") or "")
+            seller_currency = str(self.store.scalar(
+                "SELECT currency_code FROM accounts WHERE id=?", (seller_acct,),
+                default="") or "") if seller_acct is not None else ""
+            currency_mismatch = False
+            if buyer_currency != firm_currency:
+                self._cancel_order(best_buy["id"])
+                currency_mismatch = True
+            if seller_currency != firm_currency:
+                self._cancel_order(best_sell["id"])
+                currency_mismatch = True
+            if currency_mismatch:
+                continue
             affordable = self.ledger.balance(buyer_acct) // price
             if affordable < fill_qty:
                 fill_qty = max(0, affordable)

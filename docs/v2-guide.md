@@ -47,7 +47,11 @@ multicurrency behavior, and semantics 6 enables bilateral wage bargaining,
 qualified agent-priced IPOs, and agent-authored lender-of-last-resort decisions.
 Maintained profiles use semantics 7 for net loan-loss recognition, retirement
 liquidity and cadence, deterministic arrival/persona contracts, and autonomous
-qualified regional trade and migration. Schema remains v11.
+qualified regional trade and migration. They also schedule fully persisted
+peripheral agents through deterministic local policies without model-call rows,
+form first stock prices through actor bids/asks, expose only state-qualified
+startup work, filter local-currency action surfaces, and count unique workers in
+unemployment. Schema remains v11.
 
 Non-regional maintained profiles also persist
 `population.baseline_citizens_core: true`, which pins baseline citizens, health
@@ -99,10 +103,11 @@ The flagship profile persists exactly 1,000 agents:
 | Suncoast Republic | 180 | SCD | agriculture, logistics, tourism |
 
 One hundred core agents receive strategic model/scripted turns. Nine hundred
-peripheral agents participate through deterministic labor, lifecycle, consumer,
-voter, market, and exposure mechanics. Promotion is recalculated every 30 ticks
-from office, ownership, wealth, litigation, exposure, and activity. Controlled
-participants are pinned.
+fully persisted peripheral agents receive scheduled, state-derived local policy
+turns without creating model-call records, in addition to deterministic labor,
+lifecycle, consumer, voter, market, and exposure mechanics. Promotion is
+recalculated every 30 ticks from office, ownership, wealth, litigation, exposure,
+and activity. Controlled participants are pinned.
 
 On the reference Windows development machine, the verified 1,000-agent genesis
 completed in about 2.1 seconds. The final offline R19 1,000-agent 365-tick
@@ -111,9 +116,16 @@ performance gate completed on
 peak Python working set and a 643.68 MB SQLite database. It finished at tick 365
 with five checkpoints, zero paid spend, exactly 1,000 living agents, exactly 100
 living core agents, balanced NSD/IVC/SCD/USD ledgers, no account/ledger-total
-mismatches, no negative FX reserve, and zero calls made while an agent was in
-the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
+mismatches, no negative FX reserve, and zero model-call rows for decisions made
+while an agent was in the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
 machine; downstream release hardware should publish its own measurement.
+
+Current `main` at `c9f0b23` restores a visibly active semantics-7 observatory
+without engine-authored shortcuts: peripheral policy turns create accepted
+goods activity, household fundamentals drive the first matched stock price,
+qualified partner/founder/lawyer actions complete the startup funding chain and
+IP registration, regional contexts reject foreign-currency surfaces until FX,
+and unemployment deduplicates workers such as employed founders.
 
 ## Observatory and APIs
 
@@ -330,8 +342,8 @@ The complete ten-arm and aggregate gate remains pending.
 
 No live inference is run without `--approve-live-inference`. An unperformed or
 failed live gate must be reported as pending or failed, never treated as passed.
-Release-gate PR #20 stays draft; merge, tag, publication, and public
-deployment require separate authorization.
+PR #20 implementation is authorized for squash merge; live evidence, tagging,
+publication, and public deployment require separate authorization.
 
 ## Hybrid live pilot
 
@@ -583,7 +595,7 @@ semantics-7 merge receipt rather than the later revision total.
 The final v3 receipt-hardening tree then passed 599 Python tests with 8 skipped
 in 1,618.07 seconds.
 
-The fresh V9 precommit tree subsequently passed all 659 Python tests with 8
+The reconciled V9 premerge tree subsequently passed all 663 Python tests with 8
 environment-gated skips, 23 dashboard tests, the 603-module production build
 and static-bundle freshness check, pinned-dataset verification, dependency
 checks, and `git diff --check`.
@@ -632,7 +644,7 @@ mechanics and evidence plumbing; it does not satisfy live-provider acceptance.
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
 | Preceding replay-integrity revision | **Passed** | 590 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
-| Current V9 precommit tree | **Passed** | 659 Python passed / 8 skipped; 23 dashboard tests; 603-module build; pinned datasets and hygiene green |
+| Current V9 premerge tree | **Passed** | 663 Python passed / 8 skipped; 23 dashboard tests; 603-module build; pinned datasets and hygiene green |
 | Free 365-tick workflow rehearsal | **Passed mechanics + replay** | `881ed41994`; 19/20 checks, with only scripted `real_providers` false; replay matched tick/hash with every table exact and `differences: []` |
 | GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
@@ -645,6 +657,18 @@ authorized PR #15's merge to `main` as
 `255555c2b24530c0bd39aed2f501277a468adc0a`; post-merge CI run `29368193807`
 repeated all five jobs successfully. Repeat the audits against any future
 release candidate.
+
+### Current semantics-7 observatory activity
+
+The later `c9f0b23` hardening pass preserved the four closure contracts and
+restored measured activity across the flagship world. Peripheral agents now take
+scheduled local policy turns without model-call rows; household fundamentals
+create the first stock price through ordinary matched bids and asks; bounded
+partner, founder, and lawyer contexts advance pitches through term sheet,
+diligence, funding close, and IP; action surfaces remain in the actor's currency
+until FX; and unemployment counts each living non-retired worker once. Focused
+tests assert each contract and a 31-tick rehearsal proves nonzero goods, trades,
+startup/legal activity, and reconciled ledgers.
 
 R21 real-U.S. initialization is now available through
 `runs/r21-real-us.yaml`. It uses pinned 2022 SCF family and SUSB firm-size
@@ -756,9 +780,8 @@ still requires independent signing or a separately administered append-only
 transparency log.
 
 Completion of the V9 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
-run, and final provenance audit remain separate release evidence. Release-gate
-PR #20 stays draft. GitHub account billing is an external operational blocker
-and does not waive any required CI job. Merging, tagging, publication, and public
+run, and final provenance audit remain separate release evidence. PR #20
+implementation is authorized for squash merge. Tagging, publication, and public
 deployment remain separate release decisions.
 
 ## Release checklist

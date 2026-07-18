@@ -118,7 +118,7 @@ dashboard source:
 
 ```powershell
 cd dashboard
-npm test -- --run
+npm test
 npm run build
 ```
 

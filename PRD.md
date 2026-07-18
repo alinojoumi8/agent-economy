@@ -190,7 +190,7 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 ### P1 — Should have (fast follows)
 
 **R12. Government fiscal layer + elections.** Flat income tax funding unemployment benefits; periodic elections where agents vote based on beliefs/economic experience; election outcomes shift fiscal policy within bounds. *(The "political views" outcome Ali wants — first-class but not needed to prove the core loop.)*
-**R13. VC / private funding track.** Pitch → partner evaluation → term sheet → equity on cap table → follow-on or write-off. Founding via bank loan works in P0; VC adds the risk-capital channel.
+**R13. VC / private funding track.** Pitch → partner evaluation → term sheet → equity on cap table → follow-on or write-off. Founding via bank loan works in P0; VC adds the risk-capital channel. *(Implemented: state-qualified partner, founder, and lawyer contexts advance a pending pitch through `propose_term_sheet`, two-sided acceptance, `run_due_diligence`, and `close_funding_round`; settlement uses the exact round currency and updates both the cap table and pitch status. IP registration is exposed only through bounded eligible startup work.)*
 **R14. Experiment harness.** Define experiment = {config, seed set, shock schedule, metrics of interest}; run N seeds; produce a comparison report with outcome distributions.
 **R15. Oracle calibration dashboard.** Reliability curves and Brier decomposition across many predictions and runs. The release workflow uses the predeclared `runs/oracle` corpus and a read-only explicit-manifest evaluator that verifies source/profile hashes and writes deterministic JSON and Markdown receipts without scanning arbitrary databases.
 **R16. Replay mode.** Re-watch any past run tick-by-tick from stored events without re-running LLMs.
@@ -199,10 +199,10 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 ### P2 — Future (design so we don't preclude them)
 
 **R18. Participant mode.** Ali (or an external LLM) plays an in-world agent through the same action API agents use. *(Implemented extension; participant-influenced runs remain disqualified from observer-only acceptance.)*
-**R19. Scale to 1,000+ agents** via a two-tier population: fully-simulated core + statistically-simulated periphery. The optional regional living-world policy owns promotion/demotion. Non-regional semantics-7 maintained profiles instead persist `population.baseline_citizens_core: true` so baseline households and arrivals remain fully scheduled; markerless stored semantics-7 runs preserve their historical peripheral assignment for exact replay. *(Implemented extension with deterministic promotion/demotion and recorded performance evidence.)*
+**R19. Scale to 1,000+ agents** via a two-tier population: model-capable strategic core + fully persisted deterministic periphery. *(Implemented extension: peripheral agents take scheduled local state-derived policy turns without model calls; deterministic labor, lifecycle, consumer, voter, market, exposure, and promotion/demotion mechanics remain recorded and replayable, with performance evidence.)*
 **R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
 **R21. Real-data calibration mode** — initialize distributions from real US statistical data (income, wealth, firm size). *(Implemented as the explicit `real_us` profile: disclosure-protected 2022 SCF family records supply income, liquid-financial-asset, and total-net-worth draws, while 2022 SUSB national employer-firm classes supply initial headcounts. `LIQ` funds the modeled bank accounts; `NETWORTH` is persisted as an engine-owned, off-ledger calibration baseline visible through agent provenance, so property/business assets and debt are not silently minted as deposits. Fictional names, traits, behavior, and relationships remain synthetic; default profiles remain replay-identical.)*
-**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. The real-container image/Compose/load gate passed locally; all six exact-head PR #19 jobs passed in run `29409250171`; and PR #19 merged as `1806294d4fecbe13ddbdf615c459755c74293599`. Post-merge run `29411023992` executed no repository steps because GitHub blocked the account for billing/spending-limit reasons. A public production deployment remains a separate release action and is not claimed.)*
+**R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. Exact local image/Compose, TLS, tenant-isolation, S3 snapshot/restore, password-rotation, Prometheus, and bounded load evidence passed at `53081f2`; all six PR #19 jobs passed at `1cf1d0a` in run `29409250171`. Public production deployment remains a separate, unclaimed release action.)*
 
 After P0/P1 and R18–R22, no additional functional feature gap remains in this
 PRD. The archived v1 seed-7301 Oracle source completed with valid live-provider
@@ -319,17 +319,17 @@ SHA-256 is
 Occurrence-aware citations, shared state-aware preflight, governed-answer
 repair, and the fixed scheduled-latency producer remain unchanged. Engine
 semantics 7 and database schema 11 are unchanged. No V9 live evidence is
-claimed yet. The fresh precommit tree passed 659 Python tests with 8
+claimed yet. The reconciled premerge tree passed 663 Python tests with 8
 environment-gated skips, 23 dashboard tests, a fresh 603-module build, pinned
 dataset verification, dependency checks, and `git diff --check`.
 
 The outstanding work is release evidence and operations: pass the fresh V9
 ten-profile Oracle campaign, run the live 30-day
 rumor pilot, pass the 365-day/$200 acceptance run, and repeat the final
-public-release provenance audit. Release-gate PR #20 stays draft; GitHub account
-billing is an external operational blocker and does not waive required CI.
-Merging, tagging, publication, or public deployment requires separate
-authorization.
+public-release provenance audit. The implementation in PR #20 was explicitly
+authorized for squash merge on 2026-07-18. That authorization does not satisfy
+the live evidence gates and does not authorize a tag, publication, or public
+deployment.
 
 ---
 

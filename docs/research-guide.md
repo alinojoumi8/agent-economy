@@ -294,10 +294,9 @@ not acceptance proof. See [its diagnostic record](live-run-f7c6238bf5.md).
 ## Current next research steps
 
 Completion of the V9 Oracle campaign, capped rumor pilot, 365-day/$200 acceptance
-run, and final provenance audit are separate pending gates. Release-gate PR #20
-stays draft; merging, tagging, publication, and public deployment need separate
-authorization. GitHub account billing is an external operational blocker and
-does not waive required CI. After those gates:
+run, and final provenance audit are separate pending gates. PR #20 implementation
+is authorized for squash merge; tagging, publication, and public deployment need
+separate authorization after those live gates. After those gates:
 
 - add a causal explorer from exposure to belief to action to metric;
 - formalize experiment preregistration;

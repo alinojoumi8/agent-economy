@@ -165,13 +165,23 @@ class Metrics:
             "AND age BETWEEN 18 AND 64", default=0)
         if not labor_force:
             return 0.0
-        employed = self.store.scalar(
-            "SELECT COUNT(DISTINCT e.agent_id) FROM employments e JOIN agents a ON a.id=e.agent_id "
-            "WHERE e.status='active' AND a.alive=1 AND a.retired=0 AND a.kind='citizen'", default=0)
-        founders = self.store.scalar(
-            "SELECT COUNT(DISTINCT f.founder_agent_id) FROM firms f JOIN agents a ON a.id=f.founder_agent_id "
-            "WHERE f.status<>'bankrupt' AND a.alive=1 AND a.retired=0 AND a.kind='citizen'", default=0)
-        working = min(int(labor_force), int(employed) + int(founders))
+        if self.semantics_version >= 7:
+            working = self.store.scalar(
+                "SELECT COUNT(*) FROM agents a WHERE a.alive=1 AND a.retired=0 "
+                "AND a.kind='citizen' AND a.age BETWEEN 18 AND 64 AND ("
+                "EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id AND e.status='active') "
+                "OR EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id "
+                "AND f.status<>'bankrupt'))", default=0)
+        else:
+            employed = self.store.scalar(
+                "SELECT COUNT(DISTINCT e.agent_id) FROM employments e "
+                "JOIN agents a ON a.id=e.agent_id WHERE e.status='active' "
+                "AND a.alive=1 AND a.retired=0 AND a.kind='citizen'", default=0)
+            founders = self.store.scalar(
+                "SELECT COUNT(DISTINCT f.founder_agent_id) FROM firms f "
+                "JOIN agents a ON a.id=f.founder_agent_id WHERE f.status<>'bankrupt' "
+                "AND a.alive=1 AND a.retired=0 AND a.kind='citizen'", default=0)
+            working = min(int(labor_force), int(employed) + int(founders))
         return max(0.0, 1.0 - working / int(labor_force))
 
     def _gini(self) -> float:

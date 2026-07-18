@@ -16,6 +16,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | Free 335-tick control/treatment Oracle schedule rehearsals | None; ineligible for campaign receipt |
 | `runs/oracle/v9-seed-7381-control.yaml` … `v9-seed-7390-rumor.yaml` | Current pending v9 Oracle calibration corpus | Scripted background, live `MiniMax-M3` Oracle through the exact `openai_compat` adapter, automatic cache accounting, governed answer repair, occurrence-aware replay citations, capped at $25 per run; no v9 live evidence claimed yet |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
+| `runs/v2.yaml` | 1,000-agent, three-region semantics-7 flagship | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
 | `config/hosted.docker.yaml` | R22 Compose application service | PostgreSQL + S3-compatible storage |
@@ -37,6 +38,9 @@ Secrets belong in the ignored `.env` file or process environment.
 | `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD` | Password-free restart/lease supervisor conninfo plus its separate password |
 | `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD` | Password-free migration-only administrator conninfo plus its separate password |
 | `AGENT_ECONOMY_PUBLIC_BASE_URL` | Exact external HTTPS origin for hosted mode |
+| `AGENT_ECONOMY_PUBLIC_HOST` | Hostname Caddy serves for the reference Compose stack; default `localhost` |
+| `HTTPS_PORT` | Host port mapped to Caddy HTTPS; default `443` |
+| `AGENT_ECONOMY_IMAGE_TAG` | Optional reference Compose image tag; default `local` |
 | `AGENT_ECONOMY_S3_ENDPOINT_URL` | S3/MinIO endpoint used by the hosted artifact adapter |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3-compatible artifact credentials |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Reference Compose MinIO bootstrap identity; never passed to the app |
@@ -81,6 +85,12 @@ creating an explicit new run or fork.
 
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
+
+The maintained `runs/v2.yaml` enables
+`llm.local_currency_action_surfaces: true`. Under semantics 7, decision context
+and advertised actions are filtered to goods, jobs, firms, and banks in the
+actor's current local currency. Foreign-currency IDs fail validation; an actor
+must complete an authorized FX action before using funds in another currency.
 
 ## R21 real-U.S. initialization
 
@@ -430,6 +440,6 @@ withdrawals.
 5. Inspect report, failure events, ledger reconciliation, and acceptance status.
 6. Archive the resolved config, commit, seed, database, and evidence together.
 
-Release-gate PR #20 remains draft. GitHub account billing is an external
-operational blocker and does not waive any required CI job; merge, tag,
-publication, and public deployment remain separately authorized actions.
+The implementation in PR #20 is authorized for squash merge after its complete
+local gate. V9 live evidence, tagging, publication, and public deployment remain
+separately authorized release actions.

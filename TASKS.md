@@ -6,12 +6,10 @@ long-horizon acceptance campaign. Live inference requires explicit operator
 approval; the acceptance profile is uncapped and records actual spend while
 provider rate limits control throughput.
 
-P0/P1 and the R18–R22 functional surfaces are complete. PR #20 remains draft
-while release evidence is rebuilt; do not merge, tag, publish, or deploy
-publicly until the pending live gates and final provenance audit pass under
-separate authorization. GitHub Actions billing/spending-limit blocks are
-external runner state, not a passing or failing repository test result, and do
-not waive any required CI job.
+P0/P1 and the R18–R22 functional surfaces are complete. The implementation in
+PR #20 is authorized for squash merge after the complete local gate. Do not
+tag, publish, or deploy publicly until the pending live gates and final
+provenance audit pass under separate authorization.
 
 ## Legal-Economy v2 semantics-7 closure
 
@@ -44,6 +42,11 @@ not waive any required CI job.
   memory-ranking formula authoritative.
 - [x] Add paired `v2-spec-closure-rehearsal` and `v2-spec-closure-live` profiles
   with a near-defaulted loan, retiree, due arrival, shipment, and migration path.
+- [x] Restore semantics-7 measured economy activity: schedule local
+  state-derived peripheral policies without model-call rows, form the first stock
+  price through household bids/asks, expose state-qualified startup/VC/IP work,
+  keep regional action surfaces in the actor's local currency until FX, and count
+  each worker once in unemployment.
 
 ### Evidence gates
 
@@ -220,7 +223,7 @@ not waive any required CI job.
 - [x] Prove only V9 provider readiness with a disposable one-call MiniMax probe
   and a deliberately unclaimed five-tick Oracle rehearsal through the exact
   adapter. These successes are operational checks, not campaign evidence.
-- [x] Validate the fresh V9 precommit tree: 659 Python tests passed with 8
+- [x] Validate the reconciled V9 premerge tree: 663 Python tests passed with 8
   environment-gated skips, 23 dashboard tests passed, the 603-module production
   build left the committed static bundle fresh, four pinned datasets verified,
   dependency and Compose checks passed, and `git diff --check` was clean.
@@ -270,8 +273,9 @@ not waive any required CI job.
 
 ## Task 3 — R19 1,000-agent scaling
 
-- [x] Implement a fully simulated core plus a statistically simulated periphery
-  with deterministic seeded cohort transitions and conserved aggregate money.
+- [x] Implement a model-capable strategic core plus a fully persisted deterministic
+  periphery with scheduled local policy turns, zero periphery model-call rows,
+  deterministic seeded cohort transitions, and conserved aggregate money.
 - [x] Make promotion/demotion between tiers explicit, observable, and replayable.
 - [x] Persist the semantics-7 `population.baseline_citizens_core` opt-in for
   maintained non-regional profiles so household decisions stay scheduled while
@@ -336,8 +340,8 @@ not waive any required CI job.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [ ] Keep PR #20 draft until the successful v9 Oracle
-  campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and final
-  provenance/license/dependency/secret audit are complete. Merge, tag,
-  publication, and public deployment require separate authorization. External
-  GitHub billing state does not waive the complete CI matrix.
+- [x] Authorize PR #20 implementation for squash merge after its complete local
+  test gate and handbook reconciliation.
+- [ ] Complete the successful V9 Oracle campaign, capped 30-day rumor pilot,
+  365-day/$200 acceptance run, and final provenance/license/dependency/secret
+  audit before any tag, publication, or public deployment.
