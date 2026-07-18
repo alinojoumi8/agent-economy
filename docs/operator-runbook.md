@@ -76,10 +76,11 @@ recreate the app.
 
 Verify `/health/live`, `/health/ready`, TLS, login, an observer invitation,
 cross-tenant denial, one admin-controlled shared run, and Prometheus scraping.
-The current branch contains the deployment and integration-test surfaces, but
-final image/Compose smoke, recorded multi-user load evidence, and public
-production deployment are still pending; do not treat this runbook as a
-certification claim.
+Exact local image/Compose evidence at `53081f2` passed those checks plus immutable
+S3 snapshot/cold restore, atomic password rotation, and 200/200 bounded load
+requests with 80 enforced cross-tenant denials. PR #19 head `1cf1d0a` passed all
+six CI jobs in run `29409250171`. This is local and CI acceptance evidence, not a
+claim that a public production deployment exists.
 
 Record a bounded authenticated load/isolation receipt with at least two users
 from distinct tenants. Repeat `--user` as
@@ -108,8 +109,9 @@ isolation probe.
 `--allow-insecure-loopback` disables certificate verification only for an HTTPS
 loopback origin and is restricted to local smoke testing; it never permits
 remote or plain-HTTP probes. The JSON receipt is sanitized: it contains no
-passwords, cookies, email addresses, response bodies, or provider data. A real
-container receipt is still required before marking hosted acceptance complete.
+passwords, cookies, email addresses, response bodies, or provider data. Record a
+new receipt for every candidate deployment; the historical `53081f2` receipt
+proves that exact local build only.
 
 Operational commands use the same image/CLI:
 

@@ -66,7 +66,7 @@ the application stylesheet or its content hash.
 Full local gate:
 
 ```powershell
-python -m compileall -q agents engine experiments llm oracle reports research server world run.py
+python -m compileall -q agents engine experiments hosted llm oracle reports research server world run.py
 python run.py --verify-datasets config/data-manifest.yaml
 python -m pytest tests/ -q
 python -m pip check
