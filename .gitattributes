@@ -4,3 +4,5 @@
 Dockerfile text eol=lf
 deploy/Caddyfile text eol=lf
 research/data/*.json -text
+dashboard/index.html text eol=lf
+server/static/index.html text eol=lf

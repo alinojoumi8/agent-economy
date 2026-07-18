@@ -136,6 +136,26 @@ python run.py --config runs/acceptance/rehearsal.yaml `
   --experiment-evidence reports/out/experiment_rumor_vs_control.json
 ```
 
+The first pass intentionally lacks run-bound reviewed phenomena and uses only
+scripted providers. After it reaches tick 365, copy the template, set its
+top-level `run_id` to the exact rehearsal run, and document three distinct
+phenomena from that run before regenerating the receipt:
+
+```powershell
+Copy-Item runs/acceptance/phenomena.template.yaml `
+  reports/out/rehearsal_<RUN_ID>_phenomena.yaml
+# Review and edit the copied YAML; do not reuse evidence from another run.
+python run.py --acceptance-report <RUN_ID> `
+  --experiment-evidence reports/out/experiment_rumor_vs_control.json `
+  --phenomena-evidence reports/out/rehearsal_<RUN_ID>_phenomena.yaml
+python run.py --replay <RUN_ID>
+```
+
+The completed scripted rehearsal should fail only `real_providers`. Reaching
+the replay horizon is not exact-replay proof: retain the verifier output and
+require `exact: true`, identical source/replay ticks and hashes, and
+`differences: []` before marking replay complete.
+
 ## Capped research-validity pilot
 
 The 30-tick pilot is the first paid gate. It targets the current depositors of
@@ -156,6 +176,321 @@ Do not start the full run unless this receipt passes its rumor, conversation,
 belief-history, deposit-outflow, ledger, provider, latency, and spend gates. Do
 not resume `f7c6238bf5`; it is preserved as a pre-fix diagnostic pilot.
 
+## Oracle calibration campaign
+
+This campaign measures Oracle latency and calibration; it is not the 365-day
+whole-world acceptance run. V7 and V8 are archived incomplete diagnostic
+campaigns. V8 seeds 7371–7374 passed individually, but seed 7375 exhausted the
+Kimi billing-cycle quota and made the fixed campaign ineligible. The current
+pending `oracle-calibration-v9` commitment uses fresh seeds 7381–7390: odd
+seeds are control and even seeds are rumor arms. Its ten predeclared profiles
+keep background behavior scripted and route only the Oracle to `MiniMax-M3`
+through the exact `openai_compat` adapter under a `$25` per-run cap. Do not
+replace a seed or switch control/treatment arms after seeing outcomes. Treatment profiles
+lock a one-person public precursor one tick before each forecast and the larger
+depositor-targeted rumor one tick after it; control profiles contain neither.
+
+First run the free 335-tick control and treatment rehearsals. They exercise the
+same six governed questions and resolution horizon but are deliberately
+ineligible for a live campaign receipt because their Oracle is scripted:
+
+```powershell
+python run.py --config runs/oracle/calibration-control-rehearsal.yaml `
+  --acceptance-run
+python run.py --config runs/oracle/calibration-rehearsal.yaml `
+  --acceptance-run
+```
+
+This rehearsal is mechanics evidence, not a release receipt. The generic
+acceptance command may return nonzero because scripted-provider provenance is
+ineligible; inspect and resolve any other failed check. The live campaign
+profiles below must still satisfy their stricter source checks.
+
+The archived `oracle-calibration-v1-s7301` source completed tick 335 with six
+resolved forecasts and valid provider provenance. Its replay nonetheless
+diverged at the first arrival because staged genesis reset an uncheckpointed
+persona RNG stream, and checkpoint inspection retained SQLite WAL/SHM sidecars.
+It is diagnostic evidence only: do not resume it, copy it into a manifest, or
+reuse its responses. The preceding branch fixes for persona RNG restore,
+standalone checkpoint finalization, replay target-tick enforcement, and
+column-specific pre-dispatch RNG validation pass the focused and full gates.
+
+The immutable `oracle-calibration-v2-s7311` source and generated offline replay
+both reached tick 335 and crossed the arrival that invalidated v1. Canonical
+verification returned `exact: true` with `differences: []`. Receipt generation
+then failed because checkpoint integrity required exactly 100 total
+agent rows. Lifecycle correctly preserved one deceased row and created its
+replacement arrival, yielding 101 stored rows, 100 living, and one deceased.
+Do not resume, rewrite, or reuse any v2 source, replay, claim, checkpoint, or
+response. The receipt correction validates the bounded living population,
+requires stored total to equal living plus deceased, and rejects invalid
+lifecycle state. It also requires each death to create one chronologically valid
+schedule, each due schedule to produce exactly one linked arrival, the fixed
+5–20-tick delay, and authentic `NIGHT_CLOSE` phase plus agent-subject provenance
+for death and arrival events.
+
+The excluded `oracle-calibration-v3-s7321` source and exact companion replay then
+completed tick 335. Its original receipt admitted only four of six forecasts
+because it applied accepted-plan validation to authenticated planner attempts
+that had been rejected before valid retries. The original receipt records the
+pre-inspection source SHA-256. The local source artifact was later write-opened
+during diagnosis, so it is not admissible even as a corrected v3 sample. Do not
+resume it, regenerate its no-clobber receipt, or reuse any v3 response, claim,
+checkpoint, replay, or seed.
+
+V4 seeds 7331 and 7332 produced eligible exact source/replay receipts. Preserve
+them as diagnostic evidence only: do not resume, rewrite, regenerate, list, or
+reuse any v4 source, response, claim, checkpoint, replay, or seed. V4 seed 7333
+also completed an exact source/replay pair, but the receipt correctly excluded
+its tick-125 forecast, run, and fixed campaign. Planner attempt 1 requested
+`get_ledger_summary` for `entity_type: gov`. Runtime queried only
+`accounts.owner_type='gov'`, while the treasury is stored as
+`owner_type='system', label='sys:gov'`, returned
+`entity ledger accounts not found`, and then incorrectly labeled and retried
+that post-preflight execution failure as `oracle_tool_plan_rejected`. Attempt 2
+failed the independently reproducible
+`names must contain 1 to 10 valid metric names` contract; attempt 3 succeeded.
+The receipt could not independently reproduce or bind attempt 1 and therefore
+failed closed. Do not regenerate the no-clobber v4 receipts or substitute a
+later v4 arm.
+
+V5 introduced one scheduled-tick, catalog-aware preflight in both runtime and receipt
+audit. It validates historical tick bounds and the advertised agent, firm,
+bank, and ledger entity IDs before any read executes. Government ledger reads
+map to the system-owned `sys:gov` treasury, so the catalog and executor agree.
+A failure after successful preflight is logged as a tool execution failure and
+is not retried as a planner rejection. Legitimate rejected plans still bind the
+full independently reproduced error, matching rejection event, plan hash, and
+monotonic attempt ordinal; only the final accepted plan is validated as
+executed evidence. Replay-receipt creation continues to reject source or replay
+WAL/SHM sidecars immediately.
+
+Conservative storage cleanup for the earlier v2–v4 diagnostics removed 200
+superseded checkpoint database bodies—40 for v2, 40 for v3, and 120 for v4—and
+recovered `45.369270 GiB`. All 200 runtime checkpoint manifests and every final
+source/replay database remain.
+
+V5 seeds 7341–7347 produced passed, eligible source receipts with exact
+companion replays. Seed 7348 finalized its source, but duplicate same-tick loan
+defaults shared one bounded public citation identity. The two editor responses
+at tick 301 each matched two candidates and the two at tick 331 each matched
+three; replay failed closed those four articles to daily briefs and nine
+information tables diverged. Seeds 7349–7350 were never run. The seven
+receipt-bound replay databases and fourteen Oracle source/replay receipts belong
+only to seeds 7341–7347; seed 7348 has no eligible replay database or Oracle
+source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; it is post-source diagnostic proof and
+creates no eligible v5 receipt. Verified cleanup removed 320 v5
+source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies,
+four derived fixed-replay final databases, and the superseded partial seed-7343
+replay: 485 database files and `111.945217 GiB` total. The retained archive
+contains all authoritative final sources; the seven eligible replay databases
+and fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database. Do not
+resume the fixed corpus or copy any v5 artifact into a later campaign.
+
+V6 retained the shared preflight and mapped duplicate public-event citations by
+their deterministic source occurrence. Missing, out-of-range, or inconsistent
+equivalence classes still failed closed. Its first arm, seed 7351, stopped at
+tick 65 after a successful Kimi answer returned `confidence: "medium"` instead
+of the strict `low|med|high` value. Runtime persisted `oracle_rule_rejected`, an
+`insufficient_data` prediction, and `acceptance_checkpoint_missed`. Spend was
+$0.18351, with no provider, budget, or tool-execution failure. Preserve v6 as
+excluded diagnostic evidence; do not resume, rewrite, repair, or substitute
+seed 7351. Seeds 7352–7360 were never run and must remain unused by v6.
+
+V7 seeds 7361–7364 each produced passed, eligible source receipts and exact
+335-tick companion replays with zero differences. Preserve them as diagnostic
+evidence only. Seed 7365 is paused at tick 335 in `FINALIZE`; its authoritative
+standalone database is `data/runs/oracle-calibration-v7-s7365.db`, 518,561,792
+bytes, SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`.
+Opening it with SQLite URI `mode=ro&immutable=1` and `query_only=ON` returns
+`quick_check: ok`. It has no WAL/SHM sidecars and records
+32,114 persisted calls, 12 Oracle calls, six resolved forecasts/checkpoints, no
+critical events, balanced USD, and `$0.2754108` spend. Receipt production found
+persisted scheduled E2E of 13,658 ms below the 13,660 ms governed-call sum.
+Seed 7365 has no replay database or receipt, seeds 7366–7370 were never run, and
+there is no V7 aggregate manifest or receipt.
+
+The common scheduled-latency producer now clamps both continuous monotonic and
+resumed wall-clock duration to at least the sum of conservatively rounded
+governed call latencies. Seed 7365's claim binds commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`. The claim SHA-256 is
+`705dadfe8e9ed8588d0a4329bf0e681ce2f83e2a531ff40ee94c783d83f1f18e`; the
+initialized-marker SHA-256 is
+`f07efa9e3ff5452aa4aea6ff560a4974c86c839fac7b9aa9e5c78aeb0f900bfd`.
+Because the campaign command is the
+only receipt path and re-preparation requires the clean revision to match that
+claim byte-for-byte, never resume it or mint a post-fix eligible receipt. A
+post-fix replay may be retained only as diagnostic evidence. No V7 artifact or
+seed enters V8.
+
+V8 is archived and excluded. Seeds 7371–7374 each produced passed, eligible
+source receipts and exact tick-335 companion replays. Seed 7375 stopped at tick
+245 after four of six forecasts when Kimi returned HTTP 403 for the exhausted
+billing-cycle quota. Its source persisted one `provider_failure`, spent
+`$0.19651848`, passes immutable SQLite health checks, and has no WAL/SHM
+sidecars. Do not resume, repair, substitute, or post-fix receipt that arm. The
+archive retains five source databases, four replay databases, eight
+source/replay receipts, and every checkpoint manifest. After the archive
+commit became durable, conservative cleanup removed exactly 189 V8 source-checkpoint
+database bodies matching anchored regex
+`^oracle-calibration-v8-s737[1-5]_t\d+\.db$`—40 each for seeds 7371–7374 and
+29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189 source checkpoint manifests, 160 replay
+checkpoint manifests, five claims, five initialized markers, and the final
+artifacts listed above. The verified post-cleanup inventory contains zero
+source/replay checkpoint bodies and zero V8 SQLite sidecars. All nine retained
+final databases pass immutable read-only `quick_check`, and eligible source/
+replay hashes match their receipts. Never use a broad V8 wildcard. No V8
+artifact or seed enters V9.
+
+V9 has the same direct acceptance-rehearsal ancestry, governed-answer repair,
+fixed latency producer, engine semantics 7, and database schema 11. It is a
+fresh campaign/version/seed/config commitment: `oracle-calibration-v9`, version
+9, seeds 7381–7390, odd control/even rumor, and commitment SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+Only the Oracle is live. Its exact adapter is provider kind `openai_compat`,
+base URL `https://api.minimax.io/v1`, key environment `MINIMAX_API_KEY`,
+`healthcheck_path: /models`, 180-second timeout,
+`max_tokens_field: max_completion_tokens`, request defaults
+`max_completion_tokens: 4096` and `reasoning_split: true`, and
+`prompt_cache_mode: provider_automatic`, with model `MiniMax-M3`. Use the
+standard ≤512k prices configured in the profile: `$0.30/M` input, `$1.20/M`
+output, and `$0.06/M` automatic cache reads. The per-run cap is `$25`.
+
+A disposable one-call MiniMax probe and a deliberately unclaimed five-tick
+Oracle rehearsal both succeeded through this exact adapter. They establish
+operational readiness only; neither created a V9 corpus claim or receipt. No V9
+live evidence is claimed until all ten arms and the aggregate gate pass.
+
+Preflight and execute each profile from `v9-seed-7381-control.yaml` through
+`v9-seed-7390-rumor.yaml`. The first run is shown; repeat it for the exact ten
+checked-in profiles only after seed 7381 produces an eligible exact
+source/replay receipt:
+
+```powershell
+python run.py --config runs/oracle/v9-seed-7381-control.yaml --preflight
+python run.py --config runs/oracle/v9-seed-7381-control.yaml --preflight-live
+python run.py --config runs/oracle/v9-seed-7381-control.yaml `
+  --oracle-campaign-run --approve-live-inference
+```
+
+`--oracle-campaign-run` is the profile-specific source path: it runs the six
+checkpoints, writes the report, finalizes the source SQLite database, replays it
+offline, finalizes the replay database, verifies exact hashes/provenance, and
+writes a source receipt plus a ready-to-copy manifest entry. It exits nonzero if
+the source or companion replay is ineligible.
+
+Start and resume these runs only from a completely clean Git worktree. The
+exclusive sample claim binds `HEAD`, `HEAD^{tree}`, and the canonical
+`data/runs` location before genesis. Claim and initialized-state files are
+fsynced as temporary artifacts and atomically published into no-clobber slots.
+The command holds one OS-backed per-seed execution lock from initialization
+through source/replay receipt publication; a concurrent resume exits before it
+can dispatch, and an exited or crashed process releases the lock automatically.
+
+Genesis is built under a unique temporary directory, finalized, and validated
+as reconciled tick-0 state with zero model calls. It is then atomically
+hard-linked through canonical pending and final no-clobber slots. A valid pending
+genesis resumes without rebuilding. A partial/corrupt pending publication is
+quarantined and only the deterministic zero-call genesis is rebuilt; a missing
+database after initialization or a partial final database still fails closed.
+Source and replay databases must both remain directly under canonical
+`data/runs`.
+
+The replay execution receipt records every consumed logical source call, its
+digest, exact-key versus compatibility-fallback counts, and live-dispatch count;
+release evidence requires complete one-time consumption, zero fallback, and zero
+dispatch. Every required checkpoint is independently quick-checked, matched to
+the full schema, bound to the source run/config/tick and valid engine/lifecycle
+PRNG state, then hashed into the replay and source receipts. All persisted model
+calls are audited globally: only the six scheduled governed Oracle sessions may
+use the pinned live MiniMax route. Claims, markers, replay receipts, source receipts,
+and final campaign receipts are immutable no-clobber publications; an identical
+rerun may reuse an existing receipt, while any differing artifact fails.
+
+These controls are strong local accident/tamper evidence only. They are not an
+administrator-proof attestation: an administrator who can rewrite the code,
+databases, claims, and receipts can forge a new internally consistent local
+package. Public release evidence **requires** independent external signing or a
+separately administered append-only transparency log; the local CLI receipt
+alone is insufficient for that claim.
+
+The campaign command does the offline replay itself; do not invoke a separate
+manual `--replay` and substitute it into the corpus. After each command exits,
+confirm the emitted source receipt reports finalized source/replay databases and
+no `-wal` or `-shm` sidecar. Preserve the emitted manifest entry before any
+storage cleanup.
+
+Run the ten arms sequentially and use this checkpoint retention boundary:
+
+- Keep every `oracle-calibration-v9-s*_t*.db` source checkpoint body and its
+  `.manifest.json` through the aggregate report. The evaluator reopens each
+  physical source checkpoint, rebuilds its runtime manifest, runs SQLite and
+  ledger checks, and rejects a missing body; a receipt hash alone is not enough.
+- After one arm has emitted a passed source receipt and its manifest entry is
+  durably recorded, archive or prune only that arm's
+  `replay-oracle-calibration-v9-*_t*.db` checkpoint bodies. Retain their tiny
+  manifests, the final replay database under `data/runs`, the final source
+  database, and all source checkpoint bodies. Resolve and verify the exact
+  replay run ID and checkpoint-directory paths before removal; never use a broad
+  campaign wildcard.
+- At v5 artifact sizes, retaining all twenty source/replay checkpoint families
+  would consume about `192–198 GiB`. Sequentially pruning replay checkpoint
+  bodies keeps the ten-arm peak near `110–114 GiB`; monitor free space before
+  each arm and stop before the safety margin is exhausted.
+- Only after the aggregate JSON/Markdown receipt has passed and the evidence
+  package is durably archived may all ten arms' 400 V9 source checkpoint
+  database bodies (40 per arm) be pruned. Retain their manifests, final
+  source/replay databases, claims, and receipts.
+
+The separate V7 archive cleanup is complete. It removed exactly the 200 source
+checkpoint database bodies in `data/checkpoints` matching anchored filename regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`. The verified reclaim is
+49,647,239,168 bytes (`46.237595 GiB`): seed 7361 has 40 bodies totaling
+9,700,835,328 bytes (`9.034607 GiB`); 7362 has 40 totaling 10,008,035,328
+(`9.320709 GiB`); 7363 has 40 totaling 9,875,501,056 (`9.197277 GiB`); 7364
+has 40 totaling 10,006,319,104 (`9.319111 GiB`); and 7365 has 40 totaling
+10,056,548,352 (`9.365891 GiB`). Every body has a sibling manifest and none has
+a sidecar. No broad V7 wildcard was used. All 360 source/replay checkpoint
+manifests and hashes, five final source databases, four final replay databases, eight
+source/replay receipt JSONs for seeds 7361–7364, the five existing
+claim/initialized-marker pairs for seeds 7361–7365, profiles, commitments,
+template, base configuration, reports, and the authoritative seed-7365 database
+were retained.
+
+Only after all ten source claims and runs finish, copy
+`runs/oracle/manifest-v9.template.yaml` to a run-specific evidence manifest and
+replace its ten placeholders with the exact manifest entries emitted by the
+source receipts, then evaluate it:
+
+```powershell
+Copy-Item runs/oracle/manifest-v9.template.yaml runs/oracle/manifest-v9.yaml
+python run.py --oracle-calibration-report runs/oracle/manifest-v9.yaml
+```
+
+The command reads disposable copies rather than opening the sources directly,
+never scans a directory for candidates, recomputes every companion replay proof,
+and writes deterministic JSON and Markdown receipts under `reports/out`. A
+release PASS requires all ten runs to remain eligible, at least 60 resolved
+forecasts spanning outcomes 0 and 1,
+nearest-rank `scheduled_e2e_v1` p90 strictly below 60,000 ms, aggregate Brier
+strictly below the fixed p=0.5 baseline of 0.25, and unchanged source/profile
+hashes. Any excluded run fails the complete-manifest gate.
+
+Run aggregate verification serially on a machine with at least 6 GB of free
+memory. A measured 335-tick scripted source contained 129,764 events and 31,880
+model-call rows in a roughly 0.48 GB database; its full exact-table proof took
+about 136 seconds and peaked near 4.1 GB working set on the development machine.
+The evaluator releases each pair before opening the next, but parallel campaign
+verification is not the supported operator path.
+
 ## Production acceptance
 
 Start a fresh acceptance run only with explicit live-inference authorization:
@@ -168,10 +503,26 @@ python run.py --config runs/acceptance/production.yaml `
 ```
 
 The driver runs to scheduled Oracle checkpoints and then the configured
-365-tick horizon. It schedules six questions and requires at least five Oracle
-latency samples. The profile is uncapped for runtime continuity but has a
+365-tick horizon. It schedules six questions and requires all six persisted
+`scheduled_e2e_v1` latency samples. Each sample starts before Oracle planning,
+ends after the forecast contract is validated, and is bound to the exact
+prediction, campaign key, question, and tick. Manual calls cannot satisfy the
+gate; a missing, dangling, malformed, or duplicate completion reference marks
+the checkpoint invalid. Continuous monotonic and resumed wall-clock measurements
+are both clamped to at least the sum of conservatively rounded governed call
+latencies. The profile is uncapped for runtime continuity but has a
 separate $200 efficiency completion gate. On success it writes the complete
 HTML report plus JSON and Markdown acceptance receipts.
+
+A passing acceptance receipt is not an exact-replay receipt. After the source
+run closes, execute `python run.py --replay <RUN_ID>`, retain the companion
+database and verifier output, and require `exact: true`, identical source/replay
+ticks and hashes, and `differences: []`.
+
+The production profile starts with exactly 100 living agents: 63 sampled
+citizens plus engine-owned institutional and health-economy actors. The
+population gate counts living agents, while deceased rows remain preserved for
+lineage and replay as stable-population replacements arrive.
 
 Copy `runs/acceptance/phenomena.template.yaml` to a run-specific reviewed file,
 set its top-level `run_id` to the exact reviewed run, and replace the pending
@@ -281,10 +632,17 @@ an evidence receipt from persisted run data without advancing the simulation.
 For a release candidate, retain:
 
 1. `data/runs/<run-id>.db` and its latest checkpoint;
-2. the HTML report and JSON/Markdown acceptance receipts;
-3. the experiment JSON/Markdown/HTML artifacts;
-4. the reviewed phenomena YAML and shock traces;
-5. the exact Git commit, resolved profile, and provider preflight result.
+2. the finalized companion replay database and captured exact-verifier output;
+3. the HTML report and JSON/Markdown acceptance receipts;
+4. the experiment JSON/Markdown/HTML artifacts;
+5. the reviewed phenomena YAML and shock traces;
+6. the exact Git commit, resolved profile, and provider preflight result.
 
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.
+
+PR #20 implementation is authorized for squash merge after its complete local
+gate. Keep tagging, publication, and public deployment blocked until the V9
+Oracle campaign, capped 30-day rumor pilot, 365-day/$200 acceptance run, and
+final provenance/license/dependency/secret audit all pass under separate
+authorization.

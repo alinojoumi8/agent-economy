@@ -14,9 +14,10 @@ import os
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
@@ -25,6 +26,36 @@ from observability import get_logger, log_event as operational_log, safe_fields
 
 
 logger = get_logger("llm")
+
+
+REPLAY_OPERATIONAL_PURPOSES = frozenset({"report_narrative"})
+
+
+def _logical_replay_call(row: Any) -> str:
+    """Canonicalize one source call without its local SQLite surrogate id."""
+    record: dict[str, Any] = {}
+    keys = row.keys() if hasattr(row, "keys") else row
+    for column in keys:
+        if column in {"id", "created_at", "updated_at"}:
+            continue
+        value = row[column]
+        if column.endswith("_json") and isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                pass
+        record[str(column)] = value
+    return json.dumps(
+        record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False)
+
+
+def _logical_replay_digest(records: list[str]) -> str:
+    digest = hashlib.sha256()
+    for record in sorted(records):
+        digest.update(record.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 PRIVATE_REASONING_FIELDS = frozenset({
@@ -296,6 +327,15 @@ class GatewayInterrupted(Exception):
     """The operator interrupted an in-flight provider cooldown."""
 
 
+class ReplayReferenceError(ProviderUnavailable):
+    """Recorded replay provenance cannot be bound to one local event."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            "replay", "recorded-provenance", "event_reference", message,
+            attempts=0)
+
+
 @dataclass
 class LLMRequest:
     role: str                       # citizen|central_banker|credit_officer|editor|reporter|oracle|...
@@ -521,6 +561,10 @@ class Gateway:
         self._replay_positions: dict[str, int] = {}
         self._replay_used_call_ids: set[int] = set()
         self._replay_event_id_map: dict[int, int] = {}
+        self._replay_exact_key_count = 0
+        self._replay_compatibility_fallback_count = 0
+        self._replay_consumed_calls: list[tuple[int, str, str]] = []
+        self._live_dispatch_count = 0
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
             if not source:
@@ -545,6 +589,121 @@ class Gateway:
             replay_snapshot.close()
         elif replay_conn is not None:
             replay_conn.close()
+
+    @contextmanager
+    def replay_admission(self, name: str):
+        """Roll back one replay operation when downstream validation pauses."""
+        if not self.replay:
+            yield
+            return
+        snapshot = {
+            "positions": dict(self._replay_positions),
+            "used": set(self._replay_used_call_ids),
+            "event_map": dict(self._replay_event_id_map),
+            "exact": self._replay_exact_key_count,
+            "fallback": self._replay_compatibility_fallback_count,
+            "consumed": list(self._replay_consumed_calls),
+            "governor": (
+                self.governor._last_call_id,
+                self.governor._total_spend_usd,
+                self.governor._oracle_spend_usd,
+                self.governor._report_spend_usd,
+                self.governor._world_spend_usd,
+                self.governor._level,
+            ),
+        }
+        try:
+            with self.store.savepoint(name):
+                yield
+        except BaseException:
+            self._replay_positions.clear()
+            self._replay_positions.update(snapshot["positions"])
+            self._replay_used_call_ids.clear()
+            self._replay_used_call_ids.update(snapshot["used"])
+            self._replay_event_id_map.clear()
+            self._replay_event_id_map.update(snapshot["event_map"])
+            self._replay_exact_key_count = snapshot["exact"]
+            self._replay_compatibility_fallback_count = snapshot["fallback"]
+            self._replay_consumed_calls[:] = snapshot["consumed"]
+            (
+                self.governor._last_call_id,
+                self.governor._total_spend_usd,
+                self.governor._oracle_spend_usd,
+                self.governor._report_spend_usd,
+                self.governor._world_spend_usd,
+                self.governor._level,
+            ) = snapshot["governor"]
+            raise
+
+    def replay_execution_stats(self) -> dict[str, Any]:
+        """Attest what this in-memory replay execution actually consumed.
+
+        The digest deliberately excludes physical call ids and timestamps. It
+        covers the same deterministic call contents used by exact replay while
+        preserving multiplicity through newline-delimited sorted records.
+        """
+        if not self.replay or self.replay_conn is None:
+            raise RuntimeError("replay execution stats require an open replay source")
+        placeholders = ",".join("?" for _ in REPLAY_OPERATIONAL_PURPOSES)
+        rows = self.replay_conn.execute(
+            "SELECT * FROM llm_calls WHERE COALESCE(purpose,'') NOT IN "
+            f"({placeholders}) ORDER BY id",
+            tuple(sorted(REPLAY_OPERATIONAL_PURPOSES)),
+        ).fetchall()
+        expected = [
+            (int(row["id"]), _logical_replay_call(row), str(row["purpose"] or ""))
+            for row in rows
+        ]
+        consumed = list(self._replay_consumed_calls)
+        expected_ids = {item[0] for item in expected}
+        consumed_ids = [item[0] for item in consumed]
+        duplicate_consumptions = len(consumed_ids) - len(set(consumed_ids))
+
+        def purpose_counts(items: list[tuple[int, str, str]]) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for _call_id, _logical, purpose in items:
+                counts[purpose] = counts.get(purpose, 0) + 1
+            return dict(sorted(counts.items()))
+
+        oracle_expected = [
+            logical for _call_id, logical, purpose in expected
+            if purpose in {"oracle_plan", "oracle"}
+        ]
+        oracle_consumed = [
+            logical for _call_id, logical, purpose in consumed
+            if purpose in {"oracle_plan", "oracle"}
+        ]
+        missing = expected_ids - set(consumed_ids)
+        unexpected = set(consumed_ids) - expected_ids
+        return {
+            "schema_version": 1,
+            "source_nonoperational_calls": len(expected),
+            "consumed_source_calls": len(consumed),
+            "source_logical_calls_sha256": _logical_replay_digest(
+                [item[1] for item in expected]),
+            "consumed_logical_calls_sha256": _logical_replay_digest(
+                [item[1] for item in consumed]),
+            "source_purpose_counts": purpose_counts(expected),
+            "consumed_purpose_counts": purpose_counts(consumed),
+            "oracle_source_calls": len(oracle_expected),
+            "oracle_consumed_calls": len(oracle_consumed),
+            "oracle_source_calls_sha256": _logical_replay_digest(oracle_expected),
+            "oracle_consumed_calls_sha256": _logical_replay_digest(oracle_consumed),
+            "exact_key_matches": self._replay_exact_key_count,
+            "compatibility_fallback_matches": (
+                self._replay_compatibility_fallback_count),
+            "live_dispatch_count": self._live_dispatch_count,
+            "missing_source_calls": len(missing),
+            "unexpected_source_calls": len(unexpected),
+            "duplicate_source_consumptions": duplicate_consumptions,
+            "all_nonoperational_calls_consumed_once": bool(
+                not missing and not unexpected and duplicate_consumptions == 0
+                and len(expected) == len(consumed)),
+            "all_oracle_calls_consumed_once": bool(
+                len(oracle_expected) == len(oracle_consumed)
+                and _logical_replay_digest(oracle_expected)
+                == _logical_replay_digest(oracle_consumed)),
+        }
 
     @property
     def scripted(self):
@@ -675,7 +834,11 @@ class Gateway:
                 "live_ready": live_ready, "checks": checks}
 
     # ── main entry ───────────────────────────────────────────────────────────
-    async def complete(self, req: LLMRequest, *, schema_hint: str = "") -> LLMResponse:
+    async def complete(
+            self, req: LLMRequest, *, schema_hint: str = "",
+            parsed_transform: Optional[Callable[[Any], Any]] = None,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None,
+            ) -> LLMResponse:
         provider, model = self.route(req.role, req.purpose)
         adapter = self.adapters.get(provider)
         if adapter is None:
@@ -691,7 +854,8 @@ class Gateway:
                         tick=req.tick, replay=self.replay)
 
         if self.replay:
-            replayed = self._replay_lookup(cache_key, req, schema_hint)
+            replayed = self._replay_lookup(
+                cache_key, req, schema_hint, parsed_transform, parsed_validator)
             if replayed is not None:
                 response, source_row = replayed
                 response.call_id = self._log_replay_call(req, cache_key, source_row)
@@ -706,8 +870,11 @@ class Gateway:
                 "replay", model, req.purpose,
                 f"stored response missing for cache key {cache_key}", attempts=0)
 
-        resumed = self._durable_lookup(cache_key, schema_hint)
+        resumed = self._durable_lookup(
+            cache_key, schema_hint, parsed_validator)
         if resumed is not None:
+            if parsed_transform is not None:
+                resumed.parsed = parsed_transform(resumed.parsed)
             operational_log(
                 logger, logging.DEBUG, "llm.resume.hit",
                 run_id=self.run_id, provider=resumed.provider, model=resumed.model,
@@ -759,8 +926,13 @@ class Gateway:
         parsed, ok = self._parse(result.text)
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        validation_error = (
+            self._parsed_validation_error(parsed, parsed_validator) if ok else None)
+        if validation_error is not None:
+            ok = False
         if not ok and provider not in ("scripted", "mock"):
-            # One repair retry with the parse error appended (TECH-SPEC §8 failure policy).
+            # One repair retry with the parse/contract error appended
+            # (TECH-SPEC §8 failure policy).
             operational_log(logger, logging.WARNING, "llm.repair.started",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -771,7 +943,9 @@ class Gateway:
                 user=(req.user
                       + "\n\nYour previous reply did not match the required JSON contract. "
                         "Reply ONLY with the JSON object."
-                      + (f" Required shape: {schema_hint}" if schema_hint else "")),
+                      + (f" Required shape: {schema_hint}" if schema_hint else "")
+                      + (f" Contract error: {validation_error}"
+                         if validation_error else "")),
                 context=req.context, agent_id=req.agent_id, tick=req.tick,
                 max_tokens=req.max_tokens, temperature=0.2)
 
@@ -841,6 +1015,11 @@ class Gateway:
             parsed, ok = self._parse(result.text)
             if ok and schema_hint:
                 ok = self._matches_schema(parsed, schema_hint)
+            validation_error = (
+                self._parsed_validation_error(parsed, parsed_validator)
+                if ok else None)
+            if validation_error is not None:
+                ok = False
             operational_log(logger, logging.INFO, "llm.repair.completed",
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -857,6 +1036,8 @@ class Gateway:
             model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
         call_id = self._log_call(
             req, provider, model, cache_key, result, cost, cached, latency_ms)
+        if parsed_transform is not None:
+            parsed = parsed_transform(parsed)
         operational_log(logger, logging.DEBUG, "llm.request.completed",
                         run_id=self.run_id, provider=provider, model=model,
                         role=req.role, purpose=req.purpose, agent_id=req.agent_id,
@@ -887,6 +1068,7 @@ class Gateway:
                     if active_task is not None:
                         self._active_adapter_tasks.add(active_task)
                     try:
+                        self._live_dispatch_count += 1
                         result = await adapter.complete(
                             model, messages, purpose=req.purpose, context=req.context,
                             max_tokens=req.max_tokens, temperature=temperature,
@@ -955,6 +1137,21 @@ class Gateway:
             return False
         return all(key in parsed for key in expected)
 
+    @staticmethod
+    def _parsed_validation_error(
+            parsed: Any,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]],
+            ) -> Optional[str]:
+        """Return one bounded semantic-contract error for gateway repair."""
+        if parsed_validator is None:
+            return None
+        error = parsed_validator(parsed)
+        if error is None:
+            return None
+        if not isinstance(error, str) or not error.strip():
+            return "response failed semantic contract validation"
+        return error.strip()[:500]
+
     # ── caching + cost ───────────────────────────────────────────────────────
     def _price(self, model: str, in_tok: int, out_tok: int, cached_in: int,
                pricing: dict) -> tuple[bool, float]:
@@ -1001,23 +1198,47 @@ class Gateway:
             "SELECT tick,phase,kind,subject_type,subject_id,importance,payload_json "
             "FROM events WHERE id=?", (source_id,)).fetchone()
         if source is None:
-            return source_id
-        candidates = self.store.query(
+            # Never carry an allocatable positive surrogate through replay. Even
+            # if it is currently absent locally, an earlier ordered action could
+            # create that row before this action executes and turn a source-
+            # invalid reference into a valid local one.
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} is dangling in source")
+        source_candidates = self.replay_conn.execute(
+            "SELECT id,importance,payload_json FROM events "
+            "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
+            "AND subject_id IS ? AND id<=? ORDER BY id",
+            (int(source["tick"]), source["phase"], source["kind"],
+             source["subject_type"], source["subject_id"], source_id)).fetchall()
+        local_candidates = self.store.query(
             "SELECT id,importance,payload_json FROM events "
             "WHERE tick=? AND phase IS ? AND kind=? AND subject_type IS ? "
             "AND subject_id IS ? ORDER BY id",
             (int(source["tick"]), source["phase"], source["kind"],
              source["subject_type"], source["subject_id"]))
         source_payload = self._event_payload_identity(source["payload_json"])
-        matches = [
-            int(candidate["id"]) for candidate in candidates
+        source_matches = [
+            int(candidate["id"]) for candidate in source_candidates
             if float(candidate["importance"]) == float(source["importance"])
             and self._event_payload_identity(candidate["payload_json"]) == source_payload
         ]
-        if len(matches) == 1:
-            self._replay_event_id_map[source_id] = matches[0]
-            return matches[0]
-        return source_id
+        local_matches = [
+            int(candidate["id"]) for candidate in local_candidates
+            if float(candidate["importance"]) == float(source["importance"])
+            and self._event_payload_identity(candidate["payload_json"]) == source_payload
+        ]
+        if source_id not in source_matches:
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} has no source occurrence")
+        occurrence = source_matches.index(source_id)
+        if occurrence >= len(local_matches):
+            raise ReplayReferenceError(
+                f"recorded replay event reference {source_id} full-payload occurrence "
+                f"ordinal {occurrence} is unavailable locally "
+                f"(source_prefix={len(source_matches)}, local={len(local_matches)})")
+        local_id = local_matches[occurrence]
+        self._replay_event_id_map[source_id] = local_id
+        return local_id
 
     def _localize_replay_event_references(self, value):
         """Localize event provenance embedded in a recorded model response."""
@@ -1040,12 +1261,15 @@ class Gateway:
             return [self._localize_replay_event_references(item) for item in value]
         return value
 
-    def _replay_lookup(self, cache_key: str, req: LLMRequest,
-                       schema_hint: str = ""):
+    def _replay_lookup(
+            self, cache_key: str, req: LLMRequest, schema_hint: str = "",
+            parsed_transform: Optional[Callable[[Any], Any]] = None,
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
         row = None
+        match_mode = "exact_key"
         while True:
             candidate = self.replay_conn.execute(
                 "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
@@ -1056,7 +1280,6 @@ class Gateway:
             if int(candidate["id"]) not in self._replay_used_call_ids:
                 row = candidate
                 break
-        self._replay_positions[cache_key] = position
         if row is None:
             # Historical replay must survive prompt/context improvements. Fall
             # back only to the next unused call with the same deterministic
@@ -1071,31 +1294,50 @@ class Gateway:
                  if int(candidate["id"]) not in self._replay_used_call_ids),
                 None)
             if row is not None:
-                operational_log(
-                    logger, logging.WARNING, "llm.replay.compatibility_fallback",
-                    run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
-                    role=req.role, purpose=req.purpose,
-                    source_call_id=int(row["id"]))
+                match_mode = "compatibility_fallback"
         if not row:
             return None
-        self._replay_used_call_ids.add(int(row["id"]))
+        source_call_id = int(row["id"])
         resp = json.loads(row["response_json"]) if row["response_json"] else {}
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok and self._parsed_validation_error(parsed, parsed_validator) is not None:
+            ok = False
         if ok:
             parsed = self._localize_replay_event_references(parsed)
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}
+        if parsed_transform is not None:
+            parsed = parsed_transform(parsed)
         response = LLMResponse(
             text=resp.get("text", ""), parsed=parsed, provider=row["provider"],
             model=row["model"], in_tokens=int(row["in_tokens"]),
             out_tokens=int(row["out_tokens"]), cost_usd=float(row["cost_usd"]),
             cached=bool(row["cached"]), ok=ok)
+        # Replay consumption is transactional with parsing and provenance
+        # localization. A pause must retry the same recorded call rather than
+        # skip a corrupt response and silently consume a later duplicate.
+        self._replay_positions[cache_key] = position
+        self._replay_used_call_ids.add(source_call_id)
+        if match_mode == "exact_key":
+            self._replay_exact_key_count += 1
+        else:
+            self._replay_compatibility_fallback_count += 1
+            operational_log(
+                logger, logging.WARNING, "llm.replay.compatibility_fallback",
+                run_id=self.run_id, tick=req.tick, agent_id=req.agent_id,
+                role=req.role, purpose=req.purpose,
+                source_call_id=source_call_id)
+        self._replay_consumed_calls.append((
+            source_call_id, _logical_replay_call(row), str(row["purpose"] or "")))
         return response, row
 
-    def _durable_lookup(self, cache_key: str, schema_hint: str = "") -> Optional[LLMResponse]:
+    def _durable_lookup(
+            self, cache_key: str, schema_hint: str = "",
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None,
+            ) -> Optional[LLMResponse]:
         """Reuse a completed same-run call when an interrupted phase is retried."""
         row = self.store.query_one(
             "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1",
@@ -1106,6 +1348,8 @@ class Gateway:
         parsed, ok = self._parse(resp.get("text", "{}"))
         if ok and schema_hint:
             ok = self._matches_schema(parsed, schema_hint)
+        if ok and self._parsed_validation_error(parsed, parsed_validator) is not None:
+            ok = False
         if not ok:
             parsed = {"reasoning": "unparseable output; no-op",
                       "actions": [{"type": "do_nothing"}]}

@@ -12,12 +12,18 @@ acceptance:
   efficiency_target_usd: 25.0
   oracle_p90_ms: 60000
   oracle_min_latency_samples: 1
+  oracle_latency_source: scheduled_e2e_v1
+  oracle_campaign_id: pilot-oracle-latency
+  oracle_campaign_version: 1
   required_shocks: [rumor]
   require_oracle_scoring: false
   require_experiment: false
   require_phenomena: false
   oracle_questions:
     - at_tick: 5
+      campaign_key: bank_run_t005
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
 
 shocks:

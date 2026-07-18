@@ -1264,7 +1264,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
 def test_production_config_inherits_world_and_requires_both_keys():
     cfg = load_config("runs/production.yaml")
     assert cfg["budget"]["cap_usd"] is None
-    assert cfg["population"]["size"] == 87
+    assert cfg["population"]["size"] == 63
     assert cfg["banks"]["count"] == 2
     assert cfg["llm"]["default_route"] == {
         "provider": "minimax", "model": "MiniMax-M3"}
@@ -1521,6 +1521,16 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
         tools.execute_plan([
             {"tool": "read_news", "args": {"limit": 1}}
             for _ in range(9)])
+    legacy = tools.execute_plan_legacy([{
+        "tool": "read_news",
+        "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+    }])
+    assert len(legacy) == 1
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([{
+            "tool": "read_news",
+            "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+        }])
 
     answer = asyncio.run(world.oracle.ask(
         "What is the probability of a bank run within 30 ticks?"))

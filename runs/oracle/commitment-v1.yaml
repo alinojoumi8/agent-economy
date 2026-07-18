@@ -1,0 +1,19 @@
+# Pre-run commitment for the release Oracle calibration corpus.
+#
+# Each stochastic live arm has exactly one source run identity. The campaign
+# runner atomically claims that identity before its first provider dispatch;
+# retries must resume the claimed database and cannot create another sample.
+schema_version: 1
+campaign_id: oracle-calibration-v1
+campaign_version: 1
+runs:
+  - {seed: 7301, run_id: oracle-calibration-v1-s7301, profile: seed-7301-control.yaml, effective_config_sha256: 4b1f44de1719b70493a091a2959c5cc0ba7b22dc3b2b3947dd62f57fa308c6d2}
+  - {seed: 7302, run_id: oracle-calibration-v1-s7302, profile: seed-7302-rumor.yaml, effective_config_sha256: c6914c6f7064a327731db91572a41499f8bb307761801b18842d26d8f683c6db}
+  - {seed: 7303, run_id: oracle-calibration-v1-s7303, profile: seed-7303-control.yaml, effective_config_sha256: 9230c3799b47c42f939731b640505374d86c469f3191f264f52e73572406e3f0}
+  - {seed: 7304, run_id: oracle-calibration-v1-s7304, profile: seed-7304-rumor.yaml, effective_config_sha256: 9d5110dad62a8a5ef7db9e8b0947d6341f49688bb502e00e147229aae636f9ca}
+  - {seed: 7305, run_id: oracle-calibration-v1-s7305, profile: seed-7305-control.yaml, effective_config_sha256: 7e1f48227f07f537de162cfa84f9ce82b4e97db4dd747d82b14c138d1f996bf6}
+  - {seed: 7306, run_id: oracle-calibration-v1-s7306, profile: seed-7306-rumor.yaml, effective_config_sha256: 4d5177d984b237fe866e836140a6e47ded2534ee936c12d1f79b4f34d8a40ff5}
+  - {seed: 7307, run_id: oracle-calibration-v1-s7307, profile: seed-7307-control.yaml, effective_config_sha256: cd12765980fae2b473d5877a63fc5623520050ffc9c102ff80d99507416c978d}
+  - {seed: 7308, run_id: oracle-calibration-v1-s7308, profile: seed-7308-rumor.yaml, effective_config_sha256: f46c8cae4077c5dcc9f0eb3b895d65695c811359bcf4b2498990f0f1c2cbaed1}
+  - {seed: 7309, run_id: oracle-calibration-v1-s7309, profile: seed-7309-control.yaml, effective_config_sha256: 157330a88a66fbc3209ed832adc71707a86c66392ba207805b72a41d0a546762}
+  - {seed: 7310, run_id: oracle-calibration-v1-s7310, profile: seed-7310-rumor.yaml, effective_config_sha256: 8a15a740d40e4eb4fa9e686c05cc3bbddb469cd36593030ed8cdd8be9d1493a8}

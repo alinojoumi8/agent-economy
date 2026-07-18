@@ -1,0 +1,16 @@
+# Fresh release corpus after v3 seed 7321 exposed a receipt-only planner-retry
+# invariant. The v3 receipt chain is excluded diagnostic evidence. No v3
+# response is reused; v4 keeps the corrected deterministic mechanics and uses
+# fresh seeds.
+extends: calibration-base-v3.yaml
+
+seed: 7331
+
+acceptance:
+  oracle_campaign_id: oracle-calibration-v4
+  oracle_campaign_version: 4
+
+lifecycle:
+  population_mode: stable
+  arrival_delay_min: 5
+  arrival_delay_max: 20

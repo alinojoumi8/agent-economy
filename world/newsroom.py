@@ -16,7 +16,12 @@ from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest, sanitize_provider_text
+from llm.gateway import (
+    Gateway,
+    LLMRequest,
+    ReplayReferenceError,
+    sanitize_provider_text,
+)
 from agents.memory import Memory
 from agents.policies import conversation_turn
 from world.event_visibility import (
@@ -75,45 +80,53 @@ class Newsroom:
         if not events:
             return []
         directives = self.shocks.active_slant_directives(tick) if self.shocks else {}
-        pending = []
-        for outlet in self.outlets:
-            if self.store.query_one(
-                    "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
-                    (tick, outlet["id"])):
-                continue
-            # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4 candidate
-            # stories from true events; the editor selects and frames per slant.
-            drafts = await self._report_stories(tick, outlet, events)
-            art = await self._write_story(tick, outlet, events, directives.get(outlet["id"]),
-                                          drafts=drafts)
-            art = self._ground_article(
-                outlet, art, events, directive=directives.get(outlet["id"]))
-            if art:
-                pending.append((outlet, art))
-        articles = []
-        with self.store.savepoint(f"newsroom_{tick}"):
-            for outlet, art in pending:
-                aid = self.store.insert(
-                    "news_articles", tick=tick, outlet_id=outlet["id"], outlet_name=outlet["name"],
-                    headline=art["headline"][:200], body=art.get("body", "")[:2000],
-                    slant_tags=json.dumps(art.get("slant_tags", [outlet["slant"]])),
-                    source_event_ids=json.dumps(art.get("source_event_ids", [])),
-                    tone=float(art.get("tone", 0.0)), truthful=1)
-                # Mirror the article into the v2 claim/exposure economy.  The
-                # article remains grounded in the same event ids; this adapter
-                # never fabricates a second source of truth.
-                self.e.information.register_news_article(
-                    tick, aid, int(outlet["id"]), art["headline"], art.get("body", ""),
-                    [int(item) for item in art.get("source_event_ids", [])],
-                    float(art.get("tone", 0.0)),
-                    author_agent_id=self._desk_agent("editor", int(outlet["id"])),
-                    slant=float(art.get("slant_score", 0.0)))
-                self.store.log_event(tick, "news_published", {
-                    "article_id": aid, "outlet_id": outlet["id"], "outlet": outlet["name"],
-                    "headline": art["headline"], "tone": art.get("tone", 0.0)},
-                    phase="NEWSROOM", importance=1.5)
-                articles.append(art)
-        return articles
+        # Drafts and the pending article batch are ephemeral. Replay therefore
+        # admits the complete newsroom phase atomically: a later desk failure
+        # must retry every source row used to rebuild the same pending batch.
+        with self.gw.replay_admission(f"newsroom_publish_{tick}"):
+            pending = []
+            for outlet in self.outlets:
+                if self.store.query_one(
+                        "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
+                        (tick, outlet["id"])):
+                    continue
+                # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4
+                # candidate stories; the editor selects and frames per slant.
+                drafts = await self._report_stories(tick, outlet, events)
+                art = await self._write_story(
+                    tick, outlet, events, directives.get(outlet["id"]),
+                    drafts=drafts)
+                if art:
+                    pending.append((outlet, art))
+            articles = []
+            with self.store.savepoint(f"newsroom_{tick}"):
+                for outlet, art in pending:
+                    aid = self.store.insert(
+                        "news_articles", tick=tick, outlet_id=outlet["id"],
+                        outlet_name=outlet["name"], headline=art["headline"][:200],
+                        body=art.get("body", "")[:2000],
+                        slant_tags=json.dumps(
+                            art.get("slant_tags", [outlet["slant"]])),
+                        source_event_ids=json.dumps(
+                            art.get("source_event_ids", [])),
+                        tone=float(art.get("tone", 0.0)), truthful=1)
+                    # Mirror the article into the v2 claim/exposure economy.
+                    # This adapter never fabricates a second source of truth.
+                    self.e.information.register_news_article(
+                        tick, aid, int(outlet["id"]), art["headline"],
+                        art.get("body", ""),
+                        [int(item) for item in art.get("source_event_ids", [])],
+                        float(art.get("tone", 0.0)),
+                        author_agent_id=self._desk_agent(
+                            "editor", int(outlet["id"])),
+                        slant=float(art.get("slant_score", 0.0)))
+                    self.store.log_event(tick, "news_published", {
+                        "article_id": aid, "outlet_id": outlet["id"],
+                        "outlet": outlet["name"], "headline": art["headline"],
+                        "tone": art.get("tone", 0.0)},
+                        phase="NEWSROOM", importance=1.5)
+                    articles.append(art)
+            return articles
 
     def _daily_events(self, tick: int) -> list[dict]:
         """Return true events for a low-salience daily brief.
@@ -149,14 +162,69 @@ class Newsroom:
             return source_event_id if any(
                 int(event["id"]) == source_event_id for event in events) else None
 
+        def replay_reference_error(reason: str):
+            raise ReplayReferenceError(
+                f"newsroom source event {source_event_id}: {reason}")
+
         source = replay_conn.execute(
             "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
             (source_event_id,)).fetchone()
         if source is None:
+            # Preserve the live contract: a model-invented citation was already
+            # invalid in the source run, so replay must take the same brief
+            # fallback instead of treating it as replay divergence.
             return None
+
+        # Use the event digest that was actually persisted with the recorded
+        # editor request.  Rebuilding it from the finalized source event table
+        # is unsafe because later same-tick events were not visible to the desk.
+        source_digests: dict[str, list[dict]] = {}
+        source_calls = replay_conn.execute(
+            "SELECT request_json FROM llm_calls WHERE tick=? AND purpose='newsroom' "
+            "ORDER BY id", (int(source["tick"]),)).fetchall()
+        for call in source_calls:
+            request = load_json(call["request_json"], {}) or {}
+            context = request.get("context", {}) if isinstance(request, dict) else {}
+            digest = context.get("salient_events", []) \
+                if isinstance(context, dict) else []
+            if not isinstance(digest, list) or not all(
+                    isinstance(event, dict) for event in digest):
+                continue
+            if not any(type(event.get("id")) is int
+                       and int(event["id"]) == source_event_id
+                       for event in digest):
+                continue
+            key = json.dumps(
+                digest, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False)
+            source_digests[key] = digest
+        if len(source_digests) != 1:
+            # Existing but out-of-prompt citations are also invalid model input,
+            # not evidence that a valid source occurrence disappeared locally.
+            return None
+
+        source_digest = next(iter(source_digests.values()))
         source_payload = public_event_payload(
             source["kind"], load_json(source["payload_json"], {}) or {})
-        candidates = []
+        source_candidates = []
+        for event in source_digest:
+            event_id = event.get("id")
+            try:
+                same_tick = (
+                    int(event.get("tick", source["tick"])) == int(source["tick"]))
+                same_importance = (
+                    float(event.get("importance")) == float(source["importance"]))
+            except (TypeError, ValueError):
+                continue
+            if (type(event_id) is int and same_tick and same_importance
+                    and str(event.get("kind")) == str(source["kind"])
+                    and event.get("payload") == source_payload):
+                source_candidates.append(int(event_id))
+        if (source_event_id not in source_candidates
+                or len(source_candidates) != len(set(source_candidates))):
+            return None
+
+        local_candidates = []
         for event in events:
             local = self.store.query_one(
                 "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
@@ -168,10 +236,17 @@ class Newsroom:
                         local["kind"], load_json(local["payload_json"], {}) or {}
                     ) == source_payload
                     and float(local["importance"]) == float(source["importance"])):
-                candidates.append(int(event["id"]))
-        if len(candidates) == 1:
-            return candidates[0]
-        return None
+                local_candidates.append(int(event["id"]))
+        if (len(source_candidates) != len(local_candidates)
+                or len(local_candidates) != len(set(local_candidates))):
+            replay_reference_error(
+                "logical occurrence cardinality mismatch "
+                f"(source={len(source_candidates)}, local={len(local_candidates)})")
+        occurrence = source_candidates.index(source_event_id)
+        if occurrence >= len(local_candidates):
+            replay_reference_error(
+                f"logical occurrence ordinal {occurrence} is unavailable locally")
+        return local_candidates[occurrence]
 
     def _ground_article(self, outlet: dict, article: Optional[dict],
                         events: list[dict], *,
@@ -264,6 +339,8 @@ class Newsroom:
         """Reporter stage: draft 2–4 candidate stories from the day's true events."""
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "rng_seed": tick * 37 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         system = ("You are a reporter in a simulated economy. From the given TRUE events draft "
                   "2-4 short candidate stories as JSON: {\"stories\": [{\"headline\":..., "
                   "\"body\":..., \"tone\": -1..1, \"kind\":..., \"source_event_ids\":[...]}]}. "
@@ -286,6 +363,8 @@ class Newsroom:
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "drafts": drafts or [], "directive": directive,
                    "rng_seed": tick * 31 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         user = json.dumps({"outlet": outlet, "drafts": drafts or [], "events": events,
                            "directive": directive})[:3000]
         system = ("You are the editor of a simulated-economy news outlet. Pick the ONE candidate "
@@ -296,7 +375,12 @@ class Newsroom:
         req = LLMRequest(role="editor", purpose="newsroom", system=system, user=user,
                          context=context, agent_id=self._desk_agent("editor", outlet["id"]),
                          tick=tick, max_tokens=400)
-        resp = await self.gw.complete(req)
+        resp = await self.gw.complete(
+            req,
+            parsed_transform=lambda parsed: self._ground_article(
+                outlet, parsed if isinstance(parsed, dict) else {}, events,
+                directive=directive),
+        )
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
         return art
 

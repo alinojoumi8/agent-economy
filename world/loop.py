@@ -27,6 +27,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
+from engine.checkpoint_manifest import (
+    finalize_sqlite_artifact,
+    write_checkpoint_manifest,
+)
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.semantics import semantics_version
 from engine.store import Store, load_json
@@ -116,6 +120,10 @@ class World:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
+        if self.engine_semantics_version >= 7:
+            # Genesis consumes the persona stream. Persist it immediately so a
+            # resume before tick 1 cannot reset arrival identities.
+            self._save_prng_state()
         self.store.commit()
         operational_log(logger, logging.INFO, "world.initialized",
                         run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
@@ -514,13 +522,20 @@ class World:
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
                 if self.economy.regions.enabled else self.engine_prng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
+            baseline_core = (
+                self.engine_semantics_version >= 7
+                and bool(self.config.get("population", {}).get(
+                    "baseline_citizens_core", False))
+                and not self.economy.regions.enabled)
             agent_id = self.store.insert(
                 "agents", name=p.name, kind="citizen", occupation=p.occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                model_tier="citizen",
+                population_tier="core" if baseline_core else "periphery",
+                pinned_core=1 if baseline_core else 0, region_id=region_id,
                 alive=1, retired=0, arrived_tick=tick)
             if self.engine_semantics_version >= 7:
                 checking_cents = int(p.wealth_cents * 0.7)
@@ -602,6 +617,8 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
+            finalize_sqlite_artifact(dest)
+            write_checkpoint_manifest(dest)
             self.store.insert("checkpoints", tick=tick, path=str(dest),
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())
@@ -617,15 +634,28 @@ class World:
             return None
 
     def _save_prng_state(self) -> None:
+        engine_state = _prng_state(self.engine_prng)
+        if self.engine_semantics_version >= 7:
+            engine_state = {
+                "engine": engine_state,
+                "persona": _prng_state(self.persona_prng),
+            }
         self.store.set_meta(
-            prng_state=json.dumps(_prng_state(self.engine_prng)),
+            prng_state=json.dumps(engine_state),
             lifecycle_prng_state=json.dumps(_prng_state(self.lifecycle_prng)),
             governor_json=json.dumps(self.gateway.governor.status()))
 
     def restore_prng_state(self) -> None:
         meta = self.store.get_meta()
         if meta["prng_state"]:
-            self.engine_prng.setstate(_from_state(json.loads(meta["prng_state"])))
+            engine_state = json.loads(meta["prng_state"])
+            if isinstance(engine_state, dict):
+                self.engine_prng.setstate(_from_state(engine_state["engine"]))
+                self.persona_prng.setstate(_from_state(engine_state["persona"]))
+            else:
+                # Stored semantics 1-6 and pre-fix semantics-7 runs retain the
+                # historical list-form resume contract.
+                self.engine_prng.setstate(_from_state(engine_state))
         if meta["lifecycle_prng_state"]:
             self.lifecycle_prng.setstate(_from_state(json.loads(meta["lifecycle_prng_state"])))
 

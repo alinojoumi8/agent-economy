@@ -1,0 +1,16 @@
+# Fresh release corpus after v2 seed 7311 exposed a receipt-only population
+# invariant. V2 source and replay reached tick 335, but the receipt counted
+# preserved deceased rows instead of bounded living population. No v2 response
+# is reused; v3 keeps the corrected replay mechanics and uses fresh seeds.
+extends: calibration-base-v2.yaml
+
+seed: 7321
+
+acceptance:
+  oracle_campaign_id: oracle-calibration-v3
+  oracle_campaign_version: 3
+
+lifecycle:
+  population_mode: stable
+  arrival_delay_min: 5
+  arrival_delay_max: 20

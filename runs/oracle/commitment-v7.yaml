@@ -1,0 +1,18 @@
+# Fresh pre-run commitment after v6 seed 7351 exposed a semantic answer-contract
+# rejection: the provider returned confidence "medium" instead of the required
+# "med". V6 remains diagnostic and excluded; no response, claim, checkpoint,
+# run identity, profile ancestry, manifest entry, artifact, or seed is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v7
+campaign_version: 7
+runs:
+  - {seed: 7361, run_id: oracle-calibration-v7-s7361, profile: v7-seed-7361-control.yaml, effective_config_sha256: cb80115b4c4fc13bfccb8a83b8828936a31cbef2e06c35bec794277671937968}
+  - {seed: 7362, run_id: oracle-calibration-v7-s7362, profile: v7-seed-7362-rumor.yaml, effective_config_sha256: 956f35356f2764a87c1639460846fe52e5032b6c482c881a385be6cfaebd86d0}
+  - {seed: 7363, run_id: oracle-calibration-v7-s7363, profile: v7-seed-7363-control.yaml, effective_config_sha256: a2106b03012c59e72db7c0db617e469927072e972a03b27dc9d040a5d10e5654}
+  - {seed: 7364, run_id: oracle-calibration-v7-s7364, profile: v7-seed-7364-rumor.yaml, effective_config_sha256: 2d2c203629b754a5b62401bb6e585b06e5dea232e23e17ec0b7ce9fbcde3f0da}
+  - {seed: 7365, run_id: oracle-calibration-v7-s7365, profile: v7-seed-7365-control.yaml, effective_config_sha256: 7b8c1c30b5841ff39b4c05d8498a865a23e69443ebf3f2f420c93ce83e1a942e}
+  - {seed: 7366, run_id: oracle-calibration-v7-s7366, profile: v7-seed-7366-rumor.yaml, effective_config_sha256: 0fa305bab3b06cff0258800f04b40becd0fc64f464f1f2f43d6e7a8ab3a59030}
+  - {seed: 7367, run_id: oracle-calibration-v7-s7367, profile: v7-seed-7367-control.yaml, effective_config_sha256: 3a6d5b20b810af0a9b9f9212095762d2144b04da35626ab833433528f32dc65c}
+  - {seed: 7368, run_id: oracle-calibration-v7-s7368, profile: v7-seed-7368-rumor.yaml, effective_config_sha256: 08f8593a6049bfa01b1858c0979c5fc0d58253be86cd78873769e5e0f9daea11}
+  - {seed: 7369, run_id: oracle-calibration-v7-s7369, profile: v7-seed-7369-control.yaml, effective_config_sha256: 853807cf48e4c8bce8cecd6626cce30368368af95fffc7193d6fb20c89750014}
+  - {seed: 7370, run_id: oracle-calibration-v7-s7370, profile: v7-seed-7370-rumor.yaml, effective_config_sha256: 21e5b7f86d8e4fa12eacf0178c9c5fb86918b8fa71893a67675be3b4d813cd6e}

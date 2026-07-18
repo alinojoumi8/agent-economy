@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import experiments.harness as experiment_harness
 import research.counterfactual as counterfactual_runner
 import research.scenarios as scenarios
+import reports.acceptance as acceptance_report
 import run as cli
 from engine.store import Store
 from reports.acceptance import (
@@ -37,6 +38,33 @@ def _config(**over):
     }
     config.update(over)
     return config
+
+
+def _strict_oracle_acceptance_config(*, min_ticks=2, latency_limit_ms=60_000):
+    question = "What is the probability of a bank run within 30 ticks?"
+    return _config(
+        oracle={"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                "strict_resolution_rules": True},
+        acceptance={
+            "min_ticks": min_ticks, "min_agents": 0, "max_agents": 100,
+            "max_spend_usd": 200.0, "efficiency_target_usd": 200.0,
+            "oracle_p90_ms": latency_limit_ms,
+            "oracle_min_latency_samples": 1,
+            "oracle_latency_source": "scheduled_e2e_v1",
+            "oracle_campaign_id": "test-oracle-campaign",
+            "oracle_campaign_version": 1,
+            "required_shocks": [], "require_oracle_scoring": False,
+            "require_experiment": False, "require_phenomena": False,
+            "oracle_questions": [{
+                "at_tick": 1, "campaign_key": "bank_run_t001",
+                "horizon_ticks": 30,
+                "expected_rule": {
+                    "type": "bank_run", "window": 5, "deposit_drop": 0.30,
+                },
+                "question": question,
+            }],
+        },
+    )
 
 
 def _passing_evidence(tmp_path):
@@ -162,6 +190,31 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert "Observed through agent decisions and transactions." in markdown
 
 
+def test_acceptance_population_gate_counts_living_agents(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db))
+    store.insert(
+        "agents", id=101, name="Historical agent", kind="citizen", age=80,
+        alive=0, died_tick=300)
+    store.commit()
+    store.close()
+
+    receipt = write_acceptance_package(
+        db, out_dir=tmp_path / "out", experiment_json=experiment,
+        phenomena_yaml=phenomena)
+    population = next(
+        check for check in receipt["checks"] if check["id"] == "population")
+
+    assert receipt["passed"]
+    assert population["passed"]
+    assert population["evidence"] == {
+        "agents": 100,
+        "living_agents": 100,
+        "historical_total_agents": 101,
+        "range": [95, 105],
+    }
+
+
 def test_acceptance_package_fails_closed_without_reviewed_attachments(tmp_path):
     db, _, _ = _passing_evidence(tmp_path)
     receipt = write_acceptance_package(db, out_dir=tmp_path / "out")
@@ -256,10 +309,18 @@ def test_acceptance_distinguishes_recovered_provider_incidents(tmp_path):
     assert check["evidence"]["unrecovered_provider_incidents"] == 1
 
 
-def test_acceptance_never_waives_reconciliation_failure(tmp_path):
+@pytest.mark.parametrize(("kind", "payload"), [
+    ("reconciliation_failure", {"grand_sum_cents": 1}),
+    ("oracle_tool_execution_failed", {
+        "question": "Will a bank run happen?",
+        "error": "forced authenticated execution failure",
+        "plan_sha256": "0" * 64,
+    }),
+])
+def test_acceptance_never_waives_hard_failure(tmp_path, kind, payload):
     db, experiment, phenomena = _passing_evidence(tmp_path)
     store = Store(str(db))
-    store.log_event(1, "reconciliation_failure", {"grand_sum_cents": 1})
+    store.log_event(1, kind, payload)
     store.commit()
     store.close()
 
@@ -269,7 +330,7 @@ def test_acceptance_never_waives_reconciliation_failure(tmp_path):
     )
     check = next(check for check in receipt["checks"] if check["id"] == "failure_events")
     assert not check["passed"]
-    assert check["evidence"]["counts"]["reconciliation_failure"] == 1
+    assert check["evidence"]["counts"][kind] == 1
 
 
 def test_acceptance_runner_schedules_oracle_once_and_resumes(tmp_path):
@@ -443,6 +504,555 @@ def test_completed_acceptance_orchestration_replays_exactly(tmp_path):
             replay_world.close()
         else:
             source_world.close()
+
+
+def test_scheduled_e2e_latency_is_prediction_bound_and_replay_exact(
+        tmp_path, monkeypatch):
+    config = _strict_oracle_acceptance_config()
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    clock = iter((10_000_000_000, 11_500_000_000))
+    monkeypatch.setattr(
+        acceptance_report.time, "perf_counter_ns", lambda: next(clock))
+    seen_contracts = []
+
+    def governed_answer(context):
+        contract = context["governed_forecast_contract"]
+        seen_contracts.append(contract)
+        return {
+            "p": 0.2, "drivers": ["reserve ratio", "deposit trust"],
+            "confidence": "med",
+            "resolution_rule": contract["resolution_rule"],
+            "deadline_tick": contract["deadline_tick"],
+            "reasoning": "used the engine-owned schedule contract",
+        }
+
+    source_world.gateway.scripted.register("oracle", governed_answer)
+    try:
+        asyncio.run(execute_acceptance_run(source_world, target_tick=2))
+        assert seen_contracts == [{
+            "campaign_id": "test-oracle-campaign",
+            "campaign_version": 1,
+            "campaign_key": "bank_run_t001",
+            "scheduled_tick": 1,
+            "resolution_rule": {
+                "type": "bank_run", "window": 5, "deposit_drop": 0.30,
+            },
+            "deadline_tick": 31,
+        }]
+        source_event = source_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'")
+        payload = json.loads(source_event["payload_json"])
+        assert payload["latency_ms"] == 1500
+        assert payload["latency_kind"] == "scheduled_e2e_v1"
+        assert payload["campaign_key"] == "bank_run_t001"
+        assert {call["purpose"] for call in payload["model_calls"]} >= {
+            "oracle_plan", "oracle"}
+        source_status = acceptance_schedule_status(
+            source_store, config, target_tick=2)
+        assert source_status["state"] == "completed"
+        assert source_status["checkpoints"][0]["latency_ms"] == 1500
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+        replay_payload = json.loads(replay_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'")["payload_json"])
+        assert replay_payload == payload
+        replay_status = acceptance_schedule_status(
+            replay_store, replay_world.config, target_tick=2)
+        assert replay_status["checkpoints"][0]["latency_ms"] == 1500
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
+def test_strict_acceptance_validates_canonical_semantics7_answer_prompt(tmp_path):
+    config = _strict_oracle_acceptance_config()
+    config["engine_semantics_version"] = 7
+    store = Store(str(tmp_path / "canonical-semantics7.db"))
+    store.init_run_meta("canonical-semantics7", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    try:
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+        request = json.loads(store.query_one(
+            "SELECT request_json FROM llm_calls "
+            "WHERE tick=1 AND role='oracle' AND purpose='oracle'")["request_json"])
+        user_text = request["user"]
+        user = json.loads(user_text)
+        context = request["context"]
+        assert set(user) == {
+            "governed_forecast_contract", "question", "tick",
+            "read_only_evidence", "world",
+        }
+        assert user["tick"] == 1
+        assert user["read_only_evidence"] == context["evidence"]
+        assert user["world"] == context["prompt_world"]
+        assert user_text == json.dumps(
+            user, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False)
+        assert acceptance_schedule_status(
+            store, config, target_tick=2)["state"] == "completed"
+    finally:
+        world.close()
+
+
+def _assert_resumed_scheduled_checkpoint(store, config, *, latency_ms=3000):
+    question = config["acceptance"]["oracle_questions"][0]["question"]
+    assert store.tick == 2
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE tick=1 AND role='oracle' "
+        "AND purpose='oracle_plan'") == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE tick=1 AND role='oracle' "
+        "AND purpose='oracle'") == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM predictions WHERE asked_tick=1 AND question=?",
+        (question,)) == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1") == 1
+    checkpoint = store.query_one(
+        "SELECT status,prediction_id,detail FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=1 AND question=?", (question,))
+    assert checkpoint is not None
+    assert checkpoint["status"] == "completed"
+    assert checkpoint["prediction_id"] is not None
+    assert checkpoint["detail"] is None
+    payload = json.loads(store.query_one(
+        "SELECT payload_json FROM events "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1")["payload_json"])
+    assert payload["latency_ms"] == latency_ms
+    assert payload["latency_measurement"] == "resumed_wall_clock"
+    assert [call["purpose"] for call in payload["model_calls"]] == [
+        "oracle_plan", "oracle"]
+    assert all(call["request_key"] for call in payload["model_calls"])
+
+
+@pytest.mark.parametrize("crash_purpose", ["oracle_plan", "oracle"])
+def test_scheduled_checkpoint_resume_reuses_calls_after_crash(
+        tmp_path, monkeypatch, crash_purpose):
+    config = _strict_oracle_acceptance_config()
+    path = tmp_path / f"crash-after-{crash_purpose}.db"
+    store = Store(str(path))
+    store.init_run_meta(f"crash-after-{crash_purpose}", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    wall_clock = iter((10_000_000_000, 13_000_000_000))
+    monkeypatch.setattr(
+        acceptance_report.time, "time_ns", lambda: next(wall_clock))
+    original_complete = world.gateway.complete
+    crashed = False
+
+    async def crash_after_durable_call(request, **kwargs):
+        nonlocal crashed
+        response = await original_complete(request, **kwargs)
+        if not crashed and request.purpose == crash_purpose:
+            crashed = True
+            raise RuntimeError(f"crash after {crash_purpose}")
+        return response
+
+    world.gateway.complete = crash_after_durable_call
+    with pytest.raises(RuntimeError, match=f"crash after {crash_purpose}"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE tick=1 AND role='oracle'") == (
+            1 if crash_purpose == "oracle_plan" else 2)
+    assert store.scalar("SELECT COUNT(*) FROM predictions") == 0
+    assert store.query_one(
+        "SELECT status FROM acceptance_checkpoints WHERE scheduled_tick=1")["status"] == (
+            "pending")
+    world.close()
+
+    resumed_store = Store(str(path))
+    resumed_world = World(resumed_store, config)
+    resumed_world.initialize()
+    try:
+        asyncio.run(execute_acceptance_run(resumed_world, target_tick=2))
+        _assert_resumed_scheduled_checkpoint(resumed_store, config)
+    finally:
+        resumed_world.close()
+
+
+def test_scheduled_checkpoint_resume_does_not_duplicate_prediction_after_crash(
+        tmp_path, monkeypatch):
+    config = _strict_oracle_acceptance_config()
+    path = tmp_path / "crash-after-prediction.db"
+    store = Store(str(path))
+    store.init_run_meta("crash-after-prediction", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    wall_clock = iter((20_000_000_000, 23_000_000_000))
+    monkeypatch.setattr(
+        acceptance_report.time, "time_ns", lambda: next(wall_clock))
+    perf_calls = 0
+
+    def crash_before_completion_event():
+        nonlocal perf_calls
+        perf_calls += 1
+        if perf_calls == 2:
+            raise RuntimeError("crash after prediction")
+        return 1_000_000_000
+
+    monkeypatch.setattr(
+        acceptance_report.time, "perf_counter_ns", crash_before_completion_event)
+    with pytest.raises(RuntimeError, match="crash after prediction"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+    assert store.scalar("SELECT COUNT(*) FROM predictions") == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_completed'") == 0
+    world.close()
+
+    resumed_store = Store(str(path))
+    resumed_world = World(resumed_store, config)
+    resumed_world.initialize()
+    try:
+        asyncio.run(execute_acceptance_run(resumed_world, target_tick=2))
+        _assert_resumed_scheduled_checkpoint(resumed_store, config)
+        # Re-entering orchestration is a complete no-op for both the row and event.
+        completed_at = resumed_store.query_one(
+            "SELECT completed_at FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=1")["completed_at"]
+        asyncio.run(execute_acceptance_run(resumed_world, target_tick=2))
+        assert resumed_store.query_one(
+            "SELECT completed_at FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=1")["completed_at"] == completed_at
+        assert resumed_store.scalar("SELECT COUNT(*) FROM predictions") == 1
+        assert resumed_store.scalar(
+            "SELECT COUNT(*) FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'") == 1
+    finally:
+        resumed_world.close()
+
+
+def _seed_strict_latency_fixture(path, *, event_prediction_id=1, latency_ms=1500):
+    config = _strict_oracle_acceptance_config(latency_limit_ms=1000)
+    store = Store(str(path))
+    store.init_run_meta("strict-latency", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    asyncio.run(execute_acceptance_run(world, target_tick=2))
+    store.insert(
+        "llm_calls", tick=0, role="oracle", purpose="oracle",
+        provider="minimax", model="MiniMax-M3", latency_ms=1)
+    event = store.query_one(
+        "SELECT id,payload_json FROM events "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1")
+    payload = json.loads(event["payload_json"])
+    payload["prediction_id"] = event_prediction_id
+    payload["latency_ms"] = latency_ms
+    store.execute(
+        "UPDATE events SET payload_json=? WHERE id=?",
+        (json.dumps(payload), int(event["id"])))
+    store.commit()
+    world.gateway.close()
+    return store, config, payload
+
+
+def test_scheduled_latency_clamps_individual_rounding_to_call_floor():
+    calls = [
+        {"call_latency_ms": 8_877},
+        {"call_latency_ms": 4_783},
+    ]
+
+    # Seed 7365 measured one enclosing interval at 13,658 ms while the two
+    # independently measured governed calls summed to 13,660 ms. Persist the
+    # conservative call floor so valid evidence cannot fail its own validator.
+    assert acceptance_report._scheduled_latency_ms(
+        13_658_000_000, calls) == 13_660
+    assert acceptance_report._scheduled_latency_ms(
+        13_700_000_000, calls) == 13_700
+
+
+def test_scheduled_latency_call_floor_remains_valid_evidence(tmp_path):
+    store, config, payload = _seed_strict_latency_fixture(
+        tmp_path / "rounded-call-floor.db")
+    call_rows = store.query(
+        "SELECT id FROM llm_calls "
+        "WHERE tick=1 AND role='oracle' ORDER BY id")
+    call_latencies = [8_877, 4_783]
+    for row, latency in zip(call_rows, call_latencies):
+        store.execute(
+            "UPDATE llm_calls SET latency_ms=? WHERE id=?",
+            (latency, int(row["id"])))
+    for call, latency in zip(payload["model_calls"], call_latencies):
+        call["call_latency_ms"] = latency
+    payload["latency_ms"] = acceptance_report._scheduled_latency_ms(
+        13_658_000_000, payload["model_calls"])
+    store.execute(
+        "UPDATE events SET payload_json=? "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1",
+        (json.dumps(payload),))
+    store.commit()
+
+    try:
+        status = acceptance_schedule_status(store, config, target_tick=2)
+        assert status["state"] == "completed"
+        assert status["checkpoints"][0]["latency_ms"] == 13_660
+    finally:
+        store.close()
+
+
+def test_call_floor_dominant_scheduled_latency_replays_exactly(tmp_path):
+    config = _strict_oracle_acceptance_config()
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    replay_world = None
+    try:
+        asyncio.run(execute_acceptance_run(source_world, target_tick=2))
+        event = source_store.query_one(
+            "SELECT id,payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed' AND tick=1")
+        payload = json.loads(event["payload_json"])
+        call_rows = source_store.query(
+            "SELECT id FROM llm_calls "
+            "WHERE tick=1 AND role='oracle' ORDER BY id")
+        call_latencies = [8_877, 4_783]
+        assert len(call_rows) == len(call_latencies)
+        for row, latency in zip(call_rows, call_latencies):
+            source_store.execute(
+                "UPDATE llm_calls SET latency_ms=? WHERE id=?",
+                (latency, int(row["id"])))
+        for call, latency in zip(payload["model_calls"], call_latencies):
+            call["call_latency_ms"] = latency
+        payload["latency_ms"] = acceptance_report._scheduled_latency_ms(
+            13_658_000_000, payload["model_calls"])
+        source_store.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(payload), int(event["id"])))
+        source_store.commit()
+
+        source_status = acceptance_schedule_status(
+            source_store, config, target_tick=2)
+        assert source_status["state"] == "completed"
+        assert source_status["checkpoints"][0]["latency_ms"] == 13_660
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+        asyncio.run(cli.replay_headless(replay_world, 2))
+        replay_payload = json.loads(replay_store.query_one(
+            "SELECT payload_json FROM events "
+            "WHERE kind='acceptance_checkpoint_completed' AND tick=1")[
+                "payload_json"])
+        assert replay_payload == payload
+        replay_status = acceptance_schedule_status(
+            replay_store, replay_world.config, target_tick=2)
+        assert replay_status["state"] == "completed"
+        assert replay_status["checkpoints"][0]["latency_ms"] == 13_660
+
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
+def test_strict_latency_ignores_manual_calls_and_duplicate_references_fail(tmp_path):
+    store, config, payload = _seed_strict_latency_fixture(tmp_path / "strict.db")
+    receipt = write_acceptance_package(store.path, out_dir=tmp_path / "out")
+    latency = next(check for check in receipt["checks"] if check["id"] == "oracle_latency")
+    assert not latency["passed"]
+    assert latency["evidence"] == {
+        "samples": 1, "p90_ms": 1500, "minimum_samples": 1,
+        "limit_ms": 1000, "latency_source": "scheduled_e2e_v1",
+    }
+
+    store.log_event(1, "acceptance_checkpoint_completed", payload)
+    store.commit()
+    schedule = acceptance_schedule_status(store, config, target_tick=2)
+    assert schedule["state"] == "invalid"
+    assert "duplicate" in schedule["checkpoints"][0]["validation_error"]
+    store.close()
+
+
+def test_strict_latency_rejects_a_dangling_completion_reference(tmp_path):
+    store, config, _ = _seed_strict_latency_fixture(
+        tmp_path / "dangling.db", event_prediction_id=999)
+    schedule = acceptance_schedule_status(store, config, target_tick=2)
+    assert schedule["state"] == "invalid"
+    assert "dangling" in schedule["checkpoints"][0]["validation_error"]
+    assert schedule["checkpoints"][0]["prediction_id"] is None
+    store.close()
+
+
+@pytest.mark.parametrize("corruption", ["missing_calls", "wrong_request_key", "short_latency"])
+def test_existing_strict_completion_revalidates_durable_call_evidence(
+        tmp_path, corruption):
+    store, config, _ = _seed_strict_latency_fixture(
+        tmp_path / f"strict-{corruption}.db")
+    event = store.query_one(
+        "SELECT id,payload_json FROM events "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=1")
+    payload = json.loads(event["payload_json"])
+    if corruption == "missing_calls":
+        store.execute("DELETE FROM llm_calls WHERE tick=1 AND role='oracle'")
+        expected = "no valid governed call set"
+    elif corruption == "wrong_request_key":
+        payload["model_calls"][0]["request_key"] = "not-the-governed-request"
+        store.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(payload), int(event["id"])))
+        expected = "do not exactly match"
+    else:
+        call_rows = store.query(
+            "SELECT id,purpose FROM llm_calls "
+            "WHERE tick=1 AND role='oracle' ORDER BY id")
+        latencies = [40, 60]
+        for row, latency in zip(call_rows, latencies):
+            store.execute(
+                "UPDATE llm_calls SET latency_ms=? WHERE id=?",
+                (latency, int(row["id"])))
+        for call, latency in zip(payload["model_calls"], latencies):
+            call["call_latency_ms"] = latency
+        payload["latency_ms"] = sum(latencies) - 1
+        store.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(payload), int(event["id"])))
+        expected = "shorter than its governed call latency sum"
+    store.commit()
+
+    world = World(store, config)
+    world.initialize()
+    try:
+        with pytest.raises(AcceptanceCheckpointMissed, match=expected):
+            asyncio.run(execute_acceptance_run(world, target_tick=2))
+        assert store.scalar("SELECT COUNT(*) FROM predictions") == 1
+        assert store.scalar(
+            "SELECT COUNT(*) FROM events "
+            "WHERE kind='acceptance_checkpoint_completed'") == 1
+        assert store.query_one(
+            "SELECT status FROM acceptance_checkpoints "
+            "WHERE scheduled_tick=1")["status"] == "missed"
+    finally:
+        world.close()
+
+
+def test_strict_resume_without_timer_fails_closed_before_reusing_durable_call(
+        tmp_path):
+    config = _strict_oracle_acceptance_config()
+    store = Store(str(tmp_path / "pre-marker-call.db"))
+    store.init_run_meta("pre-marker-call", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    original_complete = world.gateway.complete
+    crashed = False
+
+    async def crash_after_plan(request, **kwargs):
+        nonlocal crashed
+        response = await original_complete(request, **kwargs)
+        if request.purpose == "oracle_plan" and not crashed:
+            crashed = True
+            raise RuntimeError("crash after durable plan")
+        return response
+
+    world.gateway.complete = crash_after_plan
+    with pytest.raises(RuntimeError, match="crash after durable plan"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='oracle_plan'") == 1
+    store.execute("DELETE FROM acceptance_checkpoints WHERE scheduled_tick=1")
+    world.gateway.complete = original_complete
+
+    with pytest.raises(
+            AcceptanceCheckpointMissed, match="durable Oracle calls but no persisted"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE tick=1 AND role='oracle'") == 1
+    assert store.scalar("SELECT COUNT(*) FROM predictions") == 0
+    assert store.query_one(
+        "SELECT status FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=1")["status"] == "missed"
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_missed'") == 1
+    world.close()
+
+
+def test_invalid_scheduled_timer_is_durably_marked_missed_before_prediction(tmp_path):
+    config = _strict_oracle_acceptance_config()
+    store = Store(str(tmp_path / "invalid-timer.db"))
+    store.init_run_meta("invalid-timer", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    asyncio.run(world.run(max_ticks=1))
+    question = config["acceptance"]["oracle_questions"][0]["question"]
+    acceptance_report._record_checkpoint(
+        store, 1, question, "pending", detail='{"kind":"wrong"}')
+
+    with pytest.raises(AcceptanceCheckpointMissed, match="invalid persisted timer marker"):
+        asyncio.run(execute_acceptance_run(world, target_tick=2))
+    checkpoint = store.query_one(
+        "SELECT status,detail FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=1 AND question=?", (question,))
+    assert checkpoint["status"] == "missed"
+    assert "invalid persisted timer marker" in checkpoint["detail"]
+    assert store.scalar("SELECT COUNT(*) FROM predictions") == 0
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_missed'") == 1
+    world.close()
+
+
+def test_duplicate_governed_planner_request_key_invalidates_completion(tmp_path):
+    store, config, _ = _seed_strict_latency_fixture(
+        tmp_path / "duplicate-planner-key.db")
+    columns = (
+        "tick,agent_id,role,provider,model,purpose,cache_key,request_json,"
+        "response_json,in_tokens,out_tokens,cached,cost_usd,latency_ms,created_at")
+    store.execute(
+        f"INSERT INTO llm_calls({columns}) SELECT {columns} FROM llm_calls "
+        "WHERE tick=1 AND role='oracle' AND purpose='oracle_plan' LIMIT 1")
+    store.commit()
+
+    schedule = acceptance_schedule_status(store, config, target_tick=2)
+    assert schedule["state"] == "invalid"
+    assert "duplicate request keys" in schedule["checkpoints"][0]["validation_error"]
+    store.close()
+
+
+def test_missed_checkpoint_event_is_idempotent_across_ticks_and_conflicts_fail(tmp_path):
+    store = Store(str(tmp_path / "missed-idempotency.db"))
+    store.init_run_meta("missed-idempotency", 7, _config())
+    detail = "prospective evidence unavailable"
+    acceptance_report._record_missed_checkpoint(
+        store, scheduled_tick=1, question="bank run?", detail=detail,
+        event_tick=1)
+    acceptance_report._record_missed_checkpoint(
+        store, scheduled_tick=1, question="bank run?", detail=detail,
+        event_tick=9)
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_missed'") == 1
+
+    with pytest.raises(AcceptanceCheckpointMissed, match="conflicting missed evidence"):
+        acceptance_report._record_missed_checkpoint(
+            store, scheduled_tick=1, question="bank run?",
+            detail="different diagnostic", event_tick=10)
+    assert store.query_one(
+        "SELECT detail FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=1")["detail"] == detail
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='acceptance_checkpoint_missed'") == 1
+    store.close()
 
 
 def test_missed_acceptance_checkpoint_replays_exactly(tmp_path):
@@ -659,17 +1269,34 @@ def test_counterfactual_runner_reuses_the_authorized_effective_config(
     assert observed_configs == [effective_config, effective_config]
 
 
-def test_rehearsal_inherits_acceptance_scope_but_routes_every_role_locally():
+def test_rehearsal_initializes_acceptance_population_and_routes_every_role_locally():
     config = load_config("runs/acceptance/rehearsal.yaml")
 
     assert config["acceptance"]["min_ticks"] == 365
-    assert config["population"]["size"] == 87
     assert {shock["kind"] for shock in config["shocks"]} == {
         "policy_rate", "oil", "rumor", "slant", "scandal",
     }
     routes = [config["llm"]["default_route"], *config["llm"]["routes"].values()]
     assert {route["provider"] for route in routes} == {"scripted"}
     assert not uses_paid_providers(config)
+
+    store = Store(":memory:")
+    store.init_run_meta("acceptance-population", int(config["seed"]), config)
+    world = World(store, config)
+    try:
+        world.initialize()
+        living_agents = int(store.scalar(
+            "SELECT COUNT(*) FROM agents WHERE alive=1", default=0))
+        total_agents = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
+        acceptance = config["acceptance"]
+
+        assert living_agents == 100
+        assert total_agents == 100
+        assert acceptance["min_agents"] <= living_agents <= acceptance["max_agents"]
+    finally:
+        world.gateway.close()
+        store.close()
 
 
 def test_live_acceptance_profile_is_explicitly_uncapped():
@@ -678,8 +1305,15 @@ def test_live_acceptance_profile_is_explicitly_uncapped():
     assert config["budget"]["cap_usd"] is None
     assert config["acceptance"]["max_spend_usd"] is None
     assert config["acceptance"]["efficiency_target_usd"] == 200
-    assert config["acceptance"]["oracle_min_latency_samples"] == 5
+    assert config["acceptance"]["oracle_min_latency_samples"] == 6
+    assert config["acceptance"]["oracle_latency_source"] == "scheduled_e2e_v1"
+    assert config["acceptance"]["oracle_campaign_version"] == 1
     assert len(config["acceptance"]["oracle_questions"]) == 6
+    assert len({
+        item["campaign_key"] for item in config["acceptance"]["oracle_questions"]
+    }) == 6
+    assert all(item["expected_rule"]["type"] == "bank_run"
+               for item in config["acceptance"]["oracle_questions"])
     assert config["information"]["citizen_bank_visibility"] == "public_status"
 
 
@@ -692,6 +1326,23 @@ def test_live_pilot_profile_is_capped_and_rumor_scoped():
     assert not config["acceptance"]["require_oracle_scoring"]
     assert not config["acceptance"]["require_experiment"]
     assert not config["acceptance"]["require_phenomena"]
+
+
+def test_pilot_rehearsal_preserves_scope_and_routes_every_role_locally():
+    pilot = load_config("runs/acceptance/pilot.yaml")
+    rehearsal = load_config("runs/acceptance/pilot-rehearsal.yaml")
+
+    assert rehearsal["acceptance"] == pilot["acceptance"]
+    assert rehearsal["shocks"] == pilot["shocks"]
+    assert rehearsal["population"] == pilot["population"]
+    assert rehearsal["budget"]["cap_usd"] == pilot["budget"]["cap_usd"]
+    routes = [
+        rehearsal["llm"]["default_route"],
+        *rehearsal["llm"]["routes"].values(),
+    ]
+    assert {route["provider"] for route in routes} == {"scripted"}
+    assert {route["model"] for route in routes} == {"scripted"}
+    assert not uses_paid_providers(rehearsal)
 
 
 def test_scoped_pilot_receipt_omits_full_acceptance_requirements(tmp_path):

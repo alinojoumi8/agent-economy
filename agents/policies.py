@@ -518,6 +518,7 @@ def reporter_draft(context: dict) -> dict:
     """Reporter scripted stage: draft up to 3 neutral candidate stories, one per
     distinct salient event kind (TECH-SPEC §10 two-stage desk)."""
     events = context.get("salient_events", [])
+    engine_semantics_version = int(context.get("engine_semantics_version", 1))
     stories = []
     seen_kinds: set = set()
     for e in events:
@@ -525,7 +526,8 @@ def reporter_draft(context: dict) -> dict:
         if kind in seen_kinds:
             continue
         seen_kinds.add(kind)
-        headline, body, tone = _story_template(kind, [e])
+        headline, body, tone = _story_template(
+            kind, [e], engine_semantics_version=engine_semantics_version)
         stories.append({"headline": headline, "body": body, "tone": tone, "kind": kind,
                         "source_event_ids": [e["id"]]})
         if len(stories) >= 3:
@@ -543,13 +545,16 @@ def newsroom_policy(context: dict) -> dict:
     frame it; composes straight from events when the reporter came back empty."""
     outlet = context.get("outlet", {})
     slant = outlet.get("slant", "neutral")
+    engine_semantics_version = int(context.get("engine_semantics_version", 1))
     drafts = [d for d in context.get("drafts", []) if d.get("headline")]
     events = context.get("salient_events", [])
     if not drafts:
         if not events:
             return {"headline": "", "body": "", "slant_tags": [slant], "source_event_ids": []}
         top = events[0]
-        headline, body, tone = _story_template(top.get("kind", "event"), events)
+        headline, body, tone = _story_template(
+            top.get("kind", "event"), events,
+            engine_semantics_version=engine_semantics_version)
         pick = {"headline": headline, "body": body, "tone": tone,
                 "kind": top.get("kind"), "source_event_ids": [e["id"] for e in events[:4]]}
     elif slant == "cautious-pro-labor":
@@ -563,7 +568,8 @@ def newsroom_policy(context: dict) -> dict:
             "source_event_ids": pick.get("source_event_ids", [])}
 
 
-def _story_template(kind: str, events: list):
+def _story_template(
+        kind: str, events: list, *, engine_semantics_version: int = 1):
     """Neutral story text for an event kind (the reporter's voice)."""
     templates = {
         "bank_failure": ("Bank Collapses as Depositors Flee",
@@ -585,9 +591,21 @@ def _story_template(kind: str, events: list):
         "circuit_breaker": ("Trading Halted After Sharp Slide",
                             "The exchange halted a stock after it plunged past the breaker."),
     }
-    base_h, base_b = templates.get(kind, ("Markets in Motion", "Activity picked up across the economy."))
-    tone = -0.5 if kind in ("bank_failure", "rumor", "bankruptcy", "loan_default",
-                            "epidemic_started", "vc_writeoff", "circuit_breaker") else 0.1
+    if engine_semantics_version >= 7:
+        templates["firm_scandal"] = (
+            "Firm Faces Accounting Investigation",
+            "Investigators are examining reported control failures at a company.",
+        )
+    base_h, base_b = templates.get(
+        kind, ("Markets in Motion", "Activity picked up across the economy."))
+    if engine_semantics_version >= 7 and kind == "firm_scandal":
+        tone = -0.7
+    elif kind in (
+            "bank_failure", "rumor", "bankruptcy", "loan_default",
+            "epidemic_started", "vc_writeoff", "circuit_breaker"):
+        tone = -0.5
+    else:
+        tone = 0.1
     return base_h, base_b, tone
 
 
@@ -729,8 +747,13 @@ def oracle_answer(context: dict) -> dict:
     else:
         return {"insufficient_data": True,
                 "reason": "No machine-checkable resolution rule can be derived from world state."}
+    governed = context.get("governed_forecast_contract")
+    deadline_tick = tick + horizon
+    if isinstance(governed, dict):
+        rule = governed.get("resolution_rule", rule)
+        deadline_tick = governed.get("deadline_tick", deadline_tick)
     return {"p": round(p, 3), "drivers": drivers, "confidence": "med",
-            "resolution_rule": rule, "deadline_tick": tick + horizon,
+            "resolution_rule": rule, "deadline_tick": deadline_tick,
             "reasoning": "Estimated from current world state and simple structural drivers."}
 
 

@@ -38,6 +38,24 @@ class Genesis:
             {"id": 2, "name": "Commons Dispatch", "slant": "cautious-pro-labor"},
         ])
 
+    def _citizen_tier(self) -> tuple[str, int]:
+        """Keep the optional R19 core/periphery throttle out of baseline v7.
+
+        Semantics 5 and 6 historically classified genesis citizens as
+        peripheral even when no regional living-world configuration was
+        present, so their persisted behavior must not move.  Maintained
+        semantics 7 treats citizens as core unless the optional regional
+        economy is explicitly enabled; otherwise a v1-style acceptance run
+        would schedule only institutional agents and rumors could never affect
+        household decisions.
+        """
+        if (int(self.config.get("engine_semantics_version", 1)) >= 7
+                and bool(self.config.get("population", {}).get(
+                    "baseline_citizens_core", False))
+                and not self.e.regions.enabled):
+            return "core", 1
+        return "periphery", 0
+
     # ── top-level ────────────────────────────────────────────────────────────
     def build(self) -> None:
         self.e.ensure_system_accounts()
@@ -184,6 +202,7 @@ class Genesis:
         personas = ([sample.persona for sample in household_samples] if calibrated
                     else sample_population(
                         self.persona_prng, size, n_outlets=len(self.outlets)))
+        population_tier, pinned_core = self._citizen_tier()
         # Guarantee at least one lawyer occupation exists among citizens too.
         for index, p in enumerate(personas):
             if self.e.regions.enabled:
@@ -202,7 +221,8 @@ class Genesis:
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps(self._cadence_for(p)), model_tier="citizen",
                 alive=1, retired=int(self._is_retired(p)), arrived_tick=0,
-                region_id=region_id, population_tier="periphery", pinned_core=0)
+                region_id=region_id, population_tier=population_tier,
+                pinned_core=pinned_core)
             self._open_accounts(agent_id, bank_id, checking, savings)
             self._seed_beliefs(agent_id, bank_id)
             if calibrated:
@@ -371,13 +391,15 @@ class Genesis:
             region_id = self.e.regions.primary_region_id() if self.e.regions.enabled else None
             bank_id = self.e.regions.bank_for_region(self.bank_ids, region_id) \
                 if self.e.regions.enabled else self.prng.choice(self.bank_ids)
+            population_tier, pinned_core = self._citizen_tier()
             founder = self.store.insert(
                 "agents", name=founder_name, kind="citizen", occupation=occupation,
                 age=self.prng.randint(35, 55), health="healthy", dependents=1,
                 personality_json=json.dumps({"diligent": 0.8}), political_lean=0.0,
                 media_diet_json=json.dumps([o["id"] for o in self.outlets]),
                 risk_tolerance=0.4, cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                model_tier="citizen", population_tier=population_tier,
+                pinned_core=pinned_core, region_id=region_id,
                 alive=1, retired=0, arrived_tick=0)
             self._open_accounts(founder, bank_id, 500_000, 0)
             self._seed_beliefs(founder, bank_id)
