@@ -1,7 +1,7 @@
 # World OS: Communications and Causal Observatory Implementation Plan
 
 **Date:** 2026-07-18<br>
-**Status:** Engineering-review draft; implementation has not started<br>
+**Status:** Approved at Gate -1; implementation in progress<br>
 **Branch reviewed:** `main` at `c9f0b23`<br>
 **Product contract:** [World OS PRD](../world-os/PRD.md)<br>
 **Technical contract:** [World OS Technical Specification](../world-os/TECH-SPEC.md)<br>
@@ -791,7 +791,7 @@ Conflict flags:
 Synthesized from this review's findings. Each task is build-actionable and belongs in the
 first-lake branch; checkbox it only when its verification command and receipt are green.
 
-- [ ] **T0 (P1, human: ~2h / CC: ~20min)** — Research contract — Approve and freeze the 30-tick treatment/control protocol
+- [x] **T0 (P1, human: ~2h / CC: ~20min)** — Research contract — Approve and freeze the 30-tick treatment/control protocol
   - Surfaced by: adversarial completeness review — implementation previously began before the causal claim, controls, refutation thresholds, privacy surface, and evidence hashes were predeclared.
   - Files: `docs/world-os/30-TICK-RESEARCH-PROTOCOL.md`, design/PRD approval status, protocol manifest.
   - Verify: reviewer can neither make treatment/control pass without the required warning chain nor produce the quantity change outside the declared diff allowlist; protocol hash is recorded before T1.
@@ -888,8 +888,8 @@ first-lake branch; checkbox it only when its verification command and receipt ar
 
 ## Implementation sequence and merge gates
 
-1. **Gate -1 — Frozen claim:** T0 approves/hashes the treatment/control protocol. No
-   implementation task starts before this gate.
+1. **Gate -1 — Frozen claim (approved 2026-07-18):** T0 approves/hashes the
+   treatment/control protocol. No implementation task starts before this gate.
 2. **Gate 0 — Baseline:** T1 establishes compatibility receipts. No refactor merges before
    this gate.
 3. **Gate 1 — Versioned foundation:** T2-T4 land. Historical runs replay identically and

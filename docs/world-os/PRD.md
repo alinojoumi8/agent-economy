@@ -3,7 +3,7 @@
 **Version:** 0.9<br>
 **Date:** 2026-07-18<br>
 **Owner:** Ali<br>
-**Status:** Proposed successor roadmap; not an implementation-status claim<br>
+**Status:** Approved Semantics 8 roadmap; implementation in progress<br>
 **Current implemented contract:** [root PRD](../../PRD.md)
 
 ## 1. Vision

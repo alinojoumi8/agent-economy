@@ -2,7 +2,7 @@
 
 **Version:** 0.9<br>
 **Date:** 2026-07-18<br>
-**Status:** Proposed and engineering-reviewed; implementation has not started<br>
+**Status:** Approved and engineering-reviewed; Semantics 8 implementation in progress<br>
 **Product contract:** [World OS PRD](PRD.md)<br>
 **Framework decision:** [Framework research](FRAMEWORK-RESEARCH.md)
 

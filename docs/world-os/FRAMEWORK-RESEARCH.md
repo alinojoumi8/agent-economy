@@ -1,7 +1,7 @@
 # World OS framework research and build-versus-buy decision
 
 **Research date:** 2026-07-18<br>
-**Status:** Proposed architecture input<br>
+**Status:** Approved architecture input for Semantics 8<br>
 **Scope:** Agent Economy to World OS expansion
 
 ## Decision
