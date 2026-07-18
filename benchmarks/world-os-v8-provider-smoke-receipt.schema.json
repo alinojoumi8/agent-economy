@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-economy.local/schemas/world-os-v8-provider-smoke-receipt-v1.json",
+  "title": "World OS Semantics 8 provider smoke receipt",
+  "type": "object",
+  "required": [
+    "schema",
+    "recorded_at",
+    "build_identifier",
+    "run_config",
+    "ticks_required",
+    "credential_values_recorded",
+    "missing_environment_keys",
+    "provider_evidence",
+    "criteria",
+    "status",
+    "reason"
+  ],
+  "properties": {
+    "schema": {"const": "world-os-v8-provider-smoke-receipt-v1"},
+    "recorded_at": {"type": "string"},
+    "build_identifier": {"type": "string"},
+    "run_config": {"const": "runs/live-smoke.yaml"},
+    "ticks_required": {"const": 10},
+    "credential_values_recorded": {"const": false},
+    "missing_environment_keys": {"type": "array", "items": {"type": "string"}},
+    "provider_evidence": {"type": ["object", "null"]},
+    "criteria": {"type": "object"},
+    "status": {"enum": ["passed", "failed", "unavailable", "waived"]},
+    "reason": {"type": "string"}
+  },
+  "additionalProperties": false
+}
