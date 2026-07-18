@@ -1,11 +1,12 @@
 # World OS: Communications and Causal Observatory Implementation Plan
 
 **Date:** 2026-07-18<br>
-**Status:** Engineering-review draft; implementation has not started<br>
-**Branch reviewed:** `main` at `c9f0b23`<br>
+**Status:** Deterministic-ready; provider smoke unavailable<br>
+**Branch reviewed:** `main` at `5e4ab9983fa121900924c769de6012a4bce72857`<br>
 **Product contract:** [World OS PRD](../world-os/PRD.md)<br>
 **Technical contract:** [World OS Technical Specification](../world-os/TECH-SPEC.md)<br>
 **Framework decision:** [Framework Research](../world-os/FRAMEWORK-RESEARCH.md)
+**Release receipt:** [Semantics 8 Release Status](../world-os/SEMANTICS-8-RELEASE-STATUS.md)
 
 ## Outcome
 
@@ -791,105 +792,105 @@ Conflict flags:
 Synthesized from this review's findings. Each task is build-actionable and belongs in the
 first-lake branch; checkbox it only when its verification command and receipt are green.
 
-- [ ] **T0 (P1, human: ~2h / CC: ~20min)** — Research contract — Approve and freeze the 30-tick treatment/control protocol
+- [x] **T0 (P1, human: ~2h / CC: ~20min)** — Research contract — Approve and freeze the 30-tick treatment/control protocol
   - Surfaced by: adversarial completeness review — implementation previously began before the causal claim, controls, refutation thresholds, privacy surface, and evidence hashes were predeclared.
   - Files: `docs/world-os/30-TICK-RESEARCH-PROTOCOL.md`, design/PRD approval status, protocol manifest.
   - Verify: reviewer can neither make treatment/control pass without the required warning chain nor produce the quantity change outside the declared diff allowlist; protocol hash is recorded before T1.
 
-- [ ] **T1 (P1, human: ~2d / CC: ~4h)** — Compatibility — Freeze baseline contracts and fixtures
+- [x] **T1 (P1, human: ~2d / CC: ~4h)** — Compatibility — Freeze baseline contracts and fixtures
   - Surfaced by: code quality review — the high-fan-out action facade and historical phase order must be characterized before refactoring.
   - Files: `tests/test_actions.py`, `tests/test_world_loop.py`, `tests/fixtures/schemas/`, replay fixtures and table-hash helpers.
   - Verify: existing suite plus new characterization tests pass against `c9f0b23` behavior; fixture manifest records provenance and hashes.
 
-- [ ] **T2 (P1, human: ~3d / CC: ~6h)** — Storage — Introduce immutable migration registry and schema migration ledger
+- [x] **T2 (P1, human: ~3d / CC: ~6h)** — Storage — Introduce immutable migration registry and schema migration ledger
   - Surfaced by: architecture/adversarial review — schema 12 needs checksums, transactional application, historical fixture equivalence, verified `adopted_legacy` bootstrap, and future-version rejection.
   - Files: `engine/migrations/`, the sole aggregate schema-12 communication/causal migration and verifier, `engine/schema.py`, `tests/test_migrations.py`, `tests/fixtures/schemas/`.
   - Verify: communication and causal schema fragments are assembled once before the immutable v12 checksum is frozen; fresh/upgraded normalized schemas match; rollback, no-op, checksum mismatch, and future-version cases pass. T5/T8 may contribute fragments and tests but do not own another v12 migration.
 
-- [ ] **T3 (P1, human: ~2d / CC: ~4h)** — Scheduler — Extract versioned static `PhaseSpec` tables and resumable runner
+- [x] **T3 (P1, human: ~2d / CC: ~4h)** — Scheduler — Extract versioned static `PhaseSpec` tables and resumable runner
   - Surfaced by: architecture review — semantics 8 needs inbox delivery before morning without changing historical runs.
   - Files: `world/phases.py`, `world/loop.py`, `tests/test_phase_specs.py`, `tests/test_phase_resume_faults.py`.
   - Verify: historical phase receipts remain identical; fault injection before/after every phase resumes exactly once.
 
-- [ ] **T4 (P1, human: ~3d / CC: ~6h)** — Commands — Add discriminated Pydantic models and registry behind the compatibility facade
+- [x] **T4 (P1, human: ~3d / CC: ~6h)** — Commands — Add discriminated Pydantic models and registry behind the compatibility facade
   - Surfaced by: code quality review — mapping-shaped LLM actions need typed validation without breaking existing callers/results.
   - Files: `engine/commands/`, `engine/actions.py`, `LegacyHandlerAdapter`, `tests/test_action_command_registry.py`, touched command tests.
   - Verify: all existing action tests pass; exact mapping-input, result-shape, and savepoint compatibility; registry completeness; invalid/unknown inputs; body-free communication proposal/result/error persistence; and rollback cases pass.
 
-- [ ] **T5 (P1, human: ~4d / CC: ~8h)** — Communications — Add thread, message, audience, delivery, and disclosure persistence
+- [x] **T5 (P1, human: ~4d / CC: ~8h)** — Communications — Add thread, message, audience, delivery, and disclosure persistence
   - Surfaced by: architecture/adversarial review — asynchronous communication needs normalized audience keys, conditional checks, typed same-case disclosure authority, and reconciled exactly-once outcomes without nullable uniqueness.
   - Files: schema fragment supplied to T2's sole v12 aggregator, `communications/models.py`, `communications/repository.py`, `tests/test_communication_storage.py`.
   - Verify: foreign keys/index plan, non-null dedupe keys, audience/visibility/status checks, same-case disclosure, resolution reconciliation, body limits, and atomic persistence tests pass.
 
-- [ ] **T6 (P1, human: ~4d / CC: ~8h)** — Communications — Implement send, reply, forward, quota, and scheduled delivery handlers
+- [x] **T6 (P1, human: ~4d / CC: ~8h)** — Communications — Implement send, reply, forward, quota, and scheduled delivery handlers
   - Surfaced by: data-flow/adversarial review — communication must enter through ordinary commands; public N+1 release and reply/forward derivation must be deterministic; outcomes/grants/events/causes commit atomically.
   - Files: `communications/handlers.py`, `communications/delivery.py`, command models/registry, `tests/test_communication_handlers.py`.
   - Verify: typed direct/org/public audiences, same-tick rejection, public publication, reply-to-sender, new-thread forward, due ordering, quotas, provenance, rollback, and exact-resume tests pass.
 
-- [ ] **T7 (P1, human: ~3d / CC: ~6h)** — Information policy — Enforce immutable grants and knowledge-safe projections
+- [x] **T7 (P1, human: ~3d / CC: ~6h)** — Information policy — Enforce immutable grants and knowledge-safe projections
   - Surfaced by: security/adversarial review — every sender/delivery/public/disclosure/operator `AccessBasis`, field, consumer, and as-of tick needs one deny-by-default policy and non-authoritative audit path.
   - Files: `communications/policy.py`, `communications/projections.py`, prompt/context builders, `tests/test_communication_policy.py`.
   - Verify: exhaustive matrix has zero subject/body/identity/existence/URL/query/persistence/error/log/metric/trace/export leaks and operator truth cannot respond unless its sidecar audit append succeeds.
 
-- [ ] **T8 (P1, human: ~3d / CC: ~6h)** — Causality — Add validated stable references and provenance-bearing causal links
+- [x] **T8 (P1, human: ~3d / CC: ~6h)** — Causality — Add validated stable references and provenance-bearing causal links
   - Surfaced by: architecture/adversarial review — investigations require a normative endpoint/direction/relation/authority/provenance matrix, non-null dedupe, recorded DAG rules, and deterministic bounded traversal.
   - Files: schema fragment supplied to T2's sole v12 aggregator, `causal/links.py`, `causal/traversal.py`, domain integration points, `tests/test_causal_links.py`.
   - Verify: edge matrix, engine/actor/model provenance checks, temporal order, dangling/cross-run rejection, recorded DAG/inferred cycles, bounds/order, time-out labeling, dedupe, and dual-write compatibility pass.
 
-- [ ] **T9 (P1, human: ~3d / CC: ~6h)** — Agent behavior — Integrate inbox observations into scheduled deliberation and memory
+- [x] **T9 (P1, human: ~3d / CC: ~6h)** — Agent behavior — Integrate inbox observations into scheduled deliberation and memory
   - Surfaced by: product/adversarial gate — messages must alter beliefs/decisions through ordinary schedules without one extra LLM call per message or branch-label leakage.
   - Files: agent deliberation/context/memory modules, communication projections, scripted policies, related tests.
   - Verify: canonical policy input contains no excluded branch/protocol field; authorized bodies are delimited untrusted data; prompt-injection/fake-tool/secret-request probes cannot change system, tool, or authorization rules; relabel, body-swap, and withheld-delivery metamorphic probes make quantity follow authorized content; quotas/periphery wakes and observation -> belief -> proposal links pass.
 
-- [ ] **T10 (P1, human: ~4d / CC: ~8h)** — Read model — Build shared, versioned live/replay projection functions and REST adapters
+- [x] **T10 (P1, human: ~4d / CC: ~8h)** — Read model — Build shared, versioned live/replay projection functions and REST adapters
   - Surfaced by: architecture/adversarial review — bootstrap, history, replay, and reconstruction need one canonical run-scoped route table and full run/fork/semantics/projection/policy/view/cursor representation.
   - Files: `server/projections/`, `server/v2_api.py`, OpenAPI contract, `tests/test_projection_builders.py`, API tests.
   - Verify: canonical run-local `/api/v2` handlers and hosted `/api/v2/tenants/{tenant}/runs/{run}/world/...` prefix, live/replay/rebuild golden equality under the same view key, existing session/membership/tenant/run authorization, expired/revoked/disabled/cross-tenant denial, policy scoping, empty/boundary states, pagination, and lineage rejection pass.
 
-- [ ] **T11 (P1, human: ~3d / CC: ~6h)** — Transport — Publish ordered WebSocket deltas with cursor recovery
+- [x] **T11 (P1, human: ~3d / CC: ~6h)** — Transport — Publish ordered WebSocket deltas with cursor recovery
   - Surfaced by: failure review — gaps, duplicates, stale versions, pauses, and reconnects must never silently corrupt the browser view.
   - Files: `server/controller.py`, projection delta helpers, WebSocket routes, scripted transport tests.
   - Verify: one global run/fork cursor, advance envelopes, full-lineage contiguous apply, duplicate/conflict rejection, retained/missed backfill, fork isolation, pause heartbeat, Origin/session validation before accept, and expired/revoked/disabled/cross-tenant reauthorization pass.
 
-- [ ] **T12 (P1, human: ~3d / CC: ~6h)** — Operator workspace — Store investigations separately with optimistic concurrency and audit
+- [x] **T12 (P1, human: ~3d / CC: ~6h)** — Operator workspace — Store investigations separately with optimistic concurrency and audit
   - Surfaced by: state-ownership review — analyst hypotheses are valuable but must not become simulated truth.
   - Files: `operator_workspace/store.py`, `operator_workspace/hosted.py`, operator API/tests, hosted RLS migrations/policies where applicable.
   - Verify: separate-file enforcement, stable refs, two-editor conflict, existing session/membership/tenant/run auth, CSRF on every state-changing request, expired/revoked/disabled/cross-tenant denial, audit, and no-world-write tests pass.
 
-- [ ] **T13 (P1, human: ~3d / CC: ~6h)** — Research export — Produce deterministic content-addressed Parquet bundles
+- [x] **T13 (P1, human: ~3d / CC: ~6h)** — Research export — Produce deterministic content-addressed Parquet bundles
   - Surfaced by: product/performance/adversarial review — replay claims need an exhaustive table/column classification and typed canonical hash, while research needs queryable output without making DuckDB operational truth.
   - Files: `research/hash-contract-v1.json`, replay hash helpers, `research/export_bundle.py`, export schemas/manifest docs, `tests/test_research_export.py`.
   - Verify: new unclassified storage fails CI; identical state/view yields identical authoritative/projection/bundle hashes; wall-clock exclusions, interruption, redaction, and DuckDB-read cases pass.
 
-- [ ] **T14 (P1, human: ~4d / CC: ~8h)** — Frontend foundation — Add route shell, query client, generated types, and cursor reducer
+- [x] **T14 (P1, human: ~4d / CC: ~8h)** — Frontend foundation — Add route shell, query client, generated types, and cursor reducer
   - Surfaced by: UI/data-flow review — URL state and server state need explicit, non-duplicated ownership.
   - Files: `dashboard/src/app/`, `dashboard/src/generated/`, existing Observatory integration, frontend unit tests, package/CI config.
   - Verify: OpenAPI drift check, route restoration, stale/gap reducer, error/empty/loading boundaries, and existing frontend tests pass.
 
-- [ ] **T15 (P1, human: ~5d / CC: ~10h)** — Observatory — Ship the three gate workspaces and synchronized causal graph/table
+- [x] **T15 (P1, human: ~5d / CC: ~10h)** — Observatory — Ship the three gate workspaces and synchronized causal graph/table
   - Surfaced by: product/UI/adversarial scope review — causal proof needs full Overview, News & Communications, and Investigations; broad new map/entity/market redesign would dilute the gate.
   - Files: `dashboard/src/workspaces/`, causal `dashboard/src/visualizations/`, shell navigation, component tests.
   - Verify: canonical routes, field-policy inspector, graph/table selection parity, renderer fallback, keyboard/reduced-motion/color checks, bounded large-state behavior, and 390px layout pass; other routes preserve current panels.
 
-- [ ] **T16 (P1, human: ~5d / CC: ~10h)** — Verification — Add Hypothesis reference model, phase faults, and the 30-tick causal scenario
+- [x] **T16 (P1, human: ~5d / CC: ~10h)** — Verification — Add Hypothesis reference model, phase faults, and the 30-tick causal scenario
   - Surfaced by: test/adversarial review — temporal membership/death/publication/fork/resume interactions and the predeclared treatment/control effect cannot be covered reliably with examples alone.
   - Files: `tests/stateful/`, `tests/scenarios/`, replay/table-hash helpers, benchmark fixture.
   - Verify: generated sequences preserve the full six-basis field/as-of and closed causal invariants; branch-blind input/rule hash and all metamorphic probes pass; source checkpoint remains unchanged; treatment/controls meet exact quantities/diffs and five edges; uninterrupted/resumed/forked/replayed runs match `hash-contract-v1` within branch.
 
-- [ ] **T17 (P1, human: ~4d / CC: ~8h)** — Browser verification — Add Playwright transport and investigator journeys
+- [x] **T17 (P1, human: ~4d / CC: ~8h)** — Browser verification — Add Playwright transport and investigator journeys
   - Surfaced by: test review — common flows cross route, REST, WebSocket, policy, visualization, and sidecar boundaries.
   - Files: `dashboard/tests/e2e/`, Playwright config/fixtures, scripted server, CI artifact configuration.
   - Verify: every role/field/as-of surface including URL/query/persistence/error/trace, reconnect, fork lineage/source immutability, conflict, accessibility, mobile, and real-sim flow passes; safe traces retained on failure.
 
-- [ ] **T18 (P1, human: ~3d / CC: ~6h)** — Release evidence — Meet scale budgets and record live-provider smoke
+- [x] **T18 (P1, human: ~3d / CC: ~6h)** — Release evidence — Meet scale budgets and record live-provider smoke
   - Surfaced by: performance/eval/adversarial review — architecture claims require a versioned workload/machine/measurement manifest and raw receipts under scripted and real model behavior.
   - Files: `benchmarks/world-os-v8-standard.json`, benchmark/eval tooling, raw receipt schema, release manifest, operator docs, `docs/world-os/` status updates.
   - Verify: interactive p95/p99 plus 1,000-agent gates, query plans, exact total-run-footprint/RSS/FINALIZE-to-applied-delta/bootstrap budgets, manifest/raw samples, and deterministic replay receipt are recorded. The separate ten-tick provider report records `passed`, `unavailable`, or approved `waived`; only `passed` satisfies provider readiness.
 
 ## Implementation sequence and merge gates
 
-1. **Gate -1 — Frozen claim:** T0 approves/hashes the treatment/control protocol. No
-   implementation task starts before this gate.
+1. **Gate -1 — Frozen claim (approved 2026-07-18):** T0 approves/hashes the
+   treatment/control protocol. No implementation task starts before this gate.
 2. **Gate 0 — Baseline:** T1 establishes compatibility receipts. No refactor merges before
    this gate.
 3. **Gate 1 — Versioned foundation:** T2-T4 land. Historical runs replay identically and

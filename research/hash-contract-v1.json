@@ -1,0 +1,64 @@
+{
+  "id": "hash-contract-v1",
+  "schema_version": 12,
+  "schema_inventory_sha256": "0df8926132314e91b603c6cb2b56c0743fb690347680dd0a3b62b3fbc356c8d0",
+  "authoritative_tables": [
+    "acceptance_checkpoints", "accounts", "action_proposals", "agencies",
+    "agent_decisions", "agent_tier_history", "agents", "applications", "banks",
+    "beliefs", "bill_actions", "bill_versions", "bills", "calibration_targets",
+    "causal_links", "checkpoints", "claims", "comm_audiences", "comm_deliveries",
+    "comm_disclosure_authorities", "comm_disclosures", "comm_messages", "comm_threads",
+    "committee_members", "committees", "contract_acceptances", "contract_clauses",
+    "contract_parties", "contracts", "conversations", "currencies", "dataset_manifests",
+    "due_diligence_checks", "elections", "employments", "events", "firm_disclosures",
+    "firms", "funding_rounds", "fx_orders", "fx_reserves", "fx_trades",
+    "information_exposures", "information_items", "insurance_policies", "ip_assets",
+    "ip_licenses", "ipo_bids", "ipo_offerings", "job_offers", "jobs", "ledger_entries",
+    "legal_decisions", "legal_filings", "legal_matters", "legal_notices",
+    "legal_restrictions", "legal_rulesets", "legislative_votes", "legislators",
+    "liquidity_support_requests", "llm_calls", "loan_applications", "loans",
+    "lobbying_activities", "memories", "merger_reviews", "mergers", "messages",
+    "migrations", "news_articles", "obligations", "orders", "participant_actions",
+    "participant_control", "pitches", "policy_rules", "political_parties", "predictions",
+    "regions", "run_meta", "scenario_packs", "schema_migrations", "share_movements",
+    "shares", "shocks", "social_ties", "term_sheets", "trade_shipments",
+    "trader_profiles", "trades", "transactions"
+  ],
+  "derived_tables": ["account_ledger_totals", "metrics", "projection_commits"],
+  "excluded_tables": ["counterfactual_experiments", "counterfactual_results"],
+  "excluded_columns": {
+    "acceptance_checkpoints": ["completed_at"],
+    "checkpoints": ["path", "created_at"],
+    "events": ["created_at"],
+    "llm_calls": ["latency_ms", "created_at"],
+    "participant_actions": ["created_at", "executed_at"],
+    "participant_control": ["updated_at"],
+    "run_meta": ["created_at", "updated_at"],
+    "scenario_packs": ["manifest_path"],
+    "schema_migrations": ["applied_at"],
+    "transactions": ["created_at"]
+  },
+  "json_suffixes": ["_json"],
+  "json_columns": [
+    "conversations.participant_ids", "news_articles.slant_tags",
+    "news_articles.source_event_ids"
+  ],
+  "default_export_redactions": {
+    "comm_threads": ["subject"],
+    "comm_messages": ["body_text"],
+    "comm_audiences": ["audience_key"],
+    "comm_deliveries": ["membership_ref_json"],
+    "conversations": ["participant_ids"],
+    "legal_filings": ["body"],
+    "llm_calls": ["request_json", "response_json"],
+    "memories": ["text", "entities_json"],
+    "messages": ["text"]
+  },
+  "default_export_pseudonym_columns": {
+    "comm_threads": ["created_by_agent_id"],
+    "comm_messages": ["sender_agent_id"],
+    "comm_audiences": ["audience_agent_id"],
+    "comm_deliveries": ["recipient_agent_id"],
+    "comm_disclosures": ["grantee_agent_id"]
+  }
+}

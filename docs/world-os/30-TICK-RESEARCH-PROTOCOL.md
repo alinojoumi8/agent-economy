@@ -2,7 +2,7 @@
 
 **Protocol ID:** `world-os-v8-supplier-warning-v1`<br>
 **Date frozen:** 2026-07-18<br>
-**Status:** Proposed protocol; must be approved with the design package before T1<br>
+**Status:** Approved and frozen at Gate -1; implementation may proceed from this contract<br>
 **Semantics/schema:** engine semantics 8, world schema 12<br>
 **Provider:** deterministic scripted provider only; live-provider behavior is a separate smoke
 

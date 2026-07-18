@@ -47,6 +47,10 @@ export function Observatory({ hostedSession = null }) {
 
     {hosted && !canControl && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs text-mint-300"><strong>Observer access.</strong> This run is read-only; an administrator owns simulation controls.</aside>}
     {status?.pause_reason && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-gold-300/20 bg-gold-300/[.05] px-4 py-3 text-xs text-gold-300"><strong>Run paused safely.</strong> {status.pause_reason.detail || status.pause_reason.reason}</aside>}
+    {status?.run_id && <aside className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-3 rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs">
+      <span><strong className="text-mint-300">Semantics 8 workspace.</strong> Trace goal-driven communications through beliefs, decisions, events, and ledger effects.</span>
+      <a className="button" href={`/runs/${encodeURIComponent(status.run_id)}/overview`}>Open World OS</a>
+    </aside>}
 
     <main id="main-content" className="mx-auto grid max-w-[1800px] grid-cols-12 gap-3 px-3 pb-16 pt-3 sm:px-5">
       <SectionTitle index="0" title="The living legal-political economy" description="Watch regional production, trade, institutions, law, information, and capital move through one deterministic event spine." />

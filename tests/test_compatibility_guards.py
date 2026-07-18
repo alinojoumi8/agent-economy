@@ -35,7 +35,8 @@ def test_resume_accepts_every_supported_persisted_semantics(tmp_path, version):
         store.close()
 
 
-@pytest.mark.parametrize("version", [-1, 0, 8, 999])
+@pytest.mark.parametrize(
+    "version", [-1, 0, CURRENT_ENGINE_SEMANTICS_VERSION + 1, 999])
 def test_fresh_run_rejects_unsupported_semantics_before_creating_database(
         tmp_path, version):
     with pytest.raises(UnsupportedEngineSemantics, match="engine_semantics_version"):
@@ -51,9 +52,10 @@ def test_resume_and_replay_reject_unsupported_stored_semantics(tmp_path):
     source_path = tmp_path / f"{run_id}.db"
     _stored_run(source_path, run_id, CURRENT_ENGINE_SEMANTICS_VERSION + 1)
 
-    with pytest.raises(UnsupportedEngineSemantics, match="supports 1-7"):
+    supported = rf"supports 1-{CURRENT_ENGINE_SEMANTICS_VERSION}"
+    with pytest.raises(UnsupportedEngineSemantics, match=supported):
         open_run({}, run_id, None, data_dir=tmp_path)
-    with pytest.raises(UnsupportedEngineSemantics, match="supports 1-7"):
+    with pytest.raises(UnsupportedEngineSemantics, match=supported):
         open_run({}, None, run_id, data_dir=tmp_path)
 
     assert sorted(tmp_path.glob("*.db")) == [source_path]

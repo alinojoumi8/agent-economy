@@ -120,6 +120,9 @@ class RunController:
             replay_reader = getattr(_app.state, "replay_reader", None)
             if replay_reader is not None:
                 replay_reader.close()
+            operator_workspace = getattr(_app.state, "operator_workspace", None)
+            if operator_workspace is not None:
+                operator_workspace.close()
             operational_log(logger, logging.INFO, "server.stopped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             run_active=self.is_running())
@@ -128,8 +131,16 @@ class RunController:
     def on_tick(self, tick: int, summary: dict) -> None:
         if self.loop is None or not self.loop.is_running():
             return
-        future = asyncio.run_coroutine_threadsafe(
-            self.hub.broadcast(self.tick_payload(tick, summary)), self.loop)
+        messages = [self.tick_payload(tick, summary)]
+        if int(getattr(self.world, "engine_semantics_version", 1)) >= 8:
+            from server.projections.transport import projection_delta_message
+            messages.append(projection_delta_message(self.store, tick=tick))
+
+        async def broadcast_all() -> None:
+            for message in messages:
+                await self.hub.broadcast(message)
+
+        future = asyncio.run_coroutine_threadsafe(broadcast_all(), self.loop)
         with self._tick_broadcasts_lock:
             self._tick_broadcasts.add(future)
         future.add_done_callback(self._tick_broadcast_done)

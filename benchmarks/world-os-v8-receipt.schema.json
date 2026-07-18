@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-economy.local/schemas/world-os-v8-benchmark-receipt-v1.json",
+  "title": "World OS Semantics 8 benchmark receipt",
+  "type": "object",
+  "required": [
+    "schema",
+    "manifest_sha256",
+    "machine",
+    "dependency_sha256",
+    "fixture_sha256",
+    "raw_samples",
+    "measurements",
+    "query_plans",
+    "gates",
+    "status"
+  ],
+  "properties": {
+    "schema": {"const": "world-os-v8-benchmark-receipt-v1"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "machine": {"type": "object"},
+    "dependency_sha256": {"type": "object"},
+    "fixture_sha256": {"type": "object"},
+    "raw_samples": {"type": "object"},
+    "measurements": {"type": "object"},
+    "query_plans": {"type": "object"},
+    "gates": {"type": "object"},
+    "status": {"enum": ["passed", "failed"]}
+  },
+  "additionalProperties": false
+}
