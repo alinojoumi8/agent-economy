@@ -6,7 +6,9 @@ as integer cents everywhere; Ledger.post rejects unbalanced batches before
 insertion and tick reconciliation independently verifies every account (PRD R1).
 """
 
-SCHEMA_VERSION = 11
+from .migrations import apply_migrations
+
+SCHEMA_VERSION = 12
 
 
 class SchemaCompatibilityError(RuntimeError):
@@ -1351,6 +1353,7 @@ SELECT account_id, SUM(delta_cents) FROM ledger_entries GROUP BY account_id;
 
 def initialize_schema(conn) -> None:
     """Create all tables on a fresh connection (idempotent)."""
+    source_schema = _existing_schema_version(conn)
     assert_schema_compatible(conn)
     conn.executescript(SCHEMA_SQL)
     conn.executescript(MIGRATION_6_SQL)
@@ -1390,6 +1393,8 @@ def initialize_schema(conn) -> None:
         conn.execute(
             "ALTER TABLE predictions ADD COLUMN "
             "evidence_json TEXT NOT NULL DEFAULT '[]'")
+    apply_migrations(
+        conn, source_schema=source_schema, target_schema=SCHEMA_VERSION)
     conn.execute(
         "UPDATE run_meta SET schema_version=? WHERE id=1 AND schema_version<?",
         (SCHEMA_VERSION, SCHEMA_VERSION))

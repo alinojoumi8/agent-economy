@@ -12,9 +12,114 @@ out — a bank run emerging from beliefs, not a hard-coded rule tying rumor→ou
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import re
 from typing import Any, Callable
+
+
+SUPPLIER_WARNING_POLICY_ID = "supplier-warning-policy-v1"
+SUPPLIER_WARNING_POLICY_CONTRACT = {
+    "excluded_fields": [
+        "branch_label", "control_label", "fork_id", "protocol_expected_qty",
+        "run_id", "semantic_tag",
+    ],
+    "id": SUPPLIER_WARNING_POLICY_ID,
+    "input_fields": [
+        "authorized_inbox.sender_role",
+        "authorized_inbox.subject",
+        "authorized_inbox.body",
+        "authorized_inbox.delivery_tick",
+        "cash_cents",
+        "firm_id",
+        "firm_inventory",
+        "unit_price_cents",
+    ],
+    "rule": (
+        "qty=5 iff an authorized delivered unread message at tick 6 from "
+        "supplier_officer has subject Shipment notice and body Batch 2026-07 may "
+        "be contaminated. Limit the scheduled purchase to 5 units.; otherwise "
+        "qty=10"
+    ),
+}
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+SUPPLIER_WARNING_POLICY_CONTRACT_HASH = hashlib.sha256(
+    _canonical_json(SUPPLIER_WARNING_POLICY_CONTRACT).encode("utf-8")
+).hexdigest()
+if SUPPLIER_WARNING_POLICY_CONTRACT_HASH != (
+        "f29339c7ff21c653419226f2aee4c25eaeb99ccbc2886674519f9d24b05fc9a2"):
+    raise RuntimeError("frozen supplier-warning policy contract hash drifted")
+
+SUPPLIER_WARNING_BODY = (
+    "Batch 2026-07 may be contaminated. Limit the scheduled purchase to 5 units."
+)
+SUPPLIER_WARNING_SUBJECT = "Shipment notice"
+SUPPLIER_WARNING_INPUT_KEYS = {
+    "authorized_inbox", "cash_cents", "firm_id", "firm_inventory", "unit_price_cents",
+}
+SUPPLIER_WARNING_INBOX_KEYS = {
+    "sender_role", "subject", "body", "delivery_tick",
+}
+
+
+def supplier_warning_decision(policy_input: dict) -> dict:
+    """Execute the frozen branch-blind supplier-warning purchase policy.
+
+    The function deliberately accepts only the canonical policy input, rather
+    than a whole agent context.  Unknown fields fail closed so branch, run, or
+    expected-output metadata cannot silently enter the treatment rule.
+    """
+    if not isinstance(policy_input, dict) or set(policy_input) != SUPPLIER_WARNING_INPUT_KEYS:
+        raise ValueError("supplier-warning policy input fields do not match the frozen contract")
+    inbox = policy_input["authorized_inbox"]
+    if not isinstance(inbox, list):
+        raise ValueError("supplier-warning authorized_inbox must be a list")
+    for item in inbox:
+        if not isinstance(item, dict) or set(item) != SUPPLIER_WARNING_INBOX_KEYS:
+            raise ValueError("supplier-warning inbox fields do not match the frozen contract")
+
+    firm_id = int(policy_input["firm_id"])
+    cash = int(policy_input["cash_cents"])
+    inventory = int(policy_input["firm_inventory"])
+    price = int(policy_input["unit_price_cents"])
+    if firm_id <= 0 or price <= 0 or inventory < 10 or cash < 10 * price:
+        raise ValueError("supplier-warning fixture economic preconditions are not satisfied")
+
+    warning = any(
+        item["sender_role"] == "supplier_officer"
+        and item["subject"] == SUPPLIER_WARNING_SUBJECT
+        and item["body"] == SUPPLIER_WARNING_BODY
+        and int(item["delivery_tick"]) == 6
+        for item in inbox
+    )
+    quantity = 5 if warning else 10
+    input_hash = hashlib.sha256(_canonical_json(policy_input).encode("utf-8")).hexdigest()
+    belief_key = f"supplier_contamination:firm:{firm_id}"
+    action = {
+        "type": "buy_goods",
+        "firm_id": firm_id,
+        "qty": quantity,
+        "policy_contract_hash": SUPPLIER_WARNING_POLICY_CONTRACT_HASH,
+        "policy_input_hash": input_hash,
+        "scripted_policy_version": SUPPLIER_WARNING_POLICY_ID,
+    }
+    beliefs = []
+    if warning:
+        action["causal_belief_key"] = belief_key
+        beliefs.append({"key": belief_key, "value": 1.0})
+    return _env(
+        None,
+        [action],
+        beliefs,
+        "I will limit the purchase because of the authorized contamination warning."
+        if warning else "I will continue the scheduled purchase.",
+    )
 
 
 def _rng(context: dict) -> random.Random:
@@ -30,6 +135,8 @@ def _env(payload: dict, actions: list, beliefs: list | None = None, reasoning: s
 # Citizens / households
 # ─────────────────────────────────────────────────────────────────────────────
 def citizen_decision(context: dict) -> dict:
+    if "supplier_warning_policy_input" in context:
+        return supplier_warning_decision(context["supplier_warning_policy_input"])
     rng = _rng(context)
     agent = context.get("agent", {})
     state = context.get("state", {})
@@ -825,7 +932,21 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
 
 def scripted_decision(purpose: str, context: dict) -> dict:
     """Run one local policy without entering the governed model-call path."""
-    return POLICIES.get(purpose, citizen_decision)(context)
+    if "supplier_warning_policy_input" in context:
+        return supplier_warning_decision(context["supplier_warning_policy_input"])
+    envelope = POLICIES.get(purpose, citizen_decision)(context)
+    communication = context.get("scripted_communication_action")
+    if not isinstance(communication, dict) or not isinstance(envelope, dict):
+        return envelope
+    enriched = dict(envelope)
+    actions = list(enriched.get("actions", []))
+    if not any(
+            isinstance(action, dict)
+            and action.get("type") in {"send_message", "reply_message", "forward_message"}
+            for action in actions):
+        actions.append(dict(communication))
+    enriched["actions"] = actions
+    return enriched
 
 
 def register_scripted_policies(scripted_adapter) -> None:

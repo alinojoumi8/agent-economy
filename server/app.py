@@ -609,12 +609,41 @@ def create_app(world: World, *, served_ticks: int | None = None,
     # ── WebSocket ────────────────────────────────────────────────────────────
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        origin = ws.headers.get("origin")
+        allowed_origins = set(world.config.get("server", {}).get("allowed_origins", []))
+        if origin and allowed_origins and origin not in allowed_origins:
+            operational_log(
+                logger, logging.WARNING, "websocket.origin_denied",
+                run_id=world.gateway.run_id)
+            await ws.close(code=1008)
+            return
         await hub.connect(ws)
         try:
             await ws.send_text(json.dumps(controller.tick_payload(
                 store.tick, {"tick": store.tick})))
+            if int(getattr(world, "engine_semantics_version", 1)) >= 8:
+                from server.projections.transport import hello_message
+                await ws.send_text(json.dumps(hello_message(
+                    store, status=world.status)))
             while True:
-                await ws.receive_text()   # keepalive; controls go over REST
+                raw = await ws.receive_text()   # controls still go over REST
+                if int(getattr(world, "engine_semantics_version", 1)) < 8:
+                    continue
+                try:
+                    request = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(request, dict) or request.get("type") != "hello":
+                    continue
+                from server.projections.transport import recovery_messages
+                try:
+                    after_cursor = int(request.get("event_cursor", 0))
+                except (TypeError, ValueError):
+                    await ws.send_text(json.dumps({
+                        "type": "error", "code": "invalid_cursor"}))
+                    continue
+                for message in recovery_messages(store, after_cursor=after_cursor):
+                    await ws.send_text(json.dumps(message))
         except WebSocketDisconnect:
             hub.disconnect(ws)
         except Exception as exc:
