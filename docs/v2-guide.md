@@ -47,7 +47,11 @@ multicurrency behavior, and semantics 6 enables bilateral wage bargaining,
 qualified agent-priced IPOs, and agent-authored lender-of-last-resort decisions.
 Maintained profiles use semantics 7 for net loan-loss recognition, retirement
 liquidity and cadence, deterministic arrival/persona contracts, and autonomous
-qualified regional trade and migration. Schema remains v11.
+qualified regional trade and migration. They also schedule fully persisted
+peripheral agents through deterministic local policies without model-call rows,
+form first stock prices through actor bids/asks, expose only state-qualified
+startup work, filter local-currency action surfaces, and count unique workers in
+unemployment. Schema remains v11.
 
 Old runs retain their stored semantics. A run is never silently upgraded. Use
 an explicit child fork:
@@ -91,10 +95,11 @@ The flagship profile persists exactly 1,000 agents:
 | Suncoast Republic | 180 | SCD | agriculture, logistics, tourism |
 
 One hundred core agents receive strategic model/scripted turns. Nine hundred
-peripheral agents participate through deterministic labor, lifecycle, consumer,
-voter, market, and exposure mechanics. Promotion is recalculated every 30 ticks
-from office, ownership, wealth, litigation, exposure, and activity. Controlled
-participants are pinned.
+fully persisted peripheral agents receive scheduled, state-derived local policy
+turns without creating model-call records, in addition to deterministic labor,
+lifecycle, consumer, voter, market, and exposure mechanics. Promotion is
+recalculated every 30 ticks from office, ownership, wealth, litigation, exposure,
+and activity. Controlled participants are pinned.
 
 On the reference Windows development machine, the verified 1,000-agent genesis
 completed in about 2.1 seconds. The final offline 365-tick gate completed on
@@ -102,9 +107,16 @@ completed in about 2.1 seconds. The final offline 365-tick gate completed on
 peak Python working set and a 643.68 MB SQLite database. It finished at tick 365
 with five checkpoints, zero paid spend, exactly 1,000 living agents, exactly 100
 living core agents, balanced NSD/IVC/SCD/USD ledgers, no account/ledger-total
-mismatches, no negative FX reserve, and zero calls made while an agent was in
-the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
+mismatches, no negative FX reserve, and zero model-call rows for decisions made
+while an agent was in the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
 machine; downstream release hardware should publish its own measurement.
+
+Current `main` at `c9f0b23` restores a visibly active semantics-7 observatory
+without engine-authored shortcuts: peripheral policy turns create accepted
+goods activity, household fundamentals drive the first matched stock price,
+qualified partner/founder/lawyer actions complete the startup funding chain and
+IP registration, regional contexts reject foreign-currency surfaces until FX,
+and unemployment deduplicates workers such as employed founders.
 
 ## Observatory and APIs
 
@@ -496,6 +508,18 @@ authorized PR #15's merge to `main` as
 `255555c2b24530c0bd39aed2f501277a468adc0a`; post-merge CI run `29368193807`
 repeated all five jobs successfully. Repeat the audits against any future
 release candidate.
+
+### Current semantics-7 observatory activity
+
+The later `c9f0b23` hardening pass preserved the four closure contracts and
+restored measured activity across the flagship world. Peripheral agents now take
+scheduled local policy turns without model-call rows; household fundamentals
+create the first stock price through ordinary matched bids and asks; bounded
+partner, founder, and lawyer contexts advance pitches through term sheet,
+diligence, funding close, and IP; action surfaces remain in the actor's currency
+until FX; and unemployment counts each living non-retired worker once. Focused
+tests assert each contract and a 31-tick rehearsal proves nonzero goods, trades,
+startup/legal activity, and reconciled ledgers.
 
 R21 real-U.S. initialization is now available through
 `runs/r21-real-us.yaml`. It uses pinned 2022 SCF family and SUSB firm-size

@@ -37,6 +37,11 @@ provider rate limits control throughput.
   memory-ranking formula authoritative.
 - [x] Add paired `v2-spec-closure-rehearsal` and `v2-spec-closure-live` profiles
   with a near-defaulted loan, retiree, due arrival, shipment, and migration path.
+- [x] Restore semantics-7 measured economy activity: schedule local
+  state-derived peripheral policies without model-call rows, form the first stock
+  price through household bids/asks, expose state-qualified startup/VC/IP work,
+  keep regional action surfaces in the actor's local currency until FX, and count
+  each worker once in unemployment.
 
 ### Evidence gates
 
@@ -113,8 +118,9 @@ provider rate limits control throughput.
 
 ## Task 3 — R19 1,000-agent scaling
 
-- [x] Implement a fully simulated core plus a statistically simulated periphery
-  with deterministic seeded cohort transitions and conserved aggregate money.
+- [x] Implement a model-capable strategic core plus a fully persisted deterministic
+  periphery with scheduled local policy turns, zero periphery model-call rows,
+  deterministic seeded cohort transitions, and conserved aggregate money.
 - [x] Make promotion/demotion between tiers explicit, observable, and replayable.
 - [x] Prove economic invariants and define a recorded 1,000-agent performance
   baseline before passing the full live-test/autoreview/commit gate.

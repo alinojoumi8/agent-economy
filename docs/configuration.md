@@ -14,6 +14,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
 | `runs/experiments/rumor_vs_control.yaml` | Five-seed treatment/control study | None by default |
+| `runs/v2.yaml` | 1,000-agent, three-region semantics-7 flagship | None by default |
 | `runs/r21-real-us.yaml` | Pinned SCF/SUSB calibrated genesis | None |
 | `config/hosted.example.yaml` | R22 filesystem-backed development control plane | PostgreSQL |
 | `config/hosted.docker.yaml` | R22 Compose application service | PostgreSQL + S3-compatible storage |
@@ -35,6 +36,9 @@ Secrets belong in the ignored `.env` file or process environment.
 | `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD` | Password-free restart/lease supervisor conninfo plus its separate password |
 | `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD` | Password-free migration-only administrator conninfo plus its separate password |
 | `AGENT_ECONOMY_PUBLIC_BASE_URL` | Exact external HTTPS origin for hosted mode |
+| `AGENT_ECONOMY_PUBLIC_HOST` | Hostname Caddy serves for the reference Compose stack; default `localhost` |
+| `HTTPS_PORT` | Host port mapped to Caddy HTTPS; default `443` |
+| `AGENT_ECONOMY_IMAGE_TAG` | Optional reference Compose image tag; default `local` |
 | `AGENT_ECONOMY_S3_ENDPOINT_URL` | S3/MinIO endpoint used by the hosted artifact adapter |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3-compatible artifact credentials |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Reference Compose MinIO bootstrap identity; never passed to the app |
@@ -63,6 +67,12 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
+
+The maintained `runs/v2.yaml` enables
+`llm.local_currency_action_surfaces: true`. Under semantics 7, decision context
+and advertised actions are filtered to goods, jobs, firms, and banks in the
+actor's current local currency. Foreign-currency IDs fail validation; an actor
+must complete an authorized FX action before using funds in another currency.
 
 ## R21 real-U.S. initialization
 

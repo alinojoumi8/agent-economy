@@ -10,6 +10,7 @@ flowchart LR
     WORLD --> AGENTS[Agent runtime]
     WORLD --> INFO[News and conversations]
     AGENTS --> GATEWAY[LLM gateway]
+    AGENTS --> POLICY[Deterministic local policies]
     INFO --> GATEWAY
     GATEWAY --> PROVIDERS[Scripted or live providers]
     WORLD --> ORACLE[Read-only Oracle]
@@ -48,6 +49,12 @@ validates identities, ownership, balances, market phase, institutional roles,
 and action bounds before applying state. The gateway cannot directly mutate a
 balance, loan, firm, job, order, or policy rate.
 
+The tier boundary changes decision selection, not state authority. Scheduled
+core agents use their configured Gateway or scripted route. Scheduled peripheral
+agents select a state-derived local policy directly and create no `llm_calls`
+row. Both produce ordinary action envelopes that pass through the same
+`ActionExecutor`, domain services, ledger, event spine, and replay contract.
+
 Every monetary effect uses integer-cent double-entry transactions whose legs
 sum to zero. The world reconciles at tick boundaries; an invariant failure
 halts and checkpoints instead of continuing with corrupted state.
@@ -74,12 +81,16 @@ if a provider interruption occurs mid-tick.
 
 | Package | Responsibility |
 |---|---|
+| `config/` | Dataset manifests and optional hosted-service configuration |
+| `runs/` | Inherited local, production, acceptance, research, and v2 profiles |
 | `engine/` | Ledger, credit, firms, labor, exchange, lifecycle, government, VC, healthcare, and action validation |
 | `agents/` | Persona sampling, scheduling, role-scoped context, policies, memory, and decisions |
 | `world/` | Genesis, phase loop, shocks, metrics, newsroom, conversations, and replay verification |
 | `llm/` | Provider adapters, routing, readiness, retry/repair, caching, metering, and budget governor |
 | `oracle/` | Read-only forecasting, resolution rules, Brier scoring, and calibration |
 | `experiments/` | Multi-seed treatment/control harness |
+| `research/` | Calibrated initialization, canonical hashes, and research utilities |
+| `scenarios/` | Versioned paired counterfactual scenario packs |
 | `reports/` | Run reports and production acceptance receipts |
 | `server/` | REST/WebSocket API and committed production dashboard bundle |
 | `dashboard/` | React/Vite/Tailwind/Recharts observatory source |
@@ -125,8 +136,10 @@ belief-event, and macro-metric behavior so historical runs remain replayable.
   immutable snapshots, hosted dashboard, and deployment/operations assets. It
   leaves local APIs, simulation schema, and semantics unchanged.
 - The reference hosted stack is PostgreSQL 17 + MinIO + application + Caddy +
-  Prometheus. Public production deployment and recorded load evidence remain
-  verification gates, not current claims.
+  Prometheus. Exact local image/Compose, TLS, isolation, S3 restore, password
+  rotation, Prometheus, and bounded load evidence passed at `53081f2`; PR #19
+  head `1cf1d0a` passed its six-job matrix in run `29409250171`. Public production
+  deployment remains a separate, unclaimed release action.
 - The Oracle is read-only and CLI-backed models are restricted to Oracle/dev
   purposes.
 

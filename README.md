@@ -28,13 +28,17 @@ than background flavor:
 - A two-party legislature, elections, lobbying, agencies, and typed policy rules
   create endogenous economic-political feedback.
 - 1,000 agents inhabit Northstar, Ironvale, and Suncoast. One hundred strategic
-  agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
+  agents may use an LLM; 900 peripheral agents take scheduled, local
+  state-derived policy turns without creating model-call records.
 - Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
   trade, migration, and regional specialization remain exactly replayable.
 - Maintained profiles run engine semantics 7: defaults recognize only net bank
   losses after collateral, retirees can draw their own savings, arrivals receive
   governed persona enrichment, and qualified trade and migration opportunities
-  become autonomous actions. Stored semantics 1–6 retain their original rules.
+  become autonomous actions. Peripheral policy turns, actor-created first stock
+  prices, the state-qualified startup funding chain, local-currency action
+  filtering, and unique-worker unemployment keep the observatory economically
+  active without weakening replay. Stored semantics 1–6 retain their original rules.
 - The observatory adds a living economic map, legal/political/startup surfaces,
   causal traces, God-mode actions through the normal validator, and static replay export.
 - Pinned dataset manifests and paired-seed scenario packs support model-conditional
@@ -261,12 +265,15 @@ normalized reconstructed replay hash is
 ```text
 run.py             CLI and local application entry point
 runs/              offline, production, acceptance, and experiment profiles
+config/            dataset manifests and hosted-service configuration
 engine/            deterministic ledger and economic mechanics
 agents/            personas, role contexts, scheduling, memory, decisions
 world/             genesis, phase loop, shocks, metrics, information layer
 llm/               adapters, routing, readiness, retry, metering, governor
 oracle/            evidence tools, prediction, resolution, calibration
 experiments/       treatment/control harness
+research/          calibrated initialization, hashes, and research utilities
+scenarios/         versioned counterfactual scenario packs
 server/            FastAPI, WebSocket, replay API, committed dashboard bundle
 hosted/            optional R22 catalog/auth/RLS, supervisor, artifacts, API, CLI
 deploy/            Compose, Caddy, Prometheus, PostgreSQL role initialization
@@ -313,6 +320,14 @@ R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
 surfaces are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
+
+Current `main` at `c9f0b23` also restores measured economy activity in the
+semantics-7 observatory. Scheduled peripheral agents execute deterministic local
+policies with zero model-call rows; households form the first stock price from
+fundamentals through ordinary bids and asks; qualified partners, founders, and
+lawyers advance pitches through term sheet, diligence, round close, and IP;
+regional action contexts expose only local-currency opportunities until FX is
+performed; and unemployment counts each worker once, including employed founders.
 
 The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
 every target effect through tick 5 at zero spend and replayed exactly with hash
