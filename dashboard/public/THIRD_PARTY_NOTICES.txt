@@ -1052,7 +1052,7 @@ respective ISC and BSD licenses. Their complete license texts are reproduced
 in this notice under the corresponding d3 package entries.
 
 ==============================================================================
-vite@8.1.4
+vite@8.1.5
 Declared license: MIT
 ==============================================================================
 # Vite core license
