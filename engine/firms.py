@@ -8,6 +8,7 @@ is the variable the oil shock moves (PRD R9 / TECH-SPEC §9).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Optional
 
 from .ledger import Ledger, Leg, SYS_COMMODITY, SYS_GOV
@@ -19,6 +20,41 @@ DEFAULT_PRODUCT = {
     "base_input_cost_cents": 180,
     "output_per_worker": 6,
 }
+
+BUSINESS_IDEA_FIELDS = ("mission", "customer_problem", "offering")
+BUSINESS_IDEA_MAX_LENGTHS = {
+    "mission": 240,
+    "customer_problem": 240,
+    "offering": 160,
+}
+
+
+def normalize_business_idea(value: object) -> dict[str, str]:
+    """Validate and canonicalize the economic narrative attached to a firm."""
+    if not isinstance(value, Mapping):
+        raise ValueError("business_idea must be an object")
+    supplied = set(value)
+    expected = set(BUSINESS_IDEA_FIELDS)
+    missing = sorted(expected - supplied)
+    extras = sorted(supplied - expected)
+    if missing:
+        raise ValueError(f"business_idea is missing fields: {missing}")
+    if extras:
+        raise ValueError(f"business_idea has unexpected fields: {extras}")
+    idea: dict[str, str] = {}
+    for field in BUSINESS_IDEA_FIELDS:
+        raw = value[field]
+        if not isinstance(raw, str):
+            raise ValueError(f"business_idea.{field} must be text")
+        text = " ".join(raw.split())
+        if not text:
+            raise ValueError(f"business_idea.{field} is required")
+        maximum = BUSINESS_IDEA_MAX_LENGTHS[field]
+        if len(text) > maximum:
+            raise ValueError(
+                f"business_idea.{field} must be at most {maximum} characters")
+        idea[field] = text
+    return idea
 
 
 class Firms:
@@ -47,7 +83,8 @@ class Firms:
     # ── founding (via law firm, PRD R3) ──────────────────────────────────────
     def found_firm(self, tick: int, founder_agent_id: int, name: str, sector: str,
                    product: Optional[dict] = None, opening_capital_cents: int = 0,
-                   shares: int = 1000) -> int:
+                   shares: int = 1000,
+                   business_idea: Optional[dict] = None) -> int:
         founder = self.store.query_one(
             "SELECT region_id, checking_account_id FROM agents WHERE id=?", (founder_agent_id,))
         region_id = int(founder["region_id"]) if founder and founder["region_id"] is not None else None
@@ -61,9 +98,10 @@ class Firms:
                 bank_id = int(source["bank_id"]) if source["bank_id"] is not None else None
         acct_id = self.ledger.create_account(
             "firm", None, "checking", bank_id=bank_id, label=f"firm:{name}", currency_code=currency)
+        stored_product = dict(product or DEFAULT_PRODUCT)
         firm_id = self.store.insert(
             "firms", name=name, sector=sector, founder_agent_id=founder_agent_id,
-            status="private", product_json=json.dumps(product or DEFAULT_PRODUCT),
+            status="private", product_json=json.dumps(stored_product),
             account_id=acct_id, founded_tick=tick, shares_outstanding=shares, inventory=0,
             region_id=region_id, currency_code=currency)
         self.store.execute("UPDATE accounts SET owner_id=? WHERE id=?", (firm_id, acct_id))
@@ -75,9 +113,13 @@ class Firms:
                                      kind="equity_investment", memo=f"found {name}")
         self.store.insert("shares", firm_id=firm_id, holder_type="agent",
                           holder_id=founder_agent_id, qty=shares)
-        self.store.log_event(tick, "company_founded", {
+        event_payload = {
             "firm_id": firm_id, "name": name, "sector": sector,
-            "founder_agent_id": founder_agent_id}, phase="EXECUTION",
+            "founder_agent_id": founder_agent_id}
+        if business_idea is not None:
+            event_payload["business_idea"] = normalize_business_idea(business_idea)
+            event_payload["opening_capital_cents"] = int(opening_capital_cents)
+        self.store.log_event(tick, "company_founded", event_payload, phase="EXECUTION",
             subject_type="firm", subject_id=firm_id, importance=2.5)
         return firm_id
 

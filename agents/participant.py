@@ -25,6 +25,26 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _path_value(source: dict, path: list[str], default: Any = None) -> Any:
+    value: Any = source
+    for part in path:
+        if not isinstance(value, dict) or part not in value:
+            return default
+        value = value[part]
+    return value
+
+
+def _path_assign(target: dict, path: list[str], value: Any) -> None:
+    cursor = target
+    for part in path[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    cursor[path[-1]] = value
+
+
 class ParticipantError(RuntimeError):
     def __init__(self, status_code: int, detail: str):
         super().__init__(detail)
@@ -319,6 +339,30 @@ class ParticipantService:
             return {"name": name, "label": label, "kind": "text", "required": required,
                     "default": default, "max_length": maximum}
 
+        founding_action = ((ctx.get("entrepreneurship_opportunity") or {}).get("action") or {})
+        founding_idea = (founding_action.get("business_idea")
+                         if isinstance(founding_action.get("business_idea"), dict) else {})
+        founding_fields = [
+            text("name", "Company name", str(founding_action.get("name", "")), 60),
+            text("sector", "Sector", str(founding_action.get("sector", "services")), 40),
+            select("lawyer_agent_id", "Lawyer", [
+                {"value": l["id"], "label": l["name"]} for l in lawyers]),
+            number("opening_capital", "Opening capital (cents)",
+                   int(founding_action.get("opening_capital", 0)), 0),
+        ]
+        if founding_action.get("lawyer_agent_id") is not None:
+            founding_fields[2]["default"] = int(founding_action["lawyer_agent_id"])
+        if bool(self.config.get("entrepreneurship", {}).get("enabled", False)):
+            idea_fields = [
+                text("mission", "Mission", str(founding_idea.get("mission", "")), 240),
+                text("customer_problem", "Customer / problem",
+                     str(founding_idea.get("customer_problem", "")), 240),
+                text("offering", "Offering", str(founding_idea.get("offering", "")), 160),
+            ]
+            for field in idea_fields:
+                field["action_path"] = ["business_idea", field["name"]]
+            founding_fields.extend(idea_fields)
+
         items = [
             {"type": "do_nothing", "label": "Do nothing", "fields": []},
             {"type": "buy_goods", "label": "Buy goods", "fields": [
@@ -352,10 +396,7 @@ class ParticipantService:
                 text("text", "Statement", "", 500)]},
             {"type": "buy_insurance", "label": "Buy health insurance", "fields": []},
             {"type": "cancel_insurance", "label": "Cancel health insurance", "fields": []},
-            {"type": "found_company", "label": "Found a company", "fields": [
-                text("name", "Company name", "", 60), text("sector", "Sector", "services", 40),
-                select("lawyer_agent_id", "Lawyer", [{"value": l["id"], "label": l["name"]}
-                       for l in lawyers]), number("opening_capital", "Opening capital (cents)", 0, 0)]},
+            {"type": "found_company", "label": "Found a company", "fields": founding_fields},
         ]
         if self.engine_semantics_version >= 7 and bool(agent["retired"]):
             # Retirees do not search for work. Their only liquidity action is a
@@ -496,14 +537,18 @@ class ParticipantService:
             raise ParticipantError(409, descriptor.get("disabled_reason", "action is currently unavailable"))
         normalized: dict[str, Any] = {"type": action_type}
         allowed = {"type", "variant"}
+        nested_allowed: dict[str, set[str]] = {}
         for field in descriptor.get("fields", []):
             name = field["name"]
-            allowed.add(name)
+            path = list(field.get("action_path") or [name])
+            allowed.add(path[0])
+            if len(path) > 1:
+                nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
             # Hidden fields are server-owned capability data. A client may echo
             # them, but it cannot redirect an action to another firm or role.
-            value = field.get("default") if kind == "hidden" else action.get(
-                name, field.get("default"))
+            value = (field.get("default") if kind == "hidden" else
+                     _path_value(action, path, field.get("default")))
             if value is None or value == "":
                 if field.get("required", True):
                     raise ParticipantError(400, f"{name} is required")
@@ -528,7 +573,16 @@ class ParticipantService:
                 if field.get("required", True) and not value:
                     raise ParticipantError(400, f"{name} is required")
                 value = value[:int(field.get("max_length", 500))]
-            normalized[name] = value
+            _path_assign(normalized, path, value)
+        for root, names in nested_allowed.items():
+            supplied = action.get(root)
+            if supplied is not None and not isinstance(supplied, dict):
+                raise ParticipantError(400, f"{root} must be a JSON object")
+            if isinstance(supplied, dict):
+                nested_extras = set(supplied).difference(names)
+                if nested_extras:
+                    raise ParticipantError(
+                        400, f"unexpected {root} fields: {sorted(nested_extras)}")
         extras = set(action).difference(allowed)
         if extras:
             raise ParticipantError(400, f"unexpected action fields: {sorted(extras)}")

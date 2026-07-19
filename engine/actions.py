@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from .core import Economy
 from .credit import LoanTerms
+from .firms import DEFAULT_PRODUCT, normalize_business_idea
 from .ledger import Leg
 from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError
@@ -560,6 +561,12 @@ class ActionExecutor:
         if not name:
             return {"ok": False, "reason": "company needs a name"}
         sector = str(action.get("sector", "services"))[:40]
+        if bool(self.e.config.get("entrepreneurship", {}).get("enabled", False)):
+            existing = self.store.query_one(
+                "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
+                (actor_id,))
+            if existing:
+                return {"ok": False, "reason": "founder already controls an active company"}
         capital = int(action.get("opening_capital", 0))
         if capital < 0:
             return {"ok": False, "reason": "opening capital must be nonnegative"}
@@ -568,8 +575,19 @@ class ActionExecutor:
             if founder_acct is None or self.e.ledger.balance(founder_acct) < capital:
                 return {"ok": False, "reason": "insufficient opening capital"}
         product = action.get("product") if isinstance(action.get("product"), dict) else None
+        business_idea = None
+        if "business_idea" in action:
+            try:
+                business_idea = normalize_business_idea(action.get("business_idea"))
+            except ValueError as exc:
+                return {"ok": False, "reason": str(exc)}
+            product = {**DEFAULT_PRODUCT, **(product or {})}
+            product["business_idea"] = business_idea
+            if not action.get("product") or "product" not in action["product"]:
+                product["product"] = business_idea["offering"][:80]
         firm_id = self.e.firms.found_firm(tick, actor_id, name, sector, product=product,
-                                          opening_capital_cents=capital)
+                                          opening_capital_cents=capital,
+                                          business_idea=business_idea)
         return {"ok": True, "firm_id": firm_id}
 
     # ── equity ───────────────────────────────────────────────────────────────

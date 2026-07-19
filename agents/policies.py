@@ -196,6 +196,20 @@ def citizen_decision(context: dict) -> dict:
                 reasons.append(f"pulling deposits from bank {my_bank} (trust {trust:.2f})")
                 ran = True
 
+    # 3.5) A native opportunity preempts ordinary spending, job search, and
+    # investing so its reserved capital remains affordable at execution time.
+    opportunity = context.get("entrepreneurship_opportunity")
+    founding_action = (opportunity.get("action")
+                       if isinstance(opportunity, dict) else None)
+    if (not ran and isinstance(founding_action, dict)
+            and founding_action.get("type") == "found_company"):
+        reasons.append(
+            f"founding a {founding_action.get('sector', 'new')} company from an unmet need")
+        return _env(
+            None, [dict(founding_action)], belief_updates,
+            "; ".join(reasons),
+        )
+
     # 4) Consumption: buy goods (unless critically ill). Households with dependents buy more.
     if health != "critical" and not ran:
         firm = _cheapest_stocked_firm(context)

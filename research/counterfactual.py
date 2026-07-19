@@ -14,6 +14,7 @@ from typing import Any
 from engine.store import Store, load_json
 from research.datasets import ingest_manifest
 from research.scenarios import ScenarioPack, load_scenario
+from run_config import deep_merge
 from world.loop import World
 
 
@@ -96,9 +97,18 @@ def _causal_trace(store: Store) -> list[dict[str, Any]]:
     return trace
 
 
+def _arm_config(
+    pack: ScenarioPack, arm: str, effective_config: dict[str, Any],
+) -> dict[str, Any]:
+    overrides = pack.arms[arm].get("config_overrides", {})
+    if not isinstance(overrides, dict):
+        raise ValueError(f"scenario arm {arm} config_overrides must be an object")
+    return deep_merge(json.loads(json.dumps(effective_config)), overrides)
+
+
 def _run_arm(pack: ScenarioPack, seed: int, arm: str, data_dir: Path, ticks: int,
              effective_config: dict[str, Any]) -> dict[str, Any]:
-    config = json.loads(json.dumps(effective_config))
+    config = _arm_config(pack, arm, effective_config)
     config.update({"seed": seed, "checkpoint_every": 0, "speed_delay_s": 0.0,
                    "dataset_manifest": pack.dataset_manifest,
                    "scenario": {"key": pack.key, "version": pack.version, "arm": arm}})
@@ -170,6 +180,9 @@ def run_counterfactual(scenario_path: str | Path | ScenarioPack, *, seeds: int |
         "design": {"paired_seeds": paired_seeds, "ticks": horizon,
                    "declared_treatments": {arm: data.get("treatment_variables", {})
                                            for arm, data in pack.arms.items()},
+                   "declared_config_overrides": {
+                       arm: data.get("config_overrides", {})
+                       for arm, data in pack.arms.items()},
                    "checkpoint_hash": checkpoint_hash},
         "results": results, "summary": summary, "limitations": pack.limitations,
         "created_at": created,
