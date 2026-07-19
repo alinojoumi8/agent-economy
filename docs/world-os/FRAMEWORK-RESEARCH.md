@@ -81,6 +81,8 @@ These are domain contracts, not commodity infrastructure:
 - A custom browser router, server-state cache, graph renderer, map renderer, chart
   library, property-testing engine, or browser-testing engine.
 - A second source of API types maintained by hand.
+- Embedded Hermes, OpenClaw/Moltbot, OpenMolt, or arbitrary owner code inside the hosted
+  process. These remain remote clients of the shared MCP/REST gateway.
 
 ## The harness
 
@@ -156,3 +158,8 @@ license review. Architectural ideas may be independently implemented with attrib
 Build World OS as the next semantics layers of Agent Economy. Use established tools
 at every replaceable boundary, but keep one local ordered kernel, one authoritative
 world database per run, and one explicit path from observation to decision to settlement.
+
+For outside-agent interoperability, use remote Streamable HTTP MCP as the primary
+framework-neutral interface and generated OpenAPI REST clients as the fallback. Treat
+Hermes and OpenClaw as configuration presets, OpenMolt as a social-product/API reference,
+and A2A as a later coordination layer. None replaces the typed world-action boundary.

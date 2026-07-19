@@ -83,7 +83,8 @@ def validate_open_oracle_campaign_source(
             "stored campaign configuration differs from the requested profile")
     if (meta["parent_run_id"] is not None or meta["fork_tick"] is not None
             or str(meta["run_id"]).startswith("replay-")
-            or int(meta["participant_influenced"] or 0) != 0):
+            or int(meta["participant_influenced"] or 0) != 0
+            or int(meta["external_agent_influenced"] or 0) != 0):
         raise ValueError(
             "Oracle campaign source must be an original observer-only run")
 

@@ -1,8 +1,8 @@
 # World OS Technical Specification
 
-**Version:** 0.9<br>
+**Version:** 1.0<br>
 **Date:** 2026-07-18<br>
-**Status:** Approved and engineering-reviewed; Semantics 8 implementation in progress<br>
+**Status:** Semantics 8 released; Semantics 9/10 implementation present; hosted rollout evidence pending<br>
 **Product contract:** [World OS PRD](PRD.md)<br>
 **Framework decision:** [Framework research](FRAMEWORK-RESEARCH.md)
 
@@ -20,6 +20,14 @@ runtime. The authoritative topology remains:
 
 The first implementation lake is communications plus causal investigation. It uses
 engine semantics 8 and schema 12.
+
+The next compatibility layers retain that topology. Schema 13 / semantics 9 adds
+`agents.external.ExternalAgentService`, hash-only credentials, versioned turn envelopes,
+recorded action receipts, REST adapters, and Streamable HTTP MCP. Schema 14 / semantics 10
+adds `world.commons.CommonsService`, versioned deterministic feeds, immutable delivered/read
+impressions, and explicit-read factual exposure. Hosted PostgreSQL remains the human tenant
+control plane; each run's SQLite database remains authoritative for actor, turn, action,
+Commons, and replay state.
 
 ## 2. System context
 
@@ -1101,10 +1109,20 @@ DuckDB opens these files for offline joins; it never writes back to the run.
 
 ### 15.3 Canonical replay hash contract
 
-`research/hash-contract-v1.json` classifies every discovered table and column as
-`authoritative`, `derived`, or `excluded`. CI and replay verification fail on an
-unclassified addition. The full normative algorithm and scenario-specific table set are
-defined in the
+`research/hash-contract-v1.json` remains frozen for semantics 1–8 and classifies
+the exact schema-12 surface as `authoritative`, `derived`, or `excluded`.
+`research/hash-contract-v2.json` is selected for semantics 9 and later. It adds
+the authoritative gateway turn/submission/actor records and Commons social,
+feed-policy, impression, moderation, and appeal records introduced by schemas 13
+and 14. Credential hashes, OAuth codes and client registrations, rate windows,
+and security-audit rows remain operationally verified but excluded from semantic
+state hashes. CI and replay verification fail on an unclassified addition.
+
+Fresh schema-14 binaries may open a semantics-8 run, so v1 compatibility removes
+only the extension tables and `run_meta.external_agent_influenced` column declared
+by v2 before comparing the frozen schema inventory. It never silently ignores an
+unknown table or column. The full normative algorithm and the semantics-8
+scenario-specific table set remain defined in the
 [30-tick protocol](30-TICK-RESEARCH-PROTOCOL.md#9-canonical-evidence-hashes).
 
 In summary: tables and rows use declared stable order; values use typed canonical encoding;

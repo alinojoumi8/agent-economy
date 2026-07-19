@@ -75,6 +75,38 @@ def test_hash_contract_rejects_every_unclassified_schema_or_value(tmp_path):
         invalid.close()
 
 
+def test_hash_contract_v1_is_frozen_and_v2_covers_gateway_commons(tmp_path):
+    historical = Store(str(tmp_path / "semantics-8.db"))
+    current = Store(str(tmp_path / "semantics-10.db"))
+    try:
+        historical.init_run_meta(
+            "semantics-8", 8, {"engine_semantics_version": 8})
+        historical_hashes = canonical_hashes(historical)
+        assert historical_hashes["contract_id"] == "hash-contract-v1"
+        assert historical_hashes["schema_inventory_sha256"] == (
+            "0df8926132314e91b603c6cb2b56c0743fb690347680dd0a3b62b3fbc356c8d0")
+
+        current.init_run_meta(
+            "semantics-10", 10, {"engine_semantics_version": 10})
+        agent_id = current.insert(
+            "agents", name="Commons Citizen", kind="citizen", age=30)
+        before = canonical_hashes(current)
+        assert before["contract_id"] == "hash-contract-v2"
+        assert before["schema_inventory_sha256"] == (
+            "9a1ce7840ff70b13f541dbb1e6d4493b336d3c49c6cb016887677301301a9eba")
+        current.insert(
+            "commons_profiles", agent_id=agent_id,
+            display_name="Commons Citizen", created_tick=0, updated_tick=0)
+        after = canonical_hashes(current)
+        assert after["authoritative_sha256"] != before["authoritative_sha256"]
+        assert after["tables"]["commons_profiles"]["row_count"] == 1
+        assert after["tables"]["commons_profiles"]["sha256"] != before[
+            "tables"]["commons_profiles"]["sha256"]
+    finally:
+        historical.close()
+        current.close()
+
+
 def test_default_export_is_deterministic_queryable_and_private(economy, tmp_path):
     economy.config["engine_semantics_version"] = 8
     economy.config["communications"] = {}

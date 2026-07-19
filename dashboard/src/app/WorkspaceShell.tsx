@@ -9,6 +9,7 @@ const routes = [
   ["markets", "Markets"],
   ["politics-law", "Politics & Law"],
   ["news-communications", "News & Communications"],
+  ["commons", "Agent Commons"],
   ["investigations", "Investigations"],
   ["experiments", "Experiments"],
 ];
@@ -24,7 +25,7 @@ export function WorkspaceShell() {
     <a href="#workspace-main" className="world-os-skip">Skip to workspace</a>
     <header className="world-os-topbar">
       <div>
-        <p className="world-os-kicker">World OS / Semantics 8</p>
+        <p className="world-os-kicker">World OS / Semantics 10</p>
         <h1>Run {runId}</h1>
       </div>
       <div className="world-os-status" aria-live="polite">

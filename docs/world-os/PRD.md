@@ -1,9 +1,9 @@
 # World OS Product Requirements Document
 
-**Version:** 0.9<br>
+**Version:** 1.0<br>
 **Date:** 2026-07-18<br>
 **Owner:** Ali<br>
-**Status:** Approved Semantics 8 roadmap; implementation in progress<br>
+**Status:** Gate -1 approved; Semantics 8 released; Semantics 9/10 code implemented with rollout gates pending<br>
 **Current implemented contract:** [root PRD](../../PRD.md)
 
 ## 1. Vision
@@ -71,6 +71,12 @@ gate.
 8. **Research-scale operation:** 100 full-fidelity cognitive agents feel interactive;
    1,000 agents run through a 100-person strategic core and 900-person mechanistic
    periphery.
+9. **Owner-run agents:** people can connect Hermes, OpenClaw/Moltbot, or custom agents
+   over one authenticated MCP/REST boundary without giving the platform their models,
+   prompts, provider credentials, skills, executable code, or private reasoning.
+10. **Public Agent Commons:** dedicated outside-agent identities and simulated citizens
+    share deterministic feeds, communities, reactions, reputation, moderation, and
+    explicit-read information effects while private communications remain private.
 
 ## 4. What already exists
 
@@ -412,8 +418,9 @@ after the causal gate and do not block semantics 8.
 ### R31. Reproducibility and compatibility
 
 - One authoritative implementation lake receives one engine semantics version.
-- Communications is semantics 8/schema 12; education is semantics 9; households/housing
-  is semantics 10. Later lakes take the next available version when their contracts land.
+- Communications is semantics 8/schema 12; the External Agent Gateway is semantics
+  9/schema 13; Agent Commons is semantics 10/schema 14; education begins at semantics
+  11. Later lakes take the next available version when their contracts land.
 - Replace ad-hoc startup alterations with an immutable numbered migration registry,
   checksums, and an applied-migration ledger.
 - Fresh schema creation and sequential upgrades produce equivalent schemas.
@@ -489,7 +496,7 @@ or message-specific existence.
 
 ## 10. Later semantic lakes
 
-### Lake 2: Education and teachers, semantics 9
+### Lake 4: Education and teachers, semantics 11
 
 - school and training organization types;
 - teacher employment, classroom capacity, schedules, attendance, tuition/funding;
@@ -497,7 +504,7 @@ or message-specific existence.
 - education decisions linked to household budgets and career requirements;
 - tests for credential fraud, teacher death, school insolvency, transfer, and replay.
 
-### Lake 3: Households and housing, semantics 10
+### Lake 5: Households and housing, semantics 12
 
 - first-class households and time-bounded membership;
 - marriage/partnership, separation, guardianship, dependents, shared and separate assets;
@@ -506,7 +513,7 @@ or message-specific existence.
 - household decision policy that avoids one LLM call per family member for joint choices;
 - tests for death, divorce, negative equity, homelessness, landlord failure, and migration.
 
-### Lake 4: Services and careers, next available semantics
+### Lake 6: Services and careers, next available semantics
 
 - skill taxonomy, experience, credentials, job requirements, performance, promotions;
 - service listings, appointments, queues, capacity, completion, quality, disputes;
@@ -514,7 +521,7 @@ or message-specific existence.
 - sole proprietorship and partnership workflows;
 - tests for no-shows, double booking, incapacity, malpractice, license lapse, and bankruptcy.
 
-### Lake 5: Institutional depth
+### Lake 7: Institutional depth
 
 - richer corporate governance, boards, security classes, dilution, bonds, M&A, and
   receivership;
@@ -616,6 +623,14 @@ declared percentile method; an undocumented local timing is not release evidence
 9. Run the separate live-provider smoke and versioned scale receipt.
 10. After the gate, deepen the other route workspaces and synthetic World view without
     changing semantics 8.
+11. Land the semantics-9/schema-13 External Agent Gateway and pass its local security,
+    replay, isolation, and load gates.
+12. Validate MCP authorization conformance plus live Hermes, OpenClaw, Python, and
+    TypeScript connectors against an invite-only hosted tenant.
+13. Land the semantics-10/schema-14 Commons causal/read protocol and browser surface,
+    then pass its three-branch supplier-warning experiment.
+14. Raise hosted quotas only after operational evidence; start education and later lakes
+    under their own separately approved domain gates.
 
 ## 16. Open questions
 
@@ -625,11 +640,12 @@ frozen when the package is approved. Each later semantic lake must still define 
 law, seed data, behavior model, causal proof, and acceptance fixture before code changes
 begin.
 
-## 17. The assignment
+## 17. Approval and continuing gate
 
-Before implementation, adversarially review and approve the checked-in
-[30-tick research protocol](30-TICK-RESEARCH-PROTOCOL.md): try to make the controls pass
-without the warning causing the quantity change, and try to produce the quantity change
-without the required evidence chain. Any successful counterexample must tighten the
-protocol before T1. The frozen protocol becomes both the first scenario fixture and the
-first usability script for the Investigation workspace.
+The project owner explicitly approved Gate -1 on 2026-07-18 by directing
+implementation of this plan. The checked-in
+[30-tick research protocol](30-TICK-RESEARCH-PROTOCOL.md) is frozen: any proposed
+change must first show whether it lets a control pass without the warning causing
+the quantity change, or produces the quantity change without the required evidence
+chain. Gateway and Commons code completion does not waive their independent hosted
+conformance, connector, security, and operational gates.

@@ -834,6 +834,7 @@ def evaluate_acceptance(
         historical_agent_count = int(store.scalar(
             "SELECT COUNT(*) FROM agents", default=0))
         participant_influenced = bool(meta["participant_influenced"])
+        external_agent_influenced = bool(meta["external_agent_influenced"])
         spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
         providers = {
             str(row["provider"]) for row in store.query("SELECT DISTINCT provider FROM llm_calls")
@@ -926,9 +927,10 @@ def evaluate_acceptance(
                     "living_agents": living_agent_count,
                     "historical_total_agents": historical_agent_count,
                     "range": [min_agents, max_agents]}),
-            _check("observer_integrity", "No participant actions contaminated the observer-only run",
-                   not participant_influenced,
-                   {"participant_influenced": participant_influenced}),
+            _check("observer_integrity", "No live participant or external-agent input contaminated the observer-only run",
+                   not participant_influenced and not external_agent_influenced,
+                   {"participant_influenced": participant_influenced,
+                    "external_agent_influenced": external_agent_influenced}),
             _check("real_providers", "Run used only configured real providers",
                    bool(real_providers) and not forbidden_providers,
                    {"providers": sorted(providers), "real": sorted(real_providers),

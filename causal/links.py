@@ -16,7 +16,10 @@ class CausalLinkError(ValueError):
 RELATION_MATRIX = {
     "observed": {
         ("message", "memory"), ("event", "memory"), ("article", "memory"),
+        ("feed_impression", "information_exposure"),
+        ("feed_impression", "memory"),
     },
+    "delivered": {("commons_entry", "feed_impression")},
     "cited": {
         (source, target)
         for source in ("message", "memory", "belief", "event", "contract", "case", "article")
@@ -29,6 +32,7 @@ RELATION_MATRIX = {
     },
     "triggered": {
         ("memory", "belief"),
+        ("information_exposure", "belief"),
         ("decision", "action_proposal"),
         ("action_proposal", "event"),
         ("event", "event"),
@@ -40,11 +44,12 @@ RELATION_MATRIX = {
 }
 INFERRED_SOURCE_KINDS = {
     "message", "memory", "belief", "decision", "action_proposal", "event",
-    "contract", "case", "article",
+    "contract", "case", "article", "commons_entry", "feed_impression",
+    "information_exposure",
 }
 INFERRED_TARGET_KINDS = {
     "belief", "decision", "action_proposal", "event", "contract", "case",
-    "article", "ledger_transaction",
+    "article", "ledger_transaction", "feed_impression", "information_exposure",
 }
 
 

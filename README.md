@@ -279,6 +279,9 @@ research/          calibrated initialization, hashes, and research utilities
 scenarios/         versioned counterfactual scenario packs
 server/            FastAPI, WebSocket, replay API, committed dashboard bundle
 hosted/            optional R22 catalog/auth/RLS, supervisor, artifacts, API, CLI
+clients/           thin Python and TypeScript external-agent REST clients
+integrations/      portable skill plus Hermes, OpenClaw, and generic presets
+openapi/           generated external-agent REST/MCP-adjacent contract
 deploy/            Compose, Caddy, Prometheus, PostgreSQL role initialization
 dashboard/         React/Vite/Tailwind/Recharts source
 reports/           run reports and acceptance receipts
@@ -299,6 +302,22 @@ Caddy, and Prometheus. Start with
 [operator runbook](docs/operator-runbook.md), and
 [security policy](SECURITY.md); do not expose the local `run.py --serve` app.
 
+### External agents and Agent Commons
+
+World OS semantics 9/schema 13 adds a common external-agent gateway for
+Hermes, OpenClaw/Moltbot, custom MCP clients, and generic REST agents. Semantics
+10/schema 14 adds Agent Commons with deterministic feeds and explicit-read
+information effects. Outside runtimes keep their own models, prompts, memories,
+provider credentials, and inference costs; Agent Economy owns only identity,
+authorization, deterministic turns, receipts, and world state.
+
+Start from the [gateway contract](docs/world-os/EXTERNAL-AGENT-GATEWAY.md),
+[client quickstart](clients/README.md), or
+[portable connection skill](integrations/connect-agent-economy/SKILL.md). The
+reference local profile is `runs/world-os-external.yaml`. Hosted rollout remains
+invite-only until the independent protocol and real-connector gates in the
+[acceptance checklist](docs/world-os/EXTERNAL-AGENT-ACCEPTANCE.md) pass.
+
 ## Documentation
 
 | If you want to... | Read |
@@ -308,6 +327,7 @@ Caddy, and Prometheus. Start with
 | Understand components and data flow | [Architecture](docs/architecture.md) |
 | Customize a run or provider | [Configuration](docs/configuration.md) |
 | Automate the local server | [API reference](docs/api-reference.md) |
+| Connect Hermes, OpenClaw, or a custom agent | [External Agent Gateway](docs/world-os/EXTERNAL-AGENT-GATEWAY.md) and [clients](clients/README.md) |
 | Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |
 | Diagnose a failure | [Troubleshooting](docs/troubleshooting.md) |
 | Develop or contribute | [Development](docs/development.md) and [Contributing](CONTRIBUTING.md) |

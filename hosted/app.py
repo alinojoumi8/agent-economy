@@ -13,21 +13,24 @@ PostgreSQL server, object store, provider, or live simulation.
 from __future__ import annotations
 
 import asyncio
+from html import escape
 import inspect
 import json
 from pathlib import Path
 import re
+import secrets
 import time
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
@@ -48,6 +51,7 @@ from hosted.security import (
 
 
 ROLE_OBSERVER = "observer"
+ROLE_AGENT_OWNER = "agent_owner"
 ROLE_ADMIN = "admin"
 ACTIVE_MEMBERSHIP = "active"
 CSRF_HEADER_NAME = "X-AE-CSRF"
@@ -174,7 +178,7 @@ class LoginBody(_StrictBody):
 
 class InviteBody(_StrictBody):
     email: str = Field(min_length=3, max_length=320)
-    role: Literal["observer", "admin"] = "observer"
+    role: Literal["observer", "agent_owner", "admin"] = "observer"
     display_name_hint: str | None = Field(default=None, max_length=120)
 
 
@@ -183,7 +187,7 @@ class RevokeInviteBody(_StrictBody):
 
 
 class MemberUpdateBody(_StrictBody):
-    role: Literal["observer", "admin"]
+    role: Literal["observer", "agent_owner", "admin"]
     enabled: bool
 
 
@@ -221,6 +225,48 @@ class RunControlBody(_StrictBody):
         if self.action != "start" and self.max_ticks is not None:
             raise ValueError("max_ticks is only valid for start control")
         return self
+
+
+class HostedAgentConnectionBody(_StrictBody):
+    run_id: UUID
+    display_name: str = Field(min_length=1, max_length=80)
+    tier: Literal["observer", "commons", "actor"]
+    scopes: list[str] | None = None
+    biography: str = Field(default="", max_length=500)
+    preferred_occupation: str = Field(default="", max_length=80)
+    wake_interval_ticks: int = Field(default=1, ge=1, le=365)
+
+
+class HostedAgentConnectionUpdateBody(_StrictBody):
+    status: Literal["active", "suspended", "revoked"]
+
+
+class HostedAgentCredentialBody(_StrictBody):
+    action: Literal["rotate", "revoke"]
+
+
+class HostedAgentPolicyBody(_StrictBody):
+    max_external_agents_per_run: int = Field(ge=0, le=10_000)
+
+
+class HostedOAuthAuthorizeBody(_StrictBody):
+    tenant_id: UUID
+    connection_id: UUID
+    client_id: str = Field(min_length=1, max_length=200)
+    redirect_uri: str = Field(min_length=1, max_length=1000)
+    code_challenge: str = Field(min_length=43, max_length=128)
+    code_challenge_method: Literal["S256"] = "S256"
+    scope: str = ""
+    state: str | None = Field(default=None, max_length=500)
+
+
+class HostedOAuthClientRegistrationBody(_StrictBody):
+    client_name: str = Field(default="MCP client", min_length=1, max_length=200)
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+    grant_types: list[str] = Field(
+        default_factory=lambda: ["authorization_code", "refresh_token"])
+    response_types: list[str] = Field(default_factory=lambda: ["code"])
+    token_endpoint_auth_method: Literal["none"] = "none"
 
 
 class Principal:
@@ -280,6 +326,7 @@ _SAFE_WORLD_PATHS = tuple(
         r"/api/trades\Z",
         r"/api/cost\Z",
         r"/api/oracle/predictions\Z",
+        r"/api/commons\Z",
         r"/api/institutions\Z",
         r"/api/shocks\Z",
         r"/api/v2/(?:map|legal|politics|information|startups|markets|datasets)\Z",
@@ -428,6 +475,61 @@ def _public_run(record: Any) -> dict[str, Any]:
         },
         "writer_active": bool(_attribute(record, "writer_lease_owner")),
     }
+
+
+def _public_external_agent(record: Any) -> dict[str, Any]:
+    return {
+        "id": str(_uuid_attribute(record, "id")),
+        "tenant_id": str(_uuid_attribute(record, "tenant_id")),
+        "run_id": str(_uuid_attribute(record, "run_id")),
+        "display_name": str(_attribute(record, "display_name", default="")),
+        "biography": str(_attribute(record, "biography", default="")),
+        "preferred_occupation": str(_attribute(record, "preferred_occupation", default="")),
+        "tier": str(_attribute(record, "tier", default="")),
+        "scopes": list(_attribute(record, "scopes", default=()) or ()),
+        "status": str(_attribute(record, "status", default="")),
+        "actor_id": _attribute(record, "actor_id"),
+        "last_seen_at": (
+            str(_attribute(record, "last_seen_at"))
+            if _attribute(record, "last_seen_at") is not None else None),
+        "lease_expires_at": (
+            str(_attribute(record, "lease_expires_at"))
+            if _attribute(record, "lease_expires_at") is not None else None),
+        "created_at": (
+            str(_attribute(record, "created_at"))
+            if _attribute(record, "created_at") is not None else None),
+    }
+
+
+def _external_connection_id_from_credential(value: str) -> UUID | None:
+    """Read only the routing UUID; the run service still verifies the full secret hash."""
+    token = str(value).strip()
+    prefixes = ("ae_pat_", "ae_at_", "ae_rt_", "ae_code_")
+    prefix = next((item for item in prefixes if token.startswith(item)), None)
+    if prefix is None:
+        return None
+    candidate = token[len(prefix):].split(".", 1)[0]
+    try:
+        return UUID(candidate)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _oauth_redirect_uris(values: list[str]) -> list[str]:
+    redirects: list[str] = []
+    for raw in values:
+        value = str(raw).strip()
+        parsed = urlsplit(value)
+        loopback = parsed.scheme == "http" and parsed.hostname in {
+            "127.0.0.1", "localhost", "::1"}
+        if ((parsed.scheme != "https" and not loopback) or not parsed.netloc
+                or parsed.fragment or len(value) > 1000):
+            raise ValueError("invalid OAuth redirect URI")
+        redirects.append(value)
+    result = sorted(set(redirects))
+    if not 1 <= len(result) <= 10:
+        raise ValueError("between one and ten redirect URIs are required")
+    return result
 
 
 def _credentials(value: Any) -> tuple[str, str, datetime | None]:
@@ -603,7 +705,7 @@ def create_hosted_app(
             # A valid credential gets no tenant-existence oracle.
             raise _generic_error(404, "not_found")
         role = str(_attribute(membership, "role", default=""))
-        if role not in {ROLE_OBSERVER, ROLE_ADMIN}:
+        if role not in {ROLE_OBSERVER, ROLE_AGENT_OWNER, ROLE_ADMIN}:
             metrics.auth_rejections.labels("invalid_role").inc()
             raise _generic_error(403, "forbidden")
         if (admin or mutation) and role != ROLE_ADMIN:
@@ -650,7 +752,7 @@ def create_hosted_app(
             metrics.auth_rejections.labels("tenant_scope").inc()
             raise _generic_error(404, "not_found")
         role = str(_attribute(membership, "role", default=""))
-        if role not in {ROLE_OBSERVER, ROLE_ADMIN}:
+        if role not in {ROLE_OBSERVER, ROLE_AGENT_OWNER, ROLE_ADMIN}:
             raise _generic_error(403, "forbidden")
         if admin and role != ROLE_ADMIN:
             metrics.auth_rejections.labels("role").inc()
@@ -848,7 +950,7 @@ def create_hosted_app(
                 await _invoke(auth.revoke_session, session_token, now=clock())
                 raise AuthFailure("invalid_credentials")
             role = str(_attribute(membership, "role", default=""))
-            if role not in {ROLE_OBSERVER, ROLE_ADMIN}:
+            if role not in {ROLE_OBSERVER, ROLE_AGENT_OWNER, ROLE_ADMIN}:
                 await _invoke(auth.revoke_session, session_token, now=clock())
                 raise AuthFailure("invalid_credentials")
         except AuthFailure as exc:
@@ -1017,6 +1119,208 @@ def create_hosted_app(
         except Exception:
             raise _generic_error(503, "service_unavailable") from None
         return {"runs": [_public_run(record) for record in records]}
+
+    @app.get("/api/v2/tenants/{tenant_id}/agent-connections")
+    async def list_external_connections(
+        tenant_id: UUID, request: Request,
+        limit: int = Query(default=200, ge=1, le=500),
+    ) -> dict[str, Any]:
+        principal = await authorize(request, tenant_id)
+        if principal.role == ROLE_OBSERVER:
+            raise _generic_error(403, "forbidden")
+        owner = None if principal.role == ROLE_ADMIN else principal.user_id
+        try:
+            records = await _invoke(
+                catalog.list_external_agents, tenant_id,
+                owner_user_id=owner, limit=limit)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        connections = []
+        for record in records:
+            public = _public_external_agent(record)
+            try:
+                handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+                local = await _invoke(
+                    handle.world.runtime.external.connection,
+                    str(_uuid_attribute(record, "run_connection_id", "id")),
+                    owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                    admin=principal.role == ROLE_ADMIN)
+                for key in ("status", "actor_id", "last_seen_at", "lease_expires_at",
+                            "actor_name", "actor_alive", "actor_occupation"):
+                    if key in local:
+                        public[key] = local[key]
+            except Exception:
+                # The catalog record remains a safe degraded view while a run is
+                # starting, stopped, or temporarily unavailable.
+                pass
+            connections.append(public)
+        return {"connections": connections}
+
+    @app.get("/api/v2/tenants/{tenant_id}/agent-policy")
+    async def get_external_agent_policy(
+        tenant_id: UUID, request: Request,
+    ) -> dict[str, int]:
+        await authorize(request, tenant_id, admin=True)
+        try:
+            return await _invoke(catalog.get_external_agent_policy, tenant_id)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+
+    @app.patch("/api/v2/tenants/{tenant_id}/agent-policy")
+    async def update_external_agent_policy(
+        tenant_id: UUID, body: HostedAgentPolicyBody, request: Request,
+    ) -> dict[str, int]:
+        principal = await authorize_mutation(request, tenant_id, admin=True)
+        try:
+            return await _invoke(
+                catalog.set_external_agent_policy, tenant_id,
+                actor_user_id=principal.user_id,
+                max_external_agents_per_run=body.max_external_agents_per_run)
+        except (ValueError, TypeError):
+            raise _generic_error(400, "invalid_request") from None
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+
+    @app.post("/api/v2/tenants/{tenant_id}/agent-connections", status_code=201)
+    async def create_external_connection(
+        tenant_id: UUID, body: HostedAgentConnectionBody, request: Request,
+    ) -> dict[str, Any]:
+        principal = await authorize_mutation(request, tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        handle = await run_handle(tenant_id, body.run_id)
+        world = getattr(handle, "world", None)
+        service = getattr(getattr(world, "runtime", None), "external", None)
+        if service is None:
+            raise _generic_error(503, "service_unavailable")
+        created: dict[str, Any] | None = None
+        try:
+            created = await _invoke(
+                service.create_connection,
+                tenant_id=str(tenant_id), owner_id=str(principal.user_id),
+                display_name=body.display_name, tier=body.tier, scopes=body.scopes,
+                biography=body.biography,
+                preferred_occupation=body.preferred_occupation,
+                wake_interval_ticks=body.wake_interval_ticks)
+            local_connection = created["connection"]
+            credential = created["credential"]
+            connection_id = UUID(str(local_connection["id"]))
+            expires_at = datetime.fromisoformat(
+                str(credential["expires_at"]).replace("Z", "+00:00"))
+            record, _credential_record = await _invoke(
+                catalog.create_external_agent_with_credential,
+                tenant_id, owner_user_id=principal.user_id, run_id=body.run_id,
+                run_connection_id=connection_id, external_agent_id=connection_id,
+                display_name=body.display_name, biography=body.biography,
+                preferred_occupation=body.preferred_occupation, tier=body.tier,
+                scopes=local_connection["scopes"],
+                token_hash=hash_opaque_token(str(credential["token"])),
+                credential_expires_at=expires_at,
+                audience=str(getattr(service, "audience", "agent-economy")))
+        except HTTPException:
+            raise
+        except Exception:
+            if created is not None:
+                try:
+                    await _invoke(
+                        service.update_connection, created["connection"]["id"],
+                        owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                        status="revoked", admin=True)
+                except Exception:
+                    pass
+            raise _generic_error(503, "service_unavailable") from None
+        return {"connection": _public_external_agent(record),
+                # The secret is intentionally disclosed exactly once.
+                "credential": credential}
+
+    @app.patch("/api/v2/tenants/{tenant_id}/agent-connections/{connection_id}")
+    async def update_external_connection(
+        tenant_id: UUID, connection_id: UUID,
+        body: HostedAgentConnectionUpdateBody, request: Request,
+    ) -> dict[str, Any]:
+        principal = await authorize_mutation(request, tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        owner_filter = None if principal.role == ROLE_ADMIN else principal.user_id
+        try:
+            record = await _invoke(
+                catalog.get_external_agent, tenant_id, connection_id,
+                owner_user_id=owner_filter)
+            if record is None:
+                raise _generic_error(404, "not_found")
+            handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+            service = handle.world.runtime.external
+            await _invoke(
+                service.update_connection,
+                str(_uuid_attribute(record, "run_connection_id", "id")),
+                owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                status=body.status, admin=principal.role == ROLE_ADMIN)
+            updated = await _invoke(
+                catalog.set_external_agent_status, tenant_id, connection_id,
+                owner_user_id=principal.user_id, status=body.status,
+                admin=principal.role == ROLE_ADMIN)
+            if updated is None:
+                raise _generic_error(404, "not_found")
+        except HTTPException:
+            raise
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        return _public_external_agent(updated)
+
+    @app.post("/api/v2/tenants/{tenant_id}/agent-connections/{connection_id}/credentials")
+    async def change_external_credentials(
+        tenant_id: UUID, connection_id: UUID,
+        body: HostedAgentCredentialBody, request: Request,
+    ) -> dict[str, Any]:
+        principal = await authorize_mutation(request, tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        owner_filter = None if principal.role == ROLE_ADMIN else principal.user_id
+        try:
+            record = await _invoke(
+                catalog.get_external_agent, tenant_id, connection_id,
+                owner_user_id=owner_filter)
+            if record is None:
+                raise _generic_error(404, "not_found")
+            handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+            service = handle.world.runtime.external
+            local_id = str(_uuid_attribute(record, "run_connection_id", "id"))
+            if body.action == "revoke":
+                local = await _invoke(
+                    service.revoke_credentials, local_id,
+                    owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                    admin=principal.role == ROLE_ADMIN)
+                await _invoke(
+                    catalog.revoke_external_credentials, tenant_id, connection_id,
+                    owner_user_id=principal.user_id, admin=principal.role == ROLE_ADMIN)
+                return {"ok": True, "revoked": int(local.get("revoked", 0))}
+            credential = await _invoke(
+                service.rotate_personal_credential, local_id,
+                owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                admin=principal.role == ROLE_ADMIN)
+            expires_at = datetime.fromisoformat(
+                str(credential["expires_at"]).replace("Z", "+00:00"))
+            await _invoke(
+                catalog.replace_external_personal_credential,
+                tenant_id, connection_id, owner_user_id=principal.user_id,
+                token_hash=hash_opaque_token(str(credential["token"])),
+                scopes=list(_attribute(record, "scopes", default=()) or ()),
+                audience=str(getattr(service, "audience", "agent-economy")),
+                expires_at=expires_at)
+        except HTTPException:
+            raise
+        except Exception:
+            # The run-local service is authoritative. If catalog rotation fails,
+            # revoke the just-issued material so no half-created credential lives.
+            try:
+                if 'service' in locals() and 'local_id' in locals():
+                    await _invoke(
+                        service.revoke_credentials, local_id,
+                        owner_id=str(principal.user_id), tenant_id=str(tenant_id), admin=True)
+            except Exception:
+                pass
+            raise _generic_error(503, "service_unavailable") from None
+        return credential
 
     @app.post("/api/v2/tenants/{tenant_id}/runs", status_code=201)
     async def create_run(tenant_id: UUID, body: RunCreateBody, request: Request) -> dict[str, Any]:
@@ -1191,6 +1495,347 @@ def create_hosted_app(
             status_code=upstream.status_code,
             content=sanitize_public_payload(data),
         )
+
+    async def proxy_external_protocol(
+        request: Request, connection_id: UUID, upstream_path: str,
+    ) -> Response:
+        try:
+            record = await _invoke(catalog.lookup_external_agent_by_id, connection_id)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        if record is None or str(_attribute(record, "status", default="")) == "revoked":
+            raise HTTPException(
+                status_code=401, detail={"code": "invalid_token"},
+                headers={"WWW-Authenticate": "Bearer"})
+        handle = await run_handle(
+            _uuid_attribute(record, "tenant_id"), _uuid_attribute(record, "run_id"))
+        run_app = getattr(handle, "app", None)
+        if run_app is None:
+            raise _generic_error(503, "service_unavailable")
+        raw = await request.body()
+        forwarded_headers = {
+            name: value for name, value in request.headers.items()
+            if name.lower() in {"authorization", "accept", "content-type", "mcp-session-id"}
+        }
+        transport = httpx.ASGITransport(app=run_app)
+        try:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://run.internal",
+                timeout=httpx.Timeout(65.0),
+            ) as client:
+                upstream = await client.request(
+                    request.method, upstream_path,
+                    params=list(request.query_params.multi_items()),
+                    content=raw, headers=forwarded_headers)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        if len(upstream.content) > MAX_PROXY_RESPONSE_BYTES:
+            raise _generic_error(502, "upstream_response_too_large")
+        headers: dict[str, str] = {"Cache-Control": "no-store"}
+        for name in ("mcp-session-id", "www-authenticate"):
+            if name in upstream.headers:
+                headers[name] = upstream.headers[name]
+        if upstream.status_code == 401:
+            base = str(request.base_url).rstrip("/")
+            headers["WWW-Authenticate"] = (
+                f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp"')
+        return Response(
+            content=upstream.content, status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type", "application/json").split(";", 1)[0],
+            headers=headers)
+
+    @app.get("/.well-known/oauth-protected-resource")
+    @app.get("/.well-known/oauth-protected-resource/mcp")
+    async def hosted_protected_resource_metadata(request: Request) -> dict[str, Any]:
+        base = str(request.base_url).rstrip("/")
+        return {"resource": f"{base}/mcp", "authorization_servers": [base],
+                "scopes_supported": ["world.read", "world.act", "commons.read",
+                                     "commons.write", "moderation.act"],
+                "bearer_methods_supported": ["header"]}
+
+    @app.get("/.well-known/oauth-authorization-server")
+    async def hosted_authorization_server_metadata(request: Request) -> dict[str, Any]:
+        base = str(request.base_url).rstrip("/")
+        return {"issuer": base, "authorization_endpoint": f"{base}/oauth/authorize",
+                "token_endpoint": f"{base}/oauth/token",
+                "revocation_endpoint": f"{base}/oauth/revoke",
+                "registration_endpoint": f"{base}/oauth/register",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "code_challenge_methods_supported": ["S256"],
+                "authorization_response_iss_parameter_supported": True,
+                "token_endpoint_auth_methods_supported": ["none"],
+                "scopes_supported": ["world.read", "world.act", "commons.read",
+                                     "commons.write", "moderation.act"]}
+
+    @app.post("/oauth/register", status_code=201)
+    async def hosted_oauth_register(
+        body: HostedOAuthClientRegistrationBody,
+    ) -> Response:
+        try:
+            redirects = _oauth_redirect_uris(body.redirect_uris)
+            record = await _invoke(
+                catalog.register_external_oauth_client,
+                client_name=body.client_name, redirect_uris=redirects,
+                grant_types=body.grant_types, response_types=body.response_types,
+                token_endpoint_auth_method=body.token_endpoint_auth_method)
+        except (ValueError, TypeError):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_client_metadata"},
+                headers={"Cache-Control": "no-store"})
+        except Exception:
+            return JSONResponse(
+                status_code=503, content={"error": "temporarily_unavailable"},
+                headers={"Cache-Control": "no-store"})
+        payload = dict(record) if isinstance(record, Mapping) else asdict(record)
+        payload["client_id_issued_at"] = int(clock().timestamp())
+        return JSONResponse(status_code=201, content=payload,
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/oauth/authorize")
+    async def hosted_oauth_authorize_page(
+        request: Request,
+        response_type: str = Query(...), client_id: str = Query(...),
+        redirect_uri: str = Query(...), code_challenge: str = Query(...),
+        code_challenge_method: str = Query(...), scope: str = Query(default=""),
+        state: str | None = Query(default=None, max_length=500),
+        resource: str = Query(...),
+    ) -> Response:
+        base = str(request.base_url).rstrip("/")
+        if (response_type != "code" or code_challenge_method != "S256"
+                or not 43 <= len(code_challenge) <= 128 or resource != f"{base}/mcp"):
+            raise _generic_error(400, "invalid_oauth_request")
+        try:
+            registered = await _invoke(catalog.get_external_oauth_client, client_id)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        if registered is None or redirect_uri not in set(
+                _attribute(registered, "redirect_uris", default=()) or ()):
+            raise _generic_error(400, "invalid_client")
+        authenticated = await authenticate(request)
+        tenant_id = _authenticated_tenant(authenticated)
+        principal = await authorize(request, tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        owner = None if principal.role == ROLE_ADMIN else principal.user_id
+        try:
+            records = await _invoke(
+                catalog.list_external_agents, tenant_id, owner_user_id=owner, limit=500)
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        requested = {item for item in scope.split() if item}
+        supported = {"world.read", "world.act", "commons.read", "commons.write",
+                     "moderation.act"}
+        if not requested.issubset(supported):
+            raise _generic_error(400, "invalid_scope")
+        eligible = [record for record in records
+                    if str(_attribute(record, "status", default="")) in {
+                        "active", "pending_actor"}
+                    and requested.issubset(set(
+                        _attribute(record, "scopes", default=()) or ()))]
+        if not eligible:
+            raise _generic_error(403, "no_eligible_agent_connection")
+        csrf_token = _csrf_cookie(request)
+        if not csrf_token:
+            raise _generic_error(403, "csrf_required")
+        hidden = {
+            "response_type": response_type, "client_id": client_id,
+            "redirect_uri": redirect_uri, "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method, "scope": scope,
+            "state": state or "", "resource": resource, "csrf_token": csrf_token,
+            "tenant_id": str(tenant_id),
+        }
+        hidden_html = "".join(
+            f'<input type="hidden" name="{escape(key)}" value="{escape(value, quote=True)}">'
+            for key, value in hidden.items())
+        options = "".join(
+            f'<option value="{escape(str(_uuid_attribute(record, "id")), quote=True)}">'
+            f'{escape(str(_attribute(record, "display_name", default="Agent")))} — '
+            f'{escape(str(_attribute(record, "tier", default="")))}</option>'
+            for record in eligible)
+        client_name = escape(str(_attribute(registered, "client_name", default="MCP client")))
+        scope_text = escape(" ".join(sorted(requested)) or "identity only")
+        page = (
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Authorize Agent Economy</title>"
+            "</head><body><main><h1>Authorize Agent Economy</h1>"
+            f"<p><strong>{client_name}</strong> requests: {scope_text}</p>"
+            "<p>Select one connection you own. The client never receives your provider keys, "
+            "prompts, memories, or private reasoning.</p>"
+            "<form method=\"post\" action=\"/oauth/authorize/complete\">"
+            f"{hidden_html}<label>Agent connection <select name=\"connection_id\">{options}</select>"
+            "</label><button type=\"submit\">Approve</button></form></main></body></html>")
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.post("/oauth/authorize/complete")
+    async def hosted_oauth_authorize_complete(request: Request) -> Response:
+        raw = (await request.body()).decode("utf-8", errors="strict")
+        fields = {key: values[-1] for key, values in parse_qs(
+            raw, keep_blank_values=True).items()}
+        session_token = _session_cookie(request)
+        csrf_cookie = _csrf_cookie(request)
+        submitted = fields.get("csrf_token")
+        if not session_token or not csrf_cookie or not submitted:
+            raise _generic_error(403, "csrf_required")
+        try:
+            authenticated = await _invoke(
+                auth.authenticate_csrf, session_token=session_token,
+                submitted_csrf_token=submitted, csrf_cookie_token=csrf_cookie, now=clock())
+            tenant_id = _authenticated_tenant(authenticated)
+            if tenant_id != UUID(str(fields.get("tenant_id", ""))):
+                raise ValueError("tenant mismatch")
+        except (AuthFailure, SecurityValidationError, ValueError, TypeError):
+            raise _generic_error(403, "csrf_required") from None
+        principal = await authorize(request, tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        base = str(request.base_url).rstrip("/")
+        if (fields.get("response_type") != "code"
+                or fields.get("code_challenge_method") != "S256"
+                or fields.get("resource") != f"{base}/mcp"):
+            raise _generic_error(400, "invalid_oauth_request")
+        client_id = str(fields.get("client_id", ""))
+        redirect_uri = str(fields.get("redirect_uri", ""))
+        try:
+            registered = await _invoke(catalog.get_external_oauth_client, client_id)
+            if registered is None or redirect_uri not in set(
+                    _attribute(registered, "redirect_uris", default=()) or ()):
+                raise _generic_error(400, "invalid_client")
+            connection_id = UUID(str(fields.get("connection_id", "")))
+            owner = None if principal.role == ROLE_ADMIN else principal.user_id
+            record = await _invoke(
+                catalog.get_external_agent, tenant_id, connection_id,
+                owner_user_id=owner)
+            if record is None:
+                raise _generic_error(404, "not_found")
+            handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+            result = await _invoke(
+                handle.world.runtime.external.create_authorization_code,
+                str(_uuid_attribute(record, "run_connection_id", "id")),
+                tenant_id=str(tenant_id), owner_id=str(principal.user_id),
+                client_id=client_id, redirect_uri=redirect_uri,
+                code_challenge=str(fields.get("code_challenge", "")),
+                scopes=str(fields.get("scope", "")).split(),
+                admin=principal.role == ROLE_ADMIN)
+        except HTTPException:
+            raise
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        parsed = urlsplit(redirect_uri)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        query.update({"code": [str(result["code"])], "iss": [base]})
+        if fields.get("state"):
+            query["state"] = [str(fields["state"])]
+        location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
+                               urlencode(query, doseq=True), ""))
+        return RedirectResponse(location, status_code=302,
+                                headers={"Cache-Control": "no-store"})
+
+    @app.post("/oauth/authorize")
+    async def hosted_oauth_authorize(
+        body: HostedOAuthAuthorizeBody, request: Request,
+    ) -> dict[str, Any]:
+        principal = await authorize_mutation(request, body.tenant_id)
+        if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
+            raise _generic_error(403, "forbidden")
+        owner_filter = None if principal.role == ROLE_ADMIN else principal.user_id
+        try:
+            record = await _invoke(
+                catalog.get_external_agent, body.tenant_id, body.connection_id,
+                owner_user_id=owner_filter)
+            if record is None:
+                raise _generic_error(404, "not_found")
+            handle = await run_handle(body.tenant_id, _uuid_attribute(record, "run_id"))
+            result = await _invoke(
+                handle.world.runtime.external.create_authorization_code,
+                str(_uuid_attribute(record, "run_connection_id", "id")),
+                tenant_id=str(body.tenant_id), owner_id=str(principal.user_id),
+                client_id=body.client_id, redirect_uri=body.redirect_uri,
+                code_challenge=body.code_challenge, scopes=body.scope.split(),
+                admin=principal.role == ROLE_ADMIN)
+        except HTTPException:
+            raise
+        except Exception:
+            raise _generic_error(503, "service_unavailable") from None
+        if body.state is not None:
+            result["state"] = body.state
+        return result
+
+    async def oauth_fields(request: Request) -> dict[str, Any]:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            value = await request.json()
+            return value if isinstance(value, dict) else {}
+        from urllib.parse import parse_qs
+        raw = (await request.body()).decode("utf-8", errors="strict")
+        return {key: values[-1] for key, values in parse_qs(
+            raw, keep_blank_values=True).items()}
+
+    @app.post("/oauth/token")
+    async def hosted_oauth_token(request: Request) -> Response:
+        fields = await oauth_fields(request)
+        expected_resource = f"{str(request.base_url).rstrip('/')}/mcp"
+        if str(fields.get("resource", "")) != expected_resource:
+            return JSONResponse(
+                status_code=400, content={"error": "invalid_target"},
+                headers={"Cache-Control": "no-store"})
+        credential = (str(fields.get("code", ""))
+                      if fields.get("grant_type") == "authorization_code"
+                      else str(fields.get("refresh_token", "")))
+        connection_id = _external_connection_id_from_credential(credential)
+        if connection_id is None:
+            return JSONResponse(status_code=400, content={"error": "invalid_grant"},
+                                headers={"Cache-Control": "no-store"})
+        return await proxy_external_protocol(request, connection_id, "/oauth/token")
+
+    @app.post("/oauth/revoke")
+    async def hosted_oauth_revoke(request: Request) -> Response:
+        fields = await oauth_fields(request)
+        connection_id = _external_connection_id_from_credential(str(fields.get("token", "")))
+        if connection_id is None:
+            return Response(status_code=200, headers={"Cache-Control": "no-store"})
+        return await proxy_external_protocol(request, connection_id, "/oauth/revoke")
+
+    @app.post("/mcp")
+    async def hosted_mcp(request: Request) -> Response:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, raw_token = authorization.partition(" ")
+        connection_id = (_external_connection_id_from_credential(raw_token)
+                         if scheme.lower() == "bearer" else None)
+        if connection_id is None:
+            base = str(request.base_url).rstrip("/")
+            raise HTTPException(
+                status_code=401, detail={"code": "authentication_required"},
+                headers={"WWW-Authenticate":
+                         f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp"'})
+        return await proxy_external_protocol(request, connection_id, "/mcp")
+
+    @app.get("/mcp")
+    async def hosted_mcp_stream_not_enabled(request: Request) -> Response:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, raw_token = authorization.partition(" ")
+        connection_id = (_external_connection_id_from_credential(raw_token)
+                         if scheme.lower() == "bearer" else None)
+        if connection_id is None:
+            base = str(request.base_url).rstrip("/")
+            raise HTTPException(
+                status_code=401, detail={"code": "authentication_required"},
+                headers={"WWW-Authenticate":
+                         f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource/mcp"'})
+        return await proxy_external_protocol(request, connection_id, "/mcp")
+
+    @app.api_route("/api/v2/agent/{agent_path:path}", methods=["GET", "POST"])
+    async def hosted_agent_rest(agent_path: str, request: Request) -> Response:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, raw_token = authorization.partition(" ")
+        connection_id = (_external_connection_id_from_credential(raw_token)
+                         if scheme.lower() == "bearer" else None)
+        if connection_id is None:
+            raise HTTPException(
+                status_code=401, detail={"code": "authentication_required"},
+                headers={"WWW-Authenticate": "Bearer"})
+        return await proxy_external_protocol(
+            request, connection_id, f"/api/v2/agent/{agent_path}")
 
     @app.websocket("/api/v2/tenants/{tenant_id}/runs/{run_id}/ws")
     async def hosted_websocket(websocket: WebSocket, tenant_id: UUID, run_id: UUID) -> None:

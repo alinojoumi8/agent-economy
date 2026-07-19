@@ -37,6 +37,7 @@ from .policies import (
 )
 from .scheduler import Scheduler
 from .participant import ParticipantService
+from .external import ExternalAgentService
 from observability import get_logger, log_event as operational_log
 
 
@@ -65,6 +66,7 @@ class AgentRuntime:
         self.mem = Memory(self.store, config)
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.participant = ParticipantService(self.store, self.ctx, config)
+        self.external = ExternalAgentService(economy, self.participant, config)
         self.executor = ActionExecutor(economy)
         self.causal = CausalLinkService(self.store)
         self.scheduler = Scheduler(self.store, config)
@@ -164,10 +166,13 @@ class AgentRuntime:
         agents = self.scheduler.scheduled_agents(
             tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
         participant_decision = self.participant.decision_for_tick(tick)
+        external_agent_ids, external_decisions = self.external.decisions_for_tick(tick)
         participant_agent_id = (
             int(participant_decision["agent_id"]) if participant_decision is not None else None)
         if participant_agent_id is not None:
             agents = [a for a in agents if int(a["id"]) != participant_agent_id]
+        if external_agent_ids:
+            agents = [a for a in agents if int(a["id"]) not in external_agent_ids]
         tasks = [self._decide_guarded(tick, a) for a in agents]
         results = await _gather_fail_fast(tasks)
         decisions = []
@@ -188,6 +193,7 @@ class AgentRuntime:
                 decisions.append(res)
         if participant_decision is not None:
             decisions.append(participant_decision)
+        decisions.extend(external_decisions)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
             operational_log(logger, logging.ERROR, "agent.decision.outage_suspected",
@@ -284,6 +290,8 @@ class AgentRuntime:
                 attributed_actions.append(attributed)
             last_proposal_id = int(self.store.scalar(
                 "SELECT COALESCE(MAX(id),0) FROM action_proposals", default=0))
+            last_event_id = int(self.store.scalar(
+                "SELECT COALESCE(MAX(id),0) FROM events", default=0))
             results = self.executor.execute_actions(
                 tick, agent_id, attributed_actions, phase="EXECUTION")
             proposals = self.store.query(
@@ -301,6 +309,14 @@ class AgentRuntime:
                         provenance={"execution_order": "agent_id_action_sequence"},
                     )
             self.participant.complete(d.get("participant_action_id"), results, tick)
+            external_event_ids = [int(row["id"]) for row in self.store.query(
+                "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))]
+            external = getattr(self, "external", None)
+            if external is not None:
+                external.complete(
+                    d.get("external_submission_id"), results, tick,
+                    event_ids=external_event_ids,
+                    resulting_state_hash=external.state_hash(agent_id))
             self.mem.apply_belief_updates(
                 agent_id, env.get("belief_updates", []), tick,
                 source=str(d.get("purpose") or "decision"),

@@ -45,17 +45,30 @@ each audience can find the authoritative level of detail.
 - [Diagnostic live run `f7c6238bf5`](live-run-f7c6238bf5.md)
 - [Closed PR #10 reconciliation](pr-10-reconciliation.md)
 
-## Approved World OS expansion
+## World OS expansion
 
-These documents specify the approved next-generation direction. They do not replace the
-root PRD or technical specification until the implementation and release gates are complete.
+These documents define the implemented semantics-8 communications lake, the
+semantics-9 External Agent Gateway, the semantics-10 Agent Commons, and their
+remaining hosted rollout gates. They extend the root PRD and technical
+specification; historical release contracts remain frozen.
 
 - [World OS product requirements](world-os/PRD.md)
 - [World OS technical specification](world-os/TECH-SPEC.md)
 - [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
+- [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
+- [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)
+- [External-agent threat model](world-os/EXTERNAL-AGENT-THREAT-MODEL.md)
+- [External-agent acceptance checklist](world-os/EXTERNAL-AGENT-ACCEPTANCE.md)
+- [POLIS cost-chart assumptions](world-os/COST-ASSUMPTIONS.md)
+- [Archived POLIS source manifest](world-os/source/polis/SHA256SUMS)
 - [Frozen first-lake 30-tick research protocol](world-os/30-TICK-RESEARCH-PROTOCOL.md)
 - [Frozen protocol approval manifest](world-os/protocol-manifest.json)
 - [Communications and Causal Observatory implementation plan](plans/2026-07-18-world-os-communications-causal-observatory.md)
+
+Connector assets live in the [Python and TypeScript clients](../clients/README.md),
+the [portable connection skill](../integrations/connect-agent-economy/SKILL.md),
+the Hermes and OpenClaw presets under `integrations/`, and the generated
+[OpenAPI contract](../openapi/agent-economy-v2.json).
 
 Generated run reports and acceptance receipts live under `reports/out/`. They
 are run-specific evidence, not maintained documentation. The PRD and technical

@@ -117,12 +117,15 @@ def test_fixture_verifier_rejects_every_frozen_precondition(tmp_path, monkeypatc
         with pytest.raises(AssertionError, match="schema 12"):
             protocol.verify_fixture(store, identity)
         store.execute("UPDATE run_meta SET schema_version=12 WHERE id=1")
-        monkeypatch.setattr(protocol, "SCHEMA_VERSION", 13)
-        store.execute("UPDATE run_meta SET schema_version=13 WHERE id=1")
-        with pytest.raises(AssertionError, match="schema 12"):
+        protocol.verify_fixture(store, identity)
+        store.execute(
+            "UPDATE schema_migrations SET name='tampered_foundation' WHERE version=12")
+        with pytest.raises(AssertionError, match="verified schema 12"):
             protocol.verify_fixture(store, identity)
-        monkeypatch.setattr(protocol, "SCHEMA_VERSION", 12)
-        store.execute("UPDATE run_meta SET schema_version=12 WHERE id=1")
+        store.execute(
+            "UPDATE schema_migrations SET name='communications_and_causal_links' "
+            "WHERE version=12")
+        store.execute("UPDATE run_meta SET schema_version=14 WHERE id=1")
 
         with pytest.raises(AssertionError, match="all three"):
             protocol.verify_fixture(store, replace(identity, outside_agent_id=999999))

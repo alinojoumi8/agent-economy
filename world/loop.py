@@ -44,6 +44,7 @@ from agents.personas.library import (
 from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
+from .commons import CommonsService
 from .shocks import Shocks
 from .phases import (
     LEGACY_PHASE_SPECS,
@@ -76,6 +77,7 @@ class World:
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
         self.gateway = Gateway(store, cfg)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
+        self.commons = CommonsService(self.economy, self.runtime.mem)
         self.communication_delivery = CommunicationDelivery(store, config)
         self.metrics = Metrics(
             self.economy, semantics_version=self.engine_semantics_version)
@@ -238,6 +240,8 @@ class World:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
         if meta["active_tick"] is None:
+            if self.engine_semantics_version >= 9:
+                await self.runtime.external.collect_online_turns(tick)
             self._persist_phase(tick, phase, state)
         elif meta["legacy_partial"] and phase == "MEMORY":
             state["observations_captured"] = bool(self.store.scalar(
@@ -535,6 +539,7 @@ class World:
                 p = sample_arrival_persona(self.persona_prng, outlet_ids)
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
+            external_identity = self.runtime.external.arrival_overrides(sched_id)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
@@ -546,7 +551,9 @@ class World:
                     "baseline_citizens_core", False))
                 and not self.economy.regions.enabled)
             agent_id = self.store.insert(
-                "agents", name=p.name, kind="citizen", occupation=p.occupation,
+                "agents", name=(external_identity["name"] if external_identity else p.name),
+                kind="citizen", occupation=(external_identity["occupation"]
+                    if external_identity and external_identity["occupation"] else p.occupation),
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
@@ -608,6 +615,7 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
+            external_binding = self.runtime.external.bind_arrival(sched_id, agent_id, tick)
             arrival_payload = {
                 "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
                 "schedule_event_id": sched_id}

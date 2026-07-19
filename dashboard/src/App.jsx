@@ -12,6 +12,7 @@ export default function App() {
   if (mode.hosted) return <HostedShell config={mode.config} />;
   return <Routes>
     <Route path="/runs/:runId/*" element={<WorldOSApp />} />
+    <Route path="/commons/*" element={<WorldOSApp />} />
     <Route path="*" element={<Observatory />} />
   </Routes>;
 }

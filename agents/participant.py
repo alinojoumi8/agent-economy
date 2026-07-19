@@ -534,6 +534,10 @@ class ParticipantService:
             raise ParticipantError(400, f"unexpected action fields: {sorted(extras)}")
         return normalized
 
+    def normalize_action(self, agent_id: int, action: Any) -> dict:
+        """Validate an action against the shared, state-filtered participant catalog."""
+        return self._normalize_action(agent_id, action)
+
     def decision_for_tick(self, tick: int) -> Optional[dict]:
         row = self._replay_action(tick)
         if row is None:

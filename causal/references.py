@@ -12,6 +12,7 @@ PHASE_RANK = {
     "GENESIS": 0,
     "NIGHT_CLOSE": 10,
     "INBOX_DELIVERY": 20,
+    "COMMONS": 25,
     "MORNING": 30,
     "EXECUTION": 40,
     "MARKET": 50,
@@ -24,6 +25,9 @@ PHASE_RANK = {
 
 KIND_RANK = {
     "message": 10,
+    "commons_entry": 12,
+    "feed_impression": 14,
+    "information_exposure": 16,
     "memory": 20,
     "belief": 30,
     "decision": 40,
@@ -85,6 +89,18 @@ class StableReferenceRegistry:
         if kind == "message":
             return self.store.query_one(
                 "SELECT created_tick AS tick FROM comm_messages WHERE id=?", (object_id,)), "EXECUTION"
+        if kind == "commons_entry":
+            return self.store.query_one(
+                "SELECT created_tick AS tick FROM commons_entries WHERE id=?",
+                (object_id,)), "COMMONS"
+        if kind == "feed_impression":
+            return self.store.query_one(
+                "SELECT delivered_tick AS tick FROM commons_feed_impressions WHERE id=?",
+                (object_id,)), "COMMONS"
+        if kind == "information_exposure":
+            return self.store.query_one(
+                "SELECT tick FROM information_exposures WHERE id=?",
+                (object_id,)), "COMMONS"
         if kind == "memory":
             return self.store.query_one(
                 "SELECT tick, CASE WHEN kind='communication' THEN 'INBOX_DELIVERY' "

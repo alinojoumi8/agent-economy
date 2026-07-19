@@ -74,6 +74,20 @@ _SECOND_PROFILE = f"runs/oracle/{RELEASE_PROFILES[_SECOND_SEED]}"
 _FIRST_RUN_ID = f"{RELEASE_CAMPAIGN_ID}-s{_FIRST_SEED}"
 
 
+def test_oracle_campaign_source_rejects_external_agent_influence():
+    profile_path = Path(_FIRST_PROFILE)
+    profile = load_config(profile_path)
+    store = Store(":memory:")
+    try:
+        store.init_run_meta(_FIRST_RUN_ID, _FIRST_SEED, profile)
+        store.set_meta(external_agent_influenced=1)
+        with pytest.raises(ValueError, match="original observer-only run"):
+            validate_open_oracle_campaign_source(
+                store, profile, profile_path)
+    finally:
+        store.close()
+
+
 @pytest.fixture(autouse=True)
 def _canonical_test_campaign_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(oracle_campaign, "RELEASE_DATA_DIR", tmp_path.resolve())

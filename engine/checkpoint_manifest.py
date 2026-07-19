@@ -127,6 +127,7 @@ def checkpoint_state_binding(connection: sqlite3.Connection) -> dict:
             lifecycle_prng_state),
         "governor_sha256": canonical_sha256(governor),
         "participant_influenced": int(meta["participant_influenced"] or 0),
+        "external_agent_influenced": int(meta["external_agent_influenced"] or 0),
         "parent_run_id": meta["parent_run_id"],
         "fork_tick": meta["fork_tick"],
     }

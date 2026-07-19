@@ -592,6 +592,7 @@ def validate_claimed_oracle_genesis(
                 or meta["parent_run_id"] is not None
                 or meta["fork_tick"] is not None
                 or int(meta["participant_influenced"] or 0) != 0
+                or int(meta["external_agent_influenced"] or 0) != 0
                 or not _valid_semantics7_prng_state(meta["prng_state"])
                 or not _valid_single_prng_state(
                     meta["lifecycle_prng_state"])
@@ -1571,6 +1572,7 @@ def _checkpoint_integrity(
                         meta["lifecycle_prng_state"])
                     or not isinstance(governor, dict)
                     or int(meta["participant_influenced"] or 0) != 0
+                    or int(meta["external_agent_influenced"] or 0) != 0
                     or meta["parent_run_id"] is not None
                     or meta["fork_tick"] is not None
                     or rebuilt_manifest.get("quick_check", "").lower() != "ok"
@@ -2718,6 +2720,8 @@ def _evaluate_run(entry: dict, *, manifest_dir: Path, campaign_id: str,
                 reasons.append("run is a fork or replay")
             if int(meta["participant_influenced"] or 0) != 0:
                 reasons.append("run is participant-influenced")
+            if int(meta["external_agent_influenced"] or 0) != 0:
+                reasons.append("run is external-agent-influenced")
             if config != profile:
                 reasons.append("stored configuration differs from resolved profile")
             if effective_config_sha256(config) != expected_config_hash:

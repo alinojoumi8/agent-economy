@@ -3,6 +3,7 @@ import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
 import { OverviewWorkspace } from "../workspaces/OverviewWorkspace";
+import { CommonsWorkspace } from "../workspaces/CommonsWorkspace";
 
 function LegacyWorkspace({ title }: { title: string }) {
   return <section className="world-os-empty">
@@ -22,6 +23,7 @@ export function WorldOSApp() {
       <Route path="news-communications/:threadId" element={<NewsCommunicationsWorkspace />} />
       <Route path="investigations" element={<InvestigationsWorkspace />} />
       <Route path="investigations/:investigationId" element={<InvestigationsWorkspace />} />
+      <Route path="commons" element={<CommonsWorkspace />} />
       <Route path="world" element={<LegacyWorkspace title="World" />} />
       <Route path="people" element={<LegacyWorkspace title="People" />} />
       <Route path="people/:agentId" element={<LegacyWorkspace title="People" />} />

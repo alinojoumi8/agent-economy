@@ -179,6 +179,36 @@ class InformationEconomy:
                     distortion=float(item["distortion"]))
                 self._update_beliefs(tick, agent_id, item, perceived, exposure_id)
 
+    def expose_item(self, tick: int, agent_id: int, item_id: int,
+                    *, channel: str = "commons") -> dict[str, Any]:
+        """Record one explicit exposure and apply its factual belief update once."""
+        if not self.enabled:
+            return {"ok": False, "reason": "information economy disabled"}
+        prior = self.store.query_one(
+            "SELECT id FROM information_exposures WHERE item_id=? AND agent_id=?",
+            (int(item_id), int(agent_id)))
+        if prior is not None:
+            return {"ok": True, "exposure_id": int(prior["id"]), "idempotent": True}
+        item = self.store.query_one(
+            "SELECT i.*,c.value_json,c.truth_status FROM information_items i "
+            "JOIN claims c ON c.id=i.claim_id WHERE i.id=? AND i.status='published'",
+            (int(item_id),))
+        if item is None:
+            return {"ok": False, "reason": "information item missing"}
+        perceived = {
+            "claim_id": int(item["claim_id"]),
+            "value": json.loads(item["value_json"] or "null"),
+            "truth_status": item["truth_status"],
+            "confidence": round(max(0.0, 1.0 - float(item["distortion"])), 4),
+        }
+        exposure_id = self.store.insert(
+            "information_exposures", item_id=int(item_id), agent_id=int(agent_id),
+            tick=int(tick), channel=str(channel)[:40], version=1,
+            perceived_claim_json=json.dumps(perceived, sort_keys=True),
+            distortion=float(item["distortion"]))
+        self._update_beliefs(tick, agent_id, item, perceived, exposure_id)
+        return {"ok": True, "exposure_id": exposure_id, "idempotent": False}
+
     def _update_beliefs(self, tick: int, agent_id: int, item, perceived: dict[str, Any],
                         exposure_id: int) -> None:
         truth_weight = {"verified": 1.0, "corrected": 1.0, "unverified": 0.55, "false": 0.15}[

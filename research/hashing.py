@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 
 CONTRACT_PATH = Path(__file__).with_name("hash-contract-v1.json")
+CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v2.json")
 
 
 class HashContractError(RuntimeError):
@@ -21,9 +22,23 @@ class HashContractError(RuntimeError):
 def load_hash_contract(path: str | Path | None = None) -> dict:
     contract_path = Path(path) if path is not None else CONTRACT_PATH
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    if contract.get("id") != "hash-contract-v1":
+    if contract.get("id") not in {"hash-contract-v1", "hash-contract-v2"}:
         raise HashContractError("unsupported hash contract")
     return contract
+
+
+def _contract_for_database(database: Any) -> dict:
+    """Select the frozen v1 boundary for old semantics and v2 for 9+."""
+    connection = _connection(database)
+    try:
+        row = connection.execute(
+            "SELECT config_json FROM run_meta WHERE id=1").fetchone()
+        config = json.loads(str(row[0])) if row is not None else {}
+        semantics = int(config.get("engine_semantics_version", 0))
+    except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+        semantics = 0
+    return load_hash_contract(
+        CURRENT_CONTRACT_PATH if semantics >= 9 else CONTRACT_PATH)
 
 
 def _connection(database: Any) -> sqlite3.Connection:
@@ -73,9 +88,49 @@ def schema_inventory_sha256(database: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _contract_inventory(connection: sqlite3.Connection, contract: dict) -> list[dict]:
+    """Return the schema surface governed by one versioned contract.
+
+    Schema 13/14 tables exist in every newly opened database. The frozen v1
+    research boundary continues to hash the exact schema-12 surface for
+    Semantics 1-8, while accepting only extensions explicitly declared by v2.
+    """
+    inventory = schema_inventory(connection)
+    if contract.get("id") != "hash-contract-v1" or int(
+            contract.get("schema_version", 0)) != 12:
+        return inventory
+    current = load_hash_contract(CURRENT_CONTRACT_PATH)
+    extension_tables = set(map(str, current.get("extension_tables", [])))
+    extension_columns = {
+        str(table): set(map(str, columns))
+        for table, columns in current.get("extension_columns", {}).items()
+    }
+    compatible = []
+    for item in inventory:
+        table = str(item["table"])
+        if table in extension_tables:
+            continue
+        removed = extension_columns.get(table, set())
+        compatible.append({
+            "table": table,
+            "columns": [
+                column for column in item["columns"]
+                if str(column["name"]) not in removed
+            ],
+        })
+    return compatible
+
+
+def _inventory_sha256(inventory: list[dict]) -> str:
+    payload = json.dumps(
+        inventory, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
     """Fail closed when any table or column is not covered by the manifest."""
-    contract = contract or load_hash_contract()
+    contract = contract or _contract_for_database(database)
     classified = {
         classification: set(map(str, contract[f"{classification}_tables"]))
         for classification in ("authoritative", "derived", "excluded")
@@ -88,19 +143,26 @@ def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
     if overlaps:
         raise HashContractError(
             "hash contract classifies tables more than once: " + ",".join(sorted(overlaps)))
-    discovered = set(_tables(_connection(database)))
+    connection = _connection(database)
+    discovered = set(_tables(connection))
     declared = set().union(*classified.values())
-    missing = sorted(discovered - declared)
+    allowed_extensions: set[str] = set()
+    if contract.get("id") == "hash-contract-v1" and int(
+            contract.get("schema_version", 0)) == 12:
+        allowed_extensions = set(map(
+            str, load_hash_contract(CURRENT_CONTRACT_PATH).get("extension_tables", [])))
+    missing = sorted(discovered - declared - allowed_extensions)
     stale = sorted(declared - discovered)
     if missing:
         raise HashContractError("unclassified storage tables: " + ",".join(missing))
     if stale:
         raise HashContractError("hash contract tables are absent: " + ",".join(stale))
-    inventory_hash = schema_inventory_sha256(database)
+    contract_inventory = _contract_inventory(connection, contract)
+    inventory_hash = _inventory_sha256(contract_inventory)
     if inventory_hash != str(contract.get("schema_inventory_sha256")):
         raise HashContractError(
             "unclassified storage column or schema change: " + inventory_hash)
-    inventory = {item["table"]: item for item in schema_inventory(database)}
+    inventory = {item["table"]: item for item in contract_inventory}
     for table, columns in contract.get("excluded_columns", {}).items():
         discovered_columns = {item["name"] for item in inventory[str(table)]["columns"]}
         unknown = sorted(set(map(str, columns)) - discovered_columns)
@@ -203,7 +265,7 @@ def table_digest(
     database: Any, table: str, *, contract: dict | None = None,
 ) -> dict:
     connection = _connection(database)
-    contract = contract or load_hash_contract()
+    contract = contract or _contract_for_database(connection)
     verify_hash_contract(connection, contract)
     classification = next(
         (name for name in ("authoritative", "derived", "excluded")
@@ -213,7 +275,8 @@ def table_digest(
     if classification is None:
         raise HashContractError(f"table is unclassified: {table}")
     inventory = next(
-        item for item in schema_inventory(connection) if item["table"] == table)
+        item for item in _contract_inventory(connection, contract)
+        if item["table"] == table)
     columns, row_order = _included_columns(table, inventory, contract)
     digest = hashlib.sha256()
     header = json.dumps(
@@ -245,7 +308,7 @@ def table_digest(
 
 def canonical_hashes(database: Any, contract: dict | None = None) -> dict:
     connection = _connection(database)
-    contract = contract or load_hash_contract()
+    contract = contract or _contract_for_database(connection)
     verification = verify_hash_contract(connection, contract)
     table_results = {}
     aggregate_results = {}

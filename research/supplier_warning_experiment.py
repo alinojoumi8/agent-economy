@@ -25,7 +25,6 @@ from communications.policy import CommunicationPolicy, MessageField, Principal
 from communications.projections import AgentKnowledgeProjection
 from engine.actions import ActionExecutor
 from engine.core import Economy
-from engine.schema import SCHEMA_VERSION
 from engine.store import Store, load_json
 from server.projections.snapshot import build_snapshot
 from world.phases import phase_names_for_semantics
@@ -34,6 +33,7 @@ from .hashing import canonical_hashes, canonical_projection_hash
 
 
 PROTOCOL_ID = "world-os-v8-supplier-warning-v1"
+PROTOCOL_SCHEMA_VERSION = 12
 SEED = 20_260_718
 NEUTRAL_BODY = "Batch 2026-07 is cleared. Continue the scheduled 10-unit purchase."
 ARMS = {
@@ -175,8 +175,16 @@ def verify_fixture(store: Store, identity: FixtureIdentity) -> None:
     config = load_json(meta["config_json"], {}) or {}
     if int(meta["tick"]) != 4 or int(config.get("engine_semantics_version", 0)) != 8:
         raise AssertionError("fixture must be frozen at tick 4 under semantics 8")
-    if int(meta["schema_version"]) != SCHEMA_VERSION or SCHEMA_VERSION != 12:
-        raise AssertionError("fixture requires schema 12")
+    if int(meta["schema_version"]) < PROTOCOL_SCHEMA_VERSION:
+        raise AssertionError("fixture requires schema 12 or a compatible migration")
+    migration = store.query_one(
+        "SELECT name,status FROM schema_migrations WHERE version=?",
+        (PROTOCOL_SCHEMA_VERSION,),
+    )
+    if (migration is None
+            or str(migration["name"]) != "communications_and_causal_links"
+            or str(migration["status"]) != "applied"):
+        raise AssertionError("fixture requires the verified schema 12 foundation")
     agents = store.query(
         "SELECT id,role,alive FROM agents WHERE id IN (?,?,?) ORDER BY id",
         (identity.sender_agent_id, identity.retailer_agent_id, identity.outside_agent_id),

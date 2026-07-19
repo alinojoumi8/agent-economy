@@ -21,6 +21,10 @@ TENANT_TABLES = (
     "runs",
     "audit_log",
     "auth_attempts",
+    "external_agents",
+    "external_agent_credentials",
+    "external_actor_bindings",
+    "external_security_audit_events",
 )
 
 
@@ -244,40 +248,49 @@ def _grant_runtime_access(
             connection,
             "REVOKE ALL ON FUNCTION hosted_active_session_tenant(text), "
             "hosted_active_invitation_tenant(text), hosted_active_run_scopes(), "
+            "hosted_active_external_credential_tenant(text), "
+            "hosted_external_agent_tenant(uuid), "
             "hosted_transfer_run_owner(uuid, uuid, uuid) "
             f"FROM {role}",
         )
         _execute(connection, f"GRANT USAGE ON SCHEMA public TO {role}")
     _execute(
         connection,
-        "GRANT SELECT ON TABLE tenants, users, memberships, sessions, invitations, runs "
+        "GRANT SELECT ON TABLE tenants, users, memberships, sessions, invitations, runs, "
+        "external_agents, external_agent_credentials, external_actor_bindings, "
+        "external_oauth_clients "
         f"TO {quoted_role}",
     )
     _execute(
         connection,
-        "GRANT INSERT ON TABLE users "
+        "GRANT INSERT ON TABLE users, external_oauth_clients "
         f"TO {quoted_role}",
     )
     _execute(
         connection,
-        "GRANT INSERT, UPDATE ON TABLE memberships, sessions, invitations "
+        "GRANT INSERT, UPDATE ON TABLE memberships, sessions, invitations, external_agents, "
+        "external_agent_credentials, external_actor_bindings "
         f"TO {quoted_role}",
     )
     _execute(connection, f"GRANT SELECT, INSERT ON TABLE auth_attempts TO {quoted_role}")
     _execute(connection, f"GRANT INSERT ON TABLE audit_log TO {quoted_role}")
+    _execute(connection, f"GRANT INSERT ON TABLE external_security_audit_events TO {quoted_role}")
     # append_auth_audit uses INSERT ... RETURNING id. PostgreSQL requires a
     # SELECT privilege on every RETURNING column even when INSERT is granted.
     # Keep that privilege column-scoped so the web role cannot read audit rows.
     _execute(connection, f"GRANT SELECT (id) ON TABLE audit_log TO {quoted_role}")
     _execute(
         connection,
-        "GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq, auth_attempts_id_seq "
+        "GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq, auth_attempts_id_seq, "
+        "external_security_audit_events_id_seq "
         f"TO {quoted_role}",
     )
     _execute(
         connection,
         "GRANT EXECUTE ON FUNCTION hosted_active_session_tenant(text), "
         "hosted_active_invitation_tenant(text), "
+        "hosted_active_external_credential_tenant(text), "
+        "hosted_external_agent_tenant(uuid), "
         "hosted_transfer_run_owner(uuid, uuid, uuid) "
         f"TO {quoted_role}",
     )

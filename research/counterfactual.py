@@ -120,10 +120,13 @@ def _run_arm(pack: ScenarioPack, seed: int, arm: str, data_dir: Path, ticks: int
     asyncio.run(world.run(max_ticks=ticks))
     ok, diagnostic = world.economy.ledger.reconcile()
     metrics = {name: store.metric_latest(name, None) for name in pack.metrics}
+    external_agent_influenced = bool(
+        store.get_meta()["external_agent_influenced"])
     result = {"run_id": run_id, "seed": seed, "arm": arm, "ticks": store.tick,
               "reconciled": ok, "reconciliation": diagnostic, "metrics": metrics,
               "genesis_hash": genesis_hash, "replay_hash": _event_hash(store),
-              "causal_trace": _causal_trace(store)}
+              "causal_trace": _causal_trace(store),
+              "external_agent_influenced": external_agent_influenced}
     store.close()
     return result
 
@@ -142,6 +145,14 @@ def run_counterfactual(scenario_path: str | Path | ScenarioPack, *, seeds: int |
     data_dir.mkdir(parents=True, exist_ok=True)
     results = [_run_arm(pack, seed, arm, data_dir, horizon, resolved_config)
                for seed in paired_seeds for arm in pack.arms]
+    influenced = [
+        str(row.get("run_id", "")) for row in results
+        if bool(row.get("external_agent_influenced", False))
+    ]
+    if influenced:
+        raise RuntimeError(
+            "external-agent-influenced runs cannot be used as branch-causal "
+            f"evidence: {', '.join(influenced)}")
     for seed in paired_seeds:
         hashes = {row["genesis_hash"] for row in results if row["seed"] == seed}
         if len(hashes) != 1:

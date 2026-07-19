@@ -190,6 +190,27 @@ def test_acceptance_package_is_machine_checkable_and_standalone(tmp_path):
     assert "Observed through agent decisions and transactions." in markdown
 
 
+def test_external_agent_influence_fails_observer_acceptance(tmp_path):
+    db, experiment, phenomena = _passing_evidence(tmp_path)
+    store = Store(str(db), create=False)
+    store.set_meta(external_agent_influenced=1)
+    store.commit()
+    store.close()
+
+    receipt = acceptance_report.evaluate_acceptance(
+        db, experiment_json=experiment, phenomena_yaml=phenomena)
+    observer = next(
+        check for check in receipt["checks"]
+        if check["id"] == "observer_integrity")
+
+    assert receipt["passed"] is False
+    assert observer["passed"] is False
+    assert observer["evidence"] == {
+        "participant_influenced": False,
+        "external_agent_influenced": True,
+    }
+
+
 def test_acceptance_population_gate_counts_living_agents(tmp_path):
     db, experiment, phenomena = _passing_evidence(tmp_path)
     store = Store(str(db))
@@ -1267,6 +1288,34 @@ def test_counterfactual_runner_reuses_the_authorized_effective_config(
         data_root=tmp_path / "data", effective_config=effective_config)
 
     assert observed_configs == [effective_config, effective_config]
+
+
+def test_counterfactual_refuses_external_agent_branch_evidence(
+        tmp_path, monkeypatch):
+    pack = scenarios.ScenarioPack(
+        key="external-influence", version="1", title="External influence",
+        ticks=1, base_config="unused.yaml", dataset_manifest="manifest.yaml",
+        common_shocks=(), arms={"control": {}, "treatment": {}}, metrics=(),
+        limitations="test only", path="unused.yaml", checksum_sha256="abc",
+    )
+
+    def run_arm(_pack, seed, arm, _data_dir, ticks, _arm_config):
+        return {
+            "run_id": f"run-{arm}", "seed": seed, "arm": arm, "ticks": ticks,
+            "reconciled": True, "reconciliation": {}, "metrics": {},
+            "genesis_hash": "same-genesis", "replay_hash": f"hash-{arm}",
+            "causal_trace": [],
+            "external_agent_influenced": arm == "treatment",
+        }
+
+    monkeypatch.setattr(counterfactual_runner, "_run_arm", run_arm)
+
+    with pytest.raises(
+            RuntimeError, match="cannot be used as branch-causal evidence"):
+        counterfactual_runner.run_counterfactual(
+            pack, seeds=[1], ticks=1, out_dir=tmp_path / "reports",
+            data_root=tmp_path / "data", effective_config=_config())
+    assert not (tmp_path / "reports" / "counterfactual_external-influence.json").exists()
 
 
 def test_rehearsal_initializes_acceptance_population_and_routes_every_role_locally():
