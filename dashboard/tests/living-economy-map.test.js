@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+
 import { aggregateFlows, normalizeMapData } from "../src/components/livingEconomyMapModel.js";
 
 const regionIds = new Set([1, 2, 3]);
@@ -152,4 +156,61 @@ test("normalizeMapData clamps coordinates and derives regional totals", () => {
 test("normalizeMapData treats malformed optional collections as empty", () => {
   const scene = normalizeMapData({ enabled: false, regions: null, firms: {}, core_agents: "bad", flows: 4 });
   assert.deepEqual(scene, { enabled: false, regions: [], routes: [], firms: [], coreAgents: [] });
+});
+
+const renderedMap = {
+  enabled: true,
+  regions: [
+    {
+      id: 1, name: "Northstar Federation", region_key: "northstar", currency_code: "NSD",
+      x: 0.25, y: 0.35, population: 650, population_target: 600,
+      specialization: ["technology", "finance"],
+    },
+    {
+      id: 2, name: "Ironvale Union", region_key: "ironvale", currency_code: "IVC",
+      x: 0.72, y: 0.28, population: 146, population_target: 220,
+      specialization: ["manufacturing", "energy"],
+    },
+  ],
+  firms: [{ id: 10, name: "Foundry", sector: "manufacturing", status: "listed", region_id: 1 }],
+  core_agents: [{ id: 20, name: "Governor Vale", role: "central_banker", region_id: 1 }],
+  flows: [
+    { id: 30, source_region_id: 1, target_region_id: 2, kind: "trade", magnitude: 7, status: "completed" },
+    { id: 31, source_region_id: 1, target_region_id: 2, kind: "trade", magnitude: 3, status: "in_transit" },
+    { id: 32, source_region_id: 2, target_region_id: 1, kind: "migration", magnitude: 1, status: "completed" },
+  ],
+};
+
+test("EconomicMap renders an accessible isometric scene and controls", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { EconomicMap } = await vite.ssrLoadModule("/src/components/V2Observatory.jsx");
+    const markup = renderToStaticMarkup(React.createElement(EconomicMap, { map: renderedMap }));
+
+    assert.match(markup, /Regional economy command table/);
+    assert.match(markup, /Perspective economic topology/);
+    assert.match(markup, /aria-label="Toggle trade routes"[^>]*aria-pressed="true"/);
+    assert.match(markup, /aria-label="Toggle migration routes"[^>]*aria-pressed="true"/);
+    assert.match(markup, /aria-label="Toggle actor markers"[^>]*aria-pressed="true"/);
+    assert.match(markup, /data-region-id="1"/);
+    assert.match(markup, /data-route-id="trade:1:2"/);
+    assert.match(markup, /tabindex="0"/);
+    assert.match(markup, /Select a region/);
+    assert.match(markup, /2 aggregated routes/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("EconomicMap preserves the disabled regional-economy guidance", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { EconomicMap } = await vite.ssrLoadModule("/src/components/V2Observatory.jsx");
+    const markup = renderToStaticMarkup(React.createElement(EconomicMap, {
+      map: { enabled: false, regions: [] },
+    }));
+    assert.match(markup, /Regional economy disabled for this run profile/);
+  } finally {
+    await vite.close();
+  }
 });

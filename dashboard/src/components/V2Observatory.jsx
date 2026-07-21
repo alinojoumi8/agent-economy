@@ -1,35 +1,7 @@
 import { number, shortKind } from "../api";
 import { Empty, Panel } from "./ui";
 
-const REGION_COLORS = ["#79e6bd", "#f7d783", "#ff9788"];
-
-export function EconomicMap({ map }) {
-  const regions = map?.regions || [];
-  const byId = Object.fromEntries(regions.map(region => [region.id, region]));
-  return <Panel className="col-span-full xl:col-span-8" title="Living economy map" eyebrow="TRADE · CAPITAL · MIGRATION">
-    {!regions.length ? <Empty text="Enable the semantics-v5 living world to populate the map." /> :
-      <div className="p-3">
-        <svg viewBox="0 0 1000 430" role="img" aria-label="Regional economy map with trade and migration flows" className="h-auto w-full rounded-xl bg-ink-950/55">
-          <defs><marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#9aefcf" /></marker></defs>
-          {(map.flows || []).map((flow, index) => {
-            const source = byId[flow.source_region_id], target = byId[flow.target_region_id];
-            if (!source || !target) return null;
-            return <line key={`${flow.kind}-${flow.id}-${index}`} x1={source.x * 1000} y1={source.y * 430} x2={target.x * 1000} y2={target.y * 430}
-              stroke={flow.kind === "trade" ? "#79e6bd" : "#f7d783"} strokeOpacity=".45" strokeWidth={Math.min(7, 1 + Number(flow.magnitude || 1) / 20)} markerEnd="url(#flow-arrow)" />;
-          })}
-          {regions.map((region, index) => <g key={region.id} transform={`translate(${region.x * 1000} ${region.y * 430})`}>
-            <circle r={54 + Math.sqrt(Number(region.population || 0))} fill={REGION_COLORS[index % 3]} fillOpacity=".12" stroke={REGION_COLORS[index % 3]} strokeWidth="2" />
-            <text textAnchor="middle" y="-8" fill="#e7f1ed" fontSize="17" fontWeight="700">{region.name}</text>
-            <text textAnchor="middle" y="16" fill="#9fb8af" fontSize="13">{number(region.population, 0)} agents · {region.currency_code}</text>
-            <text textAnchor="middle" y="36" fill="#78938a" fontSize="11">{region.firms} firms</text>
-          </g>)}
-          {(map.core_agents || []).slice(0, 100).map(agent => <circle key={agent.id}
-            cx={agent.x * 1000 + ((agent.id * 17) % 70 - 35)} cy={agent.y * 430 + ((agent.id * 29) % 70 - 35)} r="2.4" fill="#fff" fillOpacity=".62"><title>{agent.name} · {agent.role || agent.occupation}</title></circle>)}
-        </svg>
-        <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-slate-500"><span><b className="text-mint-300">●</b> trade</span><span><b className="text-gold-300">●</b> migration</span><span><b className="text-white">●</b> core strategic agent</span><span>{map.firms?.length || 0} active firms plotted</span></div>
-      </div>}
-  </Panel>;
-}
+export { EconomicMap } from "./LivingEconomyMap";
 
 function Stat({ label, value }) {
   return <div className="rounded-lg border border-mint-300/10 bg-ink-950/40 p-3"><div className="text-[10px] uppercase tracking-widest text-slate-600">{label}</div><div className="mt-1 text-xl font-semibold tabular text-slate-200">{value}</div></div>;
