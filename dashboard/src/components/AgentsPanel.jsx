@@ -18,6 +18,16 @@ export function agentDirectoryPath({ filter = "", tier = "", regionId = null, af
   return `/api/agents?${params.toString()}`;
 }
 
+export function agentDirectoryEmptyMessage({
+  loading = false, error = "", hasValidPage = false, regionFocus = null,
+} = {}) {
+  if (loading) return "Loading agents…";
+  if (error && !hasValidPage) return "Agent directory is unavailable.";
+  return regionFocus
+    ? `No agents match this search in ${regionFocus.regionName}.`
+    : "No agents match this search.";
+}
+
 export function AgentsPanel({ agents = null, initialDirectory = null, participant, status, act }) {
   const { regionFocus } = useObservatoryInteraction();
   const regionId = regionFocus?.regionId ?? null;
@@ -32,6 +42,9 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   ));
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
+  const [hasValidDirectoryPage, setHasValidDirectoryPage] = useState(
+    () => initialDirectory !== null || Array.isArray(agents),
+  );
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -50,6 +63,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         }));
         if (active) {
           setDirectory(page);
+          setHasValidDirectoryPage(true);
           setDirectoryError("");
         }
       } catch (reason) {
@@ -156,9 +170,12 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
             <td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td>
             <td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
           </tr>)}</tbody>
-        </table> : <Empty>{directoryLoading ? "Loading agents…" : regionFocus
-          ? `No agents match this search in ${regionFocus.regionName}.`
-          : "No agents match this search."}</Empty>}
+        </table> : <Empty>{agentDirectoryEmptyMessage({
+          loading: directoryLoading,
+          error: directoryError,
+          hasValidPage: hasValidDirectoryPage,
+          regionFocus,
+        })}</Empty>}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-mint-300/10 px-4 py-3 text-xs text-slate-500" aria-live="polite">
         <span>{directoryError

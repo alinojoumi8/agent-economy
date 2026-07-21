@@ -78,7 +78,14 @@ function recordsFor(reference, data) {
   }
   if (reference.kind === "macro_metric") {
     const series = arrays(data?.metrics?.[reference.id]);
-    return series.length ? [{ id: reference.id, series, latest: series.at(-1)?.value }] : [];
+    const latest = series.at(-1)?.value;
+    const previous = series.at(-2)?.value;
+    return series.length ? [{
+      id: reference.id,
+      series,
+      latest,
+      delta: previous === undefined ? null : Number(latest) - Number(previous),
+    }] : [];
   }
   if (reference.kind === "shock_trace") {
     const evidence = arrays(data?.acceptance?.checks)
@@ -109,10 +116,45 @@ const LABELS = {
   outlet: "Outlet", outlet_name: "Outlet", tone: "Tone", truthful: "Truthful", sector: "Sector",
   slant_tags: "Slant tags", source_event_ids: "Source events", ruleset: "Ruleset",
   employees: "Employees", deposits_cents: "Deposits", reserves_cents: "Reserves",
-  reserve_ratio: "Reserve ratio", loans: "Loans", loans_cents: "Loans", avg_trust: "Average trust",
+  reserve_ratio: "Reserve ratio", loans: "Loans", loans_cents: "Loans",
+  loans_outstanding_cents: "Loans outstanding", avg_trust: "Average trust",
   cash_cents: "Cash", price_cents: "Goods price", last_stock_price: "Stock price",
   inventory: "Inventory", inventory_qty: "Inventory", production: "Production", output: "Production",
   payroll_cents: "Payroll", revenue_cents: "Revenue",
+  enabled: "Enabled", tax_rate_bps: "Tax rate", unemployment_benefit_cents: "Unemployment benefit",
+  treasury_cents: "Treasury", last_election: "Last election",
+  exists: "Available", fund_cents: "Fund balance", portfolio: "Portfolio",
+  hospital: "Hospital", insurer: "Insurer", insured_count: "Insured agents",
+  epidemic_multiplier: "Epidemic multiplier",
+  matter_type: "Matter type", venue: "Venue", claim_type: "Claim type",
+  contract_id: "Contract", claimant_type: "Claimant type", claimant_id: "Claimant",
+  respondent_type: "Respondent type", respondent_id: "Respondent",
+  filed_tick: "Filed day", response_due_tick: "Response due day", resolved_tick: "Resolved day",
+  counsel_agent_id: "Counsel agent", requested_remedy: "Requested remedy", settlement: "Settlement",
+  obligation_type: "Obligation type", clause_id: "Clause", obligor_type: "Obligor type",
+  obligor_id: "Obligor", obligee_type: "Obligee type", obligee_id: "Obligee",
+  due_tick: "Due day", grace_ticks: "Grace days", amount_cents: "Amount",
+  currency_code: "Currency", terms: "Terms", terms_json: "Terms",
+  performed_tick: "Performed day", breached_tick: "Breached day", transaction_id: "Transaction",
+  bill_key: "Bill key", sponsor_legislator_id: "Sponsor legislator", origin_chamber: "Origin chamber",
+  committee_id: "Committee", current_version: "Current version", introduced_tick: "Introduced day",
+  executive_action_tick: "Executive action day", effective_tick: "Effective day",
+  policy_changes: "Policy changes",
+  firm_id: "Firm", proposer_agent_id: "Proposer agent", investor_agent_id: "Investor agent",
+  instrument_type: "Instrument", pre_money_cents: "Pre-money valuation",
+  valuation_cap_cents: "Valuation cap", discount_bps: "Discount (bps)", equity_bps: "Equity (bps)",
+  liquidation_preference_bps: "Liquidation preference (bps)", pro_rata: "Pro rata",
+  board_seat: "Board seat", founder_accepted_tick: "Founder accepted day",
+  investor_accepted_tick: "Investor accepted day", round_type: "Round type",
+  shares_issued: "Shares issued", post_money_cents: "Post-money valuation",
+  creator_agent_id: "Creator agent", asset_type: "Asset type", scope: "Scope",
+  registered_tick: "Registered day", valuation_cents: "Valuation",
+  proposed_tick: "Proposed day", acquirer_firm_id: "Acquirer firm", target_firm_id: "Target firm",
+  consideration_type: "Consideration", target_approved_tick: "Target approved day",
+  regulator_notified_tick: "Regulator notified day", closed_tick: "Closed day",
+  terminated_tick: "Terminated day", agreement_contract_id: "Agreement contract",
+  passed: "Passed", evidence: "Evidence", remedy: "Remedy",
+  source: "Source", downstream: "Downstream evidence",
   calls: "Calls", in_tokens: "Input tokens", out_tokens: "Output tokens", cost_usd: "Spend",
   latest: "Current value", delta: "Latest change", series: "Recent points", count: "Count",
 };
@@ -131,7 +173,7 @@ function scalar(value) {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.map(item => typeof item === "object"
     ? serialize(item) : String(item)).join(", ");
-  if (typeof value === "object") return null;
+  if (typeof value === "object") return serialize(value);
   return String(value);
 }
 

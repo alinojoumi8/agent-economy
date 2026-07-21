@@ -94,6 +94,26 @@ test("inspection resolves the newest record and retains a last-observed fallback
   assert.equal(missing.lastObserved, true);
 });
 
+test("live macro inspection recomputes the latest delta from the current series", () => {
+  const reference = makeInspection(
+    { kind: "macro_metric", id: "cpi", title: "Price level" },
+    {
+      id: "cpi", title: "Price level", help: "Goods-price index",
+      latest: 1.2, delta: 0.2, series: [{ tick: 1, value: 1 }, { tick: 2, value: 1.2 }],
+    },
+  );
+  const current = resolveInspection(reference, {
+    metrics: { cpi: [{ tick: 3, value: 1.5 }, { tick: 4, value: 1.8 }] },
+  });
+
+  assert.equal(current.record.latest, 1.8);
+  assert.ok(Math.abs(current.record.delta - 0.3) < 1e-12);
+  assert.deepEqual(current.record.series, [
+    { tick: 3, value: 1.5 }, { tick: 4, value: 1.8 },
+  ]);
+  assert.equal(current.lastObserved, false);
+});
+
 test("inspection presentation is safe for unsupported and malformed snapshots", () => {
   const known = inspectionPresentation(makeInspection(
     { kind: "news", id: 3 },
@@ -102,6 +122,9 @@ test("inspection presentation is safe for unsupported and malformed snapshots", 
   assert.equal(known.title, "A verified headline");
   assert.equal(known.narrative, "Full story");
   assert.equal(known.lastObserved, true);
+  assert.deepEqual(known.raw, {
+    id: 3, headline: "A verified headline", body: "Full story", tick: 92,
+  });
   assert.ok(known.fields.some(field => field.label === "Day" && field.value === "92"));
 
   const unknown = inspectionPresentation(makeInspection(
@@ -109,6 +132,158 @@ test("inspection presentation is safe for unsupported and malformed snapshots", 
   ), {});
   assert.equal(unknown.title, "Unsupported inspection item");
   assert.deepEqual(unknown.fields, []);
+});
+
+function labelledFields(presentation) {
+  return Object.fromEntries(presentation.fields.map(field => [field.label, field.value]));
+}
+
+test("inspection presentation exposes explicit bank and institution details", () => {
+  const bankSnapshot = {
+    id: 4, name: "Northstar Reserve", loans_outstanding_cents: 7300,
+    internal_password: "not a labelled field",
+  };
+  const bank = inspectionPresentation(
+    makeInspection({ kind: "bank", id: 4 }, bankSnapshot),
+    { banks: [bankSnapshot] },
+  );
+  assert.deepEqual(labelledFields(bank), { "Loans outstanding": "7300" });
+  assert.deepEqual(bank.raw, bankSnapshot);
+
+  const institutions = {
+    government: {
+      enabled: true, tax_rate_bps: 1250, unemployment_benefit_cents: 4500,
+      treasury_cents: 99000, last_election: { winner: "Civic Party" },
+    },
+    vc: { exists: true, fund_cents: 88000, portfolio: [{ firm_id: 7 }] },
+    health: {
+      epidemic_multiplier: 1.25, hospital: { name: "Central Clinic" },
+      insurer: { name: "Mutual" }, insured_count: 42,
+    },
+  };
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "institution", id: "government", title: "Government" }, institutions.government),
+    { institutions },
+  )), {
+    Enabled: "Yes", "Tax rate": "1250", "Unemployment benefit": "4500",
+    Treasury: "99000", "Last election": '{"winner":"Civic Party"}',
+  });
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "institution", id: "vc", title: "Venture capital" }, institutions.vc),
+    { institutions },
+  )), {
+    Available: "Yes", "Fund balance": "88000", Portfolio: '{"firm_id":7}',
+  });
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "institution", id: "health", title: "Health economy" }, institutions.health),
+    { institutions },
+  )), {
+    Hospital: '{"name":"Central Clinic"}', Insurer: '{"name":"Mutual"}',
+    "Insured agents": "42", "Epidemic multiplier": "1.25",
+  });
+});
+
+test("inspection presentation exposes explicit legal and startup details", () => {
+  const matter = {
+    id: 101, title: "Docket Alpha", status: "filed", matter_type: "breach",
+    venue: "civil", claim_type: "contract", filed_tick: 8,
+    requested_remedy: { type: "damages", amount_cents: 10000 },
+  };
+  const obligation = {
+    id: 201, status: "pending", obligation_type: "payment", due_tick: 12,
+    amount_cents: 10000, terms: { cadence: "once" },
+  };
+  const bill = {
+    id: 301, title: "Civic Ledger Act", status: "introduced", origin_chamber: "house",
+    current_version: 2, introduced_tick: 9, policy_changes: { "ai.audit": true },
+  };
+  const data = {
+    v2: {
+      legal: { items: [matter], obligations: [obligation] },
+      politics: { bills: [bill] },
+      startups: { term_sheets: [] },
+    },
+  };
+
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "legal_matter", id: 101 }, matter), data,
+  )), {
+    Status: "filed", "Matter type": "breach", Venue: "civil", "Claim type": "contract",
+    "Filed day": "8", "Requested remedy": '{"type":"damages","amount_cents":10000}',
+  });
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "legal_obligation", id: 201 }, obligation), data,
+  )), {
+    Status: "pending", "Obligation type": "payment", "Due day": "12", Amount: "10000",
+    Terms: '{"cadence":"once"}',
+  });
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "bill", id: 301 }, bill), data,
+  )), {
+    Status: "introduced", "Origin chamber": "house", "Current version": "2",
+    "Introduced day": "9", "Policy changes": '{"ai.audit":true}',
+  });
+
+  const record = {
+    id: 401, status: "offered", instrument_type: "safe", amount_cents: 50000,
+    valuation_cap_cents: 500000, board_seat: false,
+  };
+  assert.deepEqual(labelledFields(inspectionPresentation(
+    makeInspection({ kind: "startup_record", id: 401, collection: "term_sheets" }, record),
+    { v2: { startups: { term_sheets: [record] } } },
+  )), {
+    Status: "offered", Instrument: "safe", Amount: "50000",
+    "Valuation cap": "500000", "Board seat": "No",
+  });
+  const summarySnapshot = {
+    title: "Term sheets", count: 3,
+    description: "Summary from the current startup lifecycle payload.",
+  };
+  const summary = inspectionPresentation(
+    makeInspection({ kind: "startup_summary", id: null, title: "Term sheets" }, summarySnapshot),
+    {},
+  );
+  assert.equal(summary.title, "Term sheets");
+  assert.equal(summary.narrative, "Summary from the current startup lifecycle payload.");
+  assert.deepEqual(labelledFields(summary), { Count: "3" });
+  assert.deepEqual(summary.raw, summarySnapshot);
+  assert.equal(summary.lastObserved, false);
+});
+
+test("inspection presentation serializes allowlisted acceptance and shock evidence safely", () => {
+  const check = {
+    id: "efficiency", label: "Efficiency cap", passed: false,
+    evidence: { spend_usd: 14.25, target_usd: 12 },
+  };
+  const acceptance = { checks: [check] };
+  const checkView = inspectionPresentation(
+    makeInspection({ kind: "acceptance_check", id: "efficiency" }, check),
+    { acceptance },
+  );
+  assert.deepEqual(labelledFields(checkView), {
+    Passed: "No", Evidence: '{"spend_usd":14.25,"target_usd":12}',
+  });
+
+  const trace = {
+    passed: true, source: { tick: 5, event_id: 91 },
+    downstream: [{ tick: 6, event_id: 92 }],
+  };
+  const shock = inspectionPresentation(
+    makeInspection({ kind: "shock_trace", id: "demand_shock" }, { id: "demand_shock", ...trace }),
+    { acceptance: { checks: [{ id: "shock_traces", evidence: { demand_shock: trace } }] } },
+  );
+  assert.deepEqual(labelledFields(shock), {
+    Passed: "Yes", Source: '{"tick":5,"event_id":91}',
+    "Downstream evidence": '{"tick":6,"event_id":92}',
+  });
+
+  const circular = {};
+  circular.self = circular;
+  const unsafe = inspectionPresentation(
+    makeInspection({ kind: "acceptance_check", id: null }, { passed: false, evidence: circular }),
+    {},
+  );
+  assert.equal(labelledFields(unsafe).Evidence, "Unable to serialize value");
 });
 
 test("inspection presentation safely formats circular objects in allowlisted arrays", () => {
@@ -165,11 +340,22 @@ test("drawer is modeless, labelled, and exposes last-observed state", async () =
 test("agent directory encodes region after search and tier and before cursor", async () => {
   const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
   try {
-    const { agentDirectoryPath } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    const { agentDirectoryEmptyMessage, agentDirectoryPath } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
     assert.equal(
       agentDirectoryPath({ filter: "Ada Core", tier: "core", regionId: 2, afterId: 100 }),
       "/api/agents?limit=100&q=Ada+Core&population_tier=core&region_id=2&after_id=100",
     );
+    assert.equal(typeof agentDirectoryEmptyMessage, "function");
+    assert.equal(agentDirectoryEmptyMessage({
+      loading: false, error: "502 Bad Gateway", hasValidPage: false, regionFocus: null,
+    }), "Agent directory is unavailable.");
+    assert.equal(agentDirectoryEmptyMessage({
+      loading: false, error: "502 Bad Gateway", hasValidPage: true,
+      regionFocus: { regionName: "Northstar Federation" },
+    }), "No agents match this search in Northstar Federation.");
+    assert.equal(agentDirectoryEmptyMessage({
+      loading: true, error: "", hasValidPage: false, regionFocus: null,
+    }), "Loading agents…");
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8");
     assert.match(source, /useEffect\(\(\) => \{\s*setCursors\(\[null\]\);\s*setPageIndex\(0\);\s*\}, \[regionId\]\)/);
@@ -177,6 +363,44 @@ test("agent directory encodes region after search and tier and before cursor", a
     const observatorySource = await readFile(new URL("../src/hooks/useObservatory.js", import.meta.url), "utf8");
     assert.doesNotMatch(observatorySource, /api\("\/api\/agents"\)/);
   } finally { await vite.close(); }
+});
+
+test("mounted provider clears a missing selected region and announces its name", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  let renderer;
+  try {
+    const {
+      ObservatoryInteractionContext, ObservatoryInteractionProvider,
+    } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    let interaction;
+    function Probe() {
+      interaction = React.useContext(ObservatoryInteractionContext);
+      return null;
+    }
+    const northstar = { id: 2, region_key: "northstar", name: "Northstar Federation" };
+    const tree = regions => React.createElement(
+      ObservatoryInteractionProvider,
+      { data: { v2: { map: { regions } } } },
+      React.createElement(Probe),
+    );
+
+    renderer = await mountComponent(tree([northstar]));
+    await rendererAct(async () => { interaction.selectRegion(northstar); });
+    assert.equal(interaction.regionFocus?.regionName, "Northstar Federation");
+
+    await rendererAct(async () => { renderer.update(tree([])); });
+    assert.equal(interaction.regionFocus, null);
+    const liveRegion = renderer.root.find(
+      node => node.props["aria-live"] === "polite" && node.props["aria-atomic"] === "true",
+    );
+    assert.equal(
+      textContent(liveRegion),
+      "Northstar Federation is no longer available; the region filter was cleared.",
+    );
+  } finally {
+    if (renderer) await rendererAct(async () => { renderer.unmount(); });
+    await vite.close();
+  }
 });
 
 function assertButtonsContainOnlyPhrasingContent(markup) {
