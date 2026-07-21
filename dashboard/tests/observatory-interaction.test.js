@@ -143,17 +143,152 @@ test("agent directory encodes region after search and tier and before cursor", a
   } finally { await vite.close(); }
 });
 
-test("world and event panels expose truthful region controls and inspection labels", async () => {
-  const source = await Promise.all([
-    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/WorldPanels.jsx", import.meta.url), "utf8")),
-    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/InformationPanels.jsx", import.meta.url), "utf8")),
-    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/MacroOverview.jsx", import.meta.url), "utf8")),
-  ]);
-  assert.match(source[0], /firmIdsForRegion/);
-  assert.match(source[0], /Inspect bank/);
-  assert.match(source[0], /Inspect institution/);
-  assert.match(source[1], /eventMatchesRegion/);
-  assert.match(source[1], /Show all/);
-  assert.match(source[1], /Inspect news article/);
-  assert.match(source[2], /kind: "macro_metric"/);
+function assertButtonsContainOnlyPhrasingContent(markup) {
+  const buttons = [...markup.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)];
+  assert.ok(buttons.length > 0, "expected at least one native button");
+  for (const [, content] of buttons) {
+    assert.doesNotMatch(content, /<(?:article|div|dl|dt|dd|h[1-6]|p|pre|section|table|tr|td)\b/);
+  }
+}
+
+test("inspection triggers use native button semantics and preserve exact inspection data", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { inspectionButtonProps } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    assert.equal(typeof inspectionButtonProps, "function");
+    const reference = { kind: "firm", id: 7, title: "Anchor Works" };
+    const snapshot = { id: 7, name: "Anchor Works", cash_cents: 25 };
+    const calls = [];
+    const props = inspectionButtonProps((...args) => calls.push(args), reference, snapshot, "Inspect firm Anchor Works");
+
+    assert.equal(props.type, "button");
+    assert.equal(props.role, undefined);
+    assert.equal(props.tabIndex, undefined);
+    assert.equal(props.onKeyDown, undefined);
+    assert.equal(props["aria-label"], "Inspect firm Anchor Works");
+
+    for (const activation of ["pointer click", "Enter-generated click", "Space-generated click"]) {
+      props.onClick({ type: "click", activation });
+    }
+    assert.deepEqual(calls, [
+      [reference, snapshot], [reference, snapshot], [reference, snapshot],
+    ]);
+  } finally { await vite.close(); }
+});
+
+test("firm views filter only mapped IDs and retain native table semantics", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { BanksPanel, FirmsPanelView, InstitutionsPanel } = await vite.ssrLoadModule("/src/components/WorldPanels.jsx");
+    assert.equal(typeof FirmsPanelView, "function");
+    const regionFocus = { regionId: 2, regionKey: "northstar", regionName: "Northstar Federation" };
+    const firms = [
+      { id: 7, name: "Anchor Works", status: "listed", last_stock_price: 12, employees: 3, price_cents: 40, cash_cents: 500 },
+      { id: 8, name: "South Foundry", status: "listed", last_stock_price: 9, employees: 4, price_cents: 35, cash_cents: 400 },
+    ];
+    const focused = renderToStaticMarkup(React.createElement(FirmsPanelView, {
+      firms, map: { firms: [{ id: 7, region_id: 2 }, { id: 8, region_id: 3 }] },
+      regionFocus, inspect: () => {},
+    }));
+    assert.match(focused, /1 firms in Northstar Federation/);
+    assert.match(focused, /Anchor Works/);
+    assert.doesNotMatch(focused, /South Foundry/);
+    assert.match(focused, /<table\b/);
+    assert.doesNotMatch(focused, /<tr\b[^>]*(?:role="button"|tabindex=)/);
+    assert.match(focused, /<button\b[^>]*aria-label="Inspect firm Anchor Works"/);
+    assertButtonsContainOnlyPhrasingContent(focused);
+
+    const empty = renderToStaticMarkup(React.createElement(FirmsPanelView, {
+      firms, map: { firms: [] }, regionFocus, inspect: () => {},
+    }));
+    assert.match(empty, /No active mapped firms are present in Northstar Federation\./);
+    assert.doesNotMatch(empty, /South Foundry|Anchor Works/);
+
+    const banks = renderToStaticMarkup(React.createElement(BanksPanel, { banks: [{
+      id: 4, name: "Northstar Reserve", deposits_cents: 500, reserves_cents: 100,
+      reserve_ratio: 0.2, avg_trust: 0.8, status: "open",
+    }] }));
+    assert.doesNotMatch(banks, /<tr\b[^>]*(?:role="button"|tabindex=)/);
+    assert.match(banks, /<button\b[^>]*aria-label="Inspect bank Northstar Reserve"/);
+    assertButtonsContainOnlyPhrasingContent(banks);
+
+    const institutions = renderToStaticMarkup(React.createElement(InstitutionsPanel, { institutions: {
+      government: { enabled: true, tax_rate_bps: 1000, unemployment_benefit_cents: 20, treasury_cents: 100 },
+      vc: { exists: true, fund_cents: 200, portfolio: [] },
+      health: { epidemic_multiplier: 1, hospital: { name: "Clinic" }, insurer: { name: "Mutual" }, insured_count: 4 },
+    } }));
+    assert.equal((institutions.match(/<article\b/g) || []).length, 3);
+    assert.match(institutions, /<dl\b/);
+    assert.match(institutions, /aria-label="Inspect institution Government"/);
+    assertButtonsContainOnlyPhrasingContent(institutions);
+  } finally { await vite.close(); }
+});
+
+test("event views render related-only, show-all, empty, and reset states truthfully", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { eventPanelReducer, EventsPanelView, NewsPanel } = await vite.ssrLoadModule("/src/components/InformationPanels.jsx");
+    assert.equal(typeof EventsPanelView, "function");
+    assert.equal(typeof eventPanelReducer, "function");
+    const regionFocus = { regionId: 2, regionKey: "northstar", regionName: "Northstar Federation" };
+    const events = [
+      { id: 11, tick: 4, kind: "regional_trade", importance: 2, payload: { origin_region_id: 2 } },
+      { id: 12, tick: 5, kind: "monetary_policy", importance: 3, payload: { agent_id: 2 } },
+    ];
+    const renderEvents = showAll => renderToStaticMarkup(React.createElement(EventsPanelView, {
+      events, onShock: () => {}, regionFocus, inspect: () => {}, raw: true, showAll,
+      onToggleRaw: () => {}, onToggleShowAll: () => {},
+    }));
+    const relatedOnly = renderEvents(false);
+    assert.match(relatedOnly, />Human<\/button>/);
+    assert.match(relatedOnly, /aria-pressed="false"[^>]*>Show all<\/button>/);
+    assert.match(relatedOnly, />Shock<\/button>/);
+    assert.match(relatedOnly, /regional trade/);
+    assert.doesNotMatch(relatedOnly, /monetary policy/);
+    assert.match(relatedOnly, /<article\b/);
+    assert.doesNotMatch(relatedOnly, /<article\b[^>]*(?:role="button"|tabindex=)/);
+    assert.match(relatedOnly, /<button\b[^>]*aria-label="Inspect event regional trade from day 4"/);
+    assert.match(relatedOnly, /<pre\b/);
+    assertButtonsContainOnlyPhrasingContent(relatedOnly);
+
+    const all = renderEvents(true);
+    assert.match(all, /aria-pressed="true"[^>]*>Related only<\/button>/);
+    assert.match(all, /regional trade/);
+    assert.match(all, /monetary policy/);
+
+    const empty = renderToStaticMarkup(React.createElement(EventsPanelView, {
+      events: [events[1]], onShock: null, regionFocus, inspect: () => {}, raw: false, showAll: false,
+      onToggleRaw: () => {}, onToggleShowAll: () => {},
+    }));
+    assert.match(empty, /No region-tagged events for Northstar Federation appear in the current event window\./);
+
+    assert.deepEqual(
+      eventPanelReducer({ raw: true, showAll: true }, { type: "region-changed" }),
+      { raw: true, showAll: false },
+    );
+
+    const news = renderToStaticMarkup(React.createElement(NewsPanel, { news: [{
+      id: 3, tick: 7, outlet_name: "Ledger", headline: "Verified headline", body: "Full story",
+    }] }));
+    assert.match(news, /<article\b/);
+    assert.match(news, /<h3\b/);
+    assert.match(news, /<p\b/);
+    assert.match(news, /aria-label="Inspect news article Verified headline"/);
+    assertButtonsContainOnlyPhrasingContent(news);
+  } finally { await vite.close(); }
+});
+
+test("macro metrics retain article and chart semantics around native inspection buttons", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { MacroOverview } = await vite.ssrLoadModule("/src/components/MacroOverview.jsx");
+    const markup = renderToStaticMarkup(React.createElement(MacroOverview, {
+      metrics: { cpi: [{ tick: 1, value: 1.2 }] },
+    }));
+    assert.equal((markup.match(/<article\b/g) || []).length, 9);
+    assert.doesNotMatch(markup, /<article\b[^>]*(?:role="button"|tabindex=)/);
+    assert.match(markup, /<button\b[^>]*aria-label="Inspect macro metric Price level"/);
+    assert.match(markup, /aria-label="Price level history"/);
+    assertButtonsContainOnlyPhrasingContent(markup);
+  } finally { await vite.close(); }
 });

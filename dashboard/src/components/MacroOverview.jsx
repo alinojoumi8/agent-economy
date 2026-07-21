@@ -1,7 +1,7 @@
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { number, percent } from "../api";
 import { rollingSumSeries } from "../metrics";
-import { inspectionTriggerProps, useObservatoryInteraction } from "./ObservatoryInteraction";
+import { inspectionButtonProps, useObservatoryInteraction } from "./ObservatoryInteraction";
 import { Panel } from "./ui";
 
 const DEFINITIONS = [
@@ -38,19 +38,21 @@ export function MacroOverview({ metrics }) {
             id: key, title: label, help, latest, delta,
             series: series.slice(-30),
           };
-          const trigger = inspectionTriggerProps(
+          const trigger = inspectionButtonProps(
             inspect,
             { kind: "macro_metric", id: key, title: label },
             snapshot,
             `Inspect macro metric ${label}`,
           );
           return (
-            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help} {...trigger}>
-              <div className="truncate text-[10px] font-semibold uppercase tracking-[.12em] text-slate-500">{label}</div>
-              <div className="mt-1 flex items-baseline gap-2">
+            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help}>
+              <button className="inspectable-card !block w-full text-left" {...trigger}>
+                <span className="block truncate text-[10px] font-semibold uppercase tracking-[.12em] text-slate-500">{label}</span>
+                <span className="mt-1 flex items-baseline gap-2">
                 <strong className="tabular truncate text-lg font-semibold text-slate-100">{display(key, latest)}</strong>
                 {delta !== null && <span className={`tabular text-[10px] ${delta > 0 ? "text-mint-300" : delta < 0 ? "text-coral-300" : "text-slate-600"}`}>{delta > 0 ? "+" : ""}{number(delta, 2)}</span>}
-              </div>
+                </span>
+              </button>
               <div className="mt-2 h-10" aria-label={`${label} history`}>
                 {series.length > 1 ? (
                   <ResponsiveContainer width="100%" height="100%">

@@ -12,17 +12,11 @@ export function useObservatoryInteraction() {
   return useContext(ObservatoryInteractionContext);
 }
 
-export function inspectionTriggerProps(inspect, reference, snapshot, ariaLabel) {
+export function inspectionButtonProps(inspect, reference, snapshot, ariaLabel) {
   return {
-    role: "button",
-    tabIndex: 0,
+    type: "button",
     "aria-label": ariaLabel,
     onClick: () => inspect(reference, snapshot),
-    onKeyDown: event => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      inspect(reference, snapshot);
-    },
   };
 }
 
