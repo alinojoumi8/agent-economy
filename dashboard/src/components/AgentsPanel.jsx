@@ -105,25 +105,6 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     } finally { setLoading(false); }
   }
 
-  async function loadOlderAgentOutputs(kind) {
-    const cursor = detail?.output_cursors?.[kind];
-    if (!detail?.agent?.id || !cursor) return;
-    setLoading(true);
-    try {
-      const page = await api(
-        `/api/agents/${detail.agent.id}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
-      const field = kind === "model" ? "recent_decisions" : "recent_actions";
-      setDetail(current => {
-        const known = new Set((current?.[field] || []).map(item => item.id));
-        return {
-          ...current,
-          [field]: [...(current?.[field] || []), ...page.items.filter(item => !known.has(item.id))],
-          output_cursors: { ...current?.output_cursors, [kind]: page.next_before_id },
-        };
-      });
-    } finally { setLoading(false); }
-  }
-
   async function takeControl(agentId) {
     setLoading(true);
     try {
@@ -195,7 +176,6 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     {loading && <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-mint-300 px-3 py-2 text-xs font-semibold text-ink-950">Loading agent…</div>}
     {detail && <AgentModal detail={detail} participant={participant} running={status?.running}
       historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
-      onLoadOlderOutputs={loadOlderAgentOutputs}
       onTakeControl={takeControl} onClose={() => setDetail(null)} />}
   </>;
 }

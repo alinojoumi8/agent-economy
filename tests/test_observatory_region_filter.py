@@ -31,15 +31,22 @@ def test_agent_region_filter_combines_with_search_tier_counts_and_cursor(region_
 
     legacy = client.get("/api/agents")
     assert legacy.status_code == 200
-    assert isinstance(legacy.json(), list)
+    legacy_items = legacy.json()
+    assert isinstance(legacy_items, list)
+    legacy_ids = [item["id"] for item in legacy_items]
+    assert legacy_ids == sorted(legacy_ids)
 
     first = client.get("/api/agents", params={"limit": 2, "region_id": region_id})
     assert first.status_code == 200
     page = first.json()
     assert page["total"] == expected
-    assert page["population_total"] >= expected
+    assert page["population_total"] == len(legacy_items)
+    assert page["limit"] == 2
     assert all(item["region_id"] == region_id for item in page["items"])
     assert all(item["region_key"] for item in page["items"])
+    expected_cursor = (
+        page["items"][-1]["id"] if expected > len(page["items"]) else None)
+    assert page["next_after_id"] == expected_cursor
 
     if page["next_after_id"] is not None:
         second = client.get("/api/agents", params={

@@ -137,6 +137,7 @@ test("agent directory encodes region after search and tier and before cursor", a
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8");
     assert.match(source, /useEffect\(\(\) => \{\s*setCursors\(\[null\]\);\s*setPageIndex\(0\);\s*\}, \[regionId\]\)/);
+    assert.doesNotMatch(source, /loadOlderAgentOutputs|onLoadOlderOutputs/);
     const observatorySource = await readFile(new URL("../src/hooks/useObservatory.js", import.meta.url), "utf8");
     assert.doesNotMatch(observatorySource, /api\("\/api\/agents"\)/);
   } finally { await vite.close(); }
