@@ -95,21 +95,26 @@ export function useObservatory({ hosted = false } = {}) {
     refresh();
     const timer = window.setInterval(() => refresh({ quiet: true }), 10_000);
     const socket = new WebSocket(observatoryWebSocketUrl(window.location));
+    let disposed = false;
     socket.addEventListener("open", () => {
+      if (disposed) return;
       setConnected(true);
       clientLog("dashboard.websocket.connected");
     });
     socket.addEventListener("close", event => {
+      if (disposed) return;
       setConnected(false);
       clientLog("dashboard.websocket.disconnected", {
         code: event.code, clean: event.wasClean, reason: event.reason,
       }, event.wasClean ? "info" : "warn");
     });
     socket.addEventListener("error", () => {
+      if (disposed) return;
       setConnected(false);
       clientLog("dashboard.websocket.failed", {}, "error");
     });
     socket.addEventListener("message", (event) => {
+      if (disposed) return;
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === "tick" || payload.type === "run_status") {
@@ -132,6 +137,7 @@ export function useObservatory({ hosted = false } = {}) {
     return () => {
       window.clearInterval(timer);
       window.clearInterval(keepalive);
+      disposed = true;
       socket.close();
     };
   }, [refresh]);
