@@ -1,3 +1,5 @@
+import { rollingSumSeries } from "./metrics.js";
+
 const arrays = value => Array.isArray(value) ? value : [];
 const numericId = value => Number.isFinite(Number(value)) ? Number(value) : null;
 const sameId = (left, right) => numericId(left) !== null && numericId(left) === numericId(right);
@@ -77,7 +79,8 @@ function recordsFor(reference, data) {
     return record && typeof record === "object" ? [{ ...record, id: reference.id }] : [];
   }
   if (reference.kind === "macro_metric") {
-    const series = arrays(data?.metrics?.[reference.id]);
+    const sourceSeries = arrays(data?.metrics?.[reference.id]);
+    const series = reference.id === "labor_income" ? rollingSumSeries(sourceSeries, 30) : sourceSeries;
     const latest = series.at(-1)?.value;
     const previous = series.at(-2)?.value;
     return series.length ? [{
@@ -160,6 +163,13 @@ const LABELS = {
 };
 const FIELD_KEYS = Object.keys(LABELS);
 
+function labelFor(reference, key) {
+  if (reference?.kind === "startup_record" && reference.collection === "mergers" && key === "price_cents") {
+    return "Acquisition consideration";
+  }
+  return LABELS[key];
+}
+
 function serialize(value) {
   try {
     return JSON.stringify(value) ?? "Unable to serialize value";
@@ -194,7 +204,7 @@ export function inspectionPresentation(reference, data) {
   const narrative = String(record.body || record.reasoning || record.description || record.help || "");
   const fields = FIELD_KEYS
     .filter(key => Object.hasOwn(record, key))
-    .map(key => ({ label: LABELS[key], value: scalar(record[key]) }))
+    .map(key => ({ label: labelFor(reference, key), value: scalar(record[key]) }))
     .filter(field => field.value !== null);
   return { title, subtitle, narrative, fields, raw: record, lastObserved: resolved.lastObserved };
 }

@@ -114,6 +114,30 @@ test("live macro inspection recomputes the latest delta from the current series"
   assert.equal(current.lastObserved, false);
 });
 
+test("live labor income inspection preserves the 30-day rolling series", () => {
+  const reference = makeInspection(
+    { kind: "macro_metric", id: "labor_income", title: "30-day labor income" },
+    {
+      id: "labor_income", title: "30-day labor income",
+      help: "Rolling gross wages paid during this day and the preceding 29 days",
+      latest: 100, delta: 100, series: [{ tick: 1, value: 100 }],
+    },
+  );
+  const dailySeries = Array.from({ length: 31 }, (_, index) => ({
+    tick: index + 1,
+    value: index === 0 ? 100 : index === 1 ? 20 : index === 29 ? 3 : index === 30 ? 5 : 0,
+  }));
+
+  const current = resolveInspection(reference, { metrics: { labor_income: dailySeries } });
+
+  assert.equal(current.record.latest, 28);
+  assert.equal(current.record.delta, -95);
+  assert.deepEqual(current.record.series.slice(-2), [
+    { tick: 30, value: 123 }, { tick: 31, value: 28 },
+  ]);
+  assert.equal(current.lastObserved, false);
+});
+
 test("inspection presentation is safe for unsupported and malformed snapshots", () => {
   const known = inspectionPresentation(makeInspection(
     { kind: "news", id: 3 },
@@ -248,6 +272,26 @@ test("inspection presentation exposes explicit legal and startup details", () =>
   assert.deepEqual(labelledFields(summary), { Count: "3" });
   assert.deepEqual(summary.raw, summarySnapshot);
   assert.equal(summary.lastObserved, false);
+});
+
+test("merger price is acquisition consideration while firm price remains goods price", () => {
+  const merger = {
+    id: 404, status: "proposed", consideration_type: "cash", price_cents: 50_000,
+  };
+  const mergerFields = labelledFields(inspectionPresentation(
+    makeInspection({ kind: "startup_record", id: 404, collection: "mergers" }, merger),
+    { v2: { startups: { mergers: [merger] } } },
+  ));
+  assert.equal(mergerFields["Acquisition consideration"], "50000");
+  assert.equal(mergerFields["Goods price"], undefined);
+
+  const firm = { id: 7, price_cents: 40 };
+  const firmFields = labelledFields(inspectionPresentation(
+    makeInspection({ kind: "firm", id: 7 }, firm),
+    { firms: [firm] },
+  ));
+  assert.equal(firmFields["Goods price"], "40");
+  assert.equal(firmFields["Acquisition consideration"], undefined);
 });
 
 test("inspection presentation serializes allowlisted acceptance and shock evidence safely", () => {
