@@ -111,6 +111,39 @@ class RunRecord:
     writer_lease_expires_at: datetime | None
 
 
+@dataclass(frozen=True)
+class ExternalAgentRecord:
+    id: UUID
+    tenant_id: UUID
+    owner_user_id: UUID
+    run_id: UUID
+    run_connection_id: UUID
+    display_name: str
+    biography: str
+    preferred_occupation: str
+    tier: str
+    scopes: tuple[str, ...]
+    status: str
+    actor_id: int | None
+    last_seen_at: datetime | None
+    lease_expires_at: datetime | None
+    created_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ExternalCredentialRecord:
+    id: UUID
+    tenant_id: UUID
+    external_agent_id: UUID
+    kind: str
+    token_hash: str
+    scopes: tuple[str, ...]
+    audience: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    created_at: datetime | None
+
+
 def _uuid(value: UUID | str, *, label: str) -> UUID:
     try:
         return value if isinstance(value, UUID) else UUID(str(value))
@@ -147,8 +180,8 @@ def _email(value: str) -> str:
 
 
 def _role(value: str) -> str:
-    if value not in {"observer", "admin"}:
-        raise ValueError("membership role must be observer or admin")
+    if value not in {"observer", "agent_owner", "admin"}:
+        raise ValueError("membership role must be observer, agent_owner, or admin")
     return value
 
 
@@ -202,6 +235,54 @@ def _run(row: Any) -> RunRecord:
         writer_lease_owner=_row_value(row, "writer_lease_owner"),
         writer_lease_token=_uuid(lease_token, label="writer lease token") if lease_token else None,
         writer_lease_expires_at=_row_value(row, "writer_lease_expires_at"),
+    )
+
+
+def _text_array(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        # psycopg normally decodes arrays. This fallback keeps fake catalog
+        # connections useful without attempting a full PostgreSQL parser.
+        value = value.strip("{}")
+        return tuple(item for item in value.split(",") if item)
+    return tuple(str(item) for item in value)
+
+
+def _external_agent(row: Any) -> ExternalAgentRecord:
+    actor_id = _optional_row_value(row, "actor_id")
+    return ExternalAgentRecord(
+        id=_uuid(_row_value(row, "id"), label="external agent id"),
+        tenant_id=_uuid(_row_value(row, "tenant_id"), label="tenant id"),
+        owner_user_id=_uuid(_row_value(row, "owner_user_id"), label="owner user id"),
+        run_id=_uuid(_row_value(row, "run_id"), label="run id"),
+        run_connection_id=_uuid(
+            _row_value(row, "run_connection_id"), label="run connection id"),
+        display_name=str(_row_value(row, "display_name")),
+        biography=str(_row_value(row, "biography")),
+        preferred_occupation=str(_row_value(row, "preferred_occupation")),
+        tier=str(_row_value(row, "tier")),
+        scopes=_text_array(_row_value(row, "scopes")),
+        status=str(_row_value(row, "status")),
+        actor_id=int(actor_id) if actor_id is not None else None,
+        last_seen_at=_optional_row_value(row, "last_seen_at"),
+        lease_expires_at=_optional_row_value(row, "lease_expires_at"),
+        created_at=_optional_row_value(row, "created_at"),
+    )
+
+
+def _external_credential(row: Any) -> ExternalCredentialRecord:
+    return ExternalCredentialRecord(
+        id=_uuid(_row_value(row, "id"), label="external credential id"),
+        tenant_id=_uuid(_row_value(row, "tenant_id"), label="tenant id"),
+        external_agent_id=_uuid(
+            _row_value(row, "external_agent_id"), label="external agent id"),
+        kind=str(_row_value(row, "kind")), token_hash=str(_row_value(row, "token_hash")),
+        scopes=_text_array(_row_value(row, "scopes")),
+        audience=str(_row_value(row, "audience")),
+        expires_at=_row_value(row, "expires_at"),
+        revoked_at=_optional_row_value(row, "revoked_at"),
+        created_at=_optional_row_value(row, "created_at"),
     )
 
 
@@ -591,7 +672,7 @@ class HostedCatalog:
                 "ON m.tenant_id = t.id AND m.user_id = %s "
                 "JOIN users AS u ON u.id = m.user_id "
                 "WHERE t.id = %s AND t.status = 'active' "
-                "AND m.status = 'active' AND m.role IN ('observer', 'admin') "
+                "AND m.status = 'active' AND m.role IN ('observer', 'agent_owner', 'admin') "
                 "AND u.disabled_at IS NULL "
                 "RETURNING id, tenant_id, user_id, token_hash, csrf_secret_hash, expires_at, revoked_at, created_at",
                 (
@@ -615,7 +696,7 @@ class HostedCatalog:
                 "WHERE s.tenant_id = %s AND s.token_hash = %s "
                 "AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp() "
                 "AND t.status = 'active' AND m.status = 'active' "
-                "AND m.role IN ('observer', 'admin') AND u.disabled_at IS NULL",
+                "AND m.role IN ('observer', 'agent_owner', 'admin') AND u.disabled_at IS NULL",
                 (str(tenant), _hash(token_hash, label="session token hash")),
             ))
         if row is None:
@@ -1263,6 +1344,336 @@ class HostedCatalog:
                 ),
             )
             return int(cursor.rowcount) == 1
+
+    def create_external_agent_with_credential(
+        self,
+        tenant_id: UUID | str,
+        *,
+        owner_user_id: UUID | str,
+        run_id: UUID | str,
+        run_connection_id: UUID | str,
+        display_name: str,
+        biography: str,
+        preferred_occupation: str,
+        tier: str,
+        scopes: Sequence[str],
+        token_hash: str,
+        credential_expires_at: datetime,
+        audience: str = "agent-economy",
+        external_agent_id: UUID | None = None,
+        credential_id: UUID | None = None,
+    ) -> tuple[ExternalAgentRecord, ExternalCredentialRecord]:
+        """Create one owner-scoped connection, PAT, binding, and audit atomically."""
+
+        tenant = _uuid(tenant_id, label="tenant id")
+        owner = _uuid(owner_user_id, label="owner user id")
+        run = _uuid(run_id, label="run id")
+        run_connection = _uuid(run_connection_id, label="run connection id")
+        external_agent = external_agent_id or run_connection
+        credential = credential_id or uuid4()
+        if tier not in {"observer", "commons", "actor"}:
+            raise ValueError("invalid external-agent tier")
+        clean_scopes = tuple(sorted({str(scope) for scope in scopes}))
+        allowed = {
+            "observer": {"world.read", "commons.read"},
+            "commons": {"commons.read", "commons.write", "moderation.act"},
+            "actor": {"world.read", "world.act", "commons.read", "commons.write",
+                      "moderation.act"},
+        }[tier]
+        if not set(clean_scopes).issubset(allowed):
+            raise ValueError("external-agent scopes exceed the tier")
+        validated_hash = _hash(token_hash, label="external credential token hash")
+        name = display_name.strip()[:80]
+        if not name:
+            raise ValueError("external-agent display name is required")
+        audit_details = json.dumps(
+            {"run_id": str(run), "tier": tier, "scopes": list(clean_scopes)},
+            sort_keys=True, separators=(",", ":"))
+        with self.tenant_transaction(tenant) as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                (_scope_advisory_lock_key("external-agent", tenant, run),),
+            )
+            authorized = _one(connection.execute(
+                "SELECT m.role,t.max_external_agents_per_run FROM memberships m "
+                "JOIN tenants t ON t.id=m.tenant_id JOIN runs r ON r.tenant_id=t.id "
+                "WHERE m.tenant_id=%s AND m.user_id=%s AND m.status='active' "
+                "AND m.role IN ('agent_owner','admin') AND r.id=%s AND t.status='active'",
+                (str(tenant), str(owner), str(run))))
+            if authorized is None:
+                raise CatalogConflict("external-agent creation is not authorized")
+            quota = int(_row_value(authorized, "max_external_agents_per_run", 1))
+            active = int(_row_value(_one(connection.execute(
+                "SELECT COUNT(*) AS count FROM external_agents WHERE tenant_id=%s "
+                "AND run_id=%s AND status<>'revoked'", (str(tenant), str(run)))), "count", 0))
+            if active >= quota:
+                raise CatalogConflict("external-agent quota exceeded")
+            row = _one(connection.execute(
+                "WITH created_agent AS ("
+                " INSERT INTO external_agents(id,tenant_id,owner_user_id,run_id,run_connection_id,"
+                " display_name,biography,preferred_occupation,tier,scopes,status)"
+                " VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *"
+                "), created_credential AS ("
+                " INSERT INTO external_agent_credentials(id,tenant_id,external_agent_id,kind,"
+                " token_hash,scopes,audience,expires_at)"
+                " SELECT %s,tenant_id,id,'personal',%s,%s,%s,%s FROM created_agent RETURNING *"
+                "), created_binding AS ("
+                " INSERT INTO external_actor_bindings(id,tenant_id,external_agent_id,run_id,status)"
+                " SELECT %s,tenant_id,id,run_id,'scheduled' FROM created_agent WHERE tier<>'observer'"
+                " RETURNING id"
+                "), audited AS ("
+                " INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
+                " actor_user_id,event_kind,outcome,details_json)"
+                " SELECT tenant_id,id,owner_user_id,'connection.created','changed',%s::jsonb"
+                " FROM created_agent RETURNING id"
+                ") SELECT created_agent.* FROM created_agent CROSS JOIN audited",
+                (str(external_agent), str(tenant), str(owner), str(run), str(run_connection),
+                 name, biography.strip()[:500], preferred_occupation.strip()[:80], tier,
+                 list(clean_scopes), "active" if tier == "observer" else "pending_actor",
+                 str(credential), validated_hash, list(clean_scopes), audience[:200],
+                 credential_expires_at, str(uuid4()), audit_details)))
+            credential_row = _one(connection.execute(
+                "SELECT * FROM external_agent_credentials WHERE tenant_id=%s AND id=%s",
+                (str(tenant), str(credential))))
+        if row is None or credential_row is None:
+            raise CatalogError("external agent creation returned no record")
+        return _external_agent(row), _external_credential(credential_row)
+
+    def register_external_oauth_client(
+        self, *, client_name: str, redirect_uris: Sequence[str],
+        grant_types: Sequence[str], response_types: Sequence[str],
+        token_endpoint_auth_method: str = "none",
+    ) -> Mapping[str, Any]:
+        """Register public MCP OAuth metadata before any tenant is selected."""
+        name = str(client_name).strip()[:200]
+        redirects = tuple(sorted({str(value).strip() for value in redirect_uris}))
+        grants = tuple(sorted({str(value).strip() for value in grant_types}))
+        responses = tuple(sorted({str(value).strip() for value in response_types}))
+        if not name or not 1 <= len(redirects) <= 10:
+            raise ValueError("invalid OAuth client metadata")
+        if (not set(grants).issubset({"authorization_code", "refresh_token"})
+                or "authorization_code" not in grants or responses != ("code",)
+                or token_endpoint_auth_method != "none"):
+            raise ValueError("unsupported OAuth public-client metadata")
+        client_id = f"ae_client_{uuid4()}"
+        with self._connection() as connection:
+            with _transaction(connection):
+                row = _one(connection.execute(
+                    "INSERT INTO external_oauth_clients(client_id,client_name,redirect_uris,"
+                    "grant_types,response_types,token_endpoint_auth_method) "
+                    "VALUES(%s,%s,%s,%s,%s,'none') RETURNING *",
+                    (client_id, name, list(redirects), list(grants), list(responses))))
+        if row is None:
+            raise CatalogError("OAuth client registration returned no record")
+        return {"client_id": str(_row_value(row, "client_id", 0)),
+                "client_name": str(_row_value(row, "client_name", 1)),
+                "redirect_uris": list(_row_value(row, "redirect_uris", 2)),
+                "grant_types": list(_row_value(row, "grant_types", 3)),
+                "response_types": list(_row_value(row, "response_types", 4)),
+                "token_endpoint_auth_method": str(
+                    _row_value(row, "token_endpoint_auth_method", 5))}
+
+    def get_external_oauth_client(self, client_id: str) -> Mapping[str, Any] | None:
+        value = str(client_id).strip()
+        if not 16 <= len(value) <= 200:
+            return None
+        with self._connection() as connection:
+            with _transaction(connection):
+                row = _one(connection.execute(
+                    "SELECT client_id,client_name,redirect_uris,grant_types,response_types,"
+                    "token_endpoint_auth_method FROM external_oauth_clients WHERE client_id=%s",
+                    (value,)))
+        if row is None:
+            return None
+        return {"client_id": str(_row_value(row, "client_id", 0)),
+                "client_name": str(_row_value(row, "client_name", 1)),
+                "redirect_uris": list(_row_value(row, "redirect_uris", 2)),
+                "grant_types": list(_row_value(row, "grant_types", 3)),
+                "response_types": list(_row_value(row, "response_types", 4)),
+                "token_endpoint_auth_method": str(
+                    _row_value(row, "token_endpoint_auth_method", 5))}
+
+    def get_external_agent_policy(self, tenant_id: UUID | str) -> dict[str, int]:
+        tenant = _uuid(tenant_id, label="tenant id")
+        with self.tenant_transaction(tenant) as connection:
+            row = _one(connection.execute(
+                "SELECT max_external_agents_per_run FROM tenants WHERE id=%s",
+                (str(tenant),)))
+        if row is None:
+            raise CatalogError("tenant policy is unavailable")
+        return {"max_external_agents_per_run": int(
+            _row_value(row, "max_external_agents_per_run", 0))}
+
+    def set_external_agent_policy(
+        self, tenant_id: UUID | str, *, actor_user_id: UUID | str,
+        max_external_agents_per_run: int,
+    ) -> dict[str, int]:
+        tenant = _uuid(tenant_id, label="tenant id")
+        actor = _uuid(actor_user_id, label="actor user id")
+        quota = int(max_external_agents_per_run)
+        if not 0 <= quota <= 10_000:
+            raise ValueError("external-agent quota must be between 0 and 10000")
+        with self.tenant_transaction(tenant) as connection:
+            admin = _one(connection.execute(
+                "SELECT 1 FROM memberships WHERE tenant_id=%s AND user_id=%s "
+                "AND status='active' AND role='admin'", (str(tenant), str(actor))))
+            if admin is None:
+                raise CatalogConflict("external-agent policy requires an administrator")
+            row = _one(connection.execute(
+                "UPDATE tenants SET max_external_agents_per_run=%s,"
+                "updated_at=clock_timestamp() WHERE id=%s "
+                "RETURNING max_external_agents_per_run", (quota, str(tenant))))
+            connection.execute(
+                "INSERT INTO external_security_audit_events(tenant_id,actor_user_id,"
+                "event_kind,outcome,details_json) VALUES(%s,%s,'policy.quota_changed',"
+                "'changed',%s::jsonb)",
+                (str(tenant), str(actor), json.dumps(
+                    {"max_external_agents_per_run": quota}, sort_keys=True)))
+        if row is None:
+            raise CatalogError("tenant policy update returned no record")
+        return {"max_external_agents_per_run": int(
+            _row_value(row, "max_external_agents_per_run", 0))}
+
+    def get_external_agent(
+        self, tenant_id: UUID | str, external_agent_id: UUID | str,
+        *, owner_user_id: UUID | str | None = None,
+    ) -> ExternalAgentRecord | None:
+        tenant = _uuid(tenant_id, label="tenant id")
+        agent = _uuid(external_agent_id, label="external agent id")
+        owner = _uuid(owner_user_id, label="owner user id") if owner_user_id else None
+        with self.tenant_transaction(tenant) as connection:
+            row = _one(connection.execute(
+                "SELECT * FROM external_agents WHERE tenant_id=%s AND id=%s "
+                "AND (%s::uuid IS NULL OR owner_user_id=%s::uuid)",
+                (str(tenant), str(agent), str(owner) if owner else None,
+                 str(owner) if owner else None)))
+        return None if row is None else _external_agent(row)
+
+    def lookup_external_agent_by_id(
+        self, external_agent_id: UUID | str,
+    ) -> ExternalAgentRecord | None:
+        """Resolve an unguessable public connection UUID before entering tenant RLS."""
+        agent = _uuid(external_agent_id, label="external agent id")
+        with self._connection() as connection:
+            with _transaction(connection):
+                row = _one(connection.execute(
+                    "SELECT hosted_external_agent_tenant(%s) AS tenant_id", (str(agent),)))
+        tenant_value = None if row is None else _row_value(row, "tenant_id", 0)
+        if tenant_value is None:
+            return None
+        return self.get_external_agent(
+            _uuid(tenant_value, label="tenant id"), agent)
+
+    def list_external_agents(
+        self, tenant_id: UUID | str, *, owner_user_id: UUID | str | None = None,
+        limit: int = 200,
+    ) -> tuple[ExternalAgentRecord, ...]:
+        tenant = _uuid(tenant_id, label="tenant id")
+        owner = _uuid(owner_user_id, label="owner user id") if owner_user_id else None
+        if not 1 <= int(limit) <= 500:
+            raise ValueError("external-agent list limit must be between 1 and 500")
+        with self.tenant_transaction(tenant) as connection:
+            rows = connection.execute(
+                "SELECT * FROM external_agents WHERE tenant_id=%s "
+                "AND (%s::uuid IS NULL OR owner_user_id=%s::uuid) "
+                "ORDER BY created_at DESC,id LIMIT %s",
+                (str(tenant), str(owner) if owner else None,
+                 str(owner) if owner else None, int(limit))).fetchall()
+        return tuple(_external_agent(row) for row in rows)
+
+    def replace_external_personal_credential(
+        self, tenant_id: UUID | str, external_agent_id: UUID | str, *,
+        owner_user_id: UUID | str, token_hash: str, scopes: Sequence[str],
+        audience: str, expires_at: datetime, credential_id: UUID | None = None,
+    ) -> ExternalCredentialRecord:
+        tenant = _uuid(tenant_id, label="tenant id")
+        agent = _uuid(external_agent_id, label="external agent id")
+        owner = _uuid(owner_user_id, label="owner user id")
+        credential = credential_id or uuid4()
+        validated_hash = _hash(token_hash, label="external credential token hash")
+        clean_scopes = tuple(sorted({str(scope) for scope in scopes}))
+        with self.tenant_transaction(tenant) as connection:
+            authorized = _one(connection.execute(
+                "SELECT id FROM external_agents WHERE tenant_id=%s AND id=%s "
+                "AND owner_user_id=%s AND status<>'revoked' FOR UPDATE",
+                (str(tenant), str(agent), str(owner))))
+            if authorized is None:
+                raise CatalogConflict("external agent is not owned by this principal")
+            prior = _one(connection.execute(
+                "UPDATE external_agent_credentials SET revoked_at=clock_timestamp() "
+                "WHERE tenant_id=%s AND external_agent_id=%s AND kind='personal' "
+                "AND revoked_at IS NULL RETURNING id", (str(tenant), str(agent))))
+            row = _one(connection.execute(
+                "INSERT INTO external_agent_credentials(id,tenant_id,external_agent_id,kind,"
+                "token_hash,scopes,audience,expires_at,rotated_from_id) "
+                "VALUES(%s,%s,%s,'personal',%s,%s,%s,%s,%s) RETURNING *",
+                (str(credential), str(tenant), str(agent), validated_hash,
+                 list(clean_scopes), audience[:200], expires_at,
+                 str(_row_value(prior, "id", 0)) if prior else None)))
+            connection.execute(
+                "INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
+                "actor_user_id,event_kind,outcome) VALUES(%s,%s,%s,'credential.rotated','changed')",
+                (str(tenant), str(agent), str(owner)))
+        if row is None:
+            raise CatalogError("external credential rotation returned no record")
+        return _external_credential(row)
+
+    def set_external_agent_status(
+        self, tenant_id: UUID | str, external_agent_id: UUID | str, *,
+        owner_user_id: UUID | str, status: str, admin: bool = False,
+    ) -> ExternalAgentRecord | None:
+        tenant = _uuid(tenant_id, label="tenant id")
+        agent = _uuid(external_agent_id, label="external agent id")
+        owner = _uuid(owner_user_id, label="owner user id")
+        if status not in {"active", "suspended", "revoked"}:
+            raise ValueError("invalid external-agent status")
+        with self.tenant_transaction(tenant) as connection:
+            row = _one(connection.execute(
+                "UPDATE external_agents SET status=%s,updated_at=clock_timestamp() "
+                "WHERE tenant_id=%s AND id=%s AND (%s OR owner_user_id=%s) RETURNING *",
+                (status, str(tenant), str(agent), bool(admin), str(owner))))
+            if row is None:
+                return None
+            if status == "revoked":
+                connection.execute(
+                    "UPDATE external_agent_credentials SET revoked_at=clock_timestamp() "
+                    "WHERE tenant_id=%s AND external_agent_id=%s AND revoked_at IS NULL",
+                    (str(tenant), str(agent)))
+            connection.execute(
+                "UPDATE external_actor_bindings SET status=%s,updated_at=clock_timestamp() "
+                "WHERE tenant_id=%s AND external_agent_id=%s",
+                ("active" if status == "active" else "safe_policy",
+                 str(tenant), str(agent)))
+            connection.execute(
+                "INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
+                "actor_user_id,event_kind,outcome,details_json) VALUES(%s,%s,%s,%s,'changed',%s::jsonb)",
+                (str(tenant), str(agent), str(owner), f"connection.{status}",
+                 json.dumps({"admin": bool(admin)})))
+        return _external_agent(row)
+
+    def revoke_external_credentials(
+        self, tenant_id: UUID | str, external_agent_id: UUID | str, *,
+        owner_user_id: UUID | str, admin: bool = False,
+    ) -> int:
+        tenant = _uuid(tenant_id, label="tenant id")
+        agent = _uuid(external_agent_id, label="external agent id")
+        owner = _uuid(owner_user_id, label="owner user id")
+        with self.tenant_transaction(tenant) as connection:
+            authorized = _one(connection.execute(
+                "SELECT id FROM external_agents WHERE tenant_id=%s AND id=%s "
+                "AND (%s OR owner_user_id=%s)",
+                (str(tenant), str(agent), bool(admin), str(owner))))
+            if authorized is None:
+                raise CatalogConflict("external agent is not owned by this principal")
+            cursor = connection.execute(
+                "UPDATE external_agent_credentials SET revoked_at=clock_timestamp() "
+                "WHERE tenant_id=%s AND external_agent_id=%s AND revoked_at IS NULL",
+                (str(tenant), str(agent)))
+            connection.execute(
+                "INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
+                "actor_user_id,event_kind,outcome) VALUES(%s,%s,%s,'credential.revoked','changed')",
+                (str(tenant), str(agent), str(owner)))
+            return int(cursor.rowcount or 0)
 
     def append_audit(
         self,

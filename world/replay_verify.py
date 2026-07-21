@@ -13,7 +13,7 @@ EXCLUDED_TABLES = {
     "run_meta", "checkpoints", "acceptance_checkpoints",
     "participant_control", "participant_actions",
 }
-IGNORED_COLUMNS = {"created_at", "updated_at"}
+IGNORED_COLUMNS = {"created_at", "updated_at", "applied_at"}
 LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
 SURROGATE_ID_COLUMNS = {
     **{table: {"id"} for table in LOGICAL_ROW_TABLES},

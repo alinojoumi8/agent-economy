@@ -1,0 +1,33 @@
+key: native-entrepreneurship
+version: "1.0"
+title: Native citizen entrepreneurship
+ticks: 365
+base_config: ../runs/native-entrepreneurship.yaml
+dataset_manifest: ../config/data-manifest.yaml
+limitations: This is a model-conditional comparison of native company entry. It is not a forecast of real-world startup formation or survival.
+common_shocks: []
+arms:
+  control:
+    treatment_variables: {native_entrepreneurship: false}
+    config_overrides:
+      entrepreneurship:
+        enabled: false
+    shocks: []
+  treatment:
+    treatment_variables: {native_entrepreneurship: true, eligibility: all_qualified_citizens}
+    config_overrides:
+      entrepreneurship:
+        enabled: true
+        new_arrivals_only: false
+    shocks: []
+metrics:
+  - entrepreneurial_firms_founded
+  - entrepreneurial_firms_active
+  - entrepreneurial_survival_rate
+  - entrepreneurial_employment
+  - entrepreneurial_revenue_30d
+  - entrepreneurial_leverage_ratio
+  - entrepreneurial_bankruptcies
+  - firm_entries
+  - firm_exits
+  - hhi

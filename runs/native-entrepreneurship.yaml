@@ -1,0 +1,18 @@
+extends: base.yaml
+
+# Native company creation is isolated from frozen release profiles so their
+# effective configuration hashes and historical replay remain unchanged.
+entrepreneurship:
+  enabled: true
+  new_arrivals_only: true
+  review_interval_ticks: 30
+  minimum_ticks_after_arrival: 1
+  minimum_age: 21
+  minimum_risk_tolerance: 0.65
+  minimum_opening_capital_cents: 100000
+  personal_reserve_cents: 100000
+  opening_capital_share_bps: 3500
+  maximum_active_competitors: 3
+  sales_lookback_ticks: 30
+  stockout_inventory_threshold: 2
+  eligible_sectors: [services, technology, manufacturing, logistics, healthcare, energy, agriculture]

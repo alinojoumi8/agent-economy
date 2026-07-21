@@ -38,8 +38,8 @@ class HostedPrincipal:
             user = str(UUID(str(self.user_id)))
         except (TypeError, ValueError, AttributeError) as exc:
             raise ValueError("hosted principal tenant and user ids must be UUIDs") from exc
-        if self.role not in {"observer", "admin"}:
-            raise ValueError("hosted principal role must be observer or admin")
+        if self.role not in {"observer", "agent_owner", "admin"}:
+            raise ValueError("hosted principal role must be observer, agent_owner, or admin")
         object.__setattr__(self, "tenant_id", tenant)
         object.__setattr__(self, "user_id", user)
 

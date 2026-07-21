@@ -1,0 +1,16 @@
+{
+  "build_identifier": "world-os-semantics-8-schema-12",
+  "credential_values_recorded": false,
+  "criteria": {},
+  "missing_environment_keys": [
+    "MINIMAX_API_KEY",
+    "KIMI_API_KEY"
+  ],
+  "provider_evidence": null,
+  "reason": "MINIMAX_API_KEY and KIMI_API_KEY are not both configured",
+  "recorded_at": "2026-07-18T20:41:44.021146+00:00",
+  "run_config": "runs/live-smoke.yaml",
+  "schema": "world-os-v8-provider-smoke-receipt-v1",
+  "status": "unavailable",
+  "ticks_required": 10
+}

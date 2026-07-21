@@ -28,13 +28,17 @@ than background flavor:
 - A two-party legislature, elections, lobbying, agencies, and typed policy rules
   create endogenous economic-political feedback.
 - 1,000 agents inhabit Northstar, Ironvale, and Suncoast. One hundred strategic
-  agents may use an LLM; 900 peripheral agents remain deterministic and cheap.
+  agents may use an LLM; 900 peripheral agents take scheduled, local
+  state-derived policy turns without creating model-call records.
 - Multicurrency ledgers, inventory-backed FX books, cross-border contracts,
   trade, migration, and regional specialization remain exactly replayable.
 - Maintained profiles run engine semantics 7: defaults recognize only net bank
   losses after collateral, retirees can draw their own savings, arrivals receive
   governed persona enrichment, and qualified trade and migration opportunities
-  become autonomous actions. Stored semantics 1–6 retain their original rules.
+  become autonomous actions. Peripheral policy turns, actor-created first stock
+  prices, the state-qualified startup funding chain, local-currency action
+  filtering, and unique-worker unemployment keep the observatory economically
+  active without weakening replay. Stored semantics 1–6 retain their original rules.
 - The observatory adds a living economic map, legal/political/startup surfaces,
   causal traces, God-mode actions through the normal validator, and static replay export.
 - Pinned dataset manifests and paired-seed scenario packs support model-conditional
@@ -108,8 +112,9 @@ agents then perceive, decide, trade, publish, converse, update memory, and
 finalize a reconciled day. Maintained semantics-7 profiles preserve the
 research-valid information boundary while adding net loan charge-offs,
 retirement liquidity, deterministic arrivals, governed arrival personas, and
-autonomous regional trade/migration. Markerless and stored semantics 1–6 runs
-are never silently upgraded.
+autonomous regional trade/migration. Stored semantics 1–6 runs are never
+silently upgraded, and a markerless stored semantics-7 source keeps its
+historical citizen-tier assignment.
 
 ## Five-minute offline start
 
@@ -204,6 +209,8 @@ baseline and fails closed when history is missing.
 | `runs/acceptance/rehearsal.yaml` | Full acceptance mechanics | Scripted, free |
 | `runs/acceptance/pilot.yaml` | 30-day rumor pilot | Live, explicit approval, $25 cap |
 | `runs/acceptance/production.yaml` | 365-day release evidence | Live, explicit approval, $200 efficiency gate |
+| `runs/oracle/calibration-control-rehearsal.yaml`, `calibration-rehearsal.yaml` | 335-tick control/treatment Oracle schedule rehearsals | Scripted, free, ineligible for live receipt |
+| `runs/oracle/v9-seed-7381-control.yaml` ... `v9-seed-7390-rumor.yaml` | Current pending v9 10-run/60-forecast calibration corpus | Scripted world; live `MiniMax-M3` Oracle only through the exact `openai_compat` adapter; automatic cache accounting; governed answer repair; scheduled-latency call floor; shared state-aware preflight; occurrence-aware replay citations; $25/run cap; no v9 live evidence claimed yet |
 
 Production never silently falls back when a key, route, or provider fails.
 Provider configs select `prompt_cache_mode` from `off`,
@@ -261,14 +268,20 @@ normalized reconstructed replay hash is
 ```text
 run.py             CLI and local application entry point
 runs/              offline, production, acceptance, and experiment profiles
+config/            dataset manifests and hosted-service configuration
 engine/            deterministic ledger and economic mechanics
 agents/            personas, role contexts, scheduling, memory, decisions
 world/             genesis, phase loop, shocks, metrics, information layer
 llm/               adapters, routing, readiness, retry, metering, governor
 oracle/            evidence tools, prediction, resolution, calibration
 experiments/       treatment/control harness
+research/          calibrated initialization, hashes, and research utilities
+scenarios/         versioned counterfactual scenario packs
 server/            FastAPI, WebSocket, replay API, committed dashboard bundle
 hosted/            optional R22 catalog/auth/RLS, supervisor, artifacts, API, CLI
+clients/           thin Python and TypeScript external-agent REST clients
+integrations/      portable skill plus Hermes, OpenClaw, and generic presets
+openapi/           generated external-agent REST/MCP-adjacent contract
 deploy/            Compose, Caddy, Prometheus, PostgreSQL role initialization
 dashboard/         React/Vite/Tailwind/Recharts source
 reports/           run reports and acceptance receipts
@@ -289,6 +302,22 @@ Caddy, and Prometheus. Start with
 [operator runbook](docs/operator-runbook.md), and
 [security policy](SECURITY.md); do not expose the local `run.py --serve` app.
 
+### External agents and Agent Commons
+
+World OS semantics 9/schema 13 adds a common external-agent gateway for
+Hermes, OpenClaw/Moltbot, custom MCP clients, and generic REST agents. Semantics
+10/schema 14 adds Agent Commons with deterministic feeds and explicit-read
+information effects. Outside runtimes keep their own models, prompts, memories,
+provider credentials, and inference costs; Agent Economy owns only identity,
+authorization, deterministic turns, receipts, and world state.
+
+Start from the [gateway contract](docs/world-os/EXTERNAL-AGENT-GATEWAY.md),
+[client quickstart](clients/README.md), or
+[portable connection skill](integrations/connect-agent-economy/SKILL.md). The
+reference local profile is `runs/world-os-external.yaml`. Hosted rollout remains
+invite-only until the independent protocol and real-connector gates in the
+[acceptance checklist](docs/world-os/EXTERNAL-AGENT-ACCEPTANCE.md) pass.
+
 ## Documentation
 
 | If you want to... | Read |
@@ -298,6 +327,7 @@ Caddy, and Prometheus. Start with
 | Understand components and data flow | [Architecture](docs/architecture.md) |
 | Customize a run or provider | [Configuration](docs/configuration.md) |
 | Automate the local server | [API reference](docs/api-reference.md) |
+| Connect Hermes, OpenClaw, or a custom agent | [External Agent Gateway](docs/world-os/EXTERNAL-AGENT-GATEWAY.md) and [clients](clients/README.md) |
 | Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |
 | Diagnose a failure | [Troubleshooting](docs/troubleshooting.md) |
 | Develop or contribute | [Development](docs/development.md) and [Contributing](CONTRIBUTING.md) |
@@ -313,6 +343,14 @@ R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
 surfaces are implemented. The semantics-7 code closure adds
 the remaining bank, retirement, arrival/persona, autonomous trade/migration,
 portable replay, and cache-policy contracts without changing schema v11.
+
+Current `main` at `c9f0b23` also restores measured economy activity in the
+semantics-7 observatory. Scheduled peripheral agents execute deterministic local
+policies with zero model-call rows; households form the first stock price from
+fundamentals through ordinary bids and asks; qualified partners, founders, and
+lawyers advance pitches through term sheet, diligence, round close, and IP;
+regional action contexts expose only local-currency opportunities until FX is
+performed; and unemployment counts each worker once, including employed founders.
 
 The semantics-7 closure is locally verified. The free run `5a0d40d773` exercised
 every target effect through tick 5 at zero spend and replayed exactly with hash
@@ -331,8 +369,166 @@ after its exact-head dashboard plus Ubuntu/Windows Python 3.11/3.12 matrix
 passed. Post-merge CI run `29368193807` repeated all five jobs successfully.
 Tagging and publication remain separate release decisions.
 
-The 30-day rumor gate, Oracle latency/calibration campaign, and
-365-day/$200 acceptance run remain separate and are not replaced by this pilot.
+The final v3 receipt-hardening tree passed 599 Python tests with 8 skipped in
+1,618.07 seconds. The preceding replay-integrity revision separately passed 590
+with 8 skipped, 23 dashboard tests, a fresh 603-module dashboard build, and
+checksum verification for the pinned FRED/BLS/SCF/SUSB datasets. Free production-workflow rehearsal
+`881ed41994` completed 365 ticks
+with 100 living agents, zero spend, balanced ledger state, zero operational
+failures, six completed and resolved Oracle checkpoints, all five shock traces,
+the five-seed experiment, and three run-bound reviewed phenomena. Its acceptance
+receipt passed 19 of 20 checks; only `real_providers` was false because every
+route was intentionally scripted. Companion replay
+`replay-881ed41994-3465cb3101` matched tick 365 and hash
+`37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
+all deterministic tables matched and `differences: []`.
+
+The 30-day rumor gate, successful v9 Oracle latency/calibration campaign, and
+365-day/$200 acceptance run remain separate and are not replaced by the
+five-tick pilot or scripted 365-tick rehearsal. A final provenance, license,
+dependency, and secret audit is also required before any public release.
+
+The archived `oracle-calibration-v1-s7301` source completed tick 335 with six
+resolved forecasts and valid live-provider provenance, but its offline replay
+diverged at the first arrival. The cause was a staged-genesis persona RNG stream
+that was not checkpointed/restored; read-only checkpoint inspection also left
+SQLite WAL/SHM sidecars. That source is diagnostic evidence only and is not
+eligible acceptance evidence. The preceding replay-integrity revision persists
+and validates both semantics-7 RNG streams, finalizes standalone checkpoints
+without SQLite sidecars, and fails replay when its target tick is not reached.
+Its focused, representative aggregate, and full-suite verification passed.
+
+Oracle campaign tooling is implemented. The archived v2 seed-7311 source and
+its generated offline replay both reached tick 335 and crossed the first
+arrival without the v1 divergence. Canonical verification returned
+`exact: true` with `differences: []`; receipt creation then failed because the
+checkpoint audit counted all preserved agent rows instead of validating the
+bounded living population separately from deceased rows: after one death and
+its replacement arrival, the correct census was 101 stored rows, 100 living,
+and one deceased. V2 is immutable diagnostic evidence and is never resumed,
+rewritten, or reused. The corrected receipt contract validates the
+living/deceased census, requires each death, schedule, and arrival to link in
+chronological order, authenticates their `NIGHT_CLOSE` phase and agent subject
+provenance, consumes every due schedule exactly once, and enforces the fixed
+5–20-tick replacement delay. V3 seed 7321 then completed its source and exact
+companion replay, but its original receipt admitted only four of six forecasts:
+the receipt incorrectly applied accepted-plan validation to authenticated
+planner attempts that had been rejected before a valid retry. The original
+receipt preserves the pre-inspection source SHA-256. The local source artifact
+was later write-opened during diagnosis, so it is excluded diagnostic evidence
+and is not admissible in any release manifest.
+
+V4 seeds 7331 and 7332 completed with exact companion replays but remain
+diagnostic evidence only. Seed 7333 exposed a governed-tool mismatch: `gov` was
+advertised as a ledger target, while execution looked under the wrong account
+owner instead of the system-owned treasury account. That state-dependent
+failure was mislabeled as a preflight plan rejection, so the receipt correctly
+excluded the run. No v4 source, response, claim, initialized marker,
+checkpoint, replay, profile, commitment, manifest entry, or seed is reused.
+
+V5 seeds 7341–7347 then produced passed, eligible source receipts with exact
+companion replays. Seed 7348 finalized its source, but replay encountered
+duplicate same-tick loan-default events with indistinguishable public citation
+identities. The two outlets failed closed to daily briefs at ticks 301 and 331
+(four articles total), and the changed virality propagated through nine
+information tables. Seeds 7349–7350 were never run. The seven receipt-bound
+replay databases and fourteen Oracle source/replay receipts belong only to
+seeds 7341–7347; seed 7348 has no eligible replay database or Oracle
+source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; this post-source fix is diagnostic proof
+only and creates no eligible v5 receipt. Completed cleanup removed 320 v5
+source-checkpoint database bodies, 160 fixed-code replay checkpoint bodies,
+four derived fixed-replay final databases, and the superseded partial seed-7343
+replay: 485 database files and `111.945217 GiB` total. Retained artifacts are all
+authoritative final sources; the seven eligible replay databases and fourteen
+source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database.
+No v5 evidence is pooled into a later release corpus.
+
+V6's first arm, seed 7351, stopped at tick 65 after a successful Kimi response
+used `confidence: "medium"` instead of the strict `low|med|high` contract. The
+runtime persisted a rule rejection, an `insufficient_data` prediction, and a
+missed acceptance checkpoint. The arm spent $0.18351 and recorded no provider,
+budget, or tool-execution failure. Preserve v6 as excluded diagnostic evidence;
+seeds 7352–7360 were never run, and no v6 artifact may enter a later corpus.
+
+V7 is now archived and excluded. Seeds 7361–7364 produced passed, eligible
+source receipts with exact tick-335 companion replays. Seed 7365 remains paused
+at tick 335 in `FINALIZE` with 32,114 persisted calls, 12 governed Oracle calls,
+six resolved forecasts/checkpoints, balanced USD ledger state, no critical
+events, and `$0.2754108` spend. Its authoritative database is 518,561,792 bytes;
+SHA-256 is
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`;
+immutable SQLite `quick_check` is `ok`, with no WAL/SHM sidecars. The completion
+event recorded 13,658 ms while the two governed calls summed to 13,660 ms, so
+receipt validation correctly rejected the continuous scheduled-latency floor
+before any replay or source receipt was published. This is the continuous scheduled-latency floor defect. Because the source claim is
+bound to commit `7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`, seed 7365 is never resumed,
+repaired, substituted, or post-fix receipted. The claim SHA-256 is
+`705dadfe8e9ed8588d0a4329bf0e681ce2f83e2a531ff40ee94c783d83f1f18e` and the
+initialized-marker SHA-256 is
+`f07efa9e3ff5452aa4aea6ff560a4974c86c839fac7b9aa9e5c78aeb0f900bfd`.
+Seeds 7366–7370 were never run.
+There is no V7 aggregate manifest or receipt. The eight source/replay receipt
+JSONs for seeds 7361–7364 remain diagnostic only; no V7 response, claim,
+initialized marker, checkpoint, replay, receipt, profile, commitment, manifest
+entry, run identity, artifact, or seed enters v8.
+
+The producer now clamps both continuous-monotonic and resumed-wall-clock
+scheduled latency to at least the conservatively rounded sum of the persisted
+governed-call latencies. V8 is archived and excluded: seeds 7371–7374 each
+produced passed, eligible source receipts and exact tick-335 companion replays,
+while seed 7375 stopped at tick 245 after four of six forecasts when Kimi
+returned HTTP 403 for the exhausted billing-cycle quota. The source persisted
+one `provider_failure`, spent `$0.19651848`, and remains a healthy standalone
+SQLite database. It is not resumed or substituted. The archive retains five
+source databases, four replay databases, eight source/replay receipts, and all
+checkpoint manifests. After the archive commit became durable, conservative
+cleanup removed exactly 189 V8 source-checkpoint database bodies—40 each for
+seeds 7371–7374 and 29 for seed 7375—totalling 43,999,223,808 bytes. Retain 189
+source checkpoint manifests, 160 replay checkpoint manifests, five claims,
+five initialized markers, and every final artifact listed above. The
+post-cleanup inventory contains zero source or replay checkpoint bodies and
+zero V8 SQLite sidecars. All retained final databases pass immutable read-only
+`quick_check`, and eligible source/replay hashes still match their receipts.
+No V8 evidence enters a later corpus.
+
+V9 is the current fresh commitment: campaign `oracle-calibration-v9`, version
+9, seeds 7381–7390 with odd control and even rumor arms, commitment SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`, and
+`runs/oracle/manifest-v9.template.yaml`. Only the Oracle is live, using
+`MiniMax-M3` through provider kind `openai_compat` at
+`https://api.minimax.io/v1`, key environment `MINIMAX_API_KEY`, `/models`
+healthcheck, 180-second timeout, `max_tokens_field: max_completion_tokens`,
+request defaults `max_completion_tokens: 4096` and `reasoning_split: true`,
+and `prompt_cache_mode: provider_automatic`.
+The standard MiniMax ≤512k rates are `$0.30/M` input, `$1.20/M` output, and
+`$0.06/M` automatic cache reads; every arm retains a `$25` cap. A disposable
+one-call MiniMax probe and a deliberately unclaimed five-tick Oracle rehearsal
+both succeeded through that exact adapter. They establish operational
+readiness only and are not V9 corpus evidence. Passing still requires all ten
+fresh exact source/replay pairs, 60 resolved forecasts across both outcomes,
+p90 below 60 seconds, and Brier below 0.25. No V9 live evidence is claimed
+before the aggregate gate passes. The fresh V9 precommit tree passed all 659
+Python tests with 8 environment-gated skips, 23 dashboard tests, the 603-module
+production build and static-bundle freshness check, pinned-dataset verification,
+dependency checks, and `git diff --check`. See the
+[operator runbook](docs/operator-runbook.md).
+
+The completed V7 archive cleanup removed exactly the 200 source checkpoint
+database bodies under `data/checkpoints` matching anchored
+regex `^oracle-calibration-v7-s736[1-5]_t\d+\.db$`—40 per source. That exact set
+is 49,647,239,168 bytes (`46.237595 GiB`).
+All 360 source/replay checkpoint manifests and hashes, five final source
+databases, four final replay databases, eight source/replay receipt JSON files,
+the five existing claim/initialized-marker pairs for seeds 7361–7365, profiles,
+commitments, template, base configuration, reports, and the authoritative
+seed-7365 database were retained. No broad V7 wildcard was used.
 
 R21 is opt-in through `runs/r21-real-us.yaml`. Its pinned 2022 Federal Reserve
 SCF fixture supplies income, liquid-financial-asset, and total-net-worth draws;
@@ -359,8 +555,15 @@ changing engine semantics or schema. Exact local Compose evidence at
 cold restore, atomic database-password rotation, Prometheus scraping, and a
 200-request load probe with 80 enforced cross-tenant denials and zero failures.
 PR #19 head `1cf1d0a` then passed the six-job dashboard, hosted PostgreSQL/S3,
-and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`. No public
-production deployment is claimed.
+and Ubuntu/Windows Python 3.11/3.12 matrix in run `29409250171`, and merged as
+`1806294d4fecbe13ddbdf615c459755c74293599`. The post-merge push run
+`29411023992` was not executed: GitHub rejected every zero-step job because of
+the repository account's billing/spending-limit state. That historical runner
+block is not a code-test failure; handbook PR #24 subsequently passed the full
+six-job matrix. No public production deployment is claimed. The implementation
+in PR #20 is authorized for squash merge, while every pending live gate, the
+final provenance audit, tagging, publication, and public deployment remain
+separate release decisions.
 
 See [SECURITY.md](SECURITY.md) for data/credential boundaries and
 [docs/implementation-status.md](docs/implementation-status.md) for the evidence

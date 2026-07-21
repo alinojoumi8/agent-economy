@@ -491,7 +491,7 @@ def test_session_and_invitation_inputs_fail_closed_before_database_access():
             csrf_secret_hash="b" * 64,
             expires_at=datetime.now(timezone.utc),
         )
-    with pytest.raises(ValueError, match="observer or admin"):
+    with pytest.raises(ValueError, match="observer, agent_owner, or admin"):
         catalog.create_invitation(
             tenant_id,
             email="member@example.com",
@@ -501,6 +501,47 @@ def test_session_and_invitation_inputs_fail_closed_before_database_access():
             expires_at=datetime.now(timezone.utc),
         )
     assert factory.opened == 0
+
+
+def test_public_oauth_client_registration_is_canonical_and_retrievable():
+    client_id = "ae_client_1234567890abcdef"
+    row = {
+        "client_id": client_id,
+        "client_name": "OpenClaw",
+        "redirect_uris": ["https://agent.example/callback"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    registered = CatalogConnection([Cursor(one=row)])
+    retrieved = CatalogConnection([Cursor(one=row)])
+    catalog = HostedCatalog(
+        "postgresql://example", connect=Connections(registered, retrieved))
+
+    created = catalog.register_external_oauth_client(
+        client_name=" OpenClaw ",
+        redirect_uris=["https://agent.example/callback"],
+        grant_types=["refresh_token", "authorization_code"],
+        response_types=["code"],
+    )
+    loaded = catalog.get_external_oauth_client(client_id)
+
+    assert created == loaded == row
+    insert_sql, insert_params = registered.calls[0]
+    assert "INSERT INTO external_oauth_clients" in insert_sql
+    assert insert_params[1:] == (
+        "OpenClaw", ["https://agent.example/callback"],
+        ["authorization_code", "refresh_token"], ["code"])
+    select_sql, select_params = retrieved.calls[0]
+    assert "FROM external_oauth_clients" in select_sql
+    assert select_params == (client_id,)
+
+    with pytest.raises(ValueError, match="unsupported OAuth public-client"):
+        catalog.register_external_oauth_client(
+            client_name="Confidential client",
+            redirect_uris=["https://agent.example/callback"],
+            grant_types=["client_credentials"], response_types=["code"],
+            token_endpoint_auth_method="client_secret_basic")
 
 
 def test_audit_api_only_exposes_append_and_uses_json_parameters():

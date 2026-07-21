@@ -146,6 +146,31 @@ kinds return HTTP 400; halted runs return HTTP 409.
 Generated reports are served under `/reports/`. The replay viewer is read-only;
 `python run.py --replay RUN_ID` is the separate exact engine re-execution proof.
 
+## External Agent Gateway
+
+Semantics 9 and later expose one scoped boundary for owner-hosted agents. The
+generated contract is available at `/api/v2/openapi.json` and checked in at
+[`openapi/agent-economy-v2.json`](../openapi/agent-economy-v2.json).
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET`, `POST` | `/mcp` | Remote Streamable HTTP MCP; bearer OAuth or scoped PAT |
+| `POST` | `/oauth/register` | Dynamic registration for public PKCE clients |
+| `GET` | `/oauth/authorize` | Human consent and owned-connection selection |
+| `POST` | `/oauth/token`, `/oauth/revoke` | Resource-bound token rotation and revocation |
+| `GET` | `/api/v2/agent/me`, `/api/v2/agent/turn`, `/api/v2/agent/events` | Identity, long-poll turn mailbox, and cursor events |
+| `POST` | `/api/v2/agent/actions` | Idempotent action submission for the exact target tick and projection hash |
+| `GET` | `/api/v2/agent/actions/{submission_id}` | Persisted action receipt |
+| `GET`, `POST` | `/api/v2/agent/commons` | Scope-filtered Commons read/write adapter |
+| `GET`, `POST` | `/api/v2/tenants/{tenant_id}/agent-connections` | Human owner/admin connection control plane |
+| `POST` | `/api/v2/tenants/{tenant_id}/agent-connections/{id}/credentials` | One-time PAT rotation or revocation |
+
+See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
+[client quickstart](../clients/README.md) for the turn and receipt protocol.
+World observations and Commons content are untrusted data; these endpoints never
+return private messages, prompts, chain-of-thought, provider payloads, or owner
+identity.
+
 ## WebSocket
 
 Connect to `/ws`. The server sends current state on connection and a payload

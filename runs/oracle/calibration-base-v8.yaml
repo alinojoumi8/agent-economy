@@ -1,0 +1,35 @@
+# Fresh release corpus after v7 seed 7365 exposed a scheduled-latency producer
+# rounding mismatch: its tick-5 completion was two milliseconds shorter than
+# the governed call-latency sum. V7 remains excluded diagnostic evidence. No
+# prior response, claim, checkpoint, replay, receipt, profile ancestry,
+# manifest entry, run identity, artifact, or seed is reused.
+extends: ../acceptance/rehearsal.yaml
+seed: 7371
+acceptance:
+  min_ticks: 335
+  max_spend_usd: 25
+  efficiency_target_usd: 25
+  oracle_campaign_id: oracle-calibration-v8
+  oracle_campaign_version: 8
+  oracle_min_latency_samples: 6
+  required_shocks: []
+  require_oracle_scoring: true
+  require_experiment: false
+  require_phenomena: false
+budget:
+  cap_usd: 25
+  oracle_reserve_usd: 25
+  conversation_pairs: 0
+llm:
+  concurrency: 1
+  # HighSpeed consumes approximately three times the Kimi Code quota. Meter it
+  # conservatively at 3x the standard alias while retaining a $25 hard cap.
+  pricing:
+    kimi-for-coding-highspeed: {in: 2.85, out: 12.00, cache: 0.57}
+  routes:
+    oracle: {provider: kimi, model: kimi-for-coding-highspeed}
+lifecycle:
+  population_mode: stable
+  arrival_delay_min: 5
+  arrival_delay_max: 20
+shocks: []

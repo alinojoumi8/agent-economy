@@ -16,9 +16,14 @@ from typing import Any, Optional
 
 from .core import Economy
 from .credit import LoanTerms
+from .firms import DEFAULT_PRODUCT, normalize_business_idea
 from .ledger import Leg
 from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError
+from .commands import CommandValidationError, default_registry
+from causal import CausalLinkService
+from communications.handlers import CommunicationRejected, CommunicationService
+from communications.privacy import safe_action_for_diagnostic, safe_command_metadata
 from observability import get_logger, log_event as operational_log
 
 
@@ -48,7 +53,11 @@ VALID_TYPES = {
     "place_fx_order", "cancel_fx_orders", "create_trade_shipment", "request_migration",
     # semantics-7 retirement liquidity
     "withdraw_savings",
+    # semantics-8 private and public communication
+    "send_message", "reply_message", "forward_message",
 }
+
+COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
 
 
 class ActionExecutor:
@@ -58,6 +67,9 @@ class ActionExecutor:
         self.local_currency_action_surfaces = bool(
             economy.config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.engine_semantics_version = semantics_version(economy.config, default=2)
+        self.command_registry = default_registry(VALID_TYPES)
+        self.communications = CommunicationService(self.store, economy.config)
+        self.causal = CausalLinkService(self.store)
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
@@ -74,9 +86,27 @@ class ActionExecutor:
             return self._reject(tick, actor_id, action, f"invalid action envelope: {exc}", phase)
         action = envelope.engine_action()
         atype = envelope.action_type
+        definition = None
+        if self.engine_semantics_version >= 8 and atype in VALID_TYPES:
+            try:
+                definition, payload = self.command_registry.validate(
+                    atype, envelope.payload, self.engine_semantics_version)
+            except CommandValidationError as exc:
+                return self._reject(
+                    tick, actor_id, action, f"invalid {atype} command: {exc}", phase)
+            action = {"type": atype, **payload}
+            if envelope.evidence_event_ids:
+                action["evidence_event_ids"] = list(envelope.evidence_event_ids)
+            if envelope.model_call_id is not None:
+                action["model_call_id"] = envelope.model_call_id
+            if envelope.rationale_summary:
+                action["rationale_summary"] = envelope.rationale_summary
+        proposal_payload = (
+            safe_command_metadata(atype, envelope.payload)
+            if atype in COMMUNICATION_TYPES else envelope.payload)
         proposal_id = self.store.insert(
             "action_proposals", tick=tick, actor_id=actor_id, action_type=atype,
-            payload_json=json.dumps(envelope.payload, sort_keys=True, default=str),
+            payload_json=json.dumps(proposal_payload, sort_keys=True, default=str),
             evidence_event_ids_json=json.dumps(list(envelope.evidence_event_ids)),
             model_call_id=envelope.model_call_id,
             rationale_summary=envelope.rationale_summary,
@@ -86,6 +116,7 @@ class ActionExecutor:
         # acquire a new result/event payload merely because the v7 handler is
         # now present in this binary.
         if (atype not in VALID_TYPES
+                or (atype in COMMUNICATION_TYPES and self.engine_semantics_version < 8)
                 or (atype == "withdraw_savings" and self.engine_semantics_version < 7)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
@@ -102,7 +133,8 @@ class ActionExecutor:
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
-        handler = getattr(self, f"_do_{atype}", None)
+        handler_name = definition.handler_name if definition is not None else f"_do_{atype}"
+        handler = getattr(self, handler_name, None)
         if handler is None:
             result = self._reject(tick, actor_id, action, f"unhandled action: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
@@ -113,7 +145,63 @@ class ActionExecutor:
             # Keep the tick alive, but never retain a partially-applied action.
             with self.store.savepoint(
                     f"action_{tick}_{actor_id}_{phase}_{seq}"):
+                last_event_id = int(self.store.scalar(
+                    "SELECT COALESCE(MAX(id),0) FROM events", default=0))
+                last_transaction_id = int(self.store.scalar(
+                    "SELECT COALESCE(MAX(id),0) FROM transactions", default=0))
                 result = handler(tick, actor_id, action, phase)
+                if self.engine_semantics_version >= 8 and result.get("ok"):
+                    events = self.store.query(
+                        "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))
+                    transactions = self.store.query(
+                        "SELECT id FROM transactions WHERE id>? ORDER BY id",
+                        (last_transaction_id,),
+                    )
+                    for event in events:
+                        self.causal.create(
+                            "action_proposal", proposal_id,
+                            "event", int(event["id"]),
+                            "triggered", "engine", created_tick=tick,
+                            provenance={
+                                "action_type": atype,
+                                "action_result": result,
+                            })
+                    for transaction in transactions:
+                        transaction_id = int(transaction["id"])
+                        entries = [
+                            int(row["id"]) for row in self.store.query(
+                                "SELECT id FROM ledger_entries WHERE txn_id=? ORDER BY id",
+                                (transaction_id,),
+                            )
+                        ]
+                        if events:
+                            # Domain events are the settled economic fact.  Link
+                            # their authoritative ledger effect directly, rather
+                            # than making the proposal a second settlement truth.
+                            self.causal.create(
+                                "event", int(events[-1]["id"]),
+                                "ledger_transaction", transaction_id,
+                                "settled", "engine", created_tick=tick,
+                                provenance={
+                                    "action_type": atype,
+                                    "proposal_id": proposal_id,
+                                },
+                                evidence={
+                                    "transaction_id": transaction_id,
+                                    "entry_ids": entries,
+                                },
+                            )
+                        else:
+                            self.causal.create(
+                                "action_proposal", proposal_id,
+                                "ledger_transaction", transaction_id,
+                                "settled", "engine", created_tick=tick,
+                                provenance={"action_type": atype},
+                                evidence={
+                                    "transaction_id": transaction_id,
+                                    "entry_ids": entries,
+                                },
+                            )
         except Exception as exc:  # never let a bad action crash the tick
             operational_log(logger, logging.ERROR, "action.execution.failed",
                             tick=tick, actor_id=actor_id, action_type=atype,
@@ -131,10 +219,7 @@ class ActionExecutor:
         return result
 
     def _reject(self, tick: int, actor_id: int, action: dict, reason: str, phase: str) -> dict:
-        public_action = ({
-            key: value for key, value in action.items()
-            if key not in {"model_call_id", "rationale_summary"}
-        } if isinstance(action, dict) else action)
+        public_action = safe_action_for_diagnostic(action)
         self.store.log_event(tick, "action_rejected", {
             "actor_id": actor_id, "action": public_action, "reason": reason},
             phase=phase, subject_type="agent", subject_id=actor_id, importance=0.5)
@@ -151,6 +236,24 @@ class ActionExecutor:
     # ── household / firm actions ─────────────────────────────────────────────
     def _do_do_nothing(self, tick, actor_id, action, phase) -> dict:
         return {"ok": True}
+
+    def _do_send_message(self, tick, actor_id, action, phase) -> dict:
+        try:
+            return self.communications.send(tick, actor_id, action, phase=phase)
+        except CommunicationRejected as exc:
+            return {"ok": False, "reason": exc.code}
+
+    def _do_reply_message(self, tick, actor_id, action, phase) -> dict:
+        try:
+            return self.communications.reply(tick, actor_id, action, phase=phase)
+        except CommunicationRejected as exc:
+            return {"ok": False, "reason": exc.code}
+
+    def _do_forward_message(self, tick, actor_id, action, phase) -> dict:
+        try:
+            return self.communications.forward(tick, actor_id, action, phase=phase)
+        except CommunicationRejected as exc:
+            return {"ok": False, "reason": exc.code}
 
     def _do_say_public(self, tick, actor_id, action, phase) -> dict:
         text = str(action.get("text", "")).strip()[:500]
@@ -458,6 +561,12 @@ class ActionExecutor:
         if not name:
             return {"ok": False, "reason": "company needs a name"}
         sector = str(action.get("sector", "services"))[:40]
+        if bool(self.e.config.get("entrepreneurship", {}).get("enabled", False)):
+            existing = self.store.query_one(
+                "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
+                (actor_id,))
+            if existing:
+                return {"ok": False, "reason": "founder already controls an active company"}
         capital = int(action.get("opening_capital", 0))
         if capital < 0:
             return {"ok": False, "reason": "opening capital must be nonnegative"}
@@ -466,8 +575,19 @@ class ActionExecutor:
             if founder_acct is None or self.e.ledger.balance(founder_acct) < capital:
                 return {"ok": False, "reason": "insufficient opening capital"}
         product = action.get("product") if isinstance(action.get("product"), dict) else None
+        business_idea = None
+        if "business_idea" in action:
+            try:
+                business_idea = normalize_business_idea(action.get("business_idea"))
+            except ValueError as exc:
+                return {"ok": False, "reason": str(exc)}
+            product = {**DEFAULT_PRODUCT, **(product or {})}
+            product["business_idea"] = business_idea
+            if not action.get("product") or "product" not in action["product"]:
+                product["product"] = business_idea["offering"][:80]
         firm_id = self.e.firms.found_firm(tick, actor_id, name, sector, product=product,
-                                          opening_capital_cents=capital)
+                                          opening_capital_cents=capital,
+                                          business_idea=business_idea)
         return {"ok": True, "firm_id": firm_id}
 
     # ── equity ───────────────────────────────────────────────────────────────

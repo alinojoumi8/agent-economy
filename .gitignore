@@ -10,12 +10,17 @@ htmlcov/
 data/runs/*.db
 data/runs/*.db-wal
 data/runs/*.db-shm
+data/runs/oracle-commitments/
+data/runs/oracle-locks/
+data/runs/oracle-pending/
 data/checkpoints/
 data/experiments/
 reports/out/
 .venv/
 node_modules/
 dashboard/node_modules/
+dashboard/playwright-report/
+dashboard/test-results/
 .codebase-memory/
 build/
 dist/

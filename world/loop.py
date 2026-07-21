@@ -3,13 +3,14 @@
 Phase order per tick T (determinism requires ordered execution):
   1 NIGHT_CLOSE   interest, loan payments, payroll, production, lifecycle draws,
                   shock evaluation, pre-decision reconciliation check
-  2 MORNING       scheduled agents perceive + decide (LLM, concurrent)
-  3 EXECUTION     validator + engine apply queued actions (deterministic order)
-  4 MARKET        order book matches; session closes
-  5 NEWSROOM      outlets write stories from the day's true events
-  6 EVENING       conversation pairs
-  7 MEMORY        nightly compression, belief extraction
-  8 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
+  2 INBOX_DELIVERY due asynchronous mail resolves (Semantics 8 only)
+  3 MORNING       scheduled agents perceive + decide (LLM, concurrent)
+  4 EXECUTION     validator + engine apply queued actions (deterministic order)
+  5 MARKET        order book matches; session closes
+  6 NEWSROOM      outlets write stories from the day's true events
+  7 EVENING       conversation pairs
+  8 MEMORY        nightly compression, belief extraction
+  9 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
 
 A failed reconciliation halts the run with a diagnostic dump (PRD R1). The budget
 governor is consulted every tick; at 100% the run pauses cleanly (PRD R7).
@@ -27,29 +28,36 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
+from engine.checkpoint_manifest import (
+    finalize_sqlite_artifact,
+    write_checkpoint_manifest,
+)
 from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
 from engine.semantics import semantics_version
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
+from communications.delivery import CommunicationDelivery
 from agents.personas.library import (
     configured_outlet_ids, sample_arrival_persona, sample_persona,
 )
 from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
+from .commons import CommonsService
 from .shocks import Shocks
+from .phases import (
+    LEGACY_PHASE_SPECS,
+    STANDARD_PHASE_SPECS,
+    SEMANTICS_8_PHASE_SPECS,
+    phase_names_for_semantics,
+)
 from oracle.analyst import Oracle
 from observability import get_logger, log_event as operational_log
 
-LEGACY_PHASES = (
-    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
-    "NEWSROOM", "EVENING", "MEMORY",
-)
-PHASES = (
-    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
-    "NEWSROOM", "EVENING", "MEMORY", "FINALIZE",
-)
+LEGACY_PHASES = tuple(spec.name for spec in LEGACY_PHASE_SPECS)
+PHASES = tuple(spec.name for spec in STANDARD_PHASE_SPECS)
+SEMANTICS_8_PHASES = tuple(spec.name for spec in SEMANTICS_8_PHASE_SPECS)
 logger = get_logger("world")
 
 
@@ -58,7 +66,7 @@ class World:
         self.store = store
         self.config = config
         self.engine_semantics_version = semantics_version(config, default=2)
-        self.phases = PHASES if self.engine_semantics_version >= 2 else LEGACY_PHASES
+        self.phases = phase_names_for_semantics(self.engine_semantics_version)
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
         self.lifecycle_prng = random.Random(seed ^ 0x5F5E5F)
@@ -69,6 +77,8 @@ class World:
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
         self.gateway = Gateway(store, cfg)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
+        self.commons = CommonsService(self.economy, self.runtime.mem)
+        self.communication_delivery = CommunicationDelivery(store, config)
         self.metrics = Metrics(
             self.economy, semantics_version=self.engine_semantics_version)
         self.shocks = Shocks(self.economy, config)
@@ -116,6 +126,10 @@ class World:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
+        if self.engine_semantics_version >= 7:
+            # Genesis consumes the persona stream. Persist it immediately so a
+            # resume before tick 1 cannot reset arrival identities.
+            self._save_prng_state()
         self.store.commit()
         operational_log(logger, logging.INFO, "world.initialized",
                         run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
@@ -226,6 +240,8 @@ class World:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
         if meta["active_tick"] is None:
+            if self.engine_semantics_version >= 9:
+                await self.runtime.external.collect_online_turns(tick)
             self._persist_phase(tick, phase, state)
         elif meta["legacy_partial"] and phase == "MEMORY":
             state["observations_captured"] = bool(self.store.scalar(
@@ -246,6 +262,9 @@ class World:
                         self._record_reconciliation_halt(
                             tick, "NIGHT_CLOSE", getattr(exc, "diagnostic", {}))
                         raise
+                elif phase == "INBOX_DELIVERY":
+                    with self.store.savepoint(f"tick_{tick}_inbox_delivery"):
+                        self.communication_delivery.deliver_due(tick)
                 elif phase == "MORNING":
                     if self.gateway.governor.should_pause():
                         raise BudgetExceeded("world budget exhausted before MORNING")
@@ -430,6 +449,17 @@ class World:
         self.oracle.resolve_open(tick)
         # The completed-tick invariant includes every action settled today.
         self._assert_reconciled(tick, "FINALIZE")
+        if self.engine_semantics_version >= 8:
+            self.store.execute(
+                "INSERT OR IGNORE INTO projection_commits (tick,phase,domains_json) "
+                "VALUES (?,'FINALIZE',?)",
+                (
+                    int(tick),
+                    json.dumps([
+                        "summary", "events", "communications", "causal", "snapshot",
+                    ], separators=(",", ":")),
+                ),
+            )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
         ok, diag = self.economy.ledger.reconcile()
@@ -509,18 +539,28 @@ class World:
                 p = sample_arrival_persona(self.persona_prng, outlet_ids)
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
+            external_identity = self.runtime.external.arrival_overrides(sched_id)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
                 if self.economy.regions.enabled else self.engine_prng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
+            baseline_core = (
+                self.engine_semantics_version >= 7
+                and bool(self.config.get("population", {}).get(
+                    "baseline_citizens_core", False))
+                and not self.economy.regions.enabled)
             agent_id = self.store.insert(
-                "agents", name=p.name, kind="citizen", occupation=p.occupation,
+                "agents", name=(external_identity["name"] if external_identity else p.name),
+                kind="citizen", occupation=(external_identity["occupation"]
+                    if external_identity and external_identity["occupation"] else p.occupation),
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                model_tier="citizen",
+                population_tier="core" if baseline_core else "periphery",
+                pinned_core=1 if baseline_core else 0, region_id=region_id,
                 alive=1, retired=0, arrived_tick=tick)
             if self.engine_semantics_version >= 7:
                 checking_cents = int(p.wealth_cents * 0.7)
@@ -575,6 +615,7 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
+            external_binding = self.runtime.external.bind_arrival(sched_id, agent_id, tick)
             arrival_payload = {
                 "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
                 "schedule_event_id": sched_id}
@@ -602,6 +643,8 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
+            finalize_sqlite_artifact(dest)
+            write_checkpoint_manifest(dest)
             self.store.insert("checkpoints", tick=tick, path=str(dest),
                               created_at=__import__("datetime").datetime.now(
                                   __import__("datetime").timezone.utc).isoformat())
@@ -617,15 +660,28 @@ class World:
             return None
 
     def _save_prng_state(self) -> None:
+        engine_state = _prng_state(self.engine_prng)
+        if self.engine_semantics_version >= 7:
+            engine_state = {
+                "engine": engine_state,
+                "persona": _prng_state(self.persona_prng),
+            }
         self.store.set_meta(
-            prng_state=json.dumps(_prng_state(self.engine_prng)),
+            prng_state=json.dumps(engine_state),
             lifecycle_prng_state=json.dumps(_prng_state(self.lifecycle_prng)),
             governor_json=json.dumps(self.gateway.governor.status()))
 
     def restore_prng_state(self) -> None:
         meta = self.store.get_meta()
         if meta["prng_state"]:
-            self.engine_prng.setstate(_from_state(json.loads(meta["prng_state"])))
+            engine_state = json.loads(meta["prng_state"])
+            if isinstance(engine_state, dict):
+                self.engine_prng.setstate(_from_state(engine_state["engine"]))
+                self.persona_prng.setstate(_from_state(engine_state["persona"]))
+            else:
+                # Stored semantics 1-6 and pre-fix semantics-7 runs retain the
+                # historical list-form resume contract.
+                self.engine_prng.setstate(_from_state(engine_state))
         if meta["lifecycle_prng_state"]:
             self.lifecycle_prng.setstate(_from_state(json.loads(meta["lifecycle_prng_state"])))
 

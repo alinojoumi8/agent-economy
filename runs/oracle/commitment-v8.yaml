@@ -1,0 +1,18 @@
+# Fresh pre-run commitment after v7 seed 7365 exposed a two-millisecond
+# scheduled-latency producer mismatch. V7 remains diagnostic and excluded; no
+# response, claim, checkpoint, replay, receipt, run identity, profile ancestry,
+# manifest entry, artifact, or seed is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v8
+campaign_version: 8
+runs:
+  - {seed: 7371, run_id: oracle-calibration-v8-s7371, profile: v8-seed-7371-control.yaml, effective_config_sha256: 2ee853cb5242c23f49bc55be90da5521550f9bf4955dd7e968d9c0fa99e1b90f}
+  - {seed: 7372, run_id: oracle-calibration-v8-s7372, profile: v8-seed-7372-rumor.yaml, effective_config_sha256: d03cd3769427e5c589c16dde65572c52fcec0701a444b011e0790a54397afeb6}
+  - {seed: 7373, run_id: oracle-calibration-v8-s7373, profile: v8-seed-7373-control.yaml, effective_config_sha256: 161d60f3d4bfd27f4ab78534fc7f6c7819e032a78e2a7203aced40f11e953e51}
+  - {seed: 7374, run_id: oracle-calibration-v8-s7374, profile: v8-seed-7374-rumor.yaml, effective_config_sha256: 550de2c1de2b547041bb1f87ba13773439231440e6075d04bc5f3d93241642ba}
+  - {seed: 7375, run_id: oracle-calibration-v8-s7375, profile: v8-seed-7375-control.yaml, effective_config_sha256: 7141c9ed6362bbfc17d169e03c65f606dc525e48c1d4f4672efdb262711ca54a}
+  - {seed: 7376, run_id: oracle-calibration-v8-s7376, profile: v8-seed-7376-rumor.yaml, effective_config_sha256: 384003c86e6dad16d29bca3ed129a6fadc9d2837043d6acceb21213aba17c8b2}
+  - {seed: 7377, run_id: oracle-calibration-v8-s7377, profile: v8-seed-7377-control.yaml, effective_config_sha256: 930005057c6e6fe616b8ac294c55b223640f4ade369fae6ed71e25a1890fe3e2}
+  - {seed: 7378, run_id: oracle-calibration-v8-s7378, profile: v8-seed-7378-rumor.yaml, effective_config_sha256: 68773dfee2ae0f54fa317df36c87151347641da91d9648d988878dd766fb4c1a}
+  - {seed: 7379, run_id: oracle-calibration-v8-s7379, profile: v8-seed-7379-control.yaml, effective_config_sha256: 39fd382334a53a679d2db29d0f8137bc2ba1e94d785ff47679394e9d8d14f95f}
+  - {seed: 7380, run_id: oracle-calibration-v8-s7380, profile: v8-seed-7380-rumor.yaml, effective_config_sha256: ee56fb3bc890a6aec4ac960138b2033b429706e1ce53598e0da295493b3a0db4}

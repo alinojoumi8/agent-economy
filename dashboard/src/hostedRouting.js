@@ -129,11 +129,13 @@ export function observatoryWebSocketUrl(location = globalThis.location) {
 
 export function hostedCapabilities(role) {
   const admin = role === "admin";
+  const agentOwner = role === "agent_owner";
   return Object.freeze({
     administerTenant: admin,
     createRuns: admin,
     controlRuns: admin,
-    observeRuns: role === "observer" || admin,
+    manageAgents: agentOwner || admin,
+    observeRuns: role === "observer" || agentOwner || admin,
     mutateWorld: false,
   });
 }

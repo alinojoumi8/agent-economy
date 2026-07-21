@@ -337,7 +337,7 @@ class CatalogAuthService:
             and user.disabled_at is None
             and membership is not None
             and membership.status == "active"
-            and membership.role in {"observer", "admin"}
+            and membership.role in {"observer", "agent_owner", "admin"}
         )
         if not verified or not eligible:
             self._audit(

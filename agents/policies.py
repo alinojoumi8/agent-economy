@@ -12,9 +12,114 @@ out — a bank run emerging from beliefs, not a hard-coded rule tying rumor→ou
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import re
 from typing import Any, Callable
+
+
+SUPPLIER_WARNING_POLICY_ID = "supplier-warning-policy-v1"
+SUPPLIER_WARNING_POLICY_CONTRACT = {
+    "excluded_fields": [
+        "branch_label", "control_label", "fork_id", "protocol_expected_qty",
+        "run_id", "semantic_tag",
+    ],
+    "id": SUPPLIER_WARNING_POLICY_ID,
+    "input_fields": [
+        "authorized_inbox.sender_role",
+        "authorized_inbox.subject",
+        "authorized_inbox.body",
+        "authorized_inbox.delivery_tick",
+        "cash_cents",
+        "firm_id",
+        "firm_inventory",
+        "unit_price_cents",
+    ],
+    "rule": (
+        "qty=5 iff an authorized delivered unread message at tick 6 from "
+        "supplier_officer has subject Shipment notice and body Batch 2026-07 may "
+        "be contaminated. Limit the scheduled purchase to 5 units.; otherwise "
+        "qty=10"
+    ),
+}
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+SUPPLIER_WARNING_POLICY_CONTRACT_HASH = hashlib.sha256(
+    _canonical_json(SUPPLIER_WARNING_POLICY_CONTRACT).encode("utf-8")
+).hexdigest()
+if SUPPLIER_WARNING_POLICY_CONTRACT_HASH != (
+        "f29339c7ff21c653419226f2aee4c25eaeb99ccbc2886674519f9d24b05fc9a2"):
+    raise RuntimeError("frozen supplier-warning policy contract hash drifted")
+
+SUPPLIER_WARNING_BODY = (
+    "Batch 2026-07 may be contaminated. Limit the scheduled purchase to 5 units."
+)
+SUPPLIER_WARNING_SUBJECT = "Shipment notice"
+SUPPLIER_WARNING_INPUT_KEYS = {
+    "authorized_inbox", "cash_cents", "firm_id", "firm_inventory", "unit_price_cents",
+}
+SUPPLIER_WARNING_INBOX_KEYS = {
+    "sender_role", "subject", "body", "delivery_tick",
+}
+
+
+def supplier_warning_decision(policy_input: dict) -> dict:
+    """Execute the frozen branch-blind supplier-warning purchase policy.
+
+    The function deliberately accepts only the canonical policy input, rather
+    than a whole agent context.  Unknown fields fail closed so branch, run, or
+    expected-output metadata cannot silently enter the treatment rule.
+    """
+    if not isinstance(policy_input, dict) or set(policy_input) != SUPPLIER_WARNING_INPUT_KEYS:
+        raise ValueError("supplier-warning policy input fields do not match the frozen contract")
+    inbox = policy_input["authorized_inbox"]
+    if not isinstance(inbox, list):
+        raise ValueError("supplier-warning authorized_inbox must be a list")
+    for item in inbox:
+        if not isinstance(item, dict) or set(item) != SUPPLIER_WARNING_INBOX_KEYS:
+            raise ValueError("supplier-warning inbox fields do not match the frozen contract")
+
+    firm_id = int(policy_input["firm_id"])
+    cash = int(policy_input["cash_cents"])
+    inventory = int(policy_input["firm_inventory"])
+    price = int(policy_input["unit_price_cents"])
+    if firm_id <= 0 or price <= 0 or inventory < 10 or cash < 10 * price:
+        raise ValueError("supplier-warning fixture economic preconditions are not satisfied")
+
+    warning = any(
+        item["sender_role"] == "supplier_officer"
+        and item["subject"] == SUPPLIER_WARNING_SUBJECT
+        and item["body"] == SUPPLIER_WARNING_BODY
+        and int(item["delivery_tick"]) == 6
+        for item in inbox
+    )
+    quantity = 5 if warning else 10
+    input_hash = hashlib.sha256(_canonical_json(policy_input).encode("utf-8")).hexdigest()
+    belief_key = f"supplier_contamination:firm:{firm_id}"
+    action = {
+        "type": "buy_goods",
+        "firm_id": firm_id,
+        "qty": quantity,
+        "policy_contract_hash": SUPPLIER_WARNING_POLICY_CONTRACT_HASH,
+        "policy_input_hash": input_hash,
+        "scripted_policy_version": SUPPLIER_WARNING_POLICY_ID,
+    }
+    beliefs = []
+    if warning:
+        action["causal_belief_key"] = belief_key
+        beliefs.append({"key": belief_key, "value": 1.0})
+    return _env(
+        None,
+        [action],
+        beliefs,
+        "I will limit the purchase because of the authorized contamination warning."
+        if warning else "I will continue the scheduled purchase.",
+    )
 
 
 def _rng(context: dict) -> random.Random:
@@ -30,6 +135,8 @@ def _env(payload: dict, actions: list, beliefs: list | None = None, reasoning: s
 # Citizens / households
 # ─────────────────────────────────────────────────────────────────────────────
 def citizen_decision(context: dict) -> dict:
+    if "supplier_warning_policy_input" in context:
+        return supplier_warning_decision(context["supplier_warning_policy_input"])
     rng = _rng(context)
     agent = context.get("agent", {})
     state = context.get("state", {})
@@ -88,6 +195,20 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "move_deposits", "to_bank_id": safe})
                 reasons.append(f"pulling deposits from bank {my_bank} (trust {trust:.2f})")
                 ran = True
+
+    # 3.5) A native opportunity preempts ordinary spending, job search, and
+    # investing so its reserved capital remains affordable at execution time.
+    opportunity = context.get("entrepreneurship_opportunity")
+    founding_action = (opportunity.get("action")
+                       if isinstance(opportunity, dict) else None)
+    if (not ran and isinstance(founding_action, dict)
+            and founding_action.get("type") == "found_company"):
+        reasons.append(
+            f"founding a {founding_action.get('sector', 'new')} company from an unmet need")
+        return _env(
+            None, [dict(founding_action)], belief_updates,
+            "; ".join(reasons),
+        )
 
     # 4) Consumption: buy goods (unless critically ill). Households with dependents buy more.
     if health != "critical" and not ran:
@@ -518,6 +639,7 @@ def reporter_draft(context: dict) -> dict:
     """Reporter scripted stage: draft up to 3 neutral candidate stories, one per
     distinct salient event kind (TECH-SPEC §10 two-stage desk)."""
     events = context.get("salient_events", [])
+    engine_semantics_version = int(context.get("engine_semantics_version", 1))
     stories = []
     seen_kinds: set = set()
     for e in events:
@@ -525,7 +647,8 @@ def reporter_draft(context: dict) -> dict:
         if kind in seen_kinds:
             continue
         seen_kinds.add(kind)
-        headline, body, tone = _story_template(kind, [e])
+        headline, body, tone = _story_template(
+            kind, [e], engine_semantics_version=engine_semantics_version)
         stories.append({"headline": headline, "body": body, "tone": tone, "kind": kind,
                         "source_event_ids": [e["id"]]})
         if len(stories) >= 3:
@@ -543,13 +666,16 @@ def newsroom_policy(context: dict) -> dict:
     frame it; composes straight from events when the reporter came back empty."""
     outlet = context.get("outlet", {})
     slant = outlet.get("slant", "neutral")
+    engine_semantics_version = int(context.get("engine_semantics_version", 1))
     drafts = [d for d in context.get("drafts", []) if d.get("headline")]
     events = context.get("salient_events", [])
     if not drafts:
         if not events:
             return {"headline": "", "body": "", "slant_tags": [slant], "source_event_ids": []}
         top = events[0]
-        headline, body, tone = _story_template(top.get("kind", "event"), events)
+        headline, body, tone = _story_template(
+            top.get("kind", "event"), events,
+            engine_semantics_version=engine_semantics_version)
         pick = {"headline": headline, "body": body, "tone": tone,
                 "kind": top.get("kind"), "source_event_ids": [e["id"] for e in events[:4]]}
     elif slant == "cautious-pro-labor":
@@ -563,7 +689,8 @@ def newsroom_policy(context: dict) -> dict:
             "source_event_ids": pick.get("source_event_ids", [])}
 
 
-def _story_template(kind: str, events: list):
+def _story_template(
+        kind: str, events: list, *, engine_semantics_version: int = 1):
     """Neutral story text for an event kind (the reporter's voice)."""
     templates = {
         "bank_failure": ("Bank Collapses as Depositors Flee",
@@ -585,9 +712,21 @@ def _story_template(kind: str, events: list):
         "circuit_breaker": ("Trading Halted After Sharp Slide",
                             "The exchange halted a stock after it plunged past the breaker."),
     }
-    base_h, base_b = templates.get(kind, ("Markets in Motion", "Activity picked up across the economy."))
-    tone = -0.5 if kind in ("bank_failure", "rumor", "bankruptcy", "loan_default",
-                            "epidemic_started", "vc_writeoff", "circuit_breaker") else 0.1
+    if engine_semantics_version >= 7:
+        templates["firm_scandal"] = (
+            "Firm Faces Accounting Investigation",
+            "Investigators are examining reported control failures at a company.",
+        )
+    base_h, base_b = templates.get(
+        kind, ("Markets in Motion", "Activity picked up across the economy."))
+    if engine_semantics_version >= 7 and kind == "firm_scandal":
+        tone = -0.7
+    elif kind in (
+            "bank_failure", "rumor", "bankruptcy", "loan_default",
+            "epidemic_started", "vc_writeoff", "circuit_breaker"):
+        tone = -0.5
+    else:
+        tone = 0.1
     return base_h, base_b, tone
 
 
@@ -729,8 +868,13 @@ def oracle_answer(context: dict) -> dict:
     else:
         return {"insufficient_data": True,
                 "reason": "No machine-checkable resolution rule can be derived from world state."}
+    governed = context.get("governed_forecast_contract")
+    deadline_tick = tick + horizon
+    if isinstance(governed, dict):
+        rule = governed.get("resolution_rule", rule)
+        deadline_tick = governed.get("deadline_tick", deadline_tick)
     return {"p": round(p, 3), "drivers": drivers, "confidence": "med",
-            "resolution_rule": rule, "deadline_tick": tick + horizon,
+            "resolution_rule": rule, "deadline_tick": deadline_tick,
             "reasoning": "Estimated from current world state and simple structural drivers."}
 
 
@@ -802,7 +946,21 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
 
 def scripted_decision(purpose: str, context: dict) -> dict:
     """Run one local policy without entering the governed model-call path."""
-    return POLICIES.get(purpose, citizen_decision)(context)
+    if "supplier_warning_policy_input" in context:
+        return supplier_warning_decision(context["supplier_warning_policy_input"])
+    envelope = POLICIES.get(purpose, citizen_decision)(context)
+    communication = context.get("scripted_communication_action")
+    if not isinstance(communication, dict) or not isinstance(envelope, dict):
+        return envelope
+    enriched = dict(envelope)
+    actions = list(enriched.get("actions", []))
+    if not any(
+            isinstance(action, dict)
+            and action.get("type") in {"send_message", "reply_message", "forward_message"}
+            for action in actions):
+        actions.append(dict(communication))
+    enriched["actions"] = actions
+    return enriched
 
 
 def register_scripted_policies(scripted_adapter) -> None:

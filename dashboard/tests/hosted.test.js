@@ -131,11 +131,15 @@ test("client refuses inferred or cross-tenant identifiers", () => {
 test("hosted roles present exactly the bounded control surface", () => {
   assert.deepEqual(hostedCapabilities("observer"), {
     administerTenant: false, createRuns: false, controlRuns: false,
-    observeRuns: true, mutateWorld: false,
+    manageAgents: false, observeRuns: true, mutateWorld: false,
+  });
+  assert.deepEqual(hostedCapabilities("agent_owner"), {
+    administerTenant: false, createRuns: false, controlRuns: false,
+    manageAgents: true, observeRuns: true, mutateWorld: false,
   });
   assert.deepEqual(hostedCapabilities("admin"), {
     administerTenant: true, createRuns: true, controlRuns: true,
-    observeRuns: true, mutateWorld: false,
+    manageAgents: true, observeRuns: true, mutateWorld: false,
   });
 });
 

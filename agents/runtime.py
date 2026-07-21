@@ -8,6 +8,7 @@ compression + belief extraction.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Optional
@@ -15,6 +16,7 @@ from typing import Optional
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
+from causal import CausalLinkService
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
@@ -27,9 +29,15 @@ from .personas.library import (
     validate_persona_enrichment,
 )
 from .prompts import ContextBuilder
-from .policies import register_scripted_policies, scripted_decision
+from .policies import (
+    SUPPLIER_WARNING_POLICY_CONTRACT_HASH,
+    SUPPLIER_WARNING_POLICY_ID,
+    register_scripted_policies,
+    scripted_decision,
+)
 from .scheduler import Scheduler
 from .participant import ParticipantService
+from .external import ExternalAgentService
 from observability import get_logger, log_event as operational_log
 
 
@@ -58,7 +66,9 @@ class AgentRuntime:
         self.mem = Memory(self.store, config)
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.participant = ParticipantService(self.store, self.ctx, config)
+        self.external = ExternalAgentService(economy, self.participant, config)
         self.executor = ActionExecutor(economy)
+        self.causal = CausalLinkService(self.store)
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
         self.gw.scripted.register("persona", scripted_persona_enrichment)
@@ -156,10 +166,13 @@ class AgentRuntime:
         agents = self.scheduler.scheduled_agents(
             tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
         participant_decision = self.participant.decision_for_tick(tick)
+        external_agent_ids, external_decisions = self.external.decisions_for_tick(tick)
         participant_agent_id = (
             int(participant_decision["agent_id"]) if participant_decision is not None else None)
         if participant_agent_id is not None:
             agents = [a for a in agents if int(a["id"]) != participant_agent_id]
+        if external_agent_ids:
+            agents = [a for a in agents if int(a["id"]) not in external_agent_ids]
         tasks = [self._decide_guarded(tick, a) for a in agents]
         results = await _gather_fail_fast(tasks)
         decisions = []
@@ -180,6 +193,7 @@ class AgentRuntime:
                 decisions.append(res)
         if participant_decision is not None:
             decisions.append(participant_decision)
+        decisions.extend(external_decisions)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
             operational_log(logger, logging.ERROR, "agent.decision.outage_suspected",
@@ -201,13 +215,17 @@ class AgentRuntime:
 
     async def _decide_one(self, tick: int, a) -> Optional[dict]:
         context = self.ctx.build(a, tick)
+        self.ctx.persist_inbox_read_context(int(a["id"]), tick, context)
         purpose = context.get("purpose", "decision")
         role = a["role"] or "citizen"
         if (int(self.config.get("engine_semantics_version", 1)) >= 7
                 and a["population_tier"] != "core"):
             env = scripted_decision(purpose, context)
             return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                    "reasoning": env.get("reasoning", ""), "llm_call_id": None}
+                    "reasoning": env.get("reasoning", ""), "llm_call_id": None,
+                    "communication_sources": context.get("communication_sources", []),
+                    "communication_read_context_key": context.get(
+                        "communication_read_context_key")}
         system, user = self.ctx.render_prompt(context)
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
                          agent_id=int(a["id"]), tick=tick,
@@ -217,7 +235,10 @@ class AgentRuntime:
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
                 "reasoning": env.get("reasoning", ""),
-                "llm_call_id": getattr(resp, "call_id", None)}
+                "llm_call_id": getattr(resp, "call_id", None),
+                "communication_sources": context.get("communication_sources", []),
+                "communication_read_context_key": context.get(
+                    "communication_read_context_key")}
 
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
@@ -225,6 +246,32 @@ class AgentRuntime:
             agent_id = d["agent_id"]
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
+            supplier_warning_protocol = (
+                d.get("llm_call_id") is None
+                and any(
+                    isinstance(action, dict)
+                    and action.get("policy_contract_hash")
+                    == SUPPLIER_WARNING_POLICY_CONTRACT_HASH
+                    for action in actions
+                )
+            )
+            decision_id = None
+            method = None
+            if int(self.config.get("engine_semantics_version", 1)) >= 8:
+                decision_id, method = self._record_decision(tick, d)
+                if not supplier_warning_protocol:
+                    for source in d.get("communication_sources", []):
+                        self.causal.create(
+                            "memory", int(source["memory_id"]),
+                            "decision", decision_id,
+                            "motivated", "actor_claim",
+                            actor_agent_id=int(agent_id),
+                            method=method,
+                            provenance={
+                                "message_id": int(source["message_id"]),
+                                "read_context_key": d.get("communication_read_context_key"),
+                            },
+                        )
             model_call_id = d.get("llm_call_id")
             rationale = str(d.get("reasoning") or "").strip()[:500]
             attributed_actions = []
@@ -241,17 +288,127 @@ class AgentRuntime:
                 if rationale and not attributed.get("rationale_summary"):
                     attributed["rationale_summary"] = rationale
                 attributed_actions.append(attributed)
+            last_proposal_id = int(self.store.scalar(
+                "SELECT COALESCE(MAX(id),0) FROM action_proposals", default=0))
+            last_event_id = int(self.store.scalar(
+                "SELECT COALESCE(MAX(id),0) FROM events", default=0))
             results = self.executor.execute_actions(
                 tick, agent_id, attributed_actions, phase="EXECUTION")
+            proposals = self.store.query(
+                    "SELECT id,payload_json FROM action_proposals WHERE id>? AND tick=? AND actor_id=? "
+                    "ORDER BY id",
+                    (last_proposal_id, tick, agent_id),
+                )
+            if decision_id is not None and not supplier_warning_protocol:
+                for proposal in proposals:
+                    self.causal.create(
+                        "decision", decision_id,
+                        "action_proposal", int(proposal["id"]),
+                        "triggered", "engine",
+                        created_tick=tick,
+                        provenance={"execution_order": "agent_id_action_sequence"},
+                    )
             self.participant.complete(d.get("participant_action_id"), results, tick)
+            external_event_ids = [int(row["id"]) for row in self.store.query(
+                "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))]
+            external = getattr(self, "external", None)
+            if external is not None:
+                external.complete(
+                    d.get("external_submission_id"), results, tick,
+                    event_ids=external_event_ids,
+                    resulting_state_hash=external.state_hash(agent_id))
             self.mem.apply_belief_updates(
                 agent_id, env.get("belief_updates", []), tick,
                 source=str(d.get("purpose") or "decision"),
                 source_llm_call_id=d.get("llm_call_id"))
+            if decision_id is not None:
+                for update in env.get("belief_updates", []) or []:
+                    if not isinstance(update, dict) or update.get("key") is None:
+                        continue
+                    belief = self.store.query_one(
+                        "SELECT id FROM beliefs WHERE agent_id=? AND key=?",
+                        (agent_id, str(update["key"])),
+                    )
+                    if belief is None:
+                        continue
+                    for source in d.get("communication_sources", []):
+                        self.causal.create(
+                            "memory", int(source["memory_id"]),
+                            "belief", int(belief["id"]),
+                            "triggered", "engine",
+                            created_tick=tick,
+                            provenance={
+                                "decision_id": decision_id,
+                                "rule": (
+                                    SUPPLIER_WARNING_POLICY_ID
+                                    if supplier_warning_protocol else "decision_belief_update"
+                                ),
+                            },
+                        )
+                    if supplier_warning_protocol:
+                        for action, proposal in zip(attributed_actions, proposals):
+                            if (not isinstance(action, dict)
+                                    or action.get("causal_belief_key") != str(update["key"])):
+                                continue
+                            self.causal.create(
+                                "belief", int(belief["id"]),
+                                "action_proposal", int(proposal["id"]),
+                                "motivated", "actor_claim",
+                                created_tick=tick,
+                                actor_agent_id=int(agent_id),
+                                method=SUPPLIER_WARNING_POLICY_ID,
+                                provenance={
+                                    "decision_id": decision_id,
+                                    "policy_contract_hash": action["policy_contract_hash"],
+                                    "policy_input_hash": action["policy_input_hash"],
+                                    "read_context_key": d.get(
+                                        "communication_read_context_key"),
+                                },
+                            )
             reasoning = (d.get("reasoning") or "").strip()
             if reasoning:
                 self.mem.observe(agent_id, tick, f"I decided: {reasoning}", importance=1.0,
                                  entities=["self"])
+
+    def _record_decision(self, tick: int, decision: dict) -> tuple[int, str]:
+        agent_id = int(decision["agent_id"])
+        purpose = str(decision.get("purpose") or "decision")
+        if decision.get("participant_action_id") is not None:
+            method = "participant"
+        elif decision.get("llm_call_id") is not None:
+            method = "model_call"
+        else:
+            method = "scripted_policy"
+        identity = {
+            "tick": int(tick),
+            "agent_id": agent_id,
+            "purpose": purpose,
+            "method": method,
+        }
+        dedupe_key = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        reasoning_fingerprint = hashlib.sha256(
+            str(decision.get("reasoning") or "").encode("utf-8")
+        ).hexdigest()
+        self.store.execute(
+            "INSERT OR IGNORE INTO agent_decisions "
+            "(dedupe_key,tick,agent_id,purpose,method,model_call_id,read_context_key,"
+            "reasoning_fingerprint) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                dedupe_key, tick, agent_id, purpose, method,
+                decision.get("llm_call_id"),
+                decision.get("communication_read_context_key"),
+                reasoning_fingerprint,
+            ),
+        )
+        row = self.store.query_one(
+            "SELECT id,reasoning_fingerprint FROM agent_decisions WHERE dedupe_key=?",
+            (dedupe_key,),
+        )
+        if row["reasoning_fingerprint"] != reasoning_fingerprint:
+            raise RuntimeError("decision replay identity mismatch")
+        return int(row["id"]), method
 
     # ── observation capture from engine events ───────────────────────────────
     def capture_event_observations(self, tick: int) -> None:

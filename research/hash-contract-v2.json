@@ -1,0 +1,93 @@
+{
+  "id": "hash-contract-v2",
+  "schema_version": 14,
+  "extends_contract": "hash-contract-v1",
+  "schema_inventory_sha256": "9a1ce7840ff70b13f541dbb1e6d4493b336d3c49c6cb016887677301301a9eba",
+  "extension_tables": [
+    "external_agent_connections", "external_agent_credentials", "external_oauth_codes",
+    "external_oauth_clients",
+    "external_actor_requests", "external_agent_turns", "external_action_submissions",
+    "external_security_audit", "external_rate_windows", "commons_profiles",
+    "commons_communities", "commons_memberships", "commons_entries", "commons_follows",
+    "commons_reactions", "commons_feed_policies", "commons_feed_impressions",
+    "commons_moderation_actions", "commons_appeals"
+  ],
+  "extension_columns": {
+    "run_meta": ["external_agent_influenced"]
+  },
+  "authoritative_tables": [
+    "acceptance_checkpoints", "accounts", "action_proposals", "agencies",
+    "agent_decisions", "agent_tier_history", "agents", "applications", "banks",
+    "beliefs", "bill_actions", "bill_versions", "bills", "calibration_targets",
+    "causal_links", "checkpoints", "claims", "comm_audiences", "comm_deliveries",
+    "comm_disclosure_authorities", "comm_disclosures", "comm_messages", "comm_threads",
+    "committee_members", "committees", "commons_appeals", "commons_communities",
+    "commons_entries", "commons_feed_impressions", "commons_feed_policies",
+    "commons_follows", "commons_memberships", "commons_moderation_actions",
+    "commons_profiles", "commons_reactions", "contract_acceptances", "contract_clauses",
+    "contract_parties", "contracts", "conversations", "currencies", "dataset_manifests",
+    "due_diligence_checks", "elections", "employments", "events",
+    "external_action_submissions", "external_actor_requests", "external_agent_connections",
+    "external_agent_turns", "firm_disclosures", "firms", "funding_rounds", "fx_orders",
+    "fx_reserves", "fx_trades", "information_exposures", "information_items",
+    "insurance_policies", "ip_assets", "ip_licenses", "ipo_bids", "ipo_offerings",
+    "job_offers", "jobs", "ledger_entries", "legal_decisions", "legal_filings",
+    "legal_matters", "legal_notices", "legal_restrictions", "legal_rulesets",
+    "legislative_votes", "legislators", "liquidity_support_requests", "llm_calls",
+    "loan_applications", "loans", "lobbying_activities", "memories", "merger_reviews",
+    "mergers", "messages", "migrations", "news_articles", "obligations", "orders",
+    "participant_actions", "participant_control", "pitches", "policy_rules",
+    "political_parties", "predictions", "regions", "run_meta", "scenario_packs",
+    "schema_migrations", "share_movements", "shares", "shocks", "social_ties",
+    "term_sheets", "trade_shipments", "trader_profiles", "trades", "transactions"
+  ],
+  "derived_tables": ["account_ledger_totals", "metrics", "projection_commits"],
+  "excluded_tables": [
+    "counterfactual_experiments", "counterfactual_results", "external_agent_credentials",
+    "external_oauth_codes", "external_oauth_clients", "external_rate_windows",
+    "external_security_audit"
+  ],
+  "excluded_columns": {
+    "acceptance_checkpoints": ["completed_at"],
+    "checkpoints": ["path", "created_at"],
+    "events": ["created_at"],
+    "external_action_submissions": ["created_at", "completed_at"],
+    "external_agent_connections": ["last_seen_at", "lease_expires_at", "created_at", "updated_at"],
+    "external_agent_turns": ["deadline_at", "created_at", "updated_at"],
+    "llm_calls": ["latency_ms", "created_at"],
+    "participant_actions": ["created_at", "executed_at"],
+    "participant_control": ["updated_at"],
+    "run_meta": ["created_at", "updated_at"],
+    "scenario_packs": ["manifest_path"],
+    "schema_migrations": ["applied_at"],
+    "transactions": ["created_at"]
+  },
+  "json_suffixes": ["_json"],
+  "json_columns": [
+    "conversations.participant_ids", "news_articles.slant_tags",
+    "news_articles.source_event_ids"
+  ],
+  "default_export_redactions": {
+    "comm_threads": ["subject"],
+    "comm_messages": ["body_text"],
+    "comm_audiences": ["audience_key"],
+    "comm_deliveries": ["membership_ref_json"],
+    "conversations": ["participant_ids"],
+    "external_agent_connections": ["owner_id_hash"],
+    "legal_filings": ["body"],
+    "llm_calls": ["request_json", "response_json"],
+    "memories": ["text", "entities_json"],
+    "messages": ["text"]
+  },
+  "default_export_pseudonym_columns": {
+    "comm_threads": ["created_by_agent_id"],
+    "comm_messages": ["sender_agent_id"],
+    "comm_audiences": ["audience_agent_id"],
+    "comm_deliveries": ["recipient_agent_id"],
+    "comm_disclosures": ["grantee_agent_id"],
+    "commons_profiles": ["agent_id"],
+    "commons_entries": ["author_agent_id"],
+    "commons_feed_impressions": ["viewer_agent_id"],
+    "external_agent_connections": ["actor_id"]
+  }
+}

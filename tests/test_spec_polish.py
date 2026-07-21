@@ -1,7 +1,9 @@
 """Spec-fidelity items finished after P1: exchange circuit breaker (§9),
 two-stage newsroom (§10), fork-from-checkpoint (§13)."""
 import asyncio
+import json
 
+from agents.policies import newsroom_policy, reporter_draft
 from engine.store import Store
 from world.loop import World
 from run import fork_run
@@ -91,6 +93,85 @@ def test_newsroom_runs_reporter_then_editor(tmp_path):
     assert heads
     assert any("INVESTORS ON EDGE" in h for h in heads)
     assert any("workers weigh the fallout" in h for h in heads)
+
+
+def test_scripted_sensational_desk_prioritizes_a_firm_scandal():
+    events = [
+        {"id": 10, "kind": "firm_scandal"},
+        {"id": 11, "kind": "bankruptcy"},
+    ]
+    drafts = reporter_draft({
+        "engine_semantics_version": 7,
+        "salient_events": events,
+    })["stories"]
+    article = newsroom_policy({
+        "engine_semantics_version": 7,
+        "outlet": {"slant": "pro-market-sensational"},
+        "drafts": drafts,
+        "salient_events": events,
+    })
+
+    assert article["source_event_ids"] == [10]
+    assert "ACCOUNTING INVESTIGATION" in article["headline"]
+
+
+def test_scripted_newsroom_preserves_pre_semantics7_scandal_behavior():
+    events = [
+        {"id": 10, "kind": "firm_scandal"},
+        {"id": 11, "kind": "bankruptcy"},
+    ]
+    for semantics in (None, 1, 2, 3, 4, 5, 6):
+        context = {"salient_events": events}
+        if semantics is not None:
+            context["engine_semantics_version"] = semantics
+        drafts = reporter_draft(context)["stories"]
+
+        scandal = drafts[0]
+        assert scandal == {
+            "headline": "Markets in Motion",
+            "body": "Activity picked up across the economy.",
+            "tone": 0.1,
+            "kind": "firm_scandal",
+            "source_event_ids": [10],
+        }
+        article = newsroom_policy({
+            **context,
+            "outlet": {"slant": "pro-market-sensational"},
+            "drafts": drafts,
+        })
+        assert article["source_event_ids"] == [11]
+
+
+def test_newsroom_request_context_marks_only_semantics7(tmp_path):
+    events = [{"id": 10, "kind": "firm_scandal"}]
+
+    async def run_desk(semantics: int):
+        world = _world(
+            tmp_path, f"news-semantics-{semantics}.db",
+            engine_semantics_version=semantics,
+        )
+        outlet = world.newsroom.outlets[0]
+        drafts = await world.newsroom._report_stories(1, outlet, events)
+        article = await world.newsroom._write_story(
+            1, outlet, events, None, drafts=[])
+        contexts = [
+            json.loads(row["request_json"])["context"]
+            for row in world.store.query(
+                "SELECT request_json FROM llm_calls ORDER BY id")
+        ]
+        world.store.close()
+        return drafts, article, contexts
+
+    legacy_drafts, legacy_article, legacy_contexts = asyncio.run(run_desk(6))
+    current_drafts, current_article, current_contexts = asyncio.run(run_desk(7))
+
+    assert legacy_drafts[0]["headline"] == "Markets in Motion"
+    assert legacy_article["headline"].startswith("MARKETS IN MOTION")
+    assert all("engine_semantics_version" not in item for item in legacy_contexts)
+    assert current_drafts[0]["headline"] == "Firm Faces Accounting Investigation"
+    assert current_article["headline"].startswith(
+        "FIRM FACES ACCOUNTING INVESTIGATION")
+    assert all(item["engine_semantics_version"] == 7 for item in current_contexts)
 
 
 # ── fork from checkpoint (§13) ───────────────────────────────────────────────
