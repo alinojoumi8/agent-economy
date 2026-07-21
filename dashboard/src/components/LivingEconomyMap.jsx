@@ -113,7 +113,7 @@ function RegionPlatform({ region, index, selected, actorsVisible, onSelect, onAc
 export function EconomyScene({ scene, layers, selectedRegionId, onSelectRegion, onClearSelection, onActive, onInactive }) {
   const prefix = useId().replaceAll(":", "");
   const byId = new Map(scene.regions.map(region => [region.id, region]));
-  return <svg viewBox="0 0 1000 560" role="img" aria-labelledby={`${prefix}-title ${prefix}-description`}
+  return <svg viewBox="0 0 1000 560" role="group" aria-labelledby={`${prefix}-title ${prefix}-description`}
     className="economy-map-svg" onClick={onClearSelection}>
     <title id={`${prefix}-title`}>Regional economy command table</title>
     <desc id={`${prefix}-description`}>Perspective economic topology with selectable regions and aggregated trade and migration routes.</desc>

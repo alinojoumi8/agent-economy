@@ -202,6 +202,21 @@ test("EconomicMap renders an accessible isometric scene and controls", async () 
   }
 });
 
+test("EconomicMap exposes its interactive scene as a labelled group", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { EconomicMap } = await vite.ssrLoadModule("/src/components/V2Observatory.jsx");
+    const markup = renderToStaticMarkup(React.createElement(EconomicMap, { map: renderedMap }));
+
+    assert.match(markup, /<svg[^>]*role="group"[^>]*aria-labelledby="[^"]+"/);
+    assert.doesNotMatch(markup, /<svg[^>]*role="img"/);
+    assert.match(markup, /role="button" tabindex="0" data-region-id="1" aria-label="[^"]+"/);
+    assert.match(markup, /role="button" tabindex="0" data-route-id="trade:1:2" aria-label="[^"]+"/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("EconomicMap preserves the disabled regional-economy guidance", async () => {
   const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
   try {
