@@ -1,18 +1,83 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, money, number, shortKind } from "../api";
 import { appendParticipantHistory } from "../participant";
+import { useObservatoryInteraction } from "./ObservatoryInteraction";
 import { Badge, Empty, Modal, Panel } from "./ui";
 
-export function AgentsPanel({ agents, participant, status, act }) {
+const AGENT_PAGE_SIZE = 100;
+const EMPTY_DIRECTORY = {
+  items: [], total: 0, population_total: 0, limit: AGENT_PAGE_SIZE, next_after_id: null,
+};
+
+export function agentDirectoryPath({ filter = "", tier = "", regionId = null, afterId = null } = {}) {
+  const params = new URLSearchParams({ limit: String(AGENT_PAGE_SIZE) });
+  if (filter.trim()) params.set("q", filter.trim());
+  if (tier) params.set("population_tier", tier);
+  if (regionId !== null && regionId !== undefined) params.set("region_id", String(regionId));
+  if (afterId !== null && afterId !== undefined) params.set("after_id", String(afterId));
+  return `/api/agents?${params.toString()}`;
+}
+
+export function AgentsPanel({ agents = null, initialDirectory = null, participant, status, act }) {
+  const { regionFocus } = useObservatoryInteraction();
+  const regionId = regionFocus?.regionId ?? null;
   const [filter, setFilter] = useState("");
+  const [tier, setTier] = useState("");
+  const [cursors, setCursors] = useState([null]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [directory, setDirectory] = useState(() => initialDirectory || (
+    Array.isArray(agents)
+      ? { ...EMPTY_DIRECTORY, items: agents, total: agents.length, population_total: agents.length }
+      : EMPTY_DIRECTORY
+  ));
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
-  const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return agents;
-    return agents.filter(agent => [agent.name, agent.occupation, agent.role, agent.kind, agent.health]
-      .some(value => String(value || "").toLowerCase().includes(needle)));
-  }, [agents, filter]);
+
+  useEffect(() => {
+    setCursors([null]);
+    setPageIndex(0);
+  }, [regionId]);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setDirectoryLoading(true);
+      try {
+        const page = await api(agentDirectoryPath({
+          filter, tier, regionId, afterId: cursors[pageIndex],
+        }));
+        if (active) {
+          setDirectory(page);
+          setDirectoryError("");
+        }
+      } catch (reason) {
+        if (active) setDirectoryError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        if (active) setDirectoryLoading(false);
+      }
+    }, 180);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [filter, tier, regionId, pageIndex, cursors, status?.tick]);
+
+  function resetDirectory(nextFilter = filter, nextTier = tier) {
+    setFilter(nextFilter);
+    setTier(nextTier);
+    setCursors([null]);
+    setPageIndex(0);
+  }
+
+  function nextPage() {
+    if (directory.next_after_id === null || directory.next_after_id === undefined) return;
+    setCursors(current => [
+      ...current.slice(0, pageIndex + 1), directory.next_after_id,
+    ]);
+    setPageIndex(current => current + 1);
+  }
 
   async function inspect(id) {
     setLoading(true);
@@ -40,6 +105,25 @@ export function AgentsPanel({ agents, participant, status, act }) {
     } finally { setLoading(false); }
   }
 
+  async function loadOlderAgentOutputs(kind) {
+    const cursor = detail?.output_cursors?.[kind];
+    if (!detail?.agent?.id || !cursor) return;
+    setLoading(true);
+    try {
+      const page = await api(
+        `/api/agents/${detail.agent.id}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
+      const field = kind === "model" ? "recent_decisions" : "recent_actions";
+      setDetail(current => {
+        const known = new Set((current?.[field] || []).map(item => item.id));
+        return {
+          ...current,
+          [field]: [...(current?.[field] || []), ...page.items.filter(item => !known.has(item.id))],
+          output_cursors: { ...current?.output_cursors, [kind]: page.next_before_id },
+        };
+      });
+    } finally { setLoading(false); }
+  }
+
   async function takeControl(agentId) {
     setLoading(true);
     try {
@@ -51,20 +135,67 @@ export function AgentsPanel({ agents, participant, status, act }) {
     } finally { setLoading(false); }
   }
 
+  const listed = directory.items || [];
+  const start = listed.length ? pageIndex * AGENT_PAGE_SIZE + 1 : 0;
+  const end = listed.length ? start + listed.length - 1 : 0;
   return <>
-    <Panel title={`Agents · ${visible.length}/${agents.length}`} eyebrow="Click any row for a full audit" className="col-span-full" action={<input className="field !w-56 max-w-[46vw] !py-1.5" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter people, roles…" aria-label="Filter agents" />}>
+    <Panel
+      title={regionFocus ? `Agents · ${directory.total} in ${regionFocus.regionName}` : `Agents · ${directory.population_total || directory.total}`}
+      eyebrow="Server-paginated directory · click any row for an output audit"
+      className="col-span-full"
+      action={<div className="flex flex-wrap gap-2">
+        <select className="field !w-auto !py-1.5" value={tier}
+          onChange={event => resetDirectory(filter, event.target.value)} aria-label="Filter agents by tier">
+          <option value="">All tiers</option><option value="core">Core</option><option value="periphery">Periphery</option>
+        </select>
+        <input className="field !w-56 max-w-[46vw] !py-1.5" value={filter}
+          onChange={event => resetDirectory(event.target.value, tier)}
+          placeholder="Search people, roles…" aria-label="Search agents" />
+      </div>}
+    >
       <div className="scrollbar max-h-[520px] overflow-auto">
-        {visible.length ? <table className="data-table">
-          <thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Role</th><th>Age</th><th>Health</th><th>Status</th></tr></thead>
-          <tbody>{visible.map(agent => <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") inspect(agent.id); }}>
-            <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
+        {listed.length ? <table className="data-table">
+          <thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Role</th><th>Region</th><th>Tier</th><th>Age</th><th>Health</th><th>Status</th></tr></thead>
+          <tbody>{listed.map(agent => <tr key={agent.id} className="cursor-pointer" tabIndex="0"
+            onClick={() => inspect(agent.id)}
+            onKeyDown={event => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                inspect(agent.id);
+              }
+            }}>
+            <td className="tabular text-slate-600">{agent.id}</td>
+            <td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300"
+              onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td>
+            <td>{agent.occupation || "—"}</td>
+            <td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td>
+            <td>{shortKind(agent.region_key || "unassigned")}</td>
+            <td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td>
+            <td className="tabular">{agent.age}</td>
+            <td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td>
+            <td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
           </tr>)}</tbody>
-        </table> : <Empty>No agents match this filter.</Empty>}
+        </table> : <Empty>{directoryLoading ? "Loading agents…" : regionFocus
+          ? `No agents match this search in ${regionFocus.regionName}.`
+          : "No agents match this search."}</Empty>}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-mint-300/10 px-4 py-3 text-xs text-slate-500" aria-live="polite">
+        <span>{directoryError
+          ? <span className="text-coral-300">Directory unavailable: {directoryError}</span>
+          : directoryLoading ? "Refreshing directory…"
+          : `${start}–${end} of ${directory.total} matching agents`}</span>
+        <div className="flex gap-2">
+          <button className="button !min-h-8" disabled={pageIndex === 0 || directoryLoading}
+            onClick={() => setPageIndex(current => Math.max(0, current - 1))}>Previous</button>
+          <button className="button !min-h-8" disabled={!directory.next_after_id || directoryLoading}
+            onClick={nextPage}>Next</button>
+        </div>
       </div>
     </Panel>
     {loading && <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-mint-300 px-3 py-2 text-xs font-semibold text-ink-950">Loading agent…</div>}
     {detail && <AgentModal detail={detail} participant={participant} running={status?.running}
       historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
+      onLoadOlderOutputs={loadOlderAgentOutputs}
       onTakeControl={takeControl} onClose={() => setDetail(null)} />}
   </>;
 }

@@ -15,7 +15,6 @@ const INITIAL = {
   news: [],
   conversations: [],
   events: [],
-  agents: [],
   cost: null,
   oracle: { predictions: [], scorecard: {} },
   calibration: { run: null, all: null, errors: [] },
@@ -44,14 +43,14 @@ export function useObservatory({ hosted = false } = {}) {
         }
       };
       const [status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks, calibrationRun, calibrationAll,
+        events, cost, oracle, shocks, calibrationRun, calibrationAll,
         map, legal, politics, information, startups, markets, datasets] = await Promise.all([
         api("/api/run/status"), api("/api/acceptance/status"),
         api("/api/participant"),
         api("/api/metrics"), api("/api/banks"),
         api("/api/firms"), api("/api/institutions"), api("/api/news?limit=24"),
         api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
-        api("/api/agents"), api("/api/cost"), api("/api/oracle/predictions"),
+        api("/api/cost"), api("/api/oracle/predictions"),
         api("/api/shocks"),
         hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=run", "run"),
         hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=all", "all"),
@@ -60,7 +59,7 @@ export function useObservatory({ hosted = false } = {}) {
         api("/api/v2/datasets"),
       ]);
       setData({ status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
-        events, agents, cost, oracle, shocks,
+        events, cost, oracle, shocks,
         calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors },
         v2: { map, legal, politics, information, startups, markets, datasets } });
       setError("");

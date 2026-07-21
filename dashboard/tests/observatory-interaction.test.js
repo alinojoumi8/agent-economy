@@ -125,3 +125,19 @@ test("drawer is modeless, labelled, and exposes last-observed state", async () =
     assert.match(markup, /Unable to serialize this snapshot/);
   } finally { await vite.close(); }
 });
+
+test("agent directory encodes region after search and tier and before cursor", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { agentDirectoryPath } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    assert.equal(
+      agentDirectoryPath({ filter: "Ada Core", tier: "core", regionId: 2, afterId: 100 }),
+      "/api/agents?limit=100&q=Ada+Core&population_tier=core&region_id=2&after_id=100",
+    );
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8");
+    assert.match(source, /useEffect\(\(\) => \{\s*setCursors\(\[null\]\);\s*setPageIndex\(0\);\s*\}, \[regionId\]\)/);
+    const observatorySource = await readFile(new URL("../src/hooks/useObservatory.js", import.meta.url), "utf8");
+    assert.doesNotMatch(observatorySource, /api\("\/api\/agents"\)/);
+  } finally { await vite.close(); }
+});

@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -264,11 +264,75 @@ def create_app(world: World, *, served_ticks: int | None = None,
         return out
 
     @app.get("/api/agents")
-    async def agents():
+    async def agents(
+        limit: Optional[int] = Query(default=None, ge=1, le=200),
+        after_id: Optional[int] = Query(default=None, ge=0),
+        q: str = Query(default="", max_length=120),
+        population_tier: Optional[Literal["core", "periphery"]] = None,
+        region_id: Optional[int] = Query(default=None, ge=1),
+    ):
+        columns = (
+            "a.id, a.name, a.kind, a.role, a.occupation, a.age, a.health, "
+            "a.alive, a.retired, a.employer_id, a.population_tier, "
+            "a.region_id, r.region_key"
+        )
+        base = " FROM agents a LEFT JOIN regions r ON r.id=a.region_id"
+        filters: list[str] = []
+        filter_params: list[object] = []
+        needle = q.strip()
+        if population_tier:
+            filters.append("a.population_tier=?")
+            filter_params.append(population_tier)
+        if region_id is not None:
+            filters.append("a.region_id=?")
+            filter_params.append(region_id)
+        if needle:
+            escaped = (needle.replace("\\", "\\\\")
+                       .replace("%", "\\%")
+                       .replace("_", "\\_"))
+            pattern = f"%{escaped}%"
+            searchable = (
+                "a.name", "a.occupation", "a.role", "a.kind", "a.health",
+                "a.population_tier", "r.region_key",
+            )
+            filters.append("(" + " OR ".join(
+                f"COALESCE({field}, '') LIKE ? ESCAPE '\\'"
+                for field in searchable) + ")")
+            filter_params.extend([pattern] * len(searchable))
+        filter_sql = " WHERE " + " AND ".join(filters) if filters else ""
+
+        paged = bool(limit is not None or after_id is not None or needle
+                     or population_tier or region_id is not None)
+        if not paged:
+            rows = store.query("SELECT " + columns + base + " ORDER BY a.id")
+            return [dict(row) for row in rows]
+
+        page_limit = int(limit or 100)
+        page_filters = list(filters)
+        page_params = list(filter_params)
+        if after_id is not None:
+            page_filters.append("a.id>?")
+            page_params.append(after_id)
+        page_where = " WHERE " + " AND ".join(page_filters) if page_filters else ""
         rows = store.query(
-            "SELECT id, name, kind, role, occupation, age, health, alive, retired, employer_id "
-            "FROM agents ORDER BY id")
-        return [dict(r) for r in rows]
+            "SELECT " + columns + base + page_where + " ORDER BY a.id LIMIT ?",
+            (*page_params, page_limit + 1),
+        )
+        items = [dict(row) for row in rows[:page_limit]]
+        matched_total = int(store.scalar(
+            "SELECT COUNT(*)" + base + filter_sql,
+            filter_params,
+            default=0,
+        ))
+        population_total = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
+        return {
+            "items": items,
+            "total": matched_total,
+            "population_total": population_total,
+            "limit": page_limit,
+            "next_after_id": items[-1]["id"] if len(rows) > page_limit else None,
+        }
 
     @app.get("/api/agents/{agent_id}")
     async def agent_detail(agent_id: int):
