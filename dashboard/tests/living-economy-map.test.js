@@ -36,6 +36,74 @@ test("aggregateFlows groups routes and preserves status counts", () => {
   ]);
 });
 
+test("aggregateFlows balances trade and migration within a 100-row cap", () => {
+  const tradeFlows = Array.from({ length: 80 }, (_, index) => ({
+    id: index + 1,
+    source_region_id: 1,
+    target_region_id: 2,
+    kind: "trade",
+    magnitude: 1,
+    status: index < 50 ? "selected" : "overflow",
+  }));
+  const migrationFlows = Array.from({ length: 80 }, (_, index) => ({
+    id: index + 81,
+    source_region_id: 2,
+    target_region_id: 1,
+    kind: "migration",
+    magnitude: 1,
+    status: index < 50 ? "selected" : "overflow",
+  }));
+
+  const routes = aggregateFlows([...tradeFlows, ...migrationFlows], regionIds);
+
+  assert.deepEqual(routes, [
+    {
+      id: "migration:2:1",
+      kind: "migration",
+      source_region_id: 2,
+      target_region_id: 1,
+      magnitude: 50,
+      count: 50,
+      statuses: { selected: 50 },
+    },
+    {
+      id: "trade:1:2",
+      kind: "trade",
+      source_region_id: 1,
+      target_region_id: 2,
+      magnitude: 50,
+      count: 50,
+      statuses: { selected: 50 },
+    },
+  ]);
+  assert.equal(routes.reduce((total, route) => total + route.count, 0), 100);
+});
+
+test("aggregateFlows lets one flow kind fill the 100-row cap", () => {
+  const migrationFlows = Array.from({ length: 120 }, (_, index) => ({
+    id: index + 1,
+    source_region_id: 2,
+    target_region_id: 1,
+    kind: "migration",
+    magnitude: 1,
+    status: index < 100 ? "selected" : "overflow",
+  }));
+
+  const routes = aggregateFlows(migrationFlows, regionIds);
+
+  assert.deepEqual(routes, [
+    {
+      id: "migration:2:1",
+      kind: "migration",
+      source_region_id: 2,
+      target_region_id: 1,
+      magnitude: 100,
+      count: 100,
+      statuses: { selected: 100 },
+    },
+  ]);
+});
+
 test("normalizeMapData clamps coordinates and derives regional totals", () => {
   const scene = normalizeMapData({
     enabled: true,

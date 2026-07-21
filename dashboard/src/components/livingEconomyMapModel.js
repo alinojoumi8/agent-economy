@@ -2,6 +2,8 @@ const asArray = value => Array.isArray(value) ? value : [];
 const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 const numericId = value => Number.isFinite(Number(value)) ? Number(value) : null;
+const flowLimit = 100;
+const flowKindReserve = 50;
 
 function specializations(region) {
   if (Array.isArray(region.specialization)) return region.specialization.map(String);
@@ -16,6 +18,7 @@ function specializations(region) {
 export function aggregateFlows(flows, regionIds) {
   const allowed = regionIds instanceof Set ? regionIds : new Set();
   const grouped = new Map();
+  const validFlows = [];
 
   for (const flow of asArray(flows)) {
     const kind = flow?.kind === "trade" || flow?.kind === "migration" ? flow.kind : null;
@@ -23,6 +26,24 @@ export function aggregateFlows(flows, regionIds) {
     const targetId = numericId(flow?.target_region_id);
     if (!kind || !allowed.has(sourceId) || !allowed.has(targetId) || sourceId === targetId) continue;
 
+    validFlows.push({ flow, kind, sourceId, targetId });
+  }
+
+  const selected = new Set();
+  const reserved = { trade: 0, migration: 0 };
+  for (const row of validFlows) {
+    if (reserved[row.kind] >= flowKindReserve) continue;
+    selected.add(row);
+    reserved[row.kind] += 1;
+  }
+  for (const row of validFlows) {
+    if (selected.size >= flowLimit) break;
+    selected.add(row);
+  }
+
+  for (const row of validFlows) {
+    if (!selected.has(row)) continue;
+    const { flow, kind, sourceId, targetId } = row;
     const id = `${kind}:${sourceId}:${targetId}`;
     const status = String(flow?.status || "unknown");
     const magnitude = Math.max(0, finite(flow?.magnitude, 1));
