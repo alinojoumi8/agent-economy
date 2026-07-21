@@ -1,7 +1,9 @@
 import { number } from "../api";
 import { Badge, Empty, Panel } from "./ui";
+import { inspectionButtonProps, useObservatoryInteraction } from "./ObservatoryInteraction";
 
 export function AcceptancePanel({ acceptance }) {
+  const { inspect } = useObservatoryInteraction();
   if (!acceptance?.configured) return null;
   const checks = acceptance.checks || [];
   const passed = checks.filter(check => check.passed).length;
@@ -35,11 +37,29 @@ export function AcceptancePanel({ acceptance }) {
           </dl>}
         </section>
         <section className="scrollbar max-h-56 overflow-y-auto pr-2">
-          {checks.length ? checks.map(check => <article key={check.id} className="border-t border-mint-300/10 py-2 first:border-0"><div className="flex items-start justify-between gap-3 text-xs"><span>{check.label}</span><Badge tone={check.passed ? "good" : "warn"}>{check.passed ? "passed" : "pending"}</Badge></div><div className="mt-1 text-[10px] text-slate-600">{check.id}</div></article>) : <Empty>No acceptance checks are configured.</Empty>}
+          {checks.length ? checks.map(check => <article key={check.id} className="border-t border-mint-300/10 py-2 first:border-0"><div className="flex items-start justify-between gap-3 text-xs">
+            <button className="inspectable-card !w-auto !p-0" {...inspectionButtonProps(
+              inspect,
+              { kind: "acceptance_check", id: check.id, title: check.label },
+              check,
+              `Inspect acceptance check ${check.label}`,
+            )}><span>{check.label}</span></button>
+            <Badge tone={check.passed ? "good" : "warn"}>{check.passed ? "passed" : "pending"}</Badge>
+          </div><div className="mt-1 text-[10px] text-slate-600">{check.id}</div></article>) : <Empty>No acceptance checks are configured.</Empty>}
         </section>
         <section className="scrollbar max-h-56 overflow-y-auto pr-2">
           <div className="eyebrow mb-2">Shock traces</div>
-          {Object.keys(shockTraces).length ? Object.entries(shockTraces).map(([kind, trace]) => <article key={kind} className="flex items-center justify-between border-t border-mint-300/10 py-2 first:border-0"><div><div className="text-xs capitalize">{kind.replaceAll("_", " ")}</div><div className="mt-1 text-[10px] text-slate-600">day {trace?.source?.tick ?? "—"} · {(trace?.downstream || []).length || (trace?.downstream ? 1 : 0)} downstream</div></div><Badge tone={trace?.passed ? "good" : "warn"}>{trace?.passed ? "traced" : "pending"}</Badge></article>) : <Empty>Shock evidence appears after configured shocks fire.</Empty>}
+          {Object.keys(shockTraces).length ? Object.entries(shockTraces).map(([kind, trace]) => <article key={kind} className="border-t border-mint-300/10 py-2 first:border-0">
+            <button className="inspectable-card !p-0" {...inspectionButtonProps(
+              inspect,
+              { kind: "shock_trace", id: kind, title: `${kind.replaceAll("_", " ")} shock trace` },
+              { id: kind, kind, ...trace },
+              `Inspect ${kind.replaceAll("_", " ")} shock trace`,
+            )}>
+              <span><span className="block text-xs capitalize">{kind.replaceAll("_", " ")}</span><span className="mt-1 block text-[10px] text-slate-600">day {trace?.source?.tick ?? "—"} · {(trace?.downstream || []).length || (trace?.downstream ? 1 : 0)} downstream</span></span>
+              <Badge tone={trace?.passed ? "good" : "warn"}>{trace?.passed ? "traced" : "pending"}</Badge>
+            </button>
+          </article>) : <Empty>Shock evidence appears after configured shocks fire.</Empty>}
         </section>
       </div>
     </Panel>

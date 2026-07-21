@@ -219,9 +219,83 @@ body::before {
   .economy-map-tooltip { position: static; max-width: none; border-width: 1px 0 0; border-radius: 0; box-shadow: none; }
 }
 
+.inspectable-card {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  border: 1px solid transparent;
+  border-radius: .65rem;
+  padding: .55rem;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+.inspectable-card:hover { border-color: rgba(121, 230, 189, .22); background: rgba(121, 230, 189, .04); transform: translateY(-1px); }
+.inspectable-card:focus-visible { outline: 2px solid #79e6bd; outline-offset: 2px; }
+.observatory-focus-bar {
+  position: sticky;
+  top: 4.4rem;
+  z-index: 35;
+  display: flex;
+  max-width: 1760px;
+  margin: .75rem auto 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(121, 230, 189, .28);
+  border-radius: .9rem;
+  background: rgba(7, 18, 15, .94);
+  padding: .7rem 1rem;
+  box-shadow: 0 14px 45px rgba(0, 0, 0, .32);
+  backdrop-filter: blur(14px);
+}
+.observatory-focus-bar strong { color: #d8e8e2; font-size: .9rem; }
+.observatory-focus-bar p { margin-top: .15rem; color: #78938a; font-size: .7rem; }
+.observatory-drawer {
+  position: fixed;
+  inset: 4.8rem 0 0 auto;
+  z-index: 45;
+  width: min(30rem, 92vw);
+  overflow-y: auto;
+  border-left: 1px solid rgba(121, 230, 189, .2);
+  background: rgba(5, 13, 11, .97);
+  padding: 1rem;
+  box-shadow: -22px 0 70px rgba(0, 0, 0, .48);
+  animation: observatory-drawer-in 180ms ease-out;
+}
+.observatory-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.observatory-drawer h2 { margin-top: .2rem; color: #e7f1ed; font-size: 1.15rem; font-weight: 700; }
+.observatory-drawer h2:focus { outline: none; }
+.observatory-drawer header p,
+.observatory-drawer-narrative { margin-top: .35rem; color: #9fb8af; font-size: .78rem; line-height: 1.55; }
+.observatory-drawer dl { margin-top: 1rem; display: grid; gap: .45rem; }
+.observatory-drawer dl > div { display: grid; grid-template-columns: minmax(7rem, .8fr) 1.2fr; gap: .75rem; border-top: 1px solid rgba(121, 230, 189, .1); padding-top: .45rem; font-size: .72rem; }
+.observatory-drawer dt { color: #78938a; }
+.observatory-drawer dd { color: #d8e8e2; overflow-wrap: anywhere; }
+.observatory-drawer details { margin-top: 1rem; border-top: 1px solid rgba(121, 230, 189, .1); padding-top: .7rem; color: #79e6bd; font-size: .72rem; }
+.observatory-drawer pre { margin-top: .6rem; overflow-x: auto; white-space: pre-wrap; color: #78938a; font-size: .65rem; }
+.observatory-last-observed { margin-top: .8rem; border: 1px solid rgba(247, 215, 131, .2); border-radius: .55rem; background: rgba(247, 215, 131, .05); padding: .5rem; color: #f7d783; font-size: .68rem; }
+@keyframes observatory-drawer-in { from { transform: translateX(1.5rem); opacity: 0; } }
+
+@media (max-width: 640px) {
+  .observatory-focus-bar { position: static; margin-inline: .75rem; align-items: flex-start; }
+  .observatory-drawer {
+    inset: auto 0 0;
+    width: auto;
+    max-height: calc(100vh - 5rem);
+    border-left: 0;
+    border-top: 1px solid rgba(121, 230, 189, .2);
+    border-radius: 1rem 1rem 0 0;
+    animation-name: observatory-sheet-in;
+  }
+  @keyframes observatory-sheet-in { from { transform: translateY(1.5rem); opacity: 0; } }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
   .economy-map-route-line { animation: none !important; }
+  .observatory-drawer, .observatory-focus-bar, .inspectable-card { animation: none !important; transition: none !important; }
 }
 
 @media print {

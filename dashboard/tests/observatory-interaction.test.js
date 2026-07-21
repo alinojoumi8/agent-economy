@@ -448,3 +448,193 @@ test("macro metrics retain article and chart semantics around native inspection 
     assertButtonsContainOnlyPhrasingContent(markup);
   } finally { await vite.close(); }
 });
+
+test("mounted extended panels route every inspection button to its exact reference and snapshot", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  let renderer;
+  try {
+    const { ObservatoryInteractionContext } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    const { InstitutionalPulse, LegalPoliticalPanels } = await vite.ssrLoadModule("/src/components/V2Observatory.jsx");
+    const { AcceptancePanel } = await vite.ssrLoadModule("/src/components/AcceptancePanel.jsx");
+    const { CostPanel } = await vite.ssrLoadModule("/src/components/OracleAndCost.jsx");
+
+    const matter = { id: 101, title: "Docket Alpha", status: "open", matter_type: "contract_dispute", ruleset: "commercial" };
+    const obligation = { id: 201, obligation_type: "delivery_term", status: "open" };
+    const bill = { id: 301, title: "Civic Ledger Act", origin_chamber: "assembly", status: "introduced" };
+    const termSheet = { id: 401, title: "Seed Accord", status: "proposed" };
+    const fundingRound = { id: 402, name: "Series A", status: "closed" };
+    const ipAsset = { id: 403, name: "Patent Delta", status: "filed" };
+    const merger = { id: 404, title: "Northstar merger", status: "review" };
+    const check = { id: "efficiency", label: "Efficiency cap", passed: false, evidence: {} };
+    const shockCheck = {
+      id: "shock_traces", label: "Shock traces", passed: true,
+      evidence: {
+        demand_shock: { passed: true, source: { tick: 5 }, downstream: [{ tick: 6 }] },
+        supply_shock: { passed: false, source: { tick: 8 }, downstream: [] },
+      },
+    };
+    const modelCost = { model: "MiniMax-M3", calls: 7, cost_usd: 1.25 };
+    const purposeCost = { purpose: "decision", calls: 3, cost_usd: 0.5 };
+    const agentCost = { agent_id: 77, agent_name: "Ada", role: "consumer", calls: 4, cost_usd: 0.75 };
+    const sharedCost = { agent_id: null, agent_name: "Shared", role: "system", calls: 2, cost_usd: 0.25 };
+    const legal = { contracts: [], items: [matter], obligations: [obligation] };
+    const politics = { bills: [bill], lobbying: { items: [] } };
+    const startups = {
+      term_sheets: [termSheet], funding_rounds: [fundingRound], ip_assets: [ipAsset], mergers: [merger],
+    };
+    const acceptance = {
+      configured: true, passed: false, checks: [check, shockCheck],
+      progress: { fraction: 0.5, completed_ticks: 5, required_ticks: 10 }, orchestration: {},
+    };
+    const calls = [];
+    const inspect = (...args) => calls.push(args);
+
+    renderer = await mountComponent(React.createElement(
+      ObservatoryInteractionContext.Provider,
+      { value: { inspect } },
+      React.createElement(React.Fragment, null,
+        React.createElement(InstitutionalPulse, { legal, politics, information: {}, datasets: {} }),
+        React.createElement(LegalPoliticalPanels, { legal, politics, information: {}, startups, markets: {} }),
+        React.createElement(AcceptancePanel, { acceptance }),
+        React.createElement(CostPanel, {
+          cost: { by_model: [modelCost], by_purpose: [purposeCost], by_agent: [agentCost, sharedCost] },
+          readiness: { providers: [] },
+        }),
+      ),
+    ));
+
+    const labels = [
+      "Inspect legal matter Docket Alpha",
+      "Inspect legal obligation 201",
+      "Inspect bill Civic Ledger Act",
+      "Inspect startup summary Term sheets",
+      "Inspect startup summary Funding rounds",
+      "Inspect startup summary IP assets",
+      "Inspect startup summary M&A reviews",
+      "Inspect startup record Seed Accord",
+      "Inspect startup record Series A",
+      "Inspect startup record Patent Delta",
+      "Inspect startup record Northstar merger",
+      "Inspect acceptance check Efficiency cap",
+      "Inspect acceptance check Shock traces",
+      "Inspect demand shock shock trace",
+      "Inspect supply shock shock trace",
+      "Inspect provider model cost MiniMax-M3",
+      "Inspect provider purpose cost decision",
+      "Inspect provider agent cost Ada",
+      "Inspect provider agent cost Shared",
+    ];
+    for (const label of labels) {
+      const button = buttonByLabel(renderer.root, label);
+      assert.ok(button, `expected mounted button ${label}`);
+      assert.equal(button.props.type, "button");
+      await rendererAct(async () => { button.props.onClick({ type: "click" }); });
+    }
+
+    assert.equal(renderer.root.findAll(node => node.type === "button" && node.props["aria-label"]?.startsWith("Inspect ")).length, labels.length);
+    assert.deepEqual(calls.map(([reference]) => reference), [
+      { kind: "legal_matter", id: 101, title: "Docket Alpha" },
+      { kind: "legal_obligation", id: 201, title: "delivery term" },
+      { kind: "bill", id: 301, title: "Civic Ledger Act" },
+      { kind: "startup_summary", id: null, title: "Term sheets" },
+      { kind: "startup_summary", id: null, title: "Funding rounds" },
+      { kind: "startup_summary", id: null, title: "IP assets" },
+      { kind: "startup_summary", id: null, title: "M&A reviews" },
+      { kind: "startup_record", id: 401, collection: "term_sheets", title: "Seed Accord" },
+      { kind: "startup_record", id: 402, collection: "funding_rounds", title: "Series A" },
+      { kind: "startup_record", id: 403, collection: "ip_assets", title: "Patent Delta" },
+      { kind: "startup_record", id: 404, collection: "mergers", title: "Northstar merger" },
+      { kind: "acceptance_check", id: "efficiency", title: "Efficiency cap" },
+      { kind: "acceptance_check", id: "shock_traces", title: "Shock traces" },
+      { kind: "shock_trace", id: "demand_shock", title: "demand shock shock trace" },
+      { kind: "shock_trace", id: "supply_shock", title: "supply shock shock trace" },
+      { kind: "provider_cost", id: "MiniMax-M3", collection: "by_model", title: "MiniMax-M3" },
+      { kind: "provider_cost", id: "decision", collection: "by_purpose", title: "decision" },
+      { kind: "provider_cost", id: 77, collection: "by_agent", title: "Ada" },
+      { kind: "provider_cost", id: "shared-1", collection: "by_agent", title: "Shared" },
+    ]);
+    assert.strictEqual(calls[0][1], matter);
+    assert.strictEqual(calls[1][1], obligation);
+    assert.strictEqual(calls[2][1], bill);
+    assert.deepEqual(calls.slice(3, 7).map(([, snapshot]) => snapshot), [
+      { title: "Term sheets", count: 1, description: "Summary from the current startup lifecycle payload." },
+      { title: "Funding rounds", count: 1, description: "Summary from the current startup lifecycle payload." },
+      { title: "IP assets", count: 1, description: "Summary from the current startup lifecycle payload." },
+      { title: "M&A reviews", count: 1, description: "Summary from the current startup lifecycle payload." },
+    ]);
+    assert.strictEqual(calls[7][1], termSheet);
+    assert.strictEqual(calls[8][1], fundingRound);
+    assert.strictEqual(calls[9][1], ipAsset);
+    assert.strictEqual(calls[10][1], merger);
+    assert.strictEqual(calls[11][1], check);
+    assert.strictEqual(calls[12][1], shockCheck);
+    assert.deepEqual(calls[13][1], { id: "demand_shock", kind: "demand_shock", ...shockCheck.evidence.demand_shock });
+    assert.deepEqual(calls[14][1], { id: "supply_shock", kind: "supply_shock", ...shockCheck.evidence.supply_shock });
+    assert.deepEqual(calls.slice(15).map(([, snapshot]) => snapshot), [
+      { ...modelCost, id: "MiniMax-M3" },
+      { ...purposeCost, id: "decision" },
+      { ...agentCost, id: 77 },
+      { ...sharedCost, id: "shared-1" },
+    ]);
+  } finally {
+    if (renderer) await rendererAct(async () => { renderer.unmount(); });
+    await vite.close();
+  }
+});
+
+test("extended inspection controls preserve semantic wrappers and responsive shell styles", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { ObservatoryInteractionContext } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    const { InstitutionalPulse, LegalPoliticalPanels } = await vite.ssrLoadModule("/src/components/V2Observatory.jsx");
+    const { AcceptancePanel } = await vite.ssrLoadModule("/src/components/AcceptancePanel.jsx");
+    const { CostPanel } = await vite.ssrLoadModule("/src/components/OracleAndCost.jsx");
+    const context = { inspect: () => {} };
+    const wrap = child => React.createElement(ObservatoryInteractionContext.Provider, { value: context }, child);
+    const matter = { id: 1, title: "Matter One", status: "open", matter_type: "dispute", ruleset: "civil" };
+    const obligation = { id: 2, obligation_type: "payment_due", status: "open" };
+    const bill = { id: 3, title: "Bill Three", origin_chamber: "assembly", status: "draft" };
+    const trace = { passed: true, source: { tick: 4 }, downstream: [] };
+    const institutional = renderToStaticMarkup(wrap(React.createElement(InstitutionalPulse, {
+      legal: { items: [matter] }, politics: { bills: [bill] }, information: {}, datasets: {},
+    })));
+    const legalPolitical = renderToStaticMarkup(wrap(React.createElement(LegalPoliticalPanels, {
+      legal: { contracts: [], obligations: [obligation] }, politics: { bills: [bill], lobbying: { items: [] } },
+      information: {}, markets: {}, startups: { term_sheets: [{ id: 4, title: "Term Four", status: "open" }] },
+    })));
+    const acceptance = renderToStaticMarkup(wrap(React.createElement(AcceptancePanel, { acceptance: {
+      configured: true, checks: [
+        { id: "shock_traces", label: "Shock traces", passed: true, evidence: { demand_shock: trace } },
+      ], progress: {}, orchestration: {},
+    } })));
+    const cost = renderToStaticMarkup(wrap(React.createElement(CostPanel, {
+      cost: {
+        by_model: [{ model: "MiniMax-M3", calls: 1 }],
+        by_purpose: [{ purpose: "decision", calls: 1 }],
+        by_agent: [{ agent_id: 5, agent_name: "Ada", role: "consumer", calls: 1 }],
+      }, readiness: { providers: [] },
+    })));
+
+    for (const markup of [institutional, legalPolitical, acceptance, cost]) {
+      assert.doesNotMatch(markup, /role="button"|tabindex="0"/);
+      assertButtonsContainOnlyPhrasingContent(markup);
+    }
+    assert.match(institutional, /<div\b[^>]*>[\s\S]*aria-label="Inspect legal matter Matter One"/);
+    assert.match(legalPolitical, /<div\b[^>]*>[\s\S]*aria-label="Inspect legal obligation 2"/);
+    assert.match(legalPolitical, /<div\b[^>]*>[\s\S]*aria-label="Inspect bill Bill Three"/);
+    assert.match(acceptance, /<article\b[^>]*>[\s\S]*aria-label="Inspect acceptance check Shock traces"/);
+    assert.match(acceptance, /<article\b[^>]*>[\s\S]*aria-label="Inspect demand shock shock trace"/);
+    assert.match(acceptance, /<dl\b/);
+    assert.doesNotMatch(acceptance, /<article\b[^>]*(?:role="button"|tabindex=)/);
+    assert.match(cost, /<div\b[^>]*>[\s\S]*aria-label="Inspect provider model cost MiniMax-M3"/);
+    assert.match(cost, /<div\b[^>]*>[\s\S]*aria-label="Inspect provider agent cost Ada"/);
+
+    const { readFile } = await import("node:fs/promises");
+    const css = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
+    assert.match(css, /\.inspectable-card/);
+    assert.match(css, /\.observatory-focus-bar/);
+    assert.match(css, /\.observatory-drawer/);
+    assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.observatory-drawer/);
+    assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.observatory-drawer/);
+  } finally { await vite.close(); }
+});

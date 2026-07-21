@@ -3,6 +3,7 @@ import { number } from "../api";
 import { calibrationView } from "../calibration.js";
 import { clientLog } from "../logging.js";
 import { Badge, Empty, Panel } from "./ui";
+import { inspectionButtonProps, useObservatoryInteraction } from "./ObservatoryInteraction";
 
 const SUGGESTIONS = [
   "What is the probability of a bank run within 30 ticks?",
@@ -123,6 +124,7 @@ export function CalibrationPanel({ calibration }) {
 }
 
 export function CostPanel({ cost, readiness }) {
+  const { inspect } = useObservatoryInteraction();
   const providers = readiness?.providers || [];
   return (
     <Panel title="Provider operations" eyebrow="Readiness · calls · spend" className="col-span-full xl:col-span-4">
@@ -132,11 +134,34 @@ export function CostPanel({ cost, readiness }) {
           <div className="space-y-2">{providers.length ? providers.map(provider => <div key={provider.name} className="flex items-center justify-between text-xs"><span className="text-slate-300">{provider.name}</span><span className="text-slate-500">{provider.kind} · {provider.key_present ? "key present" : "no key required"}</span></div>) : <p className="text-xs text-slate-500">Built-in scripted provider; no network key required.</p>}</div>
         </div>
         <h3 className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">By model</h3>
-        {cost?.by_model?.length ? <div className="space-y-2">{cost.by_model.map(row => <div key={row.model} className="grid grid-cols-[1fr_auto_auto] gap-3 border-t border-mint-300/10 pt-2 text-xs first:border-0"><span className="truncate text-slate-300">{row.model}</span><span className="tabular text-slate-500">{row.calls} calls</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></div>)}</div> : <Empty>No provider calls recorded.</Empty>}
+        {cost?.by_model?.length ? <div className="space-y-2">{cost.by_model.map(row => <div key={row.model} className="border-t border-mint-300/10 pt-2 first:border-0">
+          <button className="inspectable-card !grid grid-cols-[1fr_auto_auto] !p-0 text-xs" {...inspectionButtonProps(
+            inspect,
+            { kind: "provider_cost", id: row.model, collection: "by_model", title: row.model },
+            { ...row, id: row.model },
+            `Inspect provider model cost ${row.model}`,
+          )}><span className="truncate text-slate-300">{row.model}</span><span className="tabular text-slate-500">{row.calls} calls</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></button>
+        </div>)}</div> : <Empty>No provider calls recorded.</Empty>}
         <h3 className="mb-2 mt-5 text-[10px] uppercase tracking-wider text-slate-500">By purpose</h3>
-        <div className="flex flex-wrap gap-1.5">{cost?.by_purpose?.map(row => <Badge key={row.purpose}>{row.purpose} · {row.calls}</Badge>)}</div>
+        <div className="flex flex-wrap gap-1.5">{cost?.by_purpose?.map(row => <button key={row.purpose} className="inspectable-card !w-auto !p-0"
+          {...inspectionButtonProps(
+            inspect,
+            { kind: "provider_cost", id: row.purpose, collection: "by_purpose", title: row.purpose },
+            { ...row, id: row.purpose },
+            `Inspect provider purpose cost ${row.purpose}`,
+          )}><Badge>{row.purpose} · {row.calls}</Badge></button>)}</div>
         <h3 className="mb-2 mt-5 text-[10px] uppercase tracking-wider text-slate-500">Top agents</h3>
-        {cost?.by_agent?.length ? <div className="space-y-2">{cost.by_agent.slice(0, 6).map((row, index) => <div key={`${row.agent_id ?? "shared"}-${row.role}-${index}`} className="grid grid-cols-[1fr_auto_auto] gap-3 border-t border-mint-300/10 pt-2 text-xs first:border-0"><span className="truncate text-slate-300">{row.agent_name}<small className="ml-1 text-slate-600">{row.role}</small></span><span className="tabular text-slate-500">{row.calls}</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></div>)}</div> : <Empty>No agent-level costs recorded.</Empty>}
+        {cost?.by_agent?.length ? <div className="space-y-2">{cost.by_agent.slice(0, 6).map((row, index) => {
+          const id = row.agent_id ?? `shared-${index}`;
+          return <div key={`${row.agent_id ?? "shared"}-${row.role}-${index}`} className="border-t border-mint-300/10 pt-2 first:border-0">
+            <button className="inspectable-card !grid grid-cols-[1fr_auto_auto] !p-0 text-xs" {...inspectionButtonProps(
+              inspect,
+              { kind: "provider_cost", id, collection: "by_agent", title: row.agent_name },
+              { ...row, id },
+              `Inspect provider agent cost ${row.agent_name}`,
+            )}><span className="truncate text-slate-300">{row.agent_name}<small className="ml-1 text-slate-600">{row.role}</small></span><span className="tabular text-slate-500">{row.calls}</span><span className="tabular text-mint-300">${number(row.cost_usd || 0, 4)}</span></button>
+          </div>;
+        })}</div> : <Empty>No agent-level costs recorded.</Empty>}
       </div>
     </Panel>
   );
