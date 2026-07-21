@@ -118,11 +118,19 @@ const LABELS = {
 };
 const FIELD_KEYS = Object.keys(LABELS);
 
+function serialize(value) {
+  try {
+    return JSON.stringify(value) ?? "Unable to serialize value";
+  } catch {
+    return "Unable to serialize value";
+  }
+}
+
 function scalar(value) {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return value.map(item => typeof item === "object"
-    ? JSON.stringify(item) : String(item)).join(", ");
+    ? serialize(item) : String(item)).join(", ");
   if (typeof value === "object") return null;
   return String(value);
 }

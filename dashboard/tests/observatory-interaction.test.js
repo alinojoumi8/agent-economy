@@ -70,3 +70,20 @@ test("inspection presentation is safe for unsupported and malformed snapshots", 
   assert.equal(unknown.title, "Unsupported inspection item");
   assert.deepEqual(unknown.fields, []);
 });
+
+test("inspection presentation safely formats circular objects in allowlisted arrays", () => {
+  const circular = {};
+  circular.self = circular;
+  let presentation;
+
+  assert.doesNotThrow(() => {
+    presentation = inspectionPresentation(makeInspection(
+      { kind: "news", id: 4 },
+      { id: 4, headline: "Circular evidence", slant_tags: [circular] },
+    ), { news: [] });
+  });
+  assert.equal(
+    presentation.fields.find(field => field.label === "Slant tags")?.value,
+    "Unable to serialize value",
+  );
+});
