@@ -6,7 +6,7 @@ const FALLBACK = {
   regionFocus: null, inspection: null, announcement: "",
   selectRegion: NOOP, clearRegion: NOOP, inspect: NOOP, closeInspection: NOOP,
 };
-const ObservatoryInteractionContext = createContext(FALLBACK);
+export const ObservatoryInteractionContext = createContext(FALLBACK);
 
 export function useObservatoryInteraction() {
   return useContext(ObservatoryInteractionContext);

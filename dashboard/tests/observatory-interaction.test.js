@@ -3,6 +3,7 @@ import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act as rendererAct, create as createRenderer } from "react-test-renderer";
 import { createServer } from "vite";
 
 import {
@@ -14,6 +15,41 @@ import {
   normalizeRegion,
   resolveInspection,
 } from "../src/observatoryInteraction.js";
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+async function mountComponent(element) {
+  const originalError = console.error;
+  const rendererWarnings = [];
+  let renderer;
+  console.error = (message, ...args) => {
+    if (String(message).includes("react-test-renderer is deprecated")) {
+      rendererWarnings.push([message, ...args]);
+      return;
+    }
+    originalError(message, ...args);
+  };
+  try {
+    await rendererAct(async () => { renderer = createRenderer(element); });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(rendererWarnings.length, 1, "expected only the renderer deprecation notice to be captured");
+  return renderer;
+}
+
+const buttonsByLabel = (root, label) => root.findAll(
+  node => node.type === "button" && node.props["aria-label"] === label,
+);
+const buttonByLabel = (root, label) => buttonsByLabel(root, label)[0];
+
+function textContent(node) {
+  return node.children.map(child => typeof child === "string" ? child : textContent(child)).join("");
+}
+
+const buttonByText = (root, text) => root.findAll(
+  node => node.type === "button" && textContent(node) === text,
+)[0];
 
 test("region focus normalizes valid regions and toggles by numeric id", () => {
   const northstar = { id: "1", region_key: "northstar", name: "Northstar Federation" };
@@ -167,13 +203,133 @@ test("inspection triggers use native button semantics and preserve exact inspect
     assert.equal(props.onKeyDown, undefined);
     assert.equal(props["aria-label"], "Inspect firm Anchor Works");
 
-    for (const activation of ["pointer click", "Enter-generated click", "Space-generated click"]) {
-      props.onClick({ type: "click", activation });
-    }
-    assert.deepEqual(calls, [
-      [reference, snapshot], [reference, snapshot], [reference, snapshot],
-    ]);
+    props.onClick({ type: "click" });
+    assert.deepEqual(calls, [[reference, snapshot]]);
   } finally { await vite.close(); }
+});
+
+test("mounted primary panels route each inspection button to its exact reference and snapshot", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  let renderer;
+  try {
+    const { ObservatoryInteractionContext } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    assert.ok(ObservatoryInteractionContext, "expected a controlled interaction context export");
+    const { BanksPanel, FirmsPanel, InstitutionsPanel } = await vite.ssrLoadModule("/src/components/WorldPanels.jsx");
+    const { EventsPanel, NewsPanel } = await vite.ssrLoadModule("/src/components/InformationPanels.jsx");
+    const { MacroOverview } = await vite.ssrLoadModule("/src/components/MacroOverview.jsx");
+
+    const bank = { id: 4, name: "Northstar Reserve", deposits_cents: 500, reserves_cents: 100, reserve_ratio: 0.2, avg_trust: 0.8, status: "open" };
+    const firm = { id: 7, name: "Anchor Works", status: "listed", last_stock_price: 12, employees: 3, price_cents: 40, cash_cents: 500 };
+    const government = { enabled: true, tax_rate_bps: 1000, unemployment_benefit_cents: 20, treasury_cents: 100 };
+    const vc = { exists: true, fund_cents: 200, portfolio: [] };
+    const health = { epidemic_multiplier: 1, hospital: { name: "Clinic" }, insurer: { name: "Mutual" }, insured_count: 4 };
+    const news = { id: 3, tick: 7, outlet_name: "Ledger", headline: "Verified headline", body: "Full story" };
+    const event = { id: 11, tick: 4, kind: "regional_trade", importance: 2, payload: { origin_region_id: 2 } };
+    const cpiSeries = [{ tick: 1, value: 1.2 }];
+    const calls = [];
+    const inspect = (...args) => calls.push(args);
+    const regionFocus = { regionId: 2, regionKey: "northstar", regionName: "Northstar Federation" };
+    const context = { regionFocus, inspect };
+
+    renderer = await mountComponent(React.createElement(
+      ObservatoryInteractionContext.Provider,
+      { value: context },
+      React.createElement(React.Fragment, null,
+        React.createElement(BanksPanel, { banks: [bank] }),
+        React.createElement(FirmsPanel, { firms: [firm], map: { firms: [{ id: 7, region_id: 2 }] } }),
+        React.createElement(InstitutionsPanel, { institutions: {
+          government, vc, health,
+        } }),
+        React.createElement(NewsPanel, { news: [news] }),
+        React.createElement(EventsPanel, { events: [event] }),
+        React.createElement(MacroOverview, { metrics: { cpi: cpiSeries } }),
+      ),
+    ));
+
+    const controls = [
+      ["Inspect bank Northstar Reserve", 0],
+      ["Inspect firm Anchor Works", 0],
+      ["Inspect firm Anchor Works", 1],
+      ["Inspect institution Government", 0],
+      ["Inspect institution Venture capital", 0],
+      ["Inspect institution Health economy", 0],
+      ["Inspect news article Verified headline", 0],
+      ["Inspect event regional trade from day 4", 0],
+      ["Inspect macro metric Price level", 0],
+    ];
+    for (const [label, occurrence] of controls) {
+      const button = buttonsByLabel(renderer.root, label)[occurrence];
+      assert.ok(button, `expected mounted button ${label}`);
+      assert.equal(button.props.type, "button");
+      await rendererAct(async () => { button.props.onClick({ type: "click" }); });
+    }
+
+    assert.deepEqual(calls.map(([reference]) => reference), [
+      { kind: "bank", id: 4, title: "Northstar Reserve" },
+      { kind: "firm", id: 7, title: "Anchor Works" },
+      { kind: "firm", id: 7, title: "Anchor Works" },
+      { kind: "institution", id: "government", title: "Government" },
+      { kind: "institution", id: "vc", title: "Venture capital" },
+      { kind: "institution", id: "health", title: "Health economy" },
+      { kind: "news", id: 3, title: "Verified headline" },
+      { kind: "event", id: 11, title: "regional trade" },
+      { kind: "macro_metric", id: "cpi", title: "Price level" },
+    ]);
+    assert.strictEqual(calls[0][1], bank);
+    assert.strictEqual(calls[1][1], firm);
+    assert.strictEqual(calls[2][1], firm);
+    assert.strictEqual(calls[3][1], government);
+    assert.strictEqual(calls[4][1], vc);
+    assert.strictEqual(calls[5][1], health);
+    assert.strictEqual(calls[6][1], news);
+    assert.strictEqual(calls[7][1], event);
+    assert.deepEqual(calls[8][1], {
+      id: "cpi", title: "Price level", help: "Goods-price index", latest: 1.2, delta: null,
+      series: cpiSeries,
+    });
+  } finally {
+    if (renderer) await rendererAct(async () => { renderer.unmount(); });
+    await vite.close();
+  }
+});
+
+test("mounted EventsPanel resets Related-only on region changes without resetting Raw", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  let renderer;
+  try {
+    const { ObservatoryInteractionContext } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    assert.ok(ObservatoryInteractionContext, "expected a controlled interaction context export");
+    const { EventsPanel } = await vite.ssrLoadModule("/src/components/InformationPanels.jsx");
+    const inspect = () => {};
+    const events = [
+      { id: 11, tick: 4, kind: "north_trade", importance: 2, payload: { region_id: 2 } },
+      { id: 12, tick: 5, kind: "south_trade", importance: 2, payload: { region_id: 3 } },
+    ];
+    const north = { regionId: 2, regionKey: "north", regionName: "North" };
+    const south = { regionId: 3, regionKey: "south", regionName: "South" };
+    const tree = regionFocus => React.createElement(
+      ObservatoryInteractionContext.Provider,
+      { value: { regionFocus, inspect } },
+      React.createElement(EventsPanel, { events }),
+    );
+
+    renderer = await mountComponent(tree(north));
+    await rendererAct(async () => { buttonByText(renderer.root, "Show all").props.onClick(); });
+    await rendererAct(async () => { buttonByText(renderer.root, "Raw").props.onClick(); });
+    assert.equal(buttonByText(renderer.root, "Related only").props["aria-pressed"], true);
+    assert.ok(buttonByText(renderer.root, "Human"));
+    assert.equal(renderer.root.findAllByType("pre").length, 2);
+
+    await rendererAct(async () => { renderer.update(tree(south)); });
+    assert.equal(buttonByText(renderer.root, "Show all").props["aria-pressed"], false);
+    assert.ok(buttonByText(renderer.root, "Human"));
+    assert.equal(renderer.root.findAllByType("pre").length, 1);
+    assert.equal(buttonByLabel(renderer.root, "Inspect event north trade from day 4"), undefined);
+    assert.ok(buttonByLabel(renderer.root, "Inspect event south trade from day 5"));
+  } finally {
+    if (renderer) await rendererAct(async () => { renderer.unmount(); });
+    await vite.close();
+  }
 });
 
 test("firm views filter only mapped IDs and retain native table semantics", async () => {
