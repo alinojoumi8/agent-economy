@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import React from "react";
@@ -228,4 +229,12 @@ test("EconomicMap preserves the disabled regional-economy guidance", async () =>
   } finally {
     await vite.close();
   }
+});
+
+test("economy map styles include motion and accessible reduced-motion behavior", async () => {
+  const css = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
+  assert.match(css, /@keyframes economy-map-route-flow/);
+  assert.match(css, /\.economy-map-region:focus-visible \.economy-map-focus-ring/);
+  assert.match(css, /\.economy-map-route-line\.is-migration/);
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.economy-map-route-line/);
 });
