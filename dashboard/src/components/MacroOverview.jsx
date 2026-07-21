@@ -1,6 +1,7 @@
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { number, percent } from "../api";
 import { rollingSumSeries } from "../metrics";
+import { inspectionTriggerProps, useObservatoryInteraction } from "./ObservatoryInteraction";
 import { Panel } from "./ui";
 
 const DEFINITIONS = [
@@ -23,6 +24,7 @@ function display(name, value) {
 }
 
 export function MacroOverview({ metrics }) {
+  const { inspect } = useObservatoryInteraction();
   return (
     <Panel title="Macro pulse" eyebrow="Engine-measured · never narrated" className="col-span-full">
       <div className="grid grid-cols-2 gap-px bg-mint-300/10 sm:grid-cols-3 xl:grid-cols-9">
@@ -32,8 +34,18 @@ export function MacroOverview({ metrics }) {
           const latest = series.at(-1)?.value;
           const previous = series.at(-2)?.value;
           const delta = previous === undefined ? null : Number(latest) - Number(previous);
+          const snapshot = {
+            id: key, title: label, help, latest, delta,
+            series: series.slice(-30),
+          };
+          const trigger = inspectionTriggerProps(
+            inspect,
+            { kind: "macro_metric", id: key, title: label },
+            snapshot,
+            `Inspect macro metric ${label}`,
+          );
           return (
-            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help}>
+            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help} {...trigger}>
               <div className="truncate text-[10px] font-semibold uppercase tracking-[.12em] text-slate-500">{label}</div>
               <div className="mt-1 flex items-baseline gap-2">
                 <strong className="tabular truncate text-lg font-semibold text-slate-100">{display(key, latest)}</strong>

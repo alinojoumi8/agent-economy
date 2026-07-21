@@ -142,3 +142,18 @@ test("agent directory encodes region after search and tier and before cursor", a
     assert.doesNotMatch(observatorySource, /api\("\/api\/agents"\)/);
   } finally { await vite.close(); }
 });
+
+test("world and event panels expose truthful region controls and inspection labels", async () => {
+  const source = await Promise.all([
+    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/WorldPanels.jsx", import.meta.url), "utf8")),
+    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/InformationPanels.jsx", import.meta.url), "utf8")),
+    import("node:fs/promises").then(fs => fs.readFile(new URL("../src/components/MacroOverview.jsx", import.meta.url), "utf8")),
+  ]);
+  assert.match(source[0], /firmIdsForRegion/);
+  assert.match(source[0], /Inspect bank/);
+  assert.match(source[0], /Inspect institution/);
+  assert.match(source[1], /eventMatchesRegion/);
+  assert.match(source[1], /Show all/);
+  assert.match(source[1], /Inspect news article/);
+  assert.match(source[2], /kind: "macro_metric"/);
+});

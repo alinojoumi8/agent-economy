@@ -1,17 +1,22 @@
 import { useEffect, useState } from "react";
 import { api, shortKind } from "../api";
 import { conversationSearchPath, normalizeConversationQuery } from "../conversations";
+import { eventMatchesRegion } from "../observatoryInteraction";
+import { inspectionTriggerProps, useObservatoryInteraction } from "./ObservatoryInteraction";
 import { Badge, Empty, Panel } from "./ui";
 
 export function NewsPanel({ news }) {
+  const { inspect } = useObservatoryInteraction();
   return (
     <Panel title="Newsroom" eyebrow="Event-grounded stories" className="col-span-full md:col-span-6 xl:col-span-4">
       <div className="scrollbar max-h-[390px] overflow-y-auto px-4">
-        {news.length ? news.map(article => <article key={article.id} className="border-b border-mint-300/10 py-3 last:border-0">
+        {news.length ? news.map(article => <button key={article.id} type="button" className="inspectable-card !block border-b border-mint-300/10 py-3 text-left last:border-0"
+          onClick={() => inspect({ kind: "news", id: article.id, title: article.headline }, article)}
+          aria-label={`Inspect news article ${article.headline}`}>
           <div className="mb-1 flex items-center gap-2"><Badge>{article.outlet_name || "Outlet"}</Badge><span className="tabular text-[10px] text-slate-600">day {article.tick}</span></div>
           <h3 className="text-sm font-semibold leading-snug text-slate-200">{article.headline}</h3>
           <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">{article.body}</p>
-        </article>) : <Empty>Stories publish after the newsroom has events to cover.</Empty>}
+        </button>) : <Empty>Stories publish after the newsroom has events to cover.</Empty>}
       </div>
     </Panel>
   );
@@ -80,14 +85,29 @@ export function ConversationsPanel({ conversations }) {
 }
 
 export function EventsPanel({ events, onShock = null }) {
+  const { regionFocus, inspect } = useObservatoryInteraction();
   const [raw, setRaw] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => setShowAll(false), [regionFocus?.regionId]);
+  const related = regionFocus
+    ? events.filter(event => eventMatchesRegion(event, regionFocus.regionId))
+    : events;
+  const visible = regionFocus && !showAll ? related : events;
   return (
-    <Panel title="Event spine" eyebrow="If it is not here, it did not happen" className="col-span-full xl:col-span-4" action={<div className="flex gap-1"><button className="button !min-h-7 !px-2 !py-1" onClick={() => setRaw(value => !value)}>{raw ? "Human" : "Raw"}</button>{onShock && <button className="button !min-h-7 !px-2 !py-1" onClick={onShock}>Shock</button>}</div>}>
+    <Panel title="Event spine" eyebrow="If it is not here, it did not happen" className="col-span-full xl:col-span-4" action={<div className="flex gap-1"><button className="button !min-h-7 !px-2 !py-1" onClick={() => setRaw(value => !value)}>{raw ? "Human" : "Raw"}</button>{regionFocus && <button className="button !min-h-7 !px-2 !py-1" aria-pressed={showAll}
+      onClick={() => setShowAll(value => !value)}>{showAll ? "Related only" : "Show all"}</button>}{onShock && <button className="button !min-h-7 !px-2 !py-1" onClick={onShock}>Shock</button>}</div>}>
       <div className="scrollbar max-h-[390px] overflow-y-auto px-4 font-mono">
-        {events.length ? events.map(event => <article key={event.id} className="grid grid-cols-[2.5rem_1fr] gap-2 border-b border-mint-300/[.07] py-2 text-[11px] last:border-0">
+        {visible.length ? visible.map(event => <article key={event.id} className="grid grid-cols-[2.5rem_1fr] gap-2 border-b border-mint-300/[.07] py-2 text-[11px] last:border-0" {...inspectionTriggerProps(
+          inspect,
+          { kind: "event", id: event.id, title: shortKind(event.kind) },
+          event,
+          `Inspect event ${shortKind(event.kind)} from day ${event.tick}`,
+        )}>
           <span className="tabular text-slate-600">d{event.tick}</span>
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-sans font-semibold text-slate-300">{shortKind(event.kind)}</span>{event.importance >= 3 && <Badge tone="warn">material</Badge>}</div>{raw && <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(event.payload, null, 2)}</pre>}</div>
-        </article>) : <Empty>Events stream here as the world advances.</Empty>}
+        </article>) : regionFocus
+          ? <Empty>No region-tagged events for {regionFocus.regionName} appear in the current event window.</Empty>
+          : <Empty>Events stream here as the world advances.</Empty>}
       </div>
     </Panel>
   );

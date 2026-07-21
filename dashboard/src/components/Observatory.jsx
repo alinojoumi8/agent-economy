@@ -61,7 +61,7 @@ function ObservatoryContents({ hostedSession = null, observatory }) {
       <Suspense fallback={<div className="panel col-span-full h-36 animate-pulse" aria-label="Loading charts" />}><MacroOverview metrics={data.metrics} /></Suspense>
 
       <SectionTitle index="2" title="Markets and institutions" description="Balance sheets, production, labor, fiscal policy, health, and venture capital in one causal surface." />
-      <BanksPanel banks={data.banks} /><FirmsPanel firms={data.firms} /><InstitutionsPanel institutions={data.institutions} />
+      <BanksPanel banks={data.banks} /><FirmsPanel firms={data.firms} map={data.v2?.map} /><InstitutionsPanel institutions={data.institutions} />
 
       <SectionTitle index="3" title="Information layer" description="Compare what agents read and repeat against the event spine that records what actually happened." />
       <NewsPanel news={data.news} /><ConversationsPanel conversations={data.conversations} />
