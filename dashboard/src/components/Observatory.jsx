@@ -7,6 +7,7 @@ import { CalibrationPanel, CostPanel, OraclePanel } from "./OracleAndCost";
 import { ReplayModal } from "./ReplayModal";
 import { RunHeader } from "./RunHeader";
 import { ParticipantPanel } from "./ParticipantPanel";
+import { ObservatoryInteractionProvider, RegionFocusBar, useObservatoryInteraction } from "./ObservatoryInteraction";
 import { ShockModal } from "./ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
 import { EconomicMap, InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
@@ -14,10 +15,11 @@ import { SectionTitle } from "./ui";
 
 const MacroOverview = lazy(() => import("./MacroOverview"));
 
-export function Observatory({ hostedSession = null }) {
+function ObservatoryContents({ hostedSession = null, observatory }) {
   const hosted = Boolean(hostedSession);
   const canControl = !hosted || hostedSession.role === "admin";
-  const { data, connected, loading, error, act, refresh } = useObservatory({ hosted });
+  const { data, connected, loading, error, act, refresh } = observatory;
+  const { regionFocus, clearRegion } = useObservatoryInteraction();
   const [shockOpen, setShockOpen] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(false);
@@ -32,6 +34,7 @@ export function Observatory({ hostedSession = null }) {
       hosted={hosted} canControl={canControl}
       onShock={hosted ? null : () => setShockOpen(true)}
       onReplay={hosted ? null : () => setReplayOpen(true)} />
+    <RegionFocusBar regionFocus={regionFocus} onClear={clearRegion} />
 
     {error && <div role="alert" className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-4 rounded-xl border border-coral-300/25 bg-coral-300/[.06] px-4 py-3 text-xs text-coral-300">
       <span><strong>Observatory warning:</strong> {error}</span>
@@ -78,4 +81,12 @@ export function Observatory({ hostedSession = null }) {
     {!hosted && shockOpen && <ShockModal library={data.shocks?.library} tick={status?.tick || 0} act={act} onClose={() => setShockOpen(false)} />}
     {!hosted && replayOpen && <ReplayModal onClose={() => setReplayOpen(false)} />}
   </div>;
+}
+
+export function Observatory({ hostedSession = null }) {
+  const hosted = Boolean(hostedSession);
+  const observatory = useObservatory({ hosted });
+  return <ObservatoryInteractionProvider data={observatory.data}>
+    <ObservatoryContents hostedSession={hostedSession} observatory={observatory} />
+  </ObservatoryInteractionProvider>;
 }

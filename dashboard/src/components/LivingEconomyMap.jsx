@@ -1,6 +1,7 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
 import { number, shortKind } from "../api";
+import { useObservatoryInteraction } from "./ObservatoryInteraction";
 import { Empty, Panel } from "./ui";
 import { normalizeMapData } from "./livingEconomyMapModel";
 
@@ -70,7 +71,7 @@ function RegionPlatform({ region, index, selected, actorsVisible, onSelect, onAc
   const radius = Math.min(82, 46 + Math.sqrt(region.population) * 1.25);
   const depth = 15 + Math.min(25, region.firmItems.length * 3);
   const label = `${region.name}; ${number(region.population, 0)} agents; ${region.currency_code}; ${region.firmItems.length} active firms; ${region.coreAgentItems.length} strategic agents`;
-  const choose = () => onSelect(region.id);
+  const choose = () => onSelect(region);
   const activate = () => onActive({ title: region.name, body: label });
 
   return <g transform={`translate(${point.x} ${point.y})`} role="button" tabIndex="0"
@@ -189,26 +190,24 @@ export function RegionInspector({ region, scene }) {
 
 export function EconomicMap({ map }) {
   const scene = useMemo(() => normalizeMapData(map), [map]);
-  const [selectedRegionId, setSelectedRegionId] = useState(null);
+  const { regionFocus, inspection, selectRegion, clearRegion } = useObservatoryInteraction();
+  const selectedRegionId = regionFocus?.regionId ?? null;
   const [activeItem, setActiveItem] = useState(null);
   const [layers, setLayers] = useState({ trade: true, migration: true, actors: true });
   const selectedRegion = scene.regions.find(region => region.id === selectedRegionId) || null;
 
-  useEffect(() => {
-    if (selectedRegionId !== null && !scene.regions.some(region => region.id === selectedRegionId)) {
-      setSelectedRegionId(null);
-    }
-  }, [scene.regions, selectedRegionId]);
-
   const toggleLayer = layer => setLayers(current => ({ ...current, [layer]: !current[layer] }));
-  const toggleRegion = regionId => setSelectedRegionId(current => current === regionId ? null : regionId);
-  const clearSelection = () => setSelectedRegionId(null);
 
   return <Panel className="col-span-full xl:col-span-8" title="Living economy map" eyebrow="TRADE · CAPITAL · MIGRATION">
     {!scene.regions.length ? <Empty text={map?.enabled === false
       ? "Regional economy disabled for this run profile. Use the institutional Observatory rehearsal to activate it."
       : "No regional economy data has been recorded yet."} /> :
-      <div className="p-3" onKeyDown={event => { if (event.key === "Escape") clearSelection(); }}>
+      <div className="p-3" onKeyDown={event => {
+        if (event.key === "Escape" && !inspection) {
+          event.preventDefault();
+          clearRegion();
+        }
+      }}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold text-slate-300">Perspective economic topology</div>
@@ -223,7 +222,7 @@ export function EconomicMap({ map }) {
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_250px]">
           <div className="economy-map-stage">
             <EconomyScene scene={scene} layers={layers} selectedRegionId={selectedRegionId}
-              onSelectRegion={toggleRegion} onClearSelection={clearSelection}
+              onSelectRegion={selectRegion} onClearSelection={clearRegion}
               onActive={setActiveItem} onInactive={() => setActiveItem(null)} />
             {activeItem && <div className="economy-map-tooltip" role="status">
               <strong>{activeItem.title}</strong><span>{activeItem.body}</span>

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+
 import {
   eventMatchesRegion,
   firmIdsForRegion,
@@ -86,4 +90,38 @@ test("inspection presentation safely formats circular objects in allowlisted arr
     presentation.fields.find(field => field.label === "Slant tags")?.value,
     "Unable to serialize value",
   );
+});
+
+test("focus bar names exactly the three region-filtered panels", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { RegionFocusBar } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    const markup = renderToStaticMarkup(React.createElement(RegionFocusBar, {
+      regionFocus: { regionId: 1, regionKey: "northstar", regionName: "Northstar Federation" },
+      onClear: () => {},
+    }));
+    assert.match(markup, /Northstar Federation/);
+    assert.match(markup, /Firms, agents, and region-tagged events/);
+    assert.match(markup, /aria-label="Clear Northstar Federation region filter"/);
+    assert.doesNotMatch(markup, /banks are filtered/i);
+  } finally { await vite.close(); }
+});
+
+test("drawer is modeless, labelled, and exposes last-observed state", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { InspectorDrawer } = await vite.ssrLoadModule("/src/components/ObservatoryInteraction.jsx");
+    const snapshot = { id: 4, name: "Northstar Reserve", status: "open", deposits_cents: 500 };
+    snapshot.self = snapshot;
+    const inspection = makeInspection({ kind: "bank", id: 4 }, snapshot);
+    const markup = renderToStaticMarkup(React.createElement(InspectorDrawer, {
+      inspection, data: { banks: [] }, onClose: () => {}, headingRef: { current: null },
+    }));
+    assert.match(markup, /aria-label="Observatory inspector"/);
+    assert.doesNotMatch(markup, /aria-modal="true"/);
+    assert.match(markup, /Northstar Reserve/);
+    assert.match(markup, /Last observed/);
+    assert.match(markup, /Close inspector/);
+    assert.match(markup, /Unable to serialize this snapshot/);
+  } finally { await vite.close(); }
 });
