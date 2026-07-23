@@ -15,6 +15,8 @@ export function useProjectionSocket(historical: boolean) {
     initialCursorState,
   );
   const cursor = useRef(0);
+  const legacyTick = useRef<number | null>(null);
+  const projectionProtocol = useRef(false);
   cursor.current = state.cursor;
 
   useEffect(() => {
@@ -33,7 +35,17 @@ export function useProjectionSocket(historical: boolean) {
         try {
           const message = JSON.parse(event.data);
           const before = cursor.current;
+          if (message.type === "hello") projectionProtocol.current = true;
           dispatch({ message, historical });
+          if (message.type === "tick") {
+            const nextTick = Number(message.tick);
+            const previousTick = legacyTick.current;
+            legacyTick.current = Number.isFinite(nextTick) ? nextTick : previousTick;
+            if (!historical && !projectionProtocol.current && previousTick !== null
+                && Number.isFinite(nextTick) && nextTick > previousTick) {
+              queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            }
+          }
           if (message.type === "projection_delta" && Number(message.event_cursor) > before) {
             cursor.current = Number(message.event_cursor);
             queryClient.invalidateQueries({ queryKey: ["world-os"] });

@@ -81,7 +81,7 @@ adding it to the observatory's frequent polling payload.
 |---|---|---|
 | `GET` | `/api/metrics?names=...` | Named time series; includes output, labor income, CPI, inflation, labor, market, and distribution metrics |
 | `GET` | `/api/agents` | Agent identity/status list |
-| `GET` | `/api/agents/{id}` | Persona, accounts, loans, bounded beliefs, `belief_history`, memories, holdings, and decision audit |
+| `GET` | `/api/agents/{id}` | Persona, accounts, loans, bounded beliefs, memories, holdings, decisions, current compute plan/route, eight skills, XP, and progression/subscription history |
 | `GET` | `/api/banks` | Operator ground-truth balance sheets and trust |
 | `GET` | `/api/firms` | Sector, status, inventory, price, workers, cash, and stock price |
 | `GET` | `/api/institutions` | Government, VC, healthcare, and outlets |
@@ -90,6 +90,7 @@ adding it to the observatory's frequent polling payload.
 | `GET` | `/api/events?limit=80&min_importance=0` | Recent append-only event spine |
 | `GET` | `/api/trades?limit=50` | Latest executed exchange trades |
 | `GET` | `/api/cost` | Governor plus model/purpose/agent cost breakdown |
+| `GET` | `/api/llm/runtime` | Global/provider capacity, active/queued calls, peaks, p50/p95 queue/response/day latency, cooldowns, failures, rate limits, and fallbacks |
 | `GET` | `/api/v2/datasets` | Verified manifests/targets plus the latest R21 source and calibrated-versus-synthetic distance summary |
 
 Default macro metrics include `gdp_proxy` (daily final-goods sales),

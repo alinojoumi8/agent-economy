@@ -218,7 +218,8 @@ class AgentRuntime:
         self.ctx.persist_inbox_read_context(int(a["id"]), tick, context)
         purpose = context.get("purpose", "decision")
         role = a["role"] or "citizen"
-        if (int(self.config.get("engine_semantics_version", 1)) >= 7
+        semantics = int(self.config.get("engine_semantics_version", 1))
+        if (7 <= semantics < 11
                 and a["population_tier"] != "core"):
             env = scripted_decision(purpose, context)
             return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,

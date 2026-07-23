@@ -72,11 +72,17 @@ class RunController:
         self._tick_broadcasts_lock = Lock()
         self.world.on_tick = self.on_tick
         self.participant = world.runtime.participant
-        self.acceptance_configured = bool(world.config.get("acceptance"))
+        acceptance = world.config.get("acceptance", {})
+        # Desktop profiles also use the acceptance block for rehearsal and
+        # performance targets.  Only a configured horizon denotes a governed
+        # acceptance campaign whose dashboard controls must stay locked until
+        # --acceptance-run authorizes it.
+        self.acceptance_configured = (
+            isinstance(acceptance, dict) and "min_ticks" in acceptance)
         self.acceptance_authorized = bool(getattr(world, "acceptance_authorized", False))
         self.acceptance_target_tick = int(getattr(
             world, "acceptance_target_tick",
-            world.config.get("acceptance", {}).get("min_ticks", 365)))
+            acceptance.get("min_ticks", 365)))
         self.target_tick = (
             self.acceptance_target_tick if self.acceptance_authorized
             else self.store.tick + int(served_ticks) if served_ticks is not None
@@ -123,6 +129,10 @@ class RunController:
             operator_workspace = getattr(_app.state, "operator_workspace", None)
             if operator_workspace is not None:
                 operator_workspace.close()
+            citizenship_service = getattr(
+                _app.state, "citizenship_service", None)
+            if citizenship_service is not None:
+                citizenship_service.close()
             operational_log(logger, logging.INFO, "server.stopped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             run_active=self.is_running())

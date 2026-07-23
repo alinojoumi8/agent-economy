@@ -55,6 +55,8 @@ VALID_TYPES = {
     "withdraw_savings",
     # semantics-8 private and public communication
     "send_message", "reply_message", "forward_message",
+    # semantics-11 compute economy and learnable skills
+    "buy_compute_plan", "cancel_compute_plan", "set_compute_sponsorship", "study_skill",
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
@@ -73,6 +75,20 @@ class ActionExecutor:
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
+        if self.engine_semantics_version >= 11:
+            study_indexes = [
+                index for index, action in enumerate(actions or [])
+                if isinstance(action, dict) and action.get("type") == "study_skill"
+            ]
+            if study_indexes:
+                selected = study_indexes[0]
+                return [
+                    self.execute_action(tick, actor_id, action, phase, seq=index)
+                    if index == selected else self._reject(
+                        tick, actor_id, action,
+                        "study_skill consumes the citizen's action for this turn", phase)
+                    for index, action in enumerate(actions or [])
+                ]
         results = []
         for i, action in enumerate(actions or []):
             results.append(self.execute_action(tick, actor_id, action, phase, seq=i))
@@ -117,7 +133,10 @@ class ActionExecutor:
         # now present in this binary.
         if (atype not in VALID_TYPES
                 or (atype in COMMUNICATION_TYPES and self.engine_semantics_version < 8)
-                or (atype == "withdraw_savings" and self.engine_semantics_version < 7)):
+                or (atype == "withdraw_savings" and self.engine_semantics_version < 7)
+                or (atype in {"buy_compute_plan", "cancel_compute_plan",
+                              "set_compute_sponsorship", "study_skill"}
+                    and self.engine_semantics_version < 11)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -149,7 +168,12 @@ class ActionExecutor:
                     "SELECT COALESCE(MAX(id),0) FROM events", default=0))
                 last_transaction_id = int(self.store.scalar(
                     "SELECT COALESCE(MAX(id),0) FROM transactions", default=0))
+                if atype == "study_skill":
+                    action = {**action, "_proposal_id": proposal_id}
                 result = handler(tick, actor_id, action, phase)
+                if self.engine_semantics_version >= 11 and result.get("ok"):
+                    self.e.cognition.record_accepted_action(
+                        tick, actor_id, atype, proposal_id=proposal_id)
                 if self.engine_semantics_version >= 8 and result.get("ok"):
                     events = self.store.query(
                         "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))
@@ -236,6 +260,24 @@ class ActionExecutor:
     # ── household / firm actions ─────────────────────────────────────────────
     def _do_do_nothing(self, tick, actor_id, action, phase) -> dict:
         return {"ok": True}
+
+    def _do_buy_compute_plan(self, tick, actor_id, action, phase) -> dict:
+        return self.e.cognition.buy_compute_plan(tick, actor_id, action.get("tier", ""))
+
+    def _do_cancel_compute_plan(self, tick, actor_id, action, phase) -> dict:
+        return self.e.cognition.cancel_compute_plan(tick, actor_id)
+
+    def _do_set_compute_sponsorship(self, tick, actor_id, action, phase) -> dict:
+        return self.e.cognition.set_compute_sponsorship(
+            tick, actor_id, action.get("tier", ""),
+            int(action.get("max_seats", 0)),
+            int(action["firm_id"]) if action.get("firm_id") is not None else None,
+        )
+
+    def _do_study_skill(self, tick, actor_id, action, phase) -> dict:
+        return self.e.cognition.study_skill(
+            tick, actor_id, str(action.get("skill_key", "")),
+            proposal_id=int(action["_proposal_id"]))
 
     def _do_send_message(self, tick, actor_id, action, phase) -> dict:
         try:
@@ -567,6 +609,19 @@ class ActionExecutor:
                 (actor_id,))
             if existing:
                 return {"ok": False, "reason": "founder already controls an active company"}
+            expected = getattr(
+                self.e, "_entrepreneurship_authorizations", {}).get((tick, actor_id))
+            if expected is None:
+                return {
+                    "ok": False,
+                    "reason": "found_company is available only from a supplied entrepreneurship opportunity",
+                }
+            submitted = {key: action.get(key) for key in expected}
+            if submitted != expected:
+                return {
+                    "ok": False,
+                    "reason": "found_company must copy the supplied entrepreneurship action exactly",
+                }
         capital = int(action.get("opening_capital", 0))
         if capital < 0:
             return {"ok": False, "reason": "opening capital must be nonnegative"}

@@ -122,6 +122,22 @@ def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
     assert "m.status = 'active'" in migration.sql
 
 
+def test_external_agent_migration_declares_tenant_scoped_run_key_before_fks():
+    external = load_migrations()[1]
+    compact = " ".join(external.sql.split())
+    unique_key = (
+        "ALTER TABLE runs ADD CONSTRAINT runs_tenant_id_id_key "
+        "UNIQUE (tenant_id, id)"
+    )
+    tenant_fk = (
+        "FOREIGN KEY (tenant_id, run_id) "
+        "REFERENCES runs(tenant_id, id)"
+    )
+
+    assert unique_key in compact
+    assert compact.index(unique_key) < compact.index(tenant_fk)
+
+
 def test_migration_identity_is_stable_across_lf_and_crlf_checkouts(tmp_path):
     lf_dir = tmp_path / "lf"
     crlf_dir = tmp_path / "crlf"

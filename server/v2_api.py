@@ -112,6 +112,10 @@ def install_v2_routes(app, world, controller) -> None:
         if not value or value != csrf_token:
             raise HTTPException(status_code=403, detail="valid CSRF token required")
 
+    @router.get("/mode")
+    async def local_mode():
+        return {"mode": "local", "hosted": False, "api_base": "/api/v2"}
+
     @router.get("/snapshot")
     async def world_snapshot(
         tick: str = Query("live"), fork_id: str | None = None,

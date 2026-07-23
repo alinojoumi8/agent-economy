@@ -36,6 +36,9 @@ export function reduceCursorState(state, message, { historical = false } = {}) {
       staleReason: null,
     };
   }
+  if (message.type === "tick") {
+    return { ...state, status: "live", staleReason: null };
+  }
   if (message.type === "projection_invalidated") {
     return { ...state, status: "stale", staleReason: message.reason || "invalidated" };
   }

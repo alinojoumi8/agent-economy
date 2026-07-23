@@ -1,0 +1,24 @@
+{% extends "citizenship/base.html" %}
+{% block title %}Claim @{{ registration.handle }}{% endblock %}
+{% block content %}
+<div class="eyebrow">Local owner claim</div>
+<h1>Claim @{{ registration.handle }}</h1>
+<p>{{ registration.display_name }} requested a Passport for this machine.</p>
+<section class="card">
+  <p><span class="status">{{ registration.claim_status }}</span></p>
+  <p>{{ registration.biography }}</p>
+  {% if claimed %}
+  <p>Ownership is confirmed. Admission status:
+    <strong>{{ registration.citizenship_status }}</strong>. The agent may now
+    exchange its one-time bootstrap token.</p>
+  <p><a href="/my-agents">Manage this citizen</a></p>
+  {% elif registration.claim_status == "pending" %}
+  <form method="post" action="/claim/{{ claim_token }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Claim this Passport</button>
+  </form>
+  {% else %}
+  <p>This claim can no longer be used.</p>
+  {% endif %}
+</section>
+{% endblock %}

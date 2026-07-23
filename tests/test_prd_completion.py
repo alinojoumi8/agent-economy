@@ -992,6 +992,50 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     assert dangling["differences"] == ["action_proposals"]
 
 
+def test_replay_canonicalizes_communication_model_provenance(tmp_path):
+    source = Store(str(tmp_path / "communication-source.db"))
+    replay = Store(str(tmp_path / "communication-replay.db"))
+    config = {"engine_semantics_version": 11,
+              "llm": {"institutional_role_purposes": True}}
+    source.init_run_meta("communication-source", 42, config)
+    replay.init_run_meta("communication-replay", 42, config)
+
+    for store, call_id in ((source, 5), (replay, 9)):
+        store.insert(
+            "agents", id=2, name="Credit officer", kind="staff",
+            role="credit_officer")
+        store.insert(
+            "llm_calls", id=call_id, tick=1, agent_id=2,
+            role="credit_officer", provider="minimax", model="MiniMax-M3",
+            purpose="credit_officer", cache_key="communication-call",
+            request_json='{"agent_id":2,"tick":1}',
+            response_json='{"text":"bounded","raw":{}}',
+            in_tokens=10, out_tokens=5, cached=0, cost_usd=0.001,
+            latency_ms=100, created_at="2026-07-21T00:00:00+00:00")
+        store.insert(
+            "events", id=1, tick=1, phase="EXECUTION",
+            kind="communication_queued", payload_json="{}")
+        store.insert(
+            "comm_threads", id=1, created_tick=1, created_by_agent_id=2,
+            subject="Bounded update", status="open")
+        store.insert(
+            "comm_messages", id=1, thread_id=1, sender_agent_id=2,
+            created_tick=1, deliver_at_tick=2, visibility="participants",
+            body_text="Status update", model_call_id=call_id,
+            created_event_id=1, status="queued")
+        store.insert(
+            "agent_decisions", id=1, dedupe_key="d" * 64,
+            tick=1, agent_id=2, purpose="credit_officer",
+            method="model_call", model_call_id=call_id,
+            reasoning_fingerprint="r" * 64)
+        store.commit()
+
+    proof = verify_replay(source.path, replay.path)
+
+    assert proof["exact"], proof["differences"]
+    assert proof["source_hash"] == proof["replay_hash"]
+
+
 def test_replay_rejects_same_actor_turn_wrong_llm_purpose(tmp_path):
     source = Store(str(tmp_path / "purpose-source.db"))
     replay = Store(str(tmp_path / "purpose-replay.db"))
@@ -1900,6 +1944,10 @@ def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
                and record.event_fields["status_code"] == 200 for record in completed)
     assert any(record.event_fields["path"] == "/api/shocks"
                and record.event_fields["status_code"] == 400 for record in completed)
+    assert next(record for record in completed
+                if record.event_fields["path"] == "/api/run/status").levelno == logging.DEBUG
+    assert next(record for record in completed
+                if record.event_fields["path"] == "/api/run/step").levelno == logging.INFO
 
 
 def test_react_dashboard_bundle_is_local_and_current():
@@ -1914,6 +1962,35 @@ def test_react_dashboard_bundle_is_local_and_current():
     assert "https://" not in html and "http://" not in html
     for relative in set(part.split('"')[0] for part in html.split("/static/")[1:]):
         assert (Path("server/static") / relative).is_file(), relative
+
+
+def test_world_os_deep_links_serve_spa_entrypoint(tmp_path):
+    world = _world(tmp_path, "world-os-deep-links.db")
+
+    with TestClient(create_app(world)) as client:
+        for path in (
+            "/runs/run-demo/overview",
+            "/runs/run-demo/news-communications/thread-1?tick=2",
+            "/commons/overview",
+        ):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert response.headers["content-type"].startswith("text/html")
+            assert 'id="root"' in response.text
+
+
+def test_local_mode_probe_reports_non_hosted_v2_api(tmp_path):
+    world = _world(tmp_path, "local-mode-probe.db")
+
+    with TestClient(create_app(world)) as client:
+        response = client.get("/api/v2/mode")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mode": "local",
+        "hosted": False,
+        "api_base": "/api/v2",
+    }
 
 
 def test_each_required_shock_has_a_logged_downstream_effect(tmp_path):

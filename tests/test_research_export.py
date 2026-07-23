@@ -93,7 +93,7 @@ def test_hash_contract_v1_is_frozen_and_v2_covers_gateway_commons(tmp_path):
         before = canonical_hashes(current)
         assert before["contract_id"] == "hash-contract-v2"
         assert before["schema_inventory_sha256"] == (
-            "9a1ce7840ff70b13f541dbb1e6d4493b336d3c49c6cb016887677301301a9eba")
+            "d79179a8635f1f617f0d12c2e2ce222372f83aac39cee2f25669a673f5f24f0d")
         current.insert(
             "commons_profiles", agent_id=agent_id,
             display_name="Commons Citizen", created_tick=0, updated_tick=0)

@@ -8,6 +8,7 @@ in `run_meta`, so a database remains self-describing.
 
 | Profile | Purpose | Network/cost |
 |---|---|---|
+| `runs/evolving-live.yaml` | Default 100-agent Semantics-11 compute/skill economy | Ollama + DeepSeek + MiniMax + Kimi, uncapped and fully metered |
 | `runs/base.yaml` | Default offline development world | None |
 | `runs/production.yaml` | Approx. 100-agent MiniMax/Kimi runtime | Live inference |
 | `runs/acceptance/rehearsal.yaml` | Free 365-tick acceptance rehearsal | None |
@@ -29,10 +30,12 @@ Secrets belong in the ignored `.env` file or process environment.
 
 | Variable | Purpose |
 |---|---|
+| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash route in the evolving-live profile |
 | `MINIMAX_API_KEY` | MiniMax Token Plan route in production profiles |
 | `KIMI_API_KEY` | Kimi Code membership route in production profiles |
 | `ANTHROPIC_API_KEY` | Optional custom Anthropic route |
 | `AGENT_ECONOMY_LOG_LEVEL` | Python operational log threshold; default `INFO` |
+| `AGENT_ECONOMY_LOG_FILE` | Rotating JSON operational log; default `logs/agent-economy.jsonl.log` |
 | `AGENT_ECONOMY_HOSTED_CONFIG` | Optional default path for `python -m hosted.cli` |
 | `AGENT_ECONOMY_HOSTED_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD` | Password-free hosted web PostgreSQL conninfo plus its separately injected password |
 | `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL`, `AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD` | Password-free restart/lease supervisor conninfo plus its separate password |
@@ -57,7 +60,7 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | Key | Meaning |
 |---|---|
 | `seed` | World, persona, targeting, and lifecycle reproducibility |
-| `engine_semantics_version` | Runtime compatibility contract; maintained profiles use `7` |
+| `engine_semantics_version` | Runtime compatibility contract; the default evolving-live profile uses `11`, while frozen production/research profiles retain their recorded version |
 | `population.size` | Sampled citizen count; institutional/founder agents are added |
 | `population.baseline_citizens_core` | Persisted semantics-7 opt-in that pins non-regional baseline citizens and later arrivals to the fully scheduled core tier |
 | `banks`, `firms`, `exchange` | Deterministic banking, production, and market parameters |
@@ -68,11 +71,12 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | `speed_delay_s` | Wall-clock pause between ticks; does not change simulation time |
 | `outlets`, `shocks` | Information institutions and scheduled interventions |
 
-`runs/production.yaml` samples 63 citizens. Maintained semantics 7 adds the
-engine-owned institutional and health-economy actors, producing exactly 100
-living agents at genesis. Acceptance evaluates the living population; deceased
-rows remain available for historical and replay evidence without inflating that
-gate.
+`runs/evolving-live.yaml` and `runs/production.yaml` sample 63 citizens. The
+engine-owned institutional and health-economy actors produce exactly 100 living
+agents at genesis, including 65 non-institutional citizens. Evolving-live assigns
+those citizens exactly 33 local, 26 Flash, and six premium launch grants.
+Acceptance evaluates the living population; deceased rows remain available for
+historical and replay evidence without inflating that gate.
 
 Maintained non-regional profiles also persist
 `population.baseline_citizens_core: true`. Under semantics 7 this makes baseline
@@ -211,6 +215,16 @@ clamped and audited; non-finite output is rejected.
 
 ## Provider routing and failure policy
 
+`runs/evolving-live.yaml` selects a route from the citizen's persisted compute
+plan and the request role/purpose. Its desktop-safe global ceiling is 10 calls,
+with independent Ollama (2), Ollama Cloud (3), DeepSeek (6), MiniMax (2), and
+Kimi (2) priority pools. The local lane uses the
+`agent-economy-qwen3.5:9b-16k` alias so Ollama does not allocate its much larger
+default context. Strategic policy work outranks conversation, memory, and
+newsroom work. Each logical call gets one live fallback and a 240-second hard
+deadline; exhausted routes pause the same world phase without committing an
+action. It never falls back to scripted or mock behavior.
+
 `runs/production.yaml` routes citizens/founders to `MiniMax-M3` and
 institutional roles plus the Oracle to Kimi's `kimi-for-coding`. Conversation
 and memory purposes inherit the agent's role route.
@@ -218,11 +232,12 @@ and memory purposes inherit the agent's role route.
 Every call passes through the gateway. Before a live run:
 
 ```powershell
-python run.py --config runs/production.yaml --preflight-live
+python run.py --config runs/evolving-live.yaml --preflight-live
 ```
 
-Readiness validates environment variables, endpoints, and model catalogs before
-genesis. Rate limits/overload enter an interruptible provider-wide cooldown.
+Readiness validates environment variables and model catalogs and sends one real
+JSON-contract completion through every routed provider before genesis. Rate
+limits/overload enter an interruptible provider-wide cooldown.
 Other continuing failures use bounded retries, persist diagnostics, reconcile,
 checkpoint the phase cursor, and pause. Invalid JSON receives one metered repair
 attempt. There is no silent fallback to scripted behavior.

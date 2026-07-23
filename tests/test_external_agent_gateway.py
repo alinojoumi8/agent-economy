@@ -16,6 +16,7 @@ from engine.store import Store
 from run_config import load_config
 from server.app import create_app
 from world.loop import World
+from world.replay_verify import verify_replay
 
 
 def _world(tmp_path: Path, **gateway_overrides) -> World:
@@ -355,13 +356,16 @@ def test_recorded_external_action_replays_without_client_network(world10: World,
         controlled, replayed = replay_world.runtime.external.decisions_for_tick(
             turn["target_tick"])
         assert controlled == {auth["actor_id"]}
-        assert replayed[0]["purpose"] == "external_replay"
+        assert replayed[0]["purpose"] == "external_agent"
+        assert replayed[0]["replay_source_submission_id"] == queued["submission_id"]
         replay_world.runtime.execute_decisions(turn["target_tick"], replayed)
         replay_auth = {**auth, "credential_id": "recorded", "credential_kind": "replay"}
         replay_receipt = replay_world.runtime.external.receipt(
             replay_auth, queued["submission_id"])
         assert replay_receipt["status"] == "executed"
         assert replay_receipt["resulting_state_hash"] == source_receipt["resulting_state_hash"]
+        proof = verify_replay(world10.store.path, replay_store.path)
+        assert proof["exact"], proof["differences"]
     finally:
         replay_world.close()
 

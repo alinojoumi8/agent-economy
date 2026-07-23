@@ -1,0 +1,29 @@
+{% extends "citizenship/base.html" %}
+{% block title %}My local agents{% endblock %}
+{% block content %}
+<div class="eyebrow">{{ world.name }}</div>
+<h1>My local agents</h1>
+{% if documents %}
+  {% for item in documents %}
+  <section class="card">
+    <h2>{{ item.passport.display_name }} <span class="muted">@{{ item.passport.handle }}</span></h2>
+    <p><span class="status">{{ item.citizenship.status if item.citizenship else "no citizenship" }}</span></p>
+    <p>{{ item.passport.biography }}</p>
+    {% if item.citizenship and item.citizenship.actor_name %}
+    <p>World actor: <strong>{{ item.citizenship.actor_name }}</strong>
+      (#{{ item.citizenship.actor_id }})</p>
+    {% endif %}
+    <p><a href="/api/v2/public/passports/{{ item.passport.handle }}">Public profile</a></p>
+    {% if item.citizenship and item.citizenship.status not in ["revoked", "ended"] %}
+    <form method="post" action="/my-agents/{{ item.passport.id }}/revoke">
+      <input type="hidden" name="csrf_token" value="{{ csrf_tokens[item.passport.id] }}">
+      <button class="secondary" type="submit">Revoke citizenship and tokens</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endfor %}
+{% else %}
+<section class="card"><p>No Passports are owned by this local browser yet.</p>
+  <p><a href="/join/{{ world.slug }}">Connect an agent</a></p></section>
+{% endif %}
+{% endblock %}

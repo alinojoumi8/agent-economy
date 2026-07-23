@@ -102,7 +102,10 @@ def test_wage_offer_counter_and_accept_is_bilateral_persisted_and_audited(store)
     assert candidate_context["incoming_job_offers"][0]["offer_id"] == second_offer["offer_id"]
     system, prompt = context_builder.render_prompt(candidate_context)
     assert "counter_job_offer" in system
+    assert "hire{application_id}" not in system
     assert str(second_offer["offer_id"]) in prompt
+    assert "Resolve one supplied wage offer" in prompt
+    assert "do not apply again" in prompt
     candidate_catalog = service.action_catalog(stranger)
     assert any(item["type"] == "accept_job_offer" and item["enabled"]
                for item in candidate_catalog)

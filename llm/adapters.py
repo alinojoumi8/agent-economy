@@ -56,6 +56,16 @@ class AdapterHTTPError(RuntimeError):
         return self.status_code in {429, 529}
 
 
+class AdapterTimeoutError(TimeoutError):
+    """Provider transport exceeded its configured response deadline."""
+
+    def __init__(self, endpoint: str, timeout_s: float):
+        self.endpoint = endpoint
+        self.timeout_s = float(timeout_s)
+        super().__init__(
+            f"provider request to {endpoint} timed out after {self.timeout_s:.1f}s")
+
+
 def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
     if not value:
         return None
@@ -142,6 +152,7 @@ class OpenAICompatAdapter(Adapter):
 
     def __init__(self, config: dict):
         self.base_url = str(config["base_url"]).rstrip("/")
+        self.auth_none = str(config.get("auth", "bearer")).lower() == "none"
         self.api_key_env = str(config.get("api_key_env", ""))
         self.api_key = os.environ.get(self.api_key_env, "")
         self.timeout = float(config.get("timeout_s", 60.0))
@@ -157,7 +168,9 @@ class OpenAICompatAdapter(Adapter):
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
                        temperature=0.7, cache_key="") -> AdapterResult:
         import httpx
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if not self.auth_none:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         body = {
             "model": model, "messages": messages,
             "temperature": temperature, "response_format": {"type": "json_object"},
@@ -166,14 +179,17 @@ class OpenAICompatAdapter(Adapter):
         body.update(self.request_defaults)
         if self.prompt_cache_mode == "openai_key" and cache_key:
             body["prompt_cache_key"] = cache_key
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            endpoint = f"{self.base_url}/chat/completions"
-            resp = await client.post(endpoint, headers=headers, json=body)
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _raise_http_error(resp, self.base_url, exc)
-            data = resp.json()
+        endpoint = f"{self.base_url}/chat/completions"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(endpoint, headers=headers, json=body)
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_http_error(resp, self.base_url, exc)
+                data = resp.json()
+        except httpx.TimeoutException as exc:
+            raise AdapterTimeoutError(self.base_url, self.timeout) from exc
         choice = data["choices"][0]
         message = choice.get("message") or {}
         content = message.get("content")
@@ -195,14 +211,21 @@ class OpenAICompatAdapter(Adapter):
 
     async def healthcheck(self, model: str) -> dict:
         import httpx
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        async with httpx.AsyncClient(timeout=min(self.timeout, 15.0)) as client:
-            resp = await client.get(f"{self.base_url}{self.healthcheck_path}", headers=headers)
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _raise_http_error(resp, self.base_url, exc)
-            data = resp.json()
+        headers = {}
+        if not self.auth_none:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        timeout_s = min(self.timeout, 15.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.get(
+                    f"{self.base_url}{self.healthcheck_path}", headers=headers)
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_http_error(resp, self.base_url, exc)
+                data = resp.json()
+        except httpx.TimeoutException as exc:
+            raise AdapterTimeoutError(self.base_url, timeout_s) from exc
         model_ids = {str(row.get("id")) for row in data.get("data", []) if isinstance(row, dict)}
         return {"ok": model in model_ids, "model": model, "model_available": model in model_ids,
                 "live": True, "models_returned": len(model_ids)}
@@ -237,14 +260,17 @@ class AnthropicAdapter(Adapter):
                    "content-type": "application/json"}
         body = {"model": model, "system": system, "messages": convo,
                 "max_tokens": max_tokens, "temperature": temperature}
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            endpoint = "https://api.anthropic.com/v1/messages"
-            resp = await client.post(endpoint, headers=headers, json=body)
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                _raise_http_error(resp, endpoint, exc)
-            data = resp.json()
+        endpoint = "https://api.anthropic.com/v1/messages"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(endpoint, headers=headers, json=body)
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_http_error(resp, endpoint, exc)
+                data = resp.json()
+        except httpx.TimeoutException as exc:
+            raise AdapterTimeoutError(endpoint, self.timeout) from exc
         text = "".join(block.get("text", "") for block in data.get("content", []))
         usage = data.get("usage", {})
         cached_in = int(usage.get("cache_read_input_tokens", 0) or 0)

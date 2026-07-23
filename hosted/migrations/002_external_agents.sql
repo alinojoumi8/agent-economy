@@ -1,5 +1,8 @@
 -- Hosted external-agent ownership, credentials, bindings, and immutable audit.
 
+ALTER TABLE runs ADD CONSTRAINT runs_tenant_id_id_key
+    UNIQUE (tenant_id, id);
+
 ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
 ALTER TABLE memberships ADD CONSTRAINT memberships_role_check
     CHECK (role IN ('observer', 'agent_owner', 'admin'));

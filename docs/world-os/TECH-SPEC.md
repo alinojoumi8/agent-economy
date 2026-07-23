@@ -1114,11 +1114,12 @@ the exact schema-12 surface as `authoritative`, `derived`, or `excluded`.
 `research/hash-contract-v2.json` is selected for semantics 9 and later. It adds
 the authoritative gateway turn/submission/actor records and Commons social,
 feed-policy, impression, moderation, and appeal records introduced by schemas 13
-and 14. Credential hashes, OAuth codes and client registrations, rate windows,
+and 14, cognition records from schema 15, and the passport-to-world connection
+binding from schema 16. Credential hashes, OAuth codes and client registrations, rate windows,
 and security-audit rows remain operationally verified but excluded from semantic
 state hashes. CI and replay verification fail on an unclassified addition.
 
-Fresh schema-14 binaries may open a semantics-8 run, so v1 compatibility removes
+Fresh schema-16 binaries may open a semantics-8 run, so v1 compatibility removes
 only the extension tables and `run_meta.external_agent_influenced` column declared
 by v2 before comparing the frozen schema inventory. It never silently ignores an
 unknown table or column. The full normative algorithm and the semantics-8

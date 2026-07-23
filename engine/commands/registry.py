@@ -6,7 +6,9 @@ from typing import Iterable, Type
 
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
-from .models import ForwardMessage, LegacyCommand, ReplyMessage, SendMessage
+from .models import (BuyComputePlan, CancelComputePlan, ForwardMessage,
+                     LegacyCommand, ReplyMessage, SendMessage,
+                     SetComputeSponsorship, StudySkill)
 
 
 class CommandValidationError(ValueError):
@@ -61,10 +63,18 @@ COMMUNICATION_MODELS = {
     "forward_message": ForwardMessage,
 }
 
+COGNITION_MODELS = {
+    "buy_compute_plan": BuyComputePlan,
+    "cancel_compute_plan": CancelComputePlan,
+    "set_compute_sponsorship": SetComputeSponsorship,
+    "study_skill": StudySkill,
+}
+
 
 def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     registry = CommandRegistry()
-    for command_type in sorted(set(known_types) - set(COMMUNICATION_MODELS)):
+    strict_types = set(COMMUNICATION_MODELS) | set(COGNITION_MODELS)
+    for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
             command_type=command_type,
             model=LegacyCommand,
@@ -77,5 +87,12 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
             model=model,
             handler_name=f"_do_{command_type}",
             introduced_in_semantics=8,
+        ))
+    for command_type, model in COGNITION_MODELS.items():
+        registry.register(CommandDefinition(
+            command_type=command_type,
+            model=model,
+            handler_name=f"_do_{command_type}",
+            introduced_in_semantics=11,
         ))
     return registry

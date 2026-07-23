@@ -5,7 +5,13 @@ from dataclasses import dataclass
 import hashlib
 from typing import Callable, Iterable, Optional
 
-from . import v012_communications, v013_external_agents, v014_commons
+from . import (
+    v012_communications,
+    v013_external_agents,
+    v014_commons,
+    v015_cognition,
+    v016_passport_bindings,
+)
 
 
 class MigrationError(RuntimeError):
@@ -43,6 +49,12 @@ _MIGRATIONS = (
     Migration.create(
         14, v014_commons.NAME, v014_commons.SQL,
         verify=v014_commons.verify),
+    Migration.create(
+        15, v015_cognition.NAME, v015_cognition.SQL,
+        verify=v015_cognition.verify),
+    Migration.create(
+        16, v016_passport_bindings.NAME, v016_passport_bindings.SQL,
+        verify=v016_passport_bindings.verify),
 )
 
 

@@ -130,6 +130,7 @@ class ExternalAgentService:
         self, *, tenant_id: str, owner_id: str, display_name: str,
         tier: str, scopes: Iterable[str] | None = None, biography: str = "",
         preferred_occupation: str = "", wake_interval_ticks: int = 1,
+        passport_id: str | None = None, issue_personal_credential: bool = True,
     ) -> dict[str, Any]:
         self._require_enabled()
         tier = str(tier)
@@ -150,13 +151,23 @@ class ExternalAgentService:
         created = _iso()
         status = "active" if tier == "observer" else "pending_actor"
         tick = self.store.tick
+        normalized_passport_id = str(passport_id).strip() if passport_id else None
+        if normalized_passport_id:
+            existing = self.store.query_one(
+                "SELECT id FROM external_agent_connections WHERE passport_id=?",
+                (normalized_passport_id,))
+            if existing is not None:
+                raise ExternalAgentError(
+                    409, "passport already has a citizen in this world",
+                    "passport_already_connected")
         self.store.execute(
             "INSERT INTO external_agent_connections(id,tenant_id,owner_id_hash,display_name,"
             "biography,preferred_occupation,tier,scopes_json,status,wake_interval_ticks,"
-            "created_tick,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_tick,created_at,updated_at,passport_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (connection_id, str(tenant_id)[:128], _hash(str(owner_id)), name,
              str(biography).strip()[:500], occupation, tier, json.dumps(requested), status,
-             max(1, min(int(wake_interval_ticks), 365)), tick, created, created))
+             max(1, min(int(wake_interval_ticks), 365)), tick, created, created,
+             normalized_passport_id))
         schedule_event_id = None
         if tier != "observer":
             schedule_event_id = self.economy.lifecycle.schedule_arrival(tick, tick + 1)
@@ -169,9 +180,11 @@ class ExternalAgentService:
                 public_name=name, biography=str(biography).strip()[:500],
                 preferred_occupation=occupation, status="scheduled")
             self.store.set_meta(external_agent_influenced=1)
-        credential = self._issue_credential(
-            connection_id, "personal", requested,
-            expires_at=_now() + timedelta(days=self.personal_token_days), prefix="ae_pat_")
+        credential = None
+        if issue_personal_credential:
+            credential = self._issue_credential(
+                connection_id, "personal", requested,
+                expires_at=_now() + timedelta(days=self.personal_token_days), prefix="ae_pat_")
         self._audit(connection_id, "connection.created", "changed",
                     {"tier": tier, "scopes": requested,
                      "actor_schedule_event_id": schedule_event_id})
@@ -179,6 +192,18 @@ class ExternalAgentService:
         return {"connection": self.connection(connection_id, owner_id=owner_id,
                                                tenant_id=tenant_id),
                 "credential": credential}
+
+    def connection_for_passport(
+        self, passport_id: str, *, owner_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        row = self.store.query_one(
+            "SELECT id FROM external_agent_connections WHERE passport_id=?",
+            (str(passport_id),))
+        if row is None:
+            return None
+        return self.connection(
+            str(row["id"]), owner_id=owner_id, tenant_id=tenant_id)
 
     def list_connections(self, *, tenant_id: str, owner_id: str,
                          admin: bool = False) -> list[dict[str, Any]]:
@@ -602,6 +627,13 @@ class ExternalAgentService:
         """
         if int(self.config.get("engine_semantics_version", 1)) < 9:
             return
+        if self.config.get("replay_source_path"):
+            # Live clients submit between ticks, before NIGHT_CLOSE begins. Copy
+            # recorded submissions at that same boundary so their CONTROL event
+            # retains the source ordering and every later event reference stays
+            # exact without contacting the external agent.
+            self._replay_decisions(tick)
+            return
         while True:
             now = _now()
             rows = self.store.query(
@@ -867,11 +899,57 @@ class ExternalAgentService:
                 "AND name='external_action_submissions'").fetchone()
             if table is None:
                 return []
+            source_columns = {
+                str(column[1])
+                for column in conn.execute("PRAGMA table_info(external_agent_connections)")
+            }
+            passport_select = (
+                ",c.passport_id" if "passport_id" in source_columns
+                else ",NULL AS passport_id")
+            turn_rows = conn.execute(
+                "SELECT t.*,c.actor_id FROM external_agent_turns t "
+                "JOIN external_agent_connections c ON c.id=t.connection_id "
+                "WHERE t.target_tick=? ORDER BY c.actor_id,t.id", (tick,)).fetchall()
+            for turn_row in turn_rows:
+                actor_id = int(turn_row["actor_id"])
+                actor = self.store.query_one(
+                    "SELECT alive FROM agents WHERE id=?", (actor_id,))
+                existing_turn = self.store.query_one(
+                    "SELECT id FROM external_agent_turns WHERE id=?",
+                    (str(turn_row["id"]),))
+                if actor is None or existing_turn is not None:
+                    continue
+                # Building the live action catalog retrieves the citizen's
+                # memories and advances their deterministic access tick. Replay
+                # performs the same read once for each recorded turn, including
+                # a turn that ultimately falls back without a submission.
+                self.participant.action_catalog(actor_id)
+                self.store.execute(
+                    "INSERT INTO external_agent_turns(id,connection_id,actor_id,completed_tick,"
+                    "target_tick,projection_hash,action_catalog_version,envelope_json,event_cursor,"
+                    "deadline_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (str(turn_row["id"]), str(turn_row["connection_id"]), actor_id,
+                     int(turn_row["completed_tick"]), int(turn_row["target_tick"]),
+                     str(turn_row["projection_hash"]),
+                     str(turn_row["action_catalog_version"]),
+                     str(turn_row["envelope_json"]), int(turn_row["event_cursor"]),
+                     str(turn_row["deadline_at"]), str(turn_row["status"]),
+                     str(turn_row["created_at"]), _iso()))
             rows = conn.execute(
                 "SELECT s.*,c.tenant_id,c.display_name,c.biography,c.preferred_occupation,c.tier,"
-                "c.scopes_json,c.actor_id,c.created_tick,c.created_at,c.wake_interval_ticks "
+                "c.scopes_json,c.actor_id,c.created_tick,c.created_at,c.wake_interval_ticks,"
+                "t.completed_tick AS source_completed_tick,"
+                "t.projection_hash AS source_turn_projection_hash,"
+                "t.action_catalog_version AS source_action_catalog_version,"
+                "t.envelope_json AS source_envelope_json,"
+                "t.event_cursor AS source_event_cursor,"
+                "t.deadline_at AS source_deadline_at,"
+                "t.status AS source_turn_status,"
+                "t.created_at AS source_turn_created_at"
+                + passport_select + " "
                 "FROM external_action_submissions s JOIN external_agent_connections c "
-                "ON c.id=s.connection_id WHERE s.target_tick=? AND s.status='executed' "
+                "ON c.id=s.connection_id JOIN external_agent_turns t ON t.id=s.turn_id "
+                "WHERE s.target_tick=? AND s.status='executed' "
                 "ORDER BY s.actor_id,s.id", (tick,)).fetchall()
             out = []
             for row in rows:
@@ -881,37 +959,57 @@ class ExternalAgentService:
                 self.store.execute(
                     "INSERT OR IGNORE INTO external_agent_connections(id,tenant_id,owner_id_hash,"
                     "display_name,biography,preferred_occupation,tier,scopes_json,status,actor_id,"
-                    "wake_interval_ticks,created_tick,created_at,updated_at) "
-                    "VALUES(?,?,?, ?,?,?, ?,?,'active',?,?,?,?,?)",
+                    "wake_interval_ticks,created_tick,created_at,updated_at,passport_id) "
+                    "VALUES(?,?,?, ?,?,?, ?,?,'active',?,?,?,?,?,?)",
                     (str(row["connection_id"]), str(row["tenant_id"]), "0" * 64,
                      str(row["display_name"]), str(row["biography"]),
                      str(row["preferred_occupation"]), str(row["tier"]), str(row["scopes_json"]),
                      int(row["actor_id"]), int(row["wake_interval_ticks"]),
-                     int(row["created_tick"]), str(row["created_at"]), _iso()))
+                     int(row["created_tick"]), str(row["created_at"]), _iso(),
+                     row["passport_id"]))
                 turn_id = str(row["turn_id"])
                 self.store.execute(
                     "INSERT OR IGNORE INTO external_agent_turns(id,connection_id,actor_id,completed_tick,"
                     "target_tick,projection_hash,action_catalog_version,envelope_json,event_cursor,"
-                    "deadline_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
-                    (turn_id, str(row["connection_id"]), int(row["actor_id"]), tick - 1, tick,
-                     str(row["observed_projection_hash"]), "0" * 64, "{}", 0,
-                     _iso(), str(row["created_at"]), _iso()))
-                self.store.execute(
-                    "INSERT OR IGNORE INTO external_action_submissions(id,connection_id,actor_id,turn_id,"
-                    "target_tick,observed_projection_hash,idempotency_key,action_json,rationale_summary,"
-                    "status,validator_results_json,result_json,event_ids_json,resulting_state_hash,"
-                    "source_submission_id,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,'queued',"
-                    "?,'[]','[]',NULL,?,?,NULL)",
-                    (str(row["id"]), str(row["connection_id"]), int(row["actor_id"]), turn_id,
-                     tick, str(row["observed_projection_hash"]), str(row["idempotency_key"]),
-                     str(row["action_json"]), str(row["rationale_summary"]),
-                     str(row["validator_results_json"]), str(row["id"]), str(row["created_at"])))
+                    "deadline_at,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (turn_id, str(row["connection_id"]), int(row["actor_id"]),
+                     int(row["source_completed_tick"]), tick,
+                     str(row["source_turn_projection_hash"]),
+                     str(row["source_action_catalog_version"]),
+                     str(row["source_envelope_json"]), int(row["source_event_cursor"]),
+                     str(row["source_deadline_at"]), str(row["source_turn_status"]),
+                     str(row["source_turn_created_at"]), _iso()))
+                existing = self.store.query_one(
+                    "SELECT id FROM external_action_submissions WHERE id=?", (str(row["id"]),))
+                if existing is None:
+                    self.store.execute(
+                        "INSERT INTO external_action_submissions(id,connection_id,actor_id,turn_id,"
+                        "target_tick,observed_projection_hash,idempotency_key,action_json,"
+                        "rationale_summary,status,validator_results_json,result_json,event_ids_json,"
+                        "resulting_state_hash,source_submission_id,created_at,completed_at) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,'queued',?,'[]','[]',NULL,?,?,NULL)",
+                        (str(row["id"]), str(row["connection_id"]), int(row["actor_id"]), turn_id,
+                         tick, str(row["observed_projection_hash"]), str(row["idempotency_key"]),
+                         str(row["action_json"]), str(row["rationale_summary"]),
+                         str(row["validator_results_json"]), str(row["id"]),
+                         str(row["created_at"])))
+                    action_for_event = load_json(
+                        row["action_json"], {"type": "do_nothing"})
+                    self.store.log_event(
+                        self.store.tick, "external_action_queued",
+                        {"submission_id": str(row["id"]),
+                         "connection_id": str(row["connection_id"]),
+                         "actor_id": int(row["actor_id"]), "target_tick": tick,
+                         "action_type": action_for_event.get("type")},
+                        phase="CONTROL", subject_type="agent",
+                        subject_id=int(row["actor_id"]), importance=1.2)
                 action = load_json(row["action_json"], {"type": "do_nothing"})
-                out.append({"agent_id": int(row["actor_id"]), "purpose": "external_replay",
+                out.append({"agent_id": int(row["actor_id"]), "purpose": "external_agent",
                             "envelope": {"actions": [action], "belief_updates": []},
                             "reasoning": str(row["rationale_summary"] or "")[:500],
                             "llm_call_id": None, "external_submission_id": str(row["id"]),
-                            "external_connection_id": str(row["connection_id"])})
+                            "external_connection_id": str(row["connection_id"]),
+                            "replay_source_submission_id": str(row["id"])})
             if out:
                 self.store.set_meta(external_agent_influenced=1)
             return out
@@ -1007,6 +1105,9 @@ class ExternalAgentService:
         scopes_value = row["connection_scopes_json"] if "connection_scopes_json" in keys else row["scopes_json"]
         return {"id": str(row["connection_id"] if "connection_id" in keys else row["id"]),
                 "tenant_id": str(row["tenant_id"]), "display_name": str(row["display_name"]),
+                "passport_id": (
+                    str(row["passport_id"])
+                    if "passport_id" in keys and row["passport_id"] is not None else None),
                 "biography": str(row["biography"]),
                 "preferred_occupation": str(row["preferred_occupation"]),
                 "tier": str(row["tier"]), "scopes": _clean_scopes(load_json(scopes_value, [])),

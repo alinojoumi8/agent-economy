@@ -20,17 +20,17 @@ class Scheduler:
         self.institutional_role_purposes = bool(
             config.get("llm", {}).get("institutional_role_purposes", False))
         self.engine_semantics_version = int(config.get("engine_semantics_version", 1))
+        self.periphery_cadence_multiplier = max(1, int(
+            config.get("behavior", {}).get("periphery_cadence_multiplier", 2)))
         self.retired_news_every = max(1, int(
             config.get("lifecycle", {}).get("retired_news_every", 1)))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
         semantics_version = int(self.config.get("engine_semantics_version", 1))
         if semantics_version >= 7:
-            # Core and peripheral citizens share the same state-derived wakeup
-            # cadence. AgentRuntime keeps the promoted core on its configured
-            # provider while routing the periphery through local scripted
-            # policies, so households actually consume and trade without
-            # creating model calls for the long tail.
+            # Semantics 11 separates scheduling from cognition: population tier
+            # controls wake frequency, while the compute subscription controls
+            # the live model. Semantics 7-10 retain their recorded behavior.
             agents = self.store.query(
                 "SELECT * FROM agents WHERE alive=1 ORDER BY id")
         elif semantics_version >= 5:
@@ -64,7 +64,11 @@ class Scheduler:
                 if self._event_triggered(int(a["id"]), tick):
                     out.append(a)
                 continue
-            if self._citizen_wakes(a, tick, cadence_multiplier):
+            agent_cadence_multiplier = max(1, cadence_multiplier)
+            if (semantics_version >= 11
+                    and str(a["population_tier"] or "periphery") != "core"):
+                agent_cadence_multiplier *= self.periphery_cadence_multiplier
+            if self._citizen_wakes(a, tick, agent_cadence_multiplier):
                 out.append(a)
         return out
 

@@ -197,6 +197,31 @@ def test_invalid_business_idea_is_rejected_atomically(store, business_idea):
     assert not store.query_one("SELECT 1 FROM events WHERE kind='company_founded'")
 
 
+def test_enabled_profile_rejects_unsupplied_or_mutated_company_actions(store):
+    economy, config, bank_id = _economy(store)
+    founder_id, _ = _citizen(economy, bank_id)
+    lawyer_id, _ = make_agent(
+        economy, bank_id, name="Bounded Lawyer", occupation="lawyer", role="lawyer")
+    founder = store.query_one("SELECT * FROM agents WHERE id=?", (founder_id,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+
+    unsupplied = ActionExecutor(economy).execute_action(10, founder_id, {
+        "type": "found_company", "name": "News Inspired Inc", "sector": "tech",
+        "lawyer_agent_id": lawyer_id,
+    })
+    assert not unsupplied["ok"]
+    assert "supplied entrepreneurship opportunity" in unsupplied["reason"]
+
+    context = builder.build(founder, 11)
+    supplied = context["entrepreneurship_opportunity"]["action"]
+    mutated = ActionExecutor(economy).execute_action(11, founder_id, {
+        **supplied, "name": "Model Invented Name",
+    })
+    assert not mutated["ok"]
+    assert "copy the supplied entrepreneurship action exactly" in mutated["reason"]
+    assert int(store.scalar("SELECT COUNT(*) FROM firms", default=0)) == 0
+
+
 def test_eligibility_and_participant_payload_are_bounded(store):
     economy, config, bank_id = _economy(store)
     eligible_id, _ = _citizen(economy, bank_id)
@@ -212,7 +237,10 @@ def test_eligibility_and_participant_payload_are_bounded(store):
     assert "entrepreneurship_opportunity" in builder.build(eligible, 11)
     for agent_id in (low_risk_id, poor_id):
         agent = store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
-        assert "entrepreneurship_opportunity" not in builder.build(agent, 11)
+        context = builder.build(agent, 11)
+        assert "entrepreneurship_opportunity" not in context
+        system, _ = builder.render_prompt(context)
+        assert "found_company{name,sector,lawyer_agent_id}" not in system
 
     service = ParticipantService(store, builder, config)
     catalog = {item["type"]: item for item in service.action_catalog(eligible_id)}

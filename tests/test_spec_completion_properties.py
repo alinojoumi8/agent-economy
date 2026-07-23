@@ -1090,5 +1090,9 @@ def test_schema_hint_repairs_valid_json_with_the_wrong_contract(tmp_path, monkey
     store.close()
 
 
-def test_no_argument_runtime_uses_locked_production_profile():
-    assert DEFAULT_CONFIG == "runs/production.yaml"
+def test_no_argument_runtime_uses_fail_closed_live_desktop_profile():
+    assert DEFAULT_CONFIG == "runs/evolving-live.yaml"
+    config = cli.load_config(DEFAULT_CONFIG)
+    assert config["engine_semantics_version"] == 11
+    assert config["llm"]["live_only"] is True
+    assert config["llm"]["require_preflight_live"] is True

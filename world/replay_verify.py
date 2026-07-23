@@ -12,8 +12,22 @@ from typing import Any, Callable
 EXCLUDED_TABLES = {
     "run_meta", "checkpoints", "acceptance_checkpoints",
     "participant_control", "participant_actions",
+    # External authentication, rate limiting, leases, and security telemetry are
+    # wall-clock control-plane evidence. Executed submissions and their world
+    # effects remain included in the exact deterministic comparison.
+    "external_agent_credentials", "external_agent_turns",
+    "external_oauth_clients", "external_oauth_codes",
+    "external_rate_windows", "external_security_audit",
+    # Provider concurrency/failure timing and host wall-clock timing are
+    # operational evidence. Exact replay consumes llm_calls and intentionally
+    # does not recreate live attempt telemetry.
+    "llm_attempts", "runtime_tick_stats",
 }
 IGNORED_COLUMNS = {"created_at", "updated_at", "applied_at"}
+TABLE_IGNORED_COLUMNS = {
+    "external_action_submissions": {"completed_at", "source_submission_id"},
+    "external_agent_connections": {"last_seen_at", "lease_expires_at"},
+}
 LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
 SURROGATE_ID_COLUMNS = {
     **{table: {"id"} for table in LOGICAL_ROW_TABLES},
@@ -188,12 +202,24 @@ def _row_llm_expectations(
         conn: sqlite3.Connection, table: str,
         row: sqlite3.Row) -> tuple[dict[str, Any], bool]:
     """Derive the actor, turn, and role a persisted model pointer must own."""
-    expectations: dict[str, Any] = {"tick": int(row["tick"])}
+    row_columns = set(row.keys())
+    tick_column = ("tick" if "tick" in row_columns
+                   else "created_tick" if "created_tick" in row_columns
+                   else None)
+    if tick_column is None:
+        return {}, False
+    expectations: dict[str, Any] = {"tick": int(row[tick_column])}
     owner_id: int | None = None
     context_valid = True
 
     if table == "action_proposals":
         owner_id = int(row["actor_id"])
+    elif table == "agent_decisions":
+        owner_id = int(row["agent_id"])
+    elif table == "comm_messages":
+        owner_id = int(row["sender_agent_id"])
+    elif table == "causal_links" and row["actor_agent_id"] is not None:
+        owner_id = int(row["actor_agent_id"])
     elif table == "legal_decisions":
         owner_id = int(row["decision_maker_id"])
         proposal, proposal_valid = _proposal_owner_for_result(
@@ -220,7 +246,7 @@ def _row_llm_expectations(
     if role is not None:
         expectations["role"] = role
         expectations["purpose"] = _action_purposes_for(
-            conn, owner_id, int(row["tick"]), role)
+            conn, owner_id, int(row[tick_column]), role)
     return expectations, context_valid
 
 
@@ -430,7 +456,8 @@ def _table_digest(
         llm_call_references: dict[int, Any],
         event_references: dict[int, Any]) -> tuple[int, str, bool]:
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
-    ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
+    ignored = (IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
+               | TABLE_IGNORED_COLUMNS.get(table, set()))
     columns = [column for column in all_columns if column not in ignored]
     where = ""
     params: tuple[Any, ...] = ()

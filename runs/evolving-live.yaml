@@ -1,0 +1,222 @@
+# Default desktop profile: Semantics 11 live citizens with compute plans and skills.
+# Secrets are read from the local environment and are never stored in this file.
+extends: base.yaml
+
+engine_semantics_version: 11
+
+population:
+  # Genesis adds 35 staff seats. 63 sampled citizens yields 65 citizens and
+  # exactly 100 living agents after the health-economy founders are added.
+  size: 63
+  baseline_citizens_core: false
+
+budget:
+  cap_usd: null
+
+cognition:
+  enabled: true
+  duration_ticks: 7
+  flash_cost_cents: 5000
+  premium_cost_cents: 25000
+  study_cost_cents: 5000
+  premium_cap_fraction: 0.20
+  initial_distribution: {local: 0.50, flash: 0.40, premium: 0.10}
+
+behavior:
+  # Population tier controls scheduling only; compute subscriptions control models.
+  periphery_cadence_multiplier: 2
+
+# Let qualified unemployed citizens identify a bounded market gap and found a
+# real firm. Genesis citizens participate so a short live rehearsal can cover
+# incorporation, hiring, production, sales, and payroll without synthetic
+# arrivals or fixture-only actions.
+entrepreneurship:
+  enabled: true
+  new_arrivals_only: false
+  review_interval_ticks: 30
+  minimum_ticks_after_arrival: 1
+  minimum_age: 21
+  minimum_risk_tolerance: 0.65
+  minimum_opening_capital_cents: 100000
+  personal_reserve_cents: 100000
+  opening_capital_share_bps: 3500
+  maximum_active_competitors: 3
+  sales_lookback_ticks: 30
+  stockout_inventory_threshold: 2
+  eligible_sectors: [services, technology, manufacturing, logistics, healthcare, energy, agriculture]
+
+llm:
+  live_only: true
+  require_preflight_live: true
+  institutional_role_purposes: true
+  # Ten overlapping calls preserve the acceptance target without saturating a
+  # desktop. Provider lanes remain independently bounded below.
+  max_in_flight: 10
+  concurrency: 10
+  # Leave enough wall time for a queued local Qwen attempt to time out and
+  # still reach its existing DeepSeek fallback under peak day-one load.
+  logical_deadline_s: 240
+  provider_retries: 0
+  rate_limit_backoff_s: [15, 30, 60, 120, 300]
+  decision_max_tokens: 900
+  background_flash_purposes: [conversation, memory, newsroom, report_narrative]
+
+  providers:
+    ollama:
+      kind: openai_compat
+      base_url: http://127.0.0.1:11434/v1
+      auth: none
+      # The 16K app-specific model keeps local KV-cache growth bounded. Two
+      # slots avoid six simultaneous GPU/CPU-heavy local generations.
+      concurrency: 2
+      prompt_cache_mode: "off"
+      timeout_s: 90
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        stream: false
+        reasoning_effort: none
+        temperature: 0.0
+    # A separate lane shares Ollama's local API but caps cloud offload at the
+    # three concurrent requests allowed by this subscription.
+    ollama_cloud:
+      kind: openai_compat
+      base_url: http://127.0.0.1:11434/v1
+      auth: none
+      concurrency: 3
+      prompt_cache_mode: "off"
+      timeout_s: 120
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        stream: false
+        reasoning_effort: none
+        temperature: 0.0
+    deepseek:
+      kind: openai_compat
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      concurrency: 6
+      prompt_cache_mode: provider_automatic
+      timeout_s: 60
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        stream: false
+        thinking: {type: disabled}
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      concurrency: 2
+      prompt_cache_mode: provider_automatic
+      timeout_s: 90
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        max_completion_tokens: 4096
+    kimi:
+      kind: openai_compat
+      base_url: https://api.kimi.com/coding/v1
+      api_key_env: KIMI_API_KEY
+      concurrency: 2
+      prompt_cache_mode: "off"
+      timeout_s: 90
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        reasoning_effort: medium
+        temperature: 1.0
+        max_tokens: 4096
+
+  default_route: {provider: deepseek, model: deepseek-v4-flash}
+  routes: {}
+
+  # Identity-stable assignment: the first 15 citizen IDs are split in this
+  # order. The underlying compute plan is preserved for every citizen.
+  citizen_model_cohorts:
+    - name: ollama-glm-5.1-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "glm-5.1:cloud", timeout_s: 120}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+    - name: ollama-gemma4-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+    - name: ollama-nemotron-3-super-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "nemotron-3-super:cloud", timeout_s: 120}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+
+  tier_routes:
+    local:
+      primary: {provider: ollama, model: "agent-economy-qwen3.5:9b-16k", timeout_s: 90}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+    flash:
+      primary: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+      fallback: {provider: ollama, model: "agent-economy-qwen3.5:9b-16k", timeout_s: 90}
+    premium:
+      primary: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+
+  premium_routes:
+    founder:
+      # M3 can spend the entire completion window in private reasoning on the
+      # larger founder contract and return no JSON. Kimi handles this contract;
+      # MiniMax remains assigned to the smaller VC and exchange decisions.
+      primary: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+    vc_partner:
+      primary: {provider: minimax, model: MiniMax-M3, timeout_s: 90}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+    exchange:
+      primary: {provider: minimax, model: MiniMax-M3, timeout_s: 90}
+      fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
+
+  role_tiers:
+    central_banker: premium
+    credit_officer: premium
+    vc_partner: premium
+    exchange: premium
+    lawyer: premium
+    regulator: premium
+    competition_regulator: premium
+    labor_regulator: premium
+    executive: premium
+    oracle: premium
+    gov_official: flash
+    legislator_house: flash
+    legislator_senate: flash
+    lobbyist: flash
+    reporter: flash
+    editor: flash
+
+  pricing:
+    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
+    kimi-for-coding: {in: 0.95, out: 4.00, cache: 0.19}
+    "agent-economy-qwen3.5:9b-16k": {in: 0.0, out: 0.0, cache: 0.0}
+    "glm-5.1:cloud": {in: 0.0, out: 0.0, cache: 0.0}
+    "gemma4:cloud": {in: 0.0, out: 0.0, cache: 0.0}
+    "nemotron-3-super:cloud": {in: 0.0, out: 0.0, cache: 0.0}
+
+acceptance:
+  target_agents: 100
+  rehearsal_ticks: 10
+  min_peak_concurrency: 10
+  median_day_seconds_max: 180
+  p95_day_seconds_max: 300
+
+# Pause/stop always checkpoints; a five-tick rolling cadence avoids copying the
+# full database after every simulated day.
+checkpoint_every: 5
+speed_delay_s: 0.0
+
+resource_guard:
+  enabled: true
+  sample_interval_s: 5
+  max_cpu_percent: 95
+  max_memory_percent: 90
+  min_available_memory_gb: 4
+  consecutive_breaches: 3

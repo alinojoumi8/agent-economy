@@ -3,12 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 import pytest
 
 from engine.store import Store
 from llm.adapters import AdapterHTTPError, AdapterResult, CLIAdapter
-from llm.gateway import Gateway, GatewayInterrupted, LLMRequest
+from llm.gateway import (
+    Gateway,
+    GatewayInterrupted,
+    LLMRequest,
+    PriorityProviderGate,
+    RoutePlan,
+    RouteTarget,
+)
 from llm.readiness import validate_llm_config
 from world.loop import World
 
@@ -231,6 +239,66 @@ def test_provider_throttling_retries_until_success_as_one_logical_call(
     names = [getattr(record, "event_name", "") for record in caplog.records]
     assert names.count("llm.rate_limit.waiting") == 2
     assert "llm.rate_limit.recovered" in names
+
+
+def test_tiered_route_reserves_deadline_for_fallback(tmp_path):
+    gateway = _gateway(tmp_path)
+    gateway.logical_deadline_s = 1.0
+
+    class SlowPrimary:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            await asyncio.sleep(2.0)
+            raise AssertionError("primary should be cancelled before logical deadline")
+
+    class FastFallback:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            return AdapterResult(
+                text='{"reasoning":"fallback","actions":[{"type":"do_nothing"}]}',
+                in_tokens=10, out_tokens=5)
+
+    primary = SlowPrimary()
+    fallback = FastFallback()
+    gateway.adapters["mock"] = primary
+    gateway.adapters["fallback"] = fallback
+    gateway.provider_gates["fallback"] = PriorityProviderGate(1)
+    plan = RoutePlan(
+        assigned_tier="local",
+        effective_tier="local",
+        reason="test fallback deadline reservation",
+        targets=(
+            RouteTarget("mock", "metered", timeout_s=2.0, route_index=0),
+            RouteTarget("fallback", "metered", timeout_s=0.25, route_index=1),
+        ),
+        tiered=True,
+    )
+    gateway.route_plan = lambda _req: plan
+
+    started = time.monotonic()
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="citizen", purpose="decision", tick=3)))
+    elapsed = time.monotonic() - started
+
+    assert response.ok
+    assert response.provider == "fallback"
+    assert primary.calls == 1
+    assert fallback.calls == 1
+    assert elapsed < 1.0
+    attempts = gateway.store.query(
+        "SELECT route_index,outcome,fallback_used,llm_call_id "
+        "FROM llm_attempts ORDER BY id")
+    assert [
+        (row["route_index"], row["outcome"], row["fallback_used"])
+        for row in attempts
+    ] == [(0, "timeout", 0), (1, "success", 1)]
+    assert all(row["llm_call_id"] == response.call_id for row in attempts)
 
 
 def test_rate_limit_status_is_visible_and_wait_is_interruptible(tmp_path):

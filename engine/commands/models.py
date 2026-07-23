@@ -15,6 +15,30 @@ class LegacyCommand(CommandBase):
     model_config = ConfigDict(extra="allow")
 
 
+class BuyComputePlan(CommandBase):
+    type: Literal["buy_compute_plan"]
+    tier: Literal["flash", "premium"]
+
+
+class CancelComputePlan(CommandBase):
+    type: Literal["cancel_compute_plan"]
+
+
+class SetComputeSponsorship(CommandBase):
+    type: Literal["set_compute_sponsorship"]
+    tier: Literal["flash", "premium"]
+    max_seats: Annotated[StrictInt, Field(ge=1, le=25)]
+    firm_id: Annotated[StrictInt, Field(gt=0)] | None = None
+
+
+class StudySkill(CommandBase):
+    type: Literal["study_skill"]
+    skill_key: Literal[
+        "household_finance", "labor", "commerce", "entrepreneurship",
+        "finance", "law", "media", "governance",
+    ]
+
+
 class DirectAudience(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["direct"]

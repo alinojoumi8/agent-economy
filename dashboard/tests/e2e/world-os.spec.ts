@@ -137,6 +137,8 @@ test("graph and semantic table share keyboard selection with reduced motion", as
   await proposalNode.focus();
   await page.keyboard.press("Enter");
   await expect(page.locator(".world-os-semantic-panel tr.selected")).toContainText("buy_goods");
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.locator(".world-os-graph-controls output")).toHaveText("120%");
   const duration = await page.locator(".world-os-nav a").first().evaluate(element => getComputedStyle(element).transitionDuration);
   expect(duration).toBe("0s");
 });
@@ -150,4 +152,30 @@ test("390 pixel workflow keeps navigation, chronology, and evidence usable", asy
   await expect(page.getByText("Untrusted simulated communication")).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("command navigation, tick travel, and rail controls stay interactive", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+
+  await page.keyboard.press("Control+K");
+  const command = page.getByRole("dialog", { name: "Go to a workspace" });
+  await expect(command).toBeVisible();
+  const commandSearch = command.getByPlaceholder("Search people, markets, evidence…");
+  await commandSearch.fill("communications");
+  await commandSearch.press("Enter");
+  await expect(page).toHaveURL(/news-communications/);
+
+  await page.goto("/runs/run-demo/overview");
+  await page.getByLabel("Inspect tick").fill("4");
+  await page.getByRole("button", { name: "Go to tick" }).click();
+  await expect(page).toHaveURL(/tick=4/);
+  await expect(page.getByText("Historical", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Collapse workspace rail" }).click();
+  await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
+  await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
+  expect(pageErrors).toEqual([]);
 });

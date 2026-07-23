@@ -4,14 +4,21 @@ import json
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 import pytest
 
 from engine.store import Store
 from engine.actions import ActionExecutor
 from llm.gateway import Gateway
-from observability import JsonFormatter, log_event, safe_fields
+from observability import (
+    JsonFormatter,
+    configure_logging,
+    log_event,
+    safe_fields,
+)
 import run as cli
+from run_config import load_config
 from world.loop import World
 
 
@@ -57,6 +64,37 @@ def test_log_event_attaches_testable_structured_fields(caplog):
     assert record.event_fields == {
         "run_id": "run-2", "authorization": "[REDACTED]",
     }
+
+
+def test_configure_logging_writes_to_a_bounded_json_file(tmp_path, monkeypatch):
+    path = tmp_path / "operations.jsonl.log"
+    monkeypatch.setenv("AGENT_ECONOMY_LOG_FILE", str(path))
+    root = logging.getLogger()
+    existing_handlers = list(root.handlers)
+
+    try:
+        configure_logging("INFO")
+        log_event(
+            logging.getLogger("agent_economy.test.file"),
+            logging.INFO, "file.test.completed", tick=7)
+        added = [handler for handler in root.handlers
+                 if handler not in existing_handlers]
+        for handler in added:
+            handler.flush()
+
+        payload = json.loads(path.read_text(encoding="utf-8").strip())
+        assert payload["event"] == "file.test.completed"
+        assert payload["tick"] == 7
+        rotating = next(
+            handler for handler in added
+            if isinstance(handler, RotatingFileHandler))
+        assert rotating.maxBytes == 10 * 1024 * 1024
+        assert rotating.backupCount == 5
+    finally:
+        for handler in list(root.handlers):
+            if handler not in existing_handlers:
+                root.removeHandler(handler)
+                handler.close()
 
 
 def test_cli_loads_dotenv_before_configuring_logging(monkeypatch):
@@ -240,6 +278,9 @@ def test_world_run_lifecycle_and_checkpoint_are_logged(tmp_path, caplog):
 
     events = [getattr(record, "event_name", "") for record in caplog.records]
     assert "world.run.started" in events
+    assert "world.phase.started" in events
+    assert "world.phase.completed" in events
+    assert "world.tick.completed" in events
     assert "world.checkpoint.created" in events
     assert "world.run.finished" in events
     finished = next(record for record in caplog.records
@@ -248,6 +289,43 @@ def test_world_run_lifecycle_and_checkpoint_are_logged(tmp_path, caplog):
     assert finished.event_fields["end_tick"] == 1
     assert finished.event_fields["status"] == "paused"
     store.close()
+
+
+def test_resource_guard_pauses_after_a_sustained_limit(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.world")
+    config = load_config("runs/base.yaml")
+    config["resource_guard"] = {
+        "enabled": True,
+        "sample_interval_s": 0.1,
+        "max_cpu_percent": 95,
+        "max_memory_percent": 90,
+        "min_available_memory_gb": 4,
+        "consecutive_breaches": 1,
+    }
+    store = Store(str(tmp_path / "resource-guard.db"))
+    store.init_run_meta("resource-guard", int(config["seed"]), config)
+    world = World(store, config)
+    world.status = "running"
+    monkeypatch.setattr(world, "_resource_snapshot", lambda: {
+        "system_cpu_percent": 99.0,
+        "system_memory_percent": 50.0,
+        "available_memory_gb": 8.0,
+        "process_rss_mb": 500.0,
+        "global_in_flight": 2,
+        "global_queue_depth": 1,
+        "provider_in_flight": {"scripted": 2},
+        "provider_queue_depth": {"scripted": 1},
+    })
+
+    asyncio.run(world._monitor_resources())
+
+    assert world._pause_requested
+    assert world.last_pause_reason["reason"] == "resource_guard"
+    assert world.last_pause_reason["breaches"] == ["system_cpu"]
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "runtime.resource.sample" in events
+    assert "runtime.resource.limit_reached" in events
+    world.close()
 
 
 def test_unexpected_action_handler_failure_is_logged(economy, caplog):

@@ -12,7 +12,22 @@ become ill, and panic. LLMs propose decisions; a deterministic engine validates
 and settles every consequence through an exactly balanced double-entry ledger.
 
 > Agent Economy is a research simulator, not a real-economy forecast or
-> financial advice. The default offline profile is free and deterministic.
+> financial advice. The default desktop profile uses live, evolving agents;
+> `runs/base.yaml` remains the explicit free deterministic profile.
+
+The default desktop launch is the Semantics-11 cognition economy:
+
+```powershell
+# .env must provide DEEPSEEK_API_KEY, MINIMAX_API_KEY, and KIMI_API_KEY.
+# Ollama must serve the bounded-context alias created below.
+ollama pull qwen3.5:9b
+ollama create agent-economy-qwen3.5:9b-16k -f deploy/ollama/Modelfile.qwen3.5-9b-16k
+python run.py --preflight-live --serve --approve-live-inference
+```
+
+It runs independent Ollama, DeepSeek, MiniMax, and Kimi pools, assigns citizen
+compute subscriptions, and persists learnable domain skills. See the
+[Semantics-11 live cognition guide](docs/semantics11-cognition.md).
 
 ## Legal-Political Economy v2
 
@@ -200,6 +215,7 @@ baseline and fails closed when history is missing.
 
 | Profile | Agents/purpose | Provider policy |
 |---|---|---|
+| `runs/evolving-live.yaml` | Default 100-agent Semantics-11 cognition world | Ollama 2, Ollama Cloud 3, DeepSeek 6, MiniMax 2, Kimi 2; global 10; resource guard and strict live preflight |
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
@@ -221,16 +237,19 @@ Provider configs select `prompt_cache_mode` from `off`,
 
 ```powershell
 Copy-Item .env.example .env
-# Add MINIMAX_API_KEY and KIMI_API_KEY locally; never commit .env.
+# Add DEEPSEEK_API_KEY, MINIMAX_API_KEY, and KIMI_API_KEY locally; never commit .env.
+# Create the app-specific 16K-context alias and keep Ollama running.
+ollama pull qwen3.5:9b
+ollama create agent-economy-qwen3.5:9b-16k -f deploy/ollama/Modelfile.qwen3.5-9b-16k
 
-python run.py --config runs/production.yaml --preflight
-python run.py --config runs/production.yaml --preflight-live
-python run.py --config runs/production.yaml
+python run.py --config runs/evolving-live.yaml --preflight
+python run.py --config runs/evolving-live.yaml --preflight-live
+python run.py --config runs/evolving-live.yaml --serve --approve-live-inference
 ```
 
-The preflight commands validate configuration and provider model catalogs; they
-do not request chat completions. Paid acceptance requires the additional,
-explicit `--approve-live-inference` flag. Read the
+Static preflight validates configuration. Live preflight also sends one small
+real JSON-contract completion through every routed provider. Any inference run
+requires the explicit `--approve-live-inference` flag. Read the
 [operator runbook](docs/operator-runbook.md) before starting it.
 
 ## Resume, replay, and reports
@@ -307,7 +326,9 @@ Caddy, and Prometheus. Start with
 World OS semantics 9/schema 13 adds a common external-agent gateway for
 Hermes, OpenClaw/Moltbot, custom MCP clients, and generic REST agents. Semantics
 10/schema 14 adds Agent Commons with deterministic feeds and explicit-read
-information effects. Outside runtimes keep their own models, prompts, memories,
+information effects. Semantics 11/schema 15 adds citizen compute subscriptions,
+authoritative skill progression, provider-pool routing, and operational LLM
+attempt evidence. Outside runtimes keep their own models, prompts, memories,
 provider credentials, and inference costs; Agent Economy owns only identity,
 authorization, deterministic turns, receipts, and world state.
 
@@ -326,6 +347,7 @@ invite-only until the independent protocol and real-connector gates in the
 | Understand the research model and metrics | [Research guide](docs/research-guide.md) |
 | Understand components and data flow | [Architecture](docs/architecture.md) |
 | Customize a run or provider | [Configuration](docs/configuration.md) |
+| Run evolving live agents and audit cognition | [Semantics-11 cognition](docs/semantics11-cognition.md) |
 | Automate the local server | [API reference](docs/api-reference.md) |
 | Connect Hermes, OpenClaw, or a custom agent | [External Agent Gateway](docs/world-os/EXTERNAL-AGENT-GATEWAY.md) and [clients](clients/README.md) |
 | Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |

@@ -122,24 +122,33 @@ def create_app(world: World, *, served_ticks: int | None = None,
     @app.middleware("http")
     async def log_http_request(request: Request, call_next):
         started = time.perf_counter()
+        logged_path = (
+            "/claim/[REDACTED]"
+            if request.url.path.startswith("/claim/")
+            else request.url.path
+        )
         operational_log(
             logger, logging.DEBUG, "http.request.started",
-            method=request.method, path=request.url.path,
+            method=request.method, path=logged_path,
         )
         try:
             response = await call_next(request)
         except Exception as exc:
             operational_log(
                 logger, logging.ERROR, "http.request.failed",
-                method=request.method, path=request.url.path,
+                method=request.method, path=logged_path,
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
                 error_type=type(exc).__name__, error=str(exc),
             )
             raise
-        level = logging.WARNING if response.status_code >= 400 else logging.INFO
+        level = (
+            logging.WARNING if response.status_code >= 400
+            else logging.DEBUG if request.method in {"GET", "HEAD"}
+            else logging.INFO
+        )
         operational_log(
             logger, level, "http.request.completed",
-            method=request.method, path=request.url.path,
+            method=request.method, path=logged_path,
             status_code=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
@@ -279,7 +288,8 @@ def create_app(world: World, *, served_ticks: int | None = None,
     @app.get("/api/agents")
     async def agents():
         rows = store.query(
-            "SELECT id, name, kind, role, occupation, age, health, alive, retired, employer_id "
+            "SELECT id, name, kind, role, occupation, age, health, alive, retired, employer_id, "
+            "model_tier, population_tier "
             "FROM agents ORDER BY id")
         return [dict(r) for r in rows]
 
@@ -314,7 +324,8 @@ def create_app(world: World, *, served_ticks: int | None = None,
                 "('decision','citizen','founder','credit_officer','central_banker') "
                 "ORDER BY id DESC LIMIT 10", (agent_id,)):
             decision = {
-                "tick": r["tick"], "purpose": r["purpose"], "model": r["model"],
+                "tick": r["tick"], "purpose": r["purpose"],
+                "provider": r["provider"], "model": r["model"],
                 "cost_usd": r["cost_usd"],
             }
             if not hosted_safe:
@@ -343,11 +354,17 @@ def create_app(world: World, *, served_ticks: int | None = None,
                     - int(calibration_profile["liquid_wealth_cents"]))
             calibration_profile["event_id"] = int(calibration_event["id"])
             calibration_profile["tick"] = int(calibration_event["tick"])
+        cognition = world.economy.cognition.agent_projection(agent_id)
+        latest_route = store.query_one(
+            "SELECT provider,model,purpose,tick FROM llm_calls WHERE agent_id=? "
+            "ORDER BY id DESC LIMIT 1", (agent_id,))
+        cognition["latest_route"] = dict(latest_route) if latest_route else None
         return {"agent": dict(a), "persona": persona, "accounts": accounts, "loans": loans,
                 "beliefs": beliefs, "belief_history": belief_history,
                 "memories": memories, "shares": shares,
                 "recent_decisions": decisions,
-                "calibration_profile": calibration_profile}
+                "calibration_profile": calibration_profile,
+                "cognition": cognition}
 
     @app.get("/api/banks")
     async def banks():
@@ -466,6 +483,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
     @app.get("/api/cost")
     async def cost():
+        by_provider = [dict(r) for r in store.query(
+            "SELECT provider, COUNT(*) AS calls, SUM(in_tokens) AS in_tokens, "
+            "SUM(out_tokens) AS out_tokens, SUM(cost_usd) AS cost_usd "
+            "FROM llm_calls GROUP BY provider ORDER BY cost_usd DESC")]
         by_model = [dict(r) for r in store.query(
             "SELECT model, COUNT(*) AS calls, SUM(in_tokens) AS in_tokens, "
             "SUM(out_tokens) AS out_tokens, SUM(cost_usd) AS cost_usd "
@@ -480,8 +501,14 @@ def create_app(world: World, *, served_ticks: int | None = None,
             "SUM(c.cost_usd) AS cost_usd FROM llm_calls c "
             "LEFT JOIN agents a ON a.id=c.agent_id "
             "GROUP BY c.agent_id, a.name, c.role ORDER BY cost_usd DESC, calls DESC LIMIT 12")]
-        return {"governor": world.gateway.governor.status(), "by_model": by_model,
+        return {"governor": world.gateway.governor.status(),
+                "runtime": world.gateway.runtime_status(),
+                "by_provider": by_provider, "by_model": by_model,
                 "by_purpose": by_purpose, "by_agent": by_agent}
+
+    @app.get("/api/llm/runtime")
+    async def llm_runtime():
+        return world.gateway.runtime_status()
 
     # ── Oracle (PRD R6) ──────────────────────────────────────────────────────
     @app.post("/api/oracle/ask")
@@ -670,7 +697,14 @@ def create_app(world: World, *, served_ticks: int | None = None,
         static_dir = Path(__file__).parent / "static"
         if static_dir.exists():
             @app.get("/")
-            async def index():
+            @app.get("/runs/{run_id}", include_in_schema=False)
+            @app.get("/runs/{run_id}/{workspace_path:path}", include_in_schema=False)
+            @app.get("/commons", include_in_schema=False)
+            @app.get("/commons/{workspace_path:path}", include_in_schema=False)
+            async def index(
+                run_id: Optional[str] = None,
+                workspace_path: Optional[str] = None,
+            ):
                 return FileResponse(str(static_dir / "index.html"))
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
         reports_dir = Path("reports/out")

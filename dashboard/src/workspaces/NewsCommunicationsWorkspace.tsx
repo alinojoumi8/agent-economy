@@ -20,6 +20,7 @@ export function NewsCommunicationsWorkspace() {
   const tick = search.get("tick") || "live";
   const [mode, setMode] = useState<ViewMode>("ordinary");
   const [agentId, setAgentId] = useState("");
+  const [threadQuery, setThreadQuery] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const scope = accessQuery(mode, agentId);
   const threads = useQuery({
@@ -29,6 +30,12 @@ export function NewsCommunicationsWorkspace() {
   });
   const selectedThread = useMemo(() => threads.data?.data.items.find(
     item => item.thread_id === Number(threadId)), [threadId, threads.data]);
+  const visibleThreads = useMemo(() => {
+    const items = threads.data?.data.items || [];
+    const value = threadQuery.trim().toLowerCase();
+    if (!value) return items;
+    return items.filter(item => (item.subject + " " + item.status).toLowerCase().includes(value));
+  }, [threadQuery, threads.data]);
   useEffect(() => {
     setSelectedMessageId(selectedThread?.messages.at(-1)?.id || null);
   }, [selectedThread]);
@@ -67,7 +74,11 @@ export function NewsCommunicationsWorkspace() {
     {threads.error && <div className="world-os-error" role="alert">{threads.error.message}</div>}
     <div className="world-os-communications">
       <aside className="world-os-thread-list" aria-label="Authorized threads">
-        {(threads.data?.data.items || []).map(thread => <button
+        <div className="world-os-thread-tools">
+          <label><span className="world-os-visually-hidden">Filter authorized threads</span><input aria-label="Filter authorized threads" value={threadQuery} onChange={event => setThreadQuery(event.target.value)} placeholder="Filter threads…" /></label>
+          <span>{visibleThreads.length}</span>
+        </div>
+        {visibleThreads.map(thread => <button
           key={thread.thread_id}
           className={thread.thread_id === Number(threadId) ? "active" : ""}
           onClick={() => openThread(thread.thread_id)}
@@ -76,7 +87,7 @@ export function NewsCommunicationsWorkspace() {
           <strong>{thread.subject}</strong>
           <small>{thread.authorized_message_count} authorized message{thread.authorized_message_count === 1 ? "" : "s"}</small>
         </button>)}
-        {!threads.isLoading && !threads.data?.data.items.length && <p className="muted">No message-specific records are authorized in this view.</p>}
+        {!threads.isLoading && !visibleThreads.length && <p className="muted">{threadQuery ? "No authorized threads match this filter." : "No message-specific records are authorized in this view."}</p>}
       </aside>
       <div className="world-os-thread-detail">
         {!selectedThread && <div className="world-os-empty"><h3>Select an authorized thread</h3><p>Private existence and URLs remain absent until the selected view has a valid access basis.</p></div>}

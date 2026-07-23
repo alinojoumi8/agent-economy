@@ -24,8 +24,11 @@ import random
 import shutil
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Callable, Optional
+
+import psutil
 
 from engine.core import Economy
 from engine.checkpoint_manifest import (
@@ -89,6 +92,7 @@ class World:
         self.status = "created"      # created|running|paused|halted|finished
         self.speed_delay_s = float(config.get("speed_delay_s", 0.0))
         self.checkpoint_every = int(config.get("checkpoint_every", 10))
+        self.resource_guard = dict(config.get("resource_guard", {}) or {})
         self._pause_requested = False
         self._stop_requested = False
         self.last_report_path: Optional[str] = None
@@ -120,6 +124,7 @@ class World:
         if self.config.get("spec_closure_fixture", {}).get("enabled"):
             from world.spec_closure_fixture import SpecClosureFixtureSeeder
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
+        self.economy.cognition.seed_world(0)
         self.shocks.load_from_config()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
@@ -148,6 +153,11 @@ class World:
         operational_log(logger, logging.INFO, "world.run.started",
                         run_id=self.gateway.run_id, start_tick=start_tick,
                         max_ticks=max_ticks, replay=self.gateway.replay)
+        resource_task = (
+            asyncio.create_task(self._monitor_resources())
+            if self.resource_guard.get("enabled") and not self.gateway.replay
+            else None
+        )
         try:
             while not self._stop_requested:
                 if end_tick is not None and self.store.tick >= end_tick:
@@ -160,6 +170,10 @@ class World:
                 if self.speed_delay_s > 0:
                     await asyncio.sleep(self.speed_delay_s)
         finally:
+            if resource_task is not None:
+                resource_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await resource_task
             new_status = "halted" if self.status == "halted" else "paused"
             if self._stop_requested:
                 new_status = "finished"
@@ -212,6 +226,77 @@ class World:
                             end_tick=self.store.tick, status=new_status,
                             stop_requested=self._stop_requested)
 
+    def _resource_snapshot(self) -> dict:
+        memory = psutil.virtual_memory()
+        process = psutil.Process()
+        return {
+            "system_cpu_percent": round(float(psutil.cpu_percent(interval=None)), 1),
+            "system_memory_percent": round(float(memory.percent), 1),
+            "available_memory_gb": round(float(memory.available) / (1024 ** 3), 2),
+            "process_rss_mb": round(float(process.memory_info().rss) / (1024 ** 2), 1),
+            "global_in_flight": int(self.gateway._live_in_flight),
+            "global_queue_depth": int(self.gateway._global_queue_depth()),
+            "provider_in_flight": {
+                name: int(gate.active)
+                for name, gate in sorted(self.gateway.provider_gates.items())
+            },
+            "provider_queue_depth": {
+                name: int(gate.queued)
+                for name, gate in sorted(self.gateway.provider_gates.items())
+            },
+        }
+
+    def _resource_breaches(self, sample: dict) -> list[str]:
+        breaches = []
+        if (float(self.resource_guard.get("max_cpu_percent", 0)) > 0
+                and sample["system_cpu_percent"]
+                >= float(self.resource_guard["max_cpu_percent"])):
+            breaches.append("system_cpu")
+        if (float(self.resource_guard.get("max_memory_percent", 0)) > 0
+                and sample["system_memory_percent"]
+                >= float(self.resource_guard["max_memory_percent"])):
+            breaches.append("system_memory")
+        if (float(self.resource_guard.get("min_available_memory_gb", 0)) > 0
+                and sample["available_memory_gb"]
+                <= float(self.resource_guard["min_available_memory_gb"])):
+            breaches.append("available_memory")
+        return breaches
+
+    async def _monitor_resources(self) -> None:
+        interval_s = max(
+            0.1, float(self.resource_guard.get("sample_interval_s", 5.0)))
+        required = max(
+            1, int(self.resource_guard.get("consecutive_breaches", 3)))
+        consecutive = 0
+        while self.status == "running" and not self._pause_requested:
+            try:
+                sample = self._resource_snapshot()
+                breaches = self._resource_breaches(sample)
+                consecutive = consecutive + 1 if breaches else 0
+                operational_log(
+                    logger, logging.INFO, "runtime.resource.sample",
+                    run_id=self.gateway.run_id, tick=self.store.tick,
+                    breaches=breaches, consecutive_breaches=consecutive,
+                    **sample)
+                if consecutive >= required:
+                    self.last_pause_reason = {
+                        "reason": "resource_guard",
+                        "breaches": breaches,
+                        **sample,
+                    }
+                    operational_log(
+                        logger, logging.CRITICAL, "runtime.resource.limit_reached",
+                        run_id=self.gateway.run_id, tick=self.store.tick,
+                        consecutive_breaches=consecutive, **self.last_pause_reason)
+                    self.request_pause()
+                    return
+            except Exception as exc:
+                operational_log(
+                    logger, logging.WARNING, "runtime.resource.sample_failed",
+                    run_id=self.gateway.run_id, tick=self.store.tick,
+                    error_type=type(exc).__name__, error=str(exc))
+            await asyncio.sleep(interval_s)
+
     def request_pause(self) -> None:
         self._pause_requested = True
         self.gateway.interrupt_pending()
@@ -254,6 +339,10 @@ class World:
             for index in range(self.phases.index(phase), len(self.phases)):
                 phase = self.phases[index]
                 self._persist_phase(tick, phase, state)
+                phase_started = time.perf_counter()
+                operational_log(
+                    logger, logging.INFO, "world.phase.started",
+                    run_id=self.gateway.run_id, tick=tick, phase=phase)
                 if phase == "NIGHT_CLOSE":
                     try:
                         with self.store.savepoint(f"tick_{tick}_night_close"):
@@ -304,6 +393,11 @@ class World:
                             tick, "FINALIZE", getattr(exc, "diagnostic", {}))
                         raise
 
+                operational_log(
+                    logger, logging.INFO, "world.phase.completed",
+                    run_id=self.gateway.run_id, tick=tick, phase=phase,
+                    duration_ms=round(
+                        (time.perf_counter() - phase_started) * 1000.0, 2))
                 if index + 1 < len(self.phases):
                     self._persist_phase(tick, self.phases[index + 1], state)
                 else:
@@ -313,13 +407,13 @@ class World:
                     self._save_prng_state()
                     self.store.commit()
 
-            if self.checkpoint_every and tick % self.checkpoint_every == 0:
-                self.checkpoint(tick)
-
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": decisions_count,
                        "governor": self.gateway.governor.status()}
-            operational_log(logger, logging.DEBUG, "world.tick.completed",
+            self._record_runtime_tick(tick, summary)
+            if self.checkpoint_every and tick % self.checkpoint_every == 0:
+                self.checkpoint(tick)
+            operational_log(logger, logging.INFO, "world.tick.completed",
                             run_id=self.gateway.run_id, tick=tick, phase=phase,
                             wall_s=summary["wall_s"], decisions=decisions_count)
             self._notify_tick(tick, summary)
@@ -343,6 +437,35 @@ class World:
             }
             self._notify_tick(self.store.tick, summary)
             return summary
+
+    def _record_runtime_tick(self, tick: int, summary: dict) -> None:
+        """Persist host/provider timing as non-authoritative acceptance evidence."""
+        if self.engine_semantics_version < 11:
+            return
+        attempts = self.store.query_one(
+            "SELECT COUNT(*) attempts,"
+            "SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) successes,"
+            "SUM(CASE WHEN outcome<>'success' THEN 1 ELSE 0 END) failures,"
+            "SUM(fallback_used) fallbacks,SUM(rate_limited) rate_limits "
+            "FROM llm_attempts WHERE tick=?", (int(tick),))
+        runtime = self.gateway.runtime_status()
+        global_runtime = runtime["global"]
+        self.store.execute(
+            "INSERT OR REPLACE INTO runtime_tick_stats("
+            "tick,wall_ms,decisions,llm_attempts,llm_successes,llm_failures,"
+            "fallbacks,rate_limits,peak_live_in_flight,peak_queue_depth) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                int(tick), round(float(summary.get("wall_s", 0.0)) * 1000.0, 3),
+                max(0, int(summary.get("decisions", 0))),
+                int(attempts["attempts"] or 0), int(attempts["successes"] or 0),
+                int(attempts["failures"] or 0), int(attempts["fallbacks"] or 0),
+                int(attempts["rate_limits"] or 0),
+                int(global_runtime["peak_in_flight"]),
+                int(global_runtime["peak_queue_depth"]),
+            ),
+        )
+        self.store.commit()
 
     def _notify_tick(self, tick: int, summary: dict) -> None:
         if self.on_tick:
@@ -429,6 +552,8 @@ class World:
             e.politics.run_nightly(tick)
             if self.engine_semantics_version >= 5:
                 e.regions.run_nightly(tick)
+        if self.engine_semantics_version >= 11:
+            e.cognition.run_nightly(tick)
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
@@ -582,6 +707,7 @@ class World:
                     savings_account_id=sav)
             else:
                 self.store.update("agents", agent_id, checking_account_id=chk)
+            self.economy.cognition.seed_agent(agent_id, tick)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
             housing_cost = max(0, int(self.config.get("lifecycle", {}).get(

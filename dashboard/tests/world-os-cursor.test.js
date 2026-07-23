@@ -27,6 +27,17 @@ test("cursor reducer applies only contiguous full-lineage deltas", () => {
   assert.deepEqual(reduceCursorState(applied, delta(4, 5)), applied);
 });
 
+test("legacy tick messages mark the transport live without inventing lineage", () => {
+  const connected = reduceCursorState(initialCursorState, {
+    type: "tick", tick: 0, status: "created",
+  });
+
+  assert.equal(connected.status, "live");
+  assert.equal(connected.cursor, 0);
+  assert.equal(connected.runId, null);
+  assert.equal(connected.staleReason, null);
+});
+
 test("cursor reducer marks gaps and lineage conflicts stale", () => {
   const connected = reduceCursorState(initialCursorState, hello);
   const gap = reduceCursorState(connected, delta(7, 8));

@@ -1,7 +1,8 @@
 """Agent Economy entrypoint.
 
-  python run.py --config runs/base.yaml                 # serve dashboard + world (paused)
-  python run.py --config runs/base.yaml --ticks 30      # headless: run 30 ticks, report, exit
+  python run.py --preflight-live --serve --approve-live-inference  # default evolving live dashboard
+  python run.py --config runs/evolving-live.yaml --ticks 10 --preflight-live --approve-live-inference
+  python run.py --config runs/base.yaml --ticks 30      # explicit provider-free mechanics profile
   python run.py --config runs/production.yaml --preflight       # validate real-provider config
   python run.py --config runs/production.yaml --preflight-live  # authenticate + confirm models
   python run.py --config runs/base.yaml --resume RUNID  # resume an existing run db
@@ -39,7 +40,7 @@ from observability import configure_logging, get_logger, log_event as operationa
 from run_config import load_config
 
 DATA_DIR = Path("data/runs")
-DEFAULT_CONFIG = "runs/production.yaml"
+DEFAULT_CONFIG = "runs/evolving-live.yaml"
 logger = get_logger("cli")
 REPLAY_INPUT_TABLES = (
     "dataset_manifests",
@@ -54,7 +55,12 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
         return {**report, "live_checked": False}
     store = Store(":memory:")
     store.init_run_meta("preflight", int(config.get("seed", 42)), config)
-    return await Gateway(store, config).preflight(live=True)
+    gateway = Gateway(store, config)
+    try:
+        return await gateway.preflight(live=True)
+    finally:
+        gateway.close()
+        store.close()
 
 
 def require_live_inference_approval(config: dict, *, approved: bool) -> None:
@@ -638,7 +644,7 @@ def main() -> None:
     configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
-                    help="world config (default: locked MiniMax/Kimi production profile)")
+                    help="world config (default: evolving live-agent desktop profile)")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
@@ -788,6 +794,8 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    preflight_then_run = bool(
+        args.preflight_live and (args.serve or args.ticks is not None))
     if args.oracle_campaign_run:
         from reports.oracle_campaign import validate_oracle_campaign_profile
         validate_oracle_campaign_profile(config, profile_path=args.config)
@@ -799,6 +807,10 @@ def main() -> None:
                     path=str(Path(args.config).resolve()), mode=mode,
                     seed=config.get("seed", 42))
     fresh_run = not args.resume and not args.fork
+    if (fresh_run and not args.replay
+            and bool(config.get("llm", {}).get("require_preflight_live", False))
+            and not (args.preflight or args.preflight_live)):
+        ap.error("this live profile requires --preflight-live before starting")
     if fresh_run and not (args.preflight or args.preflight_live or args.replay):
         require_live_inference_approval(
             config, approved=args.approve_live_inference)
@@ -815,7 +827,8 @@ def main() -> None:
         operational_log(logger, logging.INFO, "provider.preflight.completed",
                         live=args.preflight_live, ready=ready,
                         live_ready=live_ready)
-        return
+        if not preflight_then_run:
+            return
     if args.fork:
         args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
     if args.oracle_campaign_run:

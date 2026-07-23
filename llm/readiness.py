@@ -48,8 +48,55 @@ def validate_llm_config(
         "default_route", {"provider": "scripted", "model": "scripted"}) or {}
 
     route_items = [("default", default_route), *sorted(routes.items())]
+    tier_routes = llm.get("tier_routes", {}) or {}
+    premium_routes = llm.get("premium_routes", {}) or {}
+    citizen_model_cohorts = llm.get("citizen_model_cohorts", [])
+    if citizen_model_cohorts is None:
+        citizen_model_cohorts = []
+    cohort_errors: list[str] = []
+
+    def add_route_group(prefix: str, name: str, route: Any) -> None:
+        if not isinstance(route, dict):
+            route_items.append((f"{prefix}.{name}", route))
+            return
+        if "primary" in route or "fallback" in route:
+            if "primary" in route:
+                route_items.append((f"{prefix}.{name}.primary", route["primary"]))
+            if route.get("fallback") is not None:
+                route_items.append((f"{prefix}.{name}.fallback", route["fallback"]))
+        else:
+            route_items.append((f"{prefix}.{name}", route))
+
+    for tier_name, tier_route in sorted(tier_routes.items()):
+        add_route_group("tier_routes", str(tier_name), tier_route)
+    for route_name, premium_route in sorted(premium_routes.items()):
+        add_route_group("premium_routes", str(route_name), premium_route)
+    if not isinstance(citizen_model_cohorts, list):
+        cohort_errors.append("citizen_model_cohorts must be a list")
+    else:
+        seen_cohort_names: set[str] = set()
+        for index, cohort in enumerate(citizen_model_cohorts):
+            path = f"citizen_model_cohorts[{index}]"
+            if not isinstance(cohort, dict):
+                cohort_errors.append(f"{path} must be a mapping")
+                continue
+            name = str(cohort.get("name", "")).strip()
+            if not name:
+                cohort_errors.append(f"{path} requires a name")
+            elif name in seen_cohort_names:
+                cohort_errors.append(f"citizen model cohort name '{name}' is duplicated")
+            else:
+                seen_cohort_names.add(name)
+            count = cohort.get("count")
+            if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+                cohort_errors.append(f"{path} count must be a positive integer")
+            if "primary" not in cohort:
+                cohort_errors.append(f"{path} requires a primary route")
+            else:
+                add_route_group(
+                    "citizen_model_cohorts", name or str(index), cohort)
     referenced: dict[str, set[str]] = {}
-    errors: list[str] = []
+    errors: list[str] = list(cohort_errors)
     warnings: list[str] = []
 
     for route_name, route in route_items:
@@ -90,7 +137,8 @@ def validate_llm_config(
         prompt_cache_mode = normalize_prompt_cache_mode(
             pcfg.get("prompt_cache_mode"),
             legacy_prompt_cache_key=bool(pcfg.get("prompt_cache_key")))
-        key_required = kind in NETWORK_PROVIDER_KINDS
+        auth_none = str(pcfg.get("auth", "bearer")).lower() == "none"
+        key_required = kind in NETWORK_PROVIDER_KINDS and not auth_none
         key_value = str(env.get(key_env, "")).strip() if key_env else ""
         key_present = bool(key_value)
 
@@ -140,6 +188,7 @@ def validate_llm_config(
             "base_url": base_url or None, "key_env": key_env or None,
             "key_required": key_required, "key_present": key_present,
             "configured": True, "prompt_cache_mode": prompt_cache_mode,
+            "auth": "none" if auth_none else "bearer",
         })
 
     for provider in sorted(set(providers) - set(referenced)):
@@ -154,6 +203,14 @@ def validate_llm_config(
         errors.append(
             "CLI providers may only serve oracle_plan/oracle/dev routes: "
             + ", ".join(forbidden_cli))
+
+    if bool(llm.get("live_only", False)):
+        forbidden_live = sorted(
+            provider for provider in referenced if provider in BUILTIN_PROVIDERS)
+        if forbidden_live:
+            errors.append(
+                "live_only routing cannot reference scripted/mock providers: "
+                + ", ".join(forbidden_live))
 
     mode = "offline" if set(referenced).issubset(BUILTIN_PROVIDERS) else "network"
     report = {

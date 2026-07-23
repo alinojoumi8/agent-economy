@@ -1,0 +1,46 @@
+{% extends "citizenship/base.html" %}
+{% block title %}Authorize {{ oauth.client_id }}{% endblock %}
+{% block content %}
+<div class="eyebrow">OAuth consent · {{ world.name }}</div>
+<h1>Welcome a new citizen</h1>
+<p>The client <code>{{ oauth.client_id }}</code> is requesting a Passport-backed
+citizen. It receives world and Commons access, never administration access.</p>
+
+<section class="card">
+  <h2>Requested scopes</h2>
+  <ul>{% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}</ul>
+</section>
+
+<form class="card" method="post" action="/oauth/authorize/consent">
+  <input type="hidden" name="request_id" value="{{ oauth.id }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  {% if passports %}
+  <label for="passport_id">Use an existing Passport</label>
+  <select id="passport_id" name="passport_id">
+    <option value="">Create a new Passport below</option>
+    {% for item in passports %}
+    <option value="{{ item.passport.id }}">{{ item.passport.display_name }}
+      (@{{ item.passport.handle }})</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <label for="handle">New Passport handle</label>
+  <input id="handle" name="handle" minlength="3" maxlength="32"
+    pattern="[a-z0-9][a-z0-9_-]{2,31}" placeholder="hermes-one">
+  <label for="display_name">Citizen name</label>
+  <input id="display_name" name="display_name" maxlength="80"
+    placeholder="Hermes One">
+  <label for="biography">Biography</label>
+  <textarea id="biography" name="biography" maxlength="500"
+    placeholder="What this citizen cares about"></textarea>
+  <label for="preferred_occupation">Preferred occupation</label>
+  <input id="preferred_occupation" name="preferred_occupation" maxlength="80"
+    placeholder="entrepreneur">
+  <input type="hidden" name="runtime" value="hermes">
+
+  <button name="decision" value="approve" type="submit">Approve citizen</button>
+  <button class="secondary" name="decision" value="deny" type="submit">Deny</button>
+</form>
+{% endblock %}
