@@ -9,7 +9,8 @@ import { RunHeader } from "./RunHeader";
 import { ParticipantPanel } from "./ParticipantPanel";
 import { ShockModal } from "./ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
-import { EconomicMap, InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
+import { InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
+import { CivicCity } from "./CivicCity";
 import { SectionTitle } from "./ui";
 
 const MacroOverview = lazy(() => import("./MacroOverview"));
@@ -27,7 +28,7 @@ export function Observatory({ hostedSession = null }) {
     ? { enabled: false, active: false, action_catalog: [] }
     : data.participant;
 
-  return <div className="min-h-screen">
+  return <div className="civic-observatory min-h-screen">
     <RunHeader status={status} participant={participant} connected={connected} loading={loading} act={act}
       hosted={hosted} canControl={canControl}
       onShock={hosted ? null : () => setShockOpen(true)}
@@ -54,7 +55,19 @@ export function Observatory({ hostedSession = null }) {
 
     <main id="main-content" className="mx-auto grid max-w-[1800px] grid-cols-12 gap-3 px-3 pb-16 pt-3 sm:px-5">
       <SectionTitle index="0" title="The living legal-political economy" description="Watch regional production, trade, institutions, law, information, and capital move through one deterministic event spine." />
-      <EconomicMap map={data.v2?.map} />
+      <CivicCity
+        agents={data.agents}
+        firms={data.firms}
+        events={data.events}
+        map={data.v2?.map}
+        runId={status?.run_id}
+        tick={status?.tick ?? "live"}
+        phase={status?.phase}
+        status={status?.status}
+        connected={connected}
+        loading={loading}
+        variant="observatory"
+      />
       <InstitutionalPulse legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} datasets={data.v2?.datasets} />
       <LegalPoliticalPanels legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} startups={data.v2?.startups} markets={data.v2?.markets} />
 

@@ -3,12 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307100d'/%3E%3Cpath d='M14 42 25 20l9 16 7-11 9 17' fill='none' stroke='%2378e6b4' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <title>{% block title %}Agent Economy Citizenship{% endblock %}</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #07100d; color: #e6f2ed; }
-    main { width: min(780px, calc(100% - 32px)); margin: 48px auto; }
+    .site-header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid #20382f;
+      background: #07100df2; backdrop-filter: blur(18px); }
+    .site-header-inner { width: min(1100px, calc(100% - 28px)); margin: 0 auto;
+      display: flex; min-height: 64px; align-items: center; gap: 18px; }
+    .brand { color: #eef8f4; font-weight: 850; letter-spacing: .08em;
+      text-decoration: none; white-space: nowrap; }
+    .brand small { display: block; margin-top: 2px; color: #688177; font-size: .62rem;
+      font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+    .site-nav { display: flex; min-width: 0; align-items: center; gap: 5px;
+      overflow-x: auto; scrollbar-width: none; }
+    .site-nav::-webkit-scrollbar { display: none; }
+    .site-nav a { min-height: 32px; display: inline-flex; align-items: center;
+      border: 1px solid transparent; border-radius: 999px; padding: 5px 10px;
+      color: #829b91; font-size: .74rem; font-weight: 700; text-decoration: none;
+      white-space: nowrap; }
+    .site-nav a:hover { border-color: #345146; color: #b9efd7; background: #10201a; }
+    .site-nav a.active { border-color: #3d6756; color: #9aefcf; background: #14271f; }
+    main { width: min(780px, calc(100% - 32px)); margin: 38px auto 64px; }
     .card { background: #101c18; border: 1px solid #294238; border-radius: 18px;
       padding: 24px; box-shadow: 0 20px 60px #0007; margin: 16px 0; }
     .eyebrow { color: #73d9ab; letter-spacing: .12em; text-transform: uppercase;
@@ -36,9 +54,36 @@
     .status { display: inline-block; border: 1px solid #3f6455; border-radius: 999px;
       padding: 5px 10px; color: #9de8c7; }
     .muted { color: #849b92; font-size: .92rem; }
+    @media (max-width: 720px) {
+      .site-header-inner { align-items: flex-start; flex-direction: column; gap: 8px;
+        padding: 11px 0; }
+      .site-nav { width: 100%; }
+      main { margin-top: 28px; }
+    }
   </style>
 </head>
 <body>
+{% if navigation %}
+{% set current_path = request.url.path %}
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="brand" href="{{ navigation.observatory }}">AGENT ECONOMY
+      <small>Citizen network</small></a>
+    <nav class="site-nav" aria-label="Agent Economy sections">
+      <a href="{{ navigation.observatory }}"
+        class="{{ 'active' if current_path == '/' else '' }}">Observatory</a>
+      <a href="{{ navigation.world_os }}"
+        class="{{ 'active' if current_path.startswith('/runs/') and not current_path.endswith('/commons') else '' }}">World OS</a>
+      <a href="{{ navigation.commons }}"
+        class="{{ 'active' if current_path.endswith('/commons') else '' }}">Commons</a>
+      <a href="{{ navigation.join }}"
+        class="{{ 'active' if current_path.startswith('/join') or current_path.startswith('/claim') or current_path.startswith('/oauth/authorize') else '' }}">Join</a>
+      <a href="{{ navigation.my_agents }}"
+        class="{{ 'active' if current_path.startswith('/my-agents') else '' }}">My Agents</a>
+    </nav>
+  </div>
+</header>
+{% endif %}
 <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

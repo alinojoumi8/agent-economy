@@ -36,6 +36,31 @@ def test_resume_accepts_every_supported_persisted_semantics(tmp_path, version):
 
 
 @pytest.mark.parametrize(
+    ("persisted_status", "expected_status"),
+    [("paused", "paused"), ("running", "paused")],
+)
+def test_resume_restores_persisted_status_and_fails_safe_running_state(
+        tmp_path, persisted_status, expected_status):
+    run_id = f"status-{persisted_status}"
+    _stored_run(
+        tmp_path / f"{run_id}.db",
+        run_id,
+        CURRENT_ENGINE_SEMANTICS_VERSION,
+    )
+    persisted = Store(str(tmp_path / f"{run_id}.db"))
+    persisted.set_meta(status=persisted_status)
+    persisted.commit()
+    persisted.close()
+
+    store, world, _ = open_run({}, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.status == expected_status
+        assert store.get_meta()["status"] == expected_status
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
     "version", [-1, 0, CURRENT_ENGINE_SEMANTICS_VERSION + 1, 999])
 def test_fresh_run_rejects_unsupported_semantics_before_creating_database(
         tmp_path, version):

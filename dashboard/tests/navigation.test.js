@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  buildProductNavigation,
+  isProductNavigationActive,
+} from "../src/lib/productNavigation.js";
+
+test("product navigation keeps app and citizenship surfaces on canonical paths", () => {
+  const items = buildProductNavigation({
+    runId: "run/id",
+    worldSlug: "local world",
+  });
+  assert.deepEqual(
+    Object.fromEntries(items.map(item => [item.key, item.href])),
+    {
+      observatory: "/",
+      world_os: "/runs/run%2Fid/overview",
+      commons: "/runs/run%2Fid/commons",
+      join: "/join/local%20world",
+      my_agents: "/my-agents",
+    },
+  );
+  assert.equal(items.find(item => item.key === "join").clientSide, false);
+  assert.equal(items.find(item => item.key === "commons").clientSide, true);
+});
+
+test("product navigation distinguishes Commons and citizen onboarding", () => {
+  assert.equal(
+    isProductNavigationActive("world_os", "/runs/run-demo/overview"),
+    true,
+  );
+  assert.equal(
+    isProductNavigationActive("world_os", "/runs/run-demo/commons"),
+    false,
+  );
+  assert.equal(
+    isProductNavigationActive("commons", "/runs/run-demo/commons"),
+    true,
+  );
+  assert.equal(isProductNavigationActive("join", "/oauth/authorize"), true);
+  assert.equal(isProductNavigationActive("my_agents", "/my-agents"), true);
+});

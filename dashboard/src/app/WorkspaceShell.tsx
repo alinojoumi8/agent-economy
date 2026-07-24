@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import worldOsMark from "../assets/world-os-mark.webp";
+import worldOsEmblem from "../assets/world-os-emblem.png";
+import { CitizenMenu } from "../components/CitizenMenu";
 import { useProjectionSocket } from "./useProjectionSocket";
 
 type GlyphName =
@@ -17,7 +18,7 @@ type RouteItem = {
 
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Observe", items: [
-    { path: "overview", label: "Overview", caption: "Live operational picture", icon: "overview" },
+    { path: "overview", label: "Live City", caption: "Agents at work, evidence in motion", icon: "overview" },
     { path: "world", label: "World", caption: "Population and environment", icon: "world" },
     { path: "people", label: "People", caption: "Agents, lives, and memory", icon: "people" },
     { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
@@ -111,7 +112,7 @@ export function WorkspaceShell() {
     <a href="#workspace-main" className="world-os-skip">Skip to workspace</a>
     <aside className="world-os-rail">
       <div className="world-os-brand">
-        <img src={worldOsMark} alt="" />
+        <img src={worldOsEmblem} alt="" />
         <div className="world-os-brand-copy"><strong>WORLD OS</strong><span>Agent Economy</span></div>
         <button className="world-os-rail-toggle" type="button" onClick={() => setRailCollapsed(value => !value)} aria-label={railCollapsed ? "Expand workspace rail" : "Collapse workspace rail"} aria-pressed={railCollapsed}>
           <Glyph name="panel" />
@@ -146,6 +147,7 @@ export function WorkspaceShell() {
           <p className="world-os-kicker">{activeRoute.group} workspace</p>
           <div><h1>{activeRoute.label}</h1><span className="world-os-run-pill" title={runId}>Run {runId}</span></div>
         </div>
+        <CitizenMenu runId={runId} variant="dropdown" />
         <div className="world-os-top-actions">
           <form className="world-os-tick-control" onSubmit={submitTick} aria-label="Simulation tick travel">
             <button type="button" className={tick === "live" ? "active" : ""} onClick={() => setTick(null)} aria-pressed={tick === "live"}>Live</button>

@@ -135,6 +135,13 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         world = World(store, stored_cfg)
+        persisted_status = str(store.get_meta()["status"] or "created")
+        world.status = "paused" if persisted_status == "running" else persisted_status
+        if persisted_status == "running":
+            # A resumed process has no live controller task yet. Persist the
+            # fail-safe paused state while retaining any active phase cursor.
+            store.set_meta(status="paused")
+            store.commit()
         world.restore_prng_state()
         return store, world, run_id
     if replay:

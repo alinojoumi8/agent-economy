@@ -360,6 +360,8 @@ class World:
                     if self.engine_semantics_version >= 7:
                         await self.runtime.enrich_pending_arrivals(tick)
                     decisions = await self.runtime.decide_all(tick)
+                    if self.engine_semantics_version >= 9:
+                        self.runtime.external.restore_replay_after_morning(tick)
                     state["decisions"] = decisions
                     decisions_count = len(decisions)
                 elif phase == "EXECUTION":

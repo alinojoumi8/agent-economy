@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
@@ -97,6 +97,21 @@ def _base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def navigation_document(service: LocalCitizenshipService) -> dict[str, str]:
+    """Canonical same-origin links shared by local app and citizenship pages."""
+    run_id = quote(str(service.run_id), safe="")
+    world_slug = quote(str(service.world_slug), safe="")
+    return {
+        "run_id": str(service.run_id),
+        "world_slug": str(service.world_slug),
+        "observatory": "/",
+        "world_os": f"/runs/{run_id}/overview",
+        "commons": f"/runs/{run_id}/commons",
+        "join": f"/join/{world_slug}",
+        "my_agents": "/my-agents",
+    }
+
+
 def _bearer(request: Request) -> str:
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
@@ -163,11 +178,16 @@ def _oauth_redirect(
 
 def _render_error(
     request: Request, *, title: str, message: str, status_code: int,
+    navigation: dict[str, str] | None = None,
 ) -> HTMLResponse:
     return _secure(_templates.TemplateResponse(
         request=request,
         name="citizenship/error.html",
-        context={"title": title, "message": message},
+        context={
+            "title": title,
+            "message": message,
+            "navigation": navigation,
+        },
         status_code=status_code,
     ))
 
@@ -182,6 +202,7 @@ def install_citizenship_routes(
         config=config,
     )
     app.state.citizenship_service = service
+    navigation = navigation_document(service)
 
     @app.get("/api/v2/public/worlds/{slug}")
     async def public_world(slug: str):
@@ -242,12 +263,13 @@ def install_citizenship_routes(
         except PassportError as exc:
             return _render_error(
                 request, title="World unavailable", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         response = _templates.TemplateResponse(
             request=request,
             name="citizenship/join.html",
             context={
                 "world": world_document,
+                "navigation": navigation,
                 "base_url": _base_url(request),
                 "hermes_command": (
                     "hermes -p agenteconomy mcp add agent_economy "
@@ -281,6 +303,10 @@ Hermes will register an OAuth client, open a loopback consent page, and receive
 tokens through its temporary localhost callback. Create or select a Passport,
 approve the four citizen scopes, and wait for the actor arrival.
 
+The dashboard Run button advances the world and its native citizens; it does
+not launch Hermes. Keep `hermes -p agenteconomy` running with a bounded citizen
+prompt so Hermes can receive and answer its MCP wakes.
+
 For every wake: call `ae_identity_get`, then `ae_turn_wait`; choose exactly one
 state-valid action from `ae_actions_list`; submit it with the target tick,
 projection hash, and a unique idempotency key; then read the executed receipt.
@@ -304,7 +330,7 @@ stored only as hashes.
         except PassportError as exc:
             return _render_error(
                 request, title="Claim unavailable", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         owner_id, signed = _owner(request, service, create=True)
         assert owner_id is not None
         response = _templates.TemplateResponse(
@@ -312,6 +338,7 @@ stored only as hashes.
             name="citizenship/claim.html",
             context={
                 "registration": preview,
+                "navigation": navigation,
                 "claim_token": claim_token,
                 "csrf_token": service.csrf_token(
                     owner_id, f"claim:{preview['claim_id']}"),
@@ -328,7 +355,7 @@ stored only as hashes.
             return _render_error(
                 request, title="Claim unavailable",
                 message="The local owner session is missing or expired.",
-                status_code=401)
+                status_code=401, navigation=navigation)
         try:
             fields = await _form(request)
             preview = service.repository.claim_preview(claim_token)
@@ -339,7 +366,7 @@ stored only as hashes.
         except PassportError as exc:
             return _render_error(
                 request, title="Claim unavailable", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         response = _templates.TemplateResponse(
             request=request,
             name="citizenship/claim.html",
@@ -349,6 +376,7 @@ stored only as hashes.
                     "claim_status": document["claim_status"],
                     "citizenship_status": document["citizenship"]["status"],
                 },
+                "navigation": navigation,
                 "claim_token": claim_token,
                 "claimed": True,
                 "csrf_token": "",
@@ -368,6 +396,7 @@ stored only as hashes.
             context={
                 "documents": documents,
                 "world": service.world_document(),
+                "navigation": navigation,
                 "csrf_tokens": {
                     item["passport"]["id"]: service.csrf_token(
                         owner_id, f"revoke:{item['passport']['id']}")
@@ -386,7 +415,7 @@ stored only as hashes.
             return _render_error(
                 request, title="Revocation unavailable",
                 message="The local owner session is missing or expired.",
-                status_code=401)
+                status_code=401, navigation=navigation)
         try:
             fields = await _form(request)
             service.verify_csrf(
@@ -395,7 +424,7 @@ stored only as hashes.
         except PassportError as exc:
             return _render_error(
                 request, title="Revocation unavailable", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         return _secure(RedirectResponse("/my-agents", status_code=303))
 
     @app.get("/oauth/authorize", response_class=HTMLResponse)
@@ -440,11 +469,11 @@ stored only as hashes.
         except PassportError as exc:
             return _render_error(
                 request, title="Authorization failed", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         except ExternalAgentError as exc:
             return _render_error(
                 request, title="Authorization failed", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         owner_id, signed = _owner(request, service, create=True)
         assert owner_id is not None
         response = _templates.TemplateResponse(
@@ -453,6 +482,7 @@ stored only as hashes.
             context={
                 "oauth": oauth,
                 "world": service.world_document(),
+                "navigation": navigation,
                 "scopes": requested,
                 "passports": service.owner_passports(owner_id),
                 "csrf_token": service.csrf_token(
@@ -470,7 +500,7 @@ stored only as hashes.
             return _render_error(
                 request, title="Authorization failed",
                 message="The local owner session is missing or expired.",
-                status_code=401)
+                status_code=401, navigation=navigation)
         try:
             fields = await _form(request)
             request_id = fields.get("request_id", "")
@@ -497,10 +527,10 @@ stored only as hashes.
         except PassportError as exc:
             return _render_error(
                 request, title="Authorization failed", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
         except ExternalAgentError as exc:
             return _render_error(
                 request, title="Authorization failed", message=exc.message,
-                status_code=exc.status_code)
+                status_code=exc.status_code, navigation=navigation)
 
     return service

@@ -20,6 +20,25 @@ from server.app import create_app
 from world.loop import World
 
 
+def test_hermes_live_profile_preserves_citizenship_and_routes_native_agents_to_network():
+    config = load_config("runs/hermes-local-live.yaml")
+
+    assert config["engine_semantics_version"] == 11
+    assert config["external_gateway"]["enabled"] is True
+    assert config["external_gateway"]["public_join"]["world_slug"] == "local-sandbox"
+    assert config["external_gateway"]["public_join"]["passport_db_path"] == (
+        "data/control-plane/agent-passports.db")
+    assert config["communications"]["autonomous_scripted_enabled"] is False
+    assert config["budget"]["cap_usd"] == 5.0
+    assert config["llm"]["require_preflight_live"] is True
+    assert config["llm"]["default_route"] == {
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert set(config["llm"]["providers"]) == {"minimax", "kimi"}
+    assert all(
+        route["provider"] != "scripted"
+        for route in config["llm"]["routes"].values())
+
+
 def _world(tmp_path: Path, *, seats: int = 5) -> tuple[World, Path]:
     config = load_config("runs/world-os-external.yaml")
     config["population"]["size"] = 4
@@ -89,6 +108,10 @@ def test_migration_join_documents_and_security_headers(citizen_client):
     join = client.get("/join/local-sandbox")
     assert join.status_code == 200
     assert "Hermes Local Sandbox" in join.text
+    assert 'aria-label="Agent Economy sections"' in join.text
+    assert 'target="_blank"' not in join.text
+    assert 'rel="icon"' in join.text
+    assert 'href="/runs/passport-test/commons"' in join.text
     assert join.headers["cache-control"] == "no-store"
     assert "frame-ancestors 'none'" in join.headers["content-security-policy"]
     assert join.headers["referrer-policy"] == "no-referrer"
@@ -103,6 +126,17 @@ def test_migration_join_documents_and_security_headers(citizen_client):
     assert world_document["seat_limit"] == 5
     assert world_document["default_scopes"] == [
         "world.read", "world.act", "commons.read", "commons.write"]
+
+    navigation = client.get("/api/run/status").json()["navigation"]
+    assert navigation == {
+        "run_id": "passport-test",
+        "world_slug": "local-sandbox",
+        "observatory": "/",
+        "world_os": "/runs/passport-test/overview",
+        "commons": "/runs/passport-test/commons",
+        "join": "/join/local-sandbox",
+        "my_agents": "/my-agents",
+    }
 
 
 def test_agent_registration_claim_exchange_hashing_and_replay(citizen_client):

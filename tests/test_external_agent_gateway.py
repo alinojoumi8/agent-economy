@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import asyncio
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
@@ -76,6 +78,60 @@ def test_dedicated_actor_and_hash_only_personal_credential(world10: World):
     with pytest.raises(ExternalAgentError, match="not found"):
         world10.runtime.external.connection(
             connection["id"], owner_id="owner-b", tenant_id="tenant-a")
+
+
+def test_agent_api_projects_hermes_lease_and_privacy_safe_receipt(world10: World):
+    created = _connection(world10)
+    service = world10.runtime.external
+    actor_id = int(service.connection(
+        created["connection"]["id"], owner_id="owner-a",
+        tenant_id="tenant-a")["actor_id"])
+    auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+    turn = service.turn(auth)
+    queued = service.submit_action(auth, {
+        "target_tick": turn["target_tick"],
+        "action": {"type": "do_nothing"},
+        "observed_projection_hash": turn["projection_hash"],
+        "idempotency_key": "dashboard-proof",
+        "rationale_summary": "Private rationale must not enter the public projection.",
+    })
+    service.complete(
+        queued["submission_id"], [{"ok": True, "private": "not public"}],
+        turn["target_tick"], event_ids=[77], resulting_state_hash="a" * 64,
+    )
+    world10.store.commit()
+
+    with TestClient(create_app(world10)) as client:
+        listed = next(
+            row for row in client.get("/api/agents").json()
+            if int(row["id"]) == actor_id
+        )
+        detail = client.get(f"/api/agents/{actor_id}").json()
+
+    assert listed["execution"]["state"] == "hermes_connected"
+    assert listed["execution"]["latest_turn"]["target_tick"] == turn["target_tick"]
+    assert listed["execution"]["latest_receipt"]["status"] == "executed"
+    assert listed["execution"]["latest_receipt"]["action_type"] == "do_nothing"
+    assert detail["external_activity"]["receipts"][0]["event_ids"] == [77]
+    serialized = str(detail["external_activity"])
+    assert "Private rationale" not in serialized
+    assert "not public" not in serialized
+
+    world10.store.execute(
+        "UPDATE external_agent_connections SET lease_expires_at=? WHERE id=?",
+        ("2000-01-01T00:00:00+00:00", created["connection"]["id"]),
+    )
+    world10.store.set_meta(tick=turn["target_tick"])
+    world10.store.commit()
+    with TestClient(create_app(world10)) as client:
+        completed_tick = client.get(f"/api/agents/{actor_id}").json()
+    assert completed_tick["execution"]["state"] == "hermes_connected"
+
+    world10.store.set_meta(tick=turn["target_tick"] + 1)
+    world10.store.commit()
+    with TestClient(create_app(world10)) as client:
+        missed_tick = client.get(f"/api/agents/{actor_id}").json()
+    assert missed_tick["execution"]["state"] == "offline_fallback"
 
 
 def test_oauth_pkce_rotation_scope_reduction_expiry_and_revocation(
@@ -176,9 +232,85 @@ def test_revocation_mid_turn_cancels_queued_action(world10: World):
     assert decisions[0]["purpose"] == "external_safe_policy"
 
 
+def test_complete_is_atomic_exactly_once_and_late_calls_are_noop(world10: World):
+    created = _connection(world10)
+    service = world10.runtime.external
+    auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+    turn = service.turn(auth)
+    queued = service.submit_action(auth, {
+        "target_tick": turn["target_tick"], "action": {"type": "do_nothing"},
+        "observed_projection_hash": turn["projection_hash"],
+        "idempotency_key": "exactly-once",
+        "rationale_summary": "Race-safe completion.",
+    })
+    observed = world10.store.query_one(
+        "SELECT status FROM external_action_submissions WHERE id=?",
+        (queued["submission_id"],))
+    assert observed["status"] == "queued"
+
+    before_events = world10.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind LIKE 'external_action_%'",
+        default=0)
+
+    # Deterministic interleave: both callers observed queued, then complete twice.
+    service.complete(
+        queued["submission_id"], [{"ok": True, "effect": "first"}],
+        turn["target_tick"], event_ids=[101], resulting_state_hash="a" * 64)
+    service.complete(
+        queued["submission_id"], [{"ok": False, "effect": "second"}],
+        turn["target_tick"], event_ids=[202], resulting_state_hash="b" * 64)
+
+    receipt = service.receipt(auth, queued["submission_id"])
+    assert receipt["status"] == "executed"
+    assert receipt["resulting_state_hash"] == "a" * 64
+    assert receipt["event_ids"] == [101]
+    after_events = world10.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind LIKE 'external_action_%'",
+        default=0)
+    assert after_events == before_events + 1
+    terminal = world10.store.query(
+        "SELECT kind,payload_json FROM events WHERE kind LIKE 'external_action_%' "
+        "ORDER BY id DESC LIMIT 1")[0]
+    assert terminal["kind"] == "external_action_executed"
+    payload = json.loads(str(terminal["payload_json"]))
+    assert payload["event_ids"] == [101]
+    assert payload["resulting_state_hash"] == "a" * 64
+
+    # Late complete after terminal status is a no-op.
+    service.complete(
+        queued["submission_id"], [{"ok": False}],
+        turn["target_tick"], event_ids=[303], resulting_state_hash="c" * 64)
+    assert service.receipt(auth, queued["submission_id"])["event_ids"] == [101]
+    assert world10.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind LIKE 'external_action_%'",
+        default=0) == after_events
+
+    # Complete after rejection is also a no-op (fresh turn/connection).
+    other = _connection(world10, owner="owner-reject")
+    other_auth = service.authenticate(other["credential"]["token"], rate_limit=False)
+    other_turn = service.turn(other_auth)
+    rejected = service.submit_action(other_auth, {
+        "target_tick": other_turn["target_tick"],
+        "action": {"type": "not_a_real_action"},
+        "observed_projection_hash": other_turn["projection_hash"],
+        "idempotency_key": "already-rejected"})
+    assert rejected["status"] == "rejected"
+    rejected_events = world10.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind LIKE 'external_action_%'",
+        default=0)
+    service.complete(
+        rejected["submission_id"], [{"ok": True}],
+        other_turn["target_tick"], event_ids=[404], resulting_state_hash="d" * 64)
+    assert service.receipt(other_auth, rejected["submission_id"])["status"] == "rejected"
+    assert world10.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind LIKE 'external_action_%'",
+        default=0) == rejected_events
+
+
 def test_rest_mcp_contract_and_scope_filtered_tools(world10: World):
     created = _connection(world10, tier="observer")
     token = created["credential"]["token"]
+    connection_id = created["connection"]["id"]
     app = create_app(world10)
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {token}"}
@@ -198,6 +330,23 @@ def test_rest_mcp_contract_and_scope_filtered_tools(world10: World):
     assert metadata["resource"].endswith("/mcp")
     assert "world.read" in metadata["scopes_supported"]
     assert client.get("/api/v2/openapi.json").status_code == 200
+
+    missing = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}})
+    assert missing.status_code == 401
+    missing_challenge = missing.headers["www-authenticate"]
+    assert 'resource_metadata="http://testserver/.well-known/' in missing_challenge
+    assert "oauth-protected-resource/mcp" in missing_challenge
+
+    world10.runtime.external.revoke_credentials(
+        connection_id, owner_id="owner-a", tenant_id="tenant-a")
+    revoked = client.post("/mcp", headers=headers, json={
+        "jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}})
+    assert revoked.status_code == 401
+    revoked_challenge = revoked.headers["www-authenticate"]
+    assert 'error="invalid_token"' in revoked_challenge
+    assert 'resource_metadata="http://testserver/.well-known/' in revoked_challenge
+    assert "oauth-protected-resource/mcp" in revoked_challenge
 
 
 def test_oauth_discovery_dynamic_registration_browser_redirect_and_resource_binding(
@@ -368,6 +517,90 @@ def test_recorded_external_action_replays_without_client_network(world10: World,
         assert proof["exact"], proof["differences"]
     finally:
         replay_world.close()
+
+
+def test_fresh_replay_restores_external_arrival_and_commons_boundary(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _world(source_dir)
+    replay = None
+    try:
+        source.store.log_event(
+            1,
+            "communication_read_context",
+            {"agent_id": 1, "message_count": 0, "context_key": "boundary-proof"},
+            phase="MORNING",
+            subject_type="agent",
+            subject_id=1,
+            importance=0.2,
+        )
+        created = source.runtime.external.create_connection(
+            tenant_id="tenant-a",
+            owner_id="owner-a",
+            display_name="Replay Citizen",
+            biography="Recorded external citizen.",
+            preferred_occupation="builder",
+            tier="actor",
+        )
+        source._spawn_due_arrivals(2)
+        actor_id = int(source.runtime.external.connection(
+            created["connection"]["id"],
+            owner_id="owner-a",
+            tenant_id="tenant-a",
+        )["actor_id"])
+        source.store.set_meta(tick=2)
+        entry = source.commons.publish(actor_id, body="Replay this Commons post.")
+        source.commons.feed(actor_id)
+        source.commons.publish(
+            actor_id, body="Published after the recorded feed boundary.")
+        source.commons.react(actor_id, int(entry["id"]), "like")
+        source.store.commit()
+
+        replay_dir = tmp_path / "replay"
+        replay_dir.mkdir()
+        replay_config = deepcopy(source.config)
+        replay_config["replay_source_path"] = str(Path(source.store.path).resolve())
+        replay_config["checkpoint_dir"] = str(replay_dir / "checkpoints")
+        replay_store = Store(str(replay_dir / "world.db"))
+        replay_store.init_run_meta("external-replay-test", 42, replay_config)
+        replay = World(replay_store, replay_config, replay=True)
+        replay.initialize()
+        replay.store.log_event(
+            1,
+            "communication_read_context",
+            {"agent_id": 1, "message_count": 0, "context_key": "boundary-proof"},
+            phase="MORNING",
+            subject_type="agent",
+            subject_id=1,
+            importance=0.2,
+        )
+        replay.runtime.external.restore_replay_after_morning(1)
+        replay._spawn_due_arrivals(2)
+        replay.store.set_meta(tick=2)
+        asyncio.run(replay.runtime.external.collect_online_turns(3))
+
+        replay_connection = replay.store.query_one(
+            "SELECT actor_id,actor_schedule_event_id,status "
+            "FROM external_agent_connections WHERE id=?",
+            (created["connection"]["id"],),
+        )
+        assert replay_connection["status"] == "active"
+        assert int(replay_connection["actor_id"]) == actor_id
+        assert replay.store.scalar(
+            "SELECT COUNT(*) FROM commons_entries", default=0
+        ) == 2
+        assert replay.store.scalar(
+            "SELECT COUNT(*) FROM commons_feed_impressions", default=0
+        ) == 1
+        assert replay.store.scalar(
+            "SELECT COUNT(*) FROM commons_reactions", default=0
+        ) == 1
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
 
 
 def test_rate_limit_and_one_hundred_offline_actor_fallbacks_are_bounded(tmp_path):

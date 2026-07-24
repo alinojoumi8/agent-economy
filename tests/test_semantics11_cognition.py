@@ -549,9 +549,45 @@ def test_runtime_and_agent_cognition_api_projection(cognition_world):
     assert cognition["compute_plan"]["tier"] == "premium"
     assert cognition["compute_plan"]["expiry_tick"] == 7
     assert cognition["latest_route"] is None
+    assert detail["execution"]["state"] == "awaiting_live"
+    assert detail["execution"]["latest_receipt"] is None
     assert len(cognition["skills"]) == 8
     assert cognition["skill_history"]
     assert cognition["subscription_history"]
+
+
+def test_agent_execution_projection_requires_a_durable_call_receipt(cognition_world):
+    store, world = cognition_world
+    agent_id = _citizen(store, "premium")
+    call_id = store.insert(
+        "llm_calls",
+        tick=3,
+        agent_id=agent_id,
+        role="citizen",
+        provider="kimi",
+        model="kimi-for-coding",
+        purpose="decision",
+        cache_key="execution-projection-test",
+        request_json="{}",
+        response_json="{}",
+        created_at="2026-07-23T12:00:00+00:00",
+    )
+    store.commit()
+
+    with TestClient(create_app(world)) as client:
+        rows = client.get("/api/agents").json()
+        detail = client.get(f"/api/agents/{agent_id}").json()
+
+    listed = next(row for row in rows if row["id"] == agent_id)
+    assert listed["execution"]["state"] == "live"
+    assert listed["execution"]["provider"] == "kimi"
+    assert listed["execution"]["latest_receipt"] == {
+        "kind": "llm_call",
+        "id": call_id,
+        "status": "recorded",
+        "tick": 3,
+    }
+    assert detail["execution"] == listed["execution"]
 
 
 def test_completed_tick_runtime_stats_are_operational_and_queryable(cognition_world):

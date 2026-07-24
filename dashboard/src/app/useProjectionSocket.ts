@@ -35,8 +35,23 @@ export function useProjectionSocket(historical: boolean) {
         try {
           const message = JSON.parse(event.data);
           const before = cursor.current;
-          if (message.type === "hello") projectionProtocol.current = true;
+          if (message.type === "hello") {
+            const reconnect = projectionProtocol.current;
+            const helloCursor = Number(message.event_cursor);
+            projectionProtocol.current = true;
+            if (Number.isFinite(helloCursor)) cursor.current = helloCursor;
+            if (!historical && reconnect && helloCursor > before) {
+              queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            }
+          }
           dispatch({ message, historical });
+          if (message.type === "error" && message.code === "cursor_ahead") {
+            const recovered = Number(message.event_cursor);
+            if (Number.isFinite(recovered)) cursor.current = recovered;
+            if (!historical) {
+              queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            }
+          }
           if (message.type === "tick") {
             const nextTick = Number(message.tick);
             const previousTick = legacyTick.current;
