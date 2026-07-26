@@ -95,6 +95,20 @@ async function mockPrivacyApis(page: Page) {
     if (path === "/api/v2/map") {
       return route.fulfill({ json: { regions: [], core_agents: [], firms: [], flows: [] } });
     }
+    if (path === "/api/v2/world-map") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, projection: "world.map", data: {
+          regions: [], agents: [], organizations: [], places: [], presence: [],
+        },
+      } });
+    }
+    if (path === "/api/v2/civic/summary") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, projection: "civic.summary", data: {
+          enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+        },
+      } });
+    }
     if (path === "/api/v2/mode") return route.fulfill({ status: 404, json: {} });
     if (path === "/api/v2/operator/session") {
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });

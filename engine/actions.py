@@ -57,6 +57,8 @@ VALID_TYPES = {
     "send_message", "reply_message", "forward_message",
     # semantics-11 compute economy and learnable skills
     "buy_compute_plan", "cancel_compute_plan", "set_compute_sponsorship", "study_skill",
+    # semantics-12 civic permit workflow
+    "apply_business_permit", "attend_civic_appointment", "decide_business_permit",
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
@@ -75,6 +77,23 @@ class ActionExecutor:
 
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
+        if self.engine_semantics_version >= 12:
+            appointment_indexes = [
+                index for index, action in enumerate(actions or [])
+                if isinstance(action, dict)
+                and action.get("type") == "attend_civic_appointment"
+            ]
+            if appointment_indexes:
+                selected = appointment_indexes[0]
+                return [
+                    self.execute_action(tick, actor_id, action, phase, seq=index)
+                    if index == selected else self._reject(
+                        tick, actor_id, action,
+                        "attend_civic_appointment consumes the citizen's action for this turn",
+                        phase,
+                    )
+                    for index, action in enumerate(actions or [])
+                ]
         if self.engine_semantics_version >= 11:
             study_indexes = [
                 index for index, action in enumerate(actions or [])
@@ -136,7 +155,10 @@ class ActionExecutor:
                 or (atype == "withdraw_savings" and self.engine_semantics_version < 7)
                 or (atype in {"buy_compute_plan", "cancel_compute_plan",
                               "set_compute_sponsorship", "study_skill"}
-                    and self.engine_semantics_version < 11)):
+                    and self.engine_semantics_version < 11)
+                or (atype in {"apply_business_permit", "attend_civic_appointment",
+                              "decide_business_permit"}
+                    and self.engine_semantics_version < 12)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -594,6 +616,22 @@ class ActionExecutor:
         return self.e.firms.close_ipo(tick, actor_id, offering_id)
 
     # ── founding ─────────────────────────────────────────────────────────────
+    def _do_apply_business_permit(self, tick, actor_id, action, phase) -> dict:
+        return self.e.city.apply_business_permit(tick, actor_id, action)
+
+    def _do_attend_civic_appointment(self, tick, actor_id, action, phase) -> dict:
+        return self.e.city.attend_appointment(
+            tick, actor_id, int(action["appointment_id"]))
+
+    def _do_decide_business_permit(self, tick, actor_id, action, phase) -> dict:
+        return self.e.city.decide_business_permit(
+            tick,
+            actor_id,
+            int(action["case_id"]),
+            str(action["decision"]),
+            str(action["reason_code"]),
+        )
+
     def _do_found_company(self, tick, actor_id, action, phase) -> dict:
         lawyer_id = int(action.get("lawyer_agent_id", 0))
         lawyer = self._agent(lawyer_id) if lawyer_id else None
@@ -603,25 +641,31 @@ class ActionExecutor:
         if not name:
             return {"ok": False, "reason": "company needs a name"}
         sector = str(action.get("sector", "services"))[:40]
+        civic_permit_required = (
+            self.engine_semantics_version >= 12
+            and self.e.city.enabled
+            and self.e.city.permits_required
+        )
         if bool(self.e.config.get("entrepreneurship", {}).get("enabled", False)):
             existing = self.store.query_one(
                 "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
                 (actor_id,))
             if existing:
                 return {"ok": False, "reason": "founder already controls an active company"}
-            expected = getattr(
-                self.e, "_entrepreneurship_authorizations", {}).get((tick, actor_id))
-            if expected is None:
-                return {
-                    "ok": False,
-                    "reason": "found_company is available only from a supplied entrepreneurship opportunity",
-                }
-            submitted = {key: action.get(key) for key in expected}
-            if submitted != expected:
-                return {
-                    "ok": False,
-                    "reason": "found_company must copy the supplied entrepreneurship action exactly",
-                }
+            if not civic_permit_required:
+                expected = getattr(
+                    self.e, "_entrepreneurship_authorizations", {}).get((tick, actor_id))
+                if expected is None:
+                    return {
+                        "ok": False,
+                        "reason": "found_company is available only from a supplied entrepreneurship opportunity",
+                    }
+                submitted = {key: action.get(key) for key in expected}
+                if submitted != expected:
+                    return {
+                        "ok": False,
+                        "reason": "found_company must copy the supplied entrepreneurship action exactly",
+                    }
         capital = int(action.get("opening_capital", 0))
         if capital < 0:
             return {"ok": False, "reason": "opening capital must be nonnegative"}
@@ -640,10 +684,26 @@ class ActionExecutor:
             product["business_idea"] = business_idea
             if not action.get("product") or "product" not in action["product"]:
                 product["product"] = business_idea["offering"][:80]
+        authorization_id = None
+        if civic_permit_required:
+            authorization_id, authorization_error = self.e.city.reserve_authorization(
+                tick, actor_id, action)
+            if authorization_error is not None:
+                return {"ok": False, "reason": authorization_error}
         firm_id = self.e.firms.found_firm(tick, actor_id, name, sector, product=product,
                                           opening_capital_cents=capital,
                                           business_idea=business_idea)
-        return {"ok": True, "firm_id": firm_id}
+        if authorization_id is not None:
+            self.e.city.complete_authorization_consumption(
+                tick, authorization_id, firm_id)
+        return {
+            "ok": True,
+            "firm_id": firm_id,
+            **(
+                {"authorization_id": authorization_id}
+                if authorization_id is not None else {}
+            ),
+        }
 
     # ── equity ───────────────────────────────────────────────────────────────
     def _do_place_order(self, tick, actor_id, action, phase) -> dict:

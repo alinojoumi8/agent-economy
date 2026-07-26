@@ -40,6 +40,10 @@ class Scheduler:
         else:
             agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
         out = []
+        civic_enabled = (
+            semantics_version >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        )
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
         liquidity_decision_due = (
             int(self.config.get("engine_semantics_version", 1)) >= 6
@@ -57,7 +61,16 @@ class Scheduler:
                 if liquidity_decision_due or tick % max(1, meeting_interval) == 0:
                     out.append(a)
                 continue
+            if a["role"] == "permit_clerk":
+                if civic_enabled and self._civic_wake(
+                        int(a["id"]), str(a["role"]), tick):
+                    out.append(a)
+                continue
             if a["role"]:  # other institutional agents act every tick
+                out.append(a)
+                continue
+            if civic_enabled and self._civic_wake(
+                    int(a["id"]), "", tick):
                 out.append(a)
                 continue
             if not citizens_enabled:
@@ -71,6 +84,34 @@ class Scheduler:
             if self._citizen_wakes(a, tick, agent_cadence_multiplier):
                 out.append(a)
         return out
+
+    def _civic_wake(self, agent_id: int, role: str, tick: int) -> bool:
+        if role == "permit_clerk":
+            return self.store.query_one(
+                "SELECT 1 FROM institution_tasks "
+                "WHERE assigned_agent_id=? AND status='assigned' LIMIT 1",
+                (int(agent_id),),
+            ) is not None
+        if self.store.query_one(
+            "SELECT 1 FROM service_appointments "
+            "WHERE applicant_agent_id=? AND scheduled_tick=? "
+            "AND status='scheduled' LIMIT 1",
+            (int(agent_id), int(tick)),
+        ) is not None:
+            return True
+        if self.store.query_one(
+            "SELECT 1 FROM service_cases WHERE applicant_agent_id=? "
+            "AND outcome_event_id IS NOT NULL AND updated_tick BETWEEN ? AND ? "
+            "LIMIT 1",
+            (int(agent_id), max(0, int(tick) - 1), int(tick)),
+        ) is not None:
+            return True
+        return self.store.query_one(
+            "SELECT 1 FROM civic_authorizations "
+            "WHERE holder_agent_id=? AND status='active' AND expiry_tick>=? "
+            "LIMIT 1",
+            (int(agent_id), int(tick)),
+        ) is not None
 
     def _has_pending_liquidity_request(self) -> bool:
         return self.store.query_one(
