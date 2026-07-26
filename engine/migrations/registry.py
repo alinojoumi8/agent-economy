@@ -11,6 +11,7 @@ from . import (
     v014_commons,
     v015_cognition,
     v016_passport_bindings,
+    v017_civic_city,
 )
 
 
@@ -55,6 +56,9 @@ _MIGRATIONS = (
     Migration.create(
         16, v016_passport_bindings.NAME, v016_passport_bindings.SQL,
         verify=v016_passport_bindings.verify),
+    Migration.create(
+        17, v017_civic_city.NAME, v017_civic_city.SQL,
+        verify=v017_civic_city.verify),
 )
 
 

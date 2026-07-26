@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       full_suite:
@@ -30,7 +31,7 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -41,14 +42,23 @@ jobs:
         run: python -m pip check
       - name: Compile Python sources
         run: python -m compileall -q agents engine hosted llm oracle reports server world run.py
-      - name: Run smoke tests
-        run: python -m pytest tests/test_prd_completion.py tests/test_recorded_replay_golden.py -q
+      - name: Run focused PRD, replay, documentation, gateway, and export tests
+        run: >
+          python -m pytest -q
+          tests/test_documentation.py
+          tests/test_external_agent_gateway.py
+          tests/test_research_export.py
+          tests/test_prd_completion.py
+          tests/test_recorded_replay_golden.py
 
   dashboard:
-    if: github.event_name == 'workflow_dispatch' && inputs.integration == true
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.integration == true)
     name: Dashboard production build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -59,8 +69,11 @@ jobs:
       - name: Install dashboard dependencies
         run: npm ci
         working-directory: dashboard
-      - name: Run dashboard tests
+      - name: Run dashboard unit tests
         run: npm test
+        working-directory: dashboard
+      - name: Typecheck dashboard
+        run: npm run typecheck
         working-directory: dashboard
       - name: Verify dashboard third-party notices
         run: npm run licenses:check
@@ -68,10 +81,25 @@ jobs:
       - name: Audit dashboard dependencies
         run: npm audit --audit-level=high
         working-directory: dashboard
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: dashboard
+      - name: Run critical Chromium Playwright specs
+        run: >
+          npm run test:e2e --
+          world-os.spec.ts
+          world-os-states.spec.ts
+          world-os-privacy.spec.ts
+          agent-connections.spec.ts
+        working-directory: dashboard
       - name: Build React dashboard
         run: npm run build
         working-directory: dashboard
       - name: Verify committed static bundle is current
+        # Pull requests may carry intentional dashboard source changes without a
+        # committed static rebuild; keep the exact-bundle gate on main pushes and
+        # explicit integration runs only.
+        if: github.event_name != 'pull_request'
         run: |
           git diff --exit-code -- server/static
           test -z "$(git status --porcelain --untracked-files=all -- server/static)"
@@ -91,7 +119,7 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -131,7 +159,7 @@ jobs:
       AGENT_ECONOMY_TEST_S3_SCOPED_SECRET_KEY: ci-snapshot-password-not-a-secret
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip

@@ -1283,6 +1283,7 @@ class Gateway:
                             error=failure.message)
             raise failure from None
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        cost_override: float | None = None
 
         result.text = _sanitize_json_text(
             result.text, preserve_root_reasoning=True)
@@ -1405,11 +1406,263 @@ class Gateway:
                             run_id=self.run_id, provider=provider, model=model,
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                             tick=req.tick, valid=ok)
+        if (not ok and plan.tiered and selected_target.route_index == 0
+                and len(plan.targets) > 1):
+            # A syntactically reachable provider can still be unusable for the
+            # logical request when both its first response and repair violate
+            # the JSON contract. Treat that as a route failure and use the
+            # configured fallback. All billable completions remain one durable
+            # logical call so replay and cost accounting preserve the full
+            # primary -> repair -> fallback chain.
+            failed_result = result
+            failed_provider, failed_model = provider, model
+            failed_pricing = pricing
+            failed_cached, failed_cost = self._price(
+                failed_model, failed_result.in_tokens, failed_result.out_tokens,
+                failed_result.cached_in_tokens, failed_pricing)
+            fallback_target = plan.targets[1]
+            operational_log(
+                logger, logging.WARNING, "llm.contract.fallback_started",
+                run_id=self.run_id, provider=failed_provider, model=failed_model,
+                fallback_provider=fallback_target.provider,
+                fallback_model=fallback_target.model, role=req.role,
+                purpose=req.purpose, agent_id=req.agent_id, tick=req.tick)
+            try:
+                (fallback_result, fallback_attempts, selected_target,
+                 fallback_attempt_ids) = await self._call_route_plan(
+                    plan, req, req.messages(), req.temperature,
+                    provider_cache_key, logical_deadline,
+                    targets=(fallback_target,))
+                attempt_ids.extend(fallback_attempt_ids)
+                attempts += fallback_attempts
+            except GatewayInterrupted:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if isinstance(exc, _RoutePlanExhausted):
+                    attempt_ids.extend(exc.attempt_ids)
+                    exc = exc.error
+                latency_ms = int(
+                    (datetime.now(timezone.utc) - started).total_seconds() * 1000)
+                call_id = self._log_call(
+                    req, failed_provider, failed_model,
+                    self._cache_key(req, failed_provider, failed_model),
+                    failed_result, failed_cost, failed_cached, latency_ms)
+                self._link_attempts(call_id, attempt_ids)
+                failure = ProviderUnavailable(
+                    fallback_target.provider, fallback_target.model, req.purpose,
+                    f"contract fallback {type(exc).__name__}: {exc}",
+                    latency_ms=latency_ms, attempts=max(1, len(attempt_ids)))
+                if req.purpose != "report_narrative":
+                    self.store.log_event(
+                        req.tick, "provider_failure", failure.as_dict(),
+                        phase="LLM", importance=5.0)
+                operational_log(
+                    logger, logging.ERROR, "llm.contract.fallback_failed",
+                    run_id=self.run_id, provider=fallback_target.provider,
+                    model=fallback_target.model, role=req.role,
+                    purpose=req.purpose, agent_id=req.agent_id, tick=req.tick,
+                    latency_ms=latency_ms, attempts=failure.attempts,
+                    error_type=type(exc).__name__, error=failure.message)
+                raise failure from None
+
+            provider, model = selected_target.provider, selected_target.model
+            adapter = self.adapters[provider]
+            cache_key = self._cache_key(req, provider, model)
+            pricing = self.pricing.get(
+                model, {"in": 0, "out": 0, "cache": 0})
+            fallback_result.text = _sanitize_json_text(
+                fallback_result.text, preserve_root_reasoning=True)
+            parsed, ok = self._parse(fallback_result.text)
+            if ok and schema_hint:
+                ok = self._matches_schema(parsed, schema_hint)
+            validation_error = (
+                self._parsed_validation_error(parsed, parsed_validator)
+                if ok else None)
+            if validation_error is not None:
+                ok = False
+            if not ok and attempt_ids:
+                self._mark_attempt_invalid(
+                    attempt_ids[-1],
+                    validation_error or "invalid JSON contract")
+
+            if not ok and provider not in ("scripted", "mock"):
+                operational_log(
+                    logger, logging.WARNING, "llm.repair.started",
+                    run_id=self.run_id, provider=provider, model=model,
+                    role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                    tick=req.tick)
+                fallback_initial = fallback_result
+                fallback_repair = LLMRequest(
+                    role=req.role, purpose=req.purpose, system=req.system,
+                    user=(
+                        req.user
+                        + "\n\nYour previous reply did not match the required "
+                          "JSON contract. Reply ONLY with the JSON object."
+                        + (f" Required shape: {schema_hint}"
+                           if schema_hint else "")
+                        + (f" Contract error: {validation_error}"
+                           if validation_error else "")),
+                    context=req.context, agent_id=req.agent_id, tick=req.tick,
+                    max_tokens=req.max_tokens, temperature=0.2)
+                try:
+                    (repaired_fallback, repair_attempts, _repair_target,
+                     repair_attempt_ids) = await self._call_route_plan(
+                        plan, fallback_repair, fallback_repair.messages(), 0.2,
+                        provider_cache_key, logical_deadline,
+                        targets=(selected_target,))
+                    attempt_ids.extend(repair_attempt_ids)
+                    attempts += repair_attempts
+                except GatewayInterrupted:
+                    raise
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if isinstance(exc, _RoutePlanExhausted):
+                        attempt_ids.extend(exc.attempt_ids)
+                        exc = exc.error
+                    fallback_result = AdapterResult(
+                        text=fallback_initial.text,
+                        in_tokens=fallback_initial.in_tokens,
+                        out_tokens=fallback_initial.out_tokens,
+                        cached_in_tokens=fallback_initial.cached_in_tokens,
+                        raw={
+                            "provider_calls": 1,
+                            "initial": fallback_initial.raw,
+                            "repair_failed": type(exc).__name__,
+                        },
+                    )
+                    fallback_cached, fallback_cost = self._price(
+                        model, fallback_result.in_tokens,
+                        fallback_result.out_tokens,
+                        fallback_result.cached_in_tokens, pricing)
+                    combined = AdapterResult(
+                        text=fallback_result.text,
+                        in_tokens=(
+                            failed_result.in_tokens + fallback_result.in_tokens),
+                        out_tokens=(
+                            failed_result.out_tokens + fallback_result.out_tokens),
+                        cached_in_tokens=(
+                            failed_result.cached_in_tokens
+                            + fallback_result.cached_in_tokens),
+                        raw={
+                            "provider_calls": 3,
+                            "contract_fallback": {
+                                "failed": {
+                                    "provider": failed_provider,
+                                    "model": failed_model,
+                                    "raw": failed_result.raw,
+                                },
+                                "final": {
+                                    "provider": provider,
+                                    "model": model,
+                                    "raw": fallback_result.raw,
+                                },
+                            },
+                        },
+                    )
+                    latency_ms = int(
+                        (datetime.now(timezone.utc) - started).total_seconds()
+                        * 1000)
+                    call_id = self._log_call(
+                        req, provider, model, cache_key, combined,
+                        round(failed_cost + fallback_cost, 8),
+                        failed_cached or fallback_cached, latency_ms)
+                    self._link_attempts(call_id, attempt_ids)
+                    failure = ProviderUnavailable(
+                        provider, model, req.purpose,
+                        f"fallback repair {type(exc).__name__}: {exc}",
+                        latency_ms=latency_ms,
+                        attempts=max(1, len(attempt_ids)))
+                    if req.purpose != "report_narrative":
+                        self.store.log_event(
+                            req.tick, "provider_failure", failure.as_dict(),
+                            phase="LLM", importance=5.0)
+                    raise failure from None
+                repaired_fallback.text = _sanitize_json_text(
+                    repaired_fallback.text, preserve_root_reasoning=True)
+                fallback_result = AdapterResult(
+                    text=repaired_fallback.text,
+                    in_tokens=(
+                        fallback_initial.in_tokens + repaired_fallback.in_tokens),
+                    out_tokens=(
+                        fallback_initial.out_tokens
+                        + repaired_fallback.out_tokens),
+                    cached_in_tokens=(
+                        fallback_initial.cached_in_tokens
+                        + repaired_fallback.cached_in_tokens),
+                    raw={"provider_calls": 2, "repair": {
+                        "initial": fallback_initial.raw,
+                        "final": repaired_fallback.raw}},
+                )
+                parsed, ok = self._parse(fallback_result.text)
+                if ok and schema_hint:
+                    ok = self._matches_schema(parsed, schema_hint)
+                validation_error = (
+                    self._parsed_validation_error(parsed, parsed_validator)
+                    if ok else None)
+                if validation_error is not None:
+                    ok = False
+                if not ok and attempt_ids:
+                    self._mark_attempt_invalid(
+                        attempt_ids[-1],
+                        validation_error or "invalid JSON contract")
+                operational_log(
+                    logger, logging.INFO, "llm.repair.completed",
+                    run_id=self.run_id, provider=provider, model=model,
+                    role=req.role, purpose=req.purpose,
+                    agent_id=req.agent_id, tick=req.tick, valid=ok)
+
+            fallback_cached, fallback_cost = self._price(
+                model, fallback_result.in_tokens, fallback_result.out_tokens,
+                fallback_result.cached_in_tokens, pricing)
+            failed_calls = int(
+                failed_result.raw.get("provider_calls", 1)
+                if isinstance(failed_result.raw, dict) else 1)
+            fallback_calls = int(
+                fallback_result.raw.get("provider_calls", 1)
+                if isinstance(fallback_result.raw, dict) else 1)
+            result = AdapterResult(
+                text=fallback_result.text,
+                in_tokens=failed_result.in_tokens + fallback_result.in_tokens,
+                out_tokens=failed_result.out_tokens + fallback_result.out_tokens,
+                cached_in_tokens=(
+                    failed_result.cached_in_tokens
+                    + fallback_result.cached_in_tokens),
+                raw={
+                    "provider_calls": failed_calls + fallback_calls,
+                    "contract_fallback": {
+                        "failed": {
+                            "provider": failed_provider,
+                            "model": failed_model,
+                            "raw": failed_result.raw,
+                        },
+                        "final": {
+                            "provider": provider,
+                            "model": model,
+                            "raw": fallback_result.raw,
+                        },
+                    },
+                },
+            )
+            cost_override = round(failed_cost + fallback_cost, 8)
+            latency_ms = int(
+                (datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            operational_log(
+                logger, logging.INFO, "llm.contract.fallback_completed",
+                run_id=self.run_id, provider=provider, model=model,
+                role=req.role, purpose=req.purpose, agent_id=req.agent_id,
+                tick=req.tick, valid=ok)
         if not ok:
             if plan.tiered:
-                cached, cost = self._price(
-                    model, result.in_tokens, result.out_tokens,
-                    result.cached_in_tokens, pricing)
+                if cost_override is None:
+                    cached, cost = self._price(
+                        model, result.in_tokens, result.out_tokens,
+                        result.cached_in_tokens, pricing)
+                else:
+                    cached = result.cached_in_tokens > 0
+                    cost = cost_override
                 call_id = self._log_call(
                     req, provider, model, cache_key, result, cost, cached, latency_ms)
                 self._link_attempts(call_id, attempt_ids)
@@ -1428,8 +1681,13 @@ class Gateway:
                             role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                             tick=req.tick)
 
-        cached, cost = self._price(
-            model, result.in_tokens, result.out_tokens, result.cached_in_tokens, pricing)
+        if cost_override is None:
+            cached, cost = self._price(
+                model, result.in_tokens, result.out_tokens,
+                result.cached_in_tokens, pricing)
+        else:
+            cached = result.cached_in_tokens > 0
+            cost = cost_override
         call_id = self._log_call(
             req, provider, model, cache_key, result, cost, cached, latency_ms)
         self._link_attempts(call_id, attempt_ids)
