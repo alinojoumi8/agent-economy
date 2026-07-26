@@ -66,6 +66,7 @@ export function CivicCity(props) {
     firms = [],
     events = [],
     map = null,
+    civic = null,
     runtime = null,
     runId = "",
     tick = "live",
@@ -84,8 +85,8 @@ export function CivicCity(props) {
   const [selectedId, setSelectedId] = useState(null);
   const lensRef = useRef(null);
   const model = useMemo(
-    () => deriveCityModel({ agents, firms, events, map }),
-    [agents, firms, events, map],
+    () => deriveCityModel({ agents, firms, events, map, civic }),
+    [agents, firms, events, map, civic],
   );
   const needle = query.trim().toLowerCase();
   const visibleAgents = model.agents.filter(agent => {
@@ -108,6 +109,11 @@ export function CivicCity(props) {
     ? null
     : model.firms.find(firm => String(firm.id) === String(selected.employer_id));
   const eventFacts = payloadFacts(selected?.event?.payload);
+  const semanticReceipt = selected?.event?.payload?.semantic_receipt
+    || model.receipts[0]
+    || null;
+  const busiestOffice = [...(model.civic?.offices || [])]
+    .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const historicalSuffix = tick === "live" ? "" : `?tick=${encodeURIComponent(tick)}`;
   const peopleHref = selected && runId
     ? `/runs/${encodeURIComponent(runId)}/people/${selected.id}${historicalSuffix}`
@@ -156,6 +162,7 @@ export function CivicCity(props) {
         <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>
         <div><dt>Phase</dt><dd>{humanize(phase, "Between phases")}</dd></div>
         <div><dt>Active marks</dt><dd>{model.counts.active} / {model.counts.agents}</dd></div>
+        <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd></div>
       </dl>
     </header>
 
@@ -240,6 +247,22 @@ export function CivicCity(props) {
           <span>{String(firm.name || "Firm").replace(/\s+(co|company|inc)\b.*$/i, "").slice(0, 16)}</span>
         </div>)}
 
+        {model.places.map(place => <div
+          key={`place-${place.id}`}
+          className={[
+            "civic-city__place",
+            place.kind === "licensing_office" ? "is-permit-office" : "",
+          ].filter(Boolean).join(" ")}
+          style={{ left: `${place.x}%`, top: `${place.y}%` }}
+          title={`${place.name} · ${humanize(place.kind)} · ${place.businessOccupancy}/${place.capacity || "∞"} present${place.queueDepth ? ` · queue ${place.queueDepth}` : ""}`}
+          aria-hidden="true"
+        >
+          <i />
+          {place.kind === "licensing_office" && <span>
+            Permit office · {place.businessOccupancy}/{place.capacity} · q{place.queueDepth}
+          </span>}
+        </div>)}
+
         <div className="civic-city__agent-layer">
           {visibleAgents.map(agent => <button
             key={agent.id}
@@ -314,6 +337,7 @@ export function CivicCity(props) {
             <div><dt>District</dt><dd>{selected.district}</dd></div>
             <div><dt>Occupation</dt><dd>{humanize(selected.occupation || selected.role)}</dd></div>
             <div><dt>Employer</dt><dd>{employer?.name || (selected.employer_id != null ? `Firm #${selected.employer_id}` : "No employer linked")}</dd></div>
+            <div><dt>Effective place</dt><dd>{selected.place_name || selected.district}</dd></div>
             <div><dt>Health</dt><dd>{humanize(selected.health)}</dd></div>
             <div><dt>Compute tier</dt><dd>{humanize(selected.model_tier, "Not exposed")}</dd></div>
             <div><dt>Placement</dt><dd>{humanize(selected.coordinateSource)}</dd></div>
@@ -323,6 +347,18 @@ export function CivicCity(props) {
             {eventFacts.length
               ? <dl>{eventFacts.map(([key, value]) => <div key={key}><dt>{humanize(key)}</dt><dd>{String(value)}</dd></div>)}</dl>
               : <p>The committed event exposes no scalar payload fields.</p>}
+          </section>}
+          {semanticReceipt && <section className="civic-city__receipt">
+            <header><span>Semantic receipt</span><b>{semanticReceipt.eventId ? `#${semanticReceipt.eventId}` : "committed"}</b></header>
+            <p>
+              <strong>{humanize(semanticReceipt.actor?.type)} #{semanticReceipt.actor?.id}</strong>
+              <i>→</i>
+              <strong>{humanize(semanticReceipt.verb)}</strong>
+              <i>→</i>
+              <strong>{humanize(semanticReceipt.object?.type)} #{semanticReceipt.object?.id}</strong>
+              <i>→</i>
+              <strong>{humanize(semanticReceipt.outcome)}</strong>
+            </p>
           </section>}
           <div className="civic-city__lens-actions">
             {peopleHref && <Link to={peopleHref}>Open citizen dossier <span>↗</span></Link>}
@@ -347,6 +383,9 @@ export function CivicCity(props) {
     <dl className="civic-city__instruments" aria-label="City instrumentation">
       <div><dt>Actor-linked marks</dt><dd>{model.counts.active}</dd><small>agents in latest event sample</small></div>
       <div><dt>Operating firms</dt><dd>{model.counts.firms}</dd><small>canonical firm endpoint</small></div>
+      <div><dt>Real places</dt><dd>{model.counts.places}</dd><small>stable city coordinates</small></div>
+      <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></div>
+      <div><dt>Office load</dt><dd>{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</dd><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></div>
       <div><dt>AI inference</dt><dd>{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</dd><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></div>
       <div><dt>World time</dt><dd>{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</dd><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></div>
       <div><dt>Layout proof</dt><dd>{humanize(model.coordinateMode)}</dd><small>{model.counts.assigned} role assignments</small></div>

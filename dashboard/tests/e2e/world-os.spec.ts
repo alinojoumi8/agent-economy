@@ -60,6 +60,24 @@ async function mockApi(page: Page) {
       firms: [{ id: 1, name: "Northstar Foods", sector: "food", status: "private", x: null, y: null }],
       flows: [],
     } });
+    if (path === "/api/v2/world-map") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "world.map", data: {
+        regions: [],
+        agents: [
+          { id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", x: null, y: null },
+          { id: 2, name: "Editor Northstar", role: "editor", occupation: "editor", x: null, y: null },
+          { id: 3, name: "Dr. Amara Osei", role: null, occupation: "doctor", x: null, y: null },
+        ],
+        organizations: [{ id: 1, name: "Northstar Foods", sector: "food", status: "private", x: null, y: null }],
+        places: [],
+        presence: [],
+      },
+    } });
+    if (path === "/api/v2/civic/summary") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "civic.summary", data: {
+        enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+      },
+    } });
     if (path === "/api/v2/events") return route.fulfill({ json: {
       ...baseEnvelope, projection: "events.page", data: { items: [
         { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { qty: 5 } },
@@ -209,6 +227,24 @@ test("cursor_ahead recovery resets without rendering old-run payloads or looping
         regions: [],
         core_agents: [{ id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", x: null, y: null }],
         firms: [], flows: [],
+      } });
+    }
+    if (path === "/api/v2/world-map") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, projection: "world.map", data: {
+          regions: [],
+          agents: [{ id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", x: null, y: null }],
+          organizations: [],
+          places: [],
+          presence: [],
+        },
+      } });
+    }
+    if (path === "/api/v2/civic/summary") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, projection: "civic.summary", data: {
+          enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+        },
       } });
     }
     if (path === "/api/v2/mode") return route.fulfill({ status: 404, json: {} });

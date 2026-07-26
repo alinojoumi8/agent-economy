@@ -15,6 +15,7 @@ data/runs/oracle-locks/
 data/runs/oracle-pending/
 data/checkpoints/
 data/control-plane/
+data/counterfactuals/
 data/experiments/
 reports/out/
 .venv/

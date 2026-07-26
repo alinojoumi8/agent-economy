@@ -103,7 +103,7 @@ def test_migration_join_documents_and_security_headers(citizen_client):
         for row in world.store.query("PRAGMA table_info(external_agent_connections)")
     }
     assert "passport_id" in columns
-    assert int(world.store.get_meta()["schema_version"]) == 16
+    assert int(world.store.get_meta()["schema_version"]) == 17
 
     join = client.get("/join/local-sandbox")
     assert join.status_code == 200

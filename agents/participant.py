@@ -414,6 +414,31 @@ class ParticipantService:
             {"type": "cancel_insurance", "label": "Cancel health insurance", "fields": []},
             {"type": "found_company", "label": "Found a company", "fields": founding_fields},
         ]
+        if (
+            self.engine_semantics_version >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        ):
+            items = [item for item in items if item["type"] != "found_company"]
+            required_civic_action = ctx.get("civic_required_action")
+            if isinstance(required_civic_action, dict):
+                items.append(exact_action(
+                    required_civic_action,
+                    "Attend required permit appointment",
+                    "civic-appointment",
+                ))
+            if isinstance(founding_action, dict) and founding_action.get("type") in {
+                "apply_business_permit", "found_company",
+            }:
+                label = (
+                    "Apply for the authorized business permit"
+                    if founding_action["type"] == "apply_business_permit"
+                    else "Found the permit-authorized company"
+                )
+                items.append(exact_action(
+                    founding_action,
+                    label,
+                    f"civic-{founding_action['type']}",
+                ))
         if self.engine_semantics_version >= 7 and bool(agent["retired"]):
             # Retirees do not search for work. Their only liquidity action is a
             # bounded transfer between the two accounts declared on their row.

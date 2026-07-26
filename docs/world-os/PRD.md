@@ -494,17 +494,27 @@ event, balanced ledger, qualified causal edges, and branch-isolation hashes. The
 may observe the public goods consequence but never the private subject, body, identities,
 or message-specific existence.
 
-## 10. Later semantic lakes
+## 10. Current and later semantic lakes
 
-### Lake 4: Education and teachers, semantics 11
+### Lake 4: Compute plans and learnable skills, semantics 11 — implemented
 
-- school and training organization types;
-- teacher employment, classroom capacity, schedules, attendance, tuition/funding;
-- course prerequisites, skill progression, credentials, graduation, dropout;
-- education decisions linked to household budgets and career requirements;
-- tests for credential fraud, teacher death, school insolvency, transfer, and replay.
+- authoritative citizen skills and accepted-action XP history;
+- paid compute subscriptions separated from population scheduling tiers;
+- bounded provider pools, priority, cooldown, deadline, and failover telemetry;
+- deterministic billing, sponsorship, replay, and privacy-safe observability;
+- tests for renewal, study, sponsorship, provider failure, pause, and replay.
 
-### Lake 5: Households and housing, semantics 12
+### Lake 5: Civic places and permit services, semantics 12 — implemented
+
+- first-class places, time-bounded occupancy, and effective presence;
+- regional permit agencies, staff succession, capacity-limited appointments,
+  no-shows, application fees, cases, and durable institutional tasks;
+- expiring, payload-bound, exactly-once business authorizations;
+- privacy-bounded attention contexts and viewer-specific civic projections;
+- tests for migration, death, succession, queue priority, privacy, external
+  gateway submission, migration, and exact replay.
+
+### Lake 6: Households and housing, next available semantics
 
 - first-class households and time-bounded membership;
 - marriage/partnership, separation, guardianship, dependents, shared and separate assets;
@@ -513,15 +523,17 @@ or message-specific existence.
 - household decision policy that avoids one LLM call per family member for joint choices;
 - tests for death, divorce, negative equity, homelessness, landlord failure, and migration.
 
-### Lake 6: Services and careers, next available semantics
+### Lake 7: Education, careers, and professional-service depth
 
-- skill taxonomy, experience, credentials, job requirements, performance, promotions;
-- service listings, appointments, queues, capacity, completion, quality, disputes;
+- schools, teachers, courses, credentials, graduation, and dropout;
+- experience, job requirements, performance, promotions, and career decisions;
+- general service listings, completion, quality, and disputes beyond permits;
 - professional licensing for lawyers, teachers, health workers, finance, and trades;
 - sole proprietorship and partnership workflows;
-- tests for no-shows, double booking, incapacity, malpractice, license lapse, and bankruptcy.
+- tests for credential fraud, double booking, incapacity, malpractice, license
+  lapse, school insolvency, and bankruptcy.
 
-### Lake 7: Institutional depth
+### Lake 8: Institutional depth
 
 - richer corporate governance, boards, security classes, dilution, bonds, M&A, and
   receivership;

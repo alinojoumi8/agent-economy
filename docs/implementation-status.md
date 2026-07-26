@@ -13,6 +13,12 @@
 > authorized for squash merge. V9 live evidence, the rumor and 365-day campaigns,
 > tagging, publication, and public deployment remain separate release gates.
 
+> **Current extension note (2026-07-26):** maintained new runs now support
+> schema 17 / semantics 12. Semantics 8–10 add communications and external-agent
+> lakes, semantics 11 adds compute plans and learnable skills, and semantics 12
+> adds civic places plus the capacity-limited permit vertical. Stored historical
+> runs retain their recorded schema/semantics behavior.
+
 ## Executive verdict
 
 The PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
