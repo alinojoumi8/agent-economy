@@ -27,6 +27,9 @@ IGNORED_COLUMNS = {"created_at", "updated_at", "applied_at"}
 TABLE_IGNORED_COLUMNS = {
     "external_action_submissions": {"completed_at", "source_submission_id"},
     "external_agent_connections": {"last_seen_at", "lease_expires_at"},
+    # These are physical-order accelerators derived from source_id/target_id.
+    # Canonical replay compares the referenced logical records instead.
+    "causal_links": {"dedupe_key", "source_order_key", "target_order_key"},
 }
 LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
 SURROGATE_ID_COLUMNS = {
@@ -40,6 +43,10 @@ IGNORED_EVENT_KINDS = {
     "participant_control_acquired", "participant_control_released",
     "participant_action_queued", "participant_action_replaced",
     "participant_action_executed", "participant_action_rejected", "participant_idle",
+    # Non-terminal external receipts are wall-clock control-plane evidence.
+    # The deterministic comparison retains external_action_executed and the
+    # executed submission row that binds the action to its world effects.
+    "external_action_queued", "external_action_stale", "external_action_rejected",
 }
 OPERATIONAL_LLM_PURPOSES = {"report_narrative"}
 JSON_COLUMNS = {
@@ -53,6 +60,8 @@ LLM_REFERENCE_JSON_COLUMNS = {
 }
 EVENT_REFERENCE_JSON_COLUMNS = {
     ("news_articles", "source_event_ids"),
+    ("claims", "source_event_ids_json"),
+    ("information_items", "source_event_ids_json"),
     ("action_proposals", "evidence_event_ids_json"),
 }
 NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
@@ -64,7 +73,7 @@ EVENT_REFERENCE_COLUMNS = {
     ("liquidity_support_requests", "request_event_id"),
 }
 EVENT_REFERENCE_KEYS = {"request_event_id", "event_id"}
-EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids"}
+EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids", "source_event_ids"}
 
 
 ReferenceExpectationResolver = Callable[
@@ -469,6 +478,8 @@ def _table_digest(
         placeholders = ",".join("?" for _ in OPERATIONAL_LLM_PURPOSES)
         where = f" WHERE purpose NOT IN ({placeholders})"
         params = tuple(sorted(OPERATIONAL_LLM_PURPOSES))
+    elif table == "external_action_submissions":
+        where = " WHERE status='executed'"
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()
@@ -491,6 +502,17 @@ def _table_digest(
             elif (table, column) in EVENT_REFERENCE_COLUMNS:
                 resolved, valid = _canonical_event_reference(
                     row[column], event_references)
+                record[column] = resolved
+                references_valid = references_valid and valid
+            elif (table == "causal_links"
+                  and column in {"source_id", "target_id"}
+                  and row[f"{column.removesuffix('_id')}_kind"] == "event"):
+                try:
+                    event_id: Any = int(row[column])
+                except (TypeError, ValueError):
+                    event_id = row[column]
+                resolved, valid = _canonical_event_reference(
+                    event_id, event_references)
                 record[column] = resolved
                 references_valid = references_valid and valid
             else:

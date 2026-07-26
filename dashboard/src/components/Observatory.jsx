@@ -12,6 +12,7 @@ import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
 import { InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
 import { CivicCity } from "./CivicCity";
 import { SectionTitle } from "./ui";
+import { workspaceSemanticsLabel } from "../runState";
 
 const MacroOverview = lazy(() => import("./MacroOverview"));
 
@@ -49,7 +50,7 @@ export function Observatory({ hostedSession = null }) {
     {hosted && !canControl && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs text-mint-300"><strong>Observer access.</strong> This run is read-only; an administrator owns simulation controls.</aside>}
     {status?.pause_reason && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-gold-300/20 bg-gold-300/[.05] px-4 py-3 text-xs text-gold-300"><strong>Run paused safely.</strong> {status.pause_reason.detail || status.pause_reason.reason}</aside>}
     {status?.run_id && <aside className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-3 rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs">
-      <span><strong className="text-mint-300">Semantics 8 workspace.</strong> Trace goal-driven communications through beliefs, decisions, events, and ledger effects.</span>
+      <span><strong className="text-mint-300">{workspaceSemanticsLabel(status)}</strong> Trace goal-driven communications through beliefs, decisions, events, and ledger effects.</span>
       <a className="button" href={`/runs/${encodeURIComponent(status.run_id)}/overview`}>Open World OS</a>
     </aside>}
 

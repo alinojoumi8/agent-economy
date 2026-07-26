@@ -573,7 +573,7 @@ class ExternalAgentService:
         cursor = int(self.store.scalar("SELECT COALESCE(MAX(id),0) FROM events", default=0))
         deadline = _now() + timedelta(seconds=self.decision_seconds)
         self.store.execute(
-            "UPDATE external_agent_turns SET status='stale',updated_at=? "
+            "UPDATE external_agent_turns SET status='expired',updated_at=? "
             "WHERE connection_id=? AND target_tick<? AND status='open'",
             (_iso(), auth["id"], target_tick))
         existing = self.store.query_one(
@@ -1117,7 +1117,38 @@ class ExternalAgentService:
         return {"events": events, "cursor": next_cursor}
 
     # -- deterministic runtime/replay integration ---------------------------
+    def _expire_queued_before(self, tick: int) -> None:
+        """Close submissions that can no longer be selected for execution."""
+        rows = self.store.query(
+            "SELECT id,turn_id FROM external_action_submissions "
+            "WHERE target_tick<? AND status='queued' ORDER BY target_tick,id",
+            (int(tick),),
+        )
+        if not rows:
+            return
+        completed_at = _iso()
+        validators = _canonical([{
+            "validator": "target_tick",
+            "ok": False,
+            "message": "the target tick passed before execution",
+        }])
+        for row in rows:
+            updated = self.store.execute(
+                "UPDATE external_action_submissions SET status='stale',"
+                "validator_results_json=?,result_json='[]',completed_at=? "
+                "WHERE id=? AND status='queued'",
+                (validators, completed_at, str(row["id"])),
+            )
+            if int(updated.rowcount or 0) <= 0:
+                continue
+            self.store.execute(
+                "UPDATE external_agent_turns SET status='fallback',updated_at=? "
+                "WHERE id=? AND status IN ('open','submitted')",
+                (completed_at, str(row["turn_id"])),
+            )
+
     def decisions_for_tick(self, tick: int) -> tuple[set[int], list[dict[str, Any]]]:
+        self._expire_queued_before(tick)
         replay = self._replay_decisions(tick)
         if replay:
             return {int(item["agent_id"]) for item in replay}, replay

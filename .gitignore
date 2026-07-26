@@ -26,4 +26,5 @@ dashboard/test-results/
 build/
 dist/
 *.log
+logs/
 tmp/

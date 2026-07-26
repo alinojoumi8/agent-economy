@@ -26,6 +26,33 @@ behavior:
   # Population tier controls scheduling only; compute subscriptions control models.
   periphery_cadence_multiplier: 2
 
+# The desktop dashboard always exposes Join and My Agents. Keep that local
+# Passport control plane available in the standard live world as well as the
+# smaller Hermes rehearsal profile.
+external_gateway:
+  enabled: true
+  audience: agent-economy
+  personal_token_days: 30
+  access_token_minutes: 15
+  refresh_token_days: 30
+  lease_seconds: 60
+  decision_seconds: 120
+  requests_per_minute: 240
+  scope_sets:
+    observer: [world.read]
+    commons: [commons.read, commons.write]
+    actor: [world.read, world.act, commons.read, commons.write]
+  public_join:
+    enabled: true
+    world_slug: local-sandbox
+    world_name: Agent Economy Live World
+    tenant_id: local:local-sandbox
+    seat_limit: 5
+    max_passports_per_owner: 3
+    local_claim_enabled: true
+    passport_db_path: data/control-plane/agent-passports.db
+    claim_hours: 24
+
 # Let qualified unemployed citizens identify a bounded market gap and found a
 # real firm. Genesis citizens participate so a short live rehearsal can cover
 # incorporation, hiring, production, sales, and payroll without synthetic
@@ -49,13 +76,14 @@ llm:
   live_only: true
   require_preflight_live: true
   institutional_role_purposes: true
-  # Ten overlapping calls preserve the acceptance target without saturating a
-  # desktop. Provider lanes remain independently bounded below.
-  max_in_flight: 10
-  concurrency: 10
-  # Leave enough wall time for a queued local Qwen attempt to time out and
-  # still reach its existing DeepSeek fallback under peak day-one load.
-  logical_deadline_s: 240
+  # Six overlapping calls keep remote providers busy while leaving the desktop
+  # responsive during 100-agent phases.
+  max_in_flight: 6
+  concurrency: 6
+  # One local context deliberately trades throughput for bounded memory. Give
+  # a 100-agent queue enough time to drain without treating safe backpressure
+  # as a provider outage; the resource guard remains independently preemptive.
+  logical_deadline_s: 900
   provider_retries: 0
   rate_limit_backoff_s: [15, 30, 60, 120, 300]
   decision_max_tokens: 900
@@ -66,9 +94,9 @@ llm:
       kind: openai_compat
       base_url: http://127.0.0.1:11434/v1
       auth: none
-      # The 16K app-specific model keeps local KV-cache growth bounded. Two
-      # slots avoid six simultaneous GPU/CPU-heavy local generations.
-      concurrency: 2
+      # A single 16K context avoids parallel KV caches spilling from an 11 GB
+      # desktop GPU into system memory under fallback-heavy load.
+      concurrency: 1
       prompt_cache_mode: "off"
       timeout_s: 90
       healthcheck_path: /models
@@ -155,7 +183,9 @@ llm:
       fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
     flash:
       primary: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
-      fallback: {provider: ollama, model: "agent-economy-qwen3.5:9b-16k", timeout_s: 90}
+      # Keep an expired remote credential from spilling the flash cohort onto
+      # the desktop GPU. The local tier remains deliberately local.
+      fallback: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
     premium:
       primary: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
       fallback: {provider: deepseek, model: deepseek-v4-flash, timeout_s: 60}
@@ -215,8 +245,9 @@ speed_delay_s: 0.0
 
 resource_guard:
   enabled: true
-  sample_interval_s: 5
-  max_cpu_percent: 95
-  max_memory_percent: 90
-  min_available_memory_gb: 4
-  consecutive_breaches: 3
+  sample_interval_s: 2
+  max_cpu_percent: 85
+  max_memory_percent: 70
+  min_available_memory_gb: 20
+  max_swap_percent: 50
+  consecutive_breaches: 2

@@ -390,11 +390,19 @@ stored only as hashes.
         owner_id, signed = _owner(request, service, create=True)
         assert owner_id is not None
         documents = service.owner_passports(owner_id)
+        owned_passport_ids = {
+            str(item["passport"]["id"]) for item in documents
+        }
+        connected_documents = [
+            item for item in service.run_passports()
+            if str(item["passport"]["id"]) not in owned_passport_ids
+        ]
         response = _templates.TemplateResponse(
             request=request,
             name="citizenship/my_agents.html",
             context={
                 "documents": documents,
+                "connected_documents": connected_documents,
                 "world": service.world_document(),
                 "navigation": navigation,
                 "csrf_tokens": {

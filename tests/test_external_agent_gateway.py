@@ -214,6 +214,49 @@ def test_turn_idempotency_execution_stale_rejection_and_safe_fallback(world10: W
     assert fallback[0]["envelope"]["actions"] == [{"type": "do_nothing"}]
 
 
+def test_turn_expires_superseded_open_turn_before_creating_next_turn(world10: World):
+    created = _connection(world10)
+    service = world10.runtime.external
+    auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+    first = service.turn(auth)
+
+    world10.store.set_meta(tick=first["target_tick"])
+    second = service.turn(auth)
+
+    assert second["target_tick"] == first["target_tick"] + 1
+    assert world10.store.scalar(
+        "SELECT status FROM external_agent_turns WHERE id=?",
+        (first["turn_id"],),
+    ) == "expired"
+
+
+def test_decision_tick_stales_queued_submissions_from_past_ticks(world10: World):
+    created = _connection(world10)
+    service = world10.runtime.external
+    auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+    turn = service.turn(auth)
+    queued = service.submit_action(auth, {
+        "target_tick": turn["target_tick"],
+        "action": {"type": "do_nothing"},
+        "observed_projection_hash": turn["projection_hash"],
+        "idempotency_key": "late-after-snapshot",
+    })
+
+    service.decisions_for_tick(turn["target_tick"] + 1)
+
+    receipt = service.receipt(auth, queued["submission_id"])
+    assert receipt["status"] == "stale"
+    assert receipt["validator_results"] == [{
+        "validator": "target_tick",
+        "ok": False,
+        "message": "the target tick passed before execution",
+    }]
+    assert world10.store.scalar(
+        "SELECT status FROM external_agent_turns WHERE id=?",
+        (turn["turn_id"],),
+    ) == "fallback"
+
+
 def test_revocation_mid_turn_cancels_queued_action(world10: World):
     created = _connection(world10)
     service = world10.runtime.external
@@ -398,7 +441,22 @@ def test_oauth_discovery_dynamic_registration_browser_redirect_and_resource_bind
         "client_id": client_id, "redirect_uri": redirect_uri,
         "code_verifier": verifier, "resource": "http://testserver/mcp"})
     assert pair.status_code == 200
-    token = pair.json()["access_token"]
+    pair_body = pair.json()
+    token = pair_body["access_token"]
+    refreshed = client.post("/oauth/token", data={
+        "grant_type": "refresh_token",
+        "refresh_token": pair_body["refresh_token"],
+        "client_id": client_id,
+    })
+    assert refreshed.status_code == 200
+    explicit_mismatch = client.post("/oauth/token", data={
+        "grant_type": "refresh_token",
+        "refresh_token": refreshed.json()["refresh_token"],
+        "client_id": client_id,
+        "resource": "https://wrong.test/mcp",
+    })
+    assert explicit_mismatch.status_code == 400
+    assert explicit_mismatch.json()["error"] == "invalid_target"
     bearer = {"Authorization": f"Bearer {token}"}
     assert client.get("/mcp", headers=bearer).status_code == 405
     resources = client.post("/mcp", headers=bearer, json={
@@ -492,6 +550,12 @@ def test_recorded_external_action_replays_without_client_network(world10: World,
     _controlled, decisions = service.decisions_for_tick(turn["target_tick"])
     world10.runtime.execute_decisions(turn["target_tick"], decisions)
     source_receipt = service.receipt(auth, queued["submission_id"])
+    stale = service.submit_action(auth, {
+        "target_tick": turn["target_tick"], "action": {"type": "do_nothing"},
+        "observed_projection_hash": turn["projection_hash"],
+        "idempotency_key": "recorded-stale-control-plane-receipt",
+    })
+    assert stale["status"] == "stale"
     world10.store.commit()
 
     replay_store = Store(str(replay_path), create=False)
