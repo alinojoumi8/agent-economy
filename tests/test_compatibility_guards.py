@@ -1,6 +1,7 @@
 """Fail-closed guards for persisted engine and database compatibility."""
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -13,6 +14,7 @@ from engine.semantics import (
 )
 from engine.store import Store
 from run import fork_run, open_run
+from run_config import load_config
 
 
 def _stored_run(path, run_id: str, semantics: int) -> None:
@@ -33,6 +35,131 @@ def test_resume_accepts_every_supported_persisted_semantics(tmp_path, version):
         assert world.engine_semantics_version == version
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    ("persisted_status", "expected_status"),
+    [("paused", "paused"), ("running", "paused")],
+)
+def test_resume_restores_persisted_status_and_fails_safe_running_state(
+        tmp_path, persisted_status, expected_status):
+    run_id = f"status-{persisted_status}"
+    _stored_run(
+        tmp_path / f"{run_id}.db",
+        run_id,
+        CURRENT_ENGINE_SEMANTICS_VERSION,
+    )
+    persisted = Store(str(tmp_path / f"{run_id}.db"))
+    persisted.set_meta(status=persisted_status)
+    persisted.commit()
+    persisted.close()
+
+    store, world, _ = open_run({}, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.status == expected_status
+        assert store.get_meta()["status"] == expected_status
+    finally:
+        store.close()
+
+
+def test_resume_profile_can_only_tighten_operational_resource_limits(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi")
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax")
+    run_id = "resource-safe-resume"
+    stored_config = load_config("runs/evolving-live.yaml")
+    stored_config["llm"]["max_in_flight"] = 10
+    stored_config["llm"]["concurrency"] = 10
+    stored_config["llm"]["logical_deadline_s"] = 240
+    stored_config["llm"]["providers"]["ollama"]["concurrency"] = 2
+    stored_config["resource_guard"].update({
+        "sample_interval_s": 5,
+        "max_cpu_percent": 95,
+        "max_memory_percent": 90,
+        "min_available_memory_gb": 4,
+        "max_swap_percent": 90,
+        "consecutive_breaches": 3,
+    })
+    persisted = Store(str(tmp_path / f"{run_id}.db"))
+    persisted.init_run_meta(run_id, 42, stored_config)
+    persisted.close()
+
+    selected_config = load_config("runs/evolving-live.yaml")
+    store, world, _ = open_run(
+        selected_config, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.config["llm"]["max_in_flight"] == 6
+        assert world.config["llm"]["concurrency"] == 6
+        assert world.config["llm"]["logical_deadline_s"] == 900
+        assert world.config["llm"]["providers"]["ollama"]["concurrency"] == 1
+        assert world.config["resource_guard"]["max_memory_percent"] == 70
+        assert world.config["resource_guard"]["min_available_memory_gb"] == 20
+        assert world.config["resource_guard"]["max_swap_percent"] == 50
+
+        # Provider identity and the canonical persisted run configuration stay
+        # authoritative; the tightened limits are runtime-only.
+        persisted_config = json.loads(store.get_meta()["config_json"])
+        assert persisted_config["llm"]["max_in_flight"] == 10
+        assert persisted_config["llm"]["logical_deadline_s"] == 240
+        assert persisted_config["llm"]["providers"]["ollama"]["concurrency"] == 2
+        assert (
+            world.config["llm"]["providers"]["deepseek"]["base_url"]
+            == persisted_config["llm"]["providers"]["deepseek"]["base_url"]
+        )
+        assert (
+            world.config["llm"]["tier_routes"]
+            == persisted_config["llm"]["tier_routes"]
+        )
+    finally:
+        world.close()
+
+
+def test_resume_can_adopt_explicit_local_citizenship_without_rewriting_run_config(
+        tmp_path):
+    run_id = "local-citizenship-resume"
+    stored_config = {
+        "engine_semantics_version": CURRENT_ENGINE_SEMANTICS_VERSION,
+    }
+    persisted = Store(str(tmp_path / f"{run_id}.db"))
+    persisted.init_run_meta(run_id, 42, stored_config)
+    persisted.close()
+
+    selected_config = {
+        "external_gateway": {
+            "public_join": {
+                "enabled": True,
+                "world_slug": "local-sandbox",
+                "passport_db_path": str(tmp_path / "passports.db"),
+            },
+        },
+    }
+    store, world, _ = open_run(
+        selected_config, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.config["external_gateway"]["public_join"] == (
+            selected_config["external_gateway"]["public_join"])
+        persisted_config = json.loads(store.get_meta()["config_json"])
+        assert "external_gateway" not in persisted_config
+    finally:
+        world.close()
+
+
+def test_evolving_live_profile_enables_the_local_passport_pages():
+    config = load_config("runs/evolving-live.yaml")
+
+    assert config["external_gateway"]["enabled"] is True
+    assert config["external_gateway"]["public_join"] == {
+        "enabled": True,
+        "world_slug": "local-sandbox",
+        "world_name": "Agent Economy Live World",
+        "tenant_id": "local:local-sandbox",
+        "seat_limit": 5,
+        "max_passports_per_owner": 3,
+        "local_claim_enabled": True,
+        "passport_db_path": "data/control-plane/agent-passports.db",
+        "claim_hours": 24,
+    }
 
 
 @pytest.mark.parametrize(

@@ -1186,6 +1186,7 @@ def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
             if not status["running"]:
                 break
         assert status["tick"] == 1
+        assert status["semantics_version"] == world.engine_semantics_version
         assert status["target_tick"] == 3
         assert status["remaining_ticks"] == 2
 

@@ -1,0 +1,56 @@
+# Local Hermes citizen sandbox with real provider cognition for native agents.
+# Launches fail closed unless --approve-live-inference is supplied.
+extends: hermes-local.yaml
+
+communications:
+  autonomous_scripted_enabled: false
+
+# Keep the first interactive rehearsal bounded even though the configured
+# provider plans can support a larger run.
+budget:
+  cap_usd: 5.0
+  oracle_reserve_usd: 0.50
+  report_reserve_usd: 0.25
+  conversation_pairs: 2
+
+llm:
+  require_preflight_live: true
+  concurrency: 3
+  decision_max_tokens: 900
+  provider_retries: 1
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      prompt_cache_mode: provider_automatic
+      timeout_s: 180
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        max_completion_tokens: 4096
+    kimi:
+      kind: openai_compat
+      base_url: https://api.kimi.com/coding/v1
+      api_key_env: KIMI_API_KEY
+      prompt_cache_mode: "off"
+      timeout_s: 180
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        reasoning_effort: medium
+        temperature: 1.0
+        max_tokens: 4096
+  default_route: {provider: minimax, model: MiniMax-M3}
+  routes:
+    citizen:        {provider: minimax, model: MiniMax-M3}
+    founder:        {provider: minimax, model: MiniMax-M3}
+    conversation:   {provider: minimax, model: MiniMax-M3}
+    memory:         {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: kimi, model: kimi-for-coding}
+    credit_officer: {provider: kimi, model: kimi-for-coding}
+    reporter:       {provider: kimi, model: kimi-for-coding}
+    editor:         {provider: kimi, model: kimi-for-coding}
+    vc_partner:     {provider: kimi, model: kimi-for-coding}
+    oracle:         {provider: kimi, model: kimi-for-coding}

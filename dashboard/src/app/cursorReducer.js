@@ -36,6 +36,15 @@ export function reduceCursorState(state, message, { historical = false } = {}) {
       staleReason: null,
     };
   }
+  if (message.type === "error" && message.code === "cursor_ahead") {
+    const recovered = Number(message.event_cursor);
+    return {
+      ...state,
+      cursor: Number.isFinite(recovered) ? recovered : state.cursor,
+      status: "stale",
+      staleReason: "cursor_ahead",
+    };
+  }
   if (message.type === "tick") {
     return { ...state, status: "live", staleReason: null };
   }

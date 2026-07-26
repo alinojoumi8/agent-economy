@@ -194,15 +194,37 @@ def validate_llm_config(
     for provider in sorted(set(providers) - set(referenced)):
         warnings.append(f"provider '{provider}' is configured but not used by any route")
 
-    cli_routes = [name for name, route in route_items
-                  if isinstance(route, dict)
-                  and providers.get(route.get("provider"), {}).get("kind") == "cli"]
-    forbidden_cli = [
-        name for name in cli_routes if name not in {"oracle_plan", "oracle", "dev"}]
+    cli_routes = [
+        (name, str(route.get("provider", "")))
+        for name, route in route_items
+        if isinstance(route, dict)
+        and providers.get(route.get("provider"), {}).get("kind") == "cli"
+    ]
+    cli_opt_in_errors: set[str] = set()
+    forbidden_cli = []
+    for route_name, provider in cli_routes:
+        if route_name in {"oracle_plan", "oracle", "dev"}:
+            continue
+        pcfg = providers.get(provider, {})
+        raw_purposes = pcfg.get("allowed_purposes")
+        valid_purposes = (
+            isinstance(raw_purposes, list)
+            and bool(raw_purposes)
+            and all(isinstance(value, str) and value.strip()
+                    for value in raw_purposes)
+        )
+        if not bool(pcfg.get("allow_agent_purposes", False)) or not valid_purposes:
+            forbidden_cli.append(route_name)
+            cli_opt_in_errors.add(provider)
     if forbidden_cli:
         errors.append(
-            "CLI providers may only serve oracle_plan/oracle/dev routes: "
+            "CLI providers may only serve oracle_plan/oracle/dev routes unless "
+            "the provider sets allow_agent_purposes: true and a non-empty "
+            "allowed_purposes list: "
             + ", ".join(forbidden_cli))
+    for provider in sorted(cli_opt_in_errors):
+        errors.append(
+            f"CLI provider '{provider}' is missing its explicit agent-purpose allowlist")
 
     if bool(llm.get("live_only", False)):
         forbidden_live = sorted(

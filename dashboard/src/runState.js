@@ -15,10 +15,20 @@ export function mergeRunPayload(current, payload) {
     tick,
     status: has("status") ? payload.status : current.status,
     running: has("running") ? payload.running : current.running,
+    semantics_version: has("semantics_version")
+      ? payload.semantics_version
+      : current.semantics_version,
     target_tick: targetTick,
     remaining_ticks: remainingTicks,
     governor: has("governor") ? payload.governor : current.governor,
     pause_reason: has("pause_reason") ? payload.pause_reason : current.pause_reason,
     report_path: has("report_path") ? payload.report_path : current.report_path,
   };
+}
+
+
+export function workspaceSemanticsLabel(status) {
+  return Number.isInteger(status?.semantics_version)
+    ? `Semantics ${status.semantics_version} workspace.`
+    : "World workspace.";
 }

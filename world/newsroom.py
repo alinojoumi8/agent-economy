@@ -420,11 +420,32 @@ class Conversations:
     def _sample_pairs(self, tick: int, k: int) -> list[tuple[int, int]]:
         if k <= 0:
             return []
-        ties = self.store.query(
-            "SELECT t.agent_a, t.agent_b, t.weight,x.retired AS a_retired,y.retired AS b_retired "
-            "FROM social_ties t "
-            "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
-            "WHERE x.alive=1 AND y.alive=1")
+        civic_presence = (
+            int(self.config.get("engine_semantics_version", 1)) >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        )
+        if civic_presence:
+            ties = self.store.query(
+                "SELECT t.agent_a,t.agent_b,t.weight,"
+                "x.retired AS a_retired,y.retired AS b_retired "
+                "FROM social_ties t "
+                "JOIN agents x ON x.id=t.agent_a "
+                "JOIN agents y ON y.id=t.agent_b "
+                "JOIN effective_presence px "
+                "ON px.agent_id=t.agent_a AND px.tick=? AND px.slot='evening' "
+                "JOIN effective_presence py "
+                "ON py.agent_id=t.agent_b AND py.tick=px.tick "
+                "AND py.slot=px.slot AND py.place_id=px.place_id "
+                "WHERE x.alive=1 AND y.alive=1",
+                (int(tick),),
+            )
+        else:
+            ties = self.store.query(
+                "SELECT t.agent_a, t.agent_b, t.weight,"
+                "x.retired AS a_retired,y.retired AS b_retired "
+                "FROM social_ties t "
+                "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
+                "WHERE x.alive=1 AND y.alive=1")
         if not ties:
             return []
         # Weight by tie strength + event salience (agents touched by big events talk).

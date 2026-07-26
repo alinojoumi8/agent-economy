@@ -192,7 +192,10 @@ class AgentRuntime:
             if res is not None:
                 decisions.append(res)
         if participant_decision is not None:
+            self._attach_civic_decision_context(tick, participant_decision)
             decisions.append(participant_decision)
+        for decision in external_decisions:
+            self._attach_civic_decision_context(tick, decision)
         decisions.extend(external_decisions)
         # An LLM outage pauses the sim rather than skipping agents silently (§8).
         if agents and errors > len(agents) // 2:
@@ -204,6 +207,29 @@ class AgentRuntime:
         # deterministic execution order
         decisions.sort(key=lambda d: d["agent_id"])
         return decisions
+
+    def _attach_civic_decision_context(self, tick: int, decision: dict) -> None:
+        if (
+            int(self.config.get("engine_semantics_version", 1)) < 12
+            or not self.e.city.enabled
+            or decision.get("attention_context_key")
+        ):
+            return
+        agent_id = int(decision["agent_id"])
+        agent = self.store.query_one(
+            "SELECT * FROM agents WHERE id=? AND alive=1", (agent_id,))
+        if agent is None:
+            return
+        context = self.ctx.build(agent, tick)
+        purpose = str(decision.get("purpose") or context.get("purpose") or "decision")
+        context_key, source_event_ids = self.e.city.persist_attention_context(
+            agent_id,
+            tick,
+            purpose,
+            context.get("attention", {}),
+        )
+        decision["attention_context_key"] = context_key or None
+        decision["attention_source_event_ids"] = source_event_ids
 
     async def _decide_guarded(self, tick: int, agent):
         try:
@@ -217,6 +243,16 @@ class AgentRuntime:
         context = self.ctx.build(a, tick)
         self.ctx.persist_inbox_read_context(int(a["id"]), tick, context)
         purpose = context.get("purpose", "decision")
+        attention_context_key, attention_source_event_ids = (
+            self.e.city.persist_attention_context(
+                int(a["id"]),
+                tick,
+                str(purpose),
+                context.get("attention", {}),
+            )
+            if int(self.config.get("engine_semantics_version", 1)) >= 12
+            else ("", [])
+        )
         role = a["role"] or "citizen"
         semantics = int(self.config.get("engine_semantics_version", 1))
         if (7 <= semantics < 11
@@ -226,7 +262,9 @@ class AgentRuntime:
                     "reasoning": env.get("reasoning", ""), "llm_call_id": None,
                     "communication_sources": context.get("communication_sources", []),
                     "communication_read_context_key": context.get(
-                        "communication_read_context_key")}
+                        "communication_read_context_key"),
+                    "attention_context_key": attention_context_key or None,
+                    "attention_source_event_ids": attention_source_event_ids}
         system, user = self.ctx.render_prompt(context)
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
                          agent_id=int(a["id"]), tick=tick,
@@ -239,7 +277,9 @@ class AgentRuntime:
                 "llm_call_id": getattr(resp, "call_id", None),
                 "communication_sources": context.get("communication_sources", []),
                 "communication_read_context_key": context.get(
-                    "communication_read_context_key")}
+                    "communication_read_context_key"),
+                "attention_context_key": attention_context_key or None,
+                "attention_source_event_ids": attention_source_event_ids}
 
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
@@ -260,6 +300,27 @@ class AgentRuntime:
             method = None
             if int(self.config.get("engine_semantics_version", 1)) >= 8:
                 decision_id, method = self._record_decision(tick, d)
+                if int(self.config.get("engine_semantics_version", 1)) >= 12:
+                    self.e.city.bind_attention_decision(
+                        d.get("attention_context_key"), decision_id)
+                    for source_event_id in d.get(
+                            "attention_source_event_ids", []):
+                        self.causal.create(
+                            "event",
+                            int(source_event_id),
+                            "decision",
+                            decision_id,
+                            "cited",
+                            "actor_claim",
+                            created_tick=tick,
+                            actor_agent_id=int(agent_id),
+                            method=method,
+                            provenance={
+                                "attention_context_key": d.get(
+                                    "attention_context_key"),
+                                "lane_limit": self.e.city.lane_limit,
+                            },
+                        )
                 if not supplier_warning_protocol:
                     for source in d.get("communication_sources", []):
                         self.causal.create(
@@ -395,20 +456,24 @@ class AgentRuntime:
         self.store.execute(
             "INSERT OR IGNORE INTO agent_decisions "
             "(dedupe_key,tick,agent_id,purpose,method,model_call_id,read_context_key,"
-            "reasoning_fingerprint) VALUES (?,?,?,?,?,?,?,?)",
+            "attention_context_key,reasoning_fingerprint) VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 dedupe_key, tick, agent_id, purpose, method,
                 decision.get("llm_call_id"),
                 decision.get("communication_read_context_key"),
+                decision.get("attention_context_key"),
                 reasoning_fingerprint,
             ),
         )
         row = self.store.query_one(
-            "SELECT id,reasoning_fingerprint FROM agent_decisions WHERE dedupe_key=?",
+            "SELECT id,reasoning_fingerprint,attention_context_key "
+            "FROM agent_decisions WHERE dedupe_key=?",
             (dedupe_key,),
         )
         if row["reasoning_fingerprint"] != reasoning_fingerprint:
             raise RuntimeError("decision replay identity mismatch")
+        if row["attention_context_key"] != decision.get("attention_context_key"):
+            raise RuntimeError("decision attention context replay identity mismatch")
         return int(row["id"]), method
 
     # ── observation capture from engine events ───────────────────────────────

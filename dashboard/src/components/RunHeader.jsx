@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
+import { inferenceMode } from "../lib/inferenceMode.js";
+import worldOsEmblem from "../assets/world-os-emblem.png";
 import { Badge } from "./ui";
+import { CitizenMenu } from "./CitizenMenu";
 
 export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
   hosted = false, canControl = true }) {
@@ -12,6 +15,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
   const participantReady = Boolean(participant?.queued_action);
   const limitReached = status?.remaining_ticks === 0;
   const { spend, cap, capped, fraction } = budgetState(status?.governor);
+  const inference = inferenceMode(status?.provider_readiness);
 
   async function action(name, path, body) {
     setBusy(name);
@@ -27,13 +31,16 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-mint-300/10 bg-ink-950/90 backdrop-blur-xl">
+    <header className="civic-run-header sticky top-0 z-50 border-b border-mint-300/10 bg-ink-950/90 backdrop-blur-xl">
       <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3 px-3 py-2.5 sm:px-5">
-        <div className="mr-2 min-w-[180px]">
-          <div className="eyebrow">Agent Economy</div>
-          <div className="mt-0.5 flex items-center gap-2 text-sm font-semibold tracking-wide">
-            Live observatory
-            <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-mint-300 shadow-[0_0_10px_#79e6bd]" : "bg-coral-300"}`} aria-label={connected ? "Live connection" : "Connection offline"} />
+        <div className="civic-run-header__brand mr-2">
+          <img src={worldOsEmblem} alt="" />
+          <div>
+            <div className="eyebrow">Agent Economy</div>
+            <div className="mt-0.5 flex items-center gap-2 text-sm font-semibold tracking-wide">
+              Civic Observatory
+              <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-mint-300" : "bg-coral-300"}`} aria-label={connected ? "Live connection" : "Connection offline"} />
+            </div>
           </div>
         </div>
 
@@ -41,6 +48,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
           <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+          <span title={inference.title}><Badge tone={inference.tone}>{inference.label}</Badge></span>
           {participantActive && <Badge tone="good">playing {participant?.controlled_agent?.name}</Badge>}
           {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.target_tick != null && <Badge tone={limitReached ? "good" : "warn"}>{limitReached ? `target t${status.target_tick} reached` : `${status.remaining_ticks} days to t${status.target_tick}`}</Badge>}
@@ -77,6 +85,11 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
             <div className="h-full rounded-full bg-gradient-to-r from-mint-400 via-gold-300 to-coral-300 transition-[width]" style={{ width: `${fraction}%` }} />
           </div>
         </div>
+
+        {!hosted && <CitizenMenu
+          runId={status?.run_id}
+          navigation={status?.navigation}
+        />}
       </div>
     </header>
   );

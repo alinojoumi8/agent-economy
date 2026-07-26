@@ -39,6 +39,53 @@ class StudySkill(CommandBase):
     ]
 
 
+class BusinessIdea(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mission: str = Field(min_length=1, max_length=240)
+    customer_problem: str = Field(min_length=1, max_length=240)
+    offering: str = Field(min_length=1, max_length=160)
+
+    @field_validator("mission", "customer_problem", "offering")
+    @classmethod
+    def normalized_nonblank_text(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+
+class ApplyBusinessPermit(CommandBase):
+    type: Literal["apply_business_permit"]
+    name: str = Field(min_length=1, max_length=60)
+    sector: str = Field(min_length=1, max_length=40)
+    lawyer_agent_id: Annotated[StrictInt, Field(gt=0)]
+    opening_capital: Annotated[StrictInt, Field(ge=0)]
+    business_idea: BusinessIdea
+
+    @field_validator("name", "sector")
+    @classmethod
+    def normalized_label(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+
+class AttendCivicAppointment(CommandBase):
+    type: Literal["attend_civic_appointment"]
+    appointment_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class DecideBusinessPermit(CommandBase):
+    type: Literal["decide_business_permit"]
+    case_id: Annotated[StrictInt, Field(gt=0)]
+    decision: Literal["approve", "deny"]
+    reason_code: Literal[
+        "market_capacity_supported",
+        "market_capacity_constrained",
+    ]
+
+
 class DirectAudience(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["direct"]

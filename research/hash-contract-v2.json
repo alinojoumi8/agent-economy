@@ -1,8 +1,8 @@
 {
   "id": "hash-contract-v2",
-  "schema_version": 16,
+  "schema_version": 17,
   "extends_contract": "hash-contract-v1",
-  "schema_inventory_sha256": "d79179a8635f1f617f0d12c2e2ce222372f83aac39cee2f25669a673f5f24f0d",
+  "schema_inventory_sha256": "495657150cd398601e4dab9532e09275e5ec054b90834e85a8525021afad7865",
   "extension_tables": [
     "external_agent_connections", "external_agent_credentials", "external_oauth_codes",
     "external_oauth_clients",
@@ -12,14 +12,18 @@
     "commons_reactions", "commons_feed_policies", "commons_feed_impressions",
     "commons_moderation_actions", "commons_appeals", "agent_skills",
     "agent_skill_history", "compute_subscriptions", "llm_attempts",
-    "runtime_tick_stats"
+    "runtime_tick_stats", "places", "occupancy_leases", "effective_presence",
+    "agency_staff", "service_cases", "service_appointments", "institution_tasks",
+    "civic_authorizations", "attention_contexts", "attention_context_items"
   ],
   "extension_columns": {
-    "run_meta": ["external_agent_influenced"]
+    "run_meta": ["external_agent_influenced"],
+    "agent_decisions": ["attention_context_key"]
   },
   "authoritative_tables": [
     "acceptance_checkpoints", "accounts", "action_proposals", "agencies",
     "agent_decisions", "agent_skill_history", "agent_skills", "agent_tier_history",
+    "agency_staff",
     "agents", "applications", "banks",
     "beliefs", "bill_actions", "bill_versions", "bills", "calibration_targets",
     "causal_links", "checkpoints", "claims", "comm_audiences", "comm_deliveries",
@@ -29,21 +33,26 @@
     "commons_follows", "commons_memberships", "commons_moderation_actions",
     "commons_profiles", "commons_reactions", "contract_acceptances", "contract_clauses",
     "compute_subscriptions", "contract_parties", "contracts", "conversations",
+    "civic_authorizations",
     "currencies", "dataset_manifests",
-    "due_diligence_checks", "elections", "employments", "events",
+    "due_diligence_checks", "effective_presence", "elections", "employments", "events",
     "external_action_submissions", "external_actor_requests", "external_agent_connections",
     "external_agent_turns", "firm_disclosures", "firms", "funding_rounds", "fx_orders",
     "fx_reserves", "fx_trades", "information_exposures", "information_items",
-    "insurance_policies", "ip_assets", "ip_licenses", "ipo_bids", "ipo_offerings",
+    "institution_tasks", "insurance_policies", "ip_assets", "ip_licenses",
+    "ipo_bids", "ipo_offerings",
     "job_offers", "jobs", "ledger_entries", "legal_decisions", "legal_filings",
     "legal_matters", "legal_notices", "legal_restrictions", "legal_rulesets",
     "legislative_votes", "legislators", "liquidity_support_requests", "llm_calls",
     "loan_applications", "loans", "lobbying_activities", "memories", "merger_reviews",
-    "mergers", "messages", "migrations", "news_articles", "obligations", "orders",
+    "mergers", "messages", "migrations", "news_articles", "obligations",
+    "occupancy_leases", "orders",
     "participant_actions", "participant_control", "pitches", "policy_rules",
-    "political_parties", "predictions", "regions", "run_meta", "scenario_packs",
+    "places", "political_parties", "predictions", "regions", "run_meta",
+    "scenario_packs", "service_appointments", "service_cases",
     "schema_migrations", "share_movements", "shares", "shocks", "social_ties",
-    "term_sheets", "trade_shipments", "trader_profiles", "trades", "transactions"
+    "term_sheets", "trade_shipments", "trader_profiles", "trades", "transactions",
+    "attention_contexts", "attention_context_items"
   ],
   "derived_tables": ["account_ledger_totals", "metrics", "projection_commits"],
   "excluded_tables": [
@@ -77,6 +86,9 @@
     "comm_audiences": ["audience_key"],
     "comm_deliveries": ["membership_ref_json"],
     "conversations": ["participant_ids"],
+    "external_action_submissions": [
+      "action_json", "rationale_summary", "result_json", "validator_results_json"
+    ],
     "external_agent_connections": ["owner_id_hash"],
     "legal_filings": ["body"],
     "llm_calls": ["request_json", "response_json"],

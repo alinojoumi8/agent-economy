@@ -1,0 +1,216 @@
+# Local live rehearsal: native citizens are split deterministically between
+# isolated Grok and Codex CLI workers. Kimi and Ollama are intentionally absent.
+extends: hermes-local.yaml
+
+communications:
+  autonomous_scripted_enabled: false
+
+conversations:
+  turns: 1
+
+budget:
+  cap_usd: 10.0
+  oracle_reserve_usd: 0.50
+  report_reserve_usd: 0.25
+  conversation_pairs: 1
+
+llm:
+  live_only: true
+  require_preflight_live: true
+  institutional_role_purposes: true
+  max_in_flight: 2
+  concurrency: 2
+  logical_deadline_s: 300
+  provider_retries: 0
+  decision_max_tokens: 900
+
+  providers:
+    grok_cli:
+      kind: cli
+      command: '${USERPROFILE}\.grok\bin\grok.exe'
+      parser: grok_json
+      concurrency: 1
+      timeout_s: 90
+      cwd: '${LOCALAPPDATA}\agent-economy\cli-cwd'
+      allow_agent_purposes: true
+      allowed_purposes:
+        - oracle
+        - oracle_plan
+        - dev
+        - preflight
+        - decision
+        - founder
+        - central_banker
+        - credit_officer
+        - vc_partner
+        - lawyer
+        - exchange
+        - gov_official
+        - legislator_house
+        - legislator_senate
+        - regulator
+        - competition_regulator
+        - labor_regulator
+        - executive
+        - lobbyist
+        - conversation
+        - memory
+        - persona
+        - reporter
+        - newsroom
+        - report_narrative
+      env:
+        HOME: '${LOCALAPPDATA}\agent-economy\grok-cli-home'
+        USERPROFILE: '${LOCALAPPDATA}\agent-economy\grok-cli-home'
+        GROK_HOME: '${LOCALAPPDATA}\agent-economy\grok-cli-home\.grok'
+        GROK_DISABLE_AUTOUPDATER: '1'
+        GROK_SANDBOX: strict
+        GROK_CURSOR_SKILLS_ENABLED: '0'
+        GROK_CURSOR_RULES_ENABLED: '0'
+        GROK_CURSOR_AGENTS_ENABLED: '0'
+        GROK_CURSOR_MCPS_ENABLED: '0'
+        GROK_CURSOR_HOOKS_ENABLED: '0'
+        GROK_CLAUDE_SKILLS_ENABLED: '0'
+        GROK_CLAUDE_RULES_ENABLED: '0'
+        GROK_CLAUDE_AGENTS_ENABLED: '0'
+        GROK_CLAUDE_MCPS_ENABLED: '0'
+        GROK_CLAUDE_HOOKS_ENABLED: '0'
+        GROK_CLAUDE_PLUGINS_ENABLED: '0'
+      args:
+        - --single
+        - '{prompt}'
+        - --model
+        - '{model}'
+        - --reasoning-effort
+        - low
+        - --json-schema
+        - '{"type":"object"}'
+        - --agent
+        - '${LOCALAPPDATA}\agent-economy\grok-cli-home\.grok\agents\agent-economy-decision.md'
+        - --tools
+        - todo_write
+        - --disallowed-tools
+        - todo_write,search_tool,use_tool
+        - --no-memory
+        - --no-plan
+        - --no-subagents
+        - --disable-web-search
+        - --max-turns
+        - '1'
+        - --permission-mode
+        - dontAsk
+        - --sandbox
+        - strict
+        - --verbatim
+        - --cwd
+        - '${LOCALAPPDATA}\agent-economy\cli-cwd'
+
+    codex_cli:
+      kind: cli
+      command: '${APPDATA}\npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'
+      parser: codex_jsonl
+      stdin_prompt: true
+      concurrency: 1
+      timeout_s: 90
+      cwd: '${LOCALAPPDATA}\agent-economy\cli-cwd'
+      allow_agent_purposes: true
+      allowed_purposes:
+        - oracle
+        - oracle_plan
+        - dev
+        - preflight
+        - decision
+        - founder
+        - central_banker
+        - credit_officer
+        - vc_partner
+        - lawyer
+        - exchange
+        - gov_official
+        - legislator_house
+        - legislator_senate
+        - regulator
+        - competition_regulator
+        - labor_regulator
+        - executive
+        - lobbyist
+        - conversation
+        - memory
+        - persona
+        - reporter
+        - newsroom
+        - report_narrative
+      env:
+        CODEX_HOME: '${LOCALAPPDATA}\agent-economy\codex-cli-home'
+        HOME: '${LOCALAPPDATA}\agent-economy\codex-cli-home'
+        USERPROFILE: '${LOCALAPPDATA}\agent-economy\codex-cli-home'
+      args:
+        - --ask-for-approval
+        - never
+        - --sandbox
+        - read-only
+        - -c
+        - 'model_reasoning_effort="low"'
+        - -c
+        - 'mcp_servers={}'
+        - -c
+        - 'skills.include_instructions=false'
+        - -c
+        - 'skills.bundled.enabled=false'
+        - --disable
+        - plugins
+        - --disable
+        - apps
+        - --disable
+        - browser_use
+        - --disable
+        - in_app_browser
+        - --disable
+        - computer_use
+        - --disable
+        - image_generation
+        - --disable
+        - multi_agent
+        - --disable
+        - goals
+        - --disable
+        - shell_snapshot
+        - exec
+        - --json
+        - --ephemeral
+        - --ignore-rules
+        - --skip-git-repo-check
+        - --cd
+        - '${LOCALAPPDATA}\agent-economy\cli-cwd'
+        - --model
+        - '{model}'
+        - '-'
+
+  default_route: {provider: grok_cli, model: grok-4.5}
+  routes: {}
+  citizen_model_cohorts:
+    - name: grok-4.5-low
+      count: 4
+      primary: {provider: grok_cli, model: grok-4.5, timeout_s: 90}
+      fallback: {provider: codex_cli, model: gpt-5.6-luna, timeout_s: 90}
+    - name: codex-luna-5.6-low
+      count: 4
+      primary: {provider: codex_cli, model: gpt-5.6-luna, timeout_s: 90}
+      fallback: {provider: grok_cli, model: grok-4.5, timeout_s: 90}
+  pricing:
+    grok-4.5: {in: 2.0, out: 6.0, cache: 0.3}
+    gpt-5.6-luna: {in: 0.0, out: 0.0, cache: 0.0}
+
+checkpoint_every: 5
+speed_delay_s: 0.0
+
+# Stop before the desktop reaches the pressure range that previously caused
+# freezes. Each CLI also has a single-worker provider gate.
+resource_guard:
+  enabled: true
+  sample_interval_s: 2
+  max_cpu_percent: 90
+  max_memory_percent: 75
+  min_available_memory_gb: 8
+  max_swap_percent: 60
+  consecutive_breaches: 2

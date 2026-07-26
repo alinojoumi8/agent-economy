@@ -573,7 +573,7 @@ class ExternalAgentService:
         cursor = int(self.store.scalar("SELECT COALESCE(MAX(id),0) FROM events", default=0))
         deadline = _now() + timedelta(seconds=self.decision_seconds)
         self.store.execute(
-            "UPDATE external_agent_turns SET status='stale',updated_at=? "
+            "UPDATE external_agent_turns SET status='expired',updated_at=? "
             "WHERE connection_id=? AND target_tick<? AND status='open'",
             (_iso(), auth["id"], target_tick))
         existing = self.store.query_one(
@@ -628,11 +628,17 @@ class ExternalAgentService:
         if int(self.config.get("engine_semantics_version", 1)) < 9:
             return
         if self.config.get("replay_source_path"):
+            self._restore_replay_actor_requests(tick)
             # Live clients submit between ticks, before NIGHT_CLOSE begins. Copy
             # recorded submissions at that same boundary so their CONTROL event
             # retains the source ordering and every later event reference stays
             # exact without contacting the external agent.
-            self._replay_decisions(tick)
+            if self._replay_commons_precedes_control(tick):
+                self._restore_replay_commons(tick)
+                self._replay_decisions(tick)
+            else:
+                self._replay_decisions(tick)
+                self._restore_replay_commons(tick)
             return
         while True:
             now = _now()
@@ -671,6 +677,315 @@ class ExternalAgentService:
                         {"target_tick": int(tick), "reason": reason})
         if open_rows:
             self.store.commit()
+
+    def restore_replay_after_morning(self, tick: int) -> None:
+        """Restore control-plane writes recorded after MORNING but before EXECUTION."""
+        if self.config.get("replay_source_path"):
+            self._restore_replay_actor_requests(int(tick) + 1)
+
+    def _replay_commons_precedes_control(self, tick: int) -> bool:
+        """Preserve the source order of between-tick Commons and action writes."""
+        source_path = self.config.get("replay_source_path")
+        completed_tick = int(tick) - 1
+        if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
+            return False
+        conn = open_read_only_connection(str(source_path))
+        try:
+            row = conn.execute(
+                "SELECT "
+                "MIN(CASE WHEN kind IN "
+                "('commons_entry_published','commons_reaction_changed') "
+                "THEN id END) AS commons_event_id,"
+                "MIN(CASE WHEN kind='external_action_queued' THEN id END) "
+                "AS control_event_id "
+                "FROM events WHERE tick=?",
+                (completed_tick,),
+            ).fetchone()
+            return (
+                row is not None
+                and row["commons_event_id"] is not None
+                and row["control_event_id"] is not None
+                and int(row["commons_event_id"]) < int(row["control_event_id"])
+            )
+        finally:
+            conn.close()
+
+    def _restore_replay_actor_requests(self, tick: int) -> None:
+        """Recreate external-citizen arrivals at their recorded spawn boundary."""
+        source_path = self.config.get("replay_source_path")
+        if not source_path or not Path(str(source_path)).exists():
+            return
+        conn = open_read_only_connection(str(source_path))
+        try:
+            required = {"external_agent_connections", "external_actor_requests", "events"}
+            tables = {
+                str(row[0]) for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if not required.issubset(tables):
+                return
+            connection_columns = {
+                str(column[1])
+                for column in conn.execute(
+                    "PRAGMA table_info(external_agent_connections)"
+                ).fetchall()
+            }
+            passport_select = (
+                ",c.passport_id" if "passport_id" in connection_columns
+                else ",NULL AS passport_id"
+            )
+            rows = conn.execute(
+                "SELECT r.*,c.tenant_id,c.owner_id_hash,c.display_name,"
+                "c.biography AS connection_biography,"
+                "c.preferred_occupation AS connection_occupation,"
+                "c.tier,c.scopes_json,c.wake_interval_ticks,c.created_tick,"
+                "c.created_at,c.id AS source_connection_id"
+                + passport_select + " "
+                "FROM external_actor_requests r "
+                "JOIN external_agent_connections c ON c.id=r.connection_id "
+                "WHERE r.spawned_tick=? ORDER BY r.id",
+                (int(tick),),
+            ).fetchall()
+            for row in rows:
+                connection_id = str(row["source_connection_id"])
+                if self.store.query_one(
+                    "SELECT id FROM external_agent_connections WHERE id=?",
+                    (connection_id,),
+                ) is not None:
+                    continue
+                source_event = conn.execute(
+                    "SELECT tick,phase,kind,subject_type,subject_id,importance,"
+                    "payload_json FROM events WHERE id=?",
+                    (int(row["schedule_event_id"]),),
+                ).fetchone()
+                if source_event is None or str(source_event["kind"]) != "arrival_scheduled":
+                    raise RuntimeError(
+                        "recorded external actor request has no arrival_scheduled event"
+                    )
+                self.store.execute(
+                    "INSERT INTO external_agent_connections("
+                    "id,tenant_id,owner_id_hash,display_name,biography,"
+                    "preferred_occupation,tier,scopes_json,status,actor_id,"
+                    "actor_schedule_event_id,wake_interval_ticks,last_seen_at,"
+                    "lease_expires_at,created_tick,created_at,updated_at,passport_id"
+                    ") VALUES(?,?,?,?,?,?,?,?,'pending_actor',NULL,NULL,?,NULL,NULL,?,?,?,?)",
+                    (
+                        connection_id,
+                        str(row["tenant_id"]),
+                        str(row["owner_id_hash"]),
+                        str(row["display_name"]),
+                        str(row["connection_biography"]),
+                        str(row["connection_occupation"]),
+                        str(row["tier"]),
+                        str(row["scopes_json"]),
+                        int(row["wake_interval_ticks"]),
+                        int(row["created_tick"]),
+                        str(row["created_at"]),
+                        str(row["created_at"]),
+                        row["passport_id"],
+                    ),
+                )
+                local_schedule_id = self.store.log_event(
+                    int(source_event["tick"]),
+                    str(source_event["kind"]),
+                    load_json(source_event["payload_json"], {}) or {},
+                    phase=source_event["phase"],
+                    subject_type=source_event["subject_type"],
+                    subject_id=source_event["subject_id"],
+                    importance=float(source_event["importance"]),
+                )
+                self.store.execute(
+                    "UPDATE external_agent_connections "
+                    "SET actor_schedule_event_id=? WHERE id=?",
+                    (local_schedule_id, connection_id),
+                )
+                self.store.execute(
+                    "INSERT INTO external_actor_requests("
+                    "id,connection_id,schedule_event_id,requested_tick,due_tick,"
+                    "public_name,biography,preferred_occupation,status,actor_id,"
+                    "spawned_tick) VALUES(?,?,?,?,?,?,?,?,'scheduled',NULL,NULL)",
+                    (
+                        int(row["id"]),
+                        connection_id,
+                        local_schedule_id,
+                        int(row["requested_tick"]),
+                        int(row["due_tick"]),
+                        str(row["public_name"]),
+                        str(row["biography"]),
+                        str(row["preferred_occupation"]),
+                    ),
+                )
+                self.store.set_meta(external_agent_influenced=1)
+        finally:
+            conn.close()
+
+    def _restore_replay_commons(self, tick: int) -> None:
+        """Replay recorded external Commons writes and feed deliveries offline."""
+        source_path = self.config.get("replay_source_path")
+        completed_tick = int(tick) - 1
+        if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
+            return
+        conn = open_read_only_connection(str(source_path))
+        try:
+            required = {
+                "commons_entries", "commons_feed_impressions", "commons_reactions",
+            }
+            tables = {
+                str(row[0]) for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if not required.issubset(tables):
+                return
+            entry_rows = conn.execute(
+                "SELECT * FROM commons_entries WHERE created_tick=? ORDER BY id",
+                (completed_tick,),
+            ).fetchall()
+            impression_groups = conn.execute(
+                "SELECT viewer_agent_id,feed_kind,candidate_set_hash,policy_id,"
+                "COUNT(*) AS delivered_count "
+                "FROM commons_feed_impressions WHERE delivered_tick=? "
+                "GROUP BY viewer_agent_id,feed_kind,candidate_set_hash,policy_id "
+                "ORDER BY MIN(id)",
+                (completed_tick,),
+            ).fetchall()
+            reaction_rows = conn.execute(
+                "SELECT * FROM commons_reactions WHERE created_tick=? "
+                "ORDER BY entry_id,agent_id,reaction",
+                (completed_tick,),
+            ).fetchall()
+            if not entry_rows and not impression_groups and not reaction_rows:
+                return
+
+            from world.commons import CommonsService
+
+            commons = CommonsService(self.economy)
+
+            def source_entry(source_entry_id: int):
+                source_entry = conn.execute(
+                    "SELECT * FROM commons_entries WHERE id=?",
+                    (int(source_entry_id),),
+                ).fetchone()
+                if source_entry is None:
+                    raise RuntimeError(
+                        f"recorded Commons entry {source_entry_id} is unavailable"
+                    )
+                return source_entry
+
+            def local_entry_id(source_entry_id: int) -> int:
+                recorded = source_entry(source_entry_id)
+                matches = self.store.query(
+                    "SELECT id FROM commons_entries WHERE author_agent_id=? "
+                    "AND entry_type=? AND body_text=? AND created_tick=? ORDER BY id",
+                    (
+                        int(recorded["author_agent_id"]),
+                        str(recorded["entry_type"]),
+                        str(recorded["body_text"]),
+                        int(recorded["created_tick"]),
+                    ),
+                )
+                if len(matches) != 1:
+                    raise RuntimeError(
+                        f"recorded Commons entry {source_entry_id} has "
+                        f"{len(matches)} local matches"
+                    )
+                return int(matches[0]["id"])
+
+            def ensure_local_entry(source_entry_id: int) -> int:
+                row = source_entry(source_entry_id)
+                existing = self.store.query_one(
+                    "SELECT id FROM commons_entries WHERE author_agent_id=? "
+                    "AND entry_type=? AND body_text=? AND created_tick=?",
+                    (
+                        int(row["author_agent_id"]),
+                        str(row["entry_type"]),
+                        str(row["body_text"]),
+                        int(row["created_tick"]),
+                    ),
+                )
+                if existing is not None:
+                    return int(existing["id"])
+                if int(row["created_tick"]) > completed_tick:
+                    raise RuntimeError(
+                        f"recorded Commons entry {source_entry_id} is from a "
+                        "future replay boundary"
+                    )
+                parent_entry_id = (
+                    ensure_local_entry(int(row["parent_entry_id"]))
+                    if row["parent_entry_id"] is not None else None
+                )
+                commons.publish(
+                    int(row["author_agent_id"]),
+                    body=str(row["body_text"]),
+                    community_id=(
+                        int(row["community_id"])
+                        if row["community_id"] is not None else None
+                    ),
+                    parent_entry_id=parent_entry_id,
+                    entry_type=str(row["entry_type"]),
+                    claim_id=(
+                        int(row["claim_id"]) if row["claim_id"] is not None else None
+                    ),
+                )
+                return local_entry_id(source_entry_id)
+
+            for group in impression_groups:
+                source_impressions = conn.execute(
+                    "SELECT entry_id,position FROM commons_feed_impressions "
+                    "WHERE delivered_tick=? AND viewer_agent_id=? AND feed_kind=? "
+                    "AND candidate_set_hash=? AND policy_id=? ORDER BY position,id",
+                    (
+                        completed_tick,
+                        int(group["viewer_agent_id"]),
+                        str(group["feed_kind"]),
+                        str(group["candidate_set_hash"]),
+                        int(group["policy_id"]),
+                    ),
+                ).fetchall()
+                expected_entries = [
+                    ensure_local_entry(int(row["entry_id"]))
+                    for row in source_impressions
+                ]
+                delivered = commons.feed(
+                    int(group["viewer_agent_id"]),
+                    kind=str(group["feed_kind"]),
+                    limit=max(1, int(group["delivered_count"])),
+                )
+                actual_entries = [int(row["id"]) for row in delivered["entries"]]
+                if (
+                    str(delivered["candidate_set_hash"])
+                    != str(group["candidate_set_hash"])
+                    or actual_entries != expected_entries
+                ):
+                    raise RuntimeError(
+                        "recorded Commons feed cannot be reconstructed exactly"
+                    )
+
+            # A citizen may read the feed and then publish within the same
+            # completed tick. Defer entries absent from the recorded feed until
+            # after that delivery; entries present in a delivery are materialized
+            # above just before the corresponding feed call.
+            for row in entry_rows:
+                ensure_local_entry(int(row["id"]))
+
+            for row in reaction_rows:
+                entry_id = local_entry_id(int(row["entry_id"]))
+                existing = self.store.query_one(
+                    "SELECT status FROM commons_reactions "
+                    "WHERE entry_id=? AND agent_id=? AND reaction=?",
+                    (entry_id, int(row["agent_id"]), str(row["reaction"])),
+                )
+                if existing is not None and str(existing["status"]) == str(row["status"]):
+                    continue
+                commons.react(
+                    int(row["agent_id"]),
+                    entry_id,
+                    str(row["reaction"]),
+                    active=str(row["status"]) == "active",
+                )
+        finally:
+            conn.close()
 
     def submit_action(self, auth: dict[str, Any], submission: dict[str, Any]) -> dict[str, Any]:
         if SCOPE_WORLD_ACT not in auth["scopes"]:
@@ -802,7 +1117,38 @@ class ExternalAgentService:
         return {"events": events, "cursor": next_cursor}
 
     # -- deterministic runtime/replay integration ---------------------------
+    def _expire_queued_before(self, tick: int) -> None:
+        """Close submissions that can no longer be selected for execution."""
+        rows = self.store.query(
+            "SELECT id,turn_id FROM external_action_submissions "
+            "WHERE target_tick<? AND status='queued' ORDER BY target_tick,id",
+            (int(tick),),
+        )
+        if not rows:
+            return
+        completed_at = _iso()
+        validators = _canonical([{
+            "validator": "target_tick",
+            "ok": False,
+            "message": "the target tick passed before execution",
+        }])
+        for row in rows:
+            updated = self.store.execute(
+                "UPDATE external_action_submissions SET status='stale',"
+                "validator_results_json=?,result_json='[]',completed_at=? "
+                "WHERE id=? AND status='queued'",
+                (validators, completed_at, str(row["id"])),
+            )
+            if int(updated.rowcount or 0) <= 0:
+                continue
+            self.store.execute(
+                "UPDATE external_agent_turns SET status='fallback',updated_at=? "
+                "WHERE id=? AND status IN ('open','submitted')",
+                (completed_at, str(row["turn_id"])),
+            )
+
     def decisions_for_tick(self, tick: int) -> tuple[set[int], list[dict[str, Any]]]:
+        self._expire_queued_before(tick)
         replay = self._replay_decisions(tick)
         if replay:
             return {int(item["agent_id"]) for item in replay}, replay
@@ -861,15 +1207,19 @@ class ExternalAgentService:
             return
         row = self.store.query_one(
             "SELECT * FROM external_action_submissions WHERE id=?", (str(submission_id),))
-        if row is None or row["status"] != "queued":
+        if row is None:
             return
         ok = bool(results) and all(bool(result.get("ok")) for result in results)
         status = "executed" if ok else "rejected"
-        self.store.execute(
+        # Atomic claim: only the first complete() that observes queued wins the
+        # terminal transition and terminal event emission.
+        updated = self.store.execute(
             "UPDATE external_action_submissions SET status=?,result_json=?,event_ids_json=?,"
-            "resulting_state_hash=?,completed_at=? WHERE id=?",
+            "resulting_state_hash=?,completed_at=? WHERE id=? AND status='queued'",
             (status, _canonical(results), _canonical(event_ids), resulting_state_hash,
              _iso(), str(submission_id)))
+        if int(getattr(updated, "rowcount", 0) or 0) != 1:
+            return
         self.store.log_event(
             tick, f"external_action_{status}",
             {"submission_id": str(submission_id), "connection_id": str(row["connection_id"]),

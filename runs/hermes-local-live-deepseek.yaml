@@ -1,0 +1,27 @@
+# Three-provider local Hermes sandbox. Use after DEEPSEEK_API_KEY passes
+# `python run.py --config runs/hermes-local-live-deepseek.yaml
+# --preflight-live --approve-live-inference`.
+extends: hermes-local-live.yaml
+
+llm:
+  providers:
+    deepseek:
+      kind: openai_compat
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      concurrency: 3
+      prompt_cache_mode: provider_automatic
+      timeout_s: 60
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        stream: false
+        thinking: {type: disabled}
+
+  # DeepSeek is the high-volume flash/default lane. MiniMax remains the
+  # founder specialist and Kimi handles institutional roles.
+  default_route: {provider: deepseek, model: deepseek-v4-flash}
+  routes:
+    citizen:      {provider: deepseek, model: deepseek-v4-flash}
+    conversation: {provider: deepseek, model: deepseek-v4-flash}
+    memory:       {provider: deepseek, model: deepseek-v4-flash}
