@@ -28,15 +28,31 @@ type ProviderRuntime = {
 type CityAgent = {
   id: number; name: string; kind?: string; role?: string | null; occupation?: string | null;
   health?: string; alive?: number; employer_id?: number | null; model_tier?: string;
+  x?: number | null; y?: number | null; place_id?: number | null; place_name?: string | null;
 };
 type CityFirm = {
   id: number; name: string; sector?: string; status?: string; employees?: number;
+  x?: number | null; y?: number | null; place_id?: number | null; place_name?: string | null;
 };
 type CityMap = {
   core_agents?: Array<CityAgent & { x?: number | null; y?: number | null }>;
   firms?: Array<CityFirm & { x?: number | null; y?: number | null }>;
+  agents?: CityAgent[];
+  organizations?: CityFirm[];
+  places?: Array<Record<string, unknown>>;
+  presence?: Array<Record<string, unknown>>;
   regions?: unknown[];
   flows?: unknown[];
+};
+type CivicSummary = {
+  enabled: boolean;
+  tick: number;
+  queue: { depth: number; oldest_age_ticks: number };
+  offices: Array<{
+    place_id: number; name: string; capacity: number; scheduled_today: number;
+    occupancy: number; queue_depth: number; x: number; y: number;
+  }>;
+  cases_by_status?: Record<string, number>;
 };
 
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "finished", "halted", "stopped"]);
@@ -67,12 +83,23 @@ export function OverviewWorkspace() {
   const cityQuery = useQuery({
     queryKey: ["world-os", runId, "city", tick],
     queryFn: async ({ signal }) => {
-      const [agents, firms, map] = await Promise.all([
-        workspaceApi<CityAgent[]>("/api/agents", { signal }),
-        workspaceApi<CityFirm[]>("/api/firms", { signal }),
-        workspaceApi<CityMap>("/api/v2/map", { signal }),
+      const [mapEnvelope, civicEnvelope] = await Promise.all([
+        projectionApi<CityMap>(
+          "/api/v2/world-map?tick=" + encodeURIComponent(tick)
+          + "&layers=regions,agents,organizations,places,presence",
+          signal,
+        ),
+        projectionApi<CivicSummary>(
+          "/api/v2/civic/summary?tick=" + encodeURIComponent(tick),
+          signal,
+        ),
       ]);
-      return { agents, firms, map };
+      return {
+        agents: mapEnvelope.data.agents || [],
+        firms: mapEnvelope.data.organizations || [],
+        map: mapEnvelope.data,
+        civic: civicEnvelope.data,
+      };
     },
     refetchInterval: pollCurrentRun ? 3000 : false,
   });
@@ -100,6 +127,7 @@ export function OverviewWorkspace() {
       firms={cityQuery.data?.firms}
       events={data.events?.items}
       map={cityQuery.data?.map}
+      civic={cityQuery.data?.civic}
       runtime={runtimeQuery.data}
       runId={runId}
       tick={tick}

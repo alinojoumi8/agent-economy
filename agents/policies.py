@@ -135,6 +135,14 @@ def _env(payload: dict, actions: list, beliefs: list | None = None, reasoning: s
 # Citizens / households
 # ─────────────────────────────────────────────────────────────────────────────
 def citizen_decision(context: dict) -> dict:
+    required_civic_action = context.get("civic_required_action")
+    if isinstance(required_civic_action, dict):
+        return _env(
+            None,
+            [dict(required_civic_action)],
+            [],
+            "attending my required civic appointment",
+        )
     if "supplier_warning_policy_input" in context:
         return supplier_warning_decision(context["supplier_warning_policy_input"])
     rng = _rng(context)
@@ -202,9 +210,17 @@ def citizen_decision(context: dict) -> dict:
     founding_action = (opportunity.get("action")
                        if isinstance(opportunity, dict) else None)
     if (not ran and isinstance(founding_action, dict)
-            and founding_action.get("type") == "found_company"):
+            and founding_action.get("type") in {
+                "apply_business_permit", "found_company",
+            }):
+        civic_step = (
+            "applying for a permit for"
+            if founding_action.get("type") == "apply_business_permit"
+            else "founding"
+        )
         reasons.append(
-            f"founding a {founding_action.get('sector', 'new')} company from an unmet need")
+            f"{civic_step} a {founding_action.get('sector', 'new')} company "
+            "from an unmet need")
         return _env(
             None, [dict(founding_action)], belief_updates,
             "; ".join(reasons),
@@ -935,6 +951,7 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
     "labor_regulator": institutional_decision,
     "executive": institutional_decision,
     "lobbyist": institutional_decision,
+    "permit_clerk": institutional_decision,
     "reporter": reporter_draft,
     "newsroom": newsroom_policy,
     "conversation": conversation_turn,

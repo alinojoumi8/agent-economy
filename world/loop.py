@@ -104,6 +104,9 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
+            if self.engine_semantics_version >= 12:
+                self.economy.city.initialize(self.store.tick)
+                self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
@@ -540,6 +543,10 @@ class World:
 
     def _phase_night_close(self, tick: int) -> None:
         e = self.economy
+        if self.engine_semantics_version >= 12:
+            # Fixed-slot presence is resolved before production. An office
+            # appointment removes a worker from output, but not from payroll.
+            e.city.run_nightly(tick)
         # Interest on savings (annual rate ≈ policy - 200bps, floored at 0).
         self._accrue_savings_interest(tick)
         # Loan payments + defaults.
@@ -577,6 +584,9 @@ class World:
         self._assert_reconciled(tick, "NIGHT_CLOSE")
 
     def _phase_finalize(self, tick: int) -> None:
+        if self.engine_semantics_version >= 12:
+            # Civic maintenance stays inside the existing single-writer phase.
+            self.economy.city.finalize(tick)
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.
@@ -584,14 +594,17 @@ class World:
         # The completed-tick invariant includes every action settled today.
         self._assert_reconciled(tick, "FINALIZE")
         if self.engine_semantics_version >= 8:
+            domains = [
+                "summary", "events", "communications", "causal", "snapshot",
+            ]
+            if self.engine_semantics_version >= 12:
+                domains.extend(["city", "attention"])
             self.store.execute(
                 "INSERT OR IGNORE INTO projection_commits (tick,phase,domains_json) "
                 "VALUES (?,'FINALIZE',?)",
                 (
                     int(tick),
-                    json.dumps([
-                        "summary", "events", "communications", "causal", "snapshot",
-                    ], separators=(",", ":")),
+                    json.dumps(domains, separators=(",", ":")),
                 ),
             )
 

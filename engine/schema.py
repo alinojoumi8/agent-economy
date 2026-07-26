@@ -8,7 +8,7 @@ insertion and tick reconciliation independently verifies every account (PRD R1).
 
 from .migrations import apply_migrations
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class SchemaCompatibilityError(RuntimeError):

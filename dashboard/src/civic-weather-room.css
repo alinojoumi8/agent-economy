@@ -501,6 +501,47 @@ body::before {
   background: rgba(36, 87, 214, .2);
 }
 
+.civic-city__place {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.civic-city__place i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--civic-navy);
+  background: rgba(250, 252, 250, .92);
+  transform: rotate(45deg);
+}
+
+.civic-city__place.is-permit-office i {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--civic-navy);
+  background: var(--civic-chartreuse);
+  box-shadow: 0 0 0 3px rgba(183, 214, 74, .24);
+}
+
+.civic-city__place span {
+  position: absolute;
+  top: 13px;
+  left: 8px;
+  width: max-content;
+  max-width: 180px;
+  border: 1px solid var(--civic-navy);
+  background: rgba(250, 252, 250, .94);
+  padding: .2rem .34rem;
+  color: var(--civic-navy);
+  font: 700 .55rem/1.2 var(--civic-font-label);
+  letter-spacing: .02em;
+}
+
 .civic-city--dense .civic-city__firm {
   width: 25px;
   min-width: 25px;
@@ -945,6 +986,40 @@ body::before {
   font-size: .62rem;
 }
 
+.civic-city__receipt {
+  margin: .55rem .8rem 0;
+  border: 1px solid var(--civic-navy);
+  background: #fffef8;
+}
+
+.civic-city__receipt header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--civic-rule);
+  padding: .42rem .65rem;
+  color: var(--civic-muted);
+  font: 650 .6rem var(--civic-font-label);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.civic-city__receipt p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .28rem;
+  align-items: center;
+  margin: 0;
+  padding: .62rem .65rem;
+  color: var(--civic-navy);
+  font: 650 .62rem/1.35 var(--civic-font-label);
+}
+
+.civic-city__receipt p i {
+  color: var(--civic-cobalt);
+  font-style: normal;
+}
+
 .civic-city__lens-actions {
   display: grid;
   gap: .4rem;
@@ -1055,7 +1130,7 @@ body::before {
 
 .civic-city__instruments {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   margin: 0;
   border-top: 1px solid var(--civic-navy);
   background: var(--civic-navy);

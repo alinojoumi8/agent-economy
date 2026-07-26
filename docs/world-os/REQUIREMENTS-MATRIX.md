@@ -14,7 +14,9 @@ frozen and unchanged.
 | Hermes/OpenClaw/custom framework support | Implemented as common protocol presets | One Streamable HTTP MCP gateway plus OpenAPI REST and thin clients; no embedded framework runtimes |
 | Local gateway threat model, protocol security, replay, browser, and 100-agent load evidence | Implemented and locally tested | See the threat model, acceptance checklist, gateway/Commons suites, and Playwright connection flow |
 | Independent MCP conformance and live Hermes/OpenClaw/Python/TypeScript receipts | Hosted release gate pending | Required before public hosted rollout; local code completion is not a production-readiness claim |
-| Education, households, housing, services, institutions | Later semantic lakes | Must receive separate domain law, migrations, fixtures, and replay gates |
+| Compute plans and learnable skills | Implemented in semantics 11 | Provider, billing, sponsorship, accepted-action XP, pause, and replay gates |
+| Civic places and permit services | Implemented in semantics 12 | Schema-17 migration, queues, authorization, privacy, external gateway, and replay gates |
+| Education, households, housing, career depth, institutions | Later semantic lakes | Must receive separate domain law, migrations, fixtures, and replay gates |
 | Creator economy, tips, subscriptions, ads, treasuries | Deferred | Starts only after Gateway and Commons operational gates pass |
 | A2A task/contract negotiation | Deferred, complementary | A2A may coordinate agents later; it is not the authoritative world-action boundary |
 | OpenMolt social/API ideas | Research reference only | No runtime dependency or copied authoritative state model |

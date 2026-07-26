@@ -48,12 +48,15 @@ each audience can find the authoritative level of detail.
 ## World OS expansion
 
 These documents define the implemented semantics-8 communications lake, the
-semantics-9 External Agent Gateway, the semantics-10 Agent Commons, and their
-remaining hosted rollout gates. They extend the root PRD and technical
+semantics-9 External Agent Gateway, semantics-10 Agent Commons, semantics-11
+compute economy, and semantics-12 civic permit vertical. They extend the root
+PRD and technical
 specification; historical release contracts remain frozen.
 
 - [World OS product requirements](world-os/PRD.md)
 - [World OS technical specification](world-os/TECH-SPEC.md)
+- [Semantics-11 cognition and provider pools](semantics11-cognition.md)
+- [Semantics-12 civic city and permit workflow](semantics12-civic-city.md)
 - [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
 - [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
 - [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)
