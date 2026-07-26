@@ -132,12 +132,13 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   await installSocket(page);
   await mockPrivacyApis(page);
 
-  const unauthorized = await page.request.get(
-    "http://127.0.0.1:4174/api/v2/communications/messages/77");
-  expect(unauthorized.status()).toBe(404);
-  expect(await unauthorized.text()).not.toContain(CANARY);
-
   await page.goto("/runs/run-demo/news-communications");
+  const unauthorized = await page.evaluate(async () => {
+    const response = await fetch("/api/v2/communications/messages/77");
+    return { status: response.status, body: await response.text() };
+  });
+  expect(unauthorized.status).toBe(404);
+  expect(unauthorized.body).not.toContain(CANARY);
   await assertNoCanaryLeak(page);
 
   await page.goto("/runs/run-demo/overview?tick=3");
