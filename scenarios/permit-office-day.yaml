@@ -1,0 +1,36 @@
+key: permit-office-day
+version: "1.0"
+title: Immediate incorporation versus a capacity-limited permit office
+ticks: 45
+base_config: ../runs/civic-rehearsal.yaml
+dataset_manifest: ../config/data-manifest.yaml
+limitations: Results compare two fictional policy mechanisms inside Agent Economy. They are not forecasts of real licensing systems, firm formation, or regulatory outcomes.
+common_shocks: []
+arms:
+  control:
+    treatment_variables:
+      incorporation: immediate
+    config_overrides:
+      city:
+        business_permits:
+          required: false
+    shocks: []
+  permit:
+    treatment_variables:
+      incorporation: capacity_limited_permit
+      application_fee_cents: 2500
+      office_capacity_per_region: 1
+    config_overrides:
+      city:
+        business_permits:
+          required: true
+    shocks: []
+metrics:
+  - civic_peak_queue_age_ticks
+  - civic_peak_queue_depth
+  - civic_approval_latency_ticks
+  - civic_lost_production_worker_days
+  - civic_firm_entry_delay_ticks
+  - civic_permit_denials
+  - civic_office_utilization
+  - entrepreneurial_firms_founded

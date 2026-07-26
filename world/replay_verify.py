@@ -71,6 +71,15 @@ NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
 }
 EVENT_REFERENCE_COLUMNS = {
     ("liquidity_support_requests", "request_event_id"),
+    ("service_cases", "created_event_id"),
+    ("service_cases", "outcome_event_id"),
+    ("service_appointments", "scheduled_event_id"),
+    ("service_appointments", "outcome_event_id"),
+    ("institution_tasks", "assigned_event_id"),
+    ("institution_tasks", "outcome_event_id"),
+    ("civic_authorizations", "issued_event_id"),
+    ("civic_authorizations", "consumed_event_id"),
+    ("attention_context_items", "source_event_id"),
 }
 EVENT_REFERENCE_KEYS = {"request_event_id", "event_id"}
 EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids", "source_event_ids"}
@@ -85,7 +94,7 @@ SPECIALIZED_ACTION_PURPOSE_ROLES = {
 INSTITUTIONAL_ACTION_PURPOSE_ROLES = {
     "exchange", "gov_official", "legislator_house", "legislator_senate",
     "regulator", "competition_regulator", "labor_regulator", "executive",
-    "lobbyist",
+    "lobbyist", "permit_clerk",
 }
 
 
@@ -500,8 +509,11 @@ def _table_digest(
                 record[column] = resolved
                 references_valid = references_valid and valid
             elif (table, column) in EVENT_REFERENCE_COLUMNS:
-                resolved, valid = _canonical_event_reference(
-                    row[column], event_references)
+                if row[column] is None:
+                    resolved, valid = None, True
+                else:
+                    resolved, valid = _canonical_event_reference(
+                        row[column], event_references)
                 record[column] = resolved
                 references_valid = references_valid and valid
             elif (table == "causal_links"

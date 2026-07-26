@@ -125,6 +125,28 @@ function asArray(value) {
 function mergeAgents(agents, map) {
   const merged = new Map();
   asArray(map?.core_agents).forEach(agent => merged.set(String(agent.id), { ...agent }));
+  asArray(map?.agents).forEach(agent => merged.set(String(agent.id), {
+    ...(merged.get(String(agent.id)) || {}),
+    ...agent,
+  }));
+  asArray(map?.presence)
+    .filter(item => item?.agent_id != null && item?.slot === "business")
+    .forEach(item => {
+      const key = String(item.agent_id);
+      merged.set(key, {
+        ...(merged.get(key) || {}),
+        id: item.agent_id,
+        name: item.name,
+        role: item.role,
+        occupation: item.occupation,
+        x: item.x,
+        y: item.y,
+        place_id: item.place_id,
+        place_name: item.place_name,
+        place_kind: item.place_kind,
+        presence_source: item.source_type,
+      });
+    });
   asArray(agents).forEach(agent => {
     const key = String(agent.id);
     merged.set(key, { ...(merged.get(key) || {}), ...agent });
@@ -205,7 +227,9 @@ export function humanize(value, fallback = "Not reported") {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-export function deriveCityModel({ agents = [], firms = [], events = [], map = null } = {}) {
+export function deriveCityModel({
+  agents = [], firms = [], events = [], map = null, civic = null,
+} = {}) {
   const people = mergeAgents(agents, map);
   const eventItems = asArray(events)
     .slice()
@@ -249,7 +273,10 @@ export function deriveCityModel({ agents = [], firms = [], events = [], map = nu
     });
   });
 
-  const mapFirms = asArray(map?.firms);
+  const mapFirms = [
+    ...asArray(map?.firms),
+    ...asArray(map?.organizations),
+  ];
   const firmSource = asArray(firms).length ? asArray(firms) : mapFirms;
   const operatingFirms = firmSource.filter(firm =>
     !["bankrupt", "closed", "inactive"].includes(String(firm?.status || "").toLowerCase()),
@@ -270,9 +297,24 @@ export function deriveCityModel({ agents = [], firms = [], events = [], map = nu
       ? "observed"
       : "mixed";
 
+  const places = asArray(map?.places).map(place => ({
+    ...place,
+    x: normalizedCoordinate(place.x),
+    y: normalizedCoordinate(place.y),
+    businessOccupancy: Number(place?.occupancy?.business || 0),
+    capacity: Number(place?.capacity || 0),
+    queueDepth: Number(place?.queue_depth || 0),
+  })).filter(place => place.x !== null && place.y !== null);
+  const receipts = eventItems
+    .filter(event => event?.payload?.semantic_receipt)
+    .map(event => ({ eventId: event.id, tick: event.tick, ...event.payload.semantic_receipt }));
+
   return {
     agents: cityAgents.sort((left, right) => Number(left.id) - Number(right.id)),
     firms: cityFirms,
+    places,
+    receipts,
+    civic: civic || map?.civic || null,
     events: eventItems,
     coordinateMode,
     counts: {
@@ -280,6 +322,8 @@ export function deriveCityModel({ agents = [], firms = [], events = [], map = nu
       active: cityAgents.filter(agent => agent.event).length,
       assigned: cityAgents.filter(agent => agent.activityState === "assigned role").length,
       firms: operatingFirms.length,
+      places: places.length,
+      queue: Number(civic?.queue?.depth || map?.civic?.queue?.depth || 0),
     },
   };
 }

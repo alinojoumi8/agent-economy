@@ -55,6 +55,8 @@ _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
     ("cancel_compute_plan", "compute_plan", 11),
     ("set_compute_sponsorship", "compute_plan", 11),
     ("study_skill", "skill_learning", 11),
+    ("apply_business_permit", "civic", 12),
+    ("attend_civic_appointment", "civic", 12),
 )
 
 _COMMONS_ACTIONS: tuple[tuple[str, str, bool], ...] = (
