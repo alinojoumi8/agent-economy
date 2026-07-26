@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mergeRunPayload } from "../src/runState.js";
+import { mergeRunPayload, workspaceSemanticsLabel } from "../src/runState.js";
 
 
 test("tick payload advances the served countdown immediately", () => {
@@ -39,4 +39,13 @@ test("terminal run status clears running and reaches the served target", () => {
   assert.equal(next.remaining_ticks, 0);
   assert.equal(next.pause_reason, null);
   assert.equal(next.report_path, null);
+});
+
+
+test("workspace label follows the authoritative run semantics", () => {
+  assert.equal(
+    workspaceSemanticsLabel({ semantics_version: 11 }),
+    "Semantics 11 workspace.",
+  );
+  assert.equal(workspaceSemanticsLabel({}), "World workspace.");
 });

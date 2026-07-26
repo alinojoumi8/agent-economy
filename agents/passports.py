@@ -120,6 +120,8 @@ class PassportRepository(Protocol):
 
     def owner_passports(self, owner_id: str) -> list[dict[str, Any]]: ...
 
+    def run_passports(self, run_id: str) -> list[dict[str, Any]]: ...
+
     def owner_passport_count(self, owner_id: str) -> int: ...
 
     def citizenship(self, passport_id: str, run_id: str) -> dict[str, Any] | None: ...
@@ -461,6 +463,17 @@ class SqlitePassportRepository:
             rows = self._conn.execute(
                 "SELECT * FROM agent_passports WHERE owner_id=? ORDER BY created_at,id",
                 (str(owner_id),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def run_passports(self, run_id: str) -> list[dict[str, Any]]:
+        """List current public Passports attached to one world run."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT p.* FROM agent_passports p "
+                "JOIN passport_citizenships c ON c.passport_id=p.id "
+                "WHERE c.run_id=? AND c.status NOT IN ('revoked','ended') "
+                "ORDER BY c.created_at,p.id",
+                (str(run_id),)).fetchall()
         return [dict(row) for row in rows]
 
     def owner_passport_count(self, owner_id: str) -> int:
@@ -955,6 +968,16 @@ class LocalCitizenshipService:
     def owner_passports(self, owner_id: str) -> list[dict[str, Any]]:
         documents = []
         for passport in self.repository.owner_passports(owner_id):
+            citizenship = self.repository.citizenship(str(passport["id"]), self.run_id)
+            if citizenship is not None:
+                citizenship = self._sync_citizenship(citizenship)
+            documents.append({"passport": passport, "citizenship": citizenship})
+        return documents
+
+    def run_passports(self) -> list[dict[str, Any]]:
+        """Return public identity/status for Passports present in this run."""
+        documents = []
+        for passport in self.repository.run_passports(self.run_id):
             citizenship = self.repository.citizenship(str(passport["id"]), self.run_id)
             if citizenship is not None:
                 citizenship = self._sync_citizenship(citizenship)

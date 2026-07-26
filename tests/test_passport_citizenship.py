@@ -196,6 +196,33 @@ def test_agent_registration_claim_exchange_hashing_and_replay(citizen_client):
     assert stored["token_hash"] == token_hash
 
 
+def test_my_agents_lists_connected_passport_for_a_different_browser(
+        citizen_client):
+    _world, client, _passport_path = citizen_client
+    registration = _registration(client, "visible-hermes")
+    claim_path = urlsplit(registration["claim_url"]).path
+    claim_page = client.get(claim_path)
+    claimed = client.post(
+        claim_path, data={"csrf_token": _hidden(claim_page.text, "csrf_token")})
+    assert claimed.status_code == 200
+
+    headers = {"Authorization": f"Bearer {registration['bootstrap_token']}"}
+    exchanged = client.post(
+        f"/api/v2/public/agent-registrations/{registration['registration_id']}/exchange",
+        headers=headers)
+    assert exchanged.status_code == 200
+
+    client.cookies.clear()
+    agents = client.get("/my-agents")
+    assert agents.status_code == 200
+    assert "No Passports are owned by this local browser yet." in agents.text
+    assert "Connected to this world" in agents.text
+    assert "Visible Hermes" in agents.text
+    assert "@visible-hermes" in agents.text
+    assert "Read-only here because this Passport belongs to another local browser session." in agents.text
+    assert "/revoke" not in agents.text
+
+
 def test_standard_oauth_consent_pkce_tools_and_revocation(citizen_client):
     world, client, _passport_path = citizen_client
     redirect_uri = "http://127.0.0.1:43123/callback"

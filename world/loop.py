@@ -228,11 +228,14 @@ class World:
 
     def _resource_snapshot(self) -> dict:
         memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
         process = psutil.Process()
         return {
             "system_cpu_percent": round(float(psutil.cpu_percent(interval=None)), 1),
             "system_memory_percent": round(float(memory.percent), 1),
             "available_memory_gb": round(float(memory.available) / (1024 ** 3), 2),
+            "system_swap_percent": round(float(swap.percent), 1),
+            "available_swap_gb": round(float(swap.free) / (1024 ** 3), 2),
             "process_rss_mb": round(float(process.memory_info().rss) / (1024 ** 2), 1),
             "global_in_flight": int(self.gateway._live_in_flight),
             "global_queue_depth": int(self.gateway._global_queue_depth()),
@@ -260,6 +263,10 @@ class World:
                 and sample["available_memory_gb"]
                 <= float(self.resource_guard["min_available_memory_gb"])):
             breaches.append("available_memory")
+        if (float(self.resource_guard.get("max_swap_percent", 0)) > 0
+                and sample["system_swap_percent"]
+                >= float(self.resource_guard["max_swap_percent"])):
+            breaches.append("system_swap")
         return breaches
 
     async def _monitor_resources(self) -> None:

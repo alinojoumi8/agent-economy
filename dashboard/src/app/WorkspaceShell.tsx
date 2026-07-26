@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import worldOsEmblem from "../assets/world-os-emblem.png";
 import { CitizenMenu } from "../components/CitizenMenu";
 import { useProjectionSocket } from "./useProjectionSocket";

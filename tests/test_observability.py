@@ -328,6 +328,23 @@ def test_resource_guard_pauses_after_a_sustained_limit(tmp_path, monkeypatch, ca
     world.close()
 
 
+def test_resource_guard_detects_pagefile_pressure(tmp_path):
+    config = load_config("runs/base.yaml")
+    store = Store(str(tmp_path / "swap-resource-guard.db"))
+    store.init_run_meta("swap-resource-guard", int(config["seed"]), config)
+    world = World(store, config)
+    world.resource_guard = {"max_swap_percent": 50}
+    try:
+        assert world._resource_breaches({
+            "system_cpu_percent": 10.0,
+            "system_memory_percent": 40.0,
+            "available_memory_gb": 32.0,
+            "system_swap_percent": 50.0,
+        }) == ["system_swap"]
+    finally:
+        world.close()
+
+
 def test_unexpected_action_handler_failure_is_logged(economy, caplog):
     caplog.set_level(logging.INFO, logger="agent_economy.engine.actions")
     actor_id = economy.store.insert(

@@ -30,17 +30,53 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_desktop_profile_bounds_local_resource_use():
     config = load_config(ROOT / "runs" / "evolving-live.yaml")
 
-    assert config["llm"]["max_in_flight"] == 10
-    assert config["llm"]["providers"]["ollama"]["concurrency"] == 2
+    assert config["llm"]["max_in_flight"] == 6
+    assert config["llm"]["logical_deadline_s"] == 900
+    assert config["llm"]["providers"]["ollama"]["concurrency"] == 1
     assert config["llm"]["tier_routes"]["local"]["primary"]["model"] == (
         "agent-economy-qwen3.5:9b-16k")
+    assert config["llm"]["tier_routes"]["flash"]["fallback"]["provider"] == (
+        "ollama_cloud")
     assert config["checkpoint_every"] == 5
     assert config["resource_guard"]["enabled"] is True
+    assert config["resource_guard"]["max_memory_percent"] == 70
+    assert config["resource_guard"]["min_available_memory_gb"] == 20
+    assert config["resource_guard"]["max_swap_percent"] == 50
     modelfile = (
         ROOT / "deploy" / "ollama" / "Modelfile.qwen3.5-9b-16k"
     ).read_text(encoding="utf-8")
     assert "FROM qwen3.5:9b" in modelfile
     assert "PARAMETER num_ctx 16384" in modelfile
+
+
+def test_cloud_safe_profile_has_no_local_or_invalid_provider_route():
+    config = load_config(ROOT / "runs" / "evolving-live-cloud-safe.yaml")
+    llm = config["llm"]
+    routes = [llm["default_route"], *llm["routes"].values()]
+    for group_name in ("tier_routes", "premium_routes"):
+        for route in llm[group_name].values():
+            routes.extend(
+                target for target in (
+                    route.get("primary"), route.get("fallback"))
+                if target is not None
+            )
+    for cohort in llm["citizen_model_cohorts"]:
+        routes.append(cohort["primary"])
+        if cohort.get("fallback") is not None:
+            routes.append(cohort["fallback"])
+
+    routed_providers = {target["provider"] for target in routes}
+    assert routed_providers == {"ollama_cloud", "kimi", "minimax"}
+    assert all(
+        target["model"].endswith(":cloud")
+        for target in routes
+        if target["provider"] == "ollama_cloud"
+    )
+    assert llm["max_in_flight"] == 4
+    assert llm["concurrency"] == 4
+    assert config["resource_guard"]["max_memory_percent"] == 65
+    assert config["resource_guard"]["min_available_memory_gb"] == 12
+    assert config["resource_guard"]["max_swap_percent"] == 25
 
 
 @pytest.fixture
@@ -523,12 +559,12 @@ def test_runtime_and_agent_cognition_api_projection(cognition_world):
     assert runtime_response.status_code == 200
     runtime = runtime_response.json()
     assert runtime["global"] == {
-        "capacity": 10,
+        "capacity": 6,
         "in_flight": 0,
         "queue_depth": 0,
         "peak_in_flight": 0,
         "peak_queue_depth": 0,
-        "logical_deadline_s": 240.0,
+        "logical_deadline_s": 900.0,
     }
     assert runtime["simulated_days"] == {
         "samples": 0, "p50_wall_ms": None, "p95_wall_ms": None,
@@ -537,7 +573,7 @@ def test_runtime_and_agent_cognition_api_projection(cognition_world):
         lane["provider"]: lane["capacity"] for lane in runtime["providers"]
     } == {
         "deepseek": 6, "kimi": 2, "minimax": 2,
-        "ollama": 2, "ollama_cloud": 3,
+        "ollama": 1, "ollama_cloud": 3,
     }
     assert [row["assigned_count"] for row in runtime["citizen_model_cohorts"]] == [
         5, 5, 5,

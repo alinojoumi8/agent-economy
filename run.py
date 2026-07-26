@@ -114,6 +114,111 @@ def _restore_replay_inputs(store: Store, inputs: dict[str, list[dict]]) -> None:
     store.commit()
 
 
+def _tighten_resume_operational_limits(
+        stored_config: dict, selected_config: dict) -> dict[str, object]:
+    """Apply safer runtime limits from the selected resume profile.
+
+    Provider identities, models, routes, prompts, and prices remain owned by
+    the persisted run. A resume profile may reduce concurrency, make the
+    resource guard more conservative, or lengthen the logical deadline needed
+    for the resulting bounded queues to drain.
+    """
+    changes: dict[str, object] = {}
+
+    stored_llm = stored_config.get("llm")
+    selected_llm = selected_config.get("llm")
+    if isinstance(stored_llm, dict) and isinstance(selected_llm, dict):
+        for key in ("max_in_flight", "concurrency"):
+            current = int(stored_llm.get(key, 0) or 0)
+            selected = int(selected_llm.get(key, 0) or 0)
+            if selected > 0 and (current <= 0 or selected < current):
+                stored_llm[key] = selected
+                changes[f"llm.{key}"] = selected
+
+        current_deadline = float(stored_llm.get("logical_deadline_s", 0) or 0)
+        selected_deadline = float(
+            selected_llm.get("logical_deadline_s", 0) or 0)
+        if selected_deadline > current_deadline:
+            stored_llm["logical_deadline_s"] = selected_deadline
+            changes["llm.logical_deadline_s"] = selected_deadline
+
+        stored_providers = stored_llm.get("providers")
+        selected_providers = selected_llm.get("providers")
+        if isinstance(stored_providers, dict) and isinstance(selected_providers, dict):
+            for provider in sorted(set(stored_providers) & set(selected_providers)):
+                stored_provider = stored_providers.get(provider)
+                selected_provider = selected_providers.get(provider)
+                if not isinstance(stored_provider, dict) or not isinstance(
+                        selected_provider, dict):
+                    continue
+                current = int(stored_provider.get("concurrency", 0) or 0)
+                selected = int(selected_provider.get("concurrency", 0) or 0)
+                if selected > 0 and (current <= 0 or selected < current):
+                    stored_provider["concurrency"] = selected
+                    changes[f"llm.providers.{provider}.concurrency"] = selected
+
+    stored_guard = stored_config.setdefault("resource_guard", {})
+    selected_guard = selected_config.get("resource_guard")
+    if isinstance(stored_guard, dict) and isinstance(selected_guard, dict):
+        if bool(selected_guard.get("enabled")) and not bool(stored_guard.get("enabled")):
+            stored_guard["enabled"] = True
+            changes["resource_guard.enabled"] = True
+
+        for key in (
+                "sample_interval_s",
+                "max_cpu_percent",
+                "max_memory_percent",
+                "max_swap_percent",
+                "consecutive_breaches",
+        ):
+            current = float(stored_guard.get(key, 0) or 0)
+            selected = float(selected_guard.get(key, 0) or 0)
+            if selected > 0 and (current <= 0 or selected < current):
+                value: int | float = (
+                    int(selected) if key == "consecutive_breaches" else selected)
+                stored_guard[key] = value
+                changes[f"resource_guard.{key}"] = value
+
+        current_available = float(
+            stored_guard.get("min_available_memory_gb", 0) or 0)
+        selected_available = float(
+            selected_guard.get("min_available_memory_gb", 0) or 0)
+        if selected_available > current_available:
+            stored_guard["min_available_memory_gb"] = selected_available
+            changes["resource_guard.min_available_memory_gb"] = selected_available
+
+    return changes
+
+
+def _adopt_resume_local_citizenship(
+        stored_config: dict, selected_config: dict) -> dict[str, object]:
+    """Enable an explicitly selected local Passport UI for an older run.
+
+    Passport ownership lives in its own control-plane database. This runtime
+    overlay therefore does not rewrite the run's persisted simulation config,
+    provider routes, or replay inputs. An explicit stored disable still wins.
+    """
+    selected_gateway = selected_config.get("external_gateway")
+    if not isinstance(selected_gateway, dict):
+        return {}
+    selected_join = selected_gateway.get("public_join")
+    if not isinstance(selected_join, dict) or not bool(
+            selected_join.get("enabled", False)):
+        return {}
+
+    stored_gateway = stored_config.get("external_gateway")
+    if stored_gateway is None:
+        stored_gateway = {}
+        stored_config["external_gateway"] = stored_gateway
+    if not isinstance(stored_gateway, dict):
+        return {}
+    if stored_gateway.get("enabled") is False or "public_join" in stored_gateway:
+        return {}
+
+    stored_gateway["public_join"] = dict(selected_join)
+    return {"external_gateway.public_join.enabled": True}
+
+
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR,
              new_run_id_override: str | None = None) -> tuple[Store, World, str]:
@@ -134,6 +239,18 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             store.close()
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        tightened = _tighten_resume_operational_limits(stored_cfg, config)
+        if tightened:
+            operational_log(
+                logger, logging.INFO, "run.resume.operational_limits_tightened",
+                run_id=run_id, limits=tightened)
+        local_control_plane = _adopt_resume_local_citizenship(
+            stored_cfg, config)
+        if local_control_plane:
+            operational_log(
+                logger, logging.INFO,
+                "run.resume.local_citizenship_enabled",
+                run_id=run_id, changes=local_control_plane)
         world = World(store, stored_cfg)
         persisted_status = str(store.get_meta()["status"] or "created")
         world.status = "paused" if persisted_status == "running" else persisted_status
