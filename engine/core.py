@@ -10,6 +10,7 @@ import random
 from typing import Optional
 
 from .credit import Bank
+from .city import City
 from .cognition import CognitionEconomy
 from .exchange import Exchange
 from .firms import Firms
@@ -46,7 +47,16 @@ class Economy:
             store, self.ledger,
             local_currency_action_surfaces=local_currency_action_surfaces,
             engine_semantics_version=self.engine_semantics_version)
-        self.firms = Firms(store, self.ledger)
+        city_enabled = (
+            self.engine_semantics_version >= 12
+            and bool(config.get("city", {}).get("enabled", False))
+        )
+        self.firms = Firms(
+            store,
+            self.ledger,
+            engine_semantics_version=self.engine_semantics_version,
+            city_enabled=city_enabled,
+        )
         self.labor = Labor(
             store,
             engine_semantics_version=self.engine_semantics_version,
@@ -70,6 +80,7 @@ class Economy:
             engine_semantics_version=self.engine_semantics_version,
             seed=int(config.get("seed", 42)),
         )
+        self.city = City(self, config.get("city"))
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

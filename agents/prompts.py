@@ -24,7 +24,7 @@ from .memory import Memory
 INSTITUTIONAL_DECISION_ROLES = {
     "exchange", "gov_official", "legislator_house", "legislator_senate",
     "regulator", "competition_regulator", "labor_regulator", "executive",
-    "lobbyist",
+    "lobbyist", "permit_clerk",
 }
 
 # Shared system prefix — identical for all citizens, so it caches well (§8, §12).
@@ -123,6 +123,16 @@ when an ENTREPRENEURSHIP OPPORTUNITY is supplied. Copy its company name, sector,
 lawyer ID, and affordable opening capital exactly. Keep all three business-idea
 fields non-empty and grounded in the supplied market facts."""
 
+CIVIC_ACTIONS_SUFFIX = """
+Semantics 12 civic actions are available only when their complete action object is
+supplied in context: apply_business_permit{name,sector,lawyer_agent_id,
+opening_capital,business_idea:{mission,customer_problem,offering}},
+attend_civic_appointment{appointment_id}, and
+decide_business_permit{case_id,decision,reason_code}. Copy every supplied field
+exactly. An appointment action is mandatory and consumes the entire turn.
+found_company is valid only when the supplied payload is bound to an active,
+unexpired civic authorization."""
+
 DEFAULT_ENTREPRENEURSHIP_SECTORS = (
     "services", "technology", "manufacturing", "logistics", "healthcare",
     "energy", "agriculture",
@@ -181,17 +191,49 @@ class ContextBuilder:
                     if startup_work["eligible_actions"]:
                         ctx["startup_work"] = startup_work
             elif agent_row["kind"] == "citizen":
-                opportunity = self._entrepreneurship_opportunity(agent_row, tick, ctx)
+                opportunity = None
+                if self.engine_semantics_version >= 12 and self.e.city.enabled:
+                    opportunity = self.e.city.founding_opportunity(
+                        int(agent_row["id"]), tick)
+                if opportunity is None:
+                    opportunity = self._entrepreneurship_opportunity(
+                        agent_row, tick, ctx)
                 if opportunity is not None:
                     ctx["entrepreneurship_opportunity"] = opportunity
-                    authorizations = getattr(
-                        self.e, "_entrepreneurship_authorizations", None)
-                    if authorizations is None:
-                        authorizations = {}
-                        self.e._entrepreneurship_authorizations = authorizations
-                    authorizations[(tick, int(agent_row["id"]))] = json.loads(
-                        json.dumps(opportunity["action"], sort_keys=True))
-            elif self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
+                    supplied_action = opportunity["action"]
+                    if supplied_action.get("type") == "apply_business_permit":
+                        authorizations = getattr(
+                            self.e,
+                            "_business_permit_application_authorizations",
+                            None,
+                        )
+                        if authorizations is None:
+                            authorizations = {}
+                            self.e._business_permit_application_authorizations = (
+                                authorizations)
+                        authorizations[(tick, int(agent_row["id"]))] = {
+                            key: json.loads(json.dumps(
+                                supplied_action[key], sort_keys=True))
+                            for key in (
+                                "name", "sector", "lawyer_agent_id",
+                                "opening_capital", "business_idea",
+                            )
+                        }
+                    else:
+                        authorizations = getattr(
+                            self.e, "_entrepreneurship_authorizations", None)
+                        if authorizations is None:
+                            authorizations = {}
+                            self.e._entrepreneurship_authorizations = authorizations
+                        authorizations[(tick, int(agent_row["id"]))] = json.loads(
+                            json.dumps(supplied_action, sort_keys=True))
+            elif (
+                role == "permit_clerk"
+                or (
+                    self.institutional_role_purposes
+                    and role in INSTITUTIONAL_DECISION_ROLES
+                )
+            ):
                 ctx["purpose"] = role
                 ctx["institutional_work"] = self._institutional_work(agent_row, tick)
             if self.engine_semantics_version >= 7:
@@ -215,6 +257,13 @@ class ContextBuilder:
             self._add_supplier_warning_policy_input(ctx, agent_row, tick)
         if self.engine_semantics_version >= 11:
             ctx.update(self.e.cognition.decision_context(int(agent_row["id"]), tick))
+        if self.engine_semantics_version >= 12 and self.e.city.enabled:
+            ctx["attention"] = self.e.city.attention_for_agent(
+                int(agent_row["id"]), tick)
+            required_action = self.e.city.required_appointment_action(
+                int(agent_row["id"]), tick)
+            if required_action is not None:
+                ctx["civic_required_action"] = required_action
         return ctx
 
     def _goal_driven_communication_action(
@@ -346,6 +395,8 @@ class ContextBuilder:
         if self.store.query_one("SELECT 1 FROM firms WHERE founder_agent_id=? AND status<>'bankrupt'",
                                 (agent_row["id"],)):
             return "founder"
+        if role == "permit_clerk":
+            return "permit_clerk"
         if self.institutional_role_purposes and role in INSTITUTIONAL_DECISION_ROLES:
             return str(role)
         return "decision"
@@ -473,13 +524,32 @@ class ContextBuilder:
         minimum_age = max(18, int(settings.get("minimum_age", 21)))
         risk_floor = max(0.0, min(1.0, float(
             settings.get("minimum_risk_tolerance", 0.65))))
+        employed = bool(context.get("state", {}).get("employed"))
+        allow_employed = bool(
+            settings.get("allow_employed_applicants", False))
         if (int(agent_row["age"]) < minimum_age
                 or float(agent_row["risk_tolerance"] or 0.5) < risk_floor
-                or bool(context.get("state", {}).get("employed"))):
+                or (employed and not allow_employed)):
             return None
         if self.store.query_one(
                 "SELECT 1 FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
                 (int(agent_row["id"]),)):
+            return None
+        civic_permits = (
+            self.engine_semantics_version >= 12
+            and self.e.city.enabled
+            and self.e.city.permits_required
+        )
+        if civic_permits and (
+            self.e.city.active_authorization(int(agent_row["id"]), tick) is not None
+            or self.store.query_one(
+                "SELECT 1 FROM service_cases WHERE applicant_agent_id=? "
+                "AND status IN "
+                "('applied','appointment_scheduled','submitted','under_review') "
+                "LIMIT 1",
+                (int(agent_row["id"]),),
+            )
+        ):
             return None
 
         arrived_tick = int(agent_row["arrived_tick"] or 0)
@@ -501,7 +571,8 @@ class ContextBuilder:
             1, int(settings.get("minimum_opening_capital_cents", 100_000)))
         personal_reserve = max(
             0, int(settings.get("personal_reserve_cents", 100_000)))
-        affordable = max(0, cash - personal_reserve)
+        permit_fee = self.e.city.application_fee_cents if civic_permits else 0
+        affordable = max(0, cash - personal_reserve - permit_fee)
         if affordable < minimum_capital:
             return None
         share_bps = max(1, min(
@@ -609,7 +680,10 @@ class ContextBuilder:
             "offering": f"Reliable locally delivered {sector} products",
         }
         action = {
-            "type": "found_company",
+            "type": (
+                "apply_business_permit"
+                if civic_permits else "found_company"
+            ),
             "name": company_name,
             "sector": sector,
             "lawyer_agent_id": int(lawyer["id"]),
@@ -622,6 +696,7 @@ class ContextBuilder:
             "capital": {
                 "cash_cents": cash,
                 "personal_reserve_cents": personal_reserve,
+                "permit_fee_cents": permit_fee,
                 "affordable_capital_cents": affordable,
                 "opening_capital_cents": opening_capital,
             },
@@ -820,6 +895,11 @@ class ContextBuilder:
                 "bank_id": int(primary["bank_id"]) if primary["bank_id"] is not None else None,
             }
 
+        if role == "permit_clerk" and self.engine_semantics_version >= 12:
+            civic_work = self.e.city.clerk_work(agent_id, tick)
+            if "wallet" in work:
+                civic_work["wallet"] = work["wallet"]
+            return civic_work
         if role in {"legislator_house", "legislator_senate"}:
             self._legislative_work(agent_id, work)
         elif role == "executive":
@@ -1421,6 +1501,22 @@ class ContextBuilder:
             lines.append(
                 "[FOUNDER COMPUTE SPONSORSHIP - FIRM PAYS; COPY A SUPPLIED ACTION] "
                 + json.dumps(context["compute_sponsorship"], separators=(",", ":"))[:3000])
+        if context.get("attention"):
+            lines.append(
+                "[ATTENTION - AUTHORIZED CIVIC LANES; AT MOST EIGHT ITEMS PER LANE] "
+                + json.dumps(
+                    context["attention"],
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )[:12000])
+        if context.get("civic_required_action"):
+            lines.append(
+                "[REQUIRED CIVIC APPOINTMENT - COPY THIS ACTION EXACTLY; IT CONSUMES "
+                "THE ENTIRE TURN] "
+                + json.dumps(
+                    context["civic_required_action"],
+                    separators=(",", ":"),
+                ))
         beliefs = context.get("beliefs", {})
         if beliefs:
             lines.append("[BELIEFS] " + ", ".join(f"{k}={v}" for k, v in list(beliefs.items())[:8]))
@@ -1628,19 +1724,31 @@ class ContextBuilder:
             lines.append("[TASK] Decide what you do today from the available goods, jobs, "
                          "banks, and—when due—listed securities. Reply with the JSON envelope only.")
         if purpose == "decision" and context.get("entrepreneurship_opportunity"):
-            lines[-1] = (
-                "[TASK] Decide whether to start the supplied company from the validated "
-                "market opportunity. If you incorporate, copy the supplied name, sector, "
-                "lawyer_agent_id, and opening_capital exactly and keep the structured "
-                "business idea grounded in those facts. Otherwise make an ordinary "
-                "household decision or deliberately do_nothing. Reply with the JSON "
-                "envelope only.")
+            opportunity_action = context["entrepreneurship_opportunity"].get(
+                "action", {})
+            if opportunity_action.get("type") == "apply_business_permit":
+                lines[-1] = (
+                    "[TASK] Decide whether to apply for the supplied business permit. "
+                    "The displayed fee is non-refundable. If you apply, copy the entire "
+                    "supplied action exactly. Otherwise make an ordinary household "
+                    "decision or deliberately do_nothing. Reply with the JSON envelope only.")
+            else:
+                lines[-1] = (
+                    "[TASK] Your approved business permit is time-limited. Decide whether "
+                    "to incorporate now; if so, copy the authorization-bound found_company "
+                    "action exactly. Otherwise make an ordinary household decision or "
+                    "deliberately do_nothing. Reply with the JSON envelope only.")
         if purpose == "decision" and context.get("incoming_job_offers"):
             lines[-1] = (
                 "[TASK] Resolve one supplied wage offer before considering another job. "
                 "Use accept_job_offer, counter_job_offer, or reject_job_offer with its "
                 "exact offer_id; do not apply again to a job whose application already "
                 "has a pending offer. Reply with the JSON envelope only.")
+        if context.get("civic_required_action"):
+            lines[-1] = (
+                "[TASK] Attend the supplied civic appointment now by copying the required "
+                "action exactly. Attendance consumes this entire turn; submit no other "
+                "action. Reply with the JSON envelope only.")
         system = SYSTEM_PREFIX
         if bool(config.get("entrepreneurship", {}).get("enabled", False)):
             system = system.replace(
@@ -1649,6 +1757,20 @@ class ContextBuilder:
             system = system.replace("hire{application_id}, ", "")
         if context.get("entrepreneurship_opportunity"):
             system += ENTREPRENEURSHIP_ACTIONS_SUFFIX
+        if (
+            getattr(self, "engine_semantics_version", 2) >= 12
+            and (
+                context.get("attention")
+                or context.get("civic_required_action")
+                or context.get("purpose") == "permit_clerk"
+                or (
+                    context.get("entrepreneurship_opportunity", {})
+                    .get("action", {})
+                    .get("type") == "apply_business_permit"
+                )
+            )
+        ):
+            system += CIVIC_ACTIONS_SUFFIX
         if context.get("institutional_work"):
             system += (SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX
                        if getattr(self, "engine_semantics_version", 2) >= 7

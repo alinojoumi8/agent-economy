@@ -9,9 +9,9 @@
 - `openai_compat`: Kimi (Moonshot) + MiniMax + OpenRouter/vLLM/Ollama — all speak
                 the OpenAI wire format.
 - `anthropic` : optional tier if an Anthropic key is present.
-- `cli`       : wraps `claude -p --output-format json`; HARD-restricted to
-                purpose in {oracle_plan, oracle, dev}. Raises if a swarm role is
-                routed to it.
+- `cli`       : runs a configured local CLI without a shell. Legacy Claude CLI
+                routes remain restricted to {oracle_plan, oracle, dev}; agent
+                purposes require an explicit provider opt-in and allowlist.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -281,45 +282,288 @@ class AnthropicAdapter(Adapter):
 
 
 class CLIAdapter(Adapter):
-    """Wraps the Claude CLI in headless mode. Restricted to Oracle/dev use only."""
+    """Run a bounded local model CLI and normalize its structured output."""
     name = "cli"
     ALLOWED_PURPOSES = {"oracle", "oracle_plan", "dev"}
 
-    def __init__(self, command: str = "claude"):
-        self.command = command
+    def __init__(self, config: str | dict[str, Any] = "claude"):
+        if isinstance(config, str):
+            config = {"command": config}
+        elif not isinstance(config, dict):
+            raise TypeError("CLI adapter config must be a command string or mapping")
+
+        self.command = os.path.expandvars(str(config.get("command", "claude")))
+        raw_args = config.get("args")
+        self.args = (
+            [str(arg) for arg in raw_args]
+            if isinstance(raw_args, list)
+            else ["-p", "{prompt}", "--output-format", "json"]
+        )
+        self.parser = str(config.get("parser", "claude_json")).strip().lower()
+        if self.parser not in {"claude_json", "grok_json", "codex_jsonl", "plain"}:
+            raise ValueError(f"unsupported CLI parser '{self.parser}'")
+        self.stdin_prompt = bool(config.get("stdin_prompt", False))
+        self.timeout_s = max(1.0, float(config.get("timeout_s", 120.0)))
+        raw_cwd = str(config.get("cwd", "")).strip()
+        self.cwd = os.path.expandvars(raw_cwd) if raw_cwd else None
+
+        raw_env = config.get("env", {}) or {}
+        if not isinstance(raw_env, dict):
+            raise TypeError("CLI adapter env must be a mapping")
+        self.env = {
+            str(key): os.path.expandvars(str(value))
+            for key, value in raw_env.items()
+        }
+
+        raw_purposes = config.get("allowed_purposes")
+        if raw_purposes is None:
+            self.allowed_purposes = set(self.ALLOWED_PURPOSES)
+        elif not isinstance(raw_purposes, list) or not all(
+                isinstance(value, str) and value.strip() for value in raw_purposes):
+            raise ValueError("CLI adapter allowed_purposes must be a list of strings")
+        else:
+            self.allowed_purposes = {value.strip() for value in raw_purposes}
+        if (self.allowed_purposes - self.ALLOWED_PURPOSES
+                and not bool(config.get("allow_agent_purposes", False))):
+            raise ValueError(
+                "CLI agent purposes require allow_agent_purposes: true")
+
+    @staticmethod
+    def _prompt(messages: list[dict]) -> str:
+        return "\n\n".join(
+            f"[{str(message.get('role', 'user')).upper()}]\n"
+            f"{message.get('content', '')}"
+            for message in messages
+        )
+
+    @staticmethod
+    def _usage_value(usage: dict, *names: str) -> int:
+        for name in names:
+            value = usage.get(name)
+            if value is not None:
+                try:
+                    return max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    @classmethod
+    def _usage(cls, usage: Any) -> tuple[int, int, int]:
+        if not isinstance(usage, dict):
+            return 0, 0, 0
+        nested = [
+            value for value in usage.values()
+            if isinstance(value, dict)
+        ]
+        direct_names = {
+            "input_tokens", "inputTokens", "prompt_tokens", "promptTokens",
+            "output_tokens", "outputTokens", "completion_tokens",
+            "completionTokens", "cached_input_tokens", "cachedInputTokens",
+            "cache_read_input_tokens", "cacheReadInputTokens",
+        }
+        if nested and not direct_names.intersection(usage):
+            totals = [cls._usage(value) for value in nested]
+            return (
+                sum(value[0] for value in totals),
+                sum(value[1] for value in totals),
+                sum(value[2] for value in totals),
+            )
+        in_tokens = cls._usage_value(
+            usage, "input_tokens", "inputTokens", "prompt_tokens", "promptTokens")
+        out_tokens = cls._usage_value(
+            usage, "output_tokens", "outputTokens",
+            "completion_tokens", "completionTokens")
+        cached_in_tokens = cls._usage_value(
+            usage, "cached_input_tokens", "cachedInputTokens",
+            "cache_read_input_tokens", "cacheReadInputTokens")
+        return in_tokens, out_tokens, cached_in_tokens
+
+    @classmethod
+    def _parse_claude_json(cls, output: str) -> tuple[str, int, int, int, dict]:
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            return output, 0, 0, 0, {}
+        if not isinstance(payload, dict):
+            return output, 0, 0, 0, {}
+        text = payload.get("result", output)
+        if not isinstance(text, str):
+            text = json.dumps(text, separators=(",", ":"), ensure_ascii=False)
+        in_tokens, out_tokens, cached = cls._usage(payload.get("usage", {}))
+        return text, in_tokens, out_tokens, cached, {}
+
+    @classmethod
+    def _parse_grok_json(cls, output: str) -> tuple[str, int, int, int, dict]:
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Grok CLI did not return valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Grok CLI returned a non-object response")
+        text = payload.get("text", payload.get("result", payload.get("content", "")))
+        if not isinstance(text, str):
+            text = json.dumps(text, separators=(",", ":"), ensure_ascii=False)
+        usage_source = payload.get("usage")
+        if not isinstance(usage_source, dict):
+            usage_source = payload.get("modelUsage", {})
+        in_tokens, out_tokens, cached = cls._usage(usage_source)
+        metadata = {
+            key: payload[key]
+            for key in (
+                "session_id", "sessionId", "request_id", "requestId",
+                "stop_reason", "stopReason", "cost", "model",
+            )
+            if key in payload
+        }
+        return text, in_tokens, out_tokens, cached, metadata
+
+    @classmethod
+    def _parse_codex_jsonl(cls, output: str) -> tuple[str, int, int, int, dict]:
+        final_text = ""
+        thread_id: str | None = None
+        usage: dict = {}
+        failure = ""
+        event_count = 0
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            event_count += 1
+            event_type = str(event.get("type", ""))
+            if event_type == "thread.started":
+                thread_id = str(event.get("thread_id") or "") or None
+            elif event_type == "item.completed":
+                item = event.get("item")
+                if isinstance(item, dict) and item.get("type") == "agent_message":
+                    candidate = item.get("text")
+                    if isinstance(candidate, str):
+                        final_text = candidate
+            elif event_type == "turn.completed":
+                if isinstance(event.get("usage"), dict):
+                    usage = event["usage"]
+            elif event_type in {"turn.failed", "error"}:
+                detail = event.get("error", event.get("message", event_type))
+                if isinstance(detail, dict):
+                    detail = detail.get("message", event_type)
+                failure = str(detail)[:500]
+        if not final_text:
+            detail = f": {failure}" if failure else ""
+            raise RuntimeError(f"Codex CLI returned no final agent message{detail}")
+        in_tokens, out_tokens, cached = cls._usage(usage)
+        metadata: dict[str, Any] = {"event_count": event_count}
+        if thread_id:
+            metadata["thread_id"] = thread_id
+        return final_text, in_tokens, out_tokens, cached, metadata
+
+    def _parse_output(self, output: str) -> tuple[str, int, int, int, dict]:
+        if self.parser == "claude_json":
+            return self._parse_claude_json(output)
+        if self.parser == "grok_json":
+            return self._parse_grok_json(output)
+        if self.parser == "codex_jsonl":
+            return self._parse_codex_jsonl(output)
+        return output, 0, 0, 0, {}
+
+    @staticmethod
+    def _render_arg(arg: str, *, prompt: str, model: str, purpose: str,
+                    max_tokens: int, temperature: float) -> str:
+        replacements = {
+            "{prompt}": prompt,
+            "{model}": str(model),
+            "{purpose}": str(purpose),
+            "{max_tokens}": str(max_tokens),
+            "{temperature}": str(temperature),
+        }
+        rendered = os.path.expandvars(arg)
+        for marker, value in replacements.items():
+            rendered = rendered.replace(marker, value)
+        return rendered
 
     async def complete(self, model, messages, *, purpose="", context=None, max_tokens=700,
                        temperature=0.7, cache_key="") -> AdapterResult:
-        if purpose not in self.ALLOWED_PURPOSES:
+        if purpose not in self.allowed_purposes:
             raise PermissionError(
-                f"CLI adapter is restricted to {self.ALLOWED_PURPOSES}; refused purpose='{purpose}'. "
-                "Consumer subscriptions may not back the agent swarm (TECH-SPEC §8).")
-        prompt = "\n\n".join(f"[{m['role'].upper()}]\n{m['content']}" for m in messages)
+                f"CLI adapter is restricted to {sorted(self.allowed_purposes)}; "
+                f"refused purpose='{purpose}'.")
+        prompt = self._prompt(messages)
+        args = [
+            self._render_arg(
+                arg, prompt=prompt, model=model, purpose=purpose,
+                max_tokens=max_tokens, temperature=temperature)
+            for arg in self.args
+        ]
+        process_env = None
+        if self.env:
+            process_env = {**os.environ, **self.env}
+        process_kwargs: dict[str, Any] = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+        }
+        if self.stdin_prompt:
+            process_kwargs["stdin"] = asyncio.subprocess.PIPE
+        if self.cwd:
+            process_kwargs["cwd"] = self.cwd
+        if process_env is not None:
+            process_kwargs["env"] = process_env
+        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            process_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = await asyncio.create_subprocess_exec(
-            self.command, "-p", prompt, "--output-format", "json",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            self.command, *args, **process_kwargs)
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            proc.kill()
+            input_bytes = prompt.encode("utf-8") if self.stdin_prompt else None
+            communicate = (
+                proc.communicate(input_bytes) if input_bytes is not None
+                else proc.communicate()
+            )
+            stdout, stderr = await asyncio.wait_for(
+                communicate, timeout=self.timeout_s)
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
             await proc.wait()
             raise
+        except asyncio.TimeoutError as exc:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            raise AdapterTimeoutError(self.command, self.timeout_s) from exc
         out = stdout.decode("utf-8", errors="replace").strip()
         error_text = stderr.decode("utf-8", errors="replace").strip()
         if proc.returncode:
             detail = error_text or "no stderr output"
             raise RuntimeError(
                 f"CLI provider exited with code {proc.returncode}: {detail[:500]}")
-        try:
-            parsed = json.loads(out)
-            text = parsed.get("result", out)
-        except json.JSONDecodeError:
-            text = out
-        return AdapterResult(text=text, in_tokens=estimate_tokens(prompt),
-                             out_tokens=estimate_tokens(text), raw={"stderr": error_text})
+        text, in_tokens, out_tokens, cached, metadata = self._parse_output(out)
+        metadata["stderr"] = error_text[:500]
+        return AdapterResult(
+            text=text,
+            in_tokens=in_tokens or estimate_tokens(prompt),
+            out_tokens=out_tokens or estimate_tokens(text),
+            cached_in_tokens=cached,
+            raw=metadata,
+        )
 
     async def healthcheck(self, model: str) -> dict:
-        return {"ok": shutil.which(self.command) is not None, "model": model, "live": True}
+        command_found = (
+            os.path.isfile(self.command) if os.path.dirname(self.command)
+            else shutil.which(self.command) is not None
+        )
+        cwd_ready = self.cwd is None or os.path.isdir(self.cwd)
+        return {
+            "ok": command_found and cwd_ready,
+            "model": model,
+            "live": True,
+        }
 
 
 # Default provider registry factory ------------------------------------------------
@@ -336,5 +580,5 @@ def build_adapters(config: dict) -> dict[str, Adapter]:
         elif kind == "anthropic":
             adapters[pname] = AnthropicAdapter(pcfg)
         elif kind == "cli":
-            adapters[pname] = CLIAdapter(pcfg.get("command", "claude"))
+            adapters[pname] = CLIAdapter(pcfg)
     return adapters

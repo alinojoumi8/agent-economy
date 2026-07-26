@@ -93,7 +93,7 @@ def test_hash_contract_v1_is_frozen_and_v2_covers_gateway_commons(tmp_path):
         before = canonical_hashes(current)
         assert before["contract_id"] == "hash-contract-v2"
         assert before["schema_inventory_sha256"] == (
-            "d79179a8635f1f617f0d12c2e2ce222372f83aac39cee2f25669a673f5f24f0d")
+            "495657150cd398601e4dab9532e09275e5ec054b90834e85a8525021afad7865")
         current.insert(
             "commons_profiles", agent_id=agent_id,
             display_name="Commons Citizen", created_tick=0, updated_tick=0)
@@ -194,3 +194,98 @@ def test_manifest_hash_rejects_rewritten_metadata(economy, tmp_path):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ExportBundleError, match="manifest hash mismatch"):
         validate_bundle(bundle)
+
+
+def test_hash_contract_v2_redacts_external_action_canaries(tmp_path):
+    from pathlib import Path
+
+    from research.hashing import load_hash_contract
+    from run_config import load_config
+    from world.loop import World
+
+    canary = "CANARY-EA-EXPORT-7d2a9f31"
+    v1 = load_hash_contract(Path("research/hash-contract-v1.json"))
+    v2 = load_hash_contract(Path("research/hash-contract-v2.json"))
+    assert "external_action_submissions" not in v1.get("default_export_redactions", {})
+    assert set(v2["default_export_redactions"]["external_action_submissions"]) == {
+        "action_json", "rationale_summary", "result_json", "validator_results_json",
+    }
+
+    config = load_config("runs/world-os-external.yaml")
+    config["population"]["size"] = 4
+    config["firms"]["count"] = 2
+    config["firms"]["listed"] = 1
+    config["banks"]["count"] = 1
+    config["checkpoint_every"] = 0
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store = Store(str(tmp_path / "export-external.db"))
+    store.init_run_meta("export-external", 42, config)
+    world = World(store, config)
+    try:
+        world.initialize()
+        created = world.runtime.external.create_connection(
+            tenant_id="tenant-a", owner_id="owner-export",
+            display_name="Export Citizen", biography="Public bio.",
+            preferred_occupation="builder", tier="actor")
+        world._spawn_due_arrivals(1)
+        auth = world.runtime.external.authenticate(
+            created["credential"]["token"], rate_limit=False)
+        turn = world.runtime.external.turn(auth)
+        submission_id = "exportcanary" + ("0" * 20)
+        store.execute(
+            "INSERT INTO external_action_submissions("
+            "id,connection_id,actor_id,turn_id,target_tick,observed_projection_hash,"
+            "idempotency_key,action_json,rationale_summary,status,validator_results_json,"
+            "result_json,event_ids_json,resulting_state_hash,source_submission_id,"
+            "created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                submission_id, auth["id"], auth["actor_id"], turn["turn_id"],
+                turn["target_tick"], turn["projection_hash"], "export-canary-key",
+                json.dumps({"type": "do_nothing", "secret": canary}),
+                canary,
+                "executed",
+                json.dumps([{"validator": "participant_catalog", "ok": True,
+                             "message": canary}]),
+                json.dumps([{"ok": True, "private": canary}]),
+                json.dumps([11]),
+                "e" * 64,
+                None,
+                "2026-07-24T00:00:00+00:00",
+                "2026-07-24T00:00:01+00:00",
+            ),
+        )
+        store.commit()
+        # External-action redactions are a hash-contract-v2 default-export policy.
+        bundle = export_bundle(
+            store, tmp_path / "exports",
+            contract_path=Path("research/hash-contract-v2.json"),
+        )
+        manifest = validate_bundle(bundle)
+        assert manifest["contract_id"] == "hash-contract-v2"
+        redactions = manifest["tables"]["external_action_submissions"]["redactions"]
+        for field in (
+            "action_json", "rationale_summary", "result_json", "validator_results_json",
+        ):
+            assert redactions[field] == 1, field
+        # Non-sensitive integrity fields remain.
+        connection = duckdb.connect(database=":memory:")
+        try:
+            row = connection.execute(
+                "SELECT status,event_ids_json,resulting_state_hash,"
+                "action_json,rationale_summary,result_json,validator_results_json "
+                "FROM read_parquet(?)",
+                [str(bundle / "external_action_submissions.parquet")],
+            ).fetchone()
+        finally:
+            connection.close()
+        assert row[0] == "executed"
+        assert row[1] is not None
+        assert row[2] == "e" * 64
+        assert row[3] is None
+        assert row[4] is None
+        assert row[5] is None
+        assert row[6] is None
+        for path in bundle.iterdir():
+            assert canary.encode() not in path.read_bytes()
+    finally:
+        world.close()

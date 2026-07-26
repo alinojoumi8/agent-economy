@@ -19,6 +19,9 @@ actor, the same state-valid citizen activities, and auditable action receipts.</
   consent and return through its temporary loopback callback.</p>
   <pre>{{ hermes_command }}
 hermes -p agenteconomy mcp test agent_economy</pre>
+  <p><strong>Run does not launch Hermes.</strong> It advances the world and its
+  native citizens. Keep <code>hermes -p agenteconomy</code> running so your
+  external citizen can receive and answer MCP wakes.</p>
 </section>
 
 <section class="card">
@@ -29,7 +32,8 @@ hermes -p agenteconomy mcp test agent_economy</pre>
     <li>Submit one action with the exact tick, projection hash, and idempotency key.</li>
     <li>Read the receipt and participate in Commons.</li>
   </ol>
-  <p><a href="/join.md?world={{ world.slug }}">Agent-readable join.md</a> ·
-  <a href="/my-agents">My local agents</a> · <a href="/">Open dashboard</a></p>
+  <p><a href="/join.md?world={{ world.slug }}">Open agent-readable join.md</a>.
+  The navigation above keeps Observatory, Commons, onboarding, and Passport
+  management in this same browser tab.</p>
 </section>
 {% endblock %}

@@ -58,9 +58,19 @@ def normalize_business_idea(value: object) -> dict[str, str]:
 
 
 class Firms:
-    def __init__(self, store: Store, ledger: Ledger):
+    def __init__(
+        self,
+        store: Store,
+        ledger: Ledger,
+        *,
+        engine_semantics_version: int = 1,
+        city_enabled: bool = False,
+    ):
         self.store = store
         self.ledger = ledger
+        self.engine_semantics_version = int(engine_semantics_version)
+        self.city_enabled = bool(
+            city_enabled and self.engine_semantics_version >= 12)
 
     # ── queries ──────────────────────────────────────────────────────────────
     def get(self, firm_id: int):
@@ -79,6 +89,34 @@ class Firms:
             "SELECT e.* FROM employments e JOIN agents a ON a.id=e.agent_id "
             "WHERE e.firm_id=? AND e.status='active' AND a.alive=1 AND a.health<>'critical'",
             (firm_id,))
+
+    def productive_employees(self, firm_id: int, tick: int) -> list:
+        """Return employees physically present at work under Semantics 12."""
+        if not self.city_enabled:
+            return self.active_employees(firm_id)
+        return self.store.query(
+            "SELECT e.* FROM employments e "
+            "JOIN agents a ON a.id=e.agent_id "
+            "JOIN effective_presence ep ON ep.agent_id=e.agent_id "
+            "AND ep.tick=? AND ep.slot='business' "
+            "JOIN places p ON p.id=ep.place_id "
+            "AND p.kind='firm_workplace' AND p.owner_type='firm' "
+            "AND p.owner_id=e.firm_id AND p.active=1 "
+            "WHERE e.firm_id=? AND e.status='active' AND a.alive=1 "
+            "AND a.health<>'critical' ORDER BY e.id",
+            (int(tick), int(firm_id)),
+        )
+
+    def founder_present(self, founder_agent_id: int, firm_id: int, tick: int) -> bool:
+        if not self.city_enabled:
+            return True
+        return self.store.query_one(
+            "SELECT 1 FROM effective_presence ep JOIN places p ON p.id=ep.place_id "
+            "WHERE ep.agent_id=? AND ep.tick=? AND ep.slot='business' "
+            "AND p.kind='firm_workplace' AND p.owner_type='firm' "
+            "AND p.owner_id=? AND p.active=1 LIMIT 1",
+            (int(founder_agent_id), int(tick), int(firm_id)),
+        ) is not None
 
     # ── founding (via law firm, PRD R3) ──────────────────────────────────────
     def found_firm(self, tick: int, founder_agent_id: int, name: str, sector: str,
@@ -141,11 +179,13 @@ class Firms:
     def _produce_one(self, tick: int, firm) -> None:
         firm_id = int(firm["id"])
         prod = self.product(firm)
-        workers = len(self.active_employees(firm_id))
+        workers = len(self.productive_employees(firm_id, tick))
         if workers == 0 and firm["founder_agent_id"]:
             fa = self.store.query_one("SELECT alive, health FROM agents WHERE id=?",
                                       (firm["founder_agent_id"],))
-            if fa and fa["alive"] and fa["health"] != "critical":
+            if (fa and fa["alive"] and fa["health"] != "critical"
+                    and self.founder_present(
+                        int(firm["founder_agent_id"]), firm_id, tick)):
                 workers = 1  # owner-operator
         if workers == 0:
             return

@@ -15,19 +15,20 @@ no scripted or mock inference fallback.
 
 | Lane | Capacity | Default work |
 |---|---:|---|
-| Ollama / `agent-economy-qwen3.5:9b-16k` | 2 | Local citizen plans |
+| Ollama / `agent-economy-qwen3.5:9b-16k` | 1 | Local citizen plans |
 | Ollama Cloud | 3 | GLM 5.1, Gemma 4, and Nemotron 3 Super cohorts |
 | DeepSeek / `deepseek-v4-flash` | 6 | Flash plans and routine institutional work |
 | MiniMax / `MiniMax-M3` | 2 | Premium VC and exchange decisions |
 | Kimi / `kimi-for-coding` | 2 | Premium founder, policy, credit, legal, executive, and Oracle decisions |
 
-The desktop-wide ceiling is 10. Policy and strategic requests have priority over
+The desktop-wide ceiling is 6. Policy and strategic requests have priority over
 conversation, memory, and newsroom requests inside each lane. DeepSeek gets a
 60-second provider timeout, local/premium lanes get 90 seconds, and Ollama Cloud
-gets 120 seconds. Queueing, fallback, and provider time share a 240-second
+gets 120 seconds. Queueing, fallback, and provider time share a 900-second
 logical-call deadline.
 
-Each route has at most one live fallback: local to DeepSeek, Flash to local, and
+Each route has at most one live fallback: local to DeepSeek, Flash to Ollama
+Cloud Gemma 4, and
 premium to DeepSeek. HTTP 429 immediately places that provider in cooldown. If
 both routes fail, the world checkpoints and pauses at the same phase without
 settling the proposed action.
