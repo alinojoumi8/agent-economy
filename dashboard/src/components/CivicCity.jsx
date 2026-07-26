@@ -6,7 +6,7 @@ FIRST VIEWPORT: Stable civic navigation frames a two-thirds live atlas and a one
 FORM: Civic Weather Room, grounded direction position 4; surveyed evidence-transect staging; seed 5d725ec9.
 */
 import { useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import {
   CITY_DISTRICTS,
   CITY_LAYERS,

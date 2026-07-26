@@ -1,7 +1,7 @@
 import { HostedShell } from "./components/HostedShell";
 import { Observatory } from "./components/Observatory";
 import { useHostedMode } from "./hooks/useHostedMode";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router";
 import { WorldOSApp } from "./app/WorldOSApp";
 
 export default function App() {
