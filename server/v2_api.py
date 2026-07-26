@@ -234,6 +234,24 @@ def install_v2_routes(app, world, controller) -> None:
     ):
         as_of_tick = projection_tick(tick, fork_id)
         principal = Principal("ordinary-dashboard")
+        if kind == "place":
+            data = world.economy.city.place_detail(object_id, as_of_tick)
+            if data is None:
+                raise HTTPException(status_code=404, detail="entity not found")
+            return build_envelope(
+                store, principal, "entity.detail",
+                {"kind": kind, **data},
+                as_of_tick=as_of_tick,
+            )
+        if kind == "agency":
+            data = world.economy.city.agency_detail(object_id, as_of_tick)
+            if data is None:
+                raise HTTPException(status_code=404, detail="entity not found")
+            return build_envelope(
+                store, principal, "entity.detail",
+                {"kind": kind, **data},
+                as_of_tick=as_of_tick,
+            )
         table_and_fields = {
             "agent": ("agents", "id,name,role,occupation,population_tier,region_id,alive"),
             "firm": ("firms", "id,name,sector,status,region_id,inventory"),
@@ -253,7 +271,7 @@ def install_v2_routes(app, world, controller) -> None:
     @router.get("/world-map")
     async def world_map_projection(
         tick: str = Query("live"), fork_id: str | None = None,
-        layers: str = Query("regions,agents,organizations"),
+        layers: str = Query("regions,agents,organizations,places,presence"),
     ):
         as_of_tick = projection_tick(tick, fork_id)
         principal = Principal("ordinary-dashboard")
@@ -263,14 +281,84 @@ def install_v2_routes(app, world, controller) -> None:
             data["regions"] = world.economy.regions.region_state()
         if "agents" in selected:
             data["agents"] = [dict(row) for row in store.query(
-                "SELECT id,name,role,region_id,population_tier FROM agents "
-                "WHERE alive=1 AND population_tier='core' ORDER BY id")]
+                "SELECT a.id,a.name,a.role,a.occupation,a.region_id,"
+                "a.population_tier,ep.slot,"
+                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
+                "AS place_id,"
+                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE p.name END "
+                "AS place_name,"
+                "CASE WHEN p.kind='licensing_office' THEN r.x "
+                "ELSE COALESCE(p.x,r.x) END AS x,"
+                "CASE WHEN p.kind='licensing_office' THEN r.y "
+                "ELSE COALESCE(p.y,r.y) END AS y "
+                "FROM agents a LEFT JOIN regions r ON r.id=a.region_id "
+                "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
+                "AND ep.tick=? AND ep.slot='business' "
+                "LEFT JOIN places p ON p.id=ep.place_id "
+                "WHERE a.alive=1 AND "
+                "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
+                (as_of_tick,))]
         if "organizations" in selected:
             data["organizations"] = [dict(row) for row in store.query(
-                "SELECT id,name,sector,status,region_id FROM firms "
-                "WHERE status<>'bankrupt' ORDER BY id")]
+                "SELECT f.id,f.name,f.sector,f.status,f.region_id,p.id AS place_id,"
+                "p.name AS place_name,COALESCE(p.x,r.x) AS x,"
+                "COALESCE(p.y,r.y) AS y "
+                "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
+                "LEFT JOIN places p ON p.owner_type='firm' AND p.owner_id=f.id "
+                "AND p.kind='workplace' AND p.active=1 "
+                "WHERE f.status<>'bankrupt' ORDER BY f.id")]
+        if "places" in selected:
+            data["places"] = world.economy.city.map_places(as_of_tick)
+        if "presence" in selected:
+            data["presence"] = world.economy.city.map_presence(
+                as_of_tick, public=True)
         return build_envelope(
             store, principal, "world.map", data, as_of_tick=as_of_tick)
+
+    @router.get("/civic/summary")
+    async def civic_summary(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal = Principal("ordinary-dashboard")
+        return build_envelope(
+            store,
+            principal,
+            "civic.summary",
+            world.economy.city.public_summary(as_of_tick),
+            as_of_tick=as_of_tick,
+        )
+
+    @router.get("/civic/cases")
+    async def civic_cases(
+        tick: str = Query("live"), fork_id: str | None = None,
+        agent_id: int | None = Query(default=None, gt=0),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal(agent_id=agent_id)
+        data = world.economy.city.cases_for_viewer(
+            principal.agent_id, as_of_tick)
+        return build_envelope(
+            store, principal, "civic.cases", data, as_of_tick=as_of_tick)
+
+    @router.get("/agents/{agent_id}/attention")
+    async def agent_attention(
+        agent_id: int,
+        viewer_agent_id: int = Query(gt=0),
+        tick: str = Query("live"),
+        fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        if int(viewer_agent_id) != int(agent_id):
+            raise HTTPException(
+                status_code=403,
+                detail="an agent may view only its own attention lanes",
+            )
+        principal, _ = projection_principal(agent_id=viewer_agent_id)
+        data = world.economy.city.attention_projection(
+            int(agent_id), as_of_tick)
+        return build_envelope(
+            store, principal, "agent.attention", data, as_of_tick=as_of_tick)
 
     @router.get("/operator/session")
     async def operator_session(x_operator_id: str = Header("local-operator")):
@@ -364,12 +452,30 @@ def install_v2_routes(app, world, controller) -> None:
     async def economic_map():
         regions = world.economy.regions.region_state()
         core_agents = [dict(row) for row in store.query(
-            "SELECT a.id,a.name,a.role,a.occupation,a.population_tier,a.region_id,r.x,r.y "
+            "SELECT a.id,a.name,a.role,a.occupation,a.population_tier,a.region_id,"
+            "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
+            "AS place_id,"
+            "CASE WHEN p.kind='licensing_office' THEN NULL ELSE p.name END "
+            "AS place_name,"
+            "CASE WHEN p.kind='licensing_office' THEN r.x "
+            "ELSE COALESCE(p.x,r.x) END AS x,"
+            "CASE WHEN p.kind='licensing_office' THEN r.y "
+            "ELSE COALESCE(p.y,r.y) END AS y "
             "FROM agents a LEFT JOIN regions r ON r.id=a.region_id "
-            "WHERE a.alive=1 AND (a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id")]
+            "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
+            "AND ep.tick=? AND ep.slot='business' "
+            "LEFT JOIN places p ON p.id=ep.place_id "
+            "WHERE a.alive=1 AND "
+            "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
+            (store.tick,))]
         firms = [dict(row) for row in store.query(
-            "SELECT f.id,f.name,f.sector,f.status,f.region_id,f.currency_code,r.x,r.y "
-            "FROM firms f LEFT JOIN regions r ON r.id=f.region_id WHERE f.status<>'bankrupt' ORDER BY f.id")]
+            "SELECT f.id,f.name,f.sector,f.status,f.region_id,f.currency_code,"
+            "p.id AS place_id,p.name AS place_name,"
+            "COALESCE(p.x,r.x) AS x,COALESCE(p.y,r.y) AS y "
+            "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
+            "LEFT JOIN places p ON p.owner_type='firm' AND p.owner_id=f.id "
+            "AND p.kind='workplace' AND p.active=1 "
+            "WHERE f.status<>'bankrupt' ORDER BY f.id")]
         flows = []
         for row in store.query(
             "SELECT id,origin_region_id AS source_region_id,destination_region_id AS target_region_id,"
@@ -379,7 +485,16 @@ def install_v2_routes(app, world, controller) -> None:
             "SELECT id,origin_region_id AS source_region_id,destination_region_id AS target_region_id,"
             "'migration' AS kind,1 AS magnitude,status FROM migrations ORDER BY id DESC LIMIT 100"):
             flows.append(dict(row))
-        return {"regions": regions, "core_agents": core_agents, "firms": firms, "flows": flows}
+        return {
+            "regions": regions,
+            "core_agents": core_agents,
+            "firms": firms,
+            "flows": flows,
+            "places": world.economy.city.map_places(store.tick),
+            "presence": world.economy.city.map_presence(
+                store.tick, public=True),
+            "civic": world.economy.city.public_summary(store.tick),
+        }
 
     @router.get("/network")
     async def interaction_network(limit: int = Query(150, ge=1, le=500)):

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
-import worldOsAtlas from "../assets/world-os-atlas.webp";
+import { CivicCity } from "../components/CivicCity";
 
 type EventItem = {
   id: number; tick: number; phase: string; kind: string; importance: number;
@@ -25,6 +25,37 @@ type ProviderRuntime = {
     attempts: number; failures: number; rate_limits: number; fallbacks: number; cooldown_remaining_s: number;
   }>;
 };
+type CityAgent = {
+  id: number; name: string; kind?: string; role?: string | null; occupation?: string | null;
+  health?: string; alive?: number; employer_id?: number | null; model_tier?: string;
+  x?: number | null; y?: number | null; place_id?: number | null; place_name?: string | null;
+};
+type CityFirm = {
+  id: number; name: string; sector?: string; status?: string; employees?: number;
+  x?: number | null; y?: number | null; place_id?: number | null; place_name?: string | null;
+};
+type CityMap = {
+  core_agents?: Array<CityAgent & { x?: number | null; y?: number | null }>;
+  firms?: Array<CityFirm & { x?: number | null; y?: number | null }>;
+  agents?: CityAgent[];
+  organizations?: CityFirm[];
+  places?: Array<Record<string, unknown>>;
+  presence?: Array<Record<string, unknown>>;
+  regions?: unknown[];
+  flows?: unknown[];
+};
+type CivicSummary = {
+  enabled: boolean;
+  tick: number;
+  queue: { depth: number; oldest_age_ticks: number };
+  offices: Array<{
+    place_id: number; name: string; capacity: number; scheduled_today: number;
+    occupancy: number; queue_depth: number; x: number; y: number;
+  }>;
+  cases_by_status?: Record<string, number>;
+};
+
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "finished", "halted", "stopped"]);
 
 function title(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
@@ -41,10 +72,36 @@ export function OverviewWorkspace() {
     queryFn: ({ signal }) => projectionApi<Overview>(
       "/api/v2/snapshot?tick=" + encodeURIComponent(tick) + "&domains=summary,alerts,communications,events", signal),
   });
+  const runStatus = String(query.data?.data.summary?.status || "").toLowerCase();
+  const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
+  const pollCurrentRun = tick === "live" && !terminalRun;
   const runtimeQuery = useQuery({
     queryKey: ["llm-runtime", runId],
     queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
-    refetchInterval: tick === "live" ? 2000 : false,
+    refetchInterval: pollCurrentRun ? 2000 : false,
+  });
+  const cityQuery = useQuery({
+    queryKey: ["world-os", runId, "city", tick],
+    queryFn: async ({ signal }) => {
+      const [mapEnvelope, civicEnvelope] = await Promise.all([
+        projectionApi<CityMap>(
+          "/api/v2/world-map?tick=" + encodeURIComponent(tick)
+          + "&layers=regions,agents,organizations,places,presence",
+          signal,
+        ),
+        projectionApi<CivicSummary>(
+          "/api/v2/civic/summary?tick=" + encodeURIComponent(tick),
+          signal,
+        ),
+      ]);
+      return {
+        agents: mapEnvelope.data.agents || [],
+        firms: mapEnvelope.data.organizations || [],
+        map: mapEnvelope.data,
+        civic: civicEnvelope.data,
+      };
+    },
+    refetchInterval: pollCurrentRun ? 3000 : false,
   });
   if (query.isLoading) return <div className="world-os-loading" aria-label="Loading overview" />;
   if (query.error) return <div className="world-os-error" role="alert">{query.error.message}</div>;
@@ -65,26 +122,28 @@ export function OverviewWorkspace() {
   };
 
   return <section className="world-os-overview">
-    <article className="world-os-hero">
-      <img src={worldOsAtlas} alt="" aria-hidden="true" />
-      <div className="world-os-hero-scrim" />
-      <div className="world-os-hero-content">
-        <div className="world-os-hero-status"><span className="world-os-live-dot" />{tick === "live" ? "Live world model" : "Historical world model · tick " + tick}</div>
-        <p className="world-os-kicker">Operational picture</p>
-        <h2>Overview</h2>
-        <p className="world-os-hero-lede">See the world change, then follow the exact path from information to decision, event, and ledger.</p>
-        <div className="world-os-hero-actions">
-          <Link className="world-os-action-primary" to={"/runs/" + encodeURIComponent(runId) + "/investigations" + historicalSuffix}>Open causal explorer <span>↗</span></Link>
-          <Link className="world-os-action-secondary" to={"/runs/" + encodeURIComponent(runId) + "/news-communications" + historicalSuffix}>Inspect communications</Link>
-        </div>
-      </div>
-      <dl className="world-os-lineage">
-        <div><dt>Semantics</dt><dd>{envelope.semantics_version}</dd></div>
-        <div><dt>Projection</dt><dd>{envelope.projection_version}</dd></div>
-        <div><dt>Policy</dt><dd>{envelope.policy_version}</dd></div>
-        <div><dt>Tick</dt><dd>{envelope.tick}</dd></div>
-      </dl>
-    </article>
+    <CivicCity
+      agents={cityQuery.data?.agents}
+      firms={cityQuery.data?.firms}
+      events={data.events?.items}
+      map={cityQuery.data?.map}
+      civic={cityQuery.data?.civic}
+      runtime={runtimeQuery.data}
+      runId={runId}
+      tick={tick}
+      phase={data.summary?.phase}
+      status={data.summary?.status}
+      connected={!query.isError}
+      loading={cityQuery.isLoading}
+      error={cityQuery.error instanceof Error ? cityQuery.error.message : ""}
+      historical={tick !== "live"}
+      lineage={{
+        semantics: envelope.semantics_version,
+        projection: envelope.projection_version,
+        policy: envelope.policy_version,
+      }}
+      variant="world-os"
+    />
 
     <div className="world-os-metrics" aria-label="World summary">
       <Link to={"/runs/" + encodeURIComponent(runId) + "/world" + historicalSuffix}>
@@ -109,9 +168,12 @@ export function OverviewWorkspace() {
       </Link>
     </div>
 
-    <section className="world-os-provider-deck" aria-label="Live AI provider lanes">
+    <section
+      className="world-os-provider-deck"
+      aria-label={tick === "live" && !terminalRun ? "Live AI provider lanes" : "Current AI provider lanes"}
+    >
       <header>
-        <div><p className="world-os-kicker">Live inference fabric</p><h3>Provider lanes</h3></div>
+        <div><p className="world-os-kicker">{tick !== "live" ? "Current inference fabric" : terminalRun ? "Final inference fabric" : "Live inference fabric"}</p><h3>Provider lanes</h3></div>
         {runtimeQuery.data && <div className="world-os-provider-global">
           <span>{runtimeQuery.data.live_only ? "Live only" : "Mixed mode"}</span>
           <strong>{runtimeQuery.data.global.in_flight}/{runtimeQuery.data.global.capacity}</strong>
@@ -122,6 +184,7 @@ export function OverviewWorkspace() {
         </div>}
       </header>
       {runtimeQuery.error && <p className="world-os-policy-note">Runtime telemetry is temporarily unavailable.</p>}
+      {tick !== "live" && <p className="world-os-policy-note">Provider capacity is current runtime telemetry, not a historical reconstruction.</p>}
       <div className="world-os-provider-lanes">
         {(runtimeQuery.data?.providers || []).filter(lane => !["scripted", "mock"].includes(lane.provider)).map(lane => {
           const utilization = Math.min(100, Math.round((lane.in_flight / Math.max(1, lane.capacity)) * 100));

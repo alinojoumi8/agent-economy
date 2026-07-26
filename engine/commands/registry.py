@@ -6,9 +6,11 @@ from typing import Iterable, Type
 
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
-from .models import (BuyComputePlan, CancelComputePlan, ForwardMessage,
-                     LegacyCommand, ReplyMessage, SendMessage,
-                     SetComputeSponsorship, StudySkill)
+from .models import (ApplyBusinessPermit, AttendCivicAppointment,
+                     BuyComputePlan, CancelComputePlan,
+                     DecideBusinessPermit, ForwardMessage, LegacyCommand,
+                     ReplyMessage, SendMessage, SetComputeSponsorship,
+                     StudySkill)
 
 
 class CommandValidationError(ValueError):
@@ -70,10 +72,20 @@ COGNITION_MODELS = {
     "study_skill": StudySkill,
 }
 
+CIVIC_MODELS = {
+    "apply_business_permit": ApplyBusinessPermit,
+    "attend_civic_appointment": AttendCivicAppointment,
+    "decide_business_permit": DecideBusinessPermit,
+}
+
 
 def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     registry = CommandRegistry()
-    strict_types = set(COMMUNICATION_MODELS) | set(COGNITION_MODELS)
+    strict_types = (
+        set(COMMUNICATION_MODELS)
+        | set(COGNITION_MODELS)
+        | set(CIVIC_MODELS)
+    )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
             command_type=command_type,
@@ -94,5 +106,12 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
             model=model,
             handler_name=f"_do_{command_type}",
             introduced_in_semantics=11,
+        ))
+    for command_type, model in CIVIC_MODELS.items():
+        registry.register(CommandDefinition(
+            command_type=command_type,
+            model=model,
+            handler_name=f"_do_{command_type}",
+            introduced_in_semantics=12,
         ))
     return registry

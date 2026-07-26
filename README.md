@@ -215,7 +215,9 @@ baseline and fails closed when history is missing.
 
 | Profile | Agents/purpose | Provider policy |
 |---|---|---|
-| `runs/evolving-live.yaml` | Default 100-agent Semantics-11 cognition world | Ollama 2, Ollama Cloud 3, DeepSeek 6, MiniMax 2, Kimi 2; global 10; resource guard and strict live preflight |
+| `runs/evolving-live.yaml` | Default 100-agent Semantics-11 cognition world | Ollama 1, Ollama Cloud 3, DeepSeek 6, MiniMax 2, Kimi 2; global 6; resource guard and strict live preflight |
+| `runs/civic-rehearsal.yaml` | Free Semantics-12 civic permit vertical | Scripted, deterministic, capacity-limited permit office |
+| `runs/civic-live.yaml` | Bounded live Semantics-12 civic permit vertical | MiniMax permit clerk with configured live fallbacks |
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
@@ -348,6 +350,7 @@ invite-only until the independent protocol and real-connector gates in the
 | Understand components and data flow | [Architecture](docs/architecture.md) |
 | Customize a run or provider | [Configuration](docs/configuration.md) |
 | Run evolving live agents and audit cognition | [Semantics-11 cognition](docs/semantics11-cognition.md) |
+| Exercise places, civic queues, and business permits | [Semantics-12 civic city](docs/semantics12-civic-city.md) |
 | Automate the local server | [API reference](docs/api-reference.md) |
 | Connect Hermes, OpenClaw, or a custom agent | [External Agent Gateway](docs/world-os/EXTERNAL-AGENT-GATEWAY.md) and [clients](clients/README.md) |
 | Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |

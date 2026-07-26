@@ -76,15 +76,23 @@ class CommonsActionBody(_StrictBody):
     action: dict[str, Any]
 
 
+def _bearer_challenge(request: Request, *, invalid_token: bool = False) -> str:
+    base = str(request.base_url).rstrip("/")
+    metadata = f"{base}/.well-known/oauth-protected-resource/mcp"
+    if invalid_token:
+        return (
+            'Bearer error="invalid_token", '
+            f'resource_metadata="{metadata}"'
+        )
+    return f'Bearer resource_metadata="{metadata}"'
+
+
 def _bearer(request: Request) -> str:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        base = str(request.base_url).rstrip("/")
         raise HTTPException(status_code=401, detail={"code": "authentication_required"},
-                            headers={"WWW-Authenticate":
-                                     f'Bearer resource_metadata="{base}/.well-known/'
-                                     'oauth-protected-resource/mcp"'})
+                            headers={"WWW-Authenticate": _bearer_challenge(request)})
     return token.strip()
 
 
@@ -215,6 +223,16 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         try:
             return service.authenticate(_bearer(request), required_scope=required_scope)
         except ExternalAgentError as exc:
+            if exc.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail={"code": exc.code, "message": exc.message},
+                    headers={
+                        "WWW-Authenticate": _bearer_challenge(
+                            request, invalid_token=True),
+                        "Cache-Control": "no-store",
+                    },
+                ) from exc
             _raise_external(exc)
         raise AssertionError("unreachable")
 
@@ -416,20 +434,26 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     @app.post("/oauth/token")
     async def oauth_token(request: Request):
         fields = await request_fields(request)
+        grant_type = str(fields.get("grant_type", ""))
         resource = str(fields.get("resource", ""))
         expected_resource = f"{str(request.base_url).rstrip('/')}/mcp"
-        if not hosted_safe and resource != expected_resource:
+        resource_mismatch = (
+            resource != expected_resource
+            if grant_type == "authorization_code"
+            else resource not in {"", expected_resource}
+        )
+        if not hosted_safe and resource_mismatch:
             return JSONResponse(
                 status_code=400,
                 content={"error": "invalid_target", "error_description": "resource mismatch"},
                 headers={"Cache-Control": "no-store"})
         try:
-            if fields.get("grant_type") == "authorization_code":
+            if grant_type == "authorization_code":
                 result = service.exchange_authorization_code(
                     code=str(fields.get("code", "")), client_id=str(fields.get("client_id", "")),
                     redirect_uri=str(fields.get("redirect_uri", "")),
                     code_verifier=str(fields.get("code_verifier", "")))
-            elif fields.get("grant_type") == "refresh_token":
+            elif grant_type == "refresh_token":
                 requested = str(fields["scope"]).split() if "scope" in fields else None
                 result = service.refresh_access_token(
                     refresh_token=str(fields.get("refresh_token", "")), scopes=requested)

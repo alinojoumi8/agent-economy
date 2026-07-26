@@ -59,3 +59,28 @@ test("historical views never apply live deltas and invalidations are explicit", 
   assert.equal(invalidated.staleReason, "backfill_truncated");
   assert.deepEqual(reduceCursorState(connected, null), connected);
 });
+
+test("cursor_ahead resets cursor below client N, marks stale, then accepts M to M+1", () => {
+  const connected = reduceCursorState(initialCursorState, {
+    ...hello, event_cursor: 10,
+  });
+  assert.equal(connected.cursor, 10);
+
+  const recovered = reduceCursorState(connected, {
+    type: "error", code: "cursor_ahead", event_cursor: 4,
+  });
+  assert.equal(recovered.cursor, 4);
+  assert.equal(recovered.status, "stale");
+  assert.equal(recovered.staleReason, "cursor_ahead");
+
+  const delayedOldLineage = reduceCursorState(
+    recovered, delta(4, 5, { fork_id: "fork-old" }));
+  assert.equal(delayedOldLineage.status, "stale");
+  assert.equal(delayedOldLineage.staleReason, "lineage_mismatch");
+  assert.equal(delayedOldLineage.cursor, 4);
+
+  const contiguous = reduceCursorState(recovered, delta(4, 5));
+  assert.equal(contiguous.cursor, 5);
+  assert.equal(contiguous.status, "live");
+  assert.equal(contiguous.staleReason, null);
+});

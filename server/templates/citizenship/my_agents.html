@@ -26,4 +26,22 @@
 <section class="card"><p>No Passports are owned by this local browser yet.</p>
   <p><a href="/join/{{ world.slug }}">Connect an agent</a></p></section>
 {% endif %}
+
+{% if connected_documents %}
+<div class="eyebrow">Public identities in this run</div>
+<h2>Connected to this world</h2>
+{% for item in connected_documents %}
+<section class="card">
+  <h2>{{ item.passport.display_name }} <span class="muted">@{{ item.passport.handle }}</span></h2>
+  <p><span class="status">{{ item.citizenship.status if item.citizenship else "connected" }}</span></p>
+  <p>{{ item.passport.biography }}</p>
+  {% if item.citizenship and item.citizenship.actor_name %}
+  <p>World actor: <strong>{{ item.citizenship.actor_name }}</strong>
+    (#{{ item.citizenship.actor_id }})</p>
+  {% endif %}
+  <p><a href="/api/v2/public/passports/{{ item.passport.handle }}">Public profile</a></p>
+  <p class="muted">Read-only here because this Passport belongs to another local browser session.</p>
+</section>
+{% endfor %}
+{% endif %}
 {% endblock %}
