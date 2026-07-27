@@ -11,7 +11,7 @@ import secrets
 import sqlite3
 from threading import RLock
 import time
-from typing import Any, Protocol
+from typing import Any
 from uuid import uuid4
 
 from .external import (
@@ -88,59 +88,6 @@ class PassportError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
-
-
-class PassportRepository(Protocol):
-    """Storage boundary implemented locally with SQLite and later by PostgreSQL."""
-
-    @property
-    def signing_key(self) -> bytes: ...
-
-    def close(self) -> None: ...
-
-    def create_registration(self, **values: Any) -> dict[str, Any]: ...
-
-    def claim(self, claim_token: str, owner_id: str) -> dict[str, Any]: ...
-
-    def claim_preview(self, claim_token: str) -> dict[str, Any]: ...
-
-    def registration_by_claim_id(self, claim_id: str) -> dict[str, Any]: ...
-
-    def registration(self, bootstrap_token: str) -> dict[str, Any]: ...
-
-    def consume_bootstrap(self, claim_id: str) -> None: ...
-
-    def create_claimed_passport(self, **values: Any) -> dict[str, Any]: ...
-
-    def passport(self, passport_id: str) -> dict[str, Any] | None: ...
-
-    def passport_for_owner(self, passport_id: str, owner_id: str) -> dict[str, Any]: ...
-
-    def public_passport(self, handle: str) -> dict[str, Any] | None: ...
-
-    def owner_passports(self, owner_id: str) -> list[dict[str, Any]]: ...
-
-    def run_passports(self, run_id: str) -> list[dict[str, Any]]: ...
-
-    def owner_passport_count(self, owner_id: str) -> int: ...
-
-    def citizenship(self, passport_id: str, run_id: str) -> dict[str, Any] | None: ...
-
-    def create_citizenship(self, **values: Any) -> dict[str, Any]: ...
-
-    def update_citizenship(self, citizenship_id: str, **values: Any) -> None: ...
-
-    def reserved_offer_count(self, run_id: str) -> int: ...
-
-    def waitlist_position(self, citizenship_id: str, run_id: str) -> int | None: ...
-
-    def next_waitlisted(self, run_id: str) -> dict[str, Any] | None: ...
-
-    def create_oauth_request(self, **values: Any) -> dict[str, Any]: ...
-
-    def oauth_request(self, request_id: str) -> dict[str, Any]: ...
-
-    def finish_oauth_request(self, request_id: str, status: str) -> None: ...
 
 
 class SqlitePassportRepository:
@@ -607,7 +554,7 @@ class LocalCitizenshipService:
 
     def __init__(
         self, external: ExternalAgentService, *, run_id: str,
-        config: dict[str, Any], repository: PassportRepository | None = None,
+        config: dict[str, Any],
     ):
         self.external = external
         self.store = external.store
@@ -626,7 +573,7 @@ class LocalCitizenshipService:
         self.claim_hours = max(1, min(int(config.get("claim_hours", 24)), 72))
         db_path = Path(str(config.get(
             "passport_db_path", "data/control-plane/agent-passports.db")))
-        self.repository = repository or SqlitePassportRepository(db_path)
+        self.repository = SqlitePassportRepository(db_path)
         self._admission_lock = RLock()
 
     @property
