@@ -114,7 +114,8 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
     config = load_json(meta["config_json"], {})
     if not isinstance(config, Mapping):
         config = {}
-    tick = _integer(meta["tick"])
+    completed_tick_raw = meta["tick"]
+    tick = _strict_tick(completed_tick_raw)
     # A persisted active phase is not a completed horizon.  Do not coerce this
     # value: only SQL NULL means the controller had no in-flight tick.
     active_tick = meta["active_tick"]
@@ -127,14 +128,21 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
     }
 
     profile_ok, profile_evidence = _profile_is_persisted(config)
-    horizon_ok, horizon_evidence = _horizon_evidence(tick, status, active_tick)
+    horizon_ok, horizon_evidence = _horizon_evidence(
+        tick, status, active_tick, completed_tick_raw=completed_tick_raw
+    )
     purchases_ok, purchases_evidence = _buy_goods_evidence(store, tick)
     unemployment_ok, unemployment_evidence = _unemployment_evidence(store, tick)
     unit_ok, unit_economics, recovery_goods_firms, unit_evidence = _unit_economics_evidence(
-        store, activation_tick=_PROFILE_SETTINGS["activation_tick"]
+        store,
+        activation_tick=_PROFILE_SETTINGS["activation_tick"],
+        completed_tick=tick,
     )
     insolvency_ok, insolvency_evidence = _insolvency_evidence(
-        store, recovery_goods_firms, activation_tick=_PROFILE_SETTINGS["activation_tick"]
+        store,
+        recovery_goods_firms,
+        activation_tick=_PROFILE_SETTINGS["activation_tick"],
+        completed_tick=tick,
     )
     backlog_ok, backlog_evidence = _labor_backlog_evidence(store)
     ledger_ok, ledger_evidence = _ledger_evidence(store)
@@ -355,7 +363,8 @@ def _profile_is_persisted(config: Mapping[str, Any]) -> tuple[bool, dict[str, An
 
 
 def _horizon_evidence(
-        tick: int | None, status: str, active_tick: Any) -> tuple[bool, dict[str, Any]]:
+        tick: int | None, status: str, active_tick: Any, *,
+        completed_tick_raw: Any) -> tuple[bool, dict[str, Any]]:
     passed = bool(
         tick is not None
         and tick >= _THRESHOLDS["minimum_ticks"]
@@ -364,6 +373,9 @@ def _horizon_evidence(
     )
     return passed, {
         "tick": tick,
+        "invalid_completed_tick": (
+            _json_scalar(completed_tick_raw) if tick is None else None
+        ),
         "minimum_ticks": _THRESHOLDS["minimum_ticks"],
         "status": status,
         "active_tick": _json_scalar(active_tick),
@@ -388,19 +400,25 @@ def _buy_goods_evidence(store: Store, tick: int | None) -> tuple[bool, dict[str,
     try:
         rows = store.query(
             "SELECT id,tick,validation_status FROM action_proposals "
-            "WHERE action_type='buy_goods' AND tick BETWEEN ? AND ? "
-            "ORDER BY tick,id",
-            (warmup, tick),
+            "WHERE action_type='buy_goods' ORDER BY tick,id",
         )
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc, window_start=warmup, window_end=tick)
 
     counts_by_tick: dict[int, dict[str, int]] = {}
     malformed_rows = 0
+    invalid_proposal_ticks: list[dict[str, Any]] = []
     for row in rows:
-        proposal_tick = _integer(row["tick"])
+        proposal_tick_raw = row["tick"]
+        proposal_tick = _strict_tick(proposal_tick_raw)
         if proposal_tick is None:
             malformed_rows += 1
+            invalid_proposal_ticks.append({
+                "proposal_id": _integer(row["id"]),
+                "tick": _json_scalar(proposal_tick_raw),
+            })
+            continue
+        if proposal_tick < warmup or proposal_tick > tick:
             continue
         counts = counts_by_tick.setdefault(
             proposal_tick, {"attempts": 0, "rejected": 0, "unresolved": 0}
@@ -456,6 +474,7 @@ def _buy_goods_evidence(store: Store, tick: int | None) -> tuple[bool, dict[str,
         "worst_window": worst_window,
         "failed_window_count": sum(not item["passed"] for item in windows),
         "malformed_row_count": malformed_rows,
+        "invalid_proposal_ticks": invalid_proposal_ticks,
         "every_window_requires_nonzero_completed_attempts": True,
         "maximum_rate": _THRESHOLDS["max_buy_goods_rejection_rate"],
     }
@@ -476,9 +495,7 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
         }
     try:
         rows = store.query(
-            "SELECT id,tick,value FROM metrics WHERE name='unemployment' "
-            "AND tick BETWEEN ? AND ? ORDER BY tick,id",
-            (0, tick),
+            "SELECT id,tick,value FROM metrics WHERE name='unemployment' ORDER BY tick,id",
         )
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc, window_start=0, window_end=tick)
@@ -486,11 +503,19 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
     values: dict[int, float] = {}
     invalid_ticks: set[int] = set()
     malformed_rows = 0
+    invalid_metric_ticks: list[dict[str, Any]] = []
     for row in rows:
-        metric_tick = _integer(row["tick"])
+        metric_tick_raw = row["tick"]
+        metric_tick = _strict_tick(metric_tick_raw)
         value = _ratio(row["value"])
         if metric_tick is None:
             malformed_rows += 1
+            invalid_metric_ticks.append({
+                "metric_id": _integer(row["id"]),
+                "tick": _json_scalar(metric_tick_raw),
+            })
+            continue
+        if metric_tick > tick:
             continue
         if value is None:
             invalid_ticks.add(metric_tick)
@@ -550,6 +575,7 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
         ),
         "failed_window_count": sum(not item["passed"] for item in windows),
         "malformed_row_count": malformed_rows,
+        "invalid_metric_ticks": invalid_metric_ticks,
         "maximum_rebound": _THRESHOLDS["max_unemployment_rebound"],
     }
 
@@ -583,17 +609,18 @@ def _unemployment_window_score(window: Mapping[str, Any]) -> tuple[int, float, i
 
 
 def _unit_economics_evidence(
-        store: Store, *, activation_tick: int) -> tuple[
+        store: Store, *, activation_tick: int, completed_tick: int | None) -> tuple[
             bool, list[dict[str, Any]], dict[int, dict[str, Any]], dict[str, Any]]:
     """Validate every producer evidenced by product data or persisted events."""
+    if completed_tick is None:
+        return False, [], {}, {"error": "completed run tick is missing or invalid"}
     try:
         firms = store.query(
             "SELECT id,name,status,sector,product_json,bankrupt_tick FROM firms ORDER BY id"
         )
         producer_rows = store.query(
-            "SELECT id,tick,kind,subject_id,payload_json FROM events "
-            "WHERE kind IN ('production','goods_sale') AND tick>=? ORDER BY tick,id",
-            (activation_tick,),
+            "SELECT id,tick,kind,subject_type,subject_id,payload_json FROM events "
+            "WHERE kind IN ('production','goods_sale') ORDER BY tick,id",
         )
         employment_rows = store.query(
             "SELECT id,firm_id,wage_cents,pay_interval_ticks FROM employments "
@@ -607,6 +634,8 @@ def _unit_economics_evidence(
     evidenced_producer_events: list[dict[str, Any]] = []
     malformed_producer_events: list[dict[str, Any]] = []
     producer_identity_mismatches: list[dict[str, Any]] = []
+    invalid_producer_subject_fallbacks: list[dict[str, Any]] = []
+    producer_events_after_completed_horizon: list[dict[str, Any]] = []
     for row in producer_rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
@@ -614,20 +643,36 @@ def _unit_economics_evidence(
         payload_firm_id = (
             _strict_entity_id(payload.get("firm_id")) if payload_has_firm_id else None
         )
-        subject_has_firm_id = row["subject_id"] is not None
+        subject_type = row["subject_type"]
+        subject_id = row["subject_id"]
+        subject_has_firm_id = subject_id is not None
+        subject_is_firm = subject_type == "firm"
         subject_firm_id = (
-            _strict_entity_id(row["subject_id"]) if subject_has_firm_id else None
+            _strict_entity_id(subject_id) if subject_is_firm and subject_has_firm_id else None
         )
         firm_id = payload_firm_id if payload_has_firm_id else subject_firm_id
-        event_tick = _integer(row["tick"])
+        event_tick_raw = row["tick"]
+        event_tick = _strict_tick(event_tick_raw)
         event = {
             "event_id": _integer(row["id"]),
             "kind": str(row["kind"] or ""),
-            "tick": event_tick,
+            "tick": _json_scalar(event_tick_raw),
             "firm_id": firm_id,
         }
+        if not payload_has_firm_id and subject_has_firm_id and not subject_is_firm:
+            invalid_producer_subject_fallbacks.append({
+                "event_id": _integer(row["id"]),
+                "kind": str(row["kind"] or ""),
+                "reason": "subject_fallback_requires_firm_subject_type",
+                "subject_id": _json_scalar(subject_id),
+                "subject_type": _json_scalar(subject_type),
+                "tick": _json_scalar(event_tick_raw),
+            })
+            malformed_producer_events.append(event)
+            continue
         if (
                 payload_has_firm_id
+                and subject_is_firm
                 and subject_has_firm_id
                 and payload_firm_id is not None
                 and subject_firm_id is not None
@@ -637,15 +682,20 @@ def _unit_economics_evidence(
                 "kind": str(row["kind"] or ""),
                 "payload_firm_id": payload_firm_id,
                 "subject_id": subject_firm_id,
-                "tick": event_tick,
+                "tick": _json_scalar(event_tick_raw),
             })
             continue
         if (
                 firm_id is None
                 or event_tick is None
                 or (payload_has_firm_id and payload_firm_id is None)
-                or (subject_has_firm_id and subject_firm_id is None)):
+                or (subject_is_firm and subject_has_firm_id and subject_firm_id is None)):
             malformed_producer_events.append(event)
+            continue
+        if event_tick > completed_tick:
+            producer_events_after_completed_horizon.append(event)
+            continue
+        if event_tick < activation_tick:
             continue
         evidenced_firm_ids.add(firm_id)
         evidenced_producer_events.append(event)
@@ -773,6 +823,8 @@ def _unit_economics_evidence(
         passed
         and not malformed_producer_events
         and not producer_identity_mismatches
+        and not invalid_producer_subject_fallbacks
+        and not producer_events_after_completed_horizon
         and not orphan_producer_events
     ), per_firm, recovery_goods_firms, {
         "active_recovery_managed_goods_firm_count": len(per_firm),
@@ -781,6 +833,8 @@ def _unit_economics_evidence(
         "excluded_historical_goods_firms": excluded_historical_goods_firms,
         "malformed_producer_events": malformed_producer_events,
         "producer_identity_mismatches": producer_identity_mismatches,
+        "invalid_producer_subject_fallbacks": invalid_producer_subject_fallbacks,
+        "producer_events_after_completed_horizon": producer_events_after_completed_horizon,
         "orphan_producer_events": orphan_producer_events,
         "requires_persisted_product_production_and_active_employment": True,
     }
@@ -788,45 +842,72 @@ def _unit_economics_evidence(
 
 def _insolvency_evidence(
         store: Store, recovery_goods_firms: Mapping[int, Mapping[str, Any]], *,
-        activation_tick: int) -> tuple[bool, dict[str, Any]]:
+        activation_tick: int, completed_tick: int | None) -> tuple[bool, dict[str, Any]]:
     """Reconcile recovery-goods terminal state and event identities."""
+    if completed_tick is None:
+        return False, {"error": "completed run tick is missing or invalid"}
     try:
         rows = store.query(
-            "SELECT id,tick,kind,subject_id,payload_json FROM events "
-            "WHERE kind IN ('bankruptcy','merger_closed') AND tick>=? ORDER BY tick,id",
-            (activation_tick,),
+            "SELECT id,tick,kind,subject_type,subject_id,payload_json FROM events "
+            "WHERE kind IN ('bankruptcy','merger_closed') ORDER BY tick,id",
         )
-        firm_rows = store.query("SELECT id FROM firms ORDER BY id")
+        firm_rows = store.query("SELECT id,status,bankrupt_tick FROM firms ORDER BY id")
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc)
 
-    known_firm_ids = {
-        firm_id for row in firm_rows if (firm_id := _strict_entity_id(row["id"])) is not None
+    firm_states = {
+        firm_id: {"status": str(row["status"] or ""), "bankrupt_tick": row["bankrupt_tick"]}
+        for row in firm_rows
+        if (firm_id := _strict_entity_id(row["id"])) is not None
     }
+    known_firm_ids = set(firm_states)
     bankruptcies_by_firm: dict[int, list[dict[str, Any]]] = {}
     acquisitions_by_firm: dict[int, list[dict[str, Any]]] = {}
+    terminal_events_by_firm: dict[int, list[dict[str, Any]]] = {}
     unparseable_bankruptcies: list[dict[str, Any]] = []
     unparseable_acquisitions: list[dict[str, Any]] = []
     orphan_terminal_events: list[dict[str, Any]] = []
     bankruptcy_identity_mismatches: list[dict[str, Any]] = []
+    invalid_bankruptcy_subject_fallbacks: list[dict[str, Any]] = []
     invalid_merger_acquirers: list[dict[str, Any]] = []
+    invalid_terminal_event_ticks: list[dict[str, Any]] = []
+    terminal_events_after_completed_horizon: list[dict[str, Any]] = []
+    merger_events: list[dict[str, Any]] = []
     for row in rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
-        event_tick = _integer(row["tick"])
+        event_tick_raw = row["tick"]
+        event_tick = _strict_tick(event_tick_raw)
         event_id = _integer(row["id"])
         if row["kind"] == "bankruptcy":
             payload_has_firm_id = "firm_id" in payload
             payload_firm_id = (
                 _strict_entity_id(payload.get("firm_id")) if payload_has_firm_id else None
             )
+            subject_type = row["subject_type"]
             subject_id = row["subject_id"]
             subject_is_present = subject_id is not None
-            subject_firm_id = _strict_entity_id(subject_id) if subject_is_present else None
-            firm_id = _event_firm_id(payload, row["subject_id"])
+            subject_is_firm = subject_type == "firm"
+            subject_firm_id = (
+                _strict_entity_id(subject_id) if subject_is_firm and subject_is_present else None
+            )
+            firm_id = _event_firm_id(payload, subject_type, subject_id)
             reason = payload.get("reason")
             identity_is_valid = True
-            if payload_has_firm_id and subject_is_present and payload_firm_id is not None:
+            if not payload_has_firm_id and subject_is_present and not subject_is_firm:
+                identity_is_valid = False
+                invalid_bankruptcy_subject_fallbacks.append({
+                    "event_id": event_id,
+                    "reason": "subject_fallback_requires_firm_subject_type",
+                    "subject_id": _json_scalar(subject_id),
+                    "subject_type": _json_scalar(subject_type),
+                    "tick": _json_scalar(event_tick_raw),
+                })
+            if (
+                    payload_has_firm_id
+                    and subject_is_firm
+                    and subject_is_present
+                    and payload_firm_id is not None):
                 identity_reason = None
                 if subject_firm_id is None:
                     identity_reason = "missing_or_invalid_bankruptcy_subject_firm_id"
@@ -841,28 +922,51 @@ def _insolvency_evidence(
                         "payload_firm_id": payload_firm_id,
                         "reason": identity_reason,
                         "subject_id": _json_scalar(subject_id),
-                        "tick": event_tick,
+                        "tick": _json_scalar(event_tick_raw),
                     })
             event = {
                 "event_id": event_id,
-                "tick": event_tick,
+                "kind": "bankruptcy",
+                "tick": _json_scalar(event_tick_raw),
                 "firm_id": firm_id,
                 "reason": reason,
                 "identity_is_valid": identity_is_valid,
             }
+            if event_tick is None:
+                invalid_terminal_event_ticks.append({
+                    "event_id": event_id,
+                    "kind": "bankruptcy",
+                    "tick": _json_scalar(event_tick_raw),
+                })
+                unparseable_bankruptcies.append({
+                    "event_id": event_id,
+                    "tick": _json_scalar(event_tick_raw),
+                    "firm_id": firm_id,
+                })
+                continue
             if firm_id is not None:
-                bankruptcies_by_firm.setdefault(firm_id, []).append(event)
                 if firm_id not in known_firm_ids:
                     orphan_terminal_events.append({
                         "event_id": event_id,
                         "firm_id": firm_id,
                         "kind": "bankruptcy",
-                        "tick": event_tick,
+                        "tick": _json_scalar(event_tick_raw),
                     })
-            if firm_id is None or event_tick is None or not isinstance(reason, str) or not reason.strip():
+            if event_tick > completed_tick:
+                terminal_events_after_completed_horizon.append({
+                    "event_id": event_id,
+                    "firm_id": firm_id,
+                    "kind": "bankruptcy",
+                    "tick": event_tick,
+                })
+                continue
+            if firm_id is not None:
+                terminal_events_by_firm.setdefault(firm_id, []).append(event)
+                bankruptcies_by_firm.setdefault(firm_id, []).append(event)
+            if firm_id is None or not isinstance(reason, str) or not reason.strip():
                 unparseable_bankruptcies.append({
                     "event_id": event_id,
-                    "tick": event_tick,
+                    "tick": _json_scalar(event_tick_raw),
                     "firm_id": firm_id,
                 })
         else:
@@ -885,28 +989,126 @@ def _insolvency_evidence(
                 })
             event = {
                 "event_id": event_id,
-                "tick": event_tick,
+                "kind": "merger_closed",
+                "tick": _json_scalar(event_tick_raw),
                 "firm_id": firm_id,
+                "acquirer_firm_id": acquirer_firm_id,
                 "acquirer_is_valid": acquirer_is_valid,
+                "acquirer_is_viable": acquirer_is_valid,
             }
+            if event_tick is None:
+                invalid_terminal_event_ticks.append({
+                    "event_id": event_id,
+                    "kind": "merger_closed",
+                    "tick": _json_scalar(event_tick_raw),
+                })
+                unparseable_acquisitions.append(event)
+                continue
             if firm_id is not None:
-                acquisitions_by_firm.setdefault(firm_id, []).append(event)
                 if firm_id not in known_firm_ids:
                     orphan_terminal_events.append({
                         "event_id": event_id,
                         "firm_id": firm_id,
                         "kind": "merger_closed",
-                        "tick": event_tick,
+                        "tick": _json_scalar(event_tick_raw),
                     })
             if acquirer_firm_id is not None and acquirer_firm_id not in known_firm_ids:
                 orphan_terminal_events.append({
                     "event_id": event_id,
                     "firm_id": acquirer_firm_id,
                     "kind": "merger_closed",
+                    "tick": _json_scalar(event_tick_raw),
+                })
+            if event_tick > completed_tick:
+                terminal_events_after_completed_horizon.append({
+                    "event_id": event_id,
+                    "firm_id": firm_id,
+                    "kind": "merger_closed",
                     "tick": event_tick,
                 })
-            if firm_id is None or event_tick is None:
+                continue
+            if firm_id is not None:
+                terminal_events_by_firm.setdefault(firm_id, []).append(event)
+            merger_events.append(event)
+            if firm_id is None:
                 unparseable_acquisitions.append(event)
+                continue
+            acquisitions_by_firm.setdefault(firm_id, []).append(event)
+
+    for event in merger_events:
+        acquirer_firm_id = event["acquirer_firm_id"]
+        if not event["acquirer_is_valid"]:
+            continue
+        if acquirer_firm_id == event["firm_id"]:
+            event["acquirer_is_viable"] = False
+            invalid_merger_acquirers.append({
+                "acquirer_firm_id": acquirer_firm_id,
+                "event_id": event["event_id"],
+                "reason": "self_acquisition",
+                "target_firm_id": event["firm_id"],
+                "tick": event["tick"],
+            })
+            continue
+        terminal_event = next(
+            (
+                candidate
+                for candidate in terminal_events_by_firm.get(acquirer_firm_id, [])
+                if _terminal_event_precedes(candidate, event)
+            ),
+            None,
+        )
+        if terminal_event is not None:
+            event["acquirer_is_viable"] = False
+            invalid_merger_acquirers.append({
+                "acquirer_firm_id": acquirer_firm_id,
+                "event_id": event["event_id"],
+                "reason": "acquirer_terminal_before_merger",
+                "terminal_event_id": terminal_event["event_id"],
+                "terminal_kind": terminal_event["kind"],
+                "terminal_tick": terminal_event["tick"],
+                "tick": event["tick"],
+            })
+            continue
+        state = firm_states[acquirer_firm_id]
+        if state["status"] == "bankrupt":
+            terminal_tick_raw = state["bankrupt_tick"]
+            terminal_tick = _strict_tick(terminal_tick_raw)
+            if terminal_tick is None:
+                event["acquirer_is_viable"] = False
+                invalid_merger_acquirers.append({
+                    "acquirer_firm_id": acquirer_firm_id,
+                    "event_id": event["event_id"],
+                    "reason": "acquirer_terminal_status_has_invalid_tick",
+                    "terminal_kind": "bankruptcy",
+                    "terminal_tick": _json_scalar(terminal_tick_raw),
+                    "tick": event["tick"],
+                })
+            elif terminal_tick < event["tick"]:
+                event["acquirer_is_viable"] = False
+                invalid_merger_acquirers.append({
+                    "acquirer_firm_id": acquirer_firm_id,
+                    "event_id": event["event_id"],
+                    "reason": "acquirer_terminal_before_merger",
+                    "terminal_kind": "bankruptcy",
+                    "terminal_tick": terminal_tick,
+                    "tick": event["tick"],
+                })
+        elif state["status"] == "acquired":
+            acquisition_history = [
+                candidate
+                for candidate in terminal_events_by_firm.get(acquirer_firm_id, [])
+                if candidate["kind"] == "merger_closed"
+            ]
+            if not acquisition_history:
+                event["acquirer_is_viable"] = False
+                invalid_merger_acquirers.append({
+                    "acquirer_firm_id": acquirer_firm_id,
+                    "event_id": event["event_id"],
+                    "reason": "acquirer_terminal_status_has_unprovable_timing",
+                    "terminal_kind": "merger_closed",
+                    "terminal_tick": None,
+                    "tick": event["tick"],
+                })
 
     insolvencies: list[dict[str, Any]] = []
     for firm_id, events in bankruptcies_by_firm.items():
@@ -985,6 +1187,13 @@ def _insolvency_evidence(
                     "status": status,
                     "tick": _json_scalar(bankrupt_tick_raw),
                 })
+            elif bankrupt_tick > completed_tick:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "bankruptcy_tick_after_completed_horizon",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
             elif not bankruptcy_events:
                 state_mismatches.append({
                     "firm_id": firm_id,
@@ -1062,7 +1271,7 @@ def _insolvency_evidence(
             if (
                     not bankruptcy_events
                     and not has_bankrupt_tick
-                    and all(event["acquirer_is_valid"] for event in acquisition_events)):
+                    and all(event["acquirer_is_viable"] for event in acquisition_events)):
                 permitted_departures.append({
                     "firm_id": firm_id,
                     "kind": "acquisition",
@@ -1076,7 +1285,10 @@ def _insolvency_evidence(
         and not unparseable_acquisitions
         and not orphan_terminal_events
         and not bankruptcy_identity_mismatches
+        and not invalid_bankruptcy_subject_fallbacks
         and not invalid_merger_acquirers
+        and not invalid_terminal_event_ticks
+        and not terminal_events_after_completed_horizon
         and not state_mismatches
     ), {
         "recovery_managed_goods_firm_ids": sorted(recovery_goods_firms),
@@ -1085,7 +1297,10 @@ def _insolvency_evidence(
         "unparseable_acquisitions": unparseable_acquisitions,
         "orphan_terminal_events": orphan_terminal_events,
         "bankruptcy_identity_mismatches": bankruptcy_identity_mismatches,
+        "invalid_bankruptcy_subject_fallbacks": invalid_bankruptcy_subject_fallbacks,
         "invalid_merger_acquirers": invalid_merger_acquirers,
+        "invalid_terminal_event_ticks": invalid_terminal_event_ticks,
+        "terminal_events_after_completed_horizon": terminal_events_after_completed_horizon,
         "state_mismatches": state_mismatches,
         "permitted_departures": permitted_departures,
     }
@@ -1186,10 +1401,15 @@ def _checkpoint_evidence(
     expected_db_paths: set[Path] = set()
     expected_manifest_paths: set[Path] = set()
     for row in rows:
-        tick = _integer(row["tick"])
+        tick_raw = row["tick"]
+        tick = _strict_tick(tick_raw)
         row_id = _integer(row["id"])
         if tick is None:
-            excluded_rows.append({"checkpoint_id": row_id, "reason": "invalid_tick"})
+            excluded_rows.append({
+                "checkpoint_id": row_id,
+                "raw_tick": _json_scalar(tick_raw),
+                "reason": "invalid_tick",
+            })
             continue
         database = checkpoint_dir / f"{run_id}_t{tick}.db"
         manifest = checkpoint_manifest_path(database)
@@ -1285,7 +1505,7 @@ def _checkpoint_directory_from_rows(
 
     candidates: set[Path] = set()
     for row in rows:
-        tick = _integer(row["tick"])
+        tick = _strict_tick(row["tick"])
         raw_path = row["path"]
         if tick is None or type(raw_path) is not str:
             continue
@@ -1479,10 +1699,25 @@ def _exact_settings_match(
     )
 
 
-def _event_firm_id(payload: Mapping[str, Any], subject_id: Any) -> int | None:
+def _event_firm_id(
+        payload: Mapping[str, Any], subject_type: Any, subject_id: Any) -> int | None:
     if "firm_id" in payload:
         return _strict_entity_id(payload.get("firm_id"))
-    return _strict_entity_id(subject_id)
+    return _strict_entity_id(subject_id) if subject_type == "firm" else None
+
+
+def _terminal_event_precedes(
+        terminal_event: Mapping[str, Any], merger_event: Mapping[str, Any]) -> bool:
+    """Use persisted event order only for terminal-state timing."""
+    terminal_tick = terminal_event["tick"]
+    merger_tick = merger_event["tick"]
+    if terminal_tick < merger_tick:
+        return True
+    if terminal_tick != merger_tick:
+        return False
+    terminal_id = _strict_entity_id(terminal_event.get("event_id"))
+    merger_id = _strict_entity_id(merger_event.get("event_id"))
+    return terminal_id is not None and merger_id is not None and terminal_id < merger_id
 
 
 def _strict_entity_id(value: Any) -> int | None:

@@ -1415,3 +1415,668 @@ def test_cli_rejects_run_modifiers_for_a_persisted_evidence_receipt(tmp_path: Pa
 
     assert result.returncode != 0
     assert "only accepts --output" in result.stderr
+
+
+@pytest.mark.parametrize("completed_tick", [1000.5, "not-a-tick"])
+def test_completed_run_tick_requires_a_strict_persisted_integer(
+        tmp_path: Path, completed_tick: float | str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.set_meta(tick=completed_tick)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["horizon_completed"] is False
+    assert report["evidence"]["horizon"]["invalid_completed_tick"] == completed_tick
+
+
+def test_fractional_metric_tick_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        metric_id = store.query_one(
+            "SELECT id FROM metrics WHERE name='unemployment' AND tick=700"
+        )["id"]
+        store.execute("UPDATE metrics SET tick=700.5 WHERE id=?", (metric_id,))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unemployment_rebound_within_10pp"] is False
+    assert report["evidence"]["unemployment"]["invalid_metric_ticks"] == [
+        {"metric_id": metric_id, "tick": 700.5}
+    ]
+
+
+def test_fractional_proposal_tick_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        proposal_id = store.query_one(
+            "SELECT id FROM action_proposals WHERE action_type='buy_goods' AND tick=700"
+        )["id"]
+        store.execute("UPDATE action_proposals SET tick=700.5 WHERE id=?", (proposal_id,))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["buy_goods_rejection_rate_within_5pct"] is False
+    assert report["evidence"]["buy_goods_rejection"]["invalid_proposal_ticks"] == [
+        {"proposal_id": proposal_id, "tick": 700.5}
+    ]
+
+
+def test_fractional_producer_event_tick_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE events SET tick=1000.5 WHERE kind='production'")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["malformed_producer_events"] == [
+        {"event_id": 1, "firm_id": 1, "kind": "production", "tick": 1000.5}
+    ]
+
+
+def test_fractional_terminal_event_tick_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.insert(
+            "events",
+            tick=700.5,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_terminal_event_ticks"] == [
+        {"event_id": 2, "kind": "bankruptcy", "tick": 700.5}
+    ]
+
+
+def test_fractional_checkpoint_tick_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE checkpoints SET tick=900.5 WHERE tick=900")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["checkpoint_retention"] is False
+    assert report["evidence"]["checkpoints"]["excluded_rows"] == [
+        {"checkpoint_id": 1, "raw_tick": 900.5, "reason": "invalid_tick"}
+    ]
+
+
+def test_producer_evidence_after_completed_horizon_is_rejected(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE events SET tick=2000 WHERE kind='production'")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["producer_events_after_completed_horizon"] == [
+        {"event_id": 1, "firm_id": 1, "kind": "production", "tick": 2000}
+    ]
+
+
+def test_bankruptcy_state_and_event_after_completed_horizon_are_rejected(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=2000 WHERE id=1")
+        store.insert(
+            "events",
+            tick=2000,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    insolvency = report["evidence"]["recovery_managed_insolvencies"]
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert insolvency["terminal_events_after_completed_horizon"] == [
+        {"event_id": 2, "firm_id": 1, "kind": "bankruptcy", "tick": 2000}
+    ]
+    assert {
+        "firm_id": 1,
+        "reason": "bankruptcy_tick_after_completed_horizon",
+        "status": "bankrupt",
+        "tick": 2000,
+    } in insolvency["state_mismatches"]
+
+
+def test_merger_after_completed_horizon_is_rejected(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Future Acquired Fixtures Co.",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "future-acquired-fixtures",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=2000,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": 1}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["terminal_events_after_completed_horizon"] == [
+        {"event_id": 2, "firm_id": acquired_firm_id, "kind": "merger_closed", "tick": 2000}
+    ]
+
+
+def test_producer_subject_fallback_requires_a_firm_subject_type(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("DELETE FROM events WHERE kind='production'")
+        event_id = store.insert(
+            "events",
+            tick=1000,
+            kind="production",
+            subject_type="agent",
+            subject_id=1,
+            payload_json=json.dumps({"units": 2, "unit_cost_cents": 180}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["invalid_producer_subject_fallbacks"] == [
+        {
+            "event_id": event_id,
+            "kind": "production",
+            "reason": "subject_fallback_requires_firm_subject_type",
+            "subject_id": 1,
+            "subject_type": "agent",
+            "tick": 1000,
+        }
+    ]
+
+
+def test_bankruptcy_subject_fallback_requires_a_firm_subject_type(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type="agent",
+            subject_id=1,
+            payload_json=json.dumps({"reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_bankruptcy_subject_fallbacks"] == [
+        {
+            "event_id": 2,
+            "reason": "subject_fallback_requires_firm_subject_type",
+            "subject_id": 1,
+            "subject_type": "agent",
+            "tick": 700,
+        }
+    ]
+
+
+def test_bankruptcy_payload_identity_remains_valid_without_a_subject(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type=None,
+            subject_id=None,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["recovery_managed_insolvency_absent"] is True
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_bankruptcy_subject_fallbacks"] == []
+
+
+def test_merger_rejects_self_acquisition(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Self Acquired Fixtures Co.",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "self-acquired-fixtures",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquired_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquired_firm_id,
+            "event_id": 2,
+            "reason": "self_acquisition",
+            "target_firm_id": acquired_firm_id,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_rejects_an_acquirer_terminal_before_close(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Already Bankrupt Acquirer",
+            sector="services",
+            status="bankrupt",
+            founded_tick=0,
+            bankrupt_tick=600,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Target of Invalid Acquirer",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "invalid-acquirer-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=600,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=acquirer_firm_id,
+            payload_json=json.dumps({"firm_id": acquirer_firm_id, "reason": "market_exit"}),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "event_id": 3,
+            "reason": "acquirer_terminal_before_merger",
+            "terminal_event_id": 2,
+            "terminal_kind": "bankruptcy",
+            "terminal_tick": 600,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_acquirer_terminal_after_close_remains_valid(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Later Bankrupt Acquirer",
+            sector="services",
+            status="bankrupt",
+            founded_tick=0,
+            bankrupt_tick=800,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Target of Valid Historical Acquirer",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "valid-acquirer-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.insert(
+            "events",
+            tick=800,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=acquirer_firm_id,
+            payload_json=json.dumps({"firm_id": acquirer_firm_id, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is True
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == []
+
+
+def test_merger_rejects_an_acquired_acquirer_without_terminal_timing(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Acquired Acquirer Without Evidence",
+            sector="services",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Target of Untimed Acquired Acquirer",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "untimed-acquired-acquirer-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "event_id": 2,
+            "reason": "acquirer_terminal_status_has_unprovable_timing",
+            "terminal_kind": "merger_closed",
+            "terminal_tick": None,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_rejects_an_acquirer_acquired_before_close(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Previously Acquired Acquirer",
+            sector="services",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        prior_buyer_firm_id = store.insert(
+            "firms",
+            name="Prior Buyer of Acquirer",
+            sector="services",
+            status="private",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Target of Previously Acquired Acquirer",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "previously-acquired-acquirer-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=600,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=100,
+            payload_json=json.dumps(
+                {"target_firm_id": acquirer_firm_id, "acquirer_firm_id": prior_buyer_firm_id}
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=101,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "event_id": 3,
+            "reason": "acquirer_terminal_before_merger",
+            "terminal_event_id": 2,
+            "terminal_kind": "merger_closed",
+            "terminal_tick": 600,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_acquirer_acquired_after_close_remains_valid(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Later Acquired Acquirer",
+            sector="services",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        later_buyer_firm_id = store.insert(
+            "firms",
+            name="Later Buyer of Acquirer",
+            sector="services",
+            status="private",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Target of Later Acquired Acquirer",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "later-acquired-acquirer-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=100,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.insert(
+            "events",
+            tick=800,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=101,
+            payload_json=json.dumps(
+                {"target_firm_id": acquirer_firm_id, "acquirer_firm_id": later_buyer_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is True
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == []
