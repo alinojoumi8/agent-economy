@@ -1177,6 +1177,88 @@ def test_same_tick_acquisition_history_uses_persisted_event_order(
         assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == []
 
 
+@pytest.mark.parametrize(
+    ("status", "bankrupt_tick"),
+    [
+        ("private", 600),
+        ("listed", 600),
+        ("private", 700.5),
+        ("listed", 700.5),
+        ("private", 1001),
+        ("listed", 1001),
+    ],
+)
+def test_merger_rejects_active_acquirer_with_any_bankruptcy_marker(
+        tmp_path: Path, status: str, bankrupt_tick: object):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = _insert_nonrecovery_firm(
+            store,
+            name=f"{status.title()} Acquirer With Marker",
+            status=status,
+            bankrupt_tick=bankrupt_tick,
+        )
+        target_firm_id = _insert_nonrecovery_firm(
+            store, name="Active Marker Target", status="acquired")
+        event_id = _insert_merger_closed_event(
+            store, tick=700, target_firm_id=target_firm_id, acquirer_firm_id=acquirer_firm_id)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "bankrupt_tick": bankrupt_tick,
+            "event_id": event_id,
+            "reason": "acquirer_nonbankrupt_status_has_bankrupt_tick",
+            "status": status,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_rejects_acquired_acquirer_with_a_bankruptcy_marker(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = _insert_nonrecovery_firm(
+            store,
+            name="Acquired Acquirer With Marker",
+            status="acquired",
+            bankrupt_tick=600,
+        )
+        buyer_firm_id = _insert_nonrecovery_firm(
+            store, name="Acquired Marker Buyer", status="private")
+        target_firm_id = _insert_nonrecovery_firm(
+            store, name="Acquired Marker Target", status="acquired")
+        event_id = _insert_merger_closed_event(
+            store, tick=700, target_firm_id=target_firm_id, acquirer_firm_id=acquirer_firm_id)
+        _insert_merger_closed_event(
+            store, tick=800, target_firm_id=acquirer_firm_id, acquirer_firm_id=buyer_firm_id)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "bankrupt_tick": 600,
+            "event_id": event_id,
+            "reason": "acquirer_nonbankrupt_status_has_bankrupt_tick",
+            "status": "acquired",
+            "tick": 700,
+        }
+    ]
+
+
 def test_only_invalid_relative_checkpoint_tick_keeps_raw_exclusion_evidence(tmp_path: Path):
     store = _seed_healthy_store(tmp_path, checkpoint_dir="relative-checkpoints")
     try:

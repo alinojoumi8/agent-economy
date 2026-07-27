@@ -1070,8 +1070,22 @@ def _insolvency_evidence(
             })
             continue
         state = firm_states[acquirer_firm_id]
+        bankrupt_tick_raw = state["bankrupt_tick"]
+        if (
+                state["status"] in _ACTIVE_RECOVERY_FIRM_STATUSES
+                or state["status"] == "acquired") and bankrupt_tick_raw is not None:
+            event["acquirer_is_viable"] = False
+            invalid_merger_acquirers.append({
+                "acquirer_firm_id": acquirer_firm_id,
+                "bankrupt_tick": _json_scalar(bankrupt_tick_raw),
+                "event_id": event["event_id"],
+                "reason": "acquirer_nonbankrupt_status_has_bankrupt_tick",
+                "status": state["status"],
+                "tick": event["tick"],
+            })
+            continue
         if state["status"] == "bankrupt":
-            terminal_tick_raw = state["bankrupt_tick"]
+            terminal_tick_raw = bankrupt_tick_raw
             terminal_tick = _strict_tick(terminal_tick_raw)
             if terminal_tick is None:
                 event["acquirer_is_viable"] = False
