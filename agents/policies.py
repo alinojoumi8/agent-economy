@@ -19,7 +19,7 @@ import re
 from typing import Any, Callable
 
 from engine.types import positive_integer_id
-from world.recovery import assess_recovery
+from world.recovery import assess_recovery, minimum_viable_price_cents
 
 
 SUPPLIER_WARNING_POLICY_ID = "supplier-warning-policy-v1"
@@ -537,6 +537,7 @@ def _recovery_hiring_state(firm: dict, wage_cents: int):
             current_headcount=int(inputs["current_headcount"]),
             target_headcount=int(inputs["target_headcount"]),
             recent_sales_units=int(inputs["recent_sales_units"]),
+            unmet_demand_units=int(inputs.get("unmet_demand_units", 0)),
         )
     except (KeyError, TypeError, ValueError):
         return (floor, None, open_vacancies)
@@ -692,6 +693,7 @@ def founder_decision(context: dict) -> dict:
     cash = int(firm.get("cash", 0))
     employees = int(firm.get("employees", 0))
     recent_sales = int(firm.get("recent_sales", 0))
+    recovery_profile = _recovery_hiring_profile(firm)
 
     # Price toward a healthy markup, nudged by inventory pressure.
     target = int(cost * 1.6)
@@ -700,6 +702,25 @@ def founder_decision(context: dict) -> dict:
     elif inv < 8:
         target = int(price * 1.05)              # scarce → raise
     target = max(int(cost * 1.2) + 1, target)   # never below a living margin
+    if recovery_profile is not None:
+        floor, settings, inputs, _ = recovery_profile
+        try:
+            active_wages = [
+                int(row.get("wage", 0))
+                for row in firm.get("employee_roster", [])
+                if isinstance(row, dict)
+            ]
+            required_wage = max([floor, *active_wages])
+            minimum_price = minimum_viable_price_cents(
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=required_wage,
+                settings=settings,
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            minimum_price = None
+        target = price if minimum_price is None else max(target, minimum_price)
     if abs(target - price) > 2:
         actions.append({"type": "set_price", "firm_id": firm["firm_id"], "price": target})
         reasons.append(f"reprice {price}->{target}")
@@ -710,7 +731,6 @@ def founder_decision(context: dict) -> dict:
     applicants = context.get("firm_applications", [])
     payroll = int(firm.get("payroll", 0))
     counters = context.get("firm_job_offers", [])
-    recovery_profile = _recovery_hiring_profile(firm)
     if recovery_profile is not None:
         floor, _, _, open_vacancies = recovery_profile
         if floor > 0:

@@ -13,7 +13,10 @@ _DEFAULT_ECONOMIC_SETTINGS = {
     "demand_buffer_ticks": 5,
     "sales_observation_ticks": 30,
 }
-_ECONOMIC_SETTING_NAMES = frozenset(_DEFAULT_ECONOMIC_SETTINGS)
+_HEADCOUNT_CAP_SETTING = "max_headcount_per_firm"
+_ECONOMIC_SETTING_NAMES = frozenset(_DEFAULT_ECONOMIC_SETTINGS) | {
+    _HEADCOUNT_CAP_SETTING,
+}
 _PROFILE_METADATA_SETTING_NAMES = frozenset({
     "enabled",
     "wage_floor_cents",
@@ -29,7 +32,11 @@ class RecoveryAssessment:
     unit_margin_cents: int
     gross_margin_per_worker_period_cents: int
     safe_wage_ceiling_cents: int
+    unmet_demand_units: int
+    observed_demand_units: int
     demand_limited_headcount: int
+    headcount_cap: int
+    capacity_limited_headcount: int
     cash_limited_headcount: int
     allowed_new_hires: int
     reason: str
@@ -50,6 +57,8 @@ def recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool | str]:
     normalized = _normalized_settings({
         key: raw[key] for key in _ECONOMIC_SETTING_NAMES if key in raw
     })
+    if _HEADCOUNT_CAP_SETTING not in normalized:
+        normalized[_HEADCOUNT_CAP_SETTING] = _legacy_headcount_cap(config)
     return {
         **metadata,
         **normalized,
@@ -66,17 +75,23 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
                     wage_cents: int, cash_cents: int,
                     current_payroll_cents: int, current_headcount: int,
                     target_headcount: int, recent_sales_units: int,
-                    settings: Mapping[str, Any]) -> RecoveryAssessment:
+                    settings: Mapping[str, Any],
+                    unmet_demand_units: int = 0) -> RecoveryAssessment:
     """Calculate the new jobs a firm can safely add using integer arithmetic."""
     normalized = _normalized_settings(settings)
     margin = max(0, price_cents - input_cost_cents)
     period_margin = margin * max(0, output_per_worker) * max(1, pay_interval_ticks)
     ceiling = period_margin * 10_000 // normalized["gross_margin_coverage_bps"]
     sales_units = max(0, recent_sales_units)
+    unmet_units = max(0, unmet_demand_units)
+    observed_demand = sales_units + unmet_units
     output_units = max(0, output_per_worker)
-    demand_cap = 0 if sales_units == 0 else (
-        sales_units + normalized["demand_buffer_ticks"] * output_units
+    demand_cap = 0 if observed_demand == 0 else (
+        observed_demand + normalized["demand_buffer_ticks"] * output_units
     ) // (max(1, output_units) * normalized["sales_observation_ticks"])
+    headcount_cap = max(0, int(normalized.get(
+        _HEADCOUNT_CAP_SETTING, target_headcount)))
+    capacity_limited = min(demand_cap, headcount_cap)
     payroll_periods = normalized["cash_payroll_coverage_periods"]
     incumbent_payroll_reserve = max(0, current_payroll_cents) * payroll_periods
     new_hire_payroll_reserve = max(1, wage_cents) * payroll_periods
@@ -85,13 +100,35 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
     ))
     allowed = min(
         normalized["max_hires_per_firm_per_period"],
-        max(0, target_headcount - current_headcount),
-        max(0, demand_cap - current_headcount),
+        max(0, capacity_limited - current_headcount),
         cash_cap,
     )
     return _assessment(
-        enabled, margin, period_margin, ceiling, demand_cap, cash_cap, allowed, wage_cents
+        enabled, margin, period_margin, ceiling, unmet_units, observed_demand,
+        demand_cap, headcount_cap, capacity_limited, cash_cap, allowed, wage_cents,
     )
+
+
+def minimum_viable_price_cents(*, input_cost_cents: int, output_per_worker: int,
+                               pay_interval_ticks: int, wage_cents: int,
+                               settings: Mapping[str, Any]) -> int | None:
+    """Return the lowest integer price that can sustain a recovery wage.
+
+    A product with no worker output has no finite unit price that can establish
+    the gross-margin guarantee, so callers must fail closed instead of making
+    an arbitrary pricing change.
+    """
+    normalized = _normalized_settings(settings)
+    output_units = max(0, int(output_per_worker))
+    if output_units <= 0:
+        return None
+    periods = max(1, int(pay_interval_ticks))
+    denominator = output_units * periods * 10_000
+    required_margin = (
+        max(0, int(wage_cents)) * normalized["gross_margin_coverage_bps"]
+        + denominator - 1
+    ) // denominator
+    return max(1, int(input_cost_cents)) + required_margin
 
 
 def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
@@ -102,6 +139,8 @@ def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
     normalized = dict(_DEFAULT_ECONOMIC_SETTINGS)
     for key, value in settings.items():
         if key in normalized:
+            normalized[key] = _nonnegative_integer(key, value)
+        elif key == _HEADCOUNT_CAP_SETTING:
             normalized[key] = _nonnegative_integer(key, value)
 
     if normalized["gross_margin_coverage_bps"] < 10_000:
@@ -115,6 +154,14 @@ def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
             "demand_buffer_ticks must not exceed one quarter of sales_observation_ticks"
         )
     return normalized
+
+
+def _legacy_headcount_cap(config: Mapping[str, Any]) -> int:
+    firms = config.get("firms", {})
+    if not isinstance(firms, Mapping):
+        raise ValueError("firms must be a mapping when supply recovery is configured")
+    return _nonnegative_integer(
+        "firms.target_headcount", firms.get("target_headcount", 3))
 
 
 def _normalized_profile_metadata(settings: Mapping[str, Any]) -> dict[str, int | bool | str]:
@@ -152,8 +199,10 @@ def _nonnegative_integer(name: str, value: Any) -> int:
 
 
 def _assessment(enabled: bool, margin: int, period_margin: int, ceiling: int,
-                demand_cap: int, cash_cap: int, allowed: int,
-                wage_cents: int) -> RecoveryAssessment:
+                unmet_demand_units: int, observed_demand_units: int,
+                demand_cap: int, headcount_cap: int,
+                capacity_limited_headcount: int, cash_cap: int,
+                allowed: int, wage_cents: int) -> RecoveryAssessment:
     if not enabled:
         allowed = 0
         reason = "feature_disabled"
@@ -168,7 +217,11 @@ def _assessment(enabled: bool, margin: int, period_margin: int, ceiling: int,
         unit_margin_cents=margin,
         gross_margin_per_worker_period_cents=period_margin,
         safe_wage_ceiling_cents=ceiling,
+        unmet_demand_units=unmet_demand_units,
+        observed_demand_units=observed_demand_units,
         demand_limited_headcount=demand_cap,
+        headcount_cap=headcount_cap,
+        capacity_limited_headcount=capacity_limited_headcount,
         cash_limited_headcount=cash_cap,
         allowed_new_hires=allowed,
         reason=reason,

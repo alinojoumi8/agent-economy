@@ -45,6 +45,7 @@ def _config(tmp_path: Path, *, checkpoint_dir: str | None = None) -> dict:
             "gross_margin_coverage_bps": 12500,
             "cash_payroll_coverage_periods": 2,
             "max_hires_per_firm_per_period": 1,
+            "max_headcount_per_firm": 5,
             "demand_buffer_ticks": 5,
             "sales_observation_ticks": 30,
         },
@@ -201,6 +202,7 @@ def test_profile_is_provider_free_and_has_explicit_recovery_acceptance_settings(
         "gross_margin_coverage_bps": 12500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 1,
+        "max_headcount_per_firm": 5,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }

@@ -18,7 +18,7 @@ from engine.core import Economy
 from engine.store import load_json
 from engine.types import positive_integer_id
 from causal import CausalLinkService
-from world.recovery import assess_recovery
+from world.recovery import assess_recovery, minimum_viable_price_cents
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
@@ -937,6 +937,7 @@ class AgentRuntime:
                 current_headcount=int(inputs["current_headcount"]),
                 target_headcount=int(inputs["target_headcount"]),
                 recent_sales_units=int(inputs["recent_sales_units"]),
+                unmet_demand_units=int(inputs.get("unmet_demand_units", 0)),
             )
             max_hires = max(0, int(settings["max_hires_per_firm_per_period"]))
             open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
@@ -944,26 +945,84 @@ class AgentRuntime:
             return (0, None, 0, 1)
         return floor, assessment, max_hires, open_vacancies
 
+    def _recovery_pricing_target(
+            self, actor_id: int, action: dict) -> tuple[int, int] | None:
+        """Return a controlled firm's requested price, if this is one."""
+        if str(action.get("type") or "") != "set_price":
+            return None
+        try:
+            firm_id = int(action.get("firm_id", 0))
+            if firm_id <= 0:
+                firm_id = int(self.executor._owned_firm(actor_id) or 0)
+            price_cents = int(action.get("price", 0))
+        except (TypeError, ValueError):
+            return None
+        if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
+            return None
+        return firm_id, price_cents
+
+    def _recovery_price_floor(
+            self, tick: int, firm_id: int) -> tuple[int | None, str | None] | None:
+        """Return the live recovery price floor or a fail-closed reason."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        inputs = recovery.get("inputs")
+        if not isinstance(settings, dict) or not isinstance(inputs, dict):
+            return None, "recovery pricing inputs are invalid"
+        try:
+            floor = int(settings["wage_floor_cents"])
+            active_wage = max(0, int(self.store.scalar(
+                "SELECT COALESCE(MAX(wage_cents),0) FROM employments "
+                "WHERE firm_id=? AND status='active'", (firm_id,), default=0) or 0))
+            minimum_price = minimum_viable_price_cents(
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=max(floor, active_wage),
+                settings=settings,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None, "recovery pricing inputs are invalid"
+        if minimum_price is None:
+            return None, "nonpositive output cannot support a recovery wage"
+        return minimum_price, None
+
     def _pre_recovery_employment_action(
             self, tick: int, actor_id: int, action: dict, phase: str) -> str | None:
         self._reset_recovery_hire_count(tick)
         target = self._recovery_employment_target(actor_id, action, phase)
-        if target is None:
+        if target is not None:
+            firm_id, wage_cents, action_type = target
+            state = self._recovery_hiring_state(tick, firm_id, wage_cents)
+            if state is not None:
+                floor, assessment, max_hires, open_vacancies = state
+                if assessment is None or floor <= 0 or wage_cents < floor:
+                    return "recovery policy rejects a wage below the configured floor"
+                if assessment.allowed_new_hires < 1:
+                    return f"recovery policy rejects action: {assessment.reason}"
+                if action_type == "post_job" and open_vacancies > 0:
+                    return "recovery policy rejects duplicate live vacancy"
+                if (action_type in {"hire", "accept_job_offer"}
+                        and self._recovery_completed_hires.get(firm_id, 0) >= max_hires):
+                    return "recovery policy rejects hire cap for this period"
+
+        pricing_target = self._recovery_pricing_target(actor_id, action)
+        if pricing_target is None:
             return None
-        firm_id, wage_cents, action_type = target
-        state = self._recovery_hiring_state(tick, firm_id, wage_cents)
-        if state is None:
+        firm_id, requested_price = pricing_target
+        constraint = self._recovery_price_floor(tick, firm_id)
+        if constraint is None:
             return None
-        floor, assessment, max_hires, open_vacancies = state
-        if assessment is None or floor <= 0 or wage_cents < floor:
-            return "recovery policy rejects a wage below the configured floor"
-        if assessment.allowed_new_hires < 1:
-            return f"recovery policy rejects action: {assessment.reason}"
-        if action_type == "post_job" and open_vacancies > 0:
-            return "recovery policy rejects duplicate live vacancy"
-        if (action_type in {"hire", "accept_job_offer"}
-                and self._recovery_completed_hires.get(firm_id, 0) >= max_hires):
-            return "recovery policy rejects hire cap for this period"
+        minimum_price, error = constraint
+        if error is not None:
+            return f"recovery policy rejects price: {error}"
+        if requested_price < int(minimum_price):
+            return "recovery policy rejects price below the recovery wage margin"
         return None
 
     def _post_recovery_employment_action(

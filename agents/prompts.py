@@ -1445,6 +1445,14 @@ class ContextBuilder:
                 "WHERE kind='goods_sale' AND tick>=? AND tick<=? "
                 "AND json_extract(payload_json,'$.firm_id')=?",
                 (observation_start, observation_end, firm_id), default=0) or 0)
+            unmet_demand_units = int(self.store.scalar(
+                "SELECT COALESCE(SUM(json_extract(payload_json,'$.qty')),0) "
+                "FROM action_proposals WHERE action_type='buy_goods' "
+                "AND validation_status='rejected' "
+                "AND json_extract(result_json,'$.reason')='out of stock' "
+                "AND tick>=? AND tick<=? "
+                "AND json_extract(payload_json,'$.firm_id')=?",
+                (observation_start, observation_end, firm_id), default=0) or 0)
             open_vacancies = int(self.store.scalar(
                 "SELECT COUNT(*) FROM jobs WHERE firm_id=? AND status='open'",
                 (firm_id,), default=0) or 0)
@@ -1462,6 +1470,7 @@ class ContextBuilder:
                 "current_headcount": int(view["employees"]),
                 "target_headcount": int(view["target_headcount"]),
                 "recent_sales_units": recovery_sales_units,
+                "unmet_demand_units": unmet_demand_units,
             }
             assessment = assess_recovery(
                 enabled=True,
@@ -1473,7 +1482,10 @@ class ContextBuilder:
                 "settings": dict(recovery_settings_at_tick),
                 "inputs": recovery_inputs,
                 "recent_sales_units": recovery_sales_units,
+                "unmet_demand_units": unmet_demand_units,
                 "open_vacancies": open_vacancies,
+                "max_headcount_per_firm": int(
+                    recovery_settings_at_tick["max_headcount_per_firm"]),
                 "assessment": asdict(assessment),
             }
         return view

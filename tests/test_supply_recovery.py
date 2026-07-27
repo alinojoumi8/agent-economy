@@ -2,6 +2,7 @@ import random
 
 import pytest
 
+from engine.actions import ActionExecutor
 from agents.memory import Memory
 from agents.policies import (
     _select_open_job,
@@ -180,6 +181,27 @@ def test_enabled_profile_defaults_documented_metadata():
     assert settings["activation_tick"] == 0
 
 
+def test_profile_defaults_headcount_cap_to_the_legacy_firm_target():
+    settings = validate_recovery_settings({
+        "firms": {"target_headcount": 4},
+        "supply_recovery": {
+            "enabled": True,
+            **RECOVERY_SETTINGS,
+        },
+    })
+
+    assert settings["max_headcount_per_firm"] == 4
+
+
+def test_profile_validation_rejects_negative_headcount_cap():
+    with pytest.raises(ValueError, match="max_headcount_per_firm"):
+        validate_recovery_settings({"supply_recovery": {
+            "enabled": True,
+            **RECOVERY_SETTINGS,
+            "max_headcount_per_firm": -1,
+        }})
+
+
 def test_enabled_profile_retains_valid_metadata():
     settings = validate_recovery_settings({"supply_recovery": {
         "enabled": True,
@@ -272,6 +294,46 @@ def test_demand_capacity_counts_default_sales_over_the_observation_window():
     assessment = _assessment(recent_sales_units=180, target_headcount=10)
 
     assert assessment.demand_limited_headcount == 1
+    assert assessment.allowed_new_hires == 1
+
+
+def test_stockout_demand_grows_supply_beyond_fulfilled_sales_capacity():
+    steady_supply = _assessment(
+        output_per_worker=6,
+        current_headcount=1,
+        target_headcount=5,
+        recent_sales_units=180,
+        unmet_demand_units=0,
+    )
+    stockout_demand = _assessment(
+        output_per_worker=6,
+        current_headcount=1,
+        target_headcount=5,
+        recent_sales_units=180,
+        unmet_demand_units=150,
+    )
+
+    assert steady_supply.demand_limited_headcount == 1
+    assert steady_supply.capacity_limited_headcount == 1
+    assert steady_supply.allowed_new_hires == 0
+    assert stockout_demand.demand_limited_headcount == 2
+    assert stockout_demand.capacity_limited_headcount == 2
+    assert stockout_demand.allowed_new_hires == 1
+
+
+def test_explicit_headcount_cap_bounds_stockout_driven_growth():
+    assessment = _assessment(
+        output_per_worker=6,
+        current_headcount=1,
+        target_headcount=9,
+        recent_sales_units=180,
+        unmet_demand_units=1_620,
+        settings={**RECOVERY_SETTINGS, "max_headcount_per_firm": 5},
+    )
+
+    assert assessment.demand_limited_headcount == 10
+    assert assessment.headcount_cap == 5
+    assert assessment.capacity_limited_headcount == 5
     assert assessment.allowed_new_hires == 1
 
 
@@ -373,8 +435,31 @@ def test_context_uses_only_completed_ticks_for_recovery_sale_units(economy):
         "current_headcount": 0,
         "target_headcount": 3,
         "recent_sales_units": 9,
+        "unmet_demand_units": 0,
     }
     assert view["recovery"]["assessment"]["allowed_new_hires"] == 0
+
+
+def test_context_counts_only_stockout_rejections_as_unmet_recovery_demand(economy):
+    firm_id, context = _context_firm(economy, _recovery_profile())
+    bank_id = int(economy.store.scalar("SELECT id FROM banks ORDER BY id LIMIT 1"))
+    buyer_id, _ = make_agent(economy, bank_id, name="Buyer", cash=0)
+    executor = ActionExecutor(economy)
+
+    economy.store.update("firms", firm_id, inventory=0)
+    stockout = executor.execute_action(1, buyer_id, {
+        "type": "buy_goods", "firm_id": firm_id, "qty": 5,
+    })
+    economy.store.update("firms", firm_id, inventory=100)
+    insufficient_funds = executor.execute_action(1, buyer_id, {
+        "type": "buy_goods", "firm_id": firm_id, "qty": 7,
+    })
+
+    view = context._firm_view(economy.firms.get(firm_id), 2)
+
+    assert stockout == {"ok": False, "reason": "out of stock"}
+    assert insufficient_funds == {"ok": False, "reason": "insufficient funds"}
+    assert view["recovery"]["inputs"]["unmet_demand_units"] == 5
 
 
 def test_active_context_exposes_live_open_vacancies(economy):
@@ -408,6 +493,27 @@ def test_recovery_founder_uses_floor_only_when_a_hire_is_feasible():
     assert jobs == [{
         "type": "post_job", "firm_id": 17, "title": "worker", "wage": 15_000,
     }]
+
+
+def test_recovery_founder_clamps_a_price_cut_to_the_floor_wage_margin():
+    context = _recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+    )
+    firm = context["my_firm"]
+    firm["price"] = 300
+    firm["unit_cost"] = 120
+    firm["recovery"]["inputs"].update({
+        "price_cents": 300,
+        "input_cost_cents": 120,
+        "output_per_worker": 8,
+        "pay_interval_ticks": 30,
+    })
+
+    decision = founder_decision(context)
+
+    prices = [action for action in decision["actions"] if action["type"] == "set_price"]
+    assert prices == [{"type": "set_price", "firm_id": 17, "price": 199}]
 
 
 def test_recovery_founder_posts_one_growth_vacancy_but_not_a_duplicate():
