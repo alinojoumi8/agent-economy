@@ -12,6 +12,14 @@ _DEFAULT_ECONOMIC_SETTINGS = {
     "max_hires_per_firm_per_period": 1,
     "demand_buffer_ticks": 5,
 }
+_ECONOMIC_SETTING_NAMES = frozenset(_DEFAULT_ECONOMIC_SETTINGS)
+_PROFILE_SETTING_NAMES = _ECONOMIC_SETTING_NAMES | {
+    "enabled",
+    "wage_floor_cents",
+    "policy_version",
+    "activation_tick",
+}
+_POLICY_VERSION = "supply-recovery-v1"
 
 
 @dataclass(frozen=True)
@@ -25,7 +33,7 @@ class RecoveryAssessment:
     reason: str
 
 
-def recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool]:
+def recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool | str]:
     """Return the normalized opt-in recovery profile without mutating config."""
     if not isinstance(config, Mapping):
         raise ValueError("config must be a mapping")
@@ -34,25 +42,31 @@ def recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool]:
         raw = {}
     if not isinstance(raw, Mapping):
         raise ValueError("supply_recovery must be a mapping")
+    _reject_unknown_keys(raw, _PROFILE_SETTING_NAMES, "supply_recovery")
 
     enabled = raw.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ValueError("supply_recovery.enabled must be a boolean")
-
-    if not enabled:
-        return {"enabled": False, "wage_floor_cents": 0, **_DEFAULT_ECONOMIC_SETTINGS}
-
-    normalized = _normalized_settings(raw)
+    normalized = _normalized_settings({
+        key: raw[key] for key in _ECONOMIC_SETTING_NAMES if key in raw
+    })
     wage_floor_cents = _nonnegative_integer(
         "wage_floor_cents", raw.get("wage_floor_cents", 0))
+    policy_version = raw.get("policy_version", _POLICY_VERSION)
+    if not isinstance(policy_version, str) or policy_version != _POLICY_VERSION:
+        raise ValueError(f"policy_version must be {_POLICY_VERSION}")
+    activation_tick = _nonnegative_integer(
+        "activation_tick", raw.get("activation_tick", 0))
     return {
-        "enabled": True,
+        "enabled": enabled,
         "wage_floor_cents": wage_floor_cents,
+        "policy_version": policy_version,
+        "activation_tick": activation_tick,
         **normalized,
     }
 
 
-def validate_recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool]:
+def validate_recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool | str]:
     """Validate and return the structural, config-only recovery settings."""
     return recovery_settings(config)
 
@@ -62,17 +76,21 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
                     wage_cents: int, cash_cents: int,
                     current_payroll_cents: int, current_headcount: int,
                     target_headcount: int, recent_sales_units: int,
-                    settings: Mapping[str, int]) -> RecoveryAssessment:
+                    settings: Mapping[str, Any]) -> RecoveryAssessment:
     """Calculate the new jobs a firm can safely add using integer arithmetic."""
     normalized = _normalized_settings(settings)
     margin = max(0, price_cents - input_cost_cents)
     period_margin = margin * max(0, output_per_worker) * max(1, pay_interval_ticks)
     ceiling = period_margin * 10_000 // normalized["gross_margin_coverage_bps"]
-    demand_cap = max(1, (max(0, recent_sales_units) + (
+    sales_units = max(0, recent_sales_units)
+    demand_cap = 0 if sales_units == 0 else max(1, (sales_units + (
         normalized["demand_buffer_ticks"] * max(0, output_per_worker))
     ) // max(1, output_per_worker))
-    cash_cap = max(0, (max(0, cash_cents) - max(0, current_payroll_cents)) // (
-        max(1, wage_cents) * normalized["cash_payroll_coverage_periods"]
+    payroll_periods = normalized["cash_payroll_coverage_periods"]
+    incumbent_payroll_reserve = max(0, current_payroll_cents) * payroll_periods
+    new_hire_payroll_reserve = max(1, wage_cents) * payroll_periods
+    cash_cap = max(0, (max(0, cash_cents) - incumbent_payroll_reserve) // (
+        new_hire_payroll_reserve
     ))
     allowed = min(
         normalized["max_hires_per_firm_per_period"],
@@ -88,6 +106,7 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
 def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
     if not isinstance(settings, Mapping):
         raise ValueError("recovery settings must be a mapping")
+    _reject_unknown_keys(settings, _ECONOMIC_SETTING_NAMES, "recovery settings")
     normalized = dict(_DEFAULT_ECONOMIC_SETTINGS)
     for key, value in settings.items():
         if key in normalized:
@@ -98,6 +117,13 @@ def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
     if normalized["cash_payroll_coverage_periods"] <= 0:
         raise ValueError("cash_payroll_coverage_periods must be positive")
     return normalized
+
+
+def _reject_unknown_keys(settings: Mapping[str, Any], allowed: frozenset[str],
+                         context: str) -> None:
+    unknown = sorted(repr(key) for key in set(settings) - allowed)
+    if unknown:
+        raise ValueError(f"{context} contains unknown keys: {', '.join(unknown)}")
 
 
 def _nonnegative_integer(name: str, value: Any) -> int:
