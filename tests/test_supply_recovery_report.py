@@ -313,6 +313,20 @@ def test_report_db_rejects_newer_schema_before_evaluation(tmp_path: Path):
     assert report["evidence"]["error"] == "run database schema is incompatible"
 
 
+def test_direct_report_rejects_newer_schema_before_evaluation(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.set_meta(schema_version=999)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["evidence"]["error"] == "run database schema is incompatible"
+
+
 def test_report_db_missing_active_tick_returns_a_failed_receipt(tmp_path: Path):
     database = tmp_path / "missing-active-tick.db"
     connection = sqlite3.connect(str(database))
@@ -623,6 +637,91 @@ def test_bankrupt_recovery_goods_firm_requires_matching_tick_and_reason(
     ]
 
 
+@pytest.mark.parametrize("bankrupt_tick", [700.5, "not-a-tick"])
+def test_bankrupt_recovery_goods_firm_rejects_a_noninteger_bankruptcy_tick(
+        tmp_path: Path, bankrupt_tick: float | str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute(
+            "UPDATE firms SET status='bankrupt', bankrupt_tick=? WHERE id=1",
+            (bankrupt_tick,),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": 1,
+            "reason": "missing_or_invalid_bankruptcy_tick",
+            "status": "bankrupt",
+            "tick": bankrupt_tick,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("subject_mode", "mismatch_reason"),
+    [
+        ("unknown", "unknown_bankruptcy_subject_firm_id"),
+        ("different_known", "bankruptcy_subject_identity_mismatch"),
+    ],
+)
+def test_bankruptcy_event_rejects_nonmatching_payload_and_subject_identity(
+        tmp_path: Path, subject_mode: str, mismatch_reason: str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        subject_id = 999
+        if subject_mode == "different_known":
+            subject_id = store.insert(
+                "firms",
+                name="Known Different Subject Firm",
+                sector="services",
+                status="private",
+                founded_tick=0,
+                inventory=0,
+                product_json=json.dumps({}),
+            )
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=subject_id,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["bankruptcy_identity_mismatches"] == [
+        {
+            "event_id": 2,
+            "payload_firm_id": 1,
+            "reason": mismatch_reason,
+            "subject_id": subject_id,
+            "tick": 700,
+        }
+    ]
+
+
 def test_acquired_recovery_goods_firm_requires_matching_acquisition_event(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:
@@ -678,6 +777,112 @@ def test_acquired_recovery_goods_firm_requires_matching_acquisition_event(tmp_pa
             "tick": 700,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("include_acquirer", "acquirer_value", "invalid_reason"),
+    [
+        (False, None, "missing_or_invalid_acquirer_firm_id"),
+        (True, "not-a-firm-id", "missing_or_invalid_acquirer_firm_id"),
+        (True, 999, "unknown_acquirer_firm_id"),
+    ],
+)
+def test_acquired_recovery_goods_firm_requires_a_known_acquirer(
+        tmp_path: Path, include_acquirer: bool, acquirer_value: int | str | None,
+        invalid_reason: str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Acquirer Validation Target",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "acquirer-validation-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        payload: dict[str, object] = {"target_firm_id": acquired_firm_id}
+        if include_acquirer:
+            payload["acquirer_firm_id"] = acquirer_value
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=1,
+            payload_json=json.dumps(payload),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_value,
+            "event_id": 2,
+            "reason": invalid_reason,
+            "tick": 700,
+        }
+    ]
+
+
+def test_merger_with_a_known_nonrecovery_acquirer_remains_valid(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = store.insert(
+            "firms",
+            name="Known Nonrecovery Acquirer",
+            sector="services",
+            status="private",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Known Acquired Target",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "known-acquired-target",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=999,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": acquirer_firm_id}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is True
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == []
 
 
 def test_acquired_recovery_goods_firm_rejects_a_bankruptcy_tick(tmp_path: Path):
