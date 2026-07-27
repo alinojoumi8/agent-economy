@@ -268,5 +268,13 @@ class Labor:
         self.store.execute(
             "UPDATE applications SET state='rejected' WHERE state='negotiating' "
             "AND id IN (SELECT application_id FROM job_offers WHERE status='expired')")
+        # Closing a vacancy must also terminalize applicants that never reached
+        # negotiation.  Otherwise they remain receipt-visible, but cannot ever
+        # produce a valid offer or hire.
+        self.store.execute(
+            "UPDATE applications SET state='rejected' "
+            "WHERE state IN ('pending','negotiating') AND job_id IN "
+            "(SELECT id FROM jobs WHERE status='open' AND tick < ?)",
+            (tick - max_age,))
         self.store.execute(
             "UPDATE jobs SET status='closed' WHERE status='open' AND tick < ?", (tick - max_age,))

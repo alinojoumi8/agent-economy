@@ -321,6 +321,30 @@ def test_stockout_demand_grows_supply_beyond_fulfilled_sales_capacity():
     assert stockout_demand.allowed_new_hires == 1
 
 
+@pytest.mark.parametrize(
+    ("output_per_worker", "recent_sales_units", "unmet_demand_units", "expected_headcount"),
+    [
+        # 741 / (4 * 30) = 6.175: a persistent stockout needs the seventh worker.
+        (4, 720, 21, 7),
+        # 1,656 / (8 * 30) = 6.9: do not round the five-tick buffer to worker eight.
+        (8, 1600, 56, 7),
+    ],
+)
+def test_stockout_demand_rounds_observed_capacity_without_rounding_the_buffer(
+        output_per_worker, recent_sales_units, unmet_demand_units, expected_headcount):
+    assessment = _assessment(
+        output_per_worker=output_per_worker,
+        current_headcount=6,
+        target_headcount=10,
+        recent_sales_units=recent_sales_units,
+        unmet_demand_units=unmet_demand_units,
+        settings={**RECOVERY_SETTINGS, "max_headcount_per_firm": 10},
+    )
+
+    assert assessment.demand_limited_headcount == expected_headcount
+    assert assessment.allowed_new_hires == 1
+
+
 def test_explicit_headcount_cap_bounds_stockout_driven_growth():
     assessment = _assessment(
         output_per_worker=6,

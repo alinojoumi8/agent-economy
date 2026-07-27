@@ -16,7 +16,7 @@ supply_recovery:
   gross_margin_coverage_bps: 12500
   cash_payroll_coverage_periods: 2
   max_hires_per_firm_per_period: 1
-  max_headcount_per_firm: 5
+  max_headcount_per_firm: 7
   demand_buffer_ticks: 5
   sales_observation_ticks: 30
 

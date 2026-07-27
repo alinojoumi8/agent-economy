@@ -23,6 +23,16 @@ def _modern_economy(store):
     return economy, config, ActionExecutor(economy)
 
 
+def _legacy_economy(store):
+    config = {
+        "engine_semantics_version": 5,
+        "central_bank": {"max_step_bps": 50, "min_rate_bps": 0, "max_rate_bps": 2000},
+    }
+    economy = Economy(store, config, random.Random(13), random.Random(14))
+    economy.ensure_system_accounts()
+    return economy, config
+
+
 def _firm(economy, founder_id, *, capital=200_000):
     return economy.firms.found_firm(
         0, founder_id, "Negotiated Industries", "services",
@@ -216,6 +226,96 @@ def test_negotiated_hire_rejects_cross_currency_at_every_transition(store):
     economy.firms.process_payroll(30)
     assert economy.ledger.balance(worker_account) == opening_worker_cash
     assert store.scalar("SELECT COUNT(*) FROM transactions WHERE kind='payroll'") == 0
+
+
+def test_expiring_stale_job_terminalizes_every_actionable_application(store):
+    """A closed vacancy cannot retain a receipt-visible applicant backlog."""
+    economy, _, _ = _modern_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Expiry Founder", cash=1_000_000)
+    pending_worker, _ = make_agent(economy, bank_id, name="Pending Worker", cash=50_000)
+    negotiating_worker, _ = make_agent(
+        economy, bank_id, name="Negotiating Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    pending_application = economy.labor.apply_job(1, pending_worker, job_id)
+    negotiating_application = economy.labor.apply_job(1, negotiating_worker, job_id)
+    offer_id = economy.labor.make_offer(
+        1, negotiating_application, founder, 200_00)
+
+    assert pending_application is not None
+    assert negotiating_application is not None
+    assert offer_id is not None
+
+    economy.labor.expire_stale_jobs(22)
+
+    assert store.scalar("SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+    assert store.scalar(
+        "SELECT state FROM applications WHERE id=?", (pending_application,)) == "rejected"
+    assert store.scalar(
+        "SELECT state FROM applications WHERE id=?", (negotiating_application,)) == "rejected"
+    assert store.scalar("SELECT status FROM job_offers WHERE id=?", (offer_id,)) == "expired"
+
+
+def test_closed_job_application_is_not_exposed_to_the_firm_context(store):
+    """Legacy stale rows must not trigger an offer against a closed vacancy."""
+    economy, config, _ = _modern_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    context = builder.build(founder_row, 2)
+
+    assert context["firm_applications"] == []
+
+
+def test_closed_job_application_is_not_exposed_to_legacy_firm_context(store):
+    """The pre-negotiation context must also hide non-actionable applicants."""
+    economy, config = _legacy_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Legacy Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Legacy Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    context = builder.build(founder_row, 2)
+
+    assert context["firm_applications"] == []
+    assert builder._firm_applications(firm_id, include_posted_wage=True) == []
+
+
+def test_closed_job_counteroffer_is_not_exposed_to_firm_context(store):
+    """Founders must not accept a counteroffer after its job is no longer open."""
+    economy, config, _ = _modern_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Counter Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Counter Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    opening_offer = economy.labor.make_offer(1, application_id, founder, 200_00)
+    counteroffer = economy.labor.make_offer(
+        2, application_id, worker, 210_00, parent_offer_id=opening_offer)
+    assert counteroffer is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    context = ContextBuilder(economy, Memory(store, config), config).build(founder_row, 3)
+
+    assert context["firm_job_offers"] == []
 
 
 def test_ipo_requires_qualification_and_agent_bids_drive_price_cash_and_cap_table(store):
