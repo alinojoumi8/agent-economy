@@ -60,6 +60,20 @@ def _world(tmp_path: Path, name: str = "acceptance.db", **over) -> World:
     return world
 
 
+def _stale_pending_application(world: World) -> tuple[int, int]:
+    """Create one old, still-pending Semantics 7 application for market expiry."""
+    firm = world.store.query_one(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1")
+    candidate = world.store.query_one(
+        "SELECT id FROM agents WHERE kind='citizen' AND alive=1 "
+        "AND retired=0 ORDER BY id LIMIT 1")
+    assert firm is not None and candidate is not None
+    job_id = world.economy.labor.post_job(1, int(firm["id"]), "worker", 15_000)
+    application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+    assert application_id is not None
+    return job_id, int(application_id)
+
+
 def test_finalize_metrics_include_same_day_sales_and_are_idempotent(tmp_path):
     world = _world(tmp_path, "finalize-metrics.db")
     buyer_id = int(world.store.scalar(
@@ -1113,6 +1127,43 @@ def test_operational_recovery_leaves_malformed_offer_for_validation(tmp_path):
         "reason": "offer_id must be a positive integer",
     }
     world.store.close()
+@pytest.mark.parametrize(
+    ("profile", "expected_application_state"),
+    [
+        pytest.param(None, "pending", id="feature-off"),
+        pytest.param(
+            {"enabled": True, "activation_tick": 23},
+            "pending",
+            id="recovery-before-activation",
+        ),
+        pytest.param(
+            {"enabled": True, "activation_tick": 22},
+            "rejected",
+            id="active-recovery",
+        ),
+    ],
+)
+def test_semantics7_market_stale_application_follows_recovery_activation(
+        tmp_path, profile, expected_application_state):
+    """Only an active recovery profile may terminalize a stale pending application."""
+    options = {"engine_semantics_version": 7}
+    if profile is not None:
+        options["supply_recovery"] = profile
+    world = _world(tmp_path, "recovery-stale-application.db", **options)
+    try:
+        job_id, application_id = _stale_pending_application(world)
+
+        world._phase_market(22)
+
+        assert world.store.scalar(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == expected_application_state
+    finally:
+        world.store.close()
+
+
 def test_default_action_executor_has_no_recovery_hook(tmp_path):
     profile = {
         "enabled": True,

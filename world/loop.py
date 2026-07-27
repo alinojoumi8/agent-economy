@@ -54,6 +54,7 @@ from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .commons import CommonsService
+from .recovery import recovery_settings
 from .shocks import Shocks
 from .phases import (
     LEGACY_PHASE_SPECS,
@@ -840,7 +841,15 @@ class World:
         self.economy.exchange.expire_session(tick)
         if self.engine_semantics_version >= 5:
             self.economy.regions.match_fx(tick)
-        self.economy.labor.expire_stale_jobs(tick, phase="MARKET")
+        recovery = recovery_settings(self.config)
+        recovery_active = (
+            bool(recovery["enabled"])
+            and int(tick) >= int(recovery["activation_tick"])
+        )
+        self.economy.labor.expire_stale_jobs(
+            tick,
+            terminalize_stale_applications=recovery_active,
+            phase="MARKET")
         # Expire stale pending loan applications (older than a week).
         self.store.execute(
             "UPDATE loan_applications SET status='expired' WHERE status='pending' AND tick < ?",
