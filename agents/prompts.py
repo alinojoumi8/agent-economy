@@ -1438,12 +1438,18 @@ class ContextBuilder:
             } if active_offering else None)
         if recovery_settings_at_tick is not None:
             observation_ticks = int(recovery_settings_at_tick["sales_observation_ticks"])
-            observation_start = max(0, int(tick) - observation_ticks + 1)
+            observation_start = max(0, int(tick) - observation_ticks)
+            observation_end = int(tick) - 1
             recovery_sales_units = int(self.store.scalar(
                 "SELECT COALESCE(SUM(json_extract(payload_json,'$.qty')),0) FROM events "
                 "WHERE kind='goods_sale' AND tick>=? AND tick<=? "
                 "AND json_extract(payload_json,'$.firm_id')=?",
-                (observation_start, int(tick), firm_id), default=0) or 0)
+                (observation_start, observation_end, firm_id), default=0) or 0)
+            open_vacancies = int(self.store.scalar(
+                "SELECT COUNT(*) FROM jobs WHERE firm_id=? AND status='open'",
+                (firm_id,), default=0) or 0)
+            output_per_worker = int(prod.get("output_per_worker", 0))
+            wage_floor = int(recovery_settings_at_tick["wage_floor_cents"])
             recovery_inputs = {
                 "price_cents": int(view["price"]),
                 "input_cost_cents": int(view["unit_cost"]),
@@ -1467,6 +1473,7 @@ class ContextBuilder:
                 "settings": dict(recovery_settings_at_tick),
                 "inputs": recovery_inputs,
                 "recent_sales_units": recovery_sales_units,
+                "open_vacancies": open_vacancies,
                 "assessment": asdict(assessment),
             }
         return view

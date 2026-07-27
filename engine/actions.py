@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .core import Economy
 from .credit import LoanTerms
@@ -65,9 +65,13 @@ COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
 
 
 class ActionExecutor:
-    def __init__(self, economy: Economy):
+    def __init__(self, economy: Economy, *,
+                 pre_action_hook: Callable[[int, int, dict, str], Optional[str]] | None = None,
+                 post_action_hook: Callable[[int, int, dict, str, dict], None] | None = None):
         self.e = economy
         self.store = economy.store
+        self.pre_action_hook = pre_action_hook
+        self.post_action_hook = post_action_hook
         self.local_currency_action_surfaces = bool(
             economy.config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.engine_semantics_version = semantics_version(economy.config, default=2)
@@ -181,6 +185,13 @@ class ActionExecutor:
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
+        if self.pre_action_hook is not None:
+            reason = self.pre_action_hook(tick, actor_id, action, phase)
+            if reason:
+                result = self._reject(tick, actor_id, action, reason, phase)
+                self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                                  result_json=json.dumps(result, sort_keys=True))
+                return result
         try:
             # A handler may perform several writes before an unexpected error.
             # Keep the tick alive, but never retain a partially-applied action.
@@ -262,6 +273,8 @@ class ActionExecutor:
             "action_proposals", proposal_id,
             validation_status="accepted" if result.get("ok") else "rejected",
             result_json=json.dumps(result, sort_keys=True, default=str))
+        if self.post_action_hook is not None:
+            self.post_action_hook(tick, actor_id, action, phase, result)
         return result
 
     def _reject(self, tick: int, actor_id: int, action: dict, reason: str, phase: str) -> dict:

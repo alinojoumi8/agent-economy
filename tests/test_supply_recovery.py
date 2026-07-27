@@ -41,7 +41,13 @@ def _recovery_profile(**overrides):
 def _recovery_founder_context(*, allowed_new_hires: int, safe_wage_ceiling_cents: int,
                               applications: list[dict] | None = None,
                               counters: list[dict] | None = None,
-                              labor_negotiation_enabled: bool = True) -> dict:
+                              labor_negotiation_enabled: bool = True,
+                              cash_cents: int = 1_000_000,
+                              payroll_cents: int = 0,
+                              employees: int = 0,
+                              target_headcount: int = 3,
+                              recent_sales_units: int = 180,
+                              open_vacancies: int = 0) -> dict:
     return {
         "my_firm": {
             "firm_id": 17,
@@ -49,20 +55,33 @@ def _recovery_founder_context(*, allowed_new_hires: int, safe_wage_ceiling_cents
             "inventory": 20,
             "price": 288,
             "unit_cost": 180,
-            "cash": 1_000_000,
-            "employees": 0,
-            "payroll": 0,
+            "cash": cash_cents,
+            "employees": employees,
+            "payroll": payroll_cents,
             "recent_sales": 0,
-            "target_headcount": 3,
+            "target_headcount": target_headcount,
             "is_private": True,
             "recovery": {
                 "active": True,
                 "settings": _recovery_profile(),
+                "inputs": {
+                    "price_cents": 500,
+                    "input_cost_cents": 180,
+                    "output_per_worker": 6,
+                    "pay_interval_ticks": 30,
+                    "wage_cents": 15_000,
+                    "cash_cents": cash_cents,
+                    "current_payroll_cents": payroll_cents,
+                    "current_headcount": employees,
+                    "target_headcount": target_headcount,
+                    "recent_sales_units": recent_sales_units,
+                },
                 "assessment": {
                     "safe_wage_ceiling_cents": safe_wage_ceiling_cents,
                     "allowed_new_hires": allowed_new_hires,
                     "reason": ("eligible" if allowed_new_hires else "no_hire_capacity"),
                 },
+                "open_vacancies": open_vacancies,
             },
         },
         "firm_applications": applications or [],
@@ -328,15 +347,16 @@ def test_context_activates_recovery_only_at_configured_tick(economy):
     assert after["recovery"]["active"] is True
 
 
-def test_context_preserves_legacy_sale_count_and_uses_quantity_lookback(economy):
+def test_context_uses_only_completed_ticks_for_recovery_sale_units(economy):
     firm_id, context = _context_firm(
         economy,
         _recovery_profile(sales_observation_ticks=3, demand_buffer_ticks=0),
     )
-    economy.store.log_event(2, "goods_sale", {"firm_id": firm_id, "qty": 99})
-    economy.store.log_event(3, "goods_sale", {"firm_id": firm_id, "qty": 7})
-    economy.store.log_event(5, "goods_sale", {"firm_id": firm_id, "qty": 2})
-    economy.store.log_event(6, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+    economy.store.log_event(1, "goods_sale", {"firm_id": firm_id, "qty": 900})
+    economy.store.log_event(2, "goods_sale", {"firm_id": firm_id, "qty": 7})
+    economy.store.log_event(4, "goods_sale", {"firm_id": firm_id, "qty": 2})
+    economy.store.log_event(5, "goods_sale", {"firm_id": firm_id, "qty": 300})
+    economy.store.log_event(6, "goods_sale", {"firm_id": firm_id, "qty": 400})
 
     view = context._firm_view(economy.firms.get(firm_id), 5)
 
@@ -357,10 +377,20 @@ def test_context_preserves_legacy_sale_count_and_uses_quantity_lookback(economy)
     assert view["recovery"]["assessment"]["allowed_new_hires"] == 0
 
 
+def test_active_context_exposes_live_open_vacancies(economy):
+    firm_id, context = _context_firm(economy, _recovery_profile())
+    economy.labor.post_job(0, firm_id, "worker", 15_000)
+
+    view = context._firm_view(economy.firms.get(firm_id), 1)
+
+    assert view["recovery"]["open_vacancies"] == 1
+
+
 def test_recovery_founder_does_not_post_without_demand():
     decision = founder_decision(_recovery_founder_context(
         allowed_new_hires=0,
         safe_wage_ceiling_cents=46_080,
+        recent_sales_units=0,
     ))
 
     assert not {
@@ -378,6 +408,25 @@ def test_recovery_founder_uses_floor_only_when_a_hire_is_feasible():
     assert jobs == [{
         "type": "post_job", "firm_id": 17, "title": "worker", "wage": 15_000,
     }]
+
+
+def test_recovery_founder_posts_one_growth_vacancy_but_not_a_duplicate():
+    growing = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        employees=1,
+        recent_sales_units=360,
+    ))
+    already_open = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        employees=1,
+        recent_sales_units=360,
+        open_vacancies=1,
+    ))
+
+    assert {action["type"] for action in growing["actions"]} >= {"post_job"}
+    assert "post_job" not in {action["type"] for action in already_open["actions"]}
 
 
 def test_recovery_founder_makes_a_floor_wage_offer_only_when_feasible():
@@ -406,6 +455,18 @@ def test_recovery_founder_rejects_existing_high_wage_offer_and_direct_hire():
 
     assert "accept_job_offer" not in {action["type"] for action in negotiated["actions"]}
     assert "hire" not in {action["type"] for action in direct["actions"]}
+
+
+def test_recovery_founder_rechecks_cash_at_the_counteroffer_wage():
+    decision = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        cash_cents=40_000,
+        recent_sales_units=180,
+        counters=[{"offer_id": 5, "requested_wage": 25_000}],
+    ))
+
+    assert "accept_job_offer" not in {action["type"] for action in decision["actions"]}
 
 
 def test_recovery_selection_uses_capacity_and_application_load_but_feature_off_is_legacy():

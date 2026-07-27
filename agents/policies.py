@@ -19,6 +19,7 @@ import re
 from typing import Any, Callable
 
 from engine.types import positive_integer_id
+from world.recovery import assess_recovery
 
 
 SUPPLIER_WARNING_POLICY_ID = "supplier-warning-policy-v1"
@@ -496,24 +497,59 @@ def _first_startup_action(context: dict):
     return dict(eligible[0]) if eligible else None
 
 
-def _recovery_hiring_limits(firm: dict) -> tuple[int, int, int] | None:
-    """Read the context-built assessment; malformed active profiles fail closed."""
+def _recovery_hiring_profile(firm: dict):
+    """Read active recovery inputs; malformed active profiles fail closed."""
     recovery = firm.get("recovery")
     if not isinstance(recovery, dict) or not bool(recovery.get("active")):
         return None
     settings = recovery.get("settings")
-    assessment = recovery.get("assessment")
-    if not isinstance(settings, dict) or not isinstance(assessment, dict):
-        return (0, 0, 0)
+    inputs = recovery.get("inputs")
+    if not isinstance(settings, dict) or not isinstance(inputs, dict):
+        return (0, None, None, 1)
     try:
         floor = int(settings["wage_floor_cents"])
-        ceiling = int(assessment["safe_wage_ceiling_cents"])
-        allowed = int(assessment["allowed_new_hires"])
+        open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
     except (KeyError, TypeError, ValueError):
-        return (0, 0, 0)
-    if floor <= 0 or ceiling < floor or allowed < 1:
-        return (0, max(0, ceiling), 0)
-    return (floor, ceiling, allowed)
+        return (0, None, None, 1)
+    return (floor, settings, inputs, open_vacancies)
+
+
+def _recovery_hiring_state(firm: dict, wage_cents: int):
+    """Reassess the supplied, actual wage against the live recovery inputs."""
+    profile = _recovery_hiring_profile(firm)
+    if profile is None:
+        return None
+    floor, settings, inputs, open_vacancies = profile
+    if settings is None or inputs is None:
+        return (floor, None, open_vacancies)
+    try:
+        wage = int(wage_cents)
+        assessment = assess_recovery(
+            enabled=True,
+            settings=settings,
+            price_cents=int(inputs["price_cents"]),
+            input_cost_cents=int(inputs["input_cost_cents"]),
+            output_per_worker=int(inputs["output_per_worker"]),
+            pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+            wage_cents=wage,
+            cash_cents=int(inputs["cash_cents"]),
+            current_payroll_cents=int(inputs["current_payroll_cents"]),
+            current_headcount=int(inputs["current_headcount"]),
+            target_headcount=int(inputs["target_headcount"]),
+            recent_sales_units=int(inputs["recent_sales_units"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return (floor, None, open_vacancies)
+    return (floor, assessment, open_vacancies)
+
+
+def _recovery_wage_can_hire(firm: dict, wage_cents: int) -> bool:
+    state = _recovery_hiring_state(firm, wage_cents)
+    if state is None:
+        return False
+    floor, assessment, _ = state
+    return (assessment is not None and int(wage_cents) >= floor > 0
+            and assessment.allowed_new_hires > 0)
 
 
 def workforce_recovery_actions(
@@ -674,19 +710,19 @@ def founder_decision(context: dict) -> dict:
     applicants = context.get("firm_applications", [])
     payroll = int(firm.get("payroll", 0))
     counters = context.get("firm_job_offers", [])
-    recovery_limits = _recovery_hiring_limits(firm)
-    if recovery_limits is not None:
-        floor, ceiling, allowed = recovery_limits
-        if allowed > 0:
+    recovery_profile = _recovery_hiring_profile(firm)
+    if recovery_profile is not None:
+        floor, _, _, open_vacancies = recovery_profile
+        if floor > 0:
             if counters:
                 requested = int(counters[0].get("requested_wage", 0))
-                if floor <= requested <= ceiling:
+                if _recovery_wage_can_hire(firm, requested):
                     actions.append({"type": "accept_job_offer", "offer_id": counters[0]["offer_id"]})
                     reasons.append("accepting a sustainable candidate wage counteroffer")
             elif context.get("labor_negotiation_enabled") and applicants:
                 candidate = next(
                     (row for row in applicants if row.get("current_offer_id") is None), None)
-                if candidate:
+                if candidate and _recovery_wage_can_hire(firm, floor):
                     actions.append({
                         "type": "make_job_offer",
                         "application_id": candidate["application_id"],
@@ -696,10 +732,10 @@ def founder_decision(context: dict) -> dict:
             elif applicants:
                 candidate = applicants[0]
                 posted = int(candidate.get("posted_wage", 0))
-                if floor <= posted <= ceiling:
+                if _recovery_wage_can_hire(firm, posted):
                     actions.append({"type": "hire", "application_id": candidate["application_id"]})
                     reasons.append("hiring at a sustainable posted wage")
-            elif employees == 0:
+            elif open_vacancies == 0 and _recovery_wage_can_hire(firm, floor):
                 actions.append({
                     "type": "post_job", "firm_id": firm["firm_id"],
                     "title": "worker", "wage": floor,
