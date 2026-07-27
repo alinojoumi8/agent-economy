@@ -1164,6 +1164,33 @@ def test_semantics7_market_stale_application_follows_recovery_activation(
         world.store.close()
 
 
+def test_semantics7_recovery_activation_reconciles_preactivation_stale_application(tmp_path):
+    """Activation cleans the backlog a prior feature-inactive market close retained."""
+    world = _world(
+        tmp_path,
+        "recovery-late-stale-application.db",
+        engine_semantics_version=7,
+        supply_recovery={"enabled": True, "activation_tick": 23},
+    )
+    try:
+        job_id, application_id = _stale_pending_application(world)
+
+        world._phase_market(22)
+        assert world.store.scalar(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == "pending"
+
+        world._phase_market(23)
+
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == "rejected"
+    finally:
+        world.store.close()
+
+
 def test_default_action_executor_has_no_recovery_hook(tmp_path):
     profile = {
         "enabled": True,

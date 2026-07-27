@@ -271,11 +271,12 @@ class Labor:
             "AND id IN (SELECT application_id FROM job_offers WHERE status='expired')")
         if terminalize_stale_applications:
             # The opt-in recovery profile closes out applicants that never
-            # reached negotiation after their vacancy expires.
+            # reached negotiation, including vacancies closed before a later
+            # activation.
             self.store.execute(
                 "UPDATE applications SET state='rejected' "
                 "WHERE state IN ('pending','negotiating') AND job_id IN "
-                "(SELECT id FROM jobs WHERE status='open' AND tick < ?)",
+                "(SELECT id FROM jobs WHERE status IN ('open','closed') AND tick < ?)",
                 (tick - max_age,))
         self.store.execute(
             "UPDATE jobs SET status='closed' WHERE status='open' AND tick < ?", (tick - max_age,))
