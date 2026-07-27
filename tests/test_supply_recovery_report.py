@@ -102,7 +102,7 @@ def _seed_healthy_store(tmp_path: Path, *, checkpoint_dir: str | None = None) ->
         "firms",
         name="Fixture Goods Co.",
         sector="manufacturing",
-        status="active",
+        status="private",
         founded_tick=0,
         inventory=10,
         product_json=json.dumps(
@@ -128,8 +128,8 @@ def _seed_healthy_store(tmp_path: Path, *, checkpoint_dir: str | None = None) ->
         "events",
         tick=1000,
         kind="production",
-        subject_type="firm",
-        subject_id=firm_id,
+        subject_type=None,
+        subject_id=None,
         payload_json=json.dumps(
             {
                 "firm_id": firm_id,
@@ -336,6 +336,29 @@ def test_report_db_missing_active_tick_returns_a_failed_receipt(tmp_path: Path):
     assert report["evidence"]["error"] == "run metadata is missing required fields: active_tick"
 
 
+def test_report_db_missing_schema_version_returns_a_failed_receipt(tmp_path: Path):
+    database = tmp_path / "missing-schema-version.db"
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute(
+            "CREATE TABLE run_meta ("
+            "id INTEGER PRIMARY KEY,run_id TEXT,seed INTEGER,config_json TEXT,"
+            "status TEXT,tick INTEGER,active_tick INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO run_meta VALUES (1,?,?,?,?,?,?)",
+            (RUN_ID, 17, json.dumps({}), "finished", 1000, None),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    report = evaluate_supply_recovery_db(database)
+
+    assert report["passed"] is False
+    assert report["evidence"]["error"] == "run metadata is missing required fields: schema_version"
+
+
 def test_report_rejects_non_null_unparseable_active_tick(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:
@@ -386,10 +409,11 @@ def test_bankrupt_recovery_goods_firm_requires_matching_bankruptcy_event(tmp_pat
     ]
 
 
-def test_recovery_goods_firm_rejects_an_unknown_status(tmp_path: Path):
+@pytest.mark.parametrize("status", ["mystery", "active"])
+def test_recovery_goods_firm_rejects_an_unknown_status(tmp_path: Path, status: str):
     store = _seed_healthy_store(tmp_path)
     try:
-        store.execute("UPDATE firms SET status='mystery' WHERE id=1")
+        store.execute("UPDATE firms SET status=? WHERE id=1", (status,))
         store.commit()
 
         report = evaluate_supply_recovery(store)
@@ -402,7 +426,7 @@ def test_recovery_goods_firm_rejects_an_unknown_status(tmp_path: Path):
         {
             "firm_id": 1,
             "reason": "unknown_recovery_goods_firm_status",
-            "status": "mystery",
+            "status": status,
             "tick": None,
         }
     ]
@@ -431,7 +455,33 @@ def test_live_recovery_goods_firm_rejects_noninsolvency_bankruptcy_event(tmp_pat
         {
             "firm_id": 1,
             "reason": "bankruptcy_event_requires_bankrupt_status",
-            "status": "active",
+            "status": "private",
+            "tick": 700,
+        }
+    ]
+
+
+@pytest.mark.parametrize("status", ["private", "listed"])
+def test_nonterminal_recovery_goods_firm_rejects_a_bankruptcy_tick(
+        tmp_path: Path, status: str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute(
+            "UPDATE firms SET status=?, bankrupt_tick=700 WHERE id=1", (status,)
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": 1,
+            "reason": "nonterminal_status_has_bankrupt_tick",
+            "status": status,
             "tick": 700,
         }
     ]
@@ -490,6 +540,53 @@ def test_report_rejects_malformed_explicit_producer_identity(tmp_path: Path):
     assert report["checks"]["unit_economics_validated"] is False
     assert report["evidence"]["unit_economics"]["malformed_producer_events"] == [
         {"event_id": 2, "firm_id": None, "kind": "goods_sale", "tick": 1000}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("production", {"firm_id": 1, "units": 1, "unit_cost_cents": 180}),
+        (
+            "goods_sale",
+            {
+                "firm_id": 1,
+                "buyer_id": 2,
+                "qty": 1,
+                "unit_price_cents": 600,
+                "total_cents": 600,
+            },
+        ),
+    ],
+)
+def test_report_rejects_conflicting_producer_payload_and_subject_identity(
+        tmp_path: Path, kind: str, payload: dict[str, int]):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.insert(
+            "events",
+            tick=1000,
+            kind=kind,
+            subject_type="firm",
+            subject_id=999,
+            payload_json=json.dumps(payload),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["producer_identity_mismatches"] == [
+        {
+            "event_id": 2,
+            "kind": kind,
+            "payload_firm_id": 1,
+            "subject_id": 999,
+            "tick": 1000,
+        }
     ]
 
 
@@ -581,6 +678,118 @@ def test_acquired_recovery_goods_firm_requires_matching_acquisition_event(tmp_pa
             "tick": 700,
         }
     ]
+
+
+def test_acquired_recovery_goods_firm_rejects_a_bankruptcy_tick(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Contradictory Acquired Fixtures Co.",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            bankrupt_tick=700,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "contradictory-acquired-fixtures",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="merger",
+            subject_id=1,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": 1}
+            ),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": acquired_firm_id,
+            "reason": "acquired_status_has_bankrupt_tick",
+            "status": "acquired",
+            "tick": 700,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("bankruptcy", {"firm_id": 999, "reason": "market_exit"}),
+        ("merger_closed", {"target_firm_id": 999, "acquirer_firm_id": 1}),
+        ("merger_closed", {"target_firm_id": 1, "acquirer_firm_id": 999}),
+    ],
+)
+def test_report_rejects_orphan_terminal_event_identity(
+        tmp_path: Path, kind: str, payload: dict[str, int | str]):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.insert(
+            "events",
+            tick=700,
+            kind=kind,
+            subject_type="firm" if kind == "bankruptcy" else "merger",
+            subject_id=999 if kind == "bankruptcy" else 1,
+            payload_json=json.dumps(payload),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["orphan_terminal_events"] == [
+        {"event_id": 2, "firm_id": 999, "kind": kind, "tick": 700}
+    ]
+
+
+def test_terminal_event_for_a_known_nonrecovery_firm_remains_valid(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        nonrecovery_firm_id = store.insert(
+            "firms",
+            name="Known Nonrecovery Firm",
+            sector="services",
+            status="bankrupt",
+            founded_tick=0,
+            bankrupt_tick=700,
+            inventory=0,
+            product_json=json.dumps({}),
+        )
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=nonrecovery_firm_id,
+            payload_json=json.dumps({"firm_id": nonrecovery_firm_id, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is True
+    assert report["evidence"]["recovery_managed_insolvencies"]["orphan_terminal_events"] == []
 
 
 def test_checkpoint_artifact_requires_a_canonical_matching_runtime_manifest(tmp_path: Path):

@@ -66,9 +66,9 @@ _CHECK_NAMES = (
 _COMPLETED_STATUSES = frozenset({"paused", "finished"})
 _CHECKPOINT_MANIFEST_KIND = "world_checkpoint_v1"
 _REQUIRED_RUN_META_FIELDS = frozenset({
-    "run_id", "seed", "status", "tick", "active_tick", "config_json",
+    "run_id", "seed", "schema_version", "status", "tick", "active_tick", "config_json",
 })
-_ACTIVE_RECOVERY_FIRM_STATUSES = frozenset({"active", "private", "listed"})
+_ACTIVE_RECOVERY_FIRM_STATUSES = frozenset({"private", "listed"})
 _TERMINAL_RECOVERY_FIRM_STATUSES = frozenset({"bankrupt", "acquired"})
 _KNOWN_RECOVERY_FIRM_STATUSES = (
     _ACTIVE_RECOVERY_FIRM_STATUSES | _TERMINAL_RECOVERY_FIRM_STATUSES
@@ -102,6 +102,8 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
         return _empty_receipt(
             "run metadata is missing required fields: " + ", ".join(missing_meta_fields)
         )
+    if _integer(meta["schema_version"]) is None:
+        return _empty_receipt("run metadata has an invalid schema_version")
 
     config = load_json(meta["config_json"], {})
     if not isinstance(config, Mapping):
@@ -598,10 +600,19 @@ def _unit_economics_evidence(
     evidenced_firm_ids: set[int] = set()
     evidenced_producer_events: list[dict[str, Any]] = []
     malformed_producer_events: list[dict[str, Any]] = []
+    producer_identity_mismatches: list[dict[str, Any]] = []
     for row in producer_rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
-        firm_id = _event_firm_id(payload, row["subject_id"])
+        payload_has_firm_id = "firm_id" in payload
+        payload_firm_id = (
+            _strict_entity_id(payload.get("firm_id")) if payload_has_firm_id else None
+        )
+        subject_has_firm_id = row["subject_id"] is not None
+        subject_firm_id = (
+            _strict_entity_id(row["subject_id"]) if subject_has_firm_id else None
+        )
+        firm_id = payload_firm_id if payload_has_firm_id else subject_firm_id
         event_tick = _integer(row["tick"])
         event = {
             "event_id": _integer(row["id"]),
@@ -609,7 +620,25 @@ def _unit_economics_evidence(
             "tick": event_tick,
             "firm_id": firm_id,
         }
-        if firm_id is None or event_tick is None:
+        if (
+                payload_has_firm_id
+                and subject_has_firm_id
+                and payload_firm_id is not None
+                and subject_firm_id is not None
+                and payload_firm_id != subject_firm_id):
+            producer_identity_mismatches.append({
+                "event_id": _integer(row["id"]),
+                "kind": str(row["kind"] or ""),
+                "payload_firm_id": payload_firm_id,
+                "subject_id": subject_firm_id,
+                "tick": event_tick,
+            })
+            continue
+        if (
+                firm_id is None
+                or event_tick is None
+                or (payload_has_firm_id and payload_firm_id is None)
+                or (subject_has_firm_id and subject_firm_id is None)):
             malformed_producer_events.append(event)
             continue
         evidenced_firm_ids.add(firm_id)
@@ -653,9 +682,11 @@ def _unit_economics_evidence(
         status = str(row["status"] or "")
         if output_per_worker is None and firm_id not in evidenced_firm_ids:
             continue
+        bankrupt_tick = row["bankrupt_tick"]
         recovery_goods_firms[firm_id] = {
             "status": status,
             "bankrupt_tick": _integer(row["bankrupt_tick"]),
+            "has_bankrupt_tick": bankrupt_tick is not None,
         }
         if status in {"bankrupt", "acquired"}:
             excluded_historical_goods_firms.append({"firm_id": firm_id, "status": status})
@@ -733,13 +764,17 @@ def _unit_economics_evidence(
 
     passed = bool(per_firm) and all(firm["validated"] for firm in per_firm)
     return bool(
-        passed and not malformed_producer_events and not orphan_producer_events
+        passed
+        and not malformed_producer_events
+        and not producer_identity_mismatches
+        and not orphan_producer_events
     ), per_firm, recovery_goods_firms, {
         "active_recovery_managed_goods_firm_count": len(per_firm),
         "recovery_managed_goods_firm_count": len(recovery_goods_firms),
         "validated_firm_count": sum(firm["validated"] for firm in per_firm),
         "excluded_historical_goods_firms": excluded_historical_goods_firms,
         "malformed_producer_events": malformed_producer_events,
+        "producer_identity_mismatches": producer_identity_mismatches,
         "orphan_producer_events": orphan_producer_events,
         "requires_persisted_product_production_and_active_employment": True,
     }
@@ -748,20 +783,25 @@ def _unit_economics_evidence(
 def _insolvency_evidence(
         store: Store, recovery_goods_firms: Mapping[int, Mapping[str, Any]], *,
         activation_tick: int) -> tuple[bool, dict[str, Any]]:
-    """Reconcile recovery-goods firm terminal state to a persisted exit event."""
+    """Reconcile recovery-goods terminal state and event identities."""
     try:
         rows = store.query(
             "SELECT id,tick,kind,subject_id,payload_json FROM events "
             "WHERE kind IN ('bankruptcy','merger_closed') AND tick>=? ORDER BY tick,id",
             (activation_tick,),
         )
+        firm_rows = store.query("SELECT id FROM firms ORDER BY id")
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc)
 
+    known_firm_ids = {
+        firm_id for row in firm_rows if (firm_id := _strict_entity_id(row["id"])) is not None
+    }
     bankruptcies_by_firm: dict[int, list[dict[str, Any]]] = {}
     acquisitions_by_firm: dict[int, list[dict[str, Any]]] = {}
     unparseable_bankruptcies: list[dict[str, Any]] = []
     unparseable_acquisitions: list[dict[str, Any]] = []
+    orphan_terminal_events: list[dict[str, Any]] = []
     for row in rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
@@ -773,6 +813,13 @@ def _insolvency_evidence(
             event = {"event_id": event_id, "tick": event_tick, "firm_id": firm_id, "reason": reason}
             if firm_id is not None:
                 bankruptcies_by_firm.setdefault(firm_id, []).append(event)
+                if firm_id not in known_firm_ids:
+                    orphan_terminal_events.append({
+                        "event_id": event_id,
+                        "firm_id": firm_id,
+                        "kind": "bankruptcy",
+                        "tick": event_tick,
+                    })
             if firm_id is None or event_tick is None or not isinstance(reason, str) or not reason.strip():
                 unparseable_bankruptcies.append({
                     "event_id": event_id,
@@ -781,9 +828,24 @@ def _insolvency_evidence(
                 })
         else:
             firm_id = _strict_entity_id(payload.get("target_firm_id"))
+            acquirer_firm_id = _strict_entity_id(payload.get("acquirer_firm_id"))
             event = {"event_id": event_id, "tick": event_tick, "firm_id": firm_id}
             if firm_id is not None:
                 acquisitions_by_firm.setdefault(firm_id, []).append(event)
+                if firm_id not in known_firm_ids:
+                    orphan_terminal_events.append({
+                        "event_id": event_id,
+                        "firm_id": firm_id,
+                        "kind": "merger_closed",
+                        "tick": event_tick,
+                    })
+            if acquirer_firm_id is not None and acquirer_firm_id not in known_firm_ids:
+                orphan_terminal_events.append({
+                    "event_id": event_id,
+                    "firm_id": acquirer_firm_id,
+                    "kind": "merger_closed",
+                    "tick": event_tick,
+                })
             if firm_id is None or event_tick is None:
                 unparseable_acquisitions.append(event)
 
@@ -806,6 +868,8 @@ def _insolvency_evidence(
     for firm_id in sorted(recovery_goods_firms):
         state = recovery_goods_firms[firm_id]
         status = str(state.get("status") or "")
+        bankrupt_tick = _integer(state.get("bankrupt_tick"))
+        has_bankrupt_tick = bool(state.get("has_bankrupt_tick"))
         bankruptcy_events = bankruptcies_by_firm.get(firm_id, [])
         acquisition_events = acquisitions_by_firm.get(firm_id, [])
         if status not in _KNOWN_RECOVERY_FIRM_STATUSES:
@@ -831,6 +895,13 @@ def _insolvency_evidence(
                 })
             continue
         if status in _ACTIVE_RECOVERY_FIRM_STATUSES:
+            if has_bankrupt_tick:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "nonterminal_status_has_bankrupt_tick",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
             for event in bankruptcy_events:
                 state_mismatches.append({
                     "firm_id": firm_id,
@@ -847,7 +918,6 @@ def _insolvency_evidence(
                 })
             continue
         if status == "bankrupt":
-            bankrupt_tick = _integer(state.get("bankrupt_tick"))
             if bankrupt_tick is None:
                 state_mismatches.append({
                     "firm_id": firm_id,
@@ -906,6 +976,13 @@ def _insolvency_evidence(
                     "tick": event["tick"],
                 })
         elif status == "acquired":
+            if has_bankrupt_tick:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "acquired_status_has_bankrupt_tick",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
             for event in bankruptcy_events:
                 state_mismatches.append({
                     "firm_id": firm_id,
@@ -921,7 +998,7 @@ def _insolvency_evidence(
                     "tick": None,
                 })
                 continue
-            if not bankruptcy_events:
+            if not bankruptcy_events and not has_bankrupt_tick:
                 permitted_departures.append({
                     "firm_id": firm_id,
                     "kind": "acquisition",
@@ -933,12 +1010,14 @@ def _insolvency_evidence(
         not insolvencies
         and not unparseable_bankruptcies
         and not unparseable_acquisitions
+        and not orphan_terminal_events
         and not state_mismatches
     ), {
         "recovery_managed_goods_firm_ids": sorted(recovery_goods_firms),
         "recovery_managed_insolvencies": insolvencies,
         "unparseable_bankruptcies": unparseable_bankruptcies,
         "unparseable_acquisitions": unparseable_acquisitions,
+        "orphan_terminal_events": orphan_terminal_events,
         "state_mismatches": state_mismatches,
         "permitted_departures": permitted_departures,
     }
