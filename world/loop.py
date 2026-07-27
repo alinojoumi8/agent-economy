@@ -965,7 +965,8 @@ class World:
             # SQLite backup only sees committed pages from its separate source
             # connection. Commit status/events/PRNG before taking the snapshot.
             self.store.commit()
-            ckpt_dir = Path(self.config.get("checkpoint_dir", "data/checkpoints"))
+            ckpt_dir = Path(
+                self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             run_id = self.store.get_meta()["run_id"]
             dest = ckpt_dir / f"{run_id}_t{tick}.db"
@@ -994,11 +995,8 @@ class World:
                     (created_at, int(existing["id"])),
                 )
             self.store.commit()
-            try:
-                keep_last = int(self.config.get("checkpoint_keep_last", 0) or 0)
-            except (TypeError, ValueError):
-                keep_last = 0
-            if keep_last > 0:
+            keep_last = self.config.get("checkpoint_keep_last")
+            if type(keep_last) is int and keep_last > 0:
                 self._prune_checkpoints(run_id, keep_last)
             operational_log(logger, logging.INFO, "world.checkpoint.created",
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))
@@ -1020,23 +1018,41 @@ class World:
         for row in self.store.query("SELECT id,tick,path FROM checkpoints"):
             try:
                 tick = int(row["tick"])
-                stored_path = Path(str(row["path"])).resolve()
-                expected_path = checkpoint_dir / f"{run_id}_t{tick}.db"
-                resolved_expected = expected_path.resolve()
-            except (OSError, RuntimeError, TypeError, ValueError):
+                database = checkpoint_dir / f"{run_id}_t{tick}.db"
+                if not isinstance(row["path"], str) or row["path"] != str(database):
+                    continue
+                if database.parent != checkpoint_dir:
+                    continue
+                manifest = Path(f"{database}.manifest.json")
+                if database.is_symlink() or manifest.is_symlink():
+                    continue
+                resolved_database = database.resolve()
+            except (OSError, OverflowError, RuntimeError, TypeError, ValueError):
                 continue
-            if (not resolved_expected.is_relative_to(checkpoint_dir)
-                    or stored_path != resolved_expected):
+            if (resolved_database != database
+                    or not resolved_database.is_relative_to(checkpoint_dir)):
                 continue
-            candidates.append((row, expected_path))
+            candidates.append((row, database))
         candidates.sort(
             key=lambda item: (int(item[0]["tick"]), int(item[0]["id"])),
             reverse=True)
-        retained_paths = {path for _, path in candidates[:keep_last]}
-        for row, database in candidates[keep_last:]:
+        retained_paths = set()
+        stale_rows = []
+        for row, database in candidates:
+            if database not in retained_paths and len(retained_paths) < keep_last:
+                retained_paths.add(database)
+            else:
+                stale_rows.append((row, database))
+        for row, database in stale_rows:
             if database not in retained_paths:
                 deletion_failed = False
-                for artifact in (Path(f"{database}.manifest.json"), database):
+                manifest = Path(f"{database}.manifest.json")
+                try:
+                    if database.is_symlink() or manifest.is_symlink():
+                        continue
+                except OSError:
+                    continue
+                for artifact in (manifest, database):
                     try:
                         artifact.unlink()
                     except FileNotFoundError:

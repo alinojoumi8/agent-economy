@@ -77,7 +77,7 @@ def test_retention_keeps_two_newest_checkpoint_bodies_and_manifests(tmp_path):
         world.close()
 
 
-@pytest.mark.parametrize("keep_last", [None, 0])
+@pytest.mark.parametrize("keep_last", [None, 0, -1])
 def test_retention_is_disabled_without_a_positive_keep_last(tmp_path, keep_last):
     world = _world(tmp_path, keep_last=keep_last)
     try:
@@ -86,6 +86,116 @@ def test_retention_is_disabled_without_a_positive_keep_last(tmp_path, keep_last)
         assert [int(row["tick"]) for row in _checkpoint_rows(world)] == [100, 200, 300]
         assert all(checkpoint.exists() for checkpoint in checkpoints)
         assert all(_manifest(checkpoint).exists() for checkpoint in checkpoints)
+    finally:
+        world.close()
+
+
+def test_retention_supports_relative_checkpoint_dirs_with_canonical_rows(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    world = _world(tmp_path, keep_last=2)
+    try:
+        world.config["checkpoint_dir"] = "checkpoints"
+
+        checkpoints = [_checkpoint(world, tick) for tick in (100, 200, 300)]
+        expected_dir = (tmp_path / "checkpoints").resolve()
+        rows = _checkpoint_rows(world)
+
+        assert [int(row["tick"]) for row in rows] == [200, 300]
+        assert all(checkpoint.parent == expected_dir for checkpoint in checkpoints)
+        assert [row["path"] for row in rows] == [str(path) for path in checkpoints[1:]]
+        assert not checkpoints[0].exists()
+        assert all(checkpoint.exists() for checkpoint in checkpoints[1:])
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [True, False, 1.0, 1.9, "2", float("inf"), float("-inf"), float("nan")],
+    ids=["true", "false", "whole-float", "fractional-float", "string", "inf", "neg-inf", "nan"],
+)
+def test_retention_requires_a_real_positive_integer_setting(tmp_path, setting):
+    world = _world(tmp_path)
+    try:
+        world.config["checkpoint_keep_last"] = setting
+
+        checkpoints = [world.checkpoint(tick) for tick in (100, 200, 300)]
+
+        assert all(checkpoint is not None for checkpoint in checkpoints)
+        assert [int(row["tick"]) for row in _checkpoint_rows(world)] == [100, 200, 300]
+        assert all(Path(checkpoint).exists() for checkpoint in checkpoints)
+        assert world.store.query_one(
+            "SELECT id FROM events WHERE kind='checkpoint_failed' LIMIT 1") is None
+    finally:
+        world.close()
+
+
+def test_retention_counts_unique_checkpoint_artifacts_not_duplicate_rows(tmp_path):
+    world = _world(tmp_path, keep_last=2)
+    try:
+        first = _checkpoint(world, 100)
+        _checkpoint(world, 200)
+        newest = _checkpoint(world, 200)
+
+        rows = _checkpoint_rows(world)
+
+        assert [int(row["tick"]) for row in rows] == [100, 200]
+        assert first.exists() and _manifest(first).exists()
+        assert newest.exists() and _manifest(newest).exists()
+    finally:
+        world.close()
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks are unavailable: {type(exc).__name__}")
+
+
+def test_retention_leaves_symlink_alias_rows_outside_generated_path_scope(tmp_path):
+    world = _world(tmp_path, keep_last=2)
+    try:
+        canonical = _checkpoint(world, 100)
+        canonical_id = int(_checkpoint_rows(world)[0]["id"])
+        alias = canonical.with_name("retention-alias.db")
+        _symlink_or_skip(alias, canonical)
+        alias_id = world.store.insert("checkpoints", tick=100, path=str(alias))
+        world.store.commit()
+
+        retained = _checkpoint(world, 200)
+
+        row_ids = {int(row["id"]) for row in _checkpoint_rows(world)}
+        assert {canonical_id, alias_id} <= row_ids
+        assert canonical.exists() and _manifest(canonical).exists()
+        assert alias.is_symlink()
+        assert retained.exists() and _manifest(retained).exists()
+    finally:
+        world.close()
+
+
+def test_retention_leaves_symlinked_checkpoint_artifacts_untouched(tmp_path):
+    world = _world(tmp_path, keep_last=1)
+    try:
+        stale = _checkpoint(world, 100)
+        stale_id = int(_checkpoint_rows(world)[0]["id"])
+        stale_manifest = _manifest(stale)
+        database_target = stale.with_name("retention-target.db")
+        manifest_target = _manifest(database_target)
+        database_target.write_bytes(stale.read_bytes())
+        manifest_target.write_bytes(stale_manifest.read_bytes())
+        stale.unlink()
+        stale_manifest.unlink()
+        _symlink_or_skip(stale, database_target)
+        _symlink_or_skip(stale_manifest, manifest_target)
+
+        retained = _checkpoint(world, 200)
+
+        row_ids = {int(row["id"]) for row in _checkpoint_rows(world)}
+        assert stale_id in row_ids
+        assert stale.is_symlink() and stale_manifest.is_symlink()
+        assert database_target.exists() and manifest_target.exists()
+        assert retained.exists() and _manifest(retained).exists()
     finally:
         world.close()
 
@@ -185,4 +295,3 @@ def test_failed_checkpoint_creation_does_not_prune_existing_checkpoints(tmp_path
         assert retained.exists() and _manifest(retained).exists()
     finally:
         world.close()
-
