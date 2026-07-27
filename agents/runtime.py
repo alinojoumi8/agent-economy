@@ -864,14 +864,24 @@ class AgentRuntime:
                     return None
                 application_id = int(action.get("application_id", 0))
                 application = self.executor._job_offer_application(application_id)
-                if (application is None
-                        or not self.executor._controls_firm(
-                            actor_id, int(application["firm_id"]))
-                        or int(application["agent_id"]) == actor_id
-                        or not self.executor._alive(int(application["agent_id"]))
-                        or not self.executor._job_currency_matches(application)):
+                if application is None:
                     return None
-                return int(application["firm_id"]), int(action.get("wage", -1)), action_type
+                if not self.executor._controls_firm(actor_id, int(application["firm_id"])):
+                    return None
+                if int(application["agent_id"]) == actor_id:
+                    return None
+                if not self.executor._alive(int(application["agent_id"])):
+                    return None
+                wage_cents = int(action.get("wage", -1))
+                if wage_cents < 0 or not self.executor._job_currency_matches(application):
+                    return None
+                pending_offer = self.store.query_one(
+                    "SELECT 1 FROM job_offers WHERE application_id=? AND status='pending' LIMIT 1",
+                    (application_id,),
+                )
+                if pending_offer is not None:
+                    return None
+                return int(application["firm_id"]), wage_cents, action_type
             if action_type == "hire":
                 if self.executor.engine_semantics_version >= 6 and phase != "FIXTURE":
                     return None

@@ -1183,6 +1183,68 @@ def test_recovery_runtime_reassesses_each_negotiated_action_wage(tmp_path):
         world.store.close()
 
 
+def test_recovery_duplicate_offer_keeps_the_executor_stale_reason(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(
+        tmp_path, "recovery-runtime-duplicate-offer.db",
+        engine_semantics_version=6, supply_recovery=profile,
+    )
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,account_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        candidates = world.store.query(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 2"
+        )
+        assert firm is not None and len(candidates) == 2
+        founder_id = int(firm["founder_agent_id"])
+        firm_id = int(firm["id"])
+        world.store.update("accounts", int(firm["account_id"]), balance_cents=60_001)
+        world.store.log_event(0, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+        applications = []
+        for candidate in candidates:
+            job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
+            application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+            assert application_id is not None
+            applications.append(int(application_id))
+        pending_offer = world.economy.labor.make_offer(
+            1, applications[0], founder_id, 15_000)
+        assert pending_offer is not None
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": founder_id,
+            "purpose": "founder",
+            "envelope": {"actions": [
+                {"type": "make_job_offer", "application_id": applications[0], "wage": 15_001},
+                {"type": "make_job_offer", "application_id": applications[1], "wage": 15_001},
+            ]},
+            "llm_call_id": None,
+        }])
+
+        proposals = world.store.query(
+            "SELECT validation_status,result_json FROM action_proposals "
+            "WHERE action_type='make_job_offer' ORDER BY id")
+        assert [row["validation_status"] for row in proposals] == ["rejected", "rejected"]
+        assert json.loads(proposals[0]["result_json"])["reason"] == (
+            "application already has a pending offer")
+        assert "recovery" in json.loads(proposals[1]["result_json"])["reason"]
+        assert world.store.scalar("SELECT COUNT(*) FROM job_offers") == 1
+        assert world.store.scalar(
+            "SELECT status FROM job_offers WHERE id=?", (pending_offer,)) == "pending"
+    finally:
+        world.store.close()
+
+
 def test_recovery_runtime_reassesses_the_direct_hire_posted_wage(tmp_path):
     profile = {
         "enabled": True,
