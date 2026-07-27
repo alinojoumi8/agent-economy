@@ -1,4 +1,15 @@
+import random
+
 import pytest
+
+from agents.memory import Memory
+from agents.policies import (
+    _select_open_job,
+    _select_stocked_firm,
+    founder_decision,
+)
+from agents.prompts import ContextBuilder
+from tests.conftest import make_agent, make_bank
 
 from world.recovery import (
     assess_recovery,
@@ -13,6 +24,76 @@ RECOVERY_SETTINGS = {
     "max_hires_per_firm_per_period": 1,
     "demand_buffer_ticks": 5,
 }
+
+
+def _recovery_profile(**overrides):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        **RECOVERY_SETTINGS,
+        "sales_observation_ticks": 30,
+        "activation_tick": 0,
+    }
+    profile.update(overrides)
+    return profile
+
+
+def _recovery_founder_context(*, allowed_new_hires: int, safe_wage_ceiling_cents: int,
+                              applications: list[dict] | None = None,
+                              counters: list[dict] | None = None,
+                              labor_negotiation_enabled: bool = True) -> dict:
+    return {
+        "my_firm": {
+            "firm_id": 17,
+            "name": "Recovery Works",
+            "inventory": 20,
+            "price": 288,
+            "unit_cost": 180,
+            "cash": 1_000_000,
+            "employees": 0,
+            "payroll": 0,
+            "recent_sales": 0,
+            "target_headcount": 3,
+            "is_private": True,
+            "recovery": {
+                "active": True,
+                "settings": _recovery_profile(),
+                "assessment": {
+                    "safe_wage_ceiling_cents": safe_wage_ceiling_cents,
+                    "allowed_new_hires": allowed_new_hires,
+                    "reason": ("eligible" if allowed_new_hires else "no_hire_capacity"),
+                },
+            },
+        },
+        "firm_applications": applications or [],
+        "firm_job_offers": counters or [],
+        "labor_negotiation_enabled": labor_negotiation_enabled,
+    }
+
+
+def _context_firm(economy, profile: dict):
+    economy.config["supply_recovery"] = profile
+    economy.config["firms"] = {"pay_interval_ticks": 30, "target_headcount": 3}
+    bank_id = make_bank(economy, reserves=10_000_000)
+    founder_id, _ = make_agent(
+        economy, bank_id, name="Recovery Founder", cash=2_000_000,
+    )
+    firm_id = economy.firms.found_firm(
+        0,
+        founder_id,
+        "Recovery Goods",
+        "manufacturing",
+        product={
+            "product": "recovery goods",
+            "unit_price_cents": 500,
+            "base_input_cost_cents": 180,
+            "output_per_worker": 6,
+        },
+        opening_capital_cents=1_000_000,
+    )
+    economy.store.update("firms", firm_id, inventory=20)
+    context = ContextBuilder(economy, Memory(economy.store, economy.config), economy.config)
+    return firm_id, context
 
 
 def _assessment(**overrides):
@@ -231,3 +312,114 @@ def test_missing_profile_defaults_to_feature_off_without_mutating_config():
     assert settings["enabled"] is False
     assert settings["gross_margin_coverage_bps"] == 12_500
     assert config == {"firms": {"pay_interval_ticks": 30}}
+
+
+def test_context_activates_recovery_only_at_configured_tick(economy):
+    firm_id, context = _context_firm(
+        economy,
+        _recovery_profile(activation_tick=5),
+    )
+    firm = economy.firms.get(firm_id)
+
+    before = context._firm_view(firm, 4)
+    after = context._firm_view(firm, 5)
+
+    assert "recovery" not in before
+    assert after["recovery"]["active"] is True
+
+
+def test_context_preserves_legacy_sale_count_and_uses_quantity_lookback(economy):
+    firm_id, context = _context_firm(
+        economy,
+        _recovery_profile(sales_observation_ticks=3, demand_buffer_ticks=0),
+    )
+    economy.store.log_event(2, "goods_sale", {"firm_id": firm_id, "qty": 99})
+    economy.store.log_event(3, "goods_sale", {"firm_id": firm_id, "qty": 7})
+    economy.store.log_event(5, "goods_sale", {"firm_id": firm_id, "qty": 2})
+    economy.store.log_event(6, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+
+    view = context._firm_view(economy.firms.get(firm_id), 5)
+
+    assert view["recent_sales"] == 4
+    assert view["recovery"]["recent_sales_units"] == 9
+    assert view["recovery"]["inputs"] == {
+        "price_cents": 500,
+        "input_cost_cents": 180,
+        "output_per_worker": 6,
+        "pay_interval_ticks": 30,
+        "wage_cents": 15_000,
+        "cash_cents": 1_000_000,
+        "current_payroll_cents": 0,
+        "current_headcount": 0,
+        "target_headcount": 3,
+        "recent_sales_units": 9,
+    }
+    assert view["recovery"]["assessment"]["allowed_new_hires"] == 0
+
+
+def test_recovery_founder_does_not_post_without_demand():
+    decision = founder_decision(_recovery_founder_context(
+        allowed_new_hires=0,
+        safe_wage_ceiling_cents=46_080,
+    ))
+
+    assert not {
+        "post_job", "make_job_offer", "accept_job_offer", "hire",
+    } & {action["type"] for action in decision["actions"]}
+
+
+def test_recovery_founder_uses_floor_only_when_a_hire_is_feasible():
+    decision = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+    ))
+
+    jobs = [action for action in decision["actions"] if action["type"] == "post_job"]
+    assert jobs == [{
+        "type": "post_job", "firm_id": 17, "title": "worker", "wage": 15_000,
+    }]
+
+
+def test_recovery_founder_makes_a_floor_wage_offer_only_when_feasible():
+    decision = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        applications=[{"application_id": 9, "posted_wage": 250_000}],
+    ))
+
+    offers = [action for action in decision["actions"] if action["type"] == "make_job_offer"]
+    assert offers == [{"type": "make_job_offer", "application_id": 9, "wage": 15_000}]
+
+
+def test_recovery_founder_rejects_existing_high_wage_offer_and_direct_hire():
+    negotiated = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        counters=[{"offer_id": 5, "requested_wage": 250_000}],
+    ))
+    direct = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        applications=[{"application_id": 8, "posted_wage": 250_000}],
+        labor_negotiation_enabled=False,
+    ))
+
+    assert "accept_job_offer" not in {action["type"] for action in negotiated["actions"]}
+    assert "hire" not in {action["type"] for action in direct["actions"]}
+
+
+def test_recovery_selection_uses_capacity_and_application_load_but_feature_off_is_legacy():
+    prices = [
+        {"firm_id": 1, "price": 300, "inventory": 1},
+        {"firm_id": 2, "price": 900, "inventory": 100},
+    ]
+    jobs = [
+        {"job_id": 1, "wage": 500, "application_count": 20},
+        {"job_id": 2, "wage": 400, "application_count": 0},
+    ]
+
+    assert _select_stocked_firm({"prices": prices}, random.Random(0))["firm_id"] == 1
+    assert _select_open_job({"jobs": jobs}, random.Random(0))["job_id"] == 1
+    active_context = {"supply_recovery": {"active": True}, "prices": prices, "jobs": jobs}
+    assert _select_stocked_firm(active_context, random.Random(0))["firm_id"] == 2
+    assert _select_open_job(active_context, random.Random(0))["job_id"] == 2

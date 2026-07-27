@@ -836,8 +836,95 @@ class AgentRuntime:
                 "attention_context_key": attention_context_key or None,
                 "attention_source_event_ids": attention_source_event_ids}
 
+    def _recovery_employment_target(self, actor_id: int, action: dict) -> tuple[int, int] | None:
+        """Resolve a hiring action to its firm and proposed or accepted wage."""
+        action_type = str(action.get("type") or "")
+        if action_type not in {
+                "post_job", "make_job_offer", "counter_job_offer",
+                "accept_job_offer", "hire"}:
+            return None
+        try:
+            if action_type == "post_job":
+                firm_id = int(action.get("firm_id", 0))
+                if firm_id <= 0:
+                    firm_id = int(self.store.scalar(
+                        "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' "
+                        "LIMIT 1", (actor_id,), default=0) or 0)
+                return firm_id, int(action.get("wage", -1))
+            if action_type in {"make_job_offer", "hire"}:
+                application_id = int(action.get("application_id", 0))
+                row = self.store.query_one(
+                    "SELECT j.firm_id,j.wage_cents FROM applications ap "
+                    "JOIN jobs j ON j.id=ap.job_id WHERE ap.id=?", (application_id,))
+                if row is None:
+                    return None
+                wage = (int(action.get("wage", -1))
+                        if action_type == "make_job_offer" else int(row["wage_cents"]))
+                return int(row["firm_id"]), wage
+            offer_id = int(action.get("offer_id", 0))
+            row = self.store.query_one(
+                "SELECT j.firm_id,jo.wage_cents FROM job_offers jo "
+                "JOIN applications ap ON ap.id=jo.application_id "
+                "JOIN jobs j ON j.id=ap.job_id WHERE jo.id=?", (offer_id,))
+            if row is None:
+                return None
+            wage = (int(action.get("wage", -1))
+                    if action_type == "counter_job_offer" else int(row["wage_cents"]))
+            return int(row["firm_id"]), wage
+        except (TypeError, ValueError):
+            return None
+
+    def _recovery_hiring_limits(self, tick: int, firm_id: int) -> tuple[int, int, int] | None:
+        """Read the context-built assessment; active malformed input fails closed."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        assessment = recovery.get("assessment")
+        if not isinstance(settings, dict) or not isinstance(assessment, dict):
+            return (0, 0, 0)
+        try:
+            floor = int(settings["wage_floor_cents"])
+            ceiling = int(assessment["safe_wage_ceiling_cents"])
+            allowed = int(assessment["allowed_new_hires"])
+        except (KeyError, TypeError, ValueError):
+            return (0, 0, 0)
+        if floor <= 0 or ceiling < floor or allowed < 1:
+            return (0, max(0, ceiling), 0)
+        return floor, ceiling, allowed
+
+    def _filter_recovery_employment_actions(
+            self, tick: int, actor_id: int, actions: list,
+            reserved_firms: set[int]) -> list:
+        """Enforce active recovery wage and capacity limits at execution."""
+        filtered = []
+        for action in actions:
+            if not isinstance(action, dict):
+                filtered.append(action)
+                continue
+            target = self._recovery_employment_target(actor_id, action)
+            if target is None:
+                filtered.append(action)
+                continue
+            firm_id, wage = target
+            limits = self._recovery_hiring_limits(tick, firm_id)
+            if limits is None:
+                filtered.append(action)
+                continue
+            floor, ceiling, allowed = limits
+            if (firm_id in reserved_firms or allowed < 1
+                    or wage < floor or wage > ceiling):
+                continue
+            reserved_firms.add(firm_id)
+            filtered.append(action)
+        return filtered
+
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
+        reserved_recovery_firms: set[int] = set()
         for d in decisions:
             agent_id = d["agent_id"]
             operational_overrides = d.get("operational_overrides") or []
@@ -874,6 +961,8 @@ class AgentRuntime:
                 )
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
+            actions = self._filter_recovery_employment_actions(
+                tick, int(agent_id), list(actions), reserved_recovery_firms)
             supplier_warning_protocol = (
                 d.get("llm_call_id") is None
                 and any(
