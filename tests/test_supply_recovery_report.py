@@ -1259,6 +1259,56 @@ def test_merger_rejects_acquired_acquirer_with_a_bankruptcy_marker(tmp_path: Pat
     ]
 
 
+def test_merger_surfaces_active_acquirer_marker_alongside_prior_terminal_event(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquirer_firm_id = _insert_nonrecovery_firm(
+            store,
+            name="Marked Acquirer With Prior Bankruptcy",
+            status="private",
+            bankrupt_tick=700.5,
+        )
+        target_firm_id = _insert_nonrecovery_firm(
+            store, name="Marked Prior Bankruptcy Target", status="acquired")
+        terminal_event_id = store.insert(
+            "events",
+            tick=600,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=acquirer_firm_id,
+            payload_json=json.dumps({"firm_id": acquirer_firm_id, "reason": "market_exit"}),
+        )
+        event_id = _insert_merger_closed_event(
+            store, tick=700, target_firm_id=target_firm_id, acquirer_firm_id=acquirer_firm_id)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["invalid_merger_acquirers"] == [
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "bankrupt_tick": 700.5,
+            "event_id": event_id,
+            "reason": "acquirer_nonbankrupt_status_has_bankrupt_tick",
+            "status": "private",
+            "tick": 700,
+        },
+        {
+            "acquirer_firm_id": acquirer_firm_id,
+            "event_id": event_id,
+            "reason": "acquirer_terminal_before_merger",
+            "terminal_event_id": terminal_event_id,
+            "terminal_kind": "bankruptcy",
+            "terminal_tick": 600,
+            "tick": 700,
+        },
+    ]
+
+
 def test_only_invalid_relative_checkpoint_tick_keeps_raw_exclusion_evidence(tmp_path: Path):
     store = _seed_healthy_store(tmp_path, checkpoint_dir="relative-checkpoints")
     try:
