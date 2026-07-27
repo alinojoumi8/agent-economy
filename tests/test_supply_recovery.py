@@ -110,6 +110,25 @@ def test_profile_validation_rejects_negative_activation_tick():
         }})
 
 
+def test_profile_validation_rejects_nonpositive_sales_observation_ticks():
+    with pytest.raises(ValueError, match="sales_observation_ticks must be positive"):
+        validate_recovery_settings({"supply_recovery": {
+            "enabled": True,
+            "sales_observation_ticks": 0,
+            **RECOVERY_SETTINGS,
+        }})
+
+
+def test_profile_validation_rejects_excessive_demand_buffer():
+    with pytest.raises(ValueError, match="demand_buffer_ticks must not exceed one quarter"):
+        validate_recovery_settings({"supply_recovery": {
+            "enabled": True,
+            **RECOVERY_SETTINGS,
+            "sales_observation_ticks": 30,
+            "demand_buffer_ticks": 8,
+        }})
+
+
 def test_feature_off_assessment_never_allows_a_hire():
     assessment = _assessment(enabled=False)
 
@@ -143,10 +162,57 @@ def test_zero_sales_permit_no_new_hires_despite_demand_buffer():
 
 
 def test_positive_sales_keep_the_bounded_demand_buffer():
-    assessment = _assessment(recent_sales_units=6, target_headcount=10)
+    assessment = _assessment(recent_sales_units=150, target_headcount=10)
 
-    assert assessment.demand_limited_headcount == 6
+    assert assessment.demand_limited_headcount == 1
     assert assessment.allowed_new_hires == 1
+
+
+def test_demand_capacity_counts_default_sales_over_the_observation_window():
+    assessment = _assessment(recent_sales_units=180, target_headcount=10)
+
+    assert assessment.demand_limited_headcount == 1
+    assert assessment.allowed_new_hires == 1
+
+
+def test_demand_capacity_scales_with_configured_observation_window():
+    assessment = _assessment(
+        recent_sales_units=180,
+        target_headcount=10,
+        settings={
+            **RECOVERY_SETTINGS,
+            "sales_observation_ticks": 10,
+            "demand_buffer_ticks": 2,
+        },
+    )
+
+    assert assessment.demand_limited_headcount == 3
+    assert assessment.allowed_new_hires == 1
+
+
+def test_assessment_accepts_normalized_profile_settings():
+    settings = recovery_settings({"supply_recovery": {
+        "enabled": True,
+        **RECOVERY_SETTINGS,
+    }})
+
+    assessment = _assessment(settings=settings, target_headcount=10)
+
+    assert settings["sales_observation_ticks"] == 30
+    assert assessment.demand_limited_headcount == 1
+    assert assessment.allowed_new_hires == 1
+
+
+def test_explicit_enabled_argument_controls_normalized_profile_settings():
+    settings = recovery_settings({"supply_recovery": {
+        "enabled": True,
+        **RECOVERY_SETTINGS,
+    }})
+
+    assessment = _assessment(enabled=False, settings=settings)
+
+    assert assessment.allowed_new_hires == 0
+    assert assessment.reason == "feature_disabled"
 
 
 def test_assessment_rejects_unknown_economic_setting():

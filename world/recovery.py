@@ -11,14 +11,16 @@ _DEFAULT_ECONOMIC_SETTINGS = {
     "cash_payroll_coverage_periods": 2,
     "max_hires_per_firm_per_period": 1,
     "demand_buffer_ticks": 5,
+    "sales_observation_ticks": 30,
 }
 _ECONOMIC_SETTING_NAMES = frozenset(_DEFAULT_ECONOMIC_SETTINGS)
-_PROFILE_SETTING_NAMES = _ECONOMIC_SETTING_NAMES | {
+_PROFILE_METADATA_SETTING_NAMES = frozenset({
     "enabled",
     "wage_floor_cents",
     "policy_version",
     "activation_tick",
-}
+})
+_PROFILE_SETTING_NAMES = _ECONOMIC_SETTING_NAMES | _PROFILE_METADATA_SETTING_NAMES
 _POLICY_VERSION = "supply-recovery-v1"
 
 
@@ -44,24 +46,12 @@ def recovery_settings(config: Mapping[str, Any]) -> dict[str, int | bool | str]:
         raise ValueError("supply_recovery must be a mapping")
     _reject_unknown_keys(raw, _PROFILE_SETTING_NAMES, "supply_recovery")
 
-    enabled = raw.get("enabled", False)
-    if not isinstance(enabled, bool):
-        raise ValueError("supply_recovery.enabled must be a boolean")
+    metadata = _normalized_profile_metadata(raw)
     normalized = _normalized_settings({
         key: raw[key] for key in _ECONOMIC_SETTING_NAMES if key in raw
     })
-    wage_floor_cents = _nonnegative_integer(
-        "wage_floor_cents", raw.get("wage_floor_cents", 0))
-    policy_version = raw.get("policy_version", _POLICY_VERSION)
-    if not isinstance(policy_version, str) or policy_version != _POLICY_VERSION:
-        raise ValueError(f"policy_version must be {_POLICY_VERSION}")
-    activation_tick = _nonnegative_integer(
-        "activation_tick", raw.get("activation_tick", 0))
     return {
-        "enabled": enabled,
-        "wage_floor_cents": wage_floor_cents,
-        "policy_version": policy_version,
-        "activation_tick": activation_tick,
+        **metadata,
         **normalized,
     }
 
@@ -83,9 +73,10 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
     period_margin = margin * max(0, output_per_worker) * max(1, pay_interval_ticks)
     ceiling = period_margin * 10_000 // normalized["gross_margin_coverage_bps"]
     sales_units = max(0, recent_sales_units)
-    demand_cap = 0 if sales_units == 0 else max(1, (sales_units + (
-        normalized["demand_buffer_ticks"] * max(0, output_per_worker))
-    ) // max(1, output_per_worker))
+    output_units = max(0, output_per_worker)
+    demand_cap = 0 if sales_units == 0 else (
+        sales_units + normalized["demand_buffer_ticks"] * output_units
+    ) // (max(1, output_units) * normalized["sales_observation_ticks"])
     payroll_periods = normalized["cash_payroll_coverage_periods"]
     incumbent_payroll_reserve = max(0, current_payroll_cents) * payroll_periods
     new_hire_payroll_reserve = max(1, wage_cents) * payroll_periods
@@ -106,7 +97,8 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
 def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
     if not isinstance(settings, Mapping):
         raise ValueError("recovery settings must be a mapping")
-    _reject_unknown_keys(settings, _ECONOMIC_SETTING_NAMES, "recovery settings")
+    _reject_unknown_keys(settings, _PROFILE_SETTING_NAMES, "recovery settings")
+    _normalized_profile_metadata(settings)
     normalized = dict(_DEFAULT_ECONOMIC_SETTINGS)
     for key, value in settings.items():
         if key in normalized:
@@ -116,7 +108,32 @@ def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:
         raise ValueError("gross_margin_coverage_bps must be at least 10000")
     if normalized["cash_payroll_coverage_periods"] <= 0:
         raise ValueError("cash_payroll_coverage_periods must be positive")
+    if normalized["sales_observation_ticks"] <= 0:
+        raise ValueError("sales_observation_ticks must be positive")
+    if normalized["demand_buffer_ticks"] > normalized["sales_observation_ticks"] // 4:
+        raise ValueError(
+            "demand_buffer_ticks must not exceed one quarter of sales_observation_ticks"
+        )
     return normalized
+
+
+def _normalized_profile_metadata(settings: Mapping[str, Any]) -> dict[str, int | bool | str]:
+    enabled = settings.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("supply_recovery.enabled must be a boolean")
+    wage_floor_cents = _nonnegative_integer(
+        "wage_floor_cents", settings.get("wage_floor_cents", 0))
+    policy_version = settings.get("policy_version", _POLICY_VERSION)
+    if not isinstance(policy_version, str) or policy_version != _POLICY_VERSION:
+        raise ValueError(f"policy_version must be {_POLICY_VERSION}")
+    activation_tick = _nonnegative_integer(
+        "activation_tick", settings.get("activation_tick", 0))
+    return {
+        "enabled": enabled,
+        "wage_floor_cents": wage_floor_cents,
+        "policy_version": policy_version,
+        "activation_tick": activation_tick,
+    }
 
 
 def _reject_unknown_keys(settings: Mapping[str, Any], allowed: frozenset[str],
