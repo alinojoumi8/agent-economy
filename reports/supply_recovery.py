@@ -9,10 +9,18 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from engine.checkpoint_manifest import (
+    CHECKPOINT_MANIFEST_VERSION,
+    build_checkpoint_manifest,
+    canonical_json_bytes,
+    checkpoint_manifest_path,
+    file_sha256,
+)
 from engine.ledger import Ledger
 from engine.store import Store, load_json
 from reports.acceptance import resolve_run_db
@@ -55,6 +63,7 @@ _CHECK_NAMES = (
     "unit_economics_validated",
 )
 _COMPLETED_STATUSES = frozenset({"paused", "finished"})
+_CHECKPOINT_MANIFEST_KIND = "world_checkpoint_v1"
 
 
 def resolve_supply_recovery_db(run_or_path: str | Path) -> Path:
@@ -80,7 +89,9 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
     if not isinstance(config, Mapping):
         config = {}
     tick = _integer(meta["tick"])
-    active_tick = _integer(meta["active_tick"])
+    # A persisted active phase is not a completed horizon.  Do not coerce this
+    # value: only SQL NULL means the controller had no in-flight tick.
+    active_tick = meta["active_tick"]
     status = str(meta["status"] or "")
     run = {
         "run_id": str(meta["run_id"] or ""),
@@ -93,11 +104,11 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
     horizon_ok, horizon_evidence = _horizon_evidence(tick, status, active_tick)
     purchases_ok, purchases_evidence = _buy_goods_evidence(store, tick)
     unemployment_ok, unemployment_evidence = _unemployment_evidence(store, tick)
-    unit_ok, unit_economics, goods_firm_ids, unit_evidence = _unit_economics_evidence(
+    unit_ok, unit_economics, recovery_goods_firms, unit_evidence = _unit_economics_evidence(
         store, activation_tick=_PROFILE_SETTINGS["activation_tick"]
     )
     insolvency_ok, insolvency_evidence = _insolvency_evidence(
-        store, goods_firm_ids, activation_tick=_PROFILE_SETTINGS["activation_tick"]
+        store, recovery_goods_firms, activation_tick=_PROFILE_SETTINGS["activation_tick"]
     )
     backlog_ok, backlog_evidence = _labor_backlog_evidence(store)
     ledger_ok, ledger_evidence = _ledger_evidence(store)
@@ -143,10 +154,33 @@ def evaluate_supply_recovery(store: Store) -> dict[str, Any]:
 
 def evaluate_supply_recovery_db(db_path: str | Path) -> dict[str, Any]:
     """Open a recorded store read-only and return its supply-recovery receipt."""
-    database = Path(db_path)
+    database = Path(db_path).resolve()
     if not database.exists():
-        raise FileNotFoundError(f"run database not found: {database}")
-    store = Store(str(database), create=False, read_only=True)
+        raise FileNotFoundError("run database not found")
+    # A finalized receipt must neither mutate its source nor silently ignore a
+    # live WAL.  Immutable SQLite reads avoid creating -wal/-shm sidecars; an
+    # existing sidecar therefore fails closed instead of yielding stale data.
+    if any(Path(f"{database}{suffix}").exists() for suffix in ("-wal", "-shm")):
+        return _empty_receipt("run database has non-finalized SQLite sidecars")
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            f"{database.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            isolation_level=None,
+            cached_statements=0,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+    except (OSError, sqlite3.Error, ValueError):
+        if connection is not None:
+            connection.close()
+        return _empty_receipt("run database could not be opened read-only")
+    store = Store.__new__(Store)
+    store.path = str(database)
+    store.read_only = True
+    store._closed = False
+    store.conn = connection
     try:
         return evaluate_supply_recovery(store)
     finally:
@@ -171,7 +205,7 @@ def write_supply_recovery_receipt(
     markdown_path.write_text(render_supply_recovery_markdown(receipt), encoding="utf-8")
     return {
         **receipt,
-        "artifacts": {"json": str(json_path), "markdown": str(markdown_path)},
+        "artifacts": {"json": json_path.name, "markdown": markdown_path.name},
     }
 
 
@@ -238,28 +272,36 @@ def _profile_is_persisted(config: Mapping[str, Any]) -> tuple[bool, dict[str, An
     recovery_valid = False
     try:
         normalized = recovery_settings(config)
-        recovery_valid = all(normalized.get(name) == value for name, value in _PROFILE_SETTINGS.items())
+        recovery_valid = _exact_settings_match(normalized, _PROFILE_SETTINGS)
     except (TypeError, ValueError):
         normalized = None
-    raw_recovery_matches = all(
-        recovery_mapping.get(name) == value for name, value in _PROFILE_SETTINGS.items()
-    )
+    raw_recovery_matches = _exact_settings_match(recovery_mapping, _PROFILE_SETTINGS)
     raw_acceptance_matches = (
-        acceptance_mapping.get("min_ticks") == _THRESHOLDS["minimum_ticks"]
-        and all(
-            supply_mapping.get(name) == value
-            for name, value in _THRESHOLDS.items()
-            if name != "minimum_ticks"
+        _exact_value(
+            acceptance_mapping.get("min_ticks"), _THRESHOLDS["minimum_ticks"]
+        )
+        and _exact_settings_match(
+            supply_mapping,
+            {name: value for name, value in _THRESHOLDS.items() if name != "minimum_ticks"},
         )
     )
-    scripted = (
-        isinstance(route, Mapping)
-        and route.get("provider") == "scripted"
-        and route.get("model") == "scripted"
-        and isinstance(routes, Mapping)
-        and not routes
+    checkpoint_settings_match = (
+        _exact_value(config.get("checkpoint_every"), 100)
+        and _exact_value(config.get("checkpoint_keep_last"), 2)
     )
-    passed = bool(recovery_valid and raw_recovery_matches and raw_acceptance_matches and scripted)
+    scripted = (
+        type(route) is dict
+        and route == {"provider": "scripted", "model": "scripted"}
+        and type(routes) is dict
+        and routes == {}
+    )
+    passed = bool(
+        recovery_valid
+        and raw_recovery_matches
+        and raw_acceptance_matches
+        and checkpoint_settings_match
+        and scripted
+    )
     return passed, {
         "required_recovery_settings": dict(_PROFILE_SETTINGS),
         "observed_recovery_settings": dict(recovery_mapping),
@@ -267,13 +309,22 @@ def _profile_is_persisted(config: Mapping[str, Any]) -> tuple[bool, dict[str, An
             "min_ticks": acceptance_mapping.get("min_ticks"),
             "supply_recovery": dict(supply_mapping),
         },
+        "required_checkpoint_settings": {
+            "checkpoint_every": 100,
+            "checkpoint_keep_last": 2,
+        },
+        "observed_checkpoint_settings": {
+            "checkpoint_every": _json_scalar(config.get("checkpoint_every")),
+            "checkpoint_keep_last": _json_scalar(config.get("checkpoint_keep_last")),
+        },
+        "checkpoint_settings_match": checkpoint_settings_match,
         "normalized_recovery_settings": normalized,
         "scripted_provider_free_route": scripted,
     }
 
 
 def _horizon_evidence(
-        tick: int | None, status: str, active_tick: int | None) -> tuple[bool, dict[str, Any]]:
+        tick: int | None, status: str, active_tick: Any) -> tuple[bool, dict[str, Any]]:
     passed = bool(
         tick is not None
         and tick >= _THRESHOLDS["minimum_ticks"]
@@ -284,7 +335,7 @@ def _horizon_evidence(
         "tick": tick,
         "minimum_ticks": _THRESHOLDS["minimum_ticks"],
         "status": status,
-        "active_tick": active_tick,
+        "active_tick": _json_scalar(active_tick),
         "completed_statuses": sorted(_COMPLETED_STATUSES),
         "headless_horizon_boundary": status == "paused" and active_tick is None,
     }
@@ -347,12 +398,13 @@ def _buy_goods_evidence(store: Store, tick: int | None) -> tuple[bool, dict[str,
             counts_by_tick.get(candidate_tick, {}).get("unresolved", 0)
             for candidate_tick in range(window_start, window_end + 1)
         )
-        rate = None if attempts == 0 else round(rejected / attempts, 6)
+        raw_rate = None if attempts == 0 else rejected / attempts
+        rate = None if raw_rate is None else round(raw_rate, 6)
         passed = bool(
             attempts > 0
             and unresolved == 0
-            and rate is not None
-            and rate <= _THRESHOLDS["max_buy_goods_rejection_rate"]
+            and raw_rate is not None
+            and raw_rate <= _THRESHOLDS["max_buy_goods_rejection_rate"]
         )
         windows.append({
             "start_tick": window_start,
@@ -361,6 +413,7 @@ def _buy_goods_evidence(store: Store, tick: int | None) -> tuple[bool, dict[str,
             "rejected": rejected,
             "unresolved": unresolved,
             "rate": rate,
+            "raw_rate": raw_rate,
             "passed": passed,
         })
     worst_window = max(windows, key=_purchase_window_score)
@@ -439,16 +492,21 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
             trailing_peak = max(
                 values[candidate_tick] for candidate_tick in range(trailing_start, window_end + 1)
             )
-            rebound = round(trailing_peak - preceding_trough, 6)
+            raw_rebound = trailing_peak - preceding_trough
+            rebound = round(raw_rebound, 6)
             item.update({
                 "preceding_trough": round(preceding_trough, 6),
                 "trailing_peak": round(trailing_peak, 6),
                 "rebound": rebound,
-                "passed": rebound <= _THRESHOLDS["max_unemployment_rebound"],
+                "raw_rebound": raw_rebound,
+                "passed": raw_rebound <= _THRESHOLDS["max_unemployment_rebound"],
             })
         windows.append(item)
     worst_window = max(windows, key=_unemployment_window_score)
     observed_rebounds = [item["rebound"] for item in windows if item["rebound"] is not None]
+    observed_raw_rebounds = [
+        item["raw_rebound"] for item in windows if item.get("raw_rebound") is not None
+    ]
     return bool(not malformed_rows and all(item["passed"] for item in windows)), {
         "warmup_ticks": warmup,
         "window_ticks": window,
@@ -456,6 +514,9 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
         "latest_window": windows[-1],
         "worst_window": worst_window,
         "maximum_observed_rebound": max(observed_rebounds) if observed_rebounds else None,
+        "maximum_observed_raw_rebound": (
+            max(observed_raw_rebounds) if observed_raw_rebounds else None
+        ),
         "failed_window_count": sum(not item["passed"] for item in windows),
         "malformed_row_count": malformed_rows,
         "maximum_rebound": _THRESHOLDS["max_unemployment_rebound"],
@@ -464,12 +525,17 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
 
 def _purchase_window_score(window: Mapping[str, Any]) -> tuple[int, float, int, int]:
     if int(window["unresolved"]) > 0:
-        return (3, float(window["rate"] or 0.0), int(window["unresolved"]), -int(window["end_tick"]))
+        return (
+            3,
+            float(window.get("raw_rate") or 0.0),
+            int(window["unresolved"]),
+            -int(window["end_tick"]),
+        )
     if int(window["attempts"]) == 0:
         return (2, 0.0, 0, -int(window["end_tick"]))
     return (
         1 if not window["passed"] else 0,
-        float(window["rate"] or 0.0),
+        float(window.get("raw_rate") or 0.0),
         0,
         -int(window["end_tick"]),
     )
@@ -480,20 +546,22 @@ def _unemployment_window_score(window: Mapping[str, Any]) -> tuple[int, float, i
         return (2, 0.0, -int(window["trailing_window"][1]))
     return (
         1 if not window["passed"] else 0,
-        float(window["rebound"] or 0.0),
+        float(window.get("raw_rebound") or 0.0),
         -int(window["trailing_window"][1]),
     )
 
 
 def _unit_economics_evidence(
-        store: Store, *, activation_tick: int) -> tuple[bool, list[dict[str, Any]], set[int], dict[str, Any]]:
+        store: Store, *, activation_tick: int) -> tuple[
+            bool, list[dict[str, Any]], dict[int, dict[str, Any]], dict[str, Any]]:
+    """Validate every producer evidenced by product data or persisted events."""
     try:
         firms = store.query(
-            "SELECT id,name,status,sector,product_json FROM firms ORDER BY id"
+            "SELECT id,name,status,sector,product_json,bankrupt_tick FROM firms ORDER BY id"
         )
-        production_rows = store.query(
-            "SELECT id,tick,subject_id,payload_json FROM events "
-            "WHERE kind='production' AND tick>=? ORDER BY tick,id",
+        producer_rows = store.query(
+            "SELECT id,tick,kind,subject_id,payload_json FROM events "
+            "WHERE kind IN ('production','goods_sale') AND tick>=? ORDER BY tick,id",
             (activation_tick,),
         )
         employment_rows = store.query(
@@ -501,25 +569,38 @@ def _unit_economics_evidence(
             "WHERE status='active' ORDER BY firm_id,id"
         )
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
-        evidence = _query_error_evidence(exc)
-        return False, [], set(), evidence
+        return False, [], {}, _query_error_evidence(exc)
 
     latest_production: dict[int, dict[str, Any]] = {}
-    for row in production_rows:
+    evidenced_firm_ids: set[int] = set()
+    malformed_producer_events: list[dict[str, Any]] = []
+    for row in producer_rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
-        firm_id = _integer(payload.get("firm_id"))
-        if firm_id is None:
-            firm_id = _integer(row["subject_id"])
-        unit_cost = _nonnegative_integer(payload.get("unit_cost_cents"))
+        firm_id = _event_firm_id(payload, row["subject_id"])
         event_tick = _integer(row["tick"])
-        if firm_id is None or unit_cost is None or event_tick is None:
+        event = {
+            "event_id": _integer(row["id"]),
+            "kind": str(row["kind"] or ""),
+            "tick": event_tick,
+            "firm_id": firm_id,
+        }
+        if firm_id is None or event_tick is None:
+            malformed_producer_events.append(event)
+            continue
+        evidenced_firm_ids.add(firm_id)
+        if row["kind"] != "production":
+            continue
+        unit_cost = _nonnegative_integer(payload.get("unit_cost_cents"))
+        if unit_cost is None:
+            malformed_producer_events.append(event)
             continue
         latest_production[firm_id] = {
             "event_id": _integer(row["id"]),
             "tick": event_tick,
             "unit_cost_cents": unit_cost,
         }
+
     employments: dict[int, list[Any]] = {}
     for row in employment_rows:
         firm_id = _integer(row["firm_id"])
@@ -527,25 +608,33 @@ def _unit_economics_evidence(
             employments.setdefault(firm_id, []).append(row)
 
     per_firm: list[dict[str, Any]] = []
-    goods_firm_ids: set[int] = set()
+    recovery_goods_firms: dict[int, dict[str, Any]] = {}
     excluded_historical_goods_firms: list[dict[str, Any]] = []
     coverage_bps = _PROFILE_SETTINGS["gross_margin_coverage_bps"]
     wage_floor = _PROFILE_SETTINGS["wage_floor_cents"]
     for row in firms:
         firm_id = _integer(row["id"])
+        if firm_id is None:
+            continue
         product = load_json(row["product_json"], {})
         product = product if isinstance(product, Mapping) else {}
         output_per_worker = _positive_integer(product.get("output_per_worker"))
-        if firm_id is None or output_per_worker is None:
-            continue
-        goods_firm_ids.add(firm_id)
         status = str(row["status"] or "")
+        if output_per_worker is None and firm_id not in evidenced_firm_ids:
+            continue
+        recovery_goods_firms[firm_id] = {
+            "status": status,
+            "bankrupt_tick": _integer(row["bankrupt_tick"]),
+        }
         if status in {"bankrupt", "acquired"}:
             excluded_historical_goods_firms.append({"firm_id": firm_id, "status": status})
             continue
+
         price = _positive_integer(product.get("unit_price_cents"))
         production = latest_production.get(firm_id)
         errors: list[str] = []
+        if output_per_worker is None:
+            errors.append("missing_or_invalid_output_per_worker")
         if price is None:
             errors.append("missing_or_invalid_unit_price")
         if production is None:
@@ -553,9 +642,10 @@ def _unit_economics_evidence(
         active_employments = employments.get(firm_id, [])
         if not active_employments:
             errors.append("missing_active_employment")
+
         employment_evidence: list[dict[str, Any]] = []
         wages_ok = True
-        if price is not None and production is not None:
+        if price is not None and production is not None and output_per_worker is not None:
             unit_cost = int(production["unit_cost_cents"])
             for employment in active_employments:
                 wage = _nonnegative_integer(employment["wage_cents"])
@@ -609,43 +699,156 @@ def _unit_economics_evidence(
             "validation_errors": errors,
             "validated": validated,
         })
+
     passed = bool(per_firm) and all(firm["validated"] for firm in per_firm)
-    return passed, per_firm, goods_firm_ids, {
+    return bool(passed and not malformed_producer_events), per_firm, recovery_goods_firms, {
         "active_recovery_managed_goods_firm_count": len(per_firm),
+        "recovery_managed_goods_firm_count": len(recovery_goods_firms),
         "validated_firm_count": sum(firm["validated"] for firm in per_firm),
         "excluded_historical_goods_firms": excluded_historical_goods_firms,
+        "malformed_producer_events": malformed_producer_events,
         "requires_persisted_product_production_and_active_employment": True,
     }
 
 
 def _insolvency_evidence(
-        store: Store, goods_firm_ids: set[int], *, activation_tick: int) -> tuple[bool, dict[str, Any]]:
+        store: Store, recovery_goods_firms: Mapping[int, Mapping[str, Any]], *,
+        activation_tick: int) -> tuple[bool, dict[str, Any]]:
+    """Reconcile recovery-goods firm terminal state to a persisted exit event."""
     try:
         rows = store.query(
-            "SELECT id,tick,subject_id,payload_json FROM events "
-            "WHERE kind='bankruptcy' AND tick>=? ORDER BY tick,id",
+            "SELECT id,tick,kind,subject_id,payload_json FROM events "
+            "WHERE kind IN ('bankruptcy','merger_closed') AND tick>=? ORDER BY tick,id",
             (activation_tick,),
         )
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc)
-    insolvencies: list[dict[str, Any]] = []
-    malformed: list[dict[str, Any]] = []
+
+    bankruptcies_by_firm: dict[int, list[dict[str, Any]]] = {}
+    acquisitions_by_firm: dict[int, list[dict[str, Any]]] = {}
+    unparseable_bankruptcies: list[dict[str, Any]] = []
+    unparseable_acquisitions: list[dict[str, Any]] = []
     for row in rows:
         payload = load_json(row["payload_json"], {})
         payload = payload if isinstance(payload, Mapping) else {}
-        firm_id = _integer(payload.get("firm_id"))
-        if firm_id is None:
-            firm_id = _integer(row["subject_id"])
-        reason = payload.get("reason")
-        event = {"event_id": _integer(row["id"]), "tick": _integer(row["tick"]), "firm_id": firm_id}
-        if firm_id is None or not isinstance(reason, str):
-            malformed.append(event)
-        elif firm_id in goods_firm_ids and reason == "insolvency":
-            insolvencies.append({**event, "reason": reason})
-    return not insolvencies and not malformed, {
-        "recovery_managed_goods_firm_ids": sorted(goods_firm_ids),
+        event_tick = _integer(row["tick"])
+        event_id = _integer(row["id"])
+        if row["kind"] == "bankruptcy":
+            firm_id = _event_firm_id(payload, row["subject_id"])
+            reason = payload.get("reason")
+            event = {"event_id": event_id, "tick": event_tick, "firm_id": firm_id, "reason": reason}
+            if firm_id is not None:
+                bankruptcies_by_firm.setdefault(firm_id, []).append(event)
+            if firm_id is None or event_tick is None or not isinstance(reason, str) or not reason.strip():
+                unparseable_bankruptcies.append({
+                    "event_id": event_id,
+                    "tick": event_tick,
+                    "firm_id": firm_id,
+                })
+        else:
+            firm_id = _integer(payload.get("target_firm_id"))
+            event = {"event_id": event_id, "tick": event_tick, "firm_id": firm_id}
+            if firm_id is not None:
+                acquisitions_by_firm.setdefault(firm_id, []).append(event)
+            if firm_id is None or event_tick is None:
+                unparseable_acquisitions.append(event)
+
+    insolvencies: list[dict[str, Any]] = []
+    for firm_id, events in bankruptcies_by_firm.items():
+        if firm_id not in recovery_goods_firms:
+            continue
+        for event in events:
+            reason = event["reason"]
+            if isinstance(reason, str) and reason.strip().lower() == "insolvency":
+                insolvencies.append({
+                    "event_id": event["event_id"],
+                    "tick": event["tick"],
+                    "firm_id": firm_id,
+                    "reason": reason,
+                })
+
+    state_mismatches: list[dict[str, Any]] = []
+    permitted_departures: list[dict[str, Any]] = []
+    for firm_id in sorted(recovery_goods_firms):
+        state = recovery_goods_firms[firm_id]
+        status = str(state.get("status") or "")
+        if status == "bankrupt":
+            bankrupt_tick = _integer(state.get("bankrupt_tick"))
+            events = bankruptcies_by_firm.get(firm_id, [])
+            if bankrupt_tick is None:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "missing_or_invalid_bankruptcy_tick",
+                    "status": status,
+                    "tick": None,
+                })
+                continue
+            if not events:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "missing_matching_bankruptcy_event",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
+                continue
+            at_bankruptcy_tick = [event for event in events if event["tick"] == bankrupt_tick]
+            if not at_bankruptcy_tick:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "bankruptcy_event_tick_mismatch",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
+                continue
+            valid_events = [
+                event for event in at_bankruptcy_tick
+                if isinstance(event["reason"], str) and event["reason"].strip()
+            ]
+            if not valid_events:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "missing_or_invalid_bankruptcy_reason",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
+                continue
+            reason = str(valid_events[0]["reason"])
+            if reason.strip().lower() != "insolvency":
+                permitted_departures.append({
+                    "firm_id": firm_id,
+                    "kind": "bankruptcy",
+                    "status": status,
+                    "tick": bankrupt_tick,
+                })
+        elif status == "acquired":
+            events = acquisitions_by_firm.get(firm_id, [])
+            if not events:
+                state_mismatches.append({
+                    "firm_id": firm_id,
+                    "reason": "missing_matching_acquisition_event",
+                    "status": status,
+                    "tick": None,
+                })
+                continue
+            permitted_departures.append({
+                "firm_id": firm_id,
+                "kind": "acquisition",
+                "status": status,
+                "tick": events[0]["tick"],
+            })
+
+    return bool(
+        not insolvencies
+        and not unparseable_bankruptcies
+        and not unparseable_acquisitions
+        and not state_mismatches
+    ), {
+        "recovery_managed_goods_firm_ids": sorted(recovery_goods_firms),
         "recovery_managed_insolvencies": insolvencies,
-        "unparseable_bankruptcies": malformed,
+        "unparseable_bankruptcies": unparseable_bankruptcies,
+        "unparseable_acquisitions": unparseable_acquisitions,
+        "state_mismatches": state_mismatches,
+        "permitted_departures": permitted_departures,
     }
 
 
@@ -705,19 +908,39 @@ def _sqlite_evidence(store: Store) -> tuple[bool, dict[str, Any]]:
 
 def _checkpoint_evidence(
         store: Store, run_id: str, config: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """Validate retained canonical checkpoint artifacts without instantiating a World."""
     keep_last = config.get("checkpoint_keep_last")
     checkpoint_dir_value = config.get("checkpoint_dir")
-    if type(keep_last) is not int or keep_last <= 0 or not isinstance(checkpoint_dir_value, str):
+    configured_dir = _logical_checkpoint_directory(checkpoint_dir_value)
+    if (
+            type(keep_last) is not int
+            or keep_last <= 0
+            or not isinstance(checkpoint_dir_value, str)
+            or not checkpoint_dir_value.strip()):
         return False, {
-            "configured_keep_last": keep_last,
-            "checkpoint_dir": checkpoint_dir_value,
+            "configured_keep_last": _json_scalar(keep_last),
+            "configured_checkpoint_dir": configured_dir,
             "error": "checkpoint retention configuration is missing or invalid",
         }
     try:
-        checkpoint_dir = Path(checkpoint_dir_value).resolve()
         rows = store.query("SELECT id,tick,path FROM checkpoints ORDER BY tick,id")
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc)
+
+    checkpoint_dir = _checkpoint_directory_from_rows(
+        rows, run_id=run_id, configured_value=checkpoint_dir_value)
+    if checkpoint_dir is None:
+        return False, {
+            "configured_keep_last": keep_last,
+            "configured_checkpoint_dir": configured_dir,
+            "current_rows": [],
+            "current_row_count": 0,
+            "current_database_artifact_count": 0,
+            "current_manifest_artifact_count": 0,
+            "artifacts_match_current_rows": False,
+            "excluded_rows": [],
+            "error": "checkpoint directory cannot be reconstructed from persisted rows",
+        }
 
     current_rows: list[dict[str, Any]] = []
     excluded_rows: list[dict[str, Any]] = []
@@ -730,9 +953,13 @@ def _checkpoint_evidence(
             excluded_rows.append({"checkpoint_id": row_id, "reason": "invalid_tick"})
             continue
         database = checkpoint_dir / f"{run_id}_t{tick}.db"
-        manifest = Path(f"{database}.manifest.json")
-        if row["path"] != str(database):
-            excluded_rows.append({"checkpoint_id": row_id, "tick": tick, "reason": "outside_current_run_scope"})
+        manifest = checkpoint_manifest_path(database)
+        if type(row["path"]) is not str or row["path"] != str(database):
+            excluded_rows.append({
+                "checkpoint_id": row_id,
+                "tick": tick,
+                "reason": "outside_current_run_scope",
+            })
             continue
         try:
             safe_path = (
@@ -740,21 +967,29 @@ def _checkpoint_evidence(
                 and not database.is_symlink()
                 and not manifest.is_symlink()
                 and database.resolve() == database
+                and manifest.resolve() == manifest
                 and database.is_relative_to(checkpoint_dir)
+                and manifest.is_relative_to(checkpoint_dir)
             )
         except (OSError, RuntimeError, ValueError):
             safe_path = False
         if not safe_path:
-            excluded_rows.append({"checkpoint_id": row_id, "tick": tick, "reason": "unsafe_artifact_path"})
+            excluded_rows.append({
+                "checkpoint_id": row_id,
+                "tick": tick,
+                "reason": "unsafe_artifact_path",
+            })
             continue
-        db_exists = database.is_file()
-        manifest_exists = manifest.is_file()
+        validation = _validate_checkpoint_artifact(
+            database, manifest, run_id=run_id, tick=tick)
         current_rows.append({
             "checkpoint_id": row_id,
             "tick": tick,
-            "path": str(database),
-            "database_exists": db_exists,
-            "manifest_exists": manifest_exists,
+            "artifact": database.name,
+            "manifest": manifest.name,
+            "database_exists": database.is_file(),
+            "manifest_exists": manifest.is_file(),
+            **validation,
         })
         expected_db_paths.add(database)
         expected_manifest_paths.add(manifest)
@@ -776,18 +1011,21 @@ def _checkpoint_evidence(
     artifacts_complete = all(
         row["database_exists"] and row["manifest_exists"] for row in current_rows
     )
+    manifests_valid = all(row["manifest_valid"] for row in current_rows)
     artifacts_match_rows = db_files == expected_db_paths and manifest_files == expected_manifest_paths
     passed = bool(
         current_rows
+        and not excluded_rows
         and len(current_rows) <= keep_last
         and len(db_files) <= keep_last
         and len(manifest_files) <= keep_last
         and artifacts_complete
+        and manifests_valid
         and artifacts_match_rows
     )
     return passed, {
         "configured_keep_last": keep_last,
-        "checkpoint_dir": str(checkpoint_dir),
+        "configured_checkpoint_dir": configured_dir,
         "current_rows": current_rows,
         "current_row_count": len(current_rows),
         "current_database_artifact_count": len(db_files),
@@ -795,6 +1033,161 @@ def _checkpoint_evidence(
         "artifacts_match_current_rows": artifacts_match_rows,
         "excluded_rows": excluded_rows,
     }
+
+
+def _checkpoint_directory_from_rows(
+        rows: list[Any], *, run_id: str, configured_value: str) -> Path | None:
+    configured = Path(configured_value)
+    if configured.is_absolute():
+        try:
+            return configured.resolve()
+        except (OSError, RuntimeError):
+            return None
+
+    candidates: set[Path] = set()
+    for row in rows:
+        tick = _integer(row["tick"])
+        raw_path = row["path"]
+        if tick is None or type(raw_path) is not str:
+            continue
+        database = Path(raw_path)
+        if not database.is_absolute() or database.name != f"{run_id}_t{tick}.db":
+            continue
+        try:
+            resolved = database.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if str(database) != str(resolved):
+            continue
+        candidates.add(resolved.parent)
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _validate_checkpoint_artifact(
+        database: Path, manifest: Path, *, run_id: str, tick: int) -> dict[str, Any]:
+    """Check a finalized DB and its canonical runtime manifest by reading only."""
+    errors: list[str] = []
+    sqlite_evidence = _checkpoint_sqlite_integrity(database)
+    if not database.is_file():
+        errors.append("database_missing")
+    if not manifest.is_file():
+        errors.append("manifest_missing")
+    if any(Path(f"{database}{suffix}").exists() for suffix in ("-wal", "-shm")):
+        errors.append("sqlite_sidecar_present")
+    if not sqlite_evidence["valid"]:
+        errors.append("sqlite_integrity_failed")
+
+    persisted: Any = None
+    raw_manifest = b""
+    if manifest.is_file():
+        try:
+            raw_manifest = manifest.read_bytes()
+            persisted = json.loads(raw_manifest.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            errors.append("manifest_not_valid_json")
+    if not isinstance(persisted, Mapping):
+        if manifest.is_file() and "manifest_not_valid_json" not in errors:
+            errors.append("manifest_not_an_object")
+    else:
+        try:
+            canonical = canonical_json_bytes(persisted)
+        except (TypeError, ValueError):
+            errors.append("manifest_not_canonical")
+        else:
+            if raw_manifest != canonical:
+                errors.append("manifest_not_canonical")
+        if not _exact_value(
+                persisted.get("schema_version"), CHECKPOINT_MANIFEST_VERSION):
+            errors.append("manifest_schema_version_mismatch")
+        if persisted.get("kind") != _CHECKPOINT_MANIFEST_KIND:
+            errors.append("manifest_kind_mismatch")
+        if persisted.get("database") != str(database):
+            errors.append("manifest_database_binding_mismatch")
+        try:
+            database_hash = file_sha256(database) if database.is_file() else None
+        except OSError:
+            database_hash = None
+        if not isinstance(database_hash, str) or persisted.get("database_sha256") != database_hash:
+            errors.append("manifest_database_hash_mismatch")
+        state = persisted.get("state")
+        if (
+                not isinstance(state, Mapping)
+                or state.get("run_id") != run_id
+                or not _exact_value(state.get("tick"), tick)):
+            errors.append("manifest_state_binding_mismatch")
+        if persisted.get("quick_check") != "ok":
+            errors.append("manifest_quick_check_mismatch")
+
+        # Rebuilding is safe only after the immutable integrity reader proved
+        # this is a finalized DELETE-journal artifact with no sidecars.
+        if sqlite_evidence["valid"] and not any(
+                reason in errors for reason in ("database_missing", "sqlite_sidecar_present")):
+            try:
+                rebuilt = build_checkpoint_manifest(database)
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                errors.append("manifest_rebuild_failed")
+            else:
+                if dict(persisted) != rebuilt:
+                    errors.append("manifest_does_not_match_artifact")
+
+    return {
+        "manifest_valid": not errors,
+        "manifest_validation_errors": errors,
+        "sqlite_artifact": {
+            "quick_check": sqlite_evidence["quick_check"],
+            "integrity_check": sqlite_evidence["integrity_check"],
+            "foreign_key_violation_count": sqlite_evidence["foreign_key_violation_count"],
+            "journal_mode": sqlite_evidence["journal_mode"],
+        },
+    }
+
+
+def _checkpoint_sqlite_integrity(database: Path) -> dict[str, Any]:
+    empty = {
+        "valid": False,
+        "quick_check": [],
+        "integrity_check": [],
+        "foreign_key_violation_count": 0,
+        "journal_mode": None,
+    }
+    if not database.is_file():
+        return empty
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            f"{database.as_uri()}?mode=ro&immutable=1", uri=True,
+            isolation_level=None, cached_statements=0)
+        quick_check = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
+        integrity_check = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
+        foreign_key_violation_count = len(
+            connection.execute("PRAGMA foreign_key_check").fetchall())
+        journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        return {
+            "valid": (
+                quick_check == ["ok"]
+                and integrity_check == ["ok"]
+                and foreign_key_violation_count == 0
+                and journal_mode == "delete"
+            ),
+            "quick_check": quick_check,
+            "integrity_check": integrity_check,
+            "foreign_key_violation_count": foreign_key_violation_count,
+            "journal_mode": journal_mode,
+        }
+    except (OSError, sqlite3.Error, ValueError):
+        return empty
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _logical_checkpoint_directory(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        return value
+    return "<absolute>" if not path.name else f"<absolute>/{path.name}"
 
 
 def _receipt_paths(output: Path) -> tuple[Path, Path]:
@@ -833,6 +1226,23 @@ def _integer(value: Any) -> int | None:
     return integer
 
 
+def _exact_value(observed: Any, expected: Any) -> bool:
+    """Compare persisted JSON values without Python's bool/int coercion."""
+    return type(observed) is type(expected) and observed == expected
+
+
+def _exact_settings_match(
+        observed: Mapping[str, Any] | Any, expected: Mapping[str, Any]) -> bool:
+    return isinstance(observed, Mapping) and all(
+        _exact_value(observed.get(name), value) for name, value in expected.items()
+    )
+
+
+def _event_firm_id(payload: Mapping[str, Any], subject_id: Any) -> int | None:
+    firm_id = _integer(payload.get("firm_id"))
+    return firm_id if firm_id is not None else _integer(subject_id)
+
+
 def _nonnegative_integer(value: Any) -> int | None:
     integer = _integer(value)
     return integer if integer is not None and integer >= 0 else None
@@ -857,4 +1267,3 @@ def _json_scalar(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
-

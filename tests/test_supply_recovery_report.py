@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from engine.checkpoint_manifest import (
+    canonical_json_bytes,
+    checkpoint_manifest_path,
+    finalize_sqlite_artifact,
+    write_checkpoint_manifest,
+)
 from engine.store import Store
-from reports.supply_recovery import evaluate_supply_recovery
+from reports import supply_recovery as supply_recovery_report
+from reports.supply_recovery import (
+    evaluate_supply_recovery,
+    render_supply_recovery_markdown,
+)
 from run_config import load_config
 
 
@@ -16,10 +30,10 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_ID = "supply-recovery-fixture"
 
 
-def _config(tmp_path: Path) -> dict:
+def _config(tmp_path: Path, *, checkpoint_dir: str | None = None) -> dict:
     return {
         "llm": {"default_route": {"provider": "scripted", "model": "scripted"}, "routes": {}},
-        "checkpoint_dir": str((tmp_path / "checkpoints").resolve()),
+        "checkpoint_dir": checkpoint_dir or str((tmp_path / "checkpoints").resolve()),
         "checkpoint_every": 100,
         "checkpoint_keep_last": 2,
         "supply_recovery": {
@@ -48,10 +62,38 @@ def _config(tmp_path: Path) -> dict:
     }
 
 
-def _seed_healthy_store(tmp_path: Path) -> Store:
+def _checkpoint_directory_for_fixture(db_path: Path, config: dict) -> Path:
+    configured = Path(config["checkpoint_dir"])
+    return configured if configured.is_absolute() else db_path.parent / configured
+
+
+def _write_valid_checkpoint(store: Store, path: Path, tick: int) -> None:
+    """Create a finalized persisted checkpoint without starting a World."""
+    store.commit()
+    source = sqlite3.connect(store.path)
+    destination = sqlite3.connect(str(path))
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    checkpoint = sqlite3.connect(str(path))
+    try:
+        checkpoint.execute(
+            "UPDATE run_meta SET tick=?, status='paused', active_tick=NULL WHERE id=1",
+            (tick,),
+        )
+        checkpoint.commit()
+    finally:
+        checkpoint.close()
+    finalize_sqlite_artifact(path)
+    write_checkpoint_manifest(path)
+
+
+def _seed_healthy_store(tmp_path: Path, *, checkpoint_dir: str | None = None) -> Store:
     db_path = tmp_path / "supply-recovery.db"
     store = Store(str(db_path))
-    config = _config(tmp_path)
+    config = _config(tmp_path, checkpoint_dir=checkpoint_dir)
     store.init_run_meta(RUN_ID, 17, config)
     store.set_meta(status="finished", tick=1000)
 
@@ -114,12 +156,11 @@ def _seed_healthy_store(tmp_path: Path) -> Store:
                 result_json=json.dumps({"ok": True}),
             )
 
-    checkpoint_dir = Path(config["checkpoint_dir"])
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_directory = _checkpoint_directory_for_fixture(db_path, config)
+    checkpoint_directory.mkdir(parents=True, exist_ok=True)
     for tick in (900, 1000):
-        checkpoint_path = checkpoint_dir / f"{RUN_ID}_t{tick}.db"
-        checkpoint_path.write_bytes(b"fixture checkpoint")
-        Path(f"{checkpoint_path}.manifest.json").write_text("{}\n", encoding="utf-8")
+        checkpoint_path = checkpoint_directory / f"{RUN_ID}_t{tick}.db"
+        _write_valid_checkpoint(store, checkpoint_path, tick)
         store.insert("checkpoints", tick=tick, path=str(checkpoint_path))
 
     store.commit()
@@ -129,6 +170,18 @@ def _seed_healthy_store(tmp_path: Path) -> Store:
 def _close(store: Store) -> None:
     store.commit()
     store.close()
+
+
+def _files_under(directory: Path) -> set[Path]:
+    return {
+        path.relative_to(directory)
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def _checkpoint_path(tmp_path: Path, tick: int) -> Path:
+    return Path(_config(tmp_path)["checkpoint_dir"]) / f"{RUN_ID}_t{tick}.db"
 
 
 def test_profile_is_provider_free_and_has_explicit_recovery_acceptance_settings():
@@ -198,6 +251,234 @@ def test_persisted_healthy_evidence_produces_a_passing_deterministic_receipt(tmp
     assert first["unit_economics"][0]["employment"][0]["wage_cents"] == 15000
 
 
+@pytest.mark.parametrize(
+    ("path", "bad_value"),
+    [
+        (("checkpoint_every",), 0),
+        (("checkpoint_keep_last",), 3),
+        (("checkpoint_every",), True),
+        (("supply_recovery", "wage_floor_cents"), "15000"),
+        (("acceptance", "supply_recovery", "warmup_ticks"), 60.0),
+    ],
+)
+def test_profile_requires_exact_persisted_types_and_checkpoint_settings(
+        tmp_path: Path, path: tuple[str, ...], bad_value: object):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        config = json.loads(store.get_meta()["config_json"])
+        target = config
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = bad_value
+        store.set_meta(config_json=json.dumps(config))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_profile_persisted"] is False
+
+
+def test_report_rejects_non_null_unparseable_active_tick(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.set_meta(status="paused", active_tick="garbage")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["horizon_completed"] is False
+    assert report["evidence"]["horizon"]["active_tick"] == "garbage"
+
+
+def test_active_producer_with_invalid_output_is_retained_as_invalid_evidence(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        product = json.loads(store.query_one("SELECT product_json FROM firms WHERE id=1")["product_json"])
+        product["output_per_worker"] = 0
+        store.execute("UPDATE firms SET product_json=? WHERE id=1", (json.dumps(product),))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["unit_economics"][0]["firm_id"] == 1
+    assert "missing_or_invalid_output_per_worker" in report["unit_economics"][0]["validation_errors"]
+
+
+def test_bankrupt_recovery_goods_firm_requires_matching_bankruptcy_event(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {"firm_id": 1, "reason": "missing_matching_bankruptcy_event", "status": "bankrupt", "tick": 700}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("event_tick", "reason", "mismatch_reason"),
+    [
+        (699, "market_exit", "bankruptcy_event_tick_mismatch"),
+        (700, "", "missing_or_invalid_bankruptcy_reason"),
+    ],
+)
+def test_bankrupt_recovery_goods_firm_requires_matching_tick_and_reason(
+        tmp_path: Path, event_tick: int, reason: str, mismatch_reason: str):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='bankrupt', bankrupt_tick=700 WHERE id=1")
+        store.insert(
+            "events",
+            tick=event_tick,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": 1, "reason": reason}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {"firm_id": 1, "reason": mismatch_reason, "status": "bankrupt", "tick": 700}
+    ]
+
+
+def test_acquired_recovery_goods_firm_requires_matching_acquisition_event(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        acquired_firm_id = store.insert(
+            "firms",
+            name="Acquired Fixtures Co.",
+            sector="manufacturing",
+            status="acquired",
+            founded_tick=0,
+            inventory=0,
+            product_json=json.dumps(
+                {
+                    "good": "acquired-fixtures",
+                    "unit_price_cents": 600,
+                    "base_input_cost_cents": 180,
+                    "output_per_worker": 2,
+                }
+            ),
+        )
+        store.commit()
+
+        without_event = evaluate_supply_recovery(store)
+        store.insert(
+            "events",
+            tick=700,
+            kind="merger_closed",
+            subject_type="firm",
+            subject_id=acquired_firm_id,
+            payload_json=json.dumps(
+                {"target_firm_id": acquired_firm_id, "acquirer_firm_id": 1}
+            ),
+        )
+        store.commit()
+        with_event = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert without_event["passed"] is False
+    assert without_event["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": acquired_firm_id,
+            "reason": "missing_matching_acquisition_event",
+            "status": "acquired",
+            "tick": None,
+        }
+    ]
+    assert with_event["passed"] is True
+    assert with_event["evidence"]["recovery_managed_insolvencies"]["permitted_departures"] == [
+        {
+            "firm_id": acquired_firm_id,
+            "kind": "acquisition",
+            "status": "acquired",
+            "tick": 700,
+        }
+    ]
+
+
+def test_checkpoint_artifact_requires_a_canonical_matching_runtime_manifest(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    checkpoint = _checkpoint_path(tmp_path, 900)
+    manifest = checkpoint_manifest_path(checkpoint)
+    try:
+        persisted = json.loads(manifest.read_text(encoding="utf-8"))
+        persisted["kind"] = "not_a_runtime_checkpoint"
+        manifest.write_bytes(canonical_json_bytes(persisted))
+        tampered = evaluate_supply_recovery(store)
+
+        write_checkpoint_manifest(checkpoint)
+        persisted = json.loads(manifest.read_text(encoding="utf-8"))
+        manifest.write_text(json.dumps(persisted, indent=4) + "\n", encoding="utf-8")
+        noncanonical = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert tampered["passed"] is False
+    assert tampered["checks"]["checkpoint_retention"] is False
+    assert tampered["evidence"]["checkpoints"]["current_rows"][0]["manifest_valid"] is False
+    assert noncanonical["passed"] is False
+    assert noncanonical["checks"]["checkpoint_retention"] is False
+
+
+def test_checkpoint_artifact_rejects_arbitrary_bytes_and_empty_manifest(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    checkpoint = _checkpoint_path(tmp_path, 900)
+    try:
+        checkpoint.write_bytes(b"not a SQLite database")
+        checkpoint_manifest_path(checkpoint).write_bytes(canonical_json_bytes({}))
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["checkpoint_retention"] is False
+    assert report["evidence"]["checkpoints"]["current_rows"][0]["manifest_valid"] is False
+
+
+def test_relative_checkpoint_config_is_db_relative_and_receipts_do_not_leak_absolute_paths(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    store = _seed_healthy_store(tmp_path, checkpoint_dir="relative-checkpoints")
+    other_cwd = tmp_path / "unrelated-cwd"
+    other_cwd.mkdir()
+    try:
+        monkeypatch.chdir(other_cwd)
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    rendered = render_supply_recovery_markdown(report)
+    serialized = json.dumps(report, sort_keys=True)
+    assert report["passed"] is True
+    assert report["evidence"]["checkpoints"]["configured_checkpoint_dir"] == "relative-checkpoints"
+    assert str(tmp_path.resolve()) not in serialized
+    assert str(tmp_path.resolve()) not in rendered
+
+
 def test_report_fails_closed_when_unemployment_rebounds_thirteen_points(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:
@@ -215,6 +496,26 @@ def test_report_fails_closed_when_unemployment_rebounds_thirteen_points(tmp_path
     assert report["checks"]["unemployment_rebound_within_10pp"] is False
     assert report["evidence"]["unemployment"]["worst_window"]["rebound"] == 0.13
     assert report["evidence"]["unemployment"]["latest_window"]["rebound"] == 0.03
+
+
+def test_report_compares_unrounded_unemployment_rebound_to_the_threshold(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute(
+            "UPDATE metrics SET value = ? WHERE name = ? AND tick BETWEEN ? AND ?",
+            (0.5200004, "unemployment", 300, 359),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    worst_window = report["evidence"]["unemployment"]["worst_window"]
+    assert report["passed"] is False
+    assert report["checks"]["unemployment_rebound_within_10pp"] is False
+    assert worst_window["rebound"] == 0.1
+    assert worst_window["raw_rebound"] == pytest.approx(0.1000004)
 
 
 def test_report_accepts_the_completed_headless_paused_boundary(tmp_path: Path):
@@ -264,6 +565,37 @@ def test_report_fails_when_a_historical_purchase_window_exceeds_five_percent(tmp
     assert report["checks"]["buy_goods_rejection_rate_within_5pct"] is False
     assert report["evidence"]["buy_goods_rejection"]["worst_window"]["rate"] > 0.05
     assert report["evidence"]["buy_goods_rejection"]["latest_window"]["rate"] == 0
+
+
+def test_purchase_gate_compares_unrounded_rate_to_the_threshold(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("DELETE FROM action_proposals")
+        for tick, status in ((60, "accepted"), (61, "accepted"), (62, "rejected")):
+            store.insert(
+                "action_proposals",
+                tick=tick,
+                actor_id=1,
+                action_type="buy_goods",
+                payload_json="{}",
+                validation_status=status,
+                result_json=json.dumps({"ok": status == "accepted"}),
+            )
+        store.commit()
+        monkeypatch.setitem(
+            supply_recovery_report._THRESHOLDS,
+            "max_buy_goods_rejection_rate",
+            0.3333333,
+        )
+
+        passed, evidence = supply_recovery_report._buy_goods_evidence(store, 119)
+    finally:
+        _close(store)
+
+    assert passed is False
+    assert evidence["latest_window"]["rate"] == 0.333333
+    assert evidence["latest_window"]["raw_rate"] == pytest.approx(1 / 3)
 
 
 def test_report_fails_for_recovery_managed_goods_firm_insolvency(tmp_path: Path):
@@ -415,10 +747,16 @@ def test_cli_writes_no_receipt_by_default_and_writes_json_and_markdown_on_reques
     store = _seed_healthy_store(tmp_path)
     db_path = Path(store.path)
     _close(store)
+    environment = {
+        **os.environ,
+        "AGENT_ECONOMY_LOG_FILE": str(tmp_path / "unexpected-operational.jsonl"),
+    }
+    before_default = _files_under(tmp_path)
 
     default_result = subprocess.run(
-        [sys.executable, "run.py", "--supply-recovery-report", str(db_path)],
-        cwd=ROOT,
+        [sys.executable, str(ROOT / "run.py"), "--supply-recovery-report", str(db_path)],
+        cwd=tmp_path,
+        env=environment,
         text=True,
         capture_output=True,
         check=False,
@@ -426,19 +764,22 @@ def test_cli_writes_no_receipt_by_default_and_writes_json_and_markdown_on_reques
 
     assert default_result.returncode == 0, default_result.stderr
     assert json.loads(default_result.stdout)["passed"] is True
-    assert not list(tmp_path.glob("receipt.*"))
+    assert _files_under(tmp_path) == before_default
+    assert str(tmp_path.resolve()) not in default_result.stdout
 
     output = tmp_path / "receipt"
+    before_explicit = _files_under(tmp_path)
     explicit_result = subprocess.run(
         [
             sys.executable,
-            "run.py",
+            str(ROOT / "run.py"),
             "--supply-recovery-report",
             str(db_path),
             "--output",
             str(output),
         ],
-        cwd=ROOT,
+        cwd=tmp_path,
+        env=environment,
         text=True,
         capture_output=True,
         check=False,
@@ -448,6 +789,13 @@ def test_cli_writes_no_receipt_by_default_and_writes_json_and_markdown_on_reques
     assert json.loads(explicit_result.stdout)["passed"] is True
     assert (tmp_path / "receipt.json").is_file()
     assert (tmp_path / "receipt.md").is_file()
+    assert _files_under(tmp_path) - before_explicit == {
+        Path("receipt.json"),
+        Path("receipt.md"),
+    }
+    assert str(tmp_path.resolve()) not in explicit_result.stdout
+    assert str(tmp_path.resolve()) not in (tmp_path / "receipt.json").read_text(encoding="utf-8")
+    assert str(tmp_path.resolve()) not in (tmp_path / "receipt.md").read_text(encoding="utf-8")
 
 
 def test_cli_returns_nonzero_for_a_nonpassing_receipt(tmp_path: Path):
@@ -491,4 +839,3 @@ def test_cli_rejects_run_modifiers_for_a_persisted_evidence_receipt(tmp_path: Pa
 
     assert result.returncode != 0
     assert "only accepts --output" in result.stderr
-
