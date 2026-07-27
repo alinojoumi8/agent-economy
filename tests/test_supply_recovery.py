@@ -516,6 +516,28 @@ def test_recovery_founder_clamps_a_price_cut_to_the_floor_wage_margin():
     assert prices == [{"type": "set_price", "firm_id": 17, "price": 199}]
 
 
+def test_recovery_founder_uses_each_incumbent_pay_interval_for_price_margin():
+    context = _recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+    )
+    firm = context["my_firm"]
+    firm["price"] = 900
+    firm["unit_cost"] = 120
+    firm["employee_roster"] = [{"wage": 20_000, "pay_interval_ticks": 5}]
+    firm["recovery"]["inputs"].update({
+        "price_cents": 900,
+        "input_cost_cents": 120,
+        "output_per_worker": 8,
+        "pay_interval_ticks": 30,
+    })
+
+    decision = founder_decision(context)
+
+    prices = [action for action in decision["actions"] if action["type"] == "set_price"]
+    assert prices == [{"type": "set_price", "firm_id": 17, "price": 745}]
+
+
 def test_recovery_founder_posts_one_growth_vacancy_but_not_a_duplicate():
     growing = founder_decision(_recovery_founder_context(
         allowed_new_hires=1,

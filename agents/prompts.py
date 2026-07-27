@@ -1380,8 +1380,10 @@ class ContextBuilder:
             "employment_id": int(row["employment_id"]),
             "agent_id": int(row["agent_id"]), "occupation": row["occupation"],
             "wage": int(row["wage_cents"]),
+            "pay_interval_ticks": int(row["pay_interval_ticks"]),
         } for row in self.store.query(
-            "SELECT e.id AS employment_id,e.agent_id,e.wage_cents,a.occupation "
+            "SELECT e.id AS employment_id,e.agent_id,e.wage_cents,e.pay_interval_ticks,"
+            "a.occupation "
             "FROM employments e JOIN agents a ON a.id=e.agent_id "
             "WHERE e.firm_id=? AND e.status='active' ORDER BY e.id", (firm_id,))]
         sales = int(self.store.scalar(

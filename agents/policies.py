@@ -705,18 +705,26 @@ def founder_decision(context: dict) -> dict:
     if recovery_profile is not None:
         floor, settings, inputs, _ = recovery_profile
         try:
-            active_wages = [
-                int(row.get("wage", 0))
-                for row in firm.get("employee_roster", [])
-                if isinstance(row, dict)
-            ]
-            required_wage = max([floor, *active_wages])
-            minimum_price = minimum_viable_price_cents(
+            minimum_prices = [minimum_viable_price_cents(
                 input_cost_cents=int(inputs["input_cost_cents"]),
                 output_per_worker=int(inputs["output_per_worker"]),
                 pay_interval_ticks=int(inputs["pay_interval_ticks"]),
-                wage_cents=required_wage,
+                wage_cents=floor,
                 settings=settings,
+            )]
+            for row in firm.get("employee_roster", []):
+                if not isinstance(row, dict):
+                    raise ValueError("employee roster entry is invalid")
+                minimum_prices.append(minimum_viable_price_cents(
+                    input_cost_cents=int(inputs["input_cost_cents"]),
+                    output_per_worker=int(inputs["output_per_worker"]),
+                    pay_interval_ticks=int(row["pay_interval_ticks"]),
+                    wage_cents=int(row["wage"]),
+                    settings=settings,
+                ))
+            minimum_price = (
+                None if any(value is None for value in minimum_prices)
+                else max(int(value) for value in minimum_prices)
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             minimum_price = None

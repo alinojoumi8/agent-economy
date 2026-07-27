@@ -287,7 +287,7 @@ def test_recovery_runtime_allows_a_feasible_floor_wage_action(tmp_path):
         world.store.close()
 
 
-def test_recovery_runtime_rejects_a_price_below_active_wage_margin(tmp_path):
+def test_recovery_runtime_uses_persisted_active_pay_interval_for_price_margin(tmp_path):
     profile = {
         "enabled": True,
         "wage_floor_cents": 15_000,
@@ -312,7 +312,8 @@ def test_recovery_runtime_rejects_a_price_below_active_wage_margin(tmp_path):
         })
         world.store.update("firms", int(firm["id"]), product_json=json.dumps(product))
         world.store.execute(
-            "UPDATE employments SET wage_cents=20000 WHERE firm_id=? AND status='active'",
+            "UPDATE employments SET wage_cents=20000,pay_interval_ticks=5 "
+            "WHERE firm_id=? AND status='active'",
             (int(firm["id"]),),
         )
 
@@ -320,7 +321,7 @@ def test_recovery_runtime_rejects_a_price_below_active_wage_margin(tmp_path):
             "agent_id": int(firm["founder_agent_id"]),
             "purpose": "founder",
             "envelope": {"actions": [{
-                "type": "set_price", "firm_id": int(firm["id"]), "price": 224,
+                "type": "set_price", "firm_id": int(firm["id"]), "price": 225,
             }]},
             "llm_call_id": None,
         }])

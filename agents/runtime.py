@@ -976,21 +976,28 @@ class AgentRuntime:
             return None, "recovery pricing inputs are invalid"
         try:
             floor = int(settings["wage_floor_cents"])
-            active_wage = max(0, int(self.store.scalar(
-                "SELECT COALESCE(MAX(wage_cents),0) FROM employments "
-                "WHERE firm_id=? AND status='active'", (firm_id,), default=0) or 0))
-            minimum_price = minimum_viable_price_cents(
+            minimum_prices = [minimum_viable_price_cents(
                 input_cost_cents=int(inputs["input_cost_cents"]),
                 output_per_worker=int(inputs["output_per_worker"]),
                 pay_interval_ticks=int(inputs["pay_interval_ticks"]),
-                wage_cents=max(floor, active_wage),
+                wage_cents=floor,
                 settings=settings,
-            )
+            )]
+            for employment in self.store.query(
+                    "SELECT wage_cents,pay_interval_ticks FROM employments "
+                    "WHERE firm_id=? AND status='active' ORDER BY id", (firm_id,)):
+                minimum_prices.append(minimum_viable_price_cents(
+                    input_cost_cents=int(inputs["input_cost_cents"]),
+                    output_per_worker=int(inputs["output_per_worker"]),
+                    pay_interval_ticks=int(employment["pay_interval_ticks"]),
+                    wage_cents=int(employment["wage_cents"]),
+                    settings=settings,
+                ))
         except (KeyError, TypeError, ValueError):
             return None, "recovery pricing inputs are invalid"
-        if minimum_price is None:
+        if any(value is None for value in minimum_prices):
             return None, "nonpositive output cannot support a recovery wage"
-        return minimum_price, None
+        return max(int(value) for value in minimum_prices), None
 
     def _pre_recovery_employment_action(
             self, tick: int, actor_id: int, action: dict, phase: str) -> str | None:
