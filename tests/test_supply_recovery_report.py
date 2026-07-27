@@ -21,6 +21,7 @@ from engine.store import Store
 from reports import supply_recovery as supply_recovery_report
 from reports.supply_recovery import (
     evaluate_supply_recovery,
+    evaluate_supply_recovery_db,
     render_supply_recovery_markdown,
 )
 from run_config import load_config
@@ -281,6 +282,60 @@ def test_profile_requires_exact_persisted_types_and_checkpoint_settings(
     assert report["checks"]["recovery_profile_persisted"] is False
 
 
+def test_profile_rejects_extra_supply_recovery_acceptance_setting(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        config = json.loads(store.get_meta()["config_json"])
+        config["acceptance"]["supply_recovery"]["unreviewed_override"] = 1
+        store.set_meta(config_json=json.dumps(config))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_profile_persisted"] is False
+
+
+def test_report_db_rejects_newer_schema_before_evaluation(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    database = Path(store.path)
+    try:
+        store.set_meta(schema_version=999)
+        store.commit()
+    finally:
+        _close(store)
+
+    report = evaluate_supply_recovery_db(database)
+
+    assert report["passed"] is False
+    assert report["evidence"]["error"] == "run database schema is incompatible"
+
+
+def test_report_db_missing_active_tick_returns_a_failed_receipt(tmp_path: Path):
+    database = tmp_path / "missing-active-tick.db"
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute(
+            "CREATE TABLE run_meta ("
+            "id INTEGER PRIMARY KEY,run_id TEXT,seed INTEGER,schema_version INTEGER,"
+            "config_json TEXT,status TEXT,tick INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO run_meta VALUES (1,?,?,?,?,?,?)",
+            (RUN_ID, 17, 17, json.dumps({}), "finished", 1000),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    report = evaluate_supply_recovery_db(database)
+
+    assert report["passed"] is False
+    assert report["evidence"]["error"] == "run metadata is missing required fields: active_tick"
+
+
 def test_report_rejects_non_null_unparseable_active_tick(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:
@@ -328,6 +383,113 @@ def test_bankrupt_recovery_goods_firm_requires_matching_bankruptcy_event(tmp_pat
     assert report["checks"]["recovery_managed_insolvency_absent"] is False
     assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
         {"firm_id": 1, "reason": "missing_matching_bankruptcy_event", "status": "bankrupt", "tick": 700}
+    ]
+
+
+def test_recovery_goods_firm_rejects_an_unknown_status(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE firms SET status='mystery' WHERE id=1")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": 1,
+            "reason": "unknown_recovery_goods_firm_status",
+            "status": "mystery",
+            "tick": None,
+        }
+    ]
+
+
+def test_live_recovery_goods_firm_rejects_noninsolvency_bankruptcy_event(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.insert(
+            "events",
+            tick=700,
+            kind="bankruptcy",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": 1, "reason": "market_exit"}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["recovery_managed_insolvency_absent"] is False
+    assert report["evidence"]["recovery_managed_insolvencies"]["state_mismatches"] == [
+        {
+            "firm_id": 1,
+            "reason": "bankruptcy_event_requires_bankrupt_status",
+            "status": "active",
+            "tick": 700,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("production", {"firm_id": 999, "units": 1, "unit_cost_cents": 180}),
+        ("goods_sale", {"firm_id": 999, "units": 1}),
+    ],
+)
+def test_report_rejects_orphan_persisted_producer_identity(
+        tmp_path: Path, kind: str, payload: dict[str, int]):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.insert(
+            "events",
+            tick=1000,
+            kind=kind,
+            subject_type="firm",
+            subject_id=999,
+            payload_json=json.dumps(payload),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["orphan_producer_events"] == [
+        {"event_id": 2, "firm_id": 999, "kind": kind, "tick": 1000}
+    ]
+
+
+def test_report_rejects_malformed_explicit_producer_identity(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.insert(
+            "events",
+            tick=1000,
+            kind="goods_sale",
+            subject_type="firm",
+            subject_id=1,
+            payload_json=json.dumps({"firm_id": "not-an-id", "units": 1}),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is False
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["malformed_producer_events"] == [
+        {"event_id": 2, "firm_id": None, "kind": "goods_sale", "tick": 1000}
     ]
 
 
