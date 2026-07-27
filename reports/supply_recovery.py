@@ -1083,12 +1083,39 @@ def _insolvency_evidence(
                     "terminal_tick": _json_scalar(terminal_tick_raw),
                     "tick": event["tick"],
                 })
+            elif terminal_tick > completed_tick:
+                event["acquirer_is_viable"] = False
+                invalid_merger_acquirers.append({
+                    "acquirer_firm_id": acquirer_firm_id,
+                    "event_id": event["event_id"],
+                    "reason": "acquirer_terminal_status_after_completed_horizon",
+                    "terminal_kind": "bankruptcy",
+                    "terminal_tick": terminal_tick,
+                    "tick": event["tick"],
+                })
             elif terminal_tick < event["tick"]:
                 event["acquirer_is_viable"] = False
                 invalid_merger_acquirers.append({
                     "acquirer_firm_id": acquirer_firm_id,
                     "event_id": event["event_id"],
                     "reason": "acquirer_terminal_before_merger",
+                    "terminal_kind": "bankruptcy",
+                    "terminal_tick": terminal_tick,
+                    "tick": event["tick"],
+                })
+            elif terminal_tick == event["tick"] and not any(
+                    candidate["kind"] == "bankruptcy"
+                    and candidate["tick"] == terminal_tick
+                    and candidate["identity_is_valid"]
+                    and isinstance(candidate["reason"], str)
+                    and candidate["reason"].strip()
+                    and _terminal_event_follows(candidate, event)
+                    for candidate in terminal_events_by_firm.get(acquirer_firm_id, [])):
+                event["acquirer_is_viable"] = False
+                invalid_merger_acquirers.append({
+                    "acquirer_firm_id": acquirer_firm_id,
+                    "event_id": event["event_id"],
+                    "reason": "acquirer_terminal_status_has_unprovable_timing",
                     "terminal_kind": "bankruptcy",
                     "terminal_tick": terminal_tick,
                     "tick": event["tick"],
@@ -1109,6 +1136,15 @@ def _insolvency_evidence(
                     "terminal_tick": None,
                     "tick": event["tick"],
                 })
+        elif state["status"] not in _ACTIVE_RECOVERY_FIRM_STATUSES:
+            event["acquirer_is_viable"] = False
+            invalid_merger_acquirers.append({
+                "acquirer_firm_id": acquirer_firm_id,
+                "event_id": event["event_id"],
+                "reason": "acquirer_not_operating_at_merger",
+                "status": state["status"],
+                "tick": event["tick"],
+            })
 
     insolvencies: list[dict[str, Any]] = []
     for firm_id, events in bankruptcies_by_firm.items():
@@ -1381,6 +1417,15 @@ def _checkpoint_evidence(
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
         return False, _query_error_evidence(exc)
 
+    invalid_tick_rows = [
+        {
+            "checkpoint_id": _integer(row["id"]),
+            "raw_tick": _json_scalar(row["tick"]),
+            "reason": "invalid_tick",
+        }
+        for row in rows
+        if _strict_tick(row["tick"]) is None
+    ]
     checkpoint_dir = _checkpoint_directory_from_rows(
         rows, run_id=run_id, configured_value=checkpoint_dir_value)
     if checkpoint_dir is None:
@@ -1392,12 +1437,12 @@ def _checkpoint_evidence(
             "current_database_artifact_count": 0,
             "current_manifest_artifact_count": 0,
             "artifacts_match_current_rows": False,
-            "excluded_rows": [],
+            "excluded_rows": invalid_tick_rows,
             "error": "checkpoint directory cannot be reconstructed from persisted rows",
         }
 
     current_rows: list[dict[str, Any]] = []
-    excluded_rows: list[dict[str, Any]] = []
+    excluded_rows: list[dict[str, Any]] = list(invalid_tick_rows)
     expected_db_paths: set[Path] = set()
     expected_manifest_paths: set[Path] = set()
     for row in rows:
@@ -1405,11 +1450,6 @@ def _checkpoint_evidence(
         tick = _strict_tick(tick_raw)
         row_id = _integer(row["id"])
         if tick is None:
-            excluded_rows.append({
-                "checkpoint_id": row_id,
-                "raw_tick": _json_scalar(tick_raw),
-                "reason": "invalid_tick",
-            })
             continue
         database = checkpoint_dir / f"{run_id}_t{tick}.db"
         manifest = checkpoint_manifest_path(database)
@@ -1718,6 +1758,20 @@ def _terminal_event_precedes(
     terminal_id = _strict_entity_id(terminal_event.get("event_id"))
     merger_id = _strict_entity_id(merger_event.get("event_id"))
     return terminal_id is not None and merger_id is not None and terminal_id < merger_id
+
+
+def _terminal_event_follows(
+        terminal_event: Mapping[str, Any], merger_event: Mapping[str, Any]) -> bool:
+    """Use persisted event order only for terminal-state timing."""
+    terminal_tick = terminal_event["tick"]
+    merger_tick = merger_event["tick"]
+    if terminal_tick > merger_tick:
+        return True
+    if terminal_tick != merger_tick:
+        return False
+    terminal_id = _strict_entity_id(terminal_event.get("event_id"))
+    merger_id = _strict_entity_id(merger_event.get("event_id"))
+    return terminal_id is not None and merger_id is not None and terminal_id > merger_id
 
 
 def _strict_entity_id(value: Any) -> int | None:
