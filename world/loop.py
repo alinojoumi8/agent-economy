@@ -994,6 +994,12 @@ class World:
                     (created_at, int(existing["id"])),
                 )
             self.store.commit()
+            try:
+                keep_last = int(self.config.get("checkpoint_keep_last", 0) or 0)
+            except (TypeError, ValueError):
+                keep_last = 0
+            if keep_last > 0:
+                self._prune_checkpoints(run_id, keep_last)
             operational_log(logger, logging.INFO, "world.checkpoint.created",
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)
@@ -1003,6 +1009,59 @@ class World:
                             run_id=self.gateway.run_id, tick=tick, reason=reason,
                             error_type=type(exc).__name__, error=str(exc))
             return None
+
+    def _prune_checkpoints(self, run_id: str, keep_last: int) -> None:
+        """Retain only the newest safe, current-run checkpoint rows and artifacts."""
+        if keep_last <= 0:
+            return
+        checkpoint_dir = Path(
+            self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
+        candidates = []
+        for row in self.store.query("SELECT id,tick,path FROM checkpoints"):
+            try:
+                tick = int(row["tick"])
+                stored_path = Path(str(row["path"])).resolve()
+                expected_path = checkpoint_dir / f"{run_id}_t{tick}.db"
+                resolved_expected = expected_path.resolve()
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if (not resolved_expected.is_relative_to(checkpoint_dir)
+                    or stored_path != resolved_expected):
+                continue
+            candidates.append((row, expected_path))
+        candidates.sort(
+            key=lambda item: (int(item[0]["tick"]), int(item[0]["id"])),
+            reverse=True)
+        retained_paths = {path for _, path in candidates[:keep_last]}
+        for row, database in candidates[keep_last:]:
+            if database not in retained_paths:
+                deletion_failed = False
+                for artifact in (Path(f"{database}.manifest.json"), database):
+                    try:
+                        artifact.unlink()
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        self.store.log_event(
+                            self.store.tick,
+                            "checkpoint_prune_failed",
+                            {
+                                "checkpoint_id": int(row["id"]),
+                                "checkpoint_tick": int(row["tick"]),
+                                "path": artifact.name,
+                                "error": type(exc).__name__,
+                                "error_type": type(exc).__name__,
+                            },
+                            importance=2.0,
+                        )
+                        self.store.commit()
+                        deletion_failed = True
+                        break
+                if deletion_failed:
+                    continue
+            self.store.execute(
+                "DELETE FROM checkpoints WHERE id=?", (int(row["id"]),))
+            self.store.commit()
 
     def _save_prng_state(self) -> None:
         engine_state = _prng_state(self.engine_prng)
