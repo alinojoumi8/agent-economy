@@ -832,6 +832,7 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--report": args.report,
         "--export-static": args.export_static,
         "--acceptance-report": args.acceptance_report,
+        "--supply-recovery-report": args.supply_recovery_report,
         "--acceptance-run": args.acceptance_run,
         "--replay": args.replay,
         "--fork": args.fork,
@@ -867,6 +868,25 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
             parser.error(
                 "--oracle-calibration-report is mutually exclusive with "
                 + ", ".join(incompatible))
+
+
+def _validate_supply_recovery_report_cli(
+        args, parser: argparse.ArgumentParser) -> None:
+    """Keep a persisted-evidence receipt command free of ignored run modifiers."""
+    if not args.supply_recovery_report:
+        return
+    allowed = {"--supply-recovery-report", "--output"}
+    incompatible = []
+    for token in sys.argv[1:]:
+        if not token.startswith("-"):
+            continue
+        option = token.split("=", 1)[0]
+        if option not in allowed:
+            incompatible.append(option)
+    if incompatible:
+        parser.error(
+            "--supply-recovery-report only accepts --output; incompatible options: "
+            + ", ".join(incompatible))
 
 
 def _initialize_claimed_oracle_genesis(
@@ -1077,6 +1097,8 @@ def main() -> None:
                     help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
+    ap.add_argument("--supply-recovery-report", default=None,
+                    help="evaluate a supply-recovery run id or .db path from persisted evidence")
     ap.add_argument("--oracle-calibration-report", default=None,
                     help="evaluate an explicit Oracle campaign manifest and write receipts")
     ap.add_argument("--oracle-campaign-run", action="store_true",
@@ -1106,9 +1128,16 @@ def main() -> None:
         ap.error("--activate-llm-output-budgets requires --resume or --fork")
     if args.activate_llm_output_budgets and args.replay:
         ap.error("--activate-llm-output-budgets cannot modify a replay")
+    _validate_supply_recovery_report_cli(args, ap)
     _validate_oracle_cli_exclusivity(args, ap)
-    if args.acceptance_report and args.oracle_calibration_report:
-        ap.error("--acceptance-report and --oracle-calibration-report are mutually exclusive")
+    report_modes = {
+        "--acceptance-report": args.acceptance_report,
+        "--supply-recovery-report": args.supply_recovery_report,
+        "--oracle-calibration-report": args.oracle_calibration_report,
+    }
+    if sum(bool(value) for value in report_modes.values()) > 1:
+        ap.error("--acceptance-report, --supply-recovery-report, and "
+                 "--oracle-calibration-report are mutually exclusive")
     if args.acceptance_run and args.oracle_campaign_run:
         ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
     if args.oracle_campaign_run and args.serve:
@@ -1120,6 +1149,7 @@ def main() -> None:
             "counterfactual" if args.counterfactual else
             "static_export" if args.export_static else "experiment" if args.experiment else
             "oracle_calibration_report" if args.oracle_calibration_report else
+            "supply_recovery_report" if args.supply_recovery_report else
             "acceptance_report" if args.acceptance_report else
             "oracle_campaign_run" if args.oracle_campaign_run else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
@@ -1183,6 +1213,20 @@ def main() -> None:
         target = Path(args.output) if args.output else Path("static_exports") / f"{store.get_meta()['run_id']}.html"
         print(export_static_replay(store, target))
         store.close()
+        return
+
+    if args.supply_recovery_report:
+        from reports.supply_recovery import (
+            resolve_supply_recovery_db,
+            write_supply_recovery_receipt,
+        )
+        receipt = write_supply_recovery_receipt(
+            resolve_supply_recovery_db(args.supply_recovery_report),
+            output=args.output,
+        )
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+        if not receipt["passed"]:
+            raise SystemExit(5)
         return
 
     if args.acceptance_report:
