@@ -57,6 +57,21 @@ async def _gather_fail_fast(coroutines):
         raise
 
 
+def _normalize_model_action(action: object) -> object:
+    """Unwrap the common model-only ``{"type": ..., "params": {...}}`` shape."""
+    if not isinstance(action, dict):
+        return action
+    params = action.get("params")
+    if not isinstance(params, dict) or "payload" in action:
+        return action
+    # Ambiguous top-level/nested collisions must still fail strict validation.
+    if any(key in action for key in params):
+        return action
+    normalized = {key: value for key, value in action.items() if key != "params"}
+    normalized.update(params)
+    return normalized
+
+
 class AgentRuntime:
     def __init__(self, economy: Economy, gateway: Gateway, config: dict):
         self.e = economy
@@ -338,6 +353,8 @@ class AgentRuntime:
             rationale = str(d.get("reasoning") or "").strip()[:500]
             attributed_actions = []
             for action in actions:
+                if model_call_id is not None:
+                    action = _normalize_model_action(action)
                 if not isinstance(action, dict):
                     attributed_actions.append(action)
                     continue
@@ -599,18 +616,21 @@ class AgentRuntime:
                 source_llm_call_id=llm_call_id)
             self.mem.write_summary(aid, tick, summary, importance)
 
-        if tick % 7 == 0:
+        rollup_every = max(1, int(
+            self.config.get("cognition", {}).get("memory_rollup_every", 7)))
+        if tick % rollup_every == 0:
+            rollup_start = tick - rollup_every + 1
             if living_world:
                 weekly_rows = self.store.query(
                     "SELECT DISTINCT m.agent_id,a.population_tier FROM memories m "
                     "JOIN agents a ON a.id=m.agent_id WHERE m.kind='summary' "
                     "AND m.demoted=0 AND m.tick BETWEEN ? AND ? ORDER BY m.agent_id",
-                    (tick - 6, tick))
+                    (rollup_start, tick))
             else:
                 weekly_rows = self.store.query(
                     "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
                     "WHERE kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
-                    "ORDER BY agent_id", (tick - 6, tick))
+                    "ORDER BY agent_id", (rollup_start, tick))
             weekly_ids = [
                 int(r["agent_id"]) for r in weekly_rows
                 if not living_world or r["population_tier"] == "core"
@@ -622,7 +642,7 @@ class AgentRuntime:
                 daily = self.store.query(
                     "SELECT text,importance FROM memories WHERE agent_id=? "
                     "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
-                    "ORDER BY tick,id", (aid, tick - 6, tick))
+                    "ORDER BY tick,id", (aid, rollup_start, tick))
                 if daily:
                     summary = "Week summary: " + " | ".join(
                         str(item["text"]) for item in daily)[:1800]

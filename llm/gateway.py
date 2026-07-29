@@ -1745,27 +1745,75 @@ class Gateway:
                     attempt_ids.append(attempt_id)
                 last_error = error
                 continue
-            try:
-                result, attempt_id = await self._call_live_target(
-                    plan, target, req, messages, temperature,
-                    provider_cache_key, target_deadline)
-                if attempt_id is not None:
-                    attempt_ids.append(attempt_id)
-                return result, len(attempt_ids), target, attempt_ids
-            except _RouteAttemptFailed as failure:
-                if failure.attempt_id is not None:
-                    attempt_ids.append(failure.attempt_id)
-                last_error = failure.error
-                if isinstance(last_error, GatewayInterrupted):
-                    raise last_error
-                operational_log(
-                    logger, logging.WARNING, "llm.route.attempt_failed",
-                    run_id=self.run_id, provider=target.provider, model=target.model,
-                    role=req.role, purpose=req.purpose, agent_id=req.agent_id,
-                    tick=req.tick, route_index=target.route_index,
-                    fallback_next=target.route_index == 0 and len(selected_targets) > 1,
-                    error_type=type(last_error).__name__,
-                    error=sanitize_provider_error(last_error))
+            retry_count = 0
+            while True:
+                try:
+                    result, attempt_id = await self._call_live_target(
+                        plan, target, req, messages, temperature,
+                        provider_cache_key, target_deadline)
+                    if attempt_id is not None:
+                        attempt_ids.append(attempt_id)
+                    return result, len(attempt_ids), target, attempt_ids
+                except _RouteAttemptFailed as failure:
+                    if failure.attempt_id is not None:
+                        attempt_ids.append(failure.attempt_id)
+                    last_error = failure.error
+                    if isinstance(last_error, GatewayInterrupted):
+                        raise last_error
+                    retryable_failure = (
+                        isinstance(last_error, asyncio.TimeoutError)
+                        or (
+                            isinstance(last_error, AdapterHTTPError)
+                            and not last_error.rate_limited
+                            and (
+                                last_error.status_code == 408
+                                or 500 <= last_error.status_code < 600
+                            )
+                        )
+                    )
+                    if (
+                        retryable_failure
+                        and retry_count < self.provider_retries
+                        and time.monotonic() < target_deadline
+                    ):
+                        retry_count += 1
+                        operational_log(
+                            logger, logging.WARNING, "llm.request.retry",
+                            run_id=self.run_id, provider=target.provider,
+                            model=target.model, role=req.role,
+                            purpose=req.purpose, agent_id=req.agent_id,
+                            tick=req.tick, attempt=retry_count,
+                            next_attempt=retry_count + 1,
+                            error_type=type(last_error).__name__,
+                            error=sanitize_provider_error(last_error))
+                        retry_delay = min(
+                            0.25 * (2 ** (retry_count - 1)), 2.0,
+                            max(0.0, target_deadline - time.monotonic()))
+                        if retry_delay > 0:
+                            try:
+                                await asyncio.wait_for(
+                                    self._interrupt_event.wait(),
+                                    timeout=retry_delay,
+                                )
+                            except asyncio.TimeoutError:
+                                pass
+                            else:
+                                raise GatewayInterrupted(
+                                    "operator interrupted "
+                                    f"{target.provider} retry")
+                        continue
+                    operational_log(
+                        logger, logging.WARNING, "llm.route.attempt_failed",
+                        run_id=self.run_id, provider=target.provider,
+                        model=target.model, role=req.role,
+                        purpose=req.purpose, agent_id=req.agent_id,
+                        tick=req.tick, route_index=target.route_index,
+                        fallback_next=(
+                            target.route_index == 0
+                            and len(selected_targets) > 1),
+                        error_type=type(last_error).__name__,
+                        error=sanitize_provider_error(last_error))
+                    break
         if last_error is None:
             last_error = RuntimeError("route plan contained no live targets")
         raise _RoutePlanExhausted(last_error, attempt_ids)

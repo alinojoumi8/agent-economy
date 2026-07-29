@@ -120,8 +120,9 @@ def _tighten_resume_operational_limits(
 
     Provider identities, models, routes, prompts, and prices remain owned by
     the persisted run. A resume profile may reduce concurrency, make the
-    resource guard more conservative, or lengthen the logical deadline needed
-    for the resulting bounded queues to drain.
+    resource guard more conservative, or lengthen operational timeouts and the
+    logical deadline needed for the resulting bounded queues to drain. A
+    selected profile may also add bounded transient-provider retries.
     """
     changes: dict[str, object] = {}
 
@@ -142,6 +143,12 @@ def _tighten_resume_operational_limits(
             stored_llm["logical_deadline_s"] = selected_deadline
             changes["llm.logical_deadline_s"] = selected_deadline
 
+        current_retries = int(stored_llm.get("provider_retries", 0) or 0)
+        selected_retries = int(selected_llm.get("provider_retries", 0) or 0)
+        if selected_retries > current_retries:
+            stored_llm["provider_retries"] = selected_retries
+            changes["llm.provider_retries"] = selected_retries
+
         stored_providers = stored_llm.get("providers")
         selected_providers = selected_llm.get("providers")
         if isinstance(stored_providers, dict) and isinstance(selected_providers, dict):
@@ -156,6 +163,53 @@ def _tighten_resume_operational_limits(
                 if selected > 0 and (current <= 0 or selected < current):
                     stored_provider["concurrency"] = selected
                     changes[f"llm.providers.{provider}.concurrency"] = selected
+
+                current_timeout = float(
+                    stored_provider.get("timeout_s", 0) or 0)
+                selected_timeout = float(
+                    selected_provider.get("timeout_s", 0) or 0)
+                if selected_timeout > current_timeout:
+                    stored_provider["timeout_s"] = selected_timeout
+                    changes[
+                        f"llm.providers.{provider}.timeout_s"
+                    ] = selected_timeout
+
+        stored_cohorts = stored_llm.get("citizen_model_cohorts")
+        selected_cohorts = selected_llm.get("citizen_model_cohorts")
+        if isinstance(stored_cohorts, list) and isinstance(selected_cohorts, list):
+            selected_by_name = {
+                str(cohort.get("name")): cohort
+                for cohort in selected_cohorts
+                if isinstance(cohort, dict) and cohort.get("name")
+            }
+            for stored_cohort in stored_cohorts:
+                if not isinstance(stored_cohort, dict):
+                    continue
+                cohort_name = str(stored_cohort.get("name") or "")
+                selected_cohort = selected_by_name.get(cohort_name)
+                if not isinstance(selected_cohort, dict):
+                    continue
+                for route_name in ("primary", "fallback"):
+                    stored_route = stored_cohort.get(route_name)
+                    selected_route = selected_cohort.get(route_name)
+                    if not isinstance(stored_route, dict) or not isinstance(
+                            selected_route, dict):
+                        continue
+                    if (
+                        stored_route.get("provider") != selected_route.get("provider")
+                        or stored_route.get("model") != selected_route.get("model")
+                    ):
+                        continue
+                    current_timeout = float(
+                        stored_route.get("timeout_s", 0) or 0)
+                    selected_timeout = float(
+                        selected_route.get("timeout_s", 0) or 0)
+                    if selected_timeout > current_timeout:
+                        stored_route["timeout_s"] = selected_timeout
+                        changes[
+                            "llm.citizen_model_cohorts."
+                            f"{cohort_name}.{route_name}.timeout_s"
+                        ] = selected_timeout
 
     stored_guard = stored_config.setdefault("resource_guard", {})
     selected_guard = selected_config.get("resource_guard")

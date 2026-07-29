@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agents.memory import Memory
 from agents.policies import scripted_decision
 from agents.prompts import ContextBuilder
+from agents.runtime import AgentRuntime, _normalize_model_action
+from causal import CausalLinkService
 from communications.delivery import CommunicationDelivery
 from communications.handlers import CommunicationRejected, CommunicationService
 from communications.policy import (
@@ -103,6 +106,66 @@ def test_direct_message_is_private_until_exactly_once_next_tick_delivery(economy
     assert policy.can_read_field(
         recipient_principal, message_id, MessageField.BODY, 2).basis is (
             AccessBasis.DIRECT_DELIVERY)
+
+
+def test_model_nested_params_are_normalized_before_communication_execution(economy):
+    _, sender, recipient, _ = _agents(economy)
+    executor = _semantics8(economy)
+    runtime = AgentRuntime.__new__(AgentRuntime)
+    runtime.store = economy.store
+    runtime.config = economy.config
+    runtime.e = economy
+    runtime.executor = executor
+    runtime.causal = CausalLinkService(economy.store)
+    runtime.participant = SimpleNamespace(complete=lambda *_args: None)
+    runtime.mem = Memory(economy.store, economy.config)
+
+    nested = {
+        "type": "send_message",
+        "params": {
+            "audience": {"kind": "direct", "agent_ids": [recipient]},
+            "subject": "Live provider compatibility",
+            "body": "This model-authored message should reach the command boundary.",
+        },
+    }
+    assert _normalize_model_action(nested) == {
+        "type": "send_message",
+        **nested["params"],
+    }
+    model_call_id = economy.store.insert(
+        "llm_calls",
+        tick=1,
+        agent_id=sender,
+        role="citizen",
+        provider="minimax",
+        model="MiniMax-M3",
+        purpose="decision",
+        request_json="{}",
+        response_json="{}",
+        in_tokens=1,
+        out_tokens=1,
+        cached=0,
+        cost_usd=0.0,
+    )
+
+    runtime.execute_decisions(1, [{
+        "agent_id": sender,
+        "purpose": "decision",
+        "envelope": {"actions": [nested], "belief_updates": []},
+        "reasoning": "I should contact the recipient.",
+        "llm_call_id": model_call_id,
+        "communication_sources": [],
+    }])
+
+    queued = economy.store.query_one(
+        "SELECT sender_agent_id,body_text,status FROM comm_messages")
+    assert dict(queued) == {
+        "sender_agent_id": sender,
+        "body_text": nested["params"]["body"],
+        "status": "queued",
+    }
+    assert economy.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='action_rejected'", default=0) == 0
 
 
 def test_read_context_is_bounded_persisted_and_resume_stable(economy):
