@@ -1000,7 +1000,7 @@ def test_replay_canonicalizes_communication_model_provenance(tmp_path):
     source.init_run_meta("communication-source", 42, config)
     replay.init_run_meta("communication-replay", 42, config)
 
-    for store, call_id in ((source, 5), (replay, 9)):
+    for store, call_id, event_id in ((source, 5, 3), (replay, 9, 1)):
         store.insert(
             "agents", id=2, name="Credit officer", kind="staff",
             role="credit_officer")
@@ -1012,17 +1012,46 @@ def test_replay_canonicalizes_communication_model_provenance(tmp_path):
             response_json='{"text":"bounded","raw":{}}',
             in_tokens=10, out_tokens=5, cached=0, cost_usd=0.001,
             latency_ms=100, created_at="2026-07-21T00:00:00+00:00")
+        if store is source:
+            store.insert(
+                "events", id=1, tick=1, phase="MORNING",
+                kind="provider_failure", payload_json='{"reason":"transient"}')
+            store.insert(
+                "events", id=2, tick=1, phase="MORNING",
+                kind="provider_pause", payload_json='{"reason":"transient"}')
         store.insert(
-            "events", id=1, tick=1, phase="EXECUTION",
+            "events", id=event_id, tick=1, phase="EXECUTION",
             kind="communication_queued", payload_json="{}")
         store.insert(
             "comm_threads", id=1, created_tick=1, created_by_agent_id=2,
-            subject="Bounded update", status="open")
+            subject="Bounded update", status="open", root_event_id=event_id)
         store.insert(
             "comm_messages", id=1, thread_id=1, sender_agent_id=2,
             created_tick=1, deliver_at_tick=2, visibility="participants",
             body_text="Status update", model_call_id=call_id,
-            created_event_id=1, status="queued")
+            created_event_id=event_id, status="queued")
+        action_result = {
+            "ok": True, "thread_id": 1, "message_id": 1,
+            "created_event_id": event_id,
+        }
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=2,
+            action_type="send_message", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=call_id,
+            rationale_summary="bounded", validation_status="executed",
+            result_json=json.dumps(action_result))
+        store.insert(
+            "causal_links", id=1, dedupe_key="c" * 64, created_tick=1,
+            source_kind="action_proposal", source_id="1", source_tick=1,
+            source_order_key="0001", target_kind="event",
+            target_id=str(event_id), target_tick=1, target_order_key="0002",
+            relation="triggered", authority="engine",
+            confidence=1.0,
+            provenance_json=json.dumps({
+                "action_type": "send_message",
+                "action_result": action_result,
+            }),
+            evidence_json="{}")
         store.insert(
             "agent_decisions", id=1, dedupe_key="d" * 64,
             tick=1, agent_id=2, purpose="credit_officer",

@@ -40,6 +40,10 @@ SURROGATE_ID_COLUMNS = {
 }
 IGNORED_EVENT_KINDS = {
     "report_generated", "report_failed",
+    # Provider health events describe live control-plane interruptions. Exact
+    # offline replay consumes stored responses and therefore cannot reproduce
+    # them, while the resumed world's deterministic state remains unchanged.
+    "provider_failure", "provider_pause",
     "participant_control_acquired", "participant_control_released",
     "participant_action_queued", "participant_action_replaced",
     "participant_action_executed", "participant_action_rejected", "participant_idle",
@@ -68,6 +72,7 @@ NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
     ("events", "payload_json"),
     ("action_proposals", "payload_json"),
     ("action_proposals", "result_json"),
+    ("causal_links", "provenance_json"),
 }
 EVENT_REFERENCE_COLUMNS = {
     ("liquidity_support_requests", "request_event_id"),
@@ -80,8 +85,14 @@ EVENT_REFERENCE_COLUMNS = {
     ("civic_authorizations", "issued_event_id"),
     ("civic_authorizations", "consumed_event_id"),
     ("attention_context_items", "source_event_id"),
+    ("comm_messages", "created_event_id"),
+    ("comm_messages", "publication_event_id"),
+    ("comm_threads", "root_event_id"),
 }
-EVENT_REFERENCE_KEYS = {"request_event_id", "event_id"}
+EVENT_REFERENCE_KEYS = {
+    "request_event_id", "event_id", "created_event_id",
+    "publication_event_id", "root_event_id",
+}
 EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids", "source_event_ids"}
 
 

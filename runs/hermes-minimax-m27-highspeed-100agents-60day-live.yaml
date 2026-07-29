@@ -1,0 +1,15 @@
+# Full 60-day live run with exactly 100 total agents.
+# target_total accounts for institutional and health staff created at genesis.
+extends: hermes-minimax-m27-highspeed-10day-live.yaml
+
+seed: 20260729
+
+population:
+  target_total: 100
+
+# Preserve the existing live-only, no-fallback routing while allowing the
+# bounded 60-day run to complete under variable provider-output costs.
+budget:
+  cap_usd: 25.0
+  oracle_reserve_usd: 0.50
+  report_reserve_usd: 0.25

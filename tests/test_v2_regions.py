@@ -590,3 +590,29 @@ def test_v2_memory_is_mechanistic_daily_and_core_reflects_weekly(v2_world):
     assert store.scalar(
         "SELECT COUNT(*) FROM memories WHERE agent_id IN (?,?) "
         "AND kind='weekly_summary'", (core_id, peripheral_id)) == 2
+
+
+def test_core_memory_rollup_interval_is_configurable(v2_world):
+    store, world = v2_world
+    world.runtime.config.setdefault("cognition", {})[
+        "memory_rollup_every"] = 14
+    core_id = int(store.scalar(
+        "SELECT id FROM agents WHERE population_tier='core' "
+        "ORDER BY id LIMIT 1"))
+
+    world.runtime.mem.observe(
+        core_id, 7, "First interval observation", importance=1.0)
+    asyncio.run(world.runtime.compress_memories(7))
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls "
+        "WHERE agent_id=? AND purpose='memory'", (core_id,)) == 0
+
+    world.runtime.mem.observe(
+        core_id, 14, "Second interval observation", importance=2.0)
+    asyncio.run(world.runtime.compress_memories(14))
+    assert store.scalar(
+        "SELECT COUNT(*) FROM llm_calls "
+        "WHERE agent_id=? AND purpose='memory'", (core_id,)) == 1
+    assert store.scalar(
+        "SELECT COUNT(*) FROM memories WHERE agent_id=? "
+        "AND kind='weekly_summary'", (core_id,)) == 1

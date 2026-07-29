@@ -22,6 +22,8 @@ class Scheduler:
         self.engine_semantics_version = int(config.get("engine_semantics_version", 1))
         self.periphery_cadence_multiplier = max(1, int(
             config.get("behavior", {}).get("periphery_cadence_multiplier", 2)))
+        self.institutional_act_every = max(1, int(
+            config.get("behavior", {}).get("institutional_act_every", 1)))
         self.retired_news_every = max(1, int(
             config.get("lifecycle", {}).get("retired_news_every", 1)))
 
@@ -66,8 +68,12 @@ class Scheduler:
                         int(a["id"]), str(a["role"]), tick):
                     out.append(a)
                 continue
-            if a["role"]:  # other institutional agents act every tick
-                out.append(a)
+            if a["role"]:
+                # Phase institutional wakes by stable agent id so a reduced
+                # cadence remains deterministic and replayable.
+                phase = int(a["id"]) % self.institutional_act_every
+                if tick % self.institutional_act_every == phase:
+                    out.append(a)
                 continue
             if civic_enabled and self._civic_wake(
                     int(a["id"]), "", tick):

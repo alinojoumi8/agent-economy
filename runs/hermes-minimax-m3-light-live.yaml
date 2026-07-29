@@ -1,0 +1,65 @@
+# Fresh 60-day MiniMax M3 profile with bounded live inference.
+extends: hermes-minimax-m3-only-live.yaml
+
+seed: 20260728
+
+population:
+  size: 6
+  baseline_citizens_core: true
+
+firms:
+  count: 2
+  listed: 0
+  target_headcount: 4
+
+political_model:
+  enabled: true
+  actor_bound_authorization: true
+  house_seats: 2
+  senate_seats: 1
+  house_election_interval_ticks: 180
+  executive_election_interval_ticks: 360
+  lobbying_disclosure_delay_ticks: 5
+
+outlets:
+  - id: 1
+    name: The Ledger
+    slant: pro-market-sensational
+
+behavior:
+  act_every: 7
+  portfolio_every: 14
+  career_every: 30
+  institutional_act_every: 7
+  event_wake_importance: 2.0
+  periphery_cadence_multiplier: 2
+
+conversations:
+  turns: 2
+  coverage_first: true
+  # Three 120-line buffers (global, speaker, topic) cover the complete
+  # two-turn, 60-day conversation horizon for local similarity validation.
+  recent_utterance_limit: 360
+  similarity_jaccard_threshold: 0.65
+  similarity_shingle_threshold: 0.65
+
+cognition:
+  enabled: true
+  duration_ticks: 7
+  flash_cost_cents: 5000
+  premium_cost_cents: 25000
+  study_cost_cents: 5000
+  premium_cap_fraction: 0.20
+  initial_distribution:
+    local: 0.50
+    flash: 0.40
+    premium: 0.10
+  memory_rollup_every: 30
+
+budget:
+  cap_usd: 5.0
+  oracle_reserve_usd: 0.25
+  report_reserve_usd: 0.25
+  conversation_pairs: 1
+
+checkpoint_every: 5
