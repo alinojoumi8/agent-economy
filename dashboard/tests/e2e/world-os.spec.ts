@@ -310,6 +310,79 @@ test("cursor_ahead recovery resets without rendering old-run payloads or looping
   await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
 });
 
+test("cursor gaps request contiguous backfill and return live", async ({ page }) => {
+  await page.addInitScript(() => {
+    class GapSocket extends EventTarget {
+      static OPEN = 1;
+      static CLOSED = 3;
+      readyState = GapSocket.OPEN;
+      sent: unknown[] = [];
+      constructor(_url: string) {
+        super();
+        (window as any).__gapSocket = this;
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+          this.emit({
+            type: "hello", run_id: "run-demo", fork_id: null, tick: 6,
+            semantics_version: 8, projection_version: 1, policy_version: 1,
+            view_key: "view-demo", event_cursor: 0, status: "running",
+          });
+        });
+      }
+      send(value: string) { this.sent.push(JSON.parse(value)); }
+      close() {
+        this.readyState = GapSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close", { wasClean: true }));
+      }
+      emit(message: unknown) {
+        this.dispatchEvent(new MessageEvent(
+          "message", { data: JSON.stringify(message) }));
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { value: GapSocket });
+  });
+
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => (
+    (window as any).__gapSocket.sent
+  ))).toContainEqual({ type: "hello", event_cursor: 0 });
+  await page.evaluate(() => {
+    (window as any).__gapSocket.sent.length = 0;
+  });
+
+  await page.evaluate(() => {
+    (window as any).__gapSocket.emit({
+      type: "projection_delta", domain: "observatory",
+      run_id: "run-demo", fork_id: null, tick: 6,
+      semantics_version: 8, projection_version: 1, policy_version: 1,
+      view_key: "view-demo", previous_event_cursor: 3, event_cursor: 4,
+      payload: {},
+    });
+  });
+
+  await expect(page.getByRole("alert")).toContainText("cursor_gap");
+  await expect.poll(async () => page.evaluate(() => (
+    (window as any).__gapSocket.sent
+  ))).toContainEqual({ type: "hello", event_cursor: 0 });
+
+  await page.evaluate(() => {
+    const socket = (window as any).__gapSocket;
+    for (let cursor = 1; cursor <= 4; cursor += 1) {
+      socket.emit({
+        type: "projection_delta", domain: "cursor_advance",
+        run_id: "run-demo", fork_id: null, tick: 6,
+        semantics_version: 8, projection_version: 1, policy_version: 1,
+        view_key: "view-demo", previous_event_cursor: cursor - 1,
+        event_cursor: cursor, payload: [],
+      });
+    }
+  });
+
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("live · cursor 4", { exact: true })).toBeVisible();
+});
+
 test("live city layers, search, and evidence lens stay truthful and interactive", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "The living city" })).toBeVisible();

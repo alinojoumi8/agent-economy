@@ -35,6 +35,15 @@ export function useProjectionSocket(historical: boolean) {
         try {
           const message = JSON.parse(event.data);
           const before = cursor.current;
+          const nextCursor = Number(message.event_cursor);
+          const previousCursor = Number(message.previous_event_cursor);
+          const cursorGap = (
+            message.type === "projection_delta"
+            && !historical
+            && Number.isFinite(nextCursor)
+            && nextCursor > before
+            && previousCursor !== before
+          );
           if (message.type === "hello") {
             const reconnect = projectionProtocol.current;
             const helloCursor = Number(message.event_cursor);
@@ -45,6 +54,11 @@ export function useProjectionSocket(historical: boolean) {
             }
           }
           dispatch({ message, historical });
+          if (cursorGap) {
+            queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            socket?.send(JSON.stringify({ type: "hello", event_cursor: before }));
+            return;
+          }
           if (message.type === "error" && message.code === "cursor_ahead") {
             const recovered = Number(message.event_cursor);
             if (Number.isFinite(recovered)) cursor.current = recovered;
@@ -61,8 +75,8 @@ export function useProjectionSocket(historical: boolean) {
               queryClient.invalidateQueries({ queryKey: ["world-os"] });
             }
           }
-          if (message.type === "projection_delta" && Number(message.event_cursor) > before) {
-            cursor.current = Number(message.event_cursor);
+          if (message.type === "projection_delta" && nextCursor > before) {
+            cursor.current = nextCursor;
             queryClient.invalidateQueries({ queryKey: ["world-os"] });
           }
           if (message.type === "projection_invalidated") {
