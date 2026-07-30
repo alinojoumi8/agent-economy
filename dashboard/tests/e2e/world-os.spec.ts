@@ -368,7 +368,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
   await expect(page.getByText("live · cursor 4", { exact: true })).toBeVisible();
 });
 
-test("lineage changes reconnect from the last accepted cursor", async ({ page }) => {
+test("lineage changes reconcile from the authoritative server hello", async ({ page }) => {
   await page.addInitScript(() => {
     class LineageSocket extends EventTarget {
       static OPEN = 1;
@@ -433,7 +433,7 @@ test("lineage changes reconnect from the last accepted cursor", async ({ page })
   ))).toBe(initialConnections + 1);
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__lineageSockets.at(-1).sent
-  ))).toContainEqual({ type: "hello", event_cursor: 4 });
+  ))).toContainEqual({ type: "hello", event_cursor: 0 });
   await expect(page.getByText(/live .* cursor 0/, { exact: true })).toBeVisible();
 
   await page.evaluate(() => {
