@@ -1759,7 +1759,7 @@ class Gateway:
                         attempt_ids.append(failure.attempt_id)
                     last_error = failure.error
                     if isinstance(last_error, GatewayInterrupted):
-                        raise last_error
+                        raise last_error from None
                     retryable_failure = (
                         isinstance(last_error, asyncio.TimeoutError)
                         or (
