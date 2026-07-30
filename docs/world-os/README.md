@@ -16,11 +16,15 @@ not "reconcile" the two sets into one file.
 |---|---|
 | What does the runtime do **today**? | [root PRD](../../PRD.md) · [root TECH-SPEC](../../TECH-SPEC.md) |
 | What is the runtime **becoming**? | [World OS PRD](PRD.md) · [World OS TECH-SPEC](TECH-SPEC.md) |
-| What shipped in a given semantics lake? | [Semantics 8 release status](SEMANTICS-8-RELEASE-STATUS.md) · [requirements matrix](REQUIREMENTS-MATRIX.md) |
+| What is implemented, released, or rollout-gated **now**? | [maintained implementation-status ledger](../implementation-status.md) |
+| What did a dated release gate prove? | [Semantics 8 historical release receipt](SEMANTICS-8-RELEASE-STATUS.md) · [requirements traceability matrix](REQUIREMENTS-MATRIX.md) |
 
 The root PRD tracks the maintained implementation contract through R22. The
-World OS PRD tracks Semantics 8 (released), with Semantics 9/10 code present
-behind rollout gates.
+World OS specifications extend through Semantics 12. Current status is not
+inferred from specification prose: Semantics 8 is the released deterministic
+causal baseline; Semantics 9–10 code is rollout-gated; Semantics 11–12 are
+implemented opt-in contracts whose public use inherits those hosted gates.
+The maintained implementation-status ledger owns those labels.
 
 ## Contents
 
@@ -33,7 +37,8 @@ behind rollout gates.
 - [FRAMEWORK-RESEARCH.md](FRAMEWORK-RESEARCH.md) — the build-versus-buy decision
   behind the Semantics 8 architecture.
 - [REQUIREMENTS-MATRIX.md](REQUIREMENTS-MATRIX.md) — requirement-to-evidence
-  traceability, frozen at Gate -1.
+  traceability; current release labels defer to the implementation-status
+  ledger.
 
 **External agent gateway**
 
@@ -49,7 +54,7 @@ behind rollout gates.
 
 - [30-TICK-RESEARCH-PROTOCOL.md](30-TICK-RESEARCH-PROTOCOL.md) — the frozen
   causal research protocol `world-os-v8-supplier-warning-v1`.
-- [SEMANTICS-8-RELEASE-STATUS.md](SEMANTICS-8-RELEASE-STATUS.md) — deterministic
-  readiness versus provider readiness for Semantics 8.
+- [SEMANTICS-8-RELEASE-STATUS.md](SEMANTICS-8-RELEASE-STATUS.md) — historical
+  deterministic-readiness and provider-smoke receipt for Semantics 8.
 - [COST-ASSUMPTIONS.md](COST-ASSUMPTIONS.md) — assumptions behind the archived
   POLIS cost chart.

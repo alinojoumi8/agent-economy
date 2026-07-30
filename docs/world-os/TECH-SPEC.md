@@ -2,7 +2,8 @@
 
 **Version:** 1.0<br>
 **Date:** 2026-07-18<br>
-**Status:** Semantics 8 released; Semantics 9/10 implementation present; hosted rollout evidence pending<br>
+**Specification status:** Semantics 8 contract frozen; Semantics 9/10 successor design defined<br>
+**Current implementation/release status:** [maintained status ledger](../implementation-status.md)<br>
 **Product contract:** [World OS PRD](PRD.md)<br>
 **Framework decision:** [Framework research](FRAMEWORK-RESEARCH.md)
 

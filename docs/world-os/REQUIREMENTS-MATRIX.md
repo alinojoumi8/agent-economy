@@ -4,6 +4,11 @@
 implementation instruction. The Semantics 8 supplier-warning protocol remains
 frozen and unchanged.
 
+This file maps requirements to evidence; it does not independently declare
+current release state. The
+[maintained implementation-status ledger](../implementation-status.md) is the
+authority for “implemented,” “released,” and “rollout-gated” labels.
+
 | Requirement group | Disposition | Contract / evidence |
 |---|---|---|
 | Deterministic kernel, ledgers, replay, hosted control plane | Existing foundation | Root PRD and historical compatibility suite |
@@ -25,7 +30,12 @@ frozen and unchanged.
 
 ## Release ordering
 
-1. Semantics 8 remains the released causal baseline.
-2. Semantics 9 Gateway protocol/security conformance and real connector evidence.
-3. Semantics 10 Commons deterministic feed/read experiment and UI evidence.
-4. Later economic/social lakes only after those gates are green.
+1. Semantics 8 remains the released deterministic causal baseline.
+2. Semantics 9 is implemented; independent Gateway protocol/security
+   conformance and real connector evidence remain hosted rollout gates.
+3. Semantics 10 is implemented; its deterministic feed/read experiment, UI
+   evidence, and hosted operational gate remain pending.
+4. Semantics 11–12 are implemented opt-in contracts. Public use inherits the
+   Semantics 9–10 hosted gates.
+5. Later economic/social lakes require their own implementation and release
+   evidence after those gates are green.

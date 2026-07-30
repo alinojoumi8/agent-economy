@@ -1,10 +1,19 @@
 # World OS Semantics 8 Release Status
 
-**Release state:** deterministic-ready<br>
-**Provider state:** unavailable; not provider-ready<br>
+**Receipt snapshot:** 2026-07-18<br>
+**Release state at snapshot:** deterministic-ready<br>
+**Provider state at snapshot:** unavailable; not provider-ready<br>
 **Semantics version:** 8<br>
 **Schema version:** 12<br>
 **Projection version:** 1
+
+This is a frozen historical receipt for the Semantics 8 gate, not the current
+cross-lake status authority. See the
+[maintained implementation-status ledger](../implementation-status.md) for the
+current Semantics 8–12 implementation and rollout matrix. Later authenticated
+MiniMax runs demonstrate provider availability for their own profiles and
+dates; they do not retroactively change this unavailable provider-smoke
+receipt.
 
 Semantics 8 adds asynchronous, agent-selected threaded communication without replacing
 ambient evening conversations. Existing runs retain their recorded Semantics 1-7 phase
@@ -92,10 +101,11 @@ python benchmarks/run_world_os_v8.py
 
 ## Live-provider receipt
 
-The separate MiniMax/Kimi smoke is explicitly `unavailable`: `MINIMAX_API_KEY` and
-`KIMI_API_KEY` were not configured, and no credential values were recorded. This does not
-weaken the deterministic gate, but it blocks a provider-ready claim. The receipt is
-`benchmarks/receipts/world-os-v8-provider-smoke.json`.
+At this receipt's snapshot, the separate MiniMax/Kimi smoke was explicitly
+`unavailable`: `MINIMAX_API_KEY` and `KIMI_API_KEY` were not configured, and no
+credential values were recorded. This did not weaken the deterministic gate,
+but it prevented this receipt from claiming provider readiness. The immutable
+receipt is `benchmarks/receipts/world-os-v8-provider-smoke.json`.
 
 After credentials are configured, run the ten-tick `runs/live-smoke.yaml` profile, record
 provider/model/build identifiers and the required evaluation fields, then ingest that JSON:
@@ -104,5 +114,6 @@ provider/model/build identifiers and the required evaluation fields, then ingest
 python benchmarks/run_provider_smoke.py --evidence path\to\ten-tick-evidence.json
 ```
 
-Only a resulting `passed` receipt changes the release from deterministic-ready to
-provider-ready.
+Only a new, separately dated `passed` Semantics 8 receipt can supersede this
+provider-smoke result. General provider availability or evidence from a later
+semantics profile must be reported separately.

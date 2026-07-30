@@ -1,69 +1,63 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Assessment date:** 2026-07-18
+> **Current assessment date:** 2026-07-30
 >
-> **Merged baseline before this change:** `main` includes handbook PR #24 at
-> `2adfb72`
+> **Maintained maximum contract for new runs:** schema 17 / semantics 12
 >
-> **Database / maintained engine contract:** schema v11 / semantics 7
+> **Status authority:** this file is the single maintained release-status
+> ledger. Root and World OS specifications define behavior and intended
+> direction; historical release receipts prove their named snapshots. Other
+> indexes must link here instead of independently labelling a semantics lake
+> “released,” “shipped,” or “provider-ready.”
 >
-> **Release state:** R21 and R22 are merged, the six-job PR #19 matrix is green,
-> and handbook PR #24 passed its dashboard, hosted integration, and complete
-> Ubuntu/Windows Python matrix. The Oracle/V9 implementation in PR #20 is
-> authorized for squash merge. V9 live evidence, the rumor and 365-day campaigns,
-> tagging, publication, and public deployment remain separate release gates.
+> **Compatibility boundary:** stored historical runs retain their recorded
+> schema and semantics. Supporting schema 17 / semantics 12 for new runs does
+> not rewrite or upgrade historical evidence.
 
-> **Current extension note (2026-07-26):** maintained new runs now support
-> schema 17 / semantics 12. Semantics 8–10 add communications and external-agent
-> lakes, semantics 11 adds compute plans and learnable skills, and semantics 12
-> adds civic places plus the capacity-limited permit vertical. Stored historical
-> runs retain their recorded schema/semantics behavior.
+## Status terminology
 
-## Executive verdict
+| Term | Meaning in this repository |
+|---|---|
+| **Implemented** | Code and repository tests exist for the named opt-in contract. |
+| **Locally verified** | The named deterministic, replay, security, or browser evidence has passed locally. |
+| **Released baseline** | The project has designated the lake as an admissible maintained baseline; this does not imply public hosting. |
+| **Rollout-gated** | Code exists, but named operational or independent evidence is still required before hosted/public use. |
+| **Historical receipt** | Immutable evidence for the dated code/profile/provider conditions only; it is not a claim about current credentials or later semantics. |
 
-The PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
-R20 regional, R21 real-U.S. calibration, and R22 hosted multi-user code surfaces
-are implemented. There is no additional functional PRD feature gap. The
-semantics-7 closure completes
-the remaining code contracts for bank loss recognition, retirement liquidity,
-deterministic arrival/persona handling, autonomous regional trade/migration,
-portable recorded replay, provider cache modes, and additive memory ranking.
+## Current semantics and release matrix
 
-The current baseline also restores measured observatory activity without
-engine-authored shortcuts: scheduled peripheral agents execute local
-state-derived policies with no model-call rows, actors form the first stock
-price, the qualified startup/VC/IP chain advances end to end, regional action
-surfaces stay local-currency until FX, and unemployment counts each worker once.
+| Contract | Implementation state | Release state | Remaining boundary |
+|---|---|---|---|
+| Semantics 1–7 / schemas through 11 | Implemented and maintained for recorded-run compatibility | Historical PRD-v1 and semantics-7 baselines | New features do not alter their phase, replay, or information contracts. |
+| Semantics 8 / schema 12 | Communications and Causal Observatory implemented and locally verified | **Released deterministic causal baseline** | Its dated provider-smoke receipt remains historical and unavailable; later MiniMax evidence is separate and does not retroactively change that receipt. |
+| Semantics 9 / schema 13 | External Agent Gateway, scoped identity, REST/MCP, receipts, and replay implemented | **Rollout-gated** | Independent MCP conformance plus real Hermes, OpenClaw, Python, and TypeScript connector receipts are pending. |
+| Semantics 10 / schema 14 | Agent Commons, deterministic feeds, explicit-read exposure, moderation, and replay implemented | **Rollout-gated** | The frozen feed/read experiment, UI evidence, and hosted operational gate remain pending. |
+| Semantics 11 / schema 15 | Compute plans, sponsorship, provider pools, operational attempt evidence, and learnable skills implemented and locally verified | Implemented opt-in contract; no separate public-hosting claim | Public use inherits the Semantics 9–10 hosted rollout gates. |
+| Semantics 12 / schema 17 | Civic places, presence, queues, appointments, permits, attention, privacy, gateway, and replay contracts implemented and locally verified | Implemented opt-in contract; current maintained maximum | Public use inherits the Semantics 9–10 hosted rollout gates. |
 
-The full local gate, five-tick closure rehearsal, bounded MiniMax pilot, and
-historical/semantics-7 exact replays are complete. The live run spent
-`$0.01121124` under its `$1` cap, all 42 proposals were accepted, and
-privacy/provenance checks found zero defects. PR #15 merged to `main` as
-`255555c2b24530c0bd39aed2f501277a468adc0a` after its exact-head dashboard and
-Ubuntu/Windows Python 3.11/3.12 matrix passed. Post-merge CI run `29368193807`
-repeated all five jobs successfully. R21 then merged through PR #18 at
-`21bbf30051e3de8c9b5b7a50e48a0e342d94676a` after all five PR jobs passed.
-Post-merge main run `29403186283` repeated all five jobs successfully.
+## Current executive verdict
 
-R22 now adds a PostgreSQL tenant/auth/run catalog with forced RLS, one SQLite
-v11 world per run, invite-only observer/admin membership, CSRF/throttling/audit,
-a lease-based supervisor, immutable filesystem/S3 snapshots, a hosted dashboard,
-and Docker Compose/Caddy/Prometheus plus migration/backup/restore operations.
-The local real-container/Compose/load acceptance gate and exact-head CI passed,
-and PR #19 merged as `1806294d4fecbe13ddbdf615c459755c74293599`.
-These are code-complete, locally accepted surfaces, not proof of a public
-production deployment.
+The PRD-v1 P0/P1 surfaces and R18–R22 extensions are implemented. The current
+runtime also contains the Semantics 8–12 code summarized above. There is no
+additional functional PRD-v1 feature gap.
 
-The preceding replay-integrity revision passed 590 Python tests with 8 skipped, 23
-dashboard tests, a fresh 603-module dashboard build, and checksum verification
-for the pinned FRED/BLS/SCF/SUSB datasets. The final v3 receipt-hardening tree
-passed 599 Python tests with 8 skipped in 1,618.07 seconds. The reconciled V9
-premerge tree passes 663 Python tests with 8 environment-gated skips, 23
-dashboard tests, and a fresh 603-module build. Free production-workflow rehearsal
-`881ed41994` completed 365 ticks;
-its detailed evidence is recorded below.
+What remains is release and product evidence rather than another core economic
+subsystem: independent external-connector receipts, the Semantics 10 rollout
+evidence, the fresh V9 Oracle campaign, the corrected live rumor gate, the
+explicitly authorized long live campaign, and a fresh provenance, license,
+dependency, and secret audit before tagging or public deployment.
 
-## Semantics-7 closure matrix
+The remainder of this document preserves the dated closure and campaign
+evidence. Version labels inside those sections describe the run or release
+snapshot being evidenced; they must not be read as the current maximum
+schema/semantics contract.
+
+## Historical semantics-7 closure matrix (2026-07-18 snapshot)
+
+The semantics-7 closure merged as
+`255555c2b24530c0bd39aed2f501277a468adc0a`; post-merge CI run `29368193807`
+repeated all five jobs successfully. No tag or publication was performed, and
+those actions remain separate release decisions.
 
 | Surface | Implemented contract | Repository evidence | Final evidence state |
 |---|---|---|---|
@@ -78,7 +72,7 @@ its detailed evidence is recorded below.
 | Memory ranking | Retrieval uses the authoritative weighted sum `0.5·recency_decay + 0.3·importance + 0.2·relevance`, with a regression that distinguishes it from multiplication. | [Memory](../agents/memory.py), [ranking test](../tests/test_memory_ranking.py) | **Passed:** focused and full regression gates |
 | Closure profiles | Paired five-tick profiles seed a near-defaulted loan, retiree, due arrival, qualified shipment, and migration opportunity. The live profile routes persona/selected strategic work to MiniMax, keeps background behavior scripted, and caps spend at `$1`. | [Rehearsal](../runs/v2-spec-closure-rehearsal.yaml), [live pilot](../runs/v2-spec-closure-live.yaml), [fixture seeder](../world/spec_closure_fixture.py) | **Passed:** `5a0d40d773` and `b4832032ba`, both exact offline replay |
 
-## Current extension status
+## Historical R18–R22 extension record
 
 | Requirement | Disposition | Current status | Remaining boundary |
 |---|---|---|---|
@@ -114,7 +108,7 @@ The 30-tick institutional run `e09e845b87` remains separate historical evidence:
 provenance/redaction failures, checkpoints 1–30, balanced currencies, and exact
 offline replay. It remains separate from the current five-tick closure gate.
 
-## Current semantics-7 run evidence
+## Historical semantics-7 run evidence
 
 Free rehearsal `5a0d40d773` completed tick 5 at zero spend with every target
 effect, zero rejected actions/provider failures, six checkpoints, and every
@@ -199,7 +193,7 @@ The five-tick semantics-7 pilot and scripted 365-tick rehearsal supplement
 those gates; neither replaces live-provider acceptance. R21's SCF/SUSB supports
 are pinned; unrelated optional sources remain separate.
 
-## Semantics-7 verification snapshot
+## Historical semantics-7 verification snapshot
 
 | Check | Result |
 |---|---|
