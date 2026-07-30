@@ -293,11 +293,16 @@ class Lifecycle:
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=? AND status='active'",
             (agent_id,))
         for loan in loans:
-            acct = self.ledger.agent_checking_id(agent_id)
+            bankrow = self.store.query_one(
+                "SELECT reserve_account_id, currency_code FROM banks WHERE id=?",
+                (loan["bank_id"],))
+            # An estate can only repay a creditor from cash that settles in the
+            # creditor's own currency; a migrated borrower's foreign wallet is
+            # not payment, so the balance passes to the heir and the loan
+            # defaults instead of halting the tick on an invalid transfer.
+            acct = self._estate_repayment_account(agent_id, bankrow)
             cash = self.ledger.balance(acct) if acct else 0
             pay = min(cash, int(loan["outstanding_cents"]))
-            bankrow = self.store.query_one("SELECT reserve_account_id FROM banks WHERE id=?",
-                                           (loan["bank_id"],))
             if pay > 0 and bankrow:
                 self.ledger.transfer(tick, acct, int(bankrow["reserve_account_id"]), pay,
                                      kind="estate_debt", memo=f"estate debt loan {loan['id']}")
@@ -347,6 +352,17 @@ class Lifecycle:
         if self.p["population_mode"] == "stable":
             delay = self.prng.randint(self.p["arrival_delay_min"], self.p["arrival_delay_max"])
             self.schedule_arrival(tick, tick + delay)
+
+    def _estate_repayment_account(self, agent_id: int, bankrow) -> Optional[int]:
+        """Return the deceased's primary wallet when it settles the bank's currency."""
+        acct = self.ledger.agent_checking_id(agent_id)
+        if acct is None or bankrow is None:
+            return None
+        account_currency = str(self.store.scalar(
+            "SELECT currency_code FROM accounts WHERE id=?", (acct,), default="USD") or "USD")
+        if account_currency != str(bankrow["currency_code"] or "USD"):
+            return None
+        return acct
 
     def _find_heir(self, agent_id: int) -> Optional[int]:
         rows = self.store.query(

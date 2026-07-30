@@ -519,17 +519,21 @@ class Bank:
         b = self.get(bank_id)
         reserve_acct = int(b["reserve_account_id"])
         deposits = self.store.query(
-            "SELECT id, balance_cents FROM accounts WHERE bank_id=? AND kind IN ('checking','savings') "
-            "AND balance_cents > 0", (bank_id,))
+            "SELECT id, balance_cents, currency_code FROM accounts WHERE bank_id=? "
+            "AND kind IN ('checking','savings') AND balance_cents > 0", (bank_id,))
         total_dep = sum(int(d["balance_cents"]) for d in deposits)
         available = max(0, self.ledger.balance(reserve_acct))
         recovery = min(1.0, (available / total_dep) if total_dep else 1.0)
-        loss_acct = self.ledger.system_account(SYS_LOSS)
 
         for d in deposits:
             bal = int(d["balance_cents"])
             haircut = bal - int(bal * recovery)
             if haircut > 0:
+                # The destroyed wealth must leave through the loss sink that
+                # settles in the deposit's own currency, or the transaction is
+                # unbalanced by currency and the failure cannot be recorded.
+                loss_acct = self.ledger.system_account(
+                    SYS_LOSS, currency_code=str(d["currency_code"] or "USD"))
                 self.ledger.post(tick, "depositor_haircut", [
                     Leg(int(d["id"]), -haircut, "bank failure haircut"),
                     Leg(loss_acct, haircut, "destroyed in bank failure"),

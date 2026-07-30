@@ -272,6 +272,29 @@ def test_semantics7_baseline_citizens_are_active_core_without_r19(tmp_path):
         "AND population_tier='periphery'", default=0) > 0
 
 
+def test_institutional_act_cadence_is_configurable_and_phased(tmp_path):
+    world = _fresh_world(
+        tmp_path, "institutional-cadence.db",
+        behavior={"institutional_act_every": 7})
+    agent = world.store.query_one(
+        "SELECT id,role FROM agents WHERE role IS NOT NULL "
+        "AND role NOT IN ('central_banker','permit_clerk') ORDER BY id LIMIT 1")
+    agent_id = int(agent["id"])
+
+    scheduled_ticks = [
+        tick
+        for tick in range(1, 15)
+        if agent_id in {
+            int(row["id"])
+            for row in world.runtime.scheduler.scheduled_agents(tick)
+        }
+    ]
+
+    phase = agent_id % 7
+    assert scheduled_ticks == [
+        tick for tick in range(1, 15) if tick % 7 == phase]
+
+
 # ── checkpoint / resume ──────────────────────────────────────────────────────
 def test_checkpoint_and_resume(tmp_path):
     w = _fresh_world(tmp_path, "ck.db", checkpoint_every=5,

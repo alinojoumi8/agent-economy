@@ -73,6 +73,8 @@ def test_resume_profile_can_only_tighten_operational_resource_limits(
     stored_config["llm"]["concurrency"] = 10
     stored_config["llm"]["logical_deadline_s"] = 240
     stored_config["llm"]["providers"]["ollama"]["concurrency"] = 2
+    stored_config["llm"]["providers"]["ollama"]["timeout_s"] = 30
+    stored_config["llm"]["citizen_model_cohorts"][0]["primary"]["timeout_s"] = 30
     stored_config["resource_guard"].update({
         "sample_interval_s": 5,
         "max_cpu_percent": 95,
@@ -86,13 +88,20 @@ def test_resume_profile_can_only_tighten_operational_resource_limits(
     persisted.close()
 
     selected_config = load_config("runs/evolving-live.yaml")
+    selected_config["llm"]["provider_retries"] = 1
     store, world, _ = open_run(
         selected_config, run_id, None, data_dir=tmp_path)
     try:
         assert world.config["llm"]["max_in_flight"] == 6
         assert world.config["llm"]["concurrency"] == 6
         assert world.config["llm"]["logical_deadline_s"] == 900
+        assert world.config["llm"]["provider_retries"] == 1
         assert world.config["llm"]["providers"]["ollama"]["concurrency"] == 1
+        assert world.config["llm"]["providers"]["ollama"]["timeout_s"] == 90
+        assert (
+            world.config["llm"]["citizen_model_cohorts"][0]["primary"]["timeout_s"]
+            == 120
+        )
         assert world.config["resource_guard"]["max_memory_percent"] == 70
         assert world.config["resource_guard"]["min_available_memory_gb"] == 20
         assert world.config["resource_guard"]["max_swap_percent"] == 50
@@ -102,7 +111,13 @@ def test_resume_profile_can_only_tighten_operational_resource_limits(
         persisted_config = json.loads(store.get_meta()["config_json"])
         assert persisted_config["llm"]["max_in_flight"] == 10
         assert persisted_config["llm"]["logical_deadline_s"] == 240
+        assert persisted_config["llm"]["provider_retries"] == 0
         assert persisted_config["llm"]["providers"]["ollama"]["concurrency"] == 2
+        assert persisted_config["llm"]["providers"]["ollama"]["timeout_s"] == 30
+        assert (
+            persisted_config["llm"]["citizen_model_cohorts"][0]["primary"]["timeout_s"]
+            == 30
+        )
         assert (
             world.config["llm"]["providers"]["deepseek"]["base_url"]
             == persisted_config["llm"]["providers"]["deepseek"]["base_url"]

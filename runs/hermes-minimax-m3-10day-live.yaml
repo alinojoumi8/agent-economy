@@ -1,0 +1,5 @@
+# Ten-day, MiniMax-M3 comparison run.
+# The seed and world shape match the M2.7-highspeed comparison profile.
+extends: hermes-minimax-m3-light-live.yaml
+
+seed: 20260729

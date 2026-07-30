@@ -128,6 +128,10 @@ def test_retirement_transition_and_genesis_apply_retired_cadence(store):
     assert genesis._is_retired(younger) is False
     assert genesis._cadence_for(younger) == {
         "act": 3, "portfolio": 7, "career": 30}
+    genesis.config["behavior"] = {
+        "act_every": 7, "portfolio_every": 14, "career_every": 45}
+    assert genesis._cadence_for(younger) == {
+        "act": 7, "portfolio": 14, "career": 45}
     genesis.config["lifecycle"]["retirement_age"] = 60
     younger = Persona("C", 62, "worker", 1, 1, {}, 0.2, 0.0, [1])
     assert genesis._is_retired(younger) is True
@@ -138,7 +142,7 @@ def test_retirement_transition_and_genesis_apply_retired_cadence(store):
     legacy = Persona("D", 68, "worker", 1, 1, {}, 0.2, 0.0, [1])
     assert genesis._is_retired(legacy) is True
     assert genesis._cadence_for(legacy) == {
-        "act": 3, "portfolio": 7, "career": 30}
+        "act": 7, "portfolio": 14, "career": 45}
 
 
 def test_retirees_skip_career_wakes_and_receive_news_wakes(store):

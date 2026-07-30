@@ -245,7 +245,12 @@ class Genesis:
                 "career": 30,
                 "news": max(1, int(lifecycle.get("retired_news_every", 1))),
             }
-        return {"act": 3, "portfolio": 7, "career": 30}
+        behavior = self.config.get("behavior", {})
+        return {
+            "act": max(1, int(behavior.get("act_every", 3))),
+            "portfolio": max(1, int(behavior.get("portfolio_every", 7))),
+            "career": max(1, int(behavior.get("career_every", 30))),
+        }
 
     def _is_retired(self, p: Persona) -> bool:
         calibration = getattr(self, "calibration", None)

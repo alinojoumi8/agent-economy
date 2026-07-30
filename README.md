@@ -365,11 +365,17 @@ documents.
 
 All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
 R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
-surfaces are implemented. The semantics-7 code closure adds
-the remaining bank, retirement, arrival/persona, autonomous trade/migration,
-portable replay, and cache-policy contracts without changing schema v11.
+surfaces are implemented. Maintained new runs support schema 17 / Semantics 12.
+Semantics 8 is the released deterministic causal baseline; Semantics 9–10 are
+implemented but rollout-gated; Semantics 11–12 are implemented opt-in contracts
+whose public use inherits those hosted gates. The
+[implementation-status ledger](docs/implementation-status.md) is the single
+authority for current release labels and remaining evidence.
 
-Current `main` at `c9f0b23` also restores measured economy activity in the
+### Historical closure and campaign evidence
+
+The historical semantics-7 merge baseline at `c9f0b23` restored measured
+economy activity in the
 semantics-7 observatory. Scheduled peripheral agents execute deterministic local
 policies with zero model-call rows; households form the first stock price from
 fundamentals through ordinary bids and asks; qualified partners, founders, and

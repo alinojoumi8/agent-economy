@@ -451,6 +451,101 @@ def test_tiered_route_reserves_deadline_for_fallback(tmp_path):
     assert all(row["llm_call_id"] == response.call_id for row in attempts)
 
 
+def test_route_plan_retries_transient_server_error_as_one_logical_call(tmp_path):
+    gateway = _gateway(tmp_path)
+    gateway.provider_retries = 1
+
+    class TransientServerError:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise AdapterHTTPError(
+                    500, "https://provider.test/v1", "temporary server error")
+            return AdapterResult(
+                text='{"reasoning":"ok","actions":[{"type":"do_nothing"}]}',
+                in_tokens=10,
+                out_tokens=5,
+            )
+
+    adapter = TransientServerError()
+    gateway.adapters["mock"] = adapter
+    plan = RoutePlan(
+        assigned_tier="local",
+        effective_tier="local",
+        reason="test transient server retry",
+        targets=(
+            RouteTarget(
+                "mock", "metered", timeout_s=1.0, route_index=0),
+        ),
+        tiered=True,
+    )
+    gateway.route_plan = lambda _req: plan
+
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="legislator", purpose="decision", tick=4)))
+
+    assert response.ok
+    assert adapter.calls == 2
+    assert gateway.store.scalar("SELECT COUNT(*) FROM llm_calls") == 1
+    attempts = gateway.store.query(
+        "SELECT route_index,outcome,llm_call_id "
+        "FROM llm_attempts ORDER BY id")
+    assert [
+        (row["route_index"], row["outcome"]) for row in attempts
+    ] == [(0, "provider_error"), (0, "success")]
+    assert all(row["llm_call_id"] == response.call_id for row in attempts)
+
+
+def test_route_plan_retries_provider_timeout_as_one_logical_call(tmp_path):
+    gateway = _gateway(tmp_path)
+    gateway.provider_retries = 1
+
+    class TimeoutThenSucceed:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(0.05)
+            return AdapterResult(
+                text='{"reasoning":"ok","actions":[{"type":"do_nothing"}]}',
+                in_tokens=10,
+                out_tokens=5,
+            )
+
+    adapter = TimeoutThenSucceed()
+    gateway.adapters["mock"] = adapter
+    plan = RoutePlan(
+        assigned_tier="local",
+        effective_tier="local",
+        reason="test provider timeout retry",
+        targets=(
+            RouteTarget(
+                "mock", "metered", timeout_s=0.01, route_index=0),
+        ),
+        tiered=True,
+    )
+    gateway.route_plan = lambda _req: plan
+
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="legislator", purpose="decision", tick=4)))
+
+    assert response.ok
+    assert adapter.calls == 2
+    assert gateway.store.scalar("SELECT COUNT(*) FROM llm_calls") == 1
+    attempts = gateway.store.query(
+        "SELECT route_index,outcome,llm_call_id "
+        "FROM llm_attempts ORDER BY id")
+    assert [
+        (row["route_index"], row["outcome"]) for row in attempts
+    ] == [(0, "timeout"), (0, "success")]
+    assert all(row["llm_call_id"] == response.call_id for row in attempts)
+
+
 def test_tiered_contract_failure_uses_fallback_after_repair(tmp_path):
     gateway = _gateway(tmp_path)
 
@@ -534,6 +629,52 @@ def test_tiered_contract_failure_uses_fallback_after_repair(tmp_path):
         (1, "success", 1),
     ]
     assert all(row["llm_call_id"] == response.call_id for row in attempts)
+
+
+def test_route_plan_retry_backoff_is_interruptible(tmp_path):
+    gateway = _gateway(tmp_path)
+    gateway.provider_retries = 1
+    first_failure = asyncio.Event()
+
+    class FailThenSucceed:
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                first_failure.set()
+                raise AdapterHTTPError(
+                    500, "https://provider.test/v1", "temporary server error")
+            return AdapterResult(
+                text='{"reasoning":"ok","actions":[{"type":"do_nothing"}]}',
+                in_tokens=10,
+                out_tokens=5,
+            )
+
+    adapter = FailThenSucceed()
+    gateway.adapters["mock"] = adapter
+    gateway.route_plan = lambda _req: RoutePlan(
+        assigned_tier="local",
+        effective_tier="local",
+        reason="test interruptible transient retry",
+        targets=(
+            RouteTarget(
+                "mock", "metered", timeout_s=1.0, route_index=0),
+        ),
+        tiered=True,
+    )
+
+    async def exercise():
+        task = asyncio.create_task(gateway.complete(
+            LLMRequest(role="legislator", purpose="decision", tick=4)))
+        await first_failure.wait()
+        gateway._interrupt_event.set()
+        with pytest.raises(GatewayInterrupted):
+            await asyncio.wait_for(task, timeout=0.1)
+
+    asyncio.run(exercise())
+    assert adapter.calls == 1
 
 
 def test_rate_limit_status_is_visible_and_wait_is_interruptible(tmp_path):

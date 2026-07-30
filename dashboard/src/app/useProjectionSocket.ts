@@ -15,9 +15,10 @@ export function useProjectionSocket(historical: boolean) {
     initialCursorState,
   );
   const cursor = useRef(0);
+  const cursorState = useRef(initialCursorState);
   const legacyTick = useRef<number | null>(null);
   const projectionProtocol = useRef(false);
-  cursor.current = state.cursor;
+  const lineageRecovery = useRef(false);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -29,22 +30,54 @@ export function useProjectionSocket(historical: boolean) {
       socket = new WebSocket(socketUrl());
       socket.addEventListener("open", () => {
         retry = 0;
-        socket?.send(JSON.stringify({ type: "hello", event_cursor: cursor.current }));
+        if (!lineageRecovery.current) {
+          socket?.send(JSON.stringify({ type: "hello", event_cursor: cursor.current }));
+        }
       });
       socket.addEventListener("message", event => {
         try {
           const message = JSON.parse(event.data);
           const before = cursor.current;
+          const nextCursor = Number(message.event_cursor);
           if (message.type === "hello") {
             const reconnect = projectionProtocol.current;
+            const recoveringLineage = lineageRecovery.current;
             const helloCursor = Number(message.event_cursor);
             projectionProtocol.current = true;
             if (Number.isFinite(helloCursor)) cursor.current = helloCursor;
-            if (!historical && reconnect && helloCursor > before) {
+            if (!historical && (recoveringLineage
+                || (reconnect && helloCursor > before))) {
               queryClient.invalidateQueries({ queryKey: ["world-os"] });
             }
+            if (recoveringLineage) {
+              lineageRecovery.current = false;
+              socket?.send(JSON.stringify({
+                type: "hello",
+                event_cursor: cursor.current,
+              }));
+            }
           }
+          const previousState = cursorState.current;
+          const nextState = reduceCursorState(
+            previousState,
+            message,
+            { historical },
+          );
+          cursorState.current = nextState;
           dispatch({ message, historical });
+          if (message.type === "projection_delta"
+              && nextState.staleReason === "lineage_mismatch") {
+            lineageRecovery.current = true;
+            queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            socket?.close();
+            return;
+          }
+          if (message.type === "projection_delta"
+              && nextState.staleReason === "cursor_gap") {
+            queryClient.invalidateQueries({ queryKey: ["world-os"] });
+            socket?.send(JSON.stringify({ type: "hello", event_cursor: before }));
+            return;
+          }
           if (message.type === "error" && message.code === "cursor_ahead") {
             const recovered = Number(message.event_cursor);
             if (Number.isFinite(recovered)) cursor.current = recovered;
@@ -61,8 +94,15 @@ export function useProjectionSocket(historical: boolean) {
               queryClient.invalidateQueries({ queryKey: ["world-os"] });
             }
           }
-          if (message.type === "projection_delta" && Number(message.event_cursor) > before) {
-            cursor.current = Number(message.event_cursor);
+          const deltaAccepted = (
+            message.type === "projection_delta"
+            && nextState !== previousState
+            && nextState.status === "live"
+            && nextState.staleReason === null
+            && nextState.cursor === nextCursor
+          );
+          if (deltaAccepted) {
+            cursor.current = nextCursor;
             queryClient.invalidateQueries({ queryKey: ["world-os"] });
           }
           if (message.type === "projection_invalidated") {

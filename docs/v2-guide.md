@@ -120,7 +120,8 @@ mismatches, no negative FX reserve, and zero model-call rows for decisions made
 while an agent was in the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
 machine; downstream release hardware should publish its own measurement.
 
-Current `main` at `c9f0b23` restores a visibly active semantics-7 observatory
+The historical semantics-7 merge baseline at `c9f0b23` restored a visibly
+active observatory
 without engine-authored shortcuts: peripheral policy turns create accepted
 goods activity, household fundamentals drive the first matched stock price,
 qualified partner/founder/lawyer actions complete the startup funding chain and
