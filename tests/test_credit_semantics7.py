@@ -107,6 +107,67 @@ def test_semantics7_default_recognizes_only_unrecovered_principal(store):
     assert diagnostics["currency_sums"]["EUR"] == 0
 
 
+def test_estate_debt_skips_a_creditor_the_estate_cannot_settle(store):
+    """A migrated borrower's foreign wallet is not payment for a home creditor."""
+    economy = _economy(store, 7)
+    bank_id, reserve, _ = _make_bank(economy, "EUR")
+    borrower_id, _ = _make_agent(economy, bank_id, "EUR", "Mover")
+    loan_id = economy.bank.disburse_loan(
+        0, bank_id, "agent", borrower_id, LoanTerms(5_000_00, 900, 360, 30))
+    assert loan_id is not None
+
+    # Migration repoints the primary wallet at the destination currency.
+    destination_wallet = economy.ledger.create_account(
+        "agent", borrower_id, "fx", label="mover:usd",
+        opening_cents=9_000_00, currency_code="USD")
+    economy.store.update("agents", borrower_id, checking_account_id=destination_wallet)
+    reserve_before = economy.ledger.balance(reserve)
+
+    economy.lifecycle.settle_death(5, borrower_id, cause="natural")
+
+    assert economy.store.scalar(
+        "SELECT alive FROM agents WHERE id=?", (borrower_id,)) == 0
+    assert economy.store.scalar(
+        "SELECT status FROM loans WHERE id=?", (loan_id,)) == "default"
+    assert economy.ledger.balance(reserve) == reserve_before
+    assert economy.store.scalar(
+        "SELECT COUNT(*) FROM transactions WHERE kind='estate_debt'", default=0) == 0
+
+    ok, diagnostics = economy.ledger.reconcile()
+    assert ok, diagnostics
+
+
+def test_bank_failure_haircut_settles_in_the_deposit_currency(store):
+    """A regional bank failure must post its haircut through its own loss sink."""
+    economy = _economy(store, 7)
+    bank_id, reserve, _ = _make_bank(economy, "EUR")
+    _, depositor_account = _make_agent(economy, bank_id, "EUR", "Depositor")
+    economy.ledger.transfer(0, reserve, depositor_account, 40_000_00)
+    reserves = economy.ledger.balance(reserve)
+    deposits = economy.bank.deposits(bank_id)
+    assert 0 < reserves < deposits
+
+    eur_loss = economy.ledger.system_account(SYS_LOSS, currency_code="EUR")
+    usd_loss = economy.ledger.system_account(SYS_LOSS, currency_code="USD")
+    usd_loss_before = economy.ledger.balance(usd_loss)
+
+    economy.bank.fail_bank(1, bank_id)
+
+    assert economy.store.scalar(
+        "SELECT status FROM banks WHERE id=?", (bank_id,)) == "failed"
+    haircut = deposits - int(deposits * min(1.0, reserves / deposits))
+    assert haircut > 0
+    assert economy.ledger.balance(eur_loss) == haircut
+    assert economy.ledger.balance(usd_loss) == usd_loss_before
+    assert economy.store.scalar(
+        "SELECT currency_code FROM transactions WHERE kind='depositor_haircut'") == "EUR"
+
+    ok, diagnostics = economy.ledger.reconcile()
+    assert ok, diagnostics
+    assert diagnostics["currency_sums"]["EUR"] == 0
+    assert diagnostics["currency_sums"]["USD"] == 0
+
+
 def test_semantics6_default_keeps_historical_off_ledger_writeoff(store):
     economy = _economy(store, 6)
     bank_id, _, equity = _make_bank(economy)

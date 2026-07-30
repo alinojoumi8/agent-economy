@@ -197,8 +197,6 @@ class RunController:
             "type": "run_status",
             "tick": self.store.tick,
             "status": self.world.status,
-            "semantics_version": int(
-                self.world.config.get("engine_semantics_version", 1)),
             "running": self.is_running() if running is None else running,
             "semantics_version": self.world.engine_semantics_version,
             "target_tick": self.target_tick,
@@ -486,8 +484,6 @@ class RunController:
         payload = {
             "run_id": meta["run_id"], "status": self.world.status,
             "tick": self.store.tick, "seed": meta["seed"],
-            "semantics_version": int(
-                self.world.config.get("engine_semantics_version", 1)),
             "active_tick": meta["active_tick"],
             "next_phase": meta["next_phase"],
             "legacy_partial": bool(meta["legacy_partial"]),

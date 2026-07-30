@@ -1232,7 +1232,6 @@ class ContextBuilder:
 
     def _borrower_financials(self, borrower_type: str, borrower_id: int) -> tuple[int, int]:
         if borrower_type == "agent":
-            a = self.store.query_one("SELECT * FROM agents WHERE id=?", (borrower_id,))
             income = 0
             emp = self.store.query_one(
                 "SELECT wage_cents, pay_interval_ticks FROM employments WHERE agent_id=? AND status='active'",
