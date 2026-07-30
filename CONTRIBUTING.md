@@ -3,6 +3,11 @@
 Thank you for improving Agent Economy. The project values reproducible evidence,
 small reviewable changes, and explicit accounting over clever shortcuts.
 
+## Licensing of contributions
+
+Agent Economy is released under the [MIT License](LICENSE). By submitting a pull
+request you agree that your contribution is licensed under those same terms.
+
 ## Workflow
 
 1. Branch from the current `main` or create a dedicated worktree.
