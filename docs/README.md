@@ -53,6 +53,12 @@ compute economy, and semantics-12 civic permit vertical. They extend the root
 PRD and technical
 specification; historical release contracts remain frozen.
 
+The World OS `PRD.md` and `TECH-SPEC.md` are **successor specifications, not
+copies** of the same-named files at the repository root. They differ on purpose:
+the root pair is authoritative for current behaviour, this pair for intended
+direction. Do not reconcile them into one file.
+
+- [World OS specification index](world-os/README.md) — start here
 - [World OS product requirements](world-os/PRD.md)
 - [World OS technical specification](world-os/TECH-SPEC.md)
 - [Semantics-11 cognition and provider pools](semantics11-cognition.md)

@@ -367,7 +367,7 @@ Keep "World OS" as the internal engine name and "AgentsCity" as the product. Tha
 ### Phase 0 — First Breath (1–2 weeks). Nothing else matters until this is done.
 
 1. Keep the completed dead-abstraction cleanup on `main`, finish the current reliability/interaction batch through focused tests, and keep generated assets paired with their dashboard source.
-2. Resolve the PRD/TECH-SPEC duplication (root vs `docs/world-os/`). One canonical copy.
+2. ~~Resolve the PRD/TECH-SPEC duplication (root vs `docs/world-os/`). One canonical copy.~~ **Corrected 2026-07-30 — the premise was wrong.** These are not duplicates. The root pair is the *maintained implementation contract*; `docs/world-os/` is a *successor specification* that defines World OS as "an extension of the current Agent Economy process, not a replacement runtime." They have different structure and scope, and collapsing them to "one canonical copy" would destroy the forward-looking spec. The genuine defect was that the root PRD and TECH-SPEC contained no pointer to the successor at all, so the pair read as an unexplained duplicate. Fixed by adding a scope banner to each root document, a [`docs/world-os/README.md`](docs/world-os/README.md) index stating which document wins on which question, and a non-duplication note in the handbook.
 3. **Run the flagship-shaped trial.** Use the verified live-provider path for 25 citizens and 30 sim-days, with a fixed review protocol. Treat it as a product observation session rather than another connectivity test.
 4. Read every transcript. Ask three questions: *Do the personas hold? Is anything surprising? Would I keep watching?*
 5. Rewrite `docs/implementation-status.md` from scratch. It is currently misleading you.
