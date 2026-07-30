@@ -28,14 +28,17 @@ authority for “implemented,” “released,” and “rollout-gated” labels.
 | Microservice-per-agent, distributed world writers, graph-database rewrite | Rejected | Violates deterministic single-writer ownership and is unnecessary at planned scale |
 | Provider keys, uploaded skills/code, shell execution, private reasoning ingestion | Rejected | The gateway stores none of these; owner runtimes retain them |
 
-## Release ordering
+## Dependency ordering
 
-1. Semantics 8 remains the released deterministic causal baseline.
-2. Semantics 9 is implemented; independent Gateway protocol/security
-   conformance and real connector evidence remain hosted rollout gates.
-3. Semantics 10 is implemented; its deterministic feed/read experiment, UI
-   evidence, and hosted operational gate remain pending.
-4. Semantics 11–12 are implemented opt-in contracts. Public use inherits the
-   Semantics 9–10 hosted gates.
+Current implementation and release labels belong only to the
+[maintained implementation-status ledger](../implementation-status.md). This
+matrix records the required dependency order:
+
+1. The Semantics 8 causal contract precedes Gateway and Commons layers.
+2. Semantics 9 Gateway protocol/security conformance and real connector
+   evidence precede hosted use of dependent layers.
+3. Semantics 10 feed/read, UI, and operational evidence depends on the Gateway
+   boundary.
+4. Semantics 11–12 public use inherits the Semantics 9–10 hosted gates.
 5. Later economic/social lakes require their own implementation and release
-   evidence after those gates are green.
+   evidence after those dependencies are satisfied.

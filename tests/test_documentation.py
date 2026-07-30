@@ -139,20 +139,30 @@ def test_current_release_status_has_one_authoritative_ledger():
     assert "semantics 12 / schema 17" in lowered
     assert "historical semantics-7 closure matrix" in lowered
 
-    status_indexes = (
-        "README.md",
-        "docs/README.md",
-        "docs/implementation-status.html",
-        "docs/world-os/README.md",
-        "docs/world-os/PRD.md",
-        "docs/world-os/TECH-SPEC.md",
-        "docs/world-os/REQUIREMENTS-MATRIX.md",
-        "docs/world-os/SEMANTICS-8-RELEASE-STATUS.md",
-    )
-    for relative_path in status_indexes:
+    status_indexes = {
+        "README.md": "docs/implementation-status.md",
+        "docs/README.md": "implementation-status.md",
+        "docs/implementation-status.html": "implementation-status.md",
+        "docs/world-os/README.md": "../implementation-status.md",
+        "docs/world-os/PRD.md": "../implementation-status.md",
+        "docs/world-os/TECH-SPEC.md": "../implementation-status.md",
+        "docs/world-os/REQUIREMENTS-MATRIX.md": "../implementation-status.md",
+        "docs/world-os/SEMANTICS-8-RELEASE-STATUS.md":
+            "../implementation-status.md",
+    }
+    for relative_path, expected_target in status_indexes.items():
         text = (ROOT / relative_path).read_text(encoding="utf-8").lower()
-        assert "implementation-status" in text, (
-            f"{relative_path} does not defer current release labels to the ledger")
+        escaped_target = re.escape(expected_target)
+        markdown_link = re.search(
+            rf"\[[^\]]+\]\({escaped_target}(?:#[^)]+)?\)",
+            text,
+        )
+        html_link = re.search(
+            rf"""href=["']{escaped_target}(?:#[^"']+)?["']""",
+            text,
+        )
+        assert markdown_link or html_link, (
+            f"{relative_path} does not link to {expected_target}")
 
 
 def test_full_suite_ci_uses_deterministic_cross_platform_shards():
