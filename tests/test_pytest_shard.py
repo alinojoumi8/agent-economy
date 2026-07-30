@@ -8,8 +8,8 @@ from scripts.pytest_shard import select_shard
 def test_select_shard_is_exhaustive_disjoint_and_balanced():
     items = list(range(914))
     selected = [
-        select_shard(items, shard_index=index, shard_count=4)[0]
-        for index in range(4)
+        select_shard(items, shard_index=index, shard_count=8)[0]
+        for index in range(8)
     ]
 
     assert sorted(item for shard in selected for item in shard) == items
