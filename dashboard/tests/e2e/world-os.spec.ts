@@ -410,7 +410,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
-  await expect(page.getByText(/live .* cursor 4/, { exact: true })).toBeVisible();
+  await expect(page.getByText(/live .* cursor 4/)).toBeVisible();
   const initialConnections = await page.evaluate(() => (
     (window as any).__lineageSockets.length
   ));
@@ -434,7 +434,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__lineageSockets.at(-1).sent
   ))).toContainEqual({ type: "hello", event_cursor: 0 });
-  await expect(page.getByText(/live .* cursor 0/, { exact: true })).toBeVisible();
+  await expect(page.getByText(/live .* cursor 0/)).toBeVisible();
 
   await page.evaluate(() => {
     (window as any).__lineageSockets.at(-1).emit({
@@ -448,7 +448,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
 
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("should-not-render")).toHaveCount(0);
-  await expect(page.getByText(/live .* cursor 1/, { exact: true })).toBeVisible();
+  await expect(page.getByText(/live .* cursor 1/)).toBeVisible();
 });
 
 test("live city layers, search, and evidence lens stay truthful and interactive", async ({ page }) => {
