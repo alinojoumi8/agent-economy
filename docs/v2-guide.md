@@ -790,5 +790,5 @@ Before publication: run Python tests and compilation, dashboard tests/build,
 dependency checks, high-severity npm audit, API and browser smoke tests, static
 export verification, 30/365-tick performance gates, exact replay, secret scan,
 license audit, data-provenance review, and the complete GitHub Actions matrix.
-The repository is licensed under Apache-2.0; third-party data retain their own
-terms.
+The repository is licensed under the MIT License; third-party data retain their
+own terms.
