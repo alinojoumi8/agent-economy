@@ -105,18 +105,20 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all -- server/static)"
 
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'workflow_dispatch' && inputs.full_suite == true
-    # Windows 3.11 completes the full 1,000-agent + portable-replay suite in
-    # roughly 16 minutes on hosted runners; retain the complete gate with
-    # enough headroom for normal runner variance.
-    timeout-minutes: 25
+    # Oracle campaign receipt/replay tests dominate the serial suite and pushed
+    # the former combined job past its 25-minute limit. Partition the complete
+    # collected suite deterministically on every OS/Python pair so coverage is
+    # unchanged while per-job and overall wall times remain bounded.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -132,8 +134,12 @@ jobs:
         run: python -m compileall -q agents engine experiments hosted llm oracle reports research server world run.py
       - name: Verify pinned research datasets
         run: python run.py --verify-datasets config/data-manifest.yaml
-      - name: Run test suite (includes golden-run diff)
-        run: python -m pytest tests/ -q
+      - name: Run full-suite shard (includes golden-run diff)
+        run: >
+          python -m pytest tests/ -q
+          -p scripts.pytest_shard
+          --ci-shard-index ${{ matrix.shard }}
+          --ci-shard-count 4
 
   hosted-integration:
     if: github.event_name == 'workflow_dispatch' && inputs.integration == true

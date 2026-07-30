@@ -155,6 +155,15 @@ def test_current_release_status_has_one_authoritative_ledger():
             f"{relative_path} does not defer current release labels to the ledger")
 
 
+def test_full_suite_ci_uses_deterministic_cross_platform_shards():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "shard: [0, 1, 2, 3]" in workflow
+    assert "python -m pytest tests/ -q" in workflow
+    assert "-p scripts.pytest_shard" in workflow
+    assert "--ci-shard-index ${{ matrix.shard }}" in workflow
+    assert "--ci-shard-count 4" in workflow
+
+
 def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
     matches = list(ENTRY_HEADING.finditer(text))
     entries: dict[str, dict[str, str]] = {}
