@@ -3,9 +3,11 @@ Copyright 2026 Agent Economy contributors
 
 The repository contains transformed calibration snapshots from the following
 sources. The MIT License covers Agent Economy code, not third-party source
-content or service terms. The MIT License imposes no notice requirement of its
-own; this file is retained because the data providers below request citation
-independently of the code license.
+content or service terms. MIT requires preserving its copyright and permission
+notice in all copies or substantial portions of the software; unlike Apache-2.0
+section 4(d), it has no mechanism that propagates this separate file. The file
+is retained because the data providers below request citation independently of
+the code license.
 
 Federal Funds Effective Rate [FEDFUNDS]
 - Source: Board of Governors of the Federal Reserve System (US), H.15 Selected
