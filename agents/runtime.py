@@ -651,7 +651,7 @@ class AgentRuntime:
                                            window_start=rollup_start)
             weekly_results = await _gather_fail_fast(
                 self._rollup_week(tick, aid, rollup_start) for aid in weekly_ids)
-            for aid, res in zip(weekly_ids, weekly_results):
+            for aid, res in zip(weekly_ids, weekly_results, strict=True):
                 if isinstance(res, Exception):
                     raise res
                 if res is None:
