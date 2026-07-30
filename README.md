@@ -596,7 +596,7 @@ matrix.
 
 ## Licensing and attribution
 
-The project source is licensed under Apache-2.0. Dataset-specific provenance,
+The project source is licensed under the [MIT License](LICENSE). Dataset-specific provenance,
 terms, and citation guidance are recorded in [NOTICE](NOTICE) and the pinned
 [data manifest](config/data-manifest.yaml). The dashboard's complete generated
 dependency notices are available in
