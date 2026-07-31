@@ -4,6 +4,15 @@
 
 This document is written to be handed to an AI coding agent (or a developer) and implemented directly. Plain-language rationale is included because architectural "why" prevents bad shortcuts later.
 
+> **Scope — read before comparing with `docs/world-os/`.** This is the normative
+> design for the runtime as *currently implemented*.
+> [`docs/world-os/TECH-SPEC.md`](docs/world-os/TECH-SPEC.md) is a **successor
+> specification**, not a copy of this file — it describes World OS as "an
+> extension of the current Agent Economy process, not a replacement runtime".
+> The overlap between the two is intentional. When they disagree about shipped
+> architecture, **this file wins**; when they disagree about intended direction,
+> the World OS spec wins. See [`docs/world-os/README.md`](docs/world-os/README.md).
+
 ---
 
 ## 1. Architecture overview

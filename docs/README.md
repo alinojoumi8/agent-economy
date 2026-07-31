@@ -38,8 +38,9 @@ each audience can find the authoritative level of detail.
 
 - [Product requirements](../PRD.md)
 - [Delivery tasks](../TASKS.md)
-- [Implementation status](implementation-status.md) and
-  [printable status](implementation-status.html)
+- [Implementation status](implementation-status.md) — the single maintained
+  release-status ledger
+- [Historical printable status snapshot](implementation-status.html)
 - [Emergent phenomena](emergent-phenomena.md)
 - [Live provider validation](live-provider-validation.md)
 - [Diagnostic live run `f7c6238bf5`](live-run-f7c6238bf5.md)
@@ -47,12 +48,23 @@ each audience can find the authoritative level of detail.
 
 ## World OS expansion
 
-These documents define the implemented semantics-8 communications lake, the
-semantics-9 External Agent Gateway, semantics-10 Agent Commons, semantics-11
-compute economy, and semantics-12 civic permit vertical. They extend the root
-PRD and technical
-specification; historical release contracts remain frozen.
+These documents define the Semantics 8 communications lake, Semantics 9
+External Agent Gateway, Semantics 10 Agent Commons, Semantics 11 compute
+economy, and Semantics 12 civic permit vertical. Their code is implemented, but
+their release states differ: Semantics 8 is the released deterministic causal
+baseline; Semantics 9–10 remain rollout-gated; Semantics 11–12 are implemented
+opt-in contracts whose public use inherits those hosted gates. The
+[implementation-status ledger](implementation-status.md) is authoritative for
+current labels. Historical release contracts and receipts remain frozen.
 
+The World OS `PRD.md` and `TECH-SPEC.md` are **successor specifications, not
+copies** of the same-named files at the repository root. They differ
+deliberately: the root pair defines the maintained runtime contract, this pair
+defines successor direction, and the implementation-status ledger records what
+is implemented, released, or rollout-gated. Do not reconcile the specification
+pairs into one file.
+
+- [World OS specification index](world-os/README.md) — start here
 - [World OS product requirements](world-os/PRD.md)
 - [World OS technical specification](world-os/TECH-SPEC.md)
 - [Semantics-11 cognition and provider pools](semantics11-cognition.md)

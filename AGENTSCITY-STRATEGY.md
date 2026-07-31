@@ -34,7 +34,12 @@ I had the codebase surveyed independently of the docs. Here is the gap.
 
 3. **The dead-abstraction cleanup has been integrated locally.** The remaining discipline is to keep each follow-up batch tested, reviewable, and merged without mixing generated assets or live-run evidence into unrelated changes.
 
-4. **The docs are two semantics versions stale.** `docs/implementation-status.md` still describes schema 11 / semantics 7 in its body with a one-paragraph bolt-on note. `docs/emergent-phenomena.md` (2026-07-13) says outright: *"real MiniMax/Kimi confirmation remains unproven… scripted evidence only."*
+4. **The status docs needed a single clock.** As of July 30, 2026,
+   `docs/implementation-status.md` is the maintained schema-17 / Semantics-12
+   release ledger, and older Semantics 7/8 evidence is explicitly historical.
+   The 2026-07-13 phenomena report remains scripted evidence for those named
+   phenomena; later live-provider runs prove their own profiles rather than
+   retroactively upgrading that report.
 
 5. **External-agent onboarding is functional but still thin.** The authenticated external gateway and scoped citizenship boundary exist, while the Hermes/OpenClaw integration folders remain lightweight. A polished SDK, hosted onboarding proof, and operator-facing diagnostics are still needed.
 
@@ -56,7 +61,7 @@ I had the last three years of this field mapped. The short version:
 - **Project Sid / Altera** → the company **renamed to Fundamental Research Labs**, abandoned the civilization line, raised $33M for computer-use agents. The famous "1000+ agent civilization" was never actually run — server capacity capped it. The religion experiment was **500 agents, one run, 2.5 hours, seeded with 20 pre-designated priests**. The taxation experiment was **29 agents**.
 - **AI Town** (a16z) is a starter kit, not a research programme. The top HN comment was *"why did they make this? what's the point?"* and the characters were criticised as "boringly nice."
 - **OASIS** ran **1 million agents** and captivated essentially nobody.
-- **AgentSociety 2** (Tsinghua, the most serious academic platform) **abandoned its Ray/gRPC distributed architecture and moved to SQLite-based full experiment replay** when reproducibility became the goal. Read that as direct validation of your architecture.
+- **AgentSociety 2** (Tsinghua, a substantial academic platform) separates execution from persistence in documentation accessed July 30, 2026: agents advance in batched Ray tasks, workspace JSON files support resume, and append-only JSONL replay shards are read through DuckDB. Legacy SQLite models remain for compatibility; the current replay path is not a move from Ray execution to SQLite. The useful comparison is that scalable task execution and durable experiment storage are separate concerns.
 
 ### The methodological counter-literature is now strong, and it is on your side
 
@@ -117,7 +122,7 @@ THE UNSEALING (t-72h)      →  every private message sent 72 real-hours ago
                               transaction it settled
 ```
 
-Every day, viewers learn *why* the thing they watched three days ago actually happened. That is dramatic irony on a timer — the audience knows something the city does not — and it is the single most powerful device in narrative fiction. **No other sim can do it, because they all log everything publicly in real time.**
+Every day, viewers learn *why* the thing they watched three days ago actually happened. That is dramatic irony on a timer — the audience knows something the city does not — and it is a powerful narrative device. Among the systems reviewed in the July 28, 2026 simulator landscape, none documented the same combination of enforced private communication, bit-exact checkpoint forking, delayed public unsealing, and typed causal receipts. That dated capability combination, not a universal claim about every simulator, is the differentiator to test.
 
 The emotional loop is: *confusion → suspense → revelation → "I should have seen it."* Repeat daily, forever, at zero incremental content cost.
 
@@ -201,7 +206,7 @@ This is Moltbook's growth engine (audience-as-cast) with Project Vend's honesty 
 
 Independent conclusion after surveying the 2026 landscape: **your existing stack is already the right architecture. Adopt zero orchestration frameworks.**
 
-The test that matters is: *can it run 500 agents that each persist for months, on a clock the framework doesn't own, where the kernel decides who acts?* LangGraph, AutoGen/AG2, Microsoft Agent Framework and the OpenAI Agents SDK all fail it — they model a request that terminates; you model a world that doesn't. AgentSociety 2 walking back from Ray to SQLite is the strongest available evidence that you chose correctly.
+The evaluation criteria that matter here are: (1) the simulation kernel owns the clock and selects who may act; (2) hundreds of agents retain durable state across multi-month runs; and (3) only the kernel may authorize and settle world actions. Based on the public documentation reviewed on July 28, 2026, LangGraph, AutoGen/AG2, Microsoft Agent Framework, and the OpenAI Agents SDK are request/workflow orchestration layers rather than complete implementations of all three world contracts. That is an architectural fit assessment, not a claim that each framework was exhaustively tested. AgentSociety 2 shows the complementary pattern clearly: Ray remains in the task-execution path, while workspace files provide resume state and append-only JSONL plus DuckDB provide replay/analysis storage.
 
 What to add, in order of impact.
 
@@ -367,7 +372,7 @@ Keep "World OS" as the internal engine name and "AgentsCity" as the product. Tha
 ### Phase 0 — First Breath (1–2 weeks). Nothing else matters until this is done.
 
 1. Keep the completed dead-abstraction cleanup on `main`, finish the current reliability/interaction batch through focused tests, and keep generated assets paired with their dashboard source.
-2. Resolve the PRD/TECH-SPEC duplication (root vs `docs/world-os/`). One canonical copy.
+2. ~~Resolve the PRD/TECH-SPEC duplication (root vs `docs/world-os/`). One canonical copy.~~ **Corrected 2026-07-30 — the premise was wrong.** These are not duplicates. The root pair is the *maintained implementation contract*; `docs/world-os/` is a *successor specification* that defines World OS as "an extension of the current Agent Economy process, not a replacement runtime." They have different structure and scope, and collapsing them to "one canonical copy" would destroy the forward-looking spec. The genuine defect was that the root PRD and TECH-SPEC contained no pointer to the successor at all, so the pair read as an unexplained duplicate. Fixed by adding a scope banner to each root document, a [`docs/world-os/README.md`](docs/world-os/README.md) index stating which document wins on which question, and a non-duplication note in the handbook.
 3. **Run the flagship-shaped trial.** Use the verified live-provider path for 25 citizens and 30 sim-days, with a fixed review protocol. Treat it as a product observation session rather than another connectivity test.
 4. Read every transcript. Ask three questions: *Do the personas hold? Is anything surprising? Would I keep watching?*
 5. Rewrite `docs/implementation-status.md` from scratch. It is currently misleading you.
@@ -466,7 +471,7 @@ But: the sector's actual pain is **false positives, not false negatives**. FINRA
 
 ### 7.5 AI-safety testbeds — the credibility on-ramp
 
-Google DeepMind + Schmidt Sciences + Cooperative AI Foundation + ARIA funded up to $10M for multi-agent safety with priority area #1 being *"sandboxes and testbeds… virtual marketplaces, simulated ecosystems"* (deadline was August 8, 2026 — check for later rounds). ~95% engine transfer.
+Google DeepMind + Schmidt Sciences + Cooperative AI Foundation + ARIA announced up to $10M for multi-agent safety with priority area #1 being *"sandboxes and testbeds… virtual marketplaces, simulated ecosystems"* (**deadline: August 8, 2026**; open and upcoming as of this document's July 28, 2026 snapshot). ~95% engine transfer.
 
 Precedent for why the artifact pays: Microsoft Research's **Magentic Marketplace** found agents overwhelmingly accept the first proposal (a **10–30× advantage to response speed over quality**), welfare *declines* from 3 to 100 search results, and some frontier models were fully compromised by prompt injection **with payments redirected to attackers**. One good sandbox produced findings now cited by regulators.
 
@@ -505,7 +510,7 @@ RL-environment bounties (Prime Intellect $100–$5,000+, HUD $0.25+/env-hour) ar
 
 **Google DeepMind + Schmidt Sciences + Cooperative AI Foundation + ARIA + Google.org are funding up to $10M for multi-agent safety research.** Priority area #1 is literally *"Sandboxes and testbeds: building realistic, reproducible environments"*, explicitly naming *"virtual marketplaces, simulated ecosystems and multi-organisation workflows."*
 
-**Applications close August 8, 2026 — eleven days from today.**
+**Deadline: August 8, 2026. The call was open and upcoming as of the July 28, 2026 document snapshot.**
 
 That is the most precise match between an existing engine and an open cheque in this entire landscape. ~95% engine transfer. You would be applying with a working deterministic multi-agent economy with enforced information boundaries and typed causal provenance — which is more than most applicants will have built.
 
@@ -576,6 +581,6 @@ The gap is real but consortia absorb contributors rather than buying from solo v
 
 **Methodology critique:** [Larooij & Törnberg](https://arxiv.org/html/2504.03274v1) · [AI Review journal version](https://link.springer.com/article/10.1007/s10462-025-11412-6) · [Coupling gain (γ)](https://arxiv.org/html/2606.22203) · [Li & Tao](https://arxiv.org/html/2603.00113v2) · [npj Complexity](https://www.nature.com/articles/s44260-026-00075-1) · [Science Advances — convention formation](https://www.science.org/doi/10.1126/sciadv.adu9368)
 
-**Harness:** [AI Town architecture](https://github.com/a16z-infra/ai-town/blob/main/ARCHITECTURE.md) · [PixiJS v8](https://pixijs.com/blog/pixi-v8-launches) · [deck.gl](https://deck.gl/docs/whats-new) · [AgentScope](https://arxiv.org/html/2407.17789) · [Letta sleep-time compute](https://www.letta.com/blog/sleep-time-compute/) · [Zep vs Mem0](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/) · [Prompt caching economics](https://www.digitalapplied.com/blog/prompt-caching-economics-cache-first-agent-architecture-2026) · [Self-hosting break-even](https://www.developersdigest.tech/blog/self-hosting-open-weights-models-break-even-math) · [Nondeterminism in LLM inference](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) · [H1 2026 provider reliability](https://blog.incidenthub.cloud/h1-2026-cloud-saas-reliability-report) · [Durable Objects fan-out](https://callsphere.ai/blog/vw1c-cloudflare-durable-objects-websocket-fanout-hibernation)
+**Harness:** [AI Town architecture](https://github.com/a16z-infra/ai-town/blob/main/ARCHITECTURE.md) · [AgentSociety 2 architecture](https://agentsociety2.readthedocs.io/en/latest/architecture.html) · [AgentSociety 2 storage](https://agentsociety2.readthedocs.io/en/latest/storage.html) · [PixiJS v8](https://pixijs.com/blog/pixi-v8-launches) · [deck.gl](https://deck.gl/docs/whats-new) · [AgentScope](https://arxiv.org/html/2407.17789) · [Letta sleep-time compute](https://www.letta.com/blog/sleep-time-compute/) · [Zep vs Mem0](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/) · [Prompt caching economics](https://www.digitalapplied.com/blog/prompt-caching-economics-cache-first-agent-architecture-2026) · [Self-hosting break-even](https://www.developersdigest.tech/blog/self-hosting-open-weights-models-break-even-math) · [Nondeterminism in LLM inference](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) · [H1 2026 provider reliability](https://blog.incidenthub.cloud/h1-2026-cloud-saas-reliability-report) · [Durable Objects fan-out](https://callsphere.ai/blog/vw1c-cloudflare-durable-objects-websocket-fanout-hibernation)
 
 **Market:** [DeepMind multi-agent safety fund](https://deepmind.google/blog/investing-in-multi-agent-ai-safety-research/) · [Magentic Marketplace](https://www.microsoft.com/en-us/research/publication/magentic-marketplace-an-open-source-environment-for-studying-agentic-markets/) · [Coval Series A](https://www.prnewswire.com/news-releases/coval-raises-28-million-series-a-to-define-safety-and-reliability-for-autonomous-voice-agents-302808740.html) · [Prime Intellect Environments Hub](https://www.primeintellect.ai/blog/scaling-environments-program) · [Epoch AI RL environments FAQ](https://epochai.substack.com/p/an-faq-on-reinforcement-learning) · [x402 Foundation](https://www.techtimes.com/articles/320813/20260717/visa-mastercard-stripe-back-open-standard-letting-ai-agents-pay-autonomously.htm) · [Simile Series A](https://www.indexventures.com/perspectives/life-the-universe-and-simile-leading-similes-series-a/) · [Aaru](https://techcrunch.com/2025/12/05/ai-synthetic-research-startup-aaru-raised-a-series-a-at-a-1b-headline-valuation) · [182-study review of synthetic participants](https://www.thevoiceofuser.com/the-largest-review-of-synthetic-participants-ever-conducted-found-exactly-what-youd-expect-synthetic-users-dont-work/) · [Verasight synthetic omnibus](https://www.verasight.io/reports/synthetic-omnibus-survey) · [Epistemix ARR](https://getlatka.com/companies/epistemix.com) · [Inworld pivot](https://inworld.ai/)

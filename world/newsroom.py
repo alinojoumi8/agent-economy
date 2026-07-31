@@ -475,13 +475,16 @@ class Conversations:
         pool = weighted[:]
         used: set[int] = set()
         while pool and len(chosen) < k:
-            candidates = [
-                item for item in pool
-                if item[1] not in used and item[2] not in used
-            ]
-            if not candidates:
-                break
+            # Without coverage-first pairing the draw stays over the whole
+            # remaining pool, so stored runs keep their original PRNG stream.
+            candidates = pool
             if self.coverage_first:
+                candidates = [
+                    item for item in pool
+                    if item[1] not in used and item[2] not in used
+                ]
+                if not candidates:
+                    break
                 least_covered = min(
                     (
                         min(participation.get(a, 0), participation.get(b, 0)),

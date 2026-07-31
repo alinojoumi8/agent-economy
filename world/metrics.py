@@ -233,7 +233,6 @@ class Metrics:
         total = sum(wealth)
         if n == 0 or total == 0:
             return 0.0
-        cum = 0.0
         weighted = 0.0
         for i, w in enumerate(wealth, start=1):
             weighted += i * w

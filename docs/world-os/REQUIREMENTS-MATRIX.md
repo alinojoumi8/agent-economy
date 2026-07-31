@@ -4,6 +4,11 @@
 implementation instruction. The Semantics 8 supplier-warning protocol remains
 frozen and unchanged.
 
+This file maps requirements to evidence; it does not independently declare
+current release state. The
+[maintained implementation-status ledger](../implementation-status.md) is the
+authority for “implemented,” “released,” and “rollout-gated” labels.
+
 | Requirement group | Disposition | Contract / evidence |
 |---|---|---|
 | Deterministic kernel, ledgers, replay, hosted control plane | Existing foundation | Root PRD and historical compatibility suite |
@@ -23,9 +28,17 @@ frozen and unchanged.
 | Microservice-per-agent, distributed world writers, graph-database rewrite | Rejected | Violates deterministic single-writer ownership and is unnecessary at planned scale |
 | Provider keys, uploaded skills/code, shell execution, private reasoning ingestion | Rejected | The gateway stores none of these; owner runtimes retain them |
 
-## Release ordering
+## Dependency ordering
 
-1. Semantics 8 remains the released causal baseline.
-2. Semantics 9 Gateway protocol/security conformance and real connector evidence.
-3. Semantics 10 Commons deterministic feed/read experiment and UI evidence.
-4. Later economic/social lakes only after those gates are green.
+Current implementation and release labels belong only to the
+[maintained implementation-status ledger](../implementation-status.md). This
+matrix records the required dependency order:
+
+1. The Semantics 8 causal contract precedes Gateway and Commons layers.
+2. Semantics 9 Gateway protocol/security conformance and real connector
+   evidence precede hosted use of dependent layers.
+3. Semantics 10 feed/read, UI, and operational evidence depends on the Gateway
+   boundary.
+4. Semantics 11–12 public use inherits the Semantics 9–10 hosted gates.
+5. Later economic/social lakes require their own implementation and release
+   evidence after those dependencies are satisfied.

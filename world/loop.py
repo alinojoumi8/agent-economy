@@ -687,6 +687,14 @@ class World:
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
             external_identity = self.runtime.external.arrival_overrides(sched_id)
+            # The public identity is decided once so the agents row and the
+            # public arrival event never disagree about who moved to town.
+            arrival_name = (
+                external_identity["name"] if external_identity else p.name)
+            arrival_occupation = (
+                external_identity["occupation"]
+                if external_identity and external_identity["occupation"]
+                else p.occupation)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
@@ -698,9 +706,8 @@ class World:
                     "baseline_citizens_core", False))
                 and not self.economy.regions.enabled)
             agent_id = self.store.insert(
-                "agents", name=(external_identity["name"] if external_identity else p.name),
-                kind="citizen", occupation=(external_identity["occupation"]
-                    if external_identity and external_identity["occupation"] else p.occupation),
+                "agents", name=arrival_name,
+                kind="citizen", occupation=arrival_occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
@@ -763,9 +770,10 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
-            external_binding = self.runtime.external.bind_arrival(sched_id, agent_id, tick)
+            self.runtime.external.bind_arrival(sched_id, agent_id, tick)
             arrival_payload = {
-                "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
+                "agent_id": agent_id, "name": arrival_name,
+                "occupation": arrival_occupation,
                 "schedule_event_id": sched_id}
             if self.engine_semantics_version >= 7:
                 arrival_payload.update({

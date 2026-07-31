@@ -647,16 +647,18 @@ class AgentRuntime:
                     summary = "Week summary: " + " | ".join(
                         str(item["text"]) for item in daily)[:1800]
                     importance = max(float(item["importance"]) for item in daily)
-                    self.mem.weekly_rollup(aid, tick, summary, importance)
+                    self.mem.weekly_rollup(aid, tick, summary, importance,
+                                           window_start=rollup_start)
             weekly_results = await _gather_fail_fast(
-                self._rollup_week(tick, aid) for aid in weekly_ids)
-            for aid, res in zip(weekly_ids, weekly_results):
+                self._rollup_week(tick, aid, rollup_start) for aid in weekly_ids)
+            for aid, res in zip(weekly_ids, weekly_results, strict=True):
                 if isinstance(res, Exception):
                     raise res
                 if res is None:
                     continue
                 summary, importance = res
-                self.mem.weekly_rollup(aid, tick, summary, importance)
+                self.mem.weekly_rollup(aid, tick, summary, importance,
+                                       window_start=rollup_start)
 
     async def _compress_one(
         self, tick: int, agent_id: int,
@@ -690,12 +692,13 @@ class AgentRuntime:
                 getattr(resp, "call_id", None))
 
     async def _rollup_week(
-        self, tick: int, agent_id: int,
+        self, tick: int, agent_id: int, rollup_start: Optional[int] = None,
     ) -> Optional[tuple[str, float]]:
+        start = tick - 6 if rollup_start is None else int(rollup_start)
         rows = self.store.query(
             "SELECT tick, text, importance FROM memories WHERE agent_id=? "
             "AND kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? ORDER BY tick, id",
-            (agent_id, tick - 6, tick))
+            (agent_id, start, tick))
         if not rows:
             return None
         daily = [{"tick": int(r["tick"]), "text": r["text"],

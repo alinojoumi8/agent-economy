@@ -80,8 +80,13 @@ class Memory:
         self.observe(agent_id, tick, summary, importance=importance, kind="summary")
 
     def weekly_rollup(self, agent_id: int, tick: int, summary: str,
-                      importance: float = 1.0) -> None:
-        """Persist one weekly synthesis, then demote the daily source summaries."""
+                      importance: float = 1.0,
+                      window_start: Optional[int] = None) -> None:
+        """Persist one weekly synthesis, then demote the daily source summaries.
+
+        `window_start` is the first tick of the roll-up window the runtime used.
+        It defaults to the seven-day window so existing callers are unchanged.
+        """
         if not summary:
             return
         existing = self.store.query_one(
@@ -89,10 +94,11 @@ class Memory:
             (agent_id, tick))
         if not existing:
             self.observe(agent_id, tick, summary, importance=importance, kind="weekly_summary")
+        start = tick - 6 if window_start is None else int(window_start)
         self.store.execute(
             "UPDATE memories SET demoted=1 WHERE agent_id=? AND kind='summary' "
             "AND tick BETWEEN ? AND ? AND demoted=0",
-            (agent_id, tick - 6, tick))
+            (agent_id, start, tick))
 
     # ── beliefs ──────────────────────────────────────────────────────────────
     def get_beliefs(self, agent_id: int) -> dict[str, float]:

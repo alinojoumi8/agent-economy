@@ -3,7 +3,8 @@
 **Version:** 1.0<br>
 **Date:** 2026-07-18<br>
 **Owner:** Ali<br>
-**Status:** Gate -1 approved; Semantics 8 released; Semantics 9/10 code implemented with rollout gates pending<br>
+**Specification status:** Gate -1 approved; Semantics 8 contract frozen; Semantics 9/10 successor requirements defined<br>
+**Current implementation/release status:** [maintained status ledger](../implementation-status.md)<br>
 **Current implemented contract:** [root PRD](../../PRD.md)
 
 ## 1. Vision

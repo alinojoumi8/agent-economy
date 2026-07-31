@@ -80,6 +80,23 @@ def test_dedicated_actor_and_hash_only_personal_credential(world10: World):
             connection["id"], owner_id="owner-b", tenant_id="tenant-a")
 
 
+def test_public_arrival_event_announces_the_bound_external_identity(world10: World):
+    """The arrival event is public evidence; it must name the agent that exists."""
+    created = _connection(world10)
+    actor_id = int(world10.runtime.external.connection(
+        created["connection"]["id"], owner_id="owner-a",
+        tenant_id="tenant-a")["actor_id"])
+    agent = world10.store.query_one(
+        "SELECT name,occupation FROM agents WHERE id=?", (actor_id,))
+    event = world10.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='arrival' AND subject_id=? "
+        "ORDER BY id DESC LIMIT 1", (actor_id,))
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["name"] == agent["name"] == "Outside Founder"
+    assert payload["occupation"] == agent["occupation"] == "builder"
+
+
 def test_agent_api_projects_hermes_lease_and_privacy_safe_receipt(world10: World):
     created = _connection(world10)
     service = world10.runtime.external

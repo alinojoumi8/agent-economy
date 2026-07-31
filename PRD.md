@@ -2,6 +2,15 @@
 
 **Version:** 1.1 · **Date:** 2026-07-16 · **Owner:** Ali · **Status:** Maintained implementation contract
 
+> **Scope — read before comparing with `docs/world-os/`.** This document governs
+> what is *built and maintained today*: the Agent Economy kernel through R22.
+> [`docs/world-os/PRD.md`](docs/world-os/PRD.md) is a **successor specification**,
+> not a copy of this file — it defines World OS, an extension of this runtime
+> whose later semantic lakes are partly unreleased. The two documents differ on
+> purpose and neither supersedes the other. When they disagree about current
+> behaviour, **this file wins**; when they disagree about intended direction, the
+> World OS PRD wins. See [`docs/world-os/README.md`](docs/world-os/README.md).
+
 ---
 
 ## 1. Vision

@@ -124,6 +124,56 @@ def test_semantics_7_closure_status_records_merged_main_and_post_merge_ci():
                 f"{relative_path} retains stale pending-merge text: {stale_phrase}")
 
 
+def test_current_release_status_has_one_authoritative_ledger():
+    status = (ROOT / "docs/implementation-status.md").read_text(encoding="utf-8")
+    lowered = status.lower()
+    assert "single maintained release-status" in lowered
+    assert "ledger" in lowered
+    assert "schema 17 / semantics 12" in lowered
+    assert "semantics 8 / schema 12" in lowered
+    assert "**released deterministic causal baseline**" in lowered
+    assert "semantics 9 / schema 13" in lowered
+    assert "semantics 10 / schema 14" in lowered
+    assert lowered.count("**rollout-gated**") >= 2
+    assert "semantics 11 / schema 15" in lowered
+    assert "semantics 12 / schema 17" in lowered
+    assert "historical semantics-7 closure matrix" in lowered
+
+    status_indexes = {
+        "README.md": "docs/implementation-status.md",
+        "docs/README.md": "implementation-status.md",
+        "docs/implementation-status.html": "implementation-status.md",
+        "docs/world-os/README.md": "../implementation-status.md",
+        "docs/world-os/PRD.md": "../implementation-status.md",
+        "docs/world-os/TECH-SPEC.md": "../implementation-status.md",
+        "docs/world-os/REQUIREMENTS-MATRIX.md": "../implementation-status.md",
+        "docs/world-os/SEMANTICS-8-RELEASE-STATUS.md":
+            "../implementation-status.md",
+    }
+    for relative_path, expected_target in status_indexes.items():
+        text = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+        escaped_target = re.escape(expected_target)
+        markdown_link = re.search(
+            rf"\[[^\]]+\]\({escaped_target}(?:#[^)]+)?\)",
+            text,
+        )
+        html_link = re.search(
+            rf"""href=["']{escaped_target}(?:#[^"']+)?["']""",
+            text,
+        )
+        assert markdown_link or html_link, (
+            f"{relative_path} does not link to {expected_target}")
+
+
+def test_full_suite_ci_uses_deterministic_cross_platform_shards():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7]" in workflow
+    assert "python -m pytest tests/ -q" in workflow
+    assert "-p scripts.pytest_shard" in workflow
+    assert "--ci-shard-index ${{ matrix.shard }}" in workflow
+    assert "--ci-shard-count 8" in workflow
+
+
 def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
     matches = list(ENTRY_HEADING.finditer(text))
     entries: dict[str, dict[str, str]] = {}

@@ -2153,8 +2153,17 @@ def test_campaign_execution_lock_rejects_overlap_and_releases_after_process_cras
     finally:
         process.kill()
         process.wait(timeout=10)
-    with oracle_campaign._CampaignExecutionLock(lock_path):
-        pass
+    # Windows releases a terminated process's byte-range locks asynchronously,
+    # so the contract under test is that the lock becomes acquirable again --
+    # not that it is free the instant the holder is reaped.
+    for attempt in range(100):
+        try:
+            with oracle_campaign._CampaignExecutionLock(lock_path):
+                break
+        except OracleCampaignError:
+            if attempt == 99:
+                raise
+            time.sleep(0.05)
 
 
 def test_every_checkpoint_hash_schema_and_prng_state_is_receipt_bound(tmp_path):

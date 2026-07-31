@@ -2,8 +2,13 @@
 
 **Evidence refreshed:** 2026-07-13
 
-**Acceptance boundary:** implemented and tested with deterministic scripted agents;
-real MiniMax/Kimi confirmation remains unproven.
+**Acceptance boundary at this 2026-07-13 snapshot:** implemented and tested with
+deterministic scripted agents; these named phenomena did not yet have live
+MiniMax/Kimi confirmation. Later authenticated provider runs establish
+availability for their own profiles, but do not retroactively convert this
+scripted phenomenon evidence into live behavioral validation. See the
+[maintained implementation-status ledger](implementation-status.md) for current
+provider and release status.
 
 The PRD calls a phenomenon emergent when the engine does not directly map a cause
 to its macro consequence. In each chain below, the engine exposes state and
