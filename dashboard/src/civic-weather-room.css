@@ -2219,3 +2219,83 @@ body::before {
     transition: none;
   }
 }
+
+.world-os-freshness--global,
+.world-os-freshness--workspace {
+  border-color: var(--civic-rule);
+  border-radius: 4px;
+  background: white;
+  color: var(--civic-ink);
+}
+
+.world-os-freshness-copy strong {
+  color: var(--civic-navy);
+}
+
+.world-os-freshness-copy small,
+.world-os-freshness-chevron {
+  color: var(--civic-muted);
+  font-size: .625rem;
+}
+
+.world-os-freshness-details {
+  border-color: var(--civic-navy);
+  border-radius: 6px;
+  background: var(--civic-white);
+  color: var(--civic-ink);
+}
+
+.world-os-freshness-details > p,
+.world-os-freshness-details dt {
+  color: var(--civic-muted);
+}
+
+.world-os-freshness-details dl div {
+  border-color: var(--civic-rule);
+  border-radius: 3px;
+  background: var(--civic-paper);
+}
+
+.world-os-freshness-details dd {
+  color: var(--civic-navy);
+}
+
+.world-os-health--connecting,
+.world-os-health--reconnecting {
+  background: #f0ae39;
+  box-shadow: none;
+}
+
+.world-os-health--historical {
+  background: var(--civic-cobalt);
+  box-shadow: none;
+}
+
+.world-os-command-group > header {
+  color: var(--civic-muted);
+}
+
+.world-os-command-group > header small {
+  color: #9b6200;
+}
+
+.world-os-command-group > button {
+  border-radius: 3px;
+  color: var(--civic-navy);
+}
+
+.world-os-command-group > button:hover,
+.world-os-command-group > button.active {
+  outline-color: #b6c6df;
+  background: var(--civic-paper);
+}
+
+.world-os-command-status {
+  background: #eef6f2;
+  color: #24624c;
+}
+
+.world-os-command-error {
+  background: #fff0ed;
+  color: #9e2e1f;
+}

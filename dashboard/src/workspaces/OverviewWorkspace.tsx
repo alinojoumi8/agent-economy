@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
+import { commonObserverParamsFromState, projectionScopeParams, useObserverViewState } from "../app/observerViewState";
 import { CivicCity } from "../components/CivicCity";
+import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 
 type EventItem = {
   id: number; tick: number; phase: string; kind: string; importance: number;
@@ -63,14 +65,18 @@ function title(value: string) {
 
 export function OverviewWorkspace() {
   const { runId = "run" } = useParams();
-  const [search] = useSearchParams();
+  const [observerState, patchObserverState] = useObserverViewState();
+  const { transport } = useWorkspaceOutletContext();
   const [activityMode, setActivityMode] = useState<"alerts" | "recent">("alerts");
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
-  const tick = search.get("tick") || "live";
+  const tick = observerState.tick;
   const query = useQuery({
-    queryKey: ["world-os", runId, "overview", tick],
-    queryFn: ({ signal }) => projectionApi<Overview>(
-      "/api/v2/snapshot?tick=" + encodeURIComponent(tick) + "&domains=summary,alerts,communications,events", signal),
+    queryKey: ["world-os", runId, observerState.fork, "overview", tick],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      params.set("domains", "summary,alerts,communications,events");
+      return projectionApi<Overview>(`/api/v2/snapshot?${params}`, signal);
+    },
   });
   const runStatus = String(query.data?.data.summary?.status || "").toLowerCase();
   const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
@@ -81,16 +87,18 @@ export function OverviewWorkspace() {
     refetchInterval: pollCurrentRun ? 2000 : false,
   });
   const cityQuery = useQuery({
-    queryKey: ["world-os", runId, "city", tick],
+    queryKey: ["world-os", runId, observerState.fork, "city", tick],
     queryFn: async ({ signal }) => {
+      const mapParams = projectionScopeParams(observerState);
+      mapParams.set("layers", "regions,agents,organizations,places,presence");
+      const civicParams = projectionScopeParams(observerState);
       const [mapEnvelope, civicEnvelope] = await Promise.all([
         projectionApi<CityMap>(
-          "/api/v2/world-map?tick=" + encodeURIComponent(tick)
-          + "&layers=regions,agents,organizations,places,presence",
+          `/api/v2/world-map?${mapParams}`,
           signal,
         ),
         projectionApi<CivicSummary>(
-          "/api/v2/civic/summary?tick=" + encodeURIComponent(tick),
+          `/api/v2/civic/summary?${civicParams}`,
           signal,
         ),
       ]);
@@ -112,9 +120,16 @@ export function OverviewWorkspace() {
   const recent = [...(data.events?.items || [])].slice(-12).reverse();
   const activity = activityMode === "alerts" ? alerts : recent;
   const selectedEvent = activity.find(event => event.id === selectedEventId) || activity[0];
-  const historicalSuffix = tick === "live" ? "" : "?tick=" + encodeURIComponent(tick);
-  const traceUrl = (event: EventItem) =>
-    "/runs/" + encodeURIComponent(runId) + "/investigations?event=" + event.id + (tick === "live" ? "" : "&tick=" + encodeURIComponent(tick));
+  const workspaceUrl = (path: string) => {
+    const common = commonObserverParamsFromState(observerState);
+    const queryString = common.toString();
+    return `/runs/${encodeURIComponent(runId)}/${path}${queryString ? `?${queryString}` : ""}`;
+  };
+  const traceUrl = (event: EventItem) => {
+    const common = commonObserverParamsFromState(observerState);
+    common.set("event", String(event.id));
+    return `/runs/${encodeURIComponent(runId)}/investigations?${common}`;
+  };
   const switchActivity = (mode: "alerts" | "recent") => {
     setActivityMode(mode);
     const first = mode === "alerts" ? alerts[0] : recent[0];
@@ -122,6 +137,9 @@ export function OverviewWorkspace() {
   };
 
   return <section className="world-os-overview">
+    <div className="world-os-workspace-freshness-row">
+      <FreshnessBadge transport={transport} tick={tick} envelope={envelope} sourceLabel="Overview committed projection" />
+    </div>
     <CivicCity
       agents={cityQuery.data?.agents}
       firms={cityQuery.data?.firms}
@@ -133,7 +151,7 @@ export function OverviewWorkspace() {
       tick={tick}
       phase={data.summary?.phase}
       status={data.summary?.status}
-      connected={!query.isError}
+      connected={!query.isError && transport.status === "live"}
       loading={cityQuery.isLoading}
       error={cityQuery.error instanceof Error ? cityQuery.error.message : ""}
       historical={tick !== "live"}
@@ -143,25 +161,27 @@ export function OverviewWorkspace() {
         policy: envelope.policy_version,
       }}
       variant="world-os"
+      observerState={observerState}
+      onObserverStateChange={patchObserverState}
     />
 
     <div className="world-os-metrics" aria-label="World summary">
-      <Link to={"/runs/" + encodeURIComponent(runId) + "/world" + historicalSuffix}>
+      <Link to={workspaceUrl("world")}>
         <span className="world-os-metric-label"><i className="world-os-metric-signal world-os-metric-signal--mint" />World state</span>
         <strong>{title(data.summary?.status || "unknown")}</strong>
         <small>{title(data.summary?.phase || "No phase")}</small><b aria-hidden="true">↗</b>
       </Link>
-      <Link to={"/runs/" + encodeURIComponent(runId) + "/people" + historicalSuffix}>
+      <Link to={workspaceUrl("people")}>
         <span className="world-os-metric-label"><i className="world-os-metric-signal" />Living agents</span>
         <strong>{data.summary?.agents_alive ?? 0}</strong>
         <small>{data.summary?.active_firms ?? 0} active firms</small><b aria-hidden="true">↗</b>
       </Link>
-      <Link to={"/runs/" + encodeURIComponent(runId) + "/news-communications" + historicalSuffix}>
+      <Link to={workspaceUrl("news-communications")}>
         <span className="world-os-metric-label"><i className="world-os-metric-signal world-os-metric-signal--amber" />Communications</span>
         <strong>{data.communications?.total ?? 0}</strong>
         <small>{data.communications?.published ?? 0} public · {data.communications?.private_total ?? 0} private</small><b aria-hidden="true">↗</b>
       </Link>
-      <Link to={selectedEvent ? traceUrl(selectedEvent) : "/runs/" + encodeURIComponent(runId) + "/investigations" + historicalSuffix}>
+      <Link to={selectedEvent ? traceUrl(selectedEvent) : workspaceUrl("investigations")}>
         <span className="world-os-metric-label"><i className={"world-os-metric-signal " + (data.summary?.ledger_balance === 0 ? "world-os-metric-signal--mint" : "world-os-metric-signal--coral")} />Ledger invariant</span>
         <strong>{data.summary?.ledger_balance === 0 ? "Balanced" : "Review"}</strong>
         <small>{data.summary?.ledger_balance ?? 0} cents net</small><b aria-hidden="true">↗</b>

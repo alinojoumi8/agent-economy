@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { workspaceApi } from "../app/api";
+import { commonObserverParamsFromState, useObserverViewState } from "../app/observerViewState";
+import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import { agentExecutionPresentation } from "../lib/agentExecution";
 
 type AgentExecution = {
@@ -55,14 +57,16 @@ function normalizedTier(value: string) {
 
 export function PeopleWorkspace() {
   const { runId = "run", agentId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [observerState] = useObserverViewState();
+  const { transport } = useWorkspaceOutletContext();
   const [filter, setFilter] = useState("");
-  const tick = searchParams.get("tick");
-  const suffix = tick ? "?tick=" + encodeURIComponent(tick) : "";
+  const tick = observerState.tick;
+  const common = commonObserverParamsFromState(observerState).toString();
+  const suffix = common ? `?${common}` : "";
   const agentsQuery = useQuery({
-    queryKey: ["agents", runId],
+    queryKey: ["agents", runId, "current-roster"],
     queryFn: ({ signal }) => workspaceApi<Agent[]>("/api/agents", { signal }),
-    refetchInterval: tick ? false : 3000,
+    refetchInterval: tick === "live" ? 3000 : false,
   });
   const agents = agentsQuery.data || [];
   const selectedId = agentId ? Number(agentId) : agents[0]?.id;
@@ -70,7 +74,7 @@ export function PeopleWorkspace() {
     queryKey: ["agent-detail", runId, selectedId],
     queryFn: ({ signal }) => workspaceApi<AgentDetail>("/api/agents/" + selectedId, { signal }),
     enabled: Number.isFinite(selectedId),
-    refetchInterval: tick ? false : 3000,
+    refetchInterval: tick === "live" ? 3000 : false,
   });
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -97,13 +101,16 @@ export function PeopleWorkspace() {
   return <section className="world-os-people">
     <header className="world-os-heading">
       <div><p className="world-os-kicker">Citizen cognition economy</p><h2>People</h2></div>
-      <div className="world-os-people-stats">
-        <span><strong>{agents.filter(agent => agent.alive).length}</strong> living</span>
-        <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "local").length}</strong> local</span>
-        <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "flash").length}</strong> flash</span>
-        <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "premium").length}</strong> premium</span>
-        <span><strong>{agents.filter(agent => agent.execution?.state === "live").length}</strong> live AI</span>
-        <span><strong>{agents.filter(agent => agent.execution?.source === "external").length}</strong> Hermes</span>
+      <div className="world-os-heading-actions">
+        <FreshnessBadge transport={transport} tick={tick} sourceMode="current-roster" sourceLabel="Polling current roster" />
+        <div className="world-os-people-stats">
+          <span><strong>{agents.filter(agent => agent.alive).length}</strong> living</span>
+          <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "local").length}</strong> local</span>
+          <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "flash").length}</strong> flash</span>
+          <span><strong>{agents.filter(agent => normalizedTier(agent.model_tier) === "premium").length}</strong> premium</span>
+          <span><strong>{agents.filter(agent => agent.execution?.state === "live").length}</strong> live AI</span>
+          <span><strong>{agents.filter(agent => agent.execution?.source === "external").length}</strong> Hermes</span>
+        </div>
       </div>
     </header>
 

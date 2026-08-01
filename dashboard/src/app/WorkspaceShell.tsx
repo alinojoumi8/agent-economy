@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import worldOsEmblem from "../assets/world-os-emblem.png";
 import { CitizenMenu } from "../components/CitizenMenu";
+import { FreshnessBadge, type ProjectionTransport } from "../components/FreshnessBadge";
+import { projectionApi } from "./api";
+import { searchResultPath, workspacePath, type SearchResultItem, type SearchResultKind } from "./commandNavigation";
+import { parseObserverViewState, projectionScopeParams } from "./observerViewState";
 import { useProjectionSocket } from "./useProjectionSocket";
 
 type GlyphName =
@@ -14,6 +19,30 @@ type RouteItem = {
   label: string;
   caption: string;
   icon: GlyphName;
+};
+
+type SearchGroup = {
+  kind: SearchResultKind;
+  items: SearchResultItem[];
+  truncated: boolean;
+};
+
+type SearchData = { groups: SearchGroup[] };
+
+type CommandChoice = {
+  key: string;
+  label: string;
+  caption: string;
+  icon: GlyphName;
+  route?: RouteItem;
+  result?: SearchResultItem;
+};
+
+type CommandGroup = {
+  key: string;
+  label: string;
+  truncated: boolean;
+  choices: CommandChoice[];
 };
 
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
@@ -36,6 +65,17 @@ const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
 ];
 
 const routes = routeGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.label })));
+
+const entityGroupOrder: Array<{
+  kind: SearchResultKind;
+  label: string;
+  icon: GlyphName;
+}> = [
+  { kind: "agent", label: "People", icon: "people" },
+  { kind: "firm", label: "Organizations", icon: "organizations" },
+  { kind: "event", label: "Events", icon: "investigations" },
+  { kind: "communication_thread", label: "Public Communications", icon: "communications" },
+];
 
 function Glyph({ name }: { name: GlyphName }) {
   let paths;
@@ -61,51 +101,158 @@ export function WorkspaceShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
-  const tick = search.get("tick") || "live";
-  const transport = useProjectionSocket(tick !== "live");
+  const observerState = useMemo(() => parseObserverViewState(search), [search]);
+  const tick = observerState.tick;
+  const transport = useProjectionSocket(tick !== "live") as ProjectionTransport;
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [debouncedCommandQuery, setDebouncedCommandQuery] = useState("");
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [draftTick, setDraftTick] = useState(tick === "live" ? "" : tick);
   const commandInput = useRef<HTMLInputElement>(null);
+  const commandTrigger = useRef<HTMLButtonElement>(null);
+  const commandReturnFocus = useRef<HTMLElement | null>(null);
   const activeRoute = routes.find(route => location.pathname.includes("/" + route.path)) || routes[0];
-  const tickSuffix = tick === "live" ? "" : "?tick=" + encodeURIComponent(tick);
-  const filteredRoutes = routes.filter(route =>
-    (route.label + " " + route.caption + " " + route.group).toLowerCase().includes(commandQuery.trim().toLowerCase()),
+  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+  const filteredRoutes = useMemo(() => routes.filter(route =>
+    (route.label + " " + route.caption + " " + route.group).toLowerCase().includes(normalizedCommandQuery),
+  ), [normalizedCommandQuery]);
+
+  useEffect(() => {
+    if (normalizedCommandQuery.length < 2) {
+      setDebouncedCommandQuery("");
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setDebouncedCommandQuery(normalizedCommandQuery),
+      200,
+    );
+    return () => window.clearTimeout(timer);
+  }, [normalizedCommandQuery]);
+
+  const entitySearch = useQuery({
+    queryKey: [
+      "world-os", runId, "search", observerState.fork, tick,
+      debouncedCommandQuery, "agent,firm,event,communication_thread",
+    ],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      params.set("q", debouncedCommandQuery);
+      params.set("kinds", "agent,firm,event,communication_thread");
+      params.set("limit", "8");
+      return projectionApi<SearchData>(`/api/v2/search?${params}`, signal);
+    },
+    enabled: commandOpen && debouncedCommandQuery.length >= 2,
+    retry: false,
+  });
+  const visibleEntitySearch = debouncedCommandQuery === normalizedCommandQuery
+    ? entitySearch.data
+    : undefined;
+
+  const commandGroups = useMemo<CommandGroup[]>(() => {
+    const groups: CommandGroup[] = [];
+    if (filteredRoutes.length) {
+      groups.push({
+        key: "routes",
+        label: "Routes",
+        truncated: false,
+        choices: filteredRoutes.map(route => ({
+          key: `route:${route.path}`,
+          label: route.label,
+          caption: route.caption,
+          icon: route.icon,
+          route,
+        })),
+      });
+    }
+    for (const metadata of entityGroupOrder) {
+      const group = visibleEntitySearch?.data.groups.find(item => item.kind === metadata.kind);
+      if (!group?.items.length) continue;
+      groups.push({
+        key: metadata.kind,
+        label: metadata.label,
+        truncated: group.truncated,
+        choices: group.items.map(result => ({
+          key: `${result.kind}:${result.id}`,
+          label: result.label,
+          caption: result.sublabel,
+          icon: metadata.icon,
+          result,
+        })),
+      });
+    }
+    return groups;
+  }, [filteredRoutes, visibleEntitySearch]);
+  const commandChoices = useMemo(
+    () => commandGroups.flatMap(group => group.choices),
+    [commandGroups],
   );
+  const entityPending = normalizedCommandQuery.length >= 2
+    && (debouncedCommandQuery !== normalizedCommandQuery || entitySearch.isFetching);
+  const visibleEntityError = debouncedCommandQuery === normalizedCommandQuery
+    ? entitySearch.error
+    : null;
+
+  const openCommand = useCallback((returnTarget?: HTMLElement | null) => {
+    commandReturnFocus.current = returnTarget
+      || (document.activeElement instanceof HTMLElement ? document.activeElement : commandTrigger.current);
+    setCommandQuery("");
+    setDebouncedCommandQuery("");
+    setActiveCommandIndex(0);
+    setCommandOpen(true);
+  }, []);
+  const closeCommand = useCallback(() => {
+    setCommandOpen(false);
+    window.requestAnimationFrame(() => commandReturnFocus.current?.focus());
+  }, []);
 
   useEffect(() => setDraftTick(tick === "live" ? "" : tick), [tick]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setCommandOpen(value => !value);
-        setCommandQuery("");
+        if (commandOpen) closeCommand();
+        else openCommand();
       }
-      if (event.key === "Escape") setCommandOpen(false);
+      if (event.key === "Escape" && commandOpen) closeCommand();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [closeCommand, commandOpen, openCommand]);
   useEffect(() => {
     if (commandOpen) window.requestAnimationFrame(() => commandInput.current?.focus());
   }, [commandOpen]);
+  useEffect(() => {
+    setActiveCommandIndex(commandChoices.length ? 0 : -1);
+  }, [commandChoices]);
 
-  const workspaceUrl = (path: string) =>
-    "/runs/" + encodeURIComponent(runId) + "/" + path + tickSuffix;
+  const workspaceUrl = (path: string) => workspacePath(runId, path, search);
   const setTick = (value: string | null) => {
     const next = new URLSearchParams(search);
     if (value) next.set("tick", value); else next.delete("tick");
-    setSearch(next, { replace: true });
+    setSearch(next);
   };
   const submitTick = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = draftTick.replace(/\D/g, "");
     if (value) setTick(value);
   };
-  const openWorkspace = (route: RouteItem) => {
-    setCommandOpen(false);
-    navigate(workspaceUrl(route.path));
+  const openChoice = (choice: CommandChoice) => {
+    const destination = choice.route
+      ? workspaceUrl(choice.route.path)
+      : choice.result
+        ? searchResultPath(runId, choice.result, search)
+        : null;
+    if (!destination) return;
+    closeCommand();
+    navigate(destination);
+  };
+  const moveCommandSelection = (direction: number) => {
+    if (!commandChoices.length) return;
+    setActiveCommandIndex(current => (
+      (Math.max(0, current) + direction + commandChoices.length) % commandChoices.length
+    ));
   };
 
   return <div className={"world-os-shell min-h-screen text-slate-200" + (railCollapsed ? " world-os-shell--collapsed" : "")}>
@@ -154,38 +301,71 @@ export function WorkspaceShell() {
             <label><span className="world-os-visually-hidden">Inspect tick</span><input aria-label="Inspect tick" inputMode="numeric" value={draftTick} onChange={event => setDraftTick(event.target.value.replace(/\D/g, ""))} placeholder="Tick" /></label>
             <button type="submit" aria-label="Go to tick">Go</button>
           </form>
-          <button className="world-os-command-button" type="button" onClick={() => { setCommandOpen(true); setCommandQuery(""); }} aria-label="Open command menu" aria-haspopup="dialog">
+          <button ref={commandTrigger} className="world-os-command-button" type="button" onClick={event => openCommand(event.currentTarget)} aria-label="Open command menu" aria-haspopup="dialog">
             <Glyph name="search" /><span>Navigate</span><kbd>Ctrl K</kbd>
           </button>
-          <div className="world-os-transport" aria-live="polite">
-            <span className={"world-os-health world-os-health--" + transport.status} aria-hidden="true" />
-            <div><strong>{tick === "live" ? "Live sync" : "Historical"}</strong><small>{transport.status} · cursor {transport.cursor}</small></div>
-          </div>
+          <FreshnessBadge transport={transport} tick={tick} placement="global" />
         </div>
       </header>
       <main id="workspace-main" className="world-os-main" tabIndex={-1}>
         {transport.status === "stale" && <div className="world-os-alert" role="alert">
           Live updates are stale. The workspace is refetching the canonical projection: {transport.staleReason}.
         </div>}
-        <Outlet />
+        <Outlet context={{ tick, forkId: observerState.fork, transport }} />
       </main>
     </section>
 
-    {commandOpen && <div className="world-os-command-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) setCommandOpen(false); }}>
+    {commandOpen && <div className="world-os-command-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) closeCommand(); }}>
       <section className="world-os-command" role="dialog" aria-modal="true" aria-labelledby="world-os-command-title">
-        <header><div><p className="world-os-kicker">World OS command</p><h2 id="world-os-command-title">Go to a workspace</h2></div><button type="button" onClick={() => setCommandOpen(false)} aria-label="Close command menu">Esc</button></header>
-        <label className="world-os-command-search"><Glyph name="search" /><input ref={commandInput} value={commandQuery} onChange={event => setCommandQuery(event.target.value)} onKeyDown={event => {
-          if (event.key === "Enter" && filteredRoutes[0]) { event.preventDefault(); openWorkspace(filteredRoutes[0]); }
-        }} placeholder="Search people, markets, evidence…" /></label>
-        <div className="world-os-command-results">
-          {filteredRoutes.map(route => <button type="button" key={route.path} onClick={() => openWorkspace(route)}>
-            <span className="world-os-nav-icon"><Glyph name={route.icon} /></span>
-            <span><strong>{route.label}</strong><small>{route.caption}</small></span>
-            <span className="world-os-command-arrow" aria-hidden="true">↗</span>
-          </button>)}
-          {!filteredRoutes.length && <p className="world-os-command-empty">No workspace matches “{commandQuery}”.</p>}
+        <header><div><p className="world-os-kicker">World OS command</p><h2 id="world-os-command-title">Navigate and inspect</h2></div><button type="button" onClick={closeCommand} aria-label="Close command menu">Esc</button></header>
+        <label className="world-os-command-search"><Glyph name="search" /><input
+          ref={commandInput}
+          value={commandQuery}
+          onChange={event => setCommandQuery(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === "ArrowDown") { event.preventDefault(); moveCommandSelection(1); }
+            if (event.key === "ArrowUp") { event.preventDefault(); moveCommandSelection(-1); }
+            if (event.key === "Home" && commandChoices.length) { event.preventDefault(); setActiveCommandIndex(0); }
+            if (event.key === "End" && commandChoices.length) { event.preventDefault(); setActiveCommandIndex(commandChoices.length - 1); }
+            if (event.key === "Enter" && commandChoices[activeCommandIndex]) {
+              event.preventDefault();
+              openChoice(commandChoices[activeCommandIndex]);
+            }
+          }}
+          placeholder="Search routes, people, firms, events…"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls="world-os-command-results"
+          aria-activedescendant={activeCommandIndex >= 0 ? `world-os-command-option-${activeCommandIndex}` : undefined}
+        /></label>
+        <div id="world-os-command-results" className="world-os-command-results" role="listbox" aria-busy={entityPending}>
+          {commandGroups.map(group => <section className="world-os-command-group" role="group" aria-labelledby={`world-os-command-group-${group.key}`} key={group.key}>
+            <header id={`world-os-command-group-${group.key}`}><span>{group.label}</span>{group.truncated && <small>Results capped</small>}</header>
+            {group.choices.map(choice => {
+              const index = commandChoices.findIndex(item => item.key === choice.key);
+              return <button
+                id={`world-os-command-option-${index}`}
+                type="button"
+                role="option"
+                aria-selected={activeCommandIndex === index}
+                tabIndex={-1}
+                className={activeCommandIndex === index ? "active" : ""}
+                key={choice.key}
+                onMouseEnter={() => setActiveCommandIndex(index)}
+                onClick={() => openChoice(choice)}
+              >
+                <span className="world-os-nav-icon"><Glyph name={choice.icon} /></span>
+                <span><strong>{choice.label}</strong><small>{choice.caption}</small></span>
+                <span className="world-os-command-arrow" aria-hidden="true">↗</span>
+              </button>;
+            })}
+          </section>)}
+          {entityPending && <p className="world-os-command-status" role="status">Searching authorized entities…</p>}
+          {visibleEntityError && normalizedCommandQuery.length >= 2 && <p className="world-os-command-error" role="status">Entity search is unavailable. Route navigation remains available.</p>}
+          {!entityPending && !commandGroups.length && <p className="world-os-command-empty">No route or authorized entity matches “{commandQuery}”.</p>}
         </div>
-        <footer><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span><span>Tick {tick}</span></footer>
+        <footer><span><kbd>↑↓</kbd> select</span><span><kbd>Enter</kbd> open</span><span><kbd>Esc</kbd> close</span><span>Tick {tick}</span></footer>
       </section>
     </div>}
   </div>;

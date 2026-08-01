@@ -176,10 +176,12 @@ def main(
                 import uvicorn
 
                 runner = uvicorn.run
+            # Observer search uses a GET projection; keep raw query text out of logs.
             runner(
                 app,
                 host=args.host,
                 port=args.port,
+                access_log=False,
                 timeout_graceful_shutdown=config.runtime.shutdown_grace_seconds,
             )
             return 0

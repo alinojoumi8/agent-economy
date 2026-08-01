@@ -38,6 +38,22 @@ test("legacy tick messages mark the transport live without inventing lineage", (
   assert.equal(connected.staleReason, null);
 });
 
+test("socket closure becomes reconnecting until an authoritative hello arrives", () => {
+  const connected = reduceCursorState(initialCursorState, hello);
+  const reconnecting = reduceCursorState(connected, {
+    type: "transport_closed", reason: "socket_closed",
+  });
+
+  assert.equal(reconnecting.status, "reconnecting");
+  assert.equal(reconnecting.staleReason, "socket_closed");
+  assert.equal(reconnecting.cursor, connected.cursor);
+
+  const recovered = reduceCursorState(reconnecting, { ...hello, event_cursor: 6 });
+  assert.equal(recovered.status, "live");
+  assert.equal(recovered.staleReason, null);
+  assert.equal(recovered.cursor, 6);
+});
+
 test("cursor reducer marks gaps and lineage conflicts stale", () => {
   const connected = reduceCursorState(initialCursorState, hello);
   const gap = reduceCursorState(connected, delta(7, 8));

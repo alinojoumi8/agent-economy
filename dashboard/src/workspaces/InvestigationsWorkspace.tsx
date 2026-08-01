@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
+import { parseObserverViewState, projectionScopeParams } from "../app/observerViewState";
+import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import type { CausalEdge, CausalNode, StableReference } from "../generated/worldOs";
 import { CausalGraph } from "../visualizations/CausalGraph";
 
@@ -27,16 +29,21 @@ export function InvestigationsWorkspace() {
   const [search, setSearch] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const tick = search.get("tick") || "live";
+  const observerState = useMemo(() => parseObserverViewState(search), [search]);
+  const { transport } = useWorkspaceOutletContext();
+  const tick = observerState.tick;
   const relation = search.get("relation") || "";
   const authority = search.get("authority") || "";
   const [selected, setSelected] = useState<StableReference | null>(null);
   const [hypothesis, setHypothesis] = useState("");
 
   const events = useQuery({
-    queryKey: ["world-os", runId, "investigation-events", tick],
-    queryFn: ({ signal }) => projectionApi<EventPage>(
-      `/api/v2/events?tick=${encodeURIComponent(tick)}&limit=200`, signal),
+    queryKey: ["world-os", runId, observerState.fork, "investigation-events", tick],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      params.set("limit", "200");
+      return projectionApi<EventPage>(`/api/v2/events?${params}`, signal);
+    },
   });
   const requestedEvent = Number(search.get("event") || 0);
   const fallbackEvent = [...(events.data?.data.items || [])].reverse().find(
@@ -44,10 +51,18 @@ export function InvestigationsWorkspace() {
   const rootKind = search.get("kind") || "event";
   const rootId = Number(search.get("id") || requestedEvent || fallbackEvent?.id || 0);
   const causal = useQuery({
-    queryKey: ["world-os", runId, "causal", rootKind, rootId, tick, relation, authority],
-    queryFn: ({ signal }) => projectionApi<CausalData>(
-      `/api/v2/causal/${encodeURIComponent(rootKind)}/${rootId}?tick=${encodeURIComponent(tick)}&depth=5&truth=true&relations=${encodeURIComponent(relation)}&authority=${encodeURIComponent(authority)}`,
-      signal),
+    queryKey: ["world-os", runId, observerState.fork, "causal", rootKind, rootId, tick, relation, authority],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      params.set("depth", "5");
+      params.set("truth", "true");
+      params.set("relations", relation);
+      params.set("authority", authority);
+      return projectionApi<CausalData>(
+        `/api/v2/causal/${encodeURIComponent(rootKind)}/${rootId}?${params}`,
+        signal,
+      );
+    },
     enabled: rootId > 0,
   });
   const selectedKey = refKey(selected || causal.data?.data.root || null);
@@ -102,9 +117,12 @@ export function InvestigationsWorkspace() {
   return <section>
     <div className="world-os-heading">
       <div><p className="world-os-kicker">Evidence, authority, consequence</p><h2>Investigations</h2></div>
-      <div className="world-os-investigation-actions">
-        {!currentInvestigation && <button className="button" disabled={!rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
-        {currentInvestigation && <button className="button" disabled={!selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+      <div className="world-os-heading-actions">
+        <FreshnessBadge transport={transport} tick={tick} envelope={causal.data || events.data} sourceLabel="Causal evidence projection" />
+        <div className="world-os-investigation-actions">
+          {!currentInvestigation && <button className="button" disabled={!rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
+          {currentInvestigation && <button className="button" disabled={!selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+        </div>
       </div>
     </div>
     <div className="world-os-filters" aria-label="Causal filters">

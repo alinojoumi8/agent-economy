@@ -83,6 +83,14 @@ async function mockApi(page: Page) {
         { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { qty: 5 } },
       ], next_after_id: null, truncated: false },
     } });
+    if (path === "/api/v2/search") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "search.results", data: { groups: [
+        { kind: "agent", truncated: false, items: [{ kind: "agent", id: 12, label: "Atlas Researcher", sublabel: "researcher · Agent #12" }] },
+        { kind: "firm", truncated: false, items: [{ kind: "firm", id: 3, label: "Atlas Foods", sublabel: "food · Firm #3" }] },
+        { kind: "event", truncated: false, items: [{ kind: "event", id: 81, label: "goods sale", sublabel: "Event #81 · t4 · firm #3" }] },
+        { kind: "communication_thread", truncated: false, items: [{ kind: "communication_thread", id: 6, label: "Atlas bulletin", sublabel: "Authorized communication · t4 · Thread #6" }] },
+      ] },
+    } });
     if (path === "/api/v2/communications/threads") return route.fulfill({ json: {
       ...baseEnvelope, projection: "communications.threads", data: { items: [{
         thread_id: 4, created_tick: 5, status: "open", subject: "Shipment notice",
@@ -365,7 +373,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
   });
 
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByText("live · cursor 4", { exact: true })).toBeVisible();
+  await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 4");
 });
 
 test("lineage changes reconcile from the authoritative server hello", async ({ page }) => {
@@ -410,7 +418,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
-  await expect(page.getByText(/live .* cursor 4/)).toBeVisible();
+  await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 4");
   const initialConnections = await page.evaluate(() => (
     (window as any).__lineageSockets.length
   ));
@@ -434,7 +442,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__lineageSockets.at(-1).sent
   ))).toContainEqual({ type: "hello", event_cursor: 0 });
-  await expect(page.getByText(/live .* cursor 0/)).toBeVisible();
+  await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 0");
 
   await page.evaluate(() => {
     (window as any).__lineageSockets.at(-1).emit({
@@ -448,7 +456,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
 
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByText("should-not-render")).toHaveCount(0);
-  await expect(page.getByText(/live .* cursor 1/)).toBeVisible();
+  await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 1");
 });
 
 test("live city layers, search, and evidence lens stay truthful and interactive", async ({ page }) => {
@@ -469,6 +477,35 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
   await page.locator(".civic-city__agent").click();
   await expect(page.locator(".civic-city__activity strong")).toHaveText("Goods Sale");
   await expect(page.getByRole("link", { name: "Trace this event" })).toHaveAttribute("href", "/runs/run-demo/investigations?event=9");
+});
+
+test("a copied Civic City URL restores filters and selection", async ({ page, context }) => {
+  const url = "/runs/run-demo/overview?fork=fork-a&tick=4&layer=markets&q=Supplier&activeOnly=1&agent=1";
+  await page.goto(url);
+  await expect(page.getByRole("button", { name: /Markets/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Find an agent")).toHaveValue("Supplier");
+  await expect(page.getByLabel("Committed events only")).toBeChecked();
+  await expect(page.getByRole("heading", { name: "Supplier Officer" })).toBeVisible();
+
+  const fresh = await context.newPage();
+  await installSocket(fresh);
+  await mockApi(fresh);
+  await fresh.goto(page.url());
+  await expect(fresh.getByRole("button", { name: /Markets/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(fresh.getByLabel("Find an agent")).toHaveValue("Supplier");
+  await expect(fresh.getByRole("heading", { name: "Supplier Officer" })).toBeVisible();
+  await fresh.close();
+});
+
+test("Civic City discrete selections participate in browser history", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.getByRole("button", { name: /Editor Northstar, Editor/ }).click();
+  await expect(page).toHaveURL(/agent=2/);
+  await page.getByRole("button", { name: /Dr\. Amara Osei, Doctor/ }).click();
+  await expect(page).toHaveURL(/agent=3/);
+  await page.goBack();
+  await expect(page).toHaveURL(/agent=2/);
+  await expect(page.getByRole("heading", { name: "Editor Northstar" })).toBeVisible();
 });
 
 test("citizen menu unifies app and onboarding links in the same tab", async ({ page }) => {
@@ -542,9 +579,11 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
 
   await page.keyboard.press("Control+K");
-  const command = page.getByRole("dialog", { name: "Go to a workspace" });
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
-  const commandSearch = command.getByPlaceholder("Search people, markets, evidence…");
+  await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
+  await expect(command.getByRole("option")).toHaveCount(10);
+  const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");
   await commandSearch.press("Enter");
   await expect(page).toHaveURL(/news-communications/);
@@ -553,10 +592,132 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await page.getByLabel("Inspect tick").fill("4");
   await page.getByRole("button", { name: "Go to tick" }).click();
   await expect(page).toHaveURL(/tick=4/);
-  await expect(page.getByText("Historical", { exact: true })).toBeVisible();
+  await expect(page.locator(".world-os-freshness--global summary")).toContainText("Historical");
+
+  const trigger = page.getByRole("button", { name: "Open command menu" });
+  await trigger.click();
+  await expect(page.getByRole("dialog", { name: "Navigate and inspect" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
 
   await page.getByRole("button", { name: "Collapse workspace rail" }).click();
   await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
   await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+test("authorized entity search preserves fork and historical tick", async ({ page }) => {
+  let searchUrl = "";
+  await page.route("**/api/v2/search?*", async route => {
+    searchUrl = route.request().url();
+    await route.fallback();
+  });
+  await page.goto("/runs/run-demo/overview?fork=fork-a&tick=4");
+  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await page.keyboard.press("Control+K");
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+  const input = command.getByPlaceholder("Search routes, people, firms, events…");
+  await input.fill("Atlas");
+  await expect(command.getByRole("option", { name: /Atlas Researcher/ })).toBeVisible();
+  await input.press("Enter");
+
+  await expect(page).toHaveURL(/\/people\/12\?fork=fork-a&tick=4$/);
+  expect(searchUrl).toContain("tick=4");
+  expect(searchUrl).toContain("fork_id=fork-a");
+});
+
+test("superseded entity searches never replace the newest result", async ({ page }) => {
+  await page.route("**/api/v2/search?*", async route => {
+    const query = new URL(route.request().url()).searchParams.get("q");
+    if (query === "atlas") await new Promise(resolve => setTimeout(resolve, 500));
+    const label = query === "atlas" ? "Atlas stale result" : "Zephyr current result";
+    await route.fulfill({ json: {
+      ...baseEnvelope,
+      projection: "search.results",
+      data: { groups: [
+        { kind: "agent", truncated: false, items: [{
+          kind: "agent", id: query === "atlas" ? 12 : 13,
+          label, sublabel: "researcher",
+        }] },
+        { kind: "firm", truncated: false, items: [] },
+        { kind: "event", truncated: false, items: [] },
+        { kind: "communication_thread", truncated: false, items: [] },
+      ] },
+    } });
+  });
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await page.keyboard.press("Control+K");
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+  const input = command.getByPlaceholder("Search routes, people, firms, events…");
+  await input.fill("Atlas");
+  await expect(command.getByText("Searching authorized entities…")).toBeVisible();
+  await page.waitForRequest(request => new URL(request.url()).searchParams.get("q") === "atlas");
+  await input.fill("Zephyr");
+  await expect(command.getByRole("option", { name: /Zephyr current result/ })).toBeVisible();
+  await page.waitForTimeout(600);
+  await expect(command.getByText("Atlas stale result")).toHaveCount(0);
+});
+
+test("entity-search failure leaves matching routes operable", async ({ page }) => {
+  await page.route("**/api/v2/search?*", route => route.fulfill({
+    status: 503,
+    json: { detail: "search unavailable" },
+  }));
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await page.keyboard.press("Control+K");
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+  const input = command.getByPlaceholder("Search routes, people, firms, events…");
+  await input.fill("People");
+  await expect(command.getByText("Entity search is unavailable. Route navigation remains available.")).toBeVisible();
+  await expect(command.getByRole("option", { name: /People Agents, lives, and memory/ })).toBeVisible();
+  await input.press("Enter");
+  await expect(page).toHaveURL(/\/people$/);
+});
+
+test("socket closure is visibly reconnecting before the next hello", async ({ page }) => {
+  await page.addInitScript(() => {
+    class ReconnectSocket extends EventTarget {
+      static OPEN = 1;
+      static CLOSED = 3;
+      static instances: ReconnectSocket[] = [];
+      readyState = ReconnectSocket.OPEN;
+      closed = false;
+      constructor(_url: string) {
+        super();
+        ReconnectSocket.instances.push(this);
+        (window as any).__reconnectSockets = ReconnectSocket.instances;
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+            type: "hello", run_id: "run-demo", fork_id: null, tick: 6,
+            semantics_version: 8, projection_version: 1, policy_version: 1,
+            view_key: "view-demo", event_cursor: 2, status: "running",
+          }) }));
+        });
+      }
+      send(_value: string) {}
+      close() {
+        if (this.closed) return;
+        this.closed = true;
+        this.readyState = ReconnectSocket.CLOSED;
+        this.dispatchEvent(new CloseEvent("close", { wasClean: false }));
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { value: ReconnectSocket });
+  });
+
+  await page.goto("/runs/run-demo/overview");
+  const freshness = page.locator(".world-os-freshness--global summary");
+  await expect(freshness).toContainText("Live");
+  const initialConnections = await page.evaluate(() => (
+    (window as any).__reconnectSockets.length
+  ));
+  await page.evaluate(() => (window as any).__reconnectSockets.at(-1).close());
+  await expect(freshness).toContainText("Reconnecting");
+  await expect.poll(async () => page.evaluate(() => (
+    (window as any).__reconnectSockets.length
+  ))).toBeGreaterThan(initialConnections);
+  await expect(freshness).toContainText("Live");
 });

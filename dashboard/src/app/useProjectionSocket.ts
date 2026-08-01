@@ -114,6 +114,15 @@ export function useProjectionSocket(historical: boolean) {
       });
       socket.addEventListener("close", () => {
         if (stopped) return;
+        if (!lineageRecovery.current) {
+          const message = { type: "transport_closed", reason: "socket_closed" };
+          cursorState.current = reduceCursorState(
+            cursorState.current,
+            message,
+            { historical },
+          );
+          dispatch({ message, historical });
+        }
         retry += 1;
         timer = window.setTimeout(connect, Math.min(10_000, 250 * (2 ** retry)));
       });

@@ -2,31 +2,32 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { projectionApi } from "../app/api";
+import { commonObserverSearchParams, parseObserverViewState, projectionScopeParams } from "../app/observerViewState";
+import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import type { CommunicationMessage, CommunicationThread } from "../generated/worldOs";
 
 type ThreadPage = { items: CommunicationThread[]; next_after_thread_id: number | null; truncated: boolean };
 type ViewMode = "ordinary" | "agent" | "truth";
 
-function accessQuery(mode: ViewMode, agentId: string): string {
-  if (mode === "truth") return "&truth=true";
-  if (mode === "agent" && Number(agentId) > 0) return `&agent_id=${Number(agentId)}`;
-  return "";
-}
-
 export function NewsCommunicationsWorkspace() {
   const { runId = "run", threadId } = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
-  const tick = search.get("tick") || "live";
+  const observerState = useMemo(() => parseObserverViewState(search), [search]);
+  const { transport } = useWorkspaceOutletContext();
+  const tick = observerState.tick;
   const [mode, setMode] = useState<ViewMode>("ordinary");
   const [agentId, setAgentId] = useState("");
   const [threadQuery, setThreadQuery] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
-  const scope = accessQuery(mode, agentId);
   const threads = useQuery({
-    queryKey: ["world-os", runId, "communications", tick, mode, agentId],
-    queryFn: ({ signal }) => projectionApi<ThreadPage>(
-      `/api/v2/communications/threads?tick=${encodeURIComponent(tick)}${scope}`, signal),
+    queryKey: ["world-os", runId, observerState.fork, "communications", tick, mode, agentId],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      if (mode === "truth") params.set("truth", "true");
+      if (mode === "agent" && Number(agentId) > 0) params.set("agent_id", String(Number(agentId)));
+      return projectionApi<ThreadPage>(`/api/v2/communications/threads?${params}`, signal);
+    },
   });
   const selectedThread = useMemo(() => threads.data?.data.items.find(
     item => item.thread_id === Number(threadId)), [threadId, threads.data]);
@@ -40,27 +41,40 @@ export function NewsCommunicationsWorkspace() {
     setSelectedMessageId(selectedThread?.messages.at(-1)?.id || null);
   }, [selectedThread]);
   const message = useQuery({
-    queryKey: ["world-os", runId, "message", selectedMessageId, tick, mode, agentId],
-    queryFn: ({ signal }) => projectionApi<CommunicationMessage>(
-      `/api/v2/communications/messages/${selectedMessageId}?tick=${encodeURIComponent(tick)}${scope}`, signal),
+    queryKey: ["world-os", runId, observerState.fork, "message", selectedMessageId, tick, mode, agentId],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      if (mode === "truth") params.set("truth", "true");
+      if (mode === "agent" && Number(agentId) > 0) params.set("agent_id", String(Number(agentId)));
+      return projectionApi<CommunicationMessage>(
+        `/api/v2/communications/messages/${selectedMessageId}?${params}`,
+        signal,
+      );
+    },
     enabled: selectedMessageId !== null,
   });
 
   const changeMode = (next: ViewMode) => {
     setMode(next);
     setSelectedMessageId(null);
-    navigate(`/runs/${runId}/news-communications${search.toString() ? `?${search}` : ""}`);
+    const common = commonObserverSearchParams(search);
+    navigate(`/runs/${encodeURIComponent(runId)}/news-communications${common.toString() ? `?${common}` : ""}`);
   };
-  const openThread = (id: number) => navigate(
-    `/runs/${runId}/news-communications/${id}${search.toString() ? `?${search}` : ""}`);
+  const openThread = (id: number) => {
+    const common = commonObserverSearchParams(search);
+    navigate(`/runs/${encodeURIComponent(runId)}/news-communications/${id}${common.toString() ? `?${common}` : ""}`);
+  };
 
   return <section>
     <div className="world-os-heading">
       <div><p className="world-os-kicker">Authorized chronology</p><h2>News & Communications</h2></div>
-      <div className="world-os-view-switch" role="group" aria-label="Communication access view">
-        <button aria-pressed={mode === "ordinary"} onClick={() => changeMode("ordinary")}>Ordinary</button>
-        <button aria-pressed={mode === "agent"} onClick={() => changeMode("agent")}>Agent view</button>
-        <button aria-pressed={mode === "truth"} onClick={() => changeMode("truth")}>Truth inspector</button>
+      <div className="world-os-heading-actions">
+        <FreshnessBadge transport={transport} tick={tick} envelope={threads.data} sourceLabel="Authorized communication projection" />
+        <div className="world-os-view-switch" role="group" aria-label="Communication access view">
+          <button aria-pressed={mode === "ordinary"} onClick={() => changeMode("ordinary")}>Ordinary</button>
+          <button aria-pressed={mode === "agent"} onClick={() => changeMode("agent")}>Agent view</button>
+          <button aria-pressed={mode === "truth"} onClick={() => changeMode("truth")}>Truth inspector</button>
+        </div>
       </div>
     </div>
     {mode === "agent" && <label className="world-os-agent-input">

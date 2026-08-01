@@ -5,7 +5,7 @@ STORY: Orient to the run, find working agents, select a city mark, then follow i
 FIRST VIEWPORT: Stable civic navigation frames a two-thirds live atlas and a one-third evidence lens.
 FORM: Civic Weather Room, grounded direction position 4; surveyed evidence-transect staging; seed 5d725ec9.
 */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   CITY_DISTRICTS,
@@ -78,11 +78,17 @@ export function CivicCity(props) {
     lineage = null,
     historical = false,
     variant = "world-os",
+    observerState = null,
+    onObserverStateChange = null,
   } = props;
-  const [activeLayer, setActiveLayer] = useState("all");
-  const [query, setQuery] = useState("");
-  const [activeOnly, setActiveOnly] = useState(false);
-  const [selectedId, setSelectedId] = useState(null);
+  const [localActiveLayer, setLocalActiveLayer] = useState("all");
+  const [localQuery, setLocalQuery] = useState("");
+  const [localActiveOnly, setLocalActiveOnly] = useState(false);
+  const [localSelectedId, setLocalSelectedId] = useState(null);
+  const activeLayer = observerState?.layer ?? localActiveLayer;
+  const query = observerState?.q ?? localQuery;
+  const activeOnly = observerState?.activeOnly ?? localActiveOnly;
+  const selectedId = observerState?.agent ?? localSelectedId;
   const lensRef = useRef(null);
   const model = useMemo(
     () => deriveCityModel({ agents, firms, events, map, civic }),
@@ -105,6 +111,13 @@ export function CivicCity(props) {
   const selectedIndex = selected
     ? visibleAgents.findIndex(agent => String(agent.id) === String(selected.id))
     : -1;
+  useEffect(() => {
+    if (!observerState || !onObserverStateChange || loading) return;
+    const resolvedId = selected ? Number(selected.id) : null;
+    if (observerState.agent !== resolvedId) {
+      onObserverStateChange({ agent: resolvedId }, { replace: true });
+    }
+  }, [loading, observerState, onObserverStateChange, selected]);
   const employer = selected?.employer_id == null
     ? null
     : model.firms.find(firm => String(firm.id) === String(selected.employer_id));
@@ -114,12 +127,18 @@ export function CivicCity(props) {
     || null;
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
-  const historicalSuffix = tick === "live" ? "" : `?tick=${encodeURIComponent(tick)}`;
+  const commonParams = new URLSearchParams();
+  if (observerState?.fork) commonParams.set("fork", observerState.fork);
+  if (tick !== "live") commonParams.set("tick", tick);
+  if (observerState?.event) commonParams.set("event", String(observerState.event));
+  const commonSuffix = commonParams.toString() ? `?${commonParams}` : "";
   const peopleHref = selected && runId
-    ? `/runs/${encodeURIComponent(runId)}/people/${selected.id}${historicalSuffix}`
+    ? `/runs/${encodeURIComponent(runId)}/people/${selected.id}${commonSuffix}`
     : null;
+  const traceParams = new URLSearchParams(commonParams);
+  if (selected?.event) traceParams.set("event", String(selected.event.id));
   const traceHref = selected?.event && runId
-    ? `/runs/${encodeURIComponent(runId)}/investigations?event=${selected.event.id}${tick === "live" ? "" : `&tick=${encodeURIComponent(tick)}`}`
+    ? `/runs/${encodeURIComponent(runId)}/investigations?${traceParams}`
     : null;
   const layerCounts = Object.fromEntries(
     CITY_LAYERS.map(layer => [
@@ -135,7 +154,35 @@ export function CivicCity(props) {
   const moveSelection = direction => {
     if (!visibleAgents.length) return;
     const nextIndex = (Math.max(0, selectedIndex) + direction + visibleAgents.length) % visibleAgents.length;
-    setSelectedId(visibleAgents[nextIndex].id);
+    const nextId = visibleAgents[nextIndex].id;
+    if (onObserverStateChange) onObserverStateChange({ agent: nextId });
+    else setLocalSelectedId(nextId);
+  };
+  const changeLayer = value => {
+    if (onObserverStateChange) onObserverStateChange({ layer: value });
+    else setLocalActiveLayer(value);
+  };
+  const changeQuery = value => {
+    if (onObserverStateChange) onObserverStateChange({ q: value }, { replace: true });
+    else setLocalQuery(value);
+  };
+  const changeActiveOnly = value => {
+    if (onObserverStateChange) onObserverStateChange({ activeOnly: value });
+    else setLocalActiveOnly(value);
+  };
+  const changeSelection = value => {
+    if (onObserverStateChange) onObserverStateChange({ agent: value });
+    else setLocalSelectedId(value);
+  };
+  const resetView = () => {
+    if (onObserverStateChange) {
+      onObserverStateChange({ q: null, layer: null, activeOnly: false, agent: null });
+      return;
+    }
+    setLocalQuery("");
+    setLocalActiveLayer("all");
+    setLocalActiveOnly(false);
+    setLocalSelectedId(null);
   };
   const openMobileLens = () => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -173,7 +220,7 @@ export function CivicCity(props) {
           type="button"
           className={activeLayer === layer.id ? "is-active" : ""}
           aria-pressed={activeLayer === layer.id}
-          onClick={() => setActiveLayer(layer.id)}
+          onClick={() => changeLayer(layer.id)}
         >
           <span>{layer.shortLabel}</span><b>{layerCounts[layer.id]}</b>
         </button>)}
@@ -183,12 +230,12 @@ export function CivicCity(props) {
         <input
           type="search"
           value={query}
-          onChange={event => setQuery(event.target.value)}
+          onChange={event => changeQuery(event.target.value)}
           placeholder="Name, role, event…"
         />
       </label>
       <label className="civic-city__active-toggle">
-        <input type="checkbox" checked={activeOnly} onChange={event => setActiveOnly(event.target.checked)} />
+        <input type="checkbox" checked={activeOnly} onChange={event => changeActiveOnly(event.target.checked)} />
         <span>Committed events only</span>
       </label>
     </div>
@@ -274,7 +321,7 @@ export function CivicCity(props) {
               selected && String(selected.id) === String(agent.id) ? "is-selected" : "",
             ].filter(Boolean).join(" ")}
             style={{ left: `${agent.x}%`, top: `${agent.y}%` }}
-            onClick={() => setSelectedId(agent.id)}
+            onClick={() => changeSelection(agent.id)}
             aria-pressed={selected && String(selected.id) === String(agent.id)}
             aria-label={`${agent.name}, ${humanize(agent.role || agent.occupation || agent.kind)}, ${agent.event ? `committed ${humanize(agent.event.kind)} event` : agent.activityState}`}
           >
@@ -289,7 +336,7 @@ export function CivicCity(props) {
         {!loading && !error && !visibleAgents.length && <div className="civic-city__empty">
           <strong>No city marks match this view.</strong>
           <span>Clear the search or show all activity layers.</span>
-          <button type="button" onClick={() => { setQuery(""); setActiveLayer("all"); setActiveOnly(false); }}>Reset city view</button>
+          <button type="button" onClick={resetView}>Reset city view</button>
         </div>}
         {loading && !error && <div className="civic-city__empty" aria-live="polite">
           <strong>Surveying the current run…</strong>

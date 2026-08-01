@@ -92,6 +92,18 @@ async function mockPrivacyApis(page: Page) {
         json: { detail: "message not found" },
       });
     }
+    if (path === "/api/v2/search") {
+      return route.fulfill({ json: {
+        ...baseEnvelope,
+        projection: "search.results",
+        data: { groups: [
+          { kind: "agent", items: [], truncated: false },
+          { kind: "firm", items: [], truncated: false },
+          { kind: "event", items: [], truncated: false },
+          { kind: "communication_thread", items: [], truncated: false },
+        ] },
+      } });
+    }
     if (path === "/api/v2/map") {
       return route.fulfill({ json: { regions: [], core_agents: [], firms: [], flows: [] } });
     }
@@ -159,6 +171,22 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   await assertNoCanaryLeak(page);
   await page.goto("/runs/run-demo/news-communications");
   await assertNoCanaryLeak(page);
+
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await page.keyboard.press("Control+K");
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+  const responsePromise = page.waitForResponse(response => (
+    new URL(response.url()).pathname === "/api/v2/search"
+  ));
+  await command.getByPlaceholder("Search routes, people, firms, events…").fill("Classified merger");
+  const searchResponse = await responsePromise;
+  expect(await searchResponse.text()).not.toContain(CANARY);
+  await expect(command.getByText(/No route or authorized entity matches/)).toBeVisible();
+  await assertNoCanaryLeak(page);
+  expect(page.url()).not.toContain("Classified");
+  const searchStorage = await page.evaluate(() => ({ ...localStorage, ...sessionStorage }));
+  expect(JSON.stringify(searchStorage)).not.toContain("Classified");
 
   const joined = consoleMessages.join("\n");
   expect(joined).not.toContain(CANARY);

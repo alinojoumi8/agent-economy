@@ -17,9 +17,11 @@ from server.projections import (
     build_envelope,
     build_events,
     build_message,
+    build_search,
     build_snapshot,
     build_threads,
     resolve_tick,
+    SEARCH_KINDS,
 )
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
 from server.projections.events import build_backfill
@@ -141,6 +143,35 @@ def install_v2_routes(app, world, controller) -> None:
         data = build_events(
             store, as_of_tick=as_of_tick, after_id=after, limit=limit, kinds=kinds)
         return build_envelope(store, principal, "events.page", data, as_of_tick=as_of_tick)
+
+    @router.get("/search")
+    async def search_projection(
+        q: str = Query(),
+        tick: str = Query("live"), fork_id: str | None = None,
+        kinds: str = Query(",".join(SEARCH_KINDS)),
+        limit: int = Query(8, ge=1, le=20),
+    ):
+        query = q.strip()
+        if not 2 <= len(query) <= 100:
+            raise HTTPException(status_code=422, detail="search query must contain 2-100 characters")
+        requested = tuple(item.strip() for item in kinds.split(",") if item.strip())
+        requested = requested or SEARCH_KINDS
+        unknown = sorted(set(requested) - set(SEARCH_KINDS))
+        if unknown:
+            raise HTTPException(status_code=422, detail="unsupported search kind")
+        selected = tuple(kind for kind in SEARCH_KINDS if kind in set(requested))
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal()
+        data = build_search(
+            store,
+            principal,
+            query=query,
+            as_of_tick=as_of_tick,
+            kinds=selected,
+            limit=limit,
+        )
+        return build_envelope(
+            store, principal, "search.results", data, as_of_tick=as_of_tick)
 
     @router.get("/communications/summary")
     async def communication_summary(

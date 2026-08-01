@@ -22,6 +22,13 @@ function currentLineage(state) {
 
 export function reduceCursorState(state, message, { historical = false } = {}) {
   if (!message || typeof message !== "object") return state;
+  if (message.type === "transport_closed") {
+    return {
+      ...state,
+      status: "reconnecting",
+      staleReason: message.reason || "socket_closed",
+    };
+  }
   if (message.type === "hello") {
     return {
       ...state,

@@ -1132,7 +1132,10 @@ def main() -> None:
         startup += f" (bounded to tick {store.tick + ticks})"
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+        # Observer search is a GET projection; do not persist raw query text in access logs.
+        uvicorn.run(
+            app, host=args.host, port=args.port,
+            log_level="warning", access_log=False)
     finally:
         _close_run(world, store)
 
