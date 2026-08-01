@@ -244,12 +244,17 @@ def test_report_api_awaits_the_governed_llm_narrative(tmp_path):
     with TestClient(create_app(world)) as client:
         response = client.post("/api/report")
         repeated = client.post("/api/report")
+        served = client.get(response.json()["url"])
 
     assert response.status_code == 200
     assert repeated.status_code == 200
+    assert served.status_code == 200
+    assert served.headers["content-type"].startswith("text/html")
+    assert response.json()["url"] == repeated.json()["url"]
     assert adapter.calls == 1
     report_path = Path(response.json()["path"])
     assert "governed report writer" in report_path.read_text(encoding="utf-8")
+    assert "governed report writer" in served.text
     assert world.last_report_path == repeated.json()["path"]
     assert world.store.scalar(
         "SELECT COUNT(*) FROM llm_calls WHERE purpose='report_narrative'", default=0) == 1

@@ -138,13 +138,14 @@ kinds return HTTP 400; halted runs return HTTP 409.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/report` | Generates/reuses a report at a completed tick boundary; returns `409` while Run or a partial tick is active |
+| `POST` | `/api/report` | Generates/reuses a report at a completed tick boundary and returns its filesystem path plus served `/reports/...` URL in local mode; returns `409` while Run or a partial tick is active |
 | `GET` | `/api/replay/runs` | Lists stored runs |
 | `GET` | `/api/replay/{run_id}/summary` | Stored run summary |
 | `GET` | `/api/replay/{run_id}/metrics` | Stored metrics; optional `names` |
 | `GET` | `/api/replay/{run_id}/tick/{tick}` | Events/state view for one tick |
 
-Generated reports are served under `/reports/`. The replay viewer is read-only;
+Generated reports are served from the configured `report_dir` under `/reports/`.
+The replay viewer is read-only;
 `python run.py --replay RUN_ID` is the separate exact engine re-execution proof.
 
 ## External Agent Gateway

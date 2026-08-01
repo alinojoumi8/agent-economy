@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import asyncio
+from difflib import SequenceMatcher
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -26,6 +28,35 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
 from .cache_config import normalize_prompt_cache_mode
+
+
+def catalog_model_suggestions(
+    requested: str, model_ids: set[str], *, limit: int = 3,
+) -> list[str]:
+    """Return bounded, catalog-derived suggestions without silently aliasing."""
+    requested_key = str(requested).casefold()
+    requested_version = re.search(r"\bm\d+(?:\.\d+)?\b", requested_key)
+
+    def score(model: str) -> float:
+        model_key = model.casefold()
+        similarity = SequenceMatcher(None, requested_key, model_key).ratio()
+        candidate_version = re.search(r"\bm\d+(?:\.\d+)?\b", model_key)
+        if (
+            requested_version is not None
+            and candidate_version is not None
+            and requested_version.group() == candidate_version.group()
+        ):
+            similarity += 0.5
+        return similarity
+
+    ranked = sorted(
+        ((score(model), model) for model in model_ids),
+        key=lambda item: (-item[0], item[1]),
+    )
+    return [
+        model for score, model in ranked
+        if score >= 0.35
+    ][:max(0, int(limit))]
 
 
 @dataclass
@@ -228,8 +259,17 @@ class OpenAICompatAdapter(Adapter):
         except httpx.TimeoutException as exc:
             raise AdapterTimeoutError(self.base_url, timeout_s) from exc
         model_ids = {str(row.get("id")) for row in data.get("data", []) if isinstance(row, dict)}
-        return {"ok": model in model_ids, "model": model, "model_available": model in model_ids,
-                "live": True, "models_returned": len(model_ids)}
+        available = model in model_ids
+        return {
+            "ok": available,
+            "model": model,
+            "model_available": available,
+            "live": True,
+            "models_returned": len(model_ids),
+            "suggested_models": (
+                [] if available else catalog_model_suggestions(model, model_ids)
+            ),
+        }
 
 
 class AnthropicAdapter(Adapter):

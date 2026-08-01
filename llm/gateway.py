@@ -1105,6 +1105,22 @@ class Gateway:
             try:
                 health = sanitize_provider_raw(
                     safe_fields(await adapter.healthcheck(model)))
+                if health.get("model_available") is False:
+                    result = {
+                        "provider": provider,
+                        **health,
+                        "ok": False,
+                        "contract_ok": False,
+                        "reason": "model_not_in_catalog",
+                    }
+                    checks.append(result)
+                    operational_log(
+                        logger, logging.ERROR, "llm.preflight.model_unavailable",
+                        run_id=self.run_id, provider=provider, model=model,
+                        models_returned=health.get("models_returned", 0),
+                        suggested_models=health.get("suggested_models", []),
+                    )
+                    continue
                 smoke_result = await asyncio.wait_for(
                     adapter.complete(
                         model,

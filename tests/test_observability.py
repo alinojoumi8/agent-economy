@@ -10,6 +10,7 @@ import pytest
 
 from engine.store import Store
 from engine.actions import ActionExecutor
+from llm.adapters import catalog_model_suggestions
 from llm.gateway import Gateway
 from observability import (
     JsonFormatter,
@@ -246,6 +247,81 @@ def test_provider_preflight_emits_a_summary_without_secrets(tmp_path, caplog):
     assert completed.event_fields["ready"] is True
     assert completed.event_fields["live_checked"] is False
     assert not any("key" in key for key in completed.event_fields)
+    store.close()
+
+
+def test_catalog_model_suggestions_are_bounded_and_do_not_alias():
+    suggestions = catalog_model_suggestions(
+        "MiniMax-M3-highspeed",
+        {"MiniMax-M3", "MiniMax-M2.7-highspeed", "unrelated-model"},
+    )
+
+    assert suggestions[0] == "MiniMax-M3"
+    assert "MiniMax-M3" in suggestions
+    assert "MiniMax-M2.7-highspeed" in suggestions
+    assert "unrelated-model" not in suggestions
+    assert len(suggestions) <= 3
+
+
+def test_live_preflight_rejects_catalog_miss_before_smoke_completion(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
+    config = {
+        "llm": {
+            "default_route": {
+                "provider": "scripted",
+                "model": "MiniMax-M3-highspeed",
+            },
+            "routes": {},
+        },
+        "budget": {"cap_usd": 1.0},
+    }
+    store = Store(str(tmp_path / "catalog-miss.db"))
+    store.init_run_meta("catalog-miss", 1, config)
+
+    class CatalogMissAdapter:
+        complete_calls = 0
+
+        async def healthcheck(self, model):
+            assert model == "MiniMax-M3-highspeed"
+            return {
+                "ok": False,
+                "model": model,
+                "model_available": False,
+                "live": True,
+                "models_returned": 2,
+                "suggested_models": ["MiniMax-M3", "MiniMax-M2.7-highspeed"],
+            }
+
+        async def complete(self, *_args, **_kwargs):
+            self.complete_calls += 1
+            raise AssertionError("catalog misses must not make a smoke completion")
+
+    gateway = Gateway(store, config)
+    adapter = CatalogMissAdapter()
+    gateway.adapters["scripted"] = adapter
+    report = asyncio.run(gateway.preflight(live=True))
+
+    assert report["ready"] is True
+    assert report["live_ready"] is False
+    assert report["checks"] == [{
+        "provider": "scripted",
+        "ok": False,
+        "model": "MiniMax-M3-highspeed",
+        "model_available": False,
+        "live": True,
+        "models_returned": 2,
+        "suggested_models": ["MiniMax-M3", "MiniMax-M2.7-highspeed"],
+        "contract_ok": False,
+        "reason": "model_not_in_catalog",
+    }]
+    assert adapter.complete_calls == 0
+    rejected = next(
+        record for record in caplog.records
+        if getattr(record, "event_name", "") == "llm.preflight.model_unavailable"
+    )
+    assert rejected.event_fields["suggested_models"] == [
+        "MiniMax-M3", "MiniMax-M2.7-highspeed",
+    ]
     store.close()
 
 

@@ -918,7 +918,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
                         run_id=world.gateway.run_id, tick=store.tick, path=path)
         if hosted_safe:
             return {"artifact": _report_artifact_metadata(path, store.tick)}
-        return {"path": path}
+        return {
+            "path": path,
+            "url": f"/reports/{Path(path).name}",
+        }
 
     # ── WebSocket ────────────────────────────────────────────────────────────
     @app.websocket("/ws")
@@ -981,7 +984,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
             ):
                 return FileResponse(str(static_dir / "index.html"))
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-        reports_dir = Path("reports/out")
+        reports_dir = Path(str(world.config.get("report_dir", "reports/out")))
         reports_dir.mkdir(parents=True, exist_ok=True)
         app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
 
