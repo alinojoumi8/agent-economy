@@ -1,0 +1,56 @@
+# Fresh release corpus after v9 executed cleanly but failed its calibration
+# gate: Brier 0.3259 against a naive 0.25, driven by a systematic under-forecast
+# (mean forecast 0.1517 against a base rate of 0.500, never exceeding 0.520).
+# V9 remains excluded evidence. No prior response, claim, checkpoint, replay,
+# receipt, profile ancestry, manifest entry, run identity, artifact, or seed is
+# reused.
+#
+# The only substantive change under test is the Oracle elicitation: PLANNER_SYSTEM
+# now spends part of its query budget on history, and ANSWER_SYSTEM states the
+# scoring rule and requires a historical-frequency anchor before adjustment.
+#
+# Checkpoints move from 6 to 11 per run (110 forecasts across ten arms instead of
+# 60) to reduce the standard error on Brier from ~0.044 to ~0.032. Spacing is 30
+# ticks against a 30-tick horizon, so no two resolution windows overlap.
+extends: ../acceptance/rehearsal.yaml
+seed: 7391
+acceptance:
+  min_ticks: 335
+  max_spend_usd: 25
+  efficiency_target_usd: 25
+  oracle_campaign_id: oracle-calibration-v10
+  oracle_campaign_version: 10
+  oracle_min_latency_samples: 11
+  required_shocks: []
+  require_oracle_scoring: true
+  require_experiment: false
+  require_phenomena: false
+  oracle_questions:
+    - {at_tick: 5, campaign_key: bank_run_t005, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 35, campaign_key: bank_run_t035, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 65, campaign_key: bank_run_t065, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 95, campaign_key: bank_run_t095, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 125, campaign_key: bank_run_t125, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 155, campaign_key: bank_run_t155, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 185, campaign_key: bank_run_t185, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 215, campaign_key: bank_run_t215, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 245, campaign_key: bank_run_t245, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 275, campaign_key: bank_run_t275, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 305, campaign_key: bank_run_t305, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+budget:
+  cap_usd: 25
+  oracle_reserve_usd: 25
+  conversation_pairs: 0
+llm:
+  concurrency: 1
+  # MiniMax's standard <=512k PAYG tier publishes $0.30/M input,
+  # $1.20/M output, and $0.06/M automatic prompt-cache reads.
+  pricing:
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
+  routes:
+    oracle: {provider: minimax, model: MiniMax-M3}
+lifecycle:
+  population_mode: stable
+  arrival_delay_min: 5
+  arrival_delay_max: 20
+shocks: []

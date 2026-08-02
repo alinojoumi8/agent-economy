@@ -56,18 +56,17 @@ from world.replay_verify import verify_replay
 SCHEMA_VERSION = 1
 LATENCY_KIND = "scheduled_e2e_v1"
 DEFAULT_MINIMUM_RUNS = 10
-DEFAULT_MINIMUM_FORECASTS = 60
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
 _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v9"
-RELEASE_CAMPAIGN_VERSION = 9
-RELEASE_SEEDS = tuple(range(7381, 7391))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v10"
+RELEASE_CAMPAIGN_VERSION = 10
+RELEASE_SEEDS = tuple(range(7391, 7401))
 RELEASE_PROFILES = {
-    seed: f"v9-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v10-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "minimax"
@@ -89,7 +88,7 @@ RELEASE_ORACLE_PRICING = {"in": 0.30, "out": 1.20, "cache": 0.06}
 RELEASE_MAX_STANDARD_PROMPT_TOKENS = 512_000
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v9.yaml"
+    / "commitment-v10.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -98,7 +97,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e"
+    "39de2c406a5ec292287e2bbf6b8e401c9d88d22ee9defa81afd7abb309aaed45"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -106,8 +105,14 @@ RELEASE_MAX_LIVING_AGENTS = 105
 RELEASE_ARRIVAL_DELAY_MIN = 5
 RELEASE_ARRIVAL_DELAY_MAX = 20
 RELEASE_QUESTION = "What is the probability of a bank run within 30 ticks?"
-RELEASE_QUESTION_TICKS = (5, 65, 125, 185, 245, 305)
+# V10 moves from 6 checkpoints to 11 at 30-tick spacing. The horizon is also 30
+# ticks, so consecutive resolution windows still never overlap, while the extra
+# forecasts cut the standard error on Brier from ~0.044 to ~0.032.
+RELEASE_QUESTION_TICKS = (5, 35, 65, 95, 125, 155, 185, 215, 245, 275, 305)
 RELEASE_RULE = {"type": "bank_run", "window": 5, "deposit_drop": 0.30}
+# Every run must resolve one forecast per scheduled checkpoint, so the release
+# floor is fixed by the corpus shape rather than restated as a literal.
+DEFAULT_MINIMUM_FORECASTS = DEFAULT_MINIMUM_RUNS * len(RELEASE_QUESTION_TICKS)
 
 
 def _release_rumor_shocks() -> list[dict[str, Any]]:
@@ -416,15 +421,17 @@ def validate_oracle_campaign_profile(
         raise OracleCampaignError("Oracle profile must use scheduled E2E latency")
     if int(acceptance.get("min_ticks", 0)) != RELEASE_HORIZON_TICKS:
         raise OracleCampaignError("Oracle profile must use the fixed 335-tick horizon")
-    if int(acceptance.get("oracle_min_latency_samples", 0)) != 6:
-        raise OracleCampaignError("Oracle profile must require all six latency samples")
+    if int(acceptance.get("oracle_min_latency_samples", 0)) != len(RELEASE_QUESTION_TICKS):
+        raise OracleCampaignError(
+            "Oracle profile must require every scheduled latency sample")
     if int(acceptance.get("oracle_p90_ms", 0)) != DEFAULT_P90_LIMIT_MS:
         raise OracleCampaignError("Oracle profile must use the fixed 60000 ms p90 gate")
     questions = acceptance.get("oracle_questions")
     if not isinstance(questions, list) or [
             item.get("at_tick") for item in questions if isinstance(item, dict)
     ] != list(RELEASE_QUESTION_TICKS):
-        raise OracleCampaignError("Oracle profile must contain the six fixed checkpoints")
+        raise OracleCampaignError(
+            "Oracle profile must contain exactly the fixed checkpoints")
     if any(
         item.get("campaign_key") != f"bank_run_t{int(item['at_tick']):03d}"
         or item.get("question") != RELEASE_QUESTION
@@ -1749,9 +1756,9 @@ def _llm_call_integrity(store: Store) -> tuple[dict, list[str]]:
         or not 1 <= counts.get("oracle_plan", 0) <= 3
         or set(counts) - {"oracle_plan", "oracle"}
     ]
-    if invalid_sessions or len(sessions) != 6:
+    if invalid_sessions or len(sessions) != len(RELEASE_QUESTION_TICKS):
         reasons.append(
-            "source does not contain six governed scheduled Oracle call sessions")
+            "source does not contain every governed scheduled Oracle call session")
     if len(live_rows) != len(governed_rows):
         reasons.append(
             "source live-call corpus is not identical to governed Oracle calls")
@@ -1846,22 +1853,30 @@ def _source_integrity(store: Store, config: dict, min_ticks: int) -> tuple[dict,
             "SELECT COUNT(*) FROM llm_calls "
             "WHERE role='oracle' AND purpose='oracle_plan'", default=0)),
     }
-    if any(exact_counts[key] != 6 for key in (
+    if any(exact_counts[key] != len(RELEASE_QUESTION_TICKS) for key in (
             "predictions", "resolved_predictions", "acceptance_checkpoints",
             "completed_acceptance_checkpoints", "oracle_predictions",
             "prediction_resolutions", "checkpoint_completions", "oracle_answers")):
-        reasons.append("source does not contain exactly six complete forecast lifecycles")
+        reasons.append(
+            "source does not contain exactly one complete forecast lifecycle "
+            "per scheduled checkpoint")
+    # One planner call per checkpoint, and at most three attempts each.
     if (exact_counts["checkpoint_misses"] != 0
             or exact_counts["insufficient_predictions"] != 0
-            or not 6 <= exact_counts["oracle_plans"] <= 18):
+            or not (len(RELEASE_QUESTION_TICKS)
+                    <= exact_counts["oracle_plans"]
+                    <= 3 * len(RELEASE_QUESTION_TICKS))):
         reasons.append("source has missed/insufficient or invalid planner outcomes")
+    # Built from the pinned int schedule, so the literals cannot drift from it.
+    scheduled_ticks = ",".join(str(int(tick)) for tick in RELEASE_QUESTION_TICKS)
     off_schedule_calls = int(store.scalar(
         "SELECT COUNT(*) FROM llm_calls WHERE role='oracle' "
-        "AND purpose IN ('oracle_plan','oracle') AND tick NOT IN (5,65,125,185,245,305)",
+        "AND purpose IN ('oracle_plan','oracle') "
+        f"AND tick NOT IN ({scheduled_ticks})",
         default=0))
     off_schedule_predictions = int(store.scalar(
         "SELECT COUNT(*) FROM predictions "
-        "WHERE asked_tick NOT IN (5,65,125,185,245,305)", default=0))
+        f"WHERE asked_tick NOT IN ({scheduled_ticks})", default=0))
     if off_schedule_calls or off_schedule_predictions:
         reasons.append("source contains off-schedule Oracle calls or predictions")
     spend = float(store.scalar(
@@ -2891,7 +2906,9 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
     if minimum_runs != DEFAULT_MINIMUM_RUNS:
         raise OracleCampaignError("minimum_runs must be the fixed release floor 10")
     if minimum_forecasts != DEFAULT_MINIMUM_FORECASTS:
-        raise OracleCampaignError("minimum_forecasts must be the fixed release floor 60")
+        raise OracleCampaignError(
+            "minimum_forecasts must be the fixed release floor "
+            f"{DEFAULT_MINIMUM_FORECASTS}")
     p90_limit_ms = _positive_int(
         payload.get("p90_limit_ms", DEFAULT_P90_LIMIT_MS), "p90_limit_ms")
     if p90_limit_ms > DEFAULT_P90_LIMIT_MS:
@@ -3135,7 +3152,8 @@ def load_existing_oracle_source_receipt(
             or payload.get("passed") is not True
             or persisted_run != comparable_run
             or not run.get("eligible")
-            or len(pairs) != 6 or len(latencies) != 6
+            or len(pairs) != len(RELEASE_QUESTION_TICKS)
+            or len(latencies) != len(RELEASE_QUESTION_TICKS)
             or entry.get("run_id") != run_id
             or Path(str(entry.get("database", ""))).resolve() != source
             or Path(str(entry.get("profile", ""))).resolve() != profile):
@@ -3358,7 +3376,9 @@ def write_oracle_source_receipt(
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": commitment["sha256"],
-        "passed": bool(run["eligible"] and len(pairs) == 6 and len(latencies) == 6),
+        "passed": bool(run["eligible"]
+                       and len(pairs) == len(RELEASE_QUESTION_TICKS)
+                       and len(latencies) == len(RELEASE_QUESTION_TICKS)),
         "manifest_entry": entry,
         "run": run,
     }

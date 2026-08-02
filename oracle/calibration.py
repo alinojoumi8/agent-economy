@@ -23,7 +23,8 @@ def calibration_from_pairs(pairs: list[tuple[float, int]]) -> dict:
     n = len(pairs)
     if n == 0:
         return {"n": 0, "bins": [], "brier": None, "naive_brier": None,
-                "reliability": None, "resolution": None, "uncertainty": None}
+                "reliability": None, "resolution": None, "uncertainty": None,
+                "mean_forecast": None, "brier_se": None, "brier_ci95": None}
     o_bar = sum(o for _, o in pairs) / n
     bins = []
     reliability = 0.0
@@ -43,11 +44,23 @@ def calibration_from_pairs(pairs: list[tuple[float, int]]) -> dict:
     reliability /= n
     resolution /= n
     uncertainty = o_bar * (1 - o_bar)
-    brier = sum((p - o) ** 2 for p, o in pairs) / n
+    errors = [(p - o) ** 2 for p, o in pairs]
+    brier = sum(errors) / n
     naive = sum((0.5 - o) ** 2 for _, o in pairs) / n
+    # Reported so a Brier near the naive baseline is read as the coin-flip it is
+    # rather than as a result. Never consulted by any pass/fail decision.
+    if n > 1:
+        variance = sum((e - brier) ** 2 for e in errors) / (n - 1)
+        brier_se = (variance / n) ** 0.5
+        ci95 = [round(brier - 1.96 * brier_se, 4), round(brier + 1.96 * brier_se, 4)]
+    else:
+        brier_se, ci95 = None, None
     return {"n": n, "base_rate": round(o_bar, 4), "bins": bins,
             "brier": round(brier, 4), "naive_brier": round(naive, 4),
             "beats_naive": brier < naive,
+            "mean_forecast": round(sum(p for p, _ in pairs) / n, 4),
+            "brier_se": None if brier_se is None else round(brier_se, 4),
+            "brier_ci95": ci95,
             "reliability": round(reliability, 4), "resolution": round(resolution, 4),
             "uncertainty": round(uncertainty, 4)}
 
