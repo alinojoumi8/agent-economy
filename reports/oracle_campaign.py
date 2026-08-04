@@ -55,18 +55,20 @@ from world.replay_verify import verify_replay
 
 SCHEMA_VERSION = 1
 LATENCY_KIND = "scheduled_e2e_v1"
-DEFAULT_MINIMUM_RUNS = 10
+# The run is the independence unit, so power comes from arms. V11 buys sixteen
+# of them with the disk V10 spent on repeated checkpoints per arm.
+DEFAULT_MINIMUM_RUNS = 16
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
 _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v10"
-RELEASE_CAMPAIGN_VERSION = 10
-RELEASE_SEEDS = tuple(range(7391, 7401))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v11"
+RELEASE_CAMPAIGN_VERSION = 11
+RELEASE_SEEDS = tuple(range(7401, 7417))
 RELEASE_PROFILES = {
-    seed: f"v10-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v11-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "minimax"
@@ -88,7 +90,7 @@ RELEASE_ORACLE_PRICING = {"in": 0.30, "out": 1.20, "cache": 0.06}
 RELEASE_MAX_STANDARD_PROMPT_TOKENS = 512_000
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v10.yaml"
+    / "commitment-v11.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -97,7 +99,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "39de2c406a5ec292287e2bbf6b8e401c9d88d22ee9defa81afd7abb309aaed45"
+    "e696c14abe25c22eb11977d90a35daa248a707fb92ee197101b3f0ec35625c7c"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -105,10 +107,18 @@ RELEASE_MAX_LIVING_AGENTS = 105
 RELEASE_ARRIVAL_DELAY_MIN = 5
 RELEASE_ARRIVAL_DELAY_MAX = 20
 RELEASE_QUESTION = "What is the probability of a bank run within 30 ticks?"
-# V10 moves from 6 checkpoints to 11 at 30-tick spacing. The horizon is also 30
-# ticks, so consecutive resolution windows still never overlap, while the extra
-# forecasts cut the standard error on Brier from ~0.044 to ~0.032.
-RELEASE_QUESTION_TICKS = (5, 35, 65, 95, 125, 155, 185, 215, 245, 275, 305)
+# V11 returns to 6 checkpoints at 60-tick spacing against a 30-tick horizon, so
+# no two resolution windows overlap. V10 went to 11 on the argument that the
+# extra forecasts cut the standard error from ~0.044 to ~0.032; that assumed
+# forecasts were independent. They are not — the scenario fixes the outcome, so
+# every forecast in a run reads one already-settled event. Measured over V10's
+# seven arms the pooled error was 0.0351 against an honest between-run 0.1165.
+# Power lives in DEFAULT_MINIMUM_RUNS, not here.
+RELEASE_QUESTION_TICKS = (5, 65, 125, 185, 245, 305)
+# Interval checkpoints serve replay granularity, not the calibration measurement.
+# Every 20 ticks yields 23 per run (16 interval + 6 question + the horizon), so
+# sixteen arms cost ~171 GB where V10's every-10 schedule cost ~21 GB per arm.
+RELEASE_CHECKPOINT_EVERY = 20
 RELEASE_RULE = {"type": "bank_run", "window": 5, "deposit_drop": 0.30}
 # Every run must resolve one forecast per scheduled checkpoint, so the release
 # floor is fixed by the corpus shape rather than restated as a literal.
@@ -479,7 +489,7 @@ def validate_oracle_campaign_profile(
             "release campaign must opt baseline citizens into the active core")
     if (config.get("population", {}).get("size") != 63
             or config.get("banks", {}).get("count") != 2
-            or config.get("checkpoint_every") != 10
+            or config.get("checkpoint_every") != RELEASE_CHECKPOINT_EVERY
             or config.get("checkpoint_dir") != "data/checkpoints"):
         raise OracleCampaignError(
             "release campaign changed its fixed population/bank/checkpoint design")
@@ -1468,15 +1478,20 @@ def _source_population_evidence(
 def _checkpoint_integrity(
         store: Store, *, run_id: str, seed: int) -> tuple[dict, list[str]]:
     reasons: list[str] = []
+    # Interval writes, plus the pause each governed question forces, plus the
+    # final tick. Derived so the schedule and the count can never drift apart.
     expected_ticks = sorted({
-        *range(10, RELEASE_HORIZON_TICKS, 10),
+        *range(RELEASE_CHECKPOINT_EVERY, RELEASE_HORIZON_TICKS,
+               RELEASE_CHECKPOINT_EVERY),
         *RELEASE_QUESTION_TICKS,
         RELEASE_HORIZON_TICKS,
     })
     rows = store.query("SELECT tick,path FROM checkpoints ORDER BY tick,id")
     ticks = [int(row["tick"]) for row in rows]
     if ticks != expected_ticks:
-        reasons.append("source checkpoint ticks differ from the exact 40-tick schedule")
+        reasons.append(
+            "source checkpoint ticks differ from the exact "
+            f"{len(expected_ticks)}-tick schedule")
     source_meta = store.get_meta()
     source_schema = sqlite_schema_evidence(store.conn)
     source_config = load_json(source_meta["config_json"], None)
@@ -2974,6 +2989,10 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
 
     run_receipts: list[dict] = []
     pairs: list[tuple[float, int]] = []
+    # One run is one independence unit: its checkpoints all forecast the same
+    # question and the scenario fixes the outcome, so the spread that matters
+    # is between runs. Pooling forecasts would report a ~3x too narrow interval.
+    clusters: list[str] = []
     latencies: list[int] = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -2994,10 +3013,11 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
             run_pairs, run_latencies = [], []
         run_receipts.append(receipt)
         pairs.extend(run_pairs)
+        clusters.extend([str(entry.get("run_id", ""))] * len(run_pairs))
         latencies.extend(run_latencies)
     run_receipts.sort(key=lambda item: (item.get("seed", -1), item.get("run_id", "")))
 
-    calibration = calibration_from_pairs(pairs)
+    calibration = calibration_from_pairs(pairs, clusters)
     raw_brier = (
         math.fsum((probability - outcome) ** 2
                   for probability, outcome in pairs) / len(pairs)

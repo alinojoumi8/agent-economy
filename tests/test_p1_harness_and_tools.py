@@ -104,6 +104,44 @@ def test_calibration_decomposition_identity():
     assert calibration_from_pairs([])["n"] == 0
 
 
+def test_brier_se_uses_the_run_as_the_independence_unit():
+    """Forecasts inside one run share an outcome, so pooling overstates precision.
+
+    Shaped like a real campaign: each run asks the same question at several
+    checkpoints and the scenario fixes the answer, so every forecast in a run
+    resolves the same way. The pooled error treats those as independent draws
+    and reports an interval far too narrow.
+    """
+    # Four "control" runs that never fire, three "rumor" runs that always do —
+    # the V10 arm shape, three forecasts each.
+    pairs, clusters = [], []
+    for run, (forecast, outcome) in enumerate(
+            [(0.09, 0)] * 4 + [(0.24, 1)] * 3):
+        pairs.extend([(forecast, outcome)] * 3)
+        clusters.extend([f"run-{run}"] * 3)
+
+    pooled = calibration_from_pairs(pairs)
+    clustered = calibration_from_pairs(pairs, clusters)
+
+    # Same point estimate; only the claimed precision changes.
+    assert pooled["brier"] == clustered["brier"]
+    assert pooled["brier_se_basis"] == "pooled"
+    assert clustered["brier_se_basis"] == "cluster"
+    assert clustered["brier_se_clusters"] == 7
+    # 21 correlated forecasts are really 7 observations, so the honest error is
+    # materially wider — the defect this guards against reported ~3x too tight.
+    assert clustered["brier_se"] > pooled["brier_se"] * 1.5
+    lo, hi = clustered["brier_ci95"]
+    assert hi - lo > (pooled["brier_ci95"][1] - pooled["brier_ci95"][0]) * 1.5
+
+    # A single cluster carries no between-run signal, so it must not pretend to.
+    single = calibration_from_pairs(pairs[:3], ["one"] * 3)
+    assert single["brier_se_basis"] == "pooled"
+
+    with pytest.raises(ValueError):
+        calibration_from_pairs(pairs, clusters[:2])
+
+
 # ── R16: replay reader over a stored run ─────────────────────────────────────
 def test_replay_reader_lists_and_pages_ticks(tmp_path):
     cfg = _tiny_config()

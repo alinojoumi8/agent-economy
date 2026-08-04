@@ -242,7 +242,11 @@ def _write_run(
                 metric_tick, f"bank_deposits:{bank_index}", deposits)
     store.log_event(0, "genesis", {"banks": 2, "agents": 100, "firms": 14})
     checkpoint_ticks = sorted({
-        *range(10, 335, 10), *question_ticks, 335,
+        *range(oracle_campaign.RELEASE_CHECKPOINT_EVERY,
+               oracle_campaign.RELEASE_HORIZON_TICKS,
+               oracle_campaign.RELEASE_CHECKPOINT_EVERY),
+        *question_ticks,
+        oracle_campaign.RELEASE_HORIZON_TICKS,
     })
     for tick in checkpoint_ticks:
         checkpoint_path = (
@@ -630,7 +634,7 @@ def _manifest(
                 planner_rejection_state if index == 0 else "valid"),
             planner_rejection_attempt=(
                 planner_rejection_attempt if index == 0 else 1))
-        for index in range(10)
+        for index in range(len(RELEASE_SEEDS))
     ]
     path = tmp_path / "oracle-campaign.yaml"
     path.write_text(yaml.safe_dump({
@@ -638,8 +642,9 @@ def _manifest(
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
-        "minimum_runs": 10,
-        "minimum_forecasts": 10 * len(oracle_campaign.RELEASE_QUESTION_TICKS),
+        "minimum_runs": len(RELEASE_SEEDS),
+        "minimum_forecasts": (
+            len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS)),
         "p90_limit_ms": 60_000,
         "naive_brier": 0.25,
         "runs": runs,
@@ -677,7 +682,8 @@ def test_curated_oracle_campaign_passes_and_is_read_only_deterministic(tmp_path)
     assert first == second
     assert first["passed"] is True
     assert first["excluded_runs"] == []
-    assert first["calibration"]["n"] == 10 * len(oracle_campaign.RELEASE_QUESTION_TICKS)
+    assert first["calibration"]["n"] == (
+        len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS))
     assert first["calibration"]["brier"] == pytest.approx(0.01)
     assert {check["id"]: check["passed"] for check in first["checks"]} == {
         "complete_manifest": True,
@@ -707,7 +713,9 @@ def test_curated_oracle_campaign_excludes_non_live_run_with_reasons(tmp_path):
     receipt = evaluate_oracle_campaign(manifest)
 
     assert receipt["passed"] is False
-    assert receipt["calibration"]["n"] == 9 * len(oracle_campaign.RELEASE_QUESTION_TICKS)
+    # One arm is excluded for a non-live provider, so every other arm counts.
+    assert receipt["calibration"]["n"] == (
+        (len(RELEASE_SEEDS) - 1) * len(oracle_campaign.RELEASE_QUESTION_TICKS))
     assert receipt["excluded_runs"][0]["run_id"] == _FIRST_RUN_ID
     excluded = next(run for run in receipt["runs"] if not run["eligible"])
     assert any(
@@ -743,8 +751,9 @@ def test_oracle_campaign_manifest_cannot_weaken_latency_gate(tmp_path):
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
-        "minimum_runs": 10,
-        "minimum_forecasts": 10 * len(oracle_campaign.RELEASE_QUESTION_TICKS),
+        "minimum_runs": len(RELEASE_SEEDS),
+        "minimum_forecasts": (
+            len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS)),
         "p90_limit_ms": 999_999,
         "runs": [],
     }), encoding="utf-8")
@@ -1074,7 +1083,7 @@ def test_oracle_campaign_requires_predeclared_treatment_to_fire(tmp_path):
 def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     root = Path("runs/oracle")
     profiles = [root / RELEASE_PROFILES[seed] for seed in RELEASE_SEEDS]
-    assert len(profiles) == 10
+    assert len(profiles) == len(RELEASE_SEEDS)
     configs = [load_config(path) for path in profiles]
     assert {config["seed"] for config in configs} == set(RELEASE_SEEDS)
     for config in configs:
@@ -1120,29 +1129,35 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v10.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v11.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v10_commitment_and_minimax_contract_are_pinned():
+def test_checked_in_v11_commitment_and_minimax_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7391: "8f9b7cea8dd3be8ee10e0dd9d6cd0422060ee5e3f1b11ae91451384504ccf6a6",
-        7392: "a31f614c8696b3fd82fb96ae3bad68bd3a6f9bddb1106a0c258b97a7b5b800b3",
-        7393: "1a59ec7f49cf203d0ed6f82fc90c192fb1725c9a9e229a7593ebb6d663a9ce52",
-        7394: "cbc8badf0e8cba9a322001e38262f3626252e955eea971bc0549113bb6ae0544",
-        7395: "d176e0493e5bb3fd2a1ff5c1cafbec9c41c762207f23af0cfa8c3f58264ae770",
-        7396: "1235b4e214eb6fe7a9594e0303078ffd24431db402a16c0b309497f9f6d938de",
-        7397: "f16ce7f458070032c76a60d6d324bf070dbf590e01f0e9749d986d3b032bd133",
-        7398: "ebbc48654a624063f654c158a32fc7936b481495a32d33440a50b96ec0bc8a75",
-        7399: "fea45f3c91dc8431c3648d6c2181e440a0200324f451e0d80d013d32b55862d1",
-        7400: "90958163cd6b13199fd4514570c868fff32f4587bcd34bb4a17e40bc59c2f342",
+        7401: "b509ee3833c1e4a275308649d58d9a63f5177ba4c1c8f0e36e76d16f2053eed8",
+        7402: "8d4a4f03a74ffa0eb1d8dbccc152ee8fd34c05bb4a7ec1c13a4eeae52001f99f",
+        7403: "f2824c0bc866984c814eef70e6063eab04cf9b88fc75920817915930c3ee0a74",
+        7404: "dce85f9a1665d4b5c4434f3c3364d53d4fc0e9fb63135399e43947afa4662575",
+        7405: "7597df891065e87a0a4a833f5c902ad9e89fc8fb110fe63834abe09e24cbeed7",
+        7406: "9aee989e52bbf7f592573196b4625f04b20e8c07e55ec1181f7b990bc18e9674",
+        7407: "b5b83afb2e296c27dc4b10e15b34f987751743df61a4afe0764f6c801aa0b6a1",
+        7408: "5eb5bfeee5ed905715b6aeec6c76bcf36c71684403690f45bf0e301b6424505b",
+        7409: "98da7a26dbd19b6e2bd63b45200304b49965d362452ec01aee34500d99df6afd",
+        7410: "f8367db876699c401e4b4e393de6f86a67a1c0570574e9793a67a9c5422ba97b",
+        7411: "25ff15889f2716c3ea23ee5881d7d86099aea729623b15b1deef79e6e88d10da",
+        7412: "f12ed907c472101d19bb95f4be661e30e944c240bd0efbd6fdaf697040397787",
+        7413: "74fb6964c0791c7ad25b654ca1c854427b9872b675d59c9c9bb2dcdbe569cfb2",
+        7414: "c3e574514211d42cdde48efcdad5ff207a09cb415d122efa58331829e2525719",
+        7415: "d14b9ce3b16bdddc5416c275ee445f13fc161c39b3baffd6fb01ea23b02a2b1c",
+        7416: "06195fe255fa60b05871341bf15014e2141c578b843598e2c36dc2c04d655164",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v10"
-    assert RELEASE_CAMPAIGN_VERSION == 10
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v11"
+    assert RELEASE_CAMPAIGN_VERSION == 11
     assert RELEASE_ORACLE_PROVIDER == "minimax"
     assert RELEASE_ORACLE_MODEL == "MiniMax-M3"
     assert RELEASE_ORACLE_ADAPTER == {
@@ -1162,9 +1177,9 @@ def test_checked_in_v10_commitment_and_minimax_contract_are_pinned():
         "in": 0.30, "out": 1.20, "cache": 0.06,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "39de2c406a5ec292287e2bbf6b8e401c9d88d22ee9defa81afd7abb309aaed45")
+        "e696c14abe25c22eb11977d90a35daa248a707fb92ee197101b3f0ec35625c7c")
 
-    commitment_path = root / "commitment-v10.yaml"
+    commitment_path = root / "commitment-v11.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1561,24 +1576,34 @@ def test_v8_campaign_has_no_v7_profile_or_evidence_ancestry():
                 committed["effective_config_sha256"])
 
 
-def test_v10_campaign_has_no_v9_profile_or_evidence_ancestry():
+def test_v11_campaign_has_no_prior_profile_or_evidence_ancestry():
     root = Path("runs/oracle")
     base = yaml.safe_load(
-        (root / "calibration-base-v10.yaml").read_text(encoding="utf-8"))
+        (root / "calibration-base-v11.yaml").read_text(encoding="utf-8"))
     assert base["extends"] == "../acceptance/rehearsal.yaml"
 
     for seed in RELEASE_SEEDS:
         profile = yaml.safe_load(
             (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
-        assert profile["extends"] == "calibration-base-v10.yaml"
+        assert profile["extends"] == "calibration-base-v11.yaml"
 
-    prior_commitment = yaml.safe_load(
-        (root / "commitment-v9.yaml").read_text(encoding="utf-8"))
+    # Every prior campaign, not just the immediate predecessor: an initialized
+    # seed can never be redrawn, so reusing any earlier seed would be
+    # unrunnable as well as dishonest.
+    prior_rows: dict[int, dict] = {}
+    prior_files = sorted(
+        path for path in root.glob("commitment-v*.yaml")
+        if path.name != "commitment-v11.yaml")
+    assert len(prior_files) >= 10, "prior commitments missing from the tree"
+    for path in prior_files:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for entry in payload["runs"]:
+            prior_rows[int(entry["seed"])] = entry
+
     new_commitment = yaml.safe_load(
-        (root / "commitment-v10.yaml").read_text(encoding="utf-8"))
+        (root / "commitment-v11.yaml").read_text(encoding="utf-8"))
     new_manifest = yaml.safe_load(
-        (root / "manifest-v10.template.yaml").read_text(encoding="utf-8"))
-    prior_rows = {int(entry["seed"]): entry for entry in prior_commitment["runs"]}
+        (root / "manifest-v11.template.yaml").read_text(encoding="utf-8"))
     new_commitment_rows = {
         int(entry["seed"]): entry for entry in new_commitment["runs"]}
     new_manifest_rows = {
@@ -1887,13 +1912,19 @@ def test_source_receipt_accepts_retained_death_and_linked_replacement(tmp_path):
     checkpoints = {
         item["tick"]: item for item in evidence["checkpoints"]["files"]
     }
+    # The fixture kills agent 1 at tick 207 and lands its replacement at 221,
+    # so pick the checkpoints either side of that window rather than naming
+    # ticks that only exist under one checkpoint interval.
+    death_tick, arrival_tick = 207, 221
+    mourning = min(t for t in checkpoints if death_tick < t < arrival_tick)
+    replaced = min(t for t in checkpoints if t > arrival_tick)
     assert checkpoints[5]["population"] == {
         "total": 100, "living": 100, "deceased": 0, "invalid": 0,
     }
-    assert checkpoints[210]["population"] == {
+    assert checkpoints[mourning]["population"] == {
         "total": 100, "living": 99, "deceased": 1, "invalid": 0,
     }
-    assert checkpoints[230]["population"] == {
+    assert checkpoints[replaced]["population"] == {
         "total": 101, "living": 100, "deceased": 1, "invalid": 0,
     }
     assert all(
@@ -2179,7 +2210,9 @@ def test_every_checkpoint_hash_schema_and_prng_state_is_receipt_bound(tmp_path):
         replay_receipt_path.read_text(encoding="utf-8"))
     checkpoint_manifest = replay_receipt["checkpoint_manifest"]
     expected_checkpoints = len({
-        *range(10, oracle_campaign.RELEASE_HORIZON_TICKS, 10),
+        *range(oracle_campaign.RELEASE_CHECKPOINT_EVERY,
+               oracle_campaign.RELEASE_HORIZON_TICKS,
+               oracle_campaign.RELEASE_CHECKPOINT_EVERY),
         *oracle_campaign.RELEASE_QUESTION_TICKS,
         oracle_campaign.RELEASE_HORIZON_TICKS,
     })
