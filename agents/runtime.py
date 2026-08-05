@@ -880,7 +880,7 @@ class AgentRuntime:
             if action_type == "post_job":
                 firm_id = int(action.get("firm_id", 0))
                 if firm_id <= 0:
-                    firm_id = self.executor._owned_firm(actor_id)
+                    firm_id = int(self.executor._owned_firm(actor_id) or 0)
                 if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
                     return None
                 return firm_id, int(action.get("wage", -1)), action_type
@@ -1063,7 +1063,9 @@ class AgentRuntime:
             self, tick: int, actor_id: int, action: dict, phase: str, result: dict) -> None:
         if not result.get("ok") or action.get("type") not in {"hire", "accept_job_offer"}:
             return
-        employment_id = int(result.get("employment_id", 0))
+        employment_id = int(result.get("employment_id") or 0)
+        if employment_id <= 0:
+            return
         employment = self.store.query_one(
             "SELECT firm_id,wage_cents FROM employments WHERE id=?", (employment_id,))
         if employment is None:

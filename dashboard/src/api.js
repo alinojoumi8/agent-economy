@@ -23,10 +23,12 @@ export async function api(path, options = {}) {
   try {
     response = await fetch(resolved.path, fetchOptions);
   } catch (reason) {
-    clientLog("dashboard.api.network_failed", {
-      path: resolved.path, method, error_type: reason?.constructor?.name || typeof reason,
-      error: reason instanceof Error ? reason.message : String(reason),
-    }, "error");
+    if (reason?.name !== "AbortError") {
+      clientLog("dashboard.api.network_failed", {
+        path: resolved.path, method, error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    }
     throw reason;
   }
   let body = {};

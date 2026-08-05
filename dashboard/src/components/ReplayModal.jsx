@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatMetricValue, money, shortKind } from "../api";
 import { clientLog } from "../logging.js";
+import { replayRequestWasCancelled } from "../lib/replayRequests.js";
 import { Badge, Empty, Modal } from "./ui";
 
 export function ReplayModal({ onClose }) {
@@ -12,24 +13,35 @@ export function ReplayModal({ onClose }) {
   const [error, setError] = useState("");
   const selected = useMemo(() => runs.find(run => run.file === runId || run.run_id === runId), [runs, runId]);
 
-  useEffect(() => { api("/api/replay/runs").then(items => {
-    setRuns(items);
-    if (items.length) { setRunId(items[0].file); setTick(items[0].ticks); }
-  }).catch(reason => {
-    const message = reason instanceof Error ? reason.message : String(reason);
-    setError(message);
-    clientLog("dashboard.replay.catalog_failed", {
-      error_type: reason?.constructor?.name || typeof reason, error: message,
-    }, "error");
-  }).finally(() => setLoading(false)); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    api("/api/replay/runs", { signal: controller.signal }).then(items => {
+      if (controller.signal.aborted) return;
+      setRuns(items);
+      if (items.length) { setRunId(items[0].file); setTick(items[0].ticks); }
+    }).catch(reason => {
+      if (replayRequestWasCancelled(reason, controller.signal)) return;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
+      clientLog("dashboard.replay.catalog_failed", {
+        error_type: reason?.constructor?.name || typeof reason, error: message,
+      }, "error");
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!runId || tick < 0) return;
+    const controller = new AbortController();
     const path = `/api/replay/${encodeURIComponent(runId)}/tick/${tick}`;
-    const timer = window.setTimeout(() => api(path).then(value => {
+    const timer = window.setTimeout(() => api(path, { signal: controller.signal }).then(value => {
+      if (controller.signal.aborted) return;
       setView(value);
       setError("");
     }).catch(reason => {
+      if (replayRequestWasCancelled(reason, controller.signal)) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);
       clientLog("dashboard.replay.tick_failed", {
@@ -37,7 +49,10 @@ export function ReplayModal({ onClose }) {
         error_type: reason?.constructor?.name || typeof reason, error: message,
       }, "error");
     }), 80);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [runId, tick]);
 
   function selectRun(value) {

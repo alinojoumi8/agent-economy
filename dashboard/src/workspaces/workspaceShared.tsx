@@ -5,16 +5,10 @@ import { projectionApi } from "../app/api";
 import { projectionScopeParams, useObserverViewState } from "../app/observerViewState";
 import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import type { ProjectionEnvelope } from "../generated/worldOs";
+import { terminalWorkspaceStatus } from "./workspacePolling.js";
 export {
   normalizeWorkspaceFilters, validatedSelectedId, workspaceRouteUrl, workspaceUrl,
 } from "./workspaceRouteState";
-
-function terminal(data: unknown) {
-  if (!data || typeof data !== "object") return false;
-  const root = data as Record<string, any>;
-  const status = root.status || root.summary?.status || root.run?.status;
-  return ["halted", "completed", "failed"].includes(String(status || "").toLowerCase());
-}
 
 export function useWorkspaceProjection<T>(projection: string, path: string) {
   const { runId = "run" } = useParams();
@@ -28,7 +22,8 @@ export function useWorkspaceProjection<T>(projection: string, path: string) {
     },
     retry: false,
     refetchInterval: queryState => (
-      observerState.tick === "live" && !terminal(queryState.state.data?.data) ? 3000 : false
+      observerState.tick === "live"
+      && !terminalWorkspaceStatus(queryState.state.data?.data) ? 3000 : false
     ),
   });
   return {

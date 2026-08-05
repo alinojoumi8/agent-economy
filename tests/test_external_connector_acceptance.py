@@ -107,6 +107,8 @@ def test_valid_independent_connector_receipts_pass(connector):
         (lambda value: value["revocation"].update(passed=False), "revocation"),
         (lambda value: value["cross_tenant_isolation"].update(passed=False), "isolation"),
         (lambda value: value.update(base_url="http://127.0.0.1:8000"), "public HTTPS"),
+        (lambda value: value.update(base_url="https://intranet"), "public HTTPS"),
+        (lambda value: value.update(base_url="https://[not-an-ipv6-address"), "public HTTPS"),
         (lambda value: value.update(access_token="not-allowed"), "sensitive"),
         (lambda value: value.update(private_payload={"body": "hidden"}), "private"),
     ],
@@ -133,6 +135,26 @@ def test_agent_connectors_require_exactly_three_executed_wakes(connector):
             value,
             expected_candidate={"commit": COMMIT, "tree": TREE},
             expected_connector=connector,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda wakes: wakes[0].update(target_tick=True), "tick, submission ID"),
+        (lambda wakes: wakes[1].update(submission_id=wakes[0]["submission_id"]), "unique"),
+        (lambda wakes: wakes[1].update(receipt_id=wakes[0]["receipt_id"]), "unique"),
+    ],
+)
+def test_agent_connector_wakes_require_strict_ticks_and_unique_ids(mutate, message):
+    value = receipt("hermes")
+    mutate(value["wakes"])
+
+    with pytest.raises(ExternalConnectorReceiptError, match=message):
+        validate_external_connector_receipt(
+            value,
+            expected_candidate={"commit": COMMIT, "tree": TREE},
+            expected_connector="hermes",
         )
 
 

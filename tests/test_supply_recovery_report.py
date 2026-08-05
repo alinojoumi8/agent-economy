@@ -1824,13 +1824,20 @@ def test_cli_writes_no_receipt_by_default_and_writes_json_and_markdown_on_reques
 def test_cli_returns_nonzero_for_a_nonpassing_receipt(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     db_path = Path(store.path)
-    store.execute("DELETE FROM metrics WHERE name = ?", ("unemployment",))
-    store.commit()
-    _close(store)
+    try:
+        store.execute("DELETE FROM metrics WHERE name = ?", ("unemployment",))
+        store.commit()
+    finally:
+        _close(store)
+    environment = {
+        **os.environ,
+        "AGENT_ECONOMY_LOG_FILE": str(tmp_path / "unexpected-operational.jsonl"),
+    }
 
     result = subprocess.run(
-        [sys.executable, "run.py", "--supply-recovery-report", str(db_path)],
-        cwd=ROOT,
+        [sys.executable, str(ROOT / "run.py"), "--supply-recovery-report", str(db_path)],
+        cwd=tmp_path,
+        env=environment,
         text=True,
         capture_output=True,
         check=False,
@@ -1843,18 +1850,26 @@ def test_cli_returns_nonzero_for_a_nonpassing_receipt(tmp_path: Path):
 def test_cli_rejects_run_modifiers_for_a_persisted_evidence_receipt(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     db_path = Path(store.path)
-    _close(store)
+    try:
+        store.commit()
+    finally:
+        _close(store)
+    environment = {
+        **os.environ,
+        "AGENT_ECONOMY_LOG_FILE": str(tmp_path / "unexpected-operational.jsonl"),
+    }
 
     result = subprocess.run(
         [
             sys.executable,
-            "run.py",
+            str(ROOT / "run.py"),
             "--supply-recovery-report",
             str(db_path),
             "--ticks",
             "1",
         ],
-        cwd=ROOT,
+        cwd=tmp_path,
+        env=environment,
         text=True,
         capture_output=True,
         check=False,

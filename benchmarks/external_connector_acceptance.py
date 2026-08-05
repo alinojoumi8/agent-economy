@@ -95,24 +95,29 @@ def _sensitive_path(value: Any, path: tuple[str, ...] = ()) -> str | None:
 def _public_https_origin(value: Any) -> bool:
     if not isinstance(value, str):
         return False
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in {"", "/"}
-    ):
+    try:
+        parsed = urlsplit(value)
+        hostname_value = parsed.hostname
+        invalid = (
+            parsed.scheme != "https"
+            or not hostname_value
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        )
+    except ValueError:
         return False
-    hostname = parsed.hostname.lower().rstrip(".")
+    if invalid:
+        return False
+    hostname = str(hostname_value).lower().rstrip(".")
     if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
         return False
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
-        return True
+        return "." in hostname
     return not (
         address.is_private
         or address.is_loopback
@@ -246,14 +251,22 @@ def validate_external_connector_receipt(
             if (
                 not isinstance(wake, dict)
                 or not isinstance(wake.get("target_tick"), int)
+                or isinstance(wake.get("target_tick"), bool)
                 or wake["target_tick"] < 0
                 or not _nonempty(wake.get("submission_id"))
                 or not _nonempty(wake.get("receipt_id"))
                 or wake.get("status") != "executed"
             ):
-                _fail("Hermes and OpenClaw require exactly three executed wakes")
+                _fail(
+                    "each Hermes and OpenClaw wake requires a tick, submission ID, "
+                    "receipt ID, and executed status")
+        if (
+            len({wake["submission_id"] for wake in wakes}) != 3
+            or len({wake["receipt_id"] for wake in wakes}) != 3
+        ):
+            _fail("Hermes and OpenClaw wakes require unique submission and receipt IDs")
         if len(executed) != 3:
-            _fail("Hermes and OpenClaw require exactly three executed wakes")
+            _fail("Hermes and OpenClaw require exactly three executed receipt reads")
     else:
         flows = receipt.get("flows")
         if (

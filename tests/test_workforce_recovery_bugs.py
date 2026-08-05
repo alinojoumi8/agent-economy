@@ -245,6 +245,18 @@ def test_invalid_recovery_hiring_inputs_keep_their_fail_closed_reason(
     world.close()
 
 
+def test_recovery_post_hook_ignores_success_without_an_employment_id(tmp_path):
+    world = _world(tmp_path, "missing-employment-id.db")
+
+    world.runtime._post_recovery_employment_action(
+        1, 1, {"type": "hire"}, "EXECUTION",
+        {"ok": True, "employment_id": None},
+    )
+
+    assert world.runtime._recovery_completed_hires == {}
+    world.close()
+
+
 def test_joint_firm_and_candidate_accepts_respect_remaining_headcount(
         tmp_path):
     """Firm counter-accept + candidate auto-accept must share one capacity budget."""

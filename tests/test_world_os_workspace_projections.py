@@ -230,8 +230,16 @@ def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(ec
         assert [row["id"] for row in payload[key]] == list(range(105, 205))
     assert all(row["qty_remaining"] == 1 for row in payload["orders"])
     assert all(row["qty_remaining"] == 1 for row in payload["fx_orders"])
-    assert sum("SELECT COALESCE(SUM(qty)" in sql for sql in statements) <= 1
-    assert sum("SELECT COALESCE(SUM(base_qty)" in sql for sql in statements) <= 1
+    trade_reads = [
+        sql for sql in statements
+        if sql.lstrip().upper().startswith("SELECT") and "FROM trades" in sql
+    ]
+    fx_trade_reads = [
+        sql for sql in statements
+        if sql.lstrip().upper().startswith("SELECT") and "FROM fx_trades" in sql
+    ]
+    assert len(trade_reads) <= 2
+    assert len(fx_trade_reads) <= 2
 
 
 def test_world_workspace_resolves_agent_regions_with_bounded_queries(economy):

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useParams } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
@@ -11,6 +11,7 @@ import { MarketsWorkspace } from "../workspaces/MarketsWorkspace";
 import { PoliticsLawWorkspace } from "../workspaces/PoliticsLawWorkspace";
 import { ExperimentsWorkspace } from "../workspaces/ExperimentsWorkspace";
 import { workspaceFallbackPath } from "../lib/routes";
+import { worldOSIndexWorkspace } from "./worldOSRouting.js";
 
 function WorkspaceFallback() {
   const { runId } = useParams<{ runId?: string }>();
@@ -18,6 +19,12 @@ function WorkspaceFallback() {
 }
 
 export function WorldOSApp() {
+  const location = useLocation();
+  if (worldOSIndexWorkspace(location.pathname) === "commons") {
+    return <Routes><Route element={<WorkspaceShell />}>
+      <Route path="*" element={<CommonsWorkspace />} />
+    </Route></Routes>;
+  }
   return <Routes>
     <Route element={<WorkspaceShell />}>
       <Route index element={<Navigate to="overview" replace />} />

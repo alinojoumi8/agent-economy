@@ -22,6 +22,8 @@ import {
   experimentActionState,
   normalizeExperimentsWorkspace,
 } from "../src/workspaces/experimentsWorkspaceModel.js";
+import { terminalWorkspaceStatus } from "../src/workspaces/workspacePolling.js";
+import { worldOSIndexWorkspace } from "../src/app/worldOSRouting.js";
 
 test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(
@@ -56,6 +58,20 @@ test("workspace URLs preserve only validated observer and route state", () => {
     for (const invalid of [0, -1, "1.5", "private", Number.MAX_SAFE_INTEGER + 1]) {
       assert.equal(organizationWorkspaceUrl("run", invalid, {}), null);
     }
+});
+
+test("workspace polling stops for every terminal run status", () => {
+  for (const status of ["halted", "completed", "failed", "stopped"]) {
+    assert.equal(terminalWorkspaceStatus({ status }), true);
+    assert.equal(terminalWorkspaceStatus({ summary: { status } }), true);
+  }
+  assert.equal(terminalWorkspaceStatus({ status: "running" }), false);
+});
+
+test("legacy Commons aliases select Commons instead of overview", () => {
+  assert.equal(worldOSIndexWorkspace("/commons"), "commons");
+  assert.equal(worldOSIndexWorkspace("/commons/feed"), "commons");
+  assert.equal(worldOSIndexWorkspace("/runs/run-demo"), "overview");
 });
 
 test("world workspace normalizes public map data without inventing coordinates", () => {
