@@ -202,7 +202,11 @@ class Firms:
                 distressed.add(int(emp["firm_id"]))
                 self.store.update("employments", int(emp["id"]), next_pay_tick=tick + interval)
                 self.store.log_event(tick, "wage_missed", {
-                    "firm_id": int(emp["firm_id"]), "agent_id": int(emp["agent_id"])},
+                    "firm_id": int(emp["firm_id"]),
+                    "agent_id": int(emp["agent_id"]),
+                    "employment_id": int(emp["id"]),
+                    "wage_cents": wage,
+                },
                     phase="NIGHT_CLOSE", importance=1.5)
         for firm_id in distressed:
             self._maybe_bankrupt(tick, firm_id)

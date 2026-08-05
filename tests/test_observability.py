@@ -160,6 +160,98 @@ def test_cli_resume_checks_authoritative_persisted_provider_config(monkeypatch):
     assert fake_store.closed
 
 
+def test_cli_supply_recovery_uses_resumed_world_target(monkeypatch):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    monkeypatch.setattr(cli, "operational_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        "ignored.yaml",
+        "--resume",
+        "saved-run",
+        "--activate-supply-recovery",
+    ])
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _path: {"firms": {"target_headcount": 3}},
+    )
+
+    class FakeWorld:
+        config = {
+            "engine_semantics_version": 7,
+            "firms": {
+                "target_headcount": 3,
+                "workforce_recovery_target_headcount": 17,
+            },
+        }
+
+        @staticmethod
+        def close():
+            pass
+
+    monkeypatch.setattr(
+        cli,
+        "open_run",
+        lambda *_args, **_kwargs: (object(), FakeWorld(), "saved-run"),
+    )
+
+    def activate(_world, *, target_headcount):
+        assert target_headcount == 17
+        raise RuntimeError("persisted target checked")
+
+    monkeypatch.setattr(cli, "activate_supply_recovery_for_run", activate)
+
+    with pytest.raises(RuntimeError, match="persisted target checked"):
+        cli.main()
+
+
+def test_cli_supply_recovery_closes_world_when_activation_fails(monkeypatch):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    monkeypatch.setattr(cli, "operational_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        "ignored.yaml",
+        "--resume",
+        "saved-run",
+        "--activate-supply-recovery",
+    ])
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda _path: {"firms": {"target_headcount": 3}},
+    )
+
+    class FakeWorld:
+        config = {
+            "engine_semantics_version": 7,
+            "firms": {"target_headcount": 17},
+        }
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    fake_world = FakeWorld()
+    monkeypatch.setattr(
+        cli,
+        "open_run",
+        lambda *_args, **_kwargs: (object(), fake_world, "saved-run"),
+    )
+
+    def fail_activation(*_args, **_kwargs):
+        raise RuntimeError("activation failed")
+
+    monkeypatch.setattr(cli, "activate_supply_recovery_for_run", fail_activation)
+
+    with pytest.raises(RuntimeError, match="activation failed"):
+        cli.main()
+    assert fake_world.closed
+
+
 def test_cli_scripted_resume_ignores_non_authoritative_live_cli_config(monkeypatch):
     monkeypatch.setattr(cli, "load_dotenv", lambda: None)
     monkeypatch.setattr(cli, "configure_logging", lambda: None)

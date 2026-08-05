@@ -1,0 +1,47 @@
+# Default live Observatory profile: 1,000 simulated agents with a bounded
+# 100-agent model core. Every gateway/model-eligible call uses live MiniMax M3;
+# the semantics-7 periphery remains deterministic for scalable daily activity.
+extends: v2.yaml
+
+budget:
+  cap_usd: 150.0
+  oracle_reserve_usd: 0.25
+  report_reserve_usd: 0.0
+  conversation_pairs: 1
+
+llm:
+  concurrency: 3
+  provider_retries: 1
+  rate_limit_backoff_s: [5, 15, 30]
+  institutional_role_purposes: true
+  persona_max_tokens: 350
+  # M3's completion budget includes reasoning. These short structured-output
+  # calls need enough room to finish their JSON instead of ending at length.
+  reporter_max_tokens: 1600
+  newsroom_max_tokens: 1200
+  conversation_max_tokens: 800
+  # MiniMax-M3 includes reasoning in completion usage. 2,400 covers the
+  # observed p90 while bounding the long tail that made days appear frozen.
+  decision_max_tokens: 2400
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      prompt_cache_mode: provider_automatic
+      # M3 non-streaming completions can legitimately exceed three minutes
+      # during brief provider degradation; retain one bounded retry and the
+      # world's reconciled fail-closed pause after a ten-minute read window.
+      timeout_s: 600
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+  route_contract: {provider: minimax, model: MiniMax-M3}
+  default_route: {provider: minimax, model: MiniMax-M3}
+  routes: {}
+  pricing:
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
+
+checkpoint_every: 1
+speed_delay_s: 0.0

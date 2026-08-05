@@ -142,6 +142,718 @@ def test_goods_context_excludes_zero_inventory(tmp_path):
     world.store.close()
 
 
+def test_inventory_aware_shopping_is_explicit_in_context_and_prompt(tmp_path):
+    world = _world(
+        tmp_path,
+        "inventory-aware-context.db",
+        engine_semantics_version=7,
+        behavior={
+            "act_every": 1,
+            "run_threshold": 0.35,
+            "inventory_aware_shopping": True,
+        },
+    )
+    agent = world.store.query_one(
+        "SELECT * FROM agents WHERE kind='citizen' AND alive=1 ORDER BY id LIMIT 1")
+
+    context = world.runtime.ctx.build(agent, 1)
+    _, prompt = world.runtime.ctx.render_prompt(context)
+
+    assert context["inventory_aware_shopping_enabled"] is True
+    assert "shared morning snapshot" in prompt
+    world.store.close()
+
+
+def test_supply_recovery_activation_is_forward_only_and_idempotent(tmp_path):
+    world = _world(
+        tmp_path,
+        "supply-recovery.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={"count": 12, "listed": 3, "target_headcount": 3},
+    )
+
+    activated = run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    repeated = run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    stored_config = json.loads(world.store.get_meta()["config_json"])
+
+    assert activated == repeated == {
+        "activation_tick": 1,
+        "target_headcount": 80,
+        "operational_activation_tick": 1,
+    }
+    assert stored_config["firms"]["target_headcount"] == 3
+    assert stored_config["firms"]["workforce_recovery_activation_tick"] == 1
+    assert stored_config["firms"]["workforce_recovery_target_headcount"] == 80
+    assert stored_config[
+        "firms"]["workforce_recovery_operational_activation_tick"] == 1
+    assert stored_config["firms"]["workforce_recovery_recapitalization_tick"] == 1
+    assert stored_config["firms"]["workforce_recovery_min_wage_cents"] == 250_000
+    assert stored_config[
+        "firms"]["workforce_recovery_wage_floor_activation_tick"] == 1
+    assert stored_config["behavior"]["inventory_aware_shopping_activation_tick"] == 1
+    assert stored_config["behavior"]["job_application_aware_activation_tick"] == 1
+    assert "inventory_aware_shopping_enabled" not in world.runtime.ctx.build(
+        world.store.query_one(
+            "SELECT * FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"),
+        0,
+    )
+    citizen = world.store.query_one(
+        "SELECT * FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1")
+    assert "job_application_aware_enabled" not in world.runtime.ctx.build(
+        citizen, 0)
+    activated_citizen_context = world.runtime.ctx.build(citizen, 1)
+    assert activated_citizen_context["inventory_aware_shopping_enabled"] is True
+    assert activated_citizen_context["job_application_aware_enabled"] is True
+    founder = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN firms f ON f.founder_agent_id=a.id "
+        "ORDER BY f.id LIMIT 1")
+    assert "workforce_recovery_enabled" not in world.runtime.ctx.build(founder, 0)
+    assert world.runtime.ctx.build(
+        founder, 1)["workforce_recovery_enabled"] is True
+    world.store.close()
+
+
+def test_existing_supply_recovery_is_upgraded_at_the_next_untouched_tick(tmp_path):
+    world = _world(
+        tmp_path,
+        "supply-recovery-upgrade.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 12,
+            "listed": 3,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 34,
+            "workforce_recovery_target_headcount": 80,
+        },
+        behavior={
+            "act_every": 1,
+            "run_threshold": 0.35,
+            "inventory_aware_shopping_activation_tick": 34,
+        },
+    )
+    world.store.set_meta(
+        tick=34,
+        config_json=json.dumps(world.config, sort_keys=True),
+    )
+    world.store.commit()
+
+    activated = run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    repeated = run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    stored = json.loads(world.store.get_meta()["config_json"])
+
+    assert activated == repeated == {
+        "activation_tick": 34,
+        "target_headcount": 80,
+        "operational_activation_tick": 35,
+    }
+    assert stored["firms"]["workforce_recovery_operational_activation_tick"] == 35
+    assert stored["firms"]["workforce_recovery_recapitalization_tick"] == 35
+    assert stored["firms"]["workforce_recovery_batch_size"] == 4
+    assert stored["firms"]["workforce_recovery_excluded_sectors"] == [
+        "health", "insurance"]
+    assert stored["firms"]["workforce_recovery_capital_per_worker_cents"] == 500_000
+    assert stored["firms"]["workforce_recovery_min_wage_cents"] == 250_000
+    assert stored[
+        "firms"]["workforce_recovery_wage_floor_activation_tick"] == 35
+    assert stored["behavior"]["job_application_aware_activation_tick"] == 35
+    world.store.close()
+
+
+def test_recapitalization_is_balanced_one_time_and_excludes_service_firms(tmp_path):
+    world = _world(
+        tmp_path,
+        "supply-recapitalization.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_recapitalization_tick": 1,
+            "workforce_recovery_capital_per_worker_cents": 500_000,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+        health={"hospital": True, "insurer": True},
+    )
+    ordinary = world.store.query(
+        "SELECT id,account_id FROM firms "
+        "WHERE sector NOT IN ('health','insurance') ORDER BY id")
+    services = world.store.query(
+        "SELECT id,account_id FROM firms "
+        "WHERE sector IN ('health','insurance') ORDER BY id")
+    service_balances = {
+        int(row["id"]): world.economy.ledger.balance(int(row["account_id"]))
+        for row in services
+    }
+
+    world._apply_supply_recovery_recapitalization(1)
+    balances_once = {
+        int(row["id"]): world.economy.ledger.balance(int(row["account_id"]))
+        for row in ordinary
+    }
+    world._apply_supply_recovery_recapitalization(1)
+
+    assert set(balances_once.values()) == {40_000_000}
+    assert {
+        int(row["id"]): world.economy.ledger.balance(int(row["account_id"]))
+        for row in ordinary
+    } == balances_once
+    assert {
+        int(row["id"]): world.economy.ledger.balance(int(row["account_id"]))
+        for row in services
+    } == service_balances
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='supply_recovery_recapitalized' AND tick=1") == len(ordinary)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='supply_recovery_recapitalization_applied' AND tick=1") == 1
+    assert world.economy.ledger.reconcile()[0] is True
+    world.store.close()
+
+
+def test_recapitalization_applies_once_when_first_seen_after_activation(tmp_path):
+    world = _world(
+        tmp_path,
+        "late-supply-recapitalization.db",
+        engine_semantics_version=7,
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_target_headcount": 9,
+            "workforce_recovery_recapitalization_tick": 1,
+            "workforce_recovery_capital_per_worker_cents": 100_000,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+
+    world._apply_supply_recovery_recapitalization(2)
+    world._apply_supply_recovery_recapitalization(3)
+
+    events = world.store.query(
+        "SELECT tick,payload_json FROM events "
+        "WHERE kind='supply_recovery_recapitalization_applied' ORDER BY id")
+    assert len(events) == 1
+    assert int(events[0]["tick"]) == 2
+    assert json.loads(events[0]["payload_json"])["activation_tick"] == 1
+    world.store.close()
+
+
+def test_existing_operational_recovery_adds_wage_floor_forward_only(tmp_path):
+    world = _world(
+        tmp_path,
+        "supply-recovery-wage-upgrade.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 34,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 35,
+            "workforce_recovery_recapitalization_tick": 35,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+            "workforce_recovery_capital_per_worker_cents": 500_000,
+        },
+        behavior={
+            "act_every": 1,
+            "run_threshold": 0.35,
+            "inventory_aware_shopping_activation_tick": 34,
+            "job_application_aware_activation_tick": 35,
+        },
+    )
+    world.store.set_meta(
+        tick=35,
+        config_json=json.dumps(world.config, sort_keys=True),
+    )
+    world.store.commit()
+
+    run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    repeated = run_module.activate_supply_recovery_for_run(
+        world, target_headcount=80)
+    stored = json.loads(world.store.get_meta()["config_json"])
+
+    assert repeated["operational_activation_tick"] == 35
+    assert stored["firms"]["workforce_recovery_min_wage_cents"] == 250_000
+    assert stored[
+        "firms"]["workforce_recovery_wage_floor_activation_tick"] == 36
+    world.store.close()
+
+
+def test_operational_recovery_closes_only_underfloor_ordinary_jobs(tmp_path):
+    world = _world(
+        tmp_path,
+        "recovery-wage-floor.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_min_wage_cents": 250_000,
+            "workforce_recovery_wage_floor_activation_tick": 1,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+        health={"hospital": True, "insurer": True},
+    )
+    ordinary_firm = int(world.store.scalar(
+        "SELECT id FROM firms WHERE sector NOT IN ('health','insurance') "
+        "ORDER BY id LIMIT 1"))
+    service_firm = int(world.store.scalar(
+        "SELECT id FROM firms WHERE sector IN ('health','insurance') "
+        "ORDER BY id LIMIT 1"))
+    low_job = world.store.insert(
+        "jobs", tick=1, firm_id=ordinary_firm, title="worker",
+        wage_cents=5_000, status="open")
+    valid_job = world.store.insert(
+        "jobs", tick=1, firm_id=ordinary_firm, title="worker",
+        wage_cents=275_200, status="open")
+    service_job = world.store.insert(
+        "jobs", tick=1, firm_id=service_firm, title="orderly",
+        wage_cents=200_000, status="open")
+
+    world._enforce_workforce_recovery_job_floor(2)
+    world._enforce_workforce_recovery_job_floor(2)
+
+    assert world.store.scalar(
+        "SELECT status FROM jobs WHERE id=?", (low_job,)) == "closed"
+    assert world.store.scalar(
+        "SELECT status FROM jobs WHERE id=?", (valid_job,)) == "open"
+    assert world.store.scalar(
+        "SELECT status FROM jobs WHERE id=?", (service_job,)) == "open"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='workforce_recovery_job_floor_enforced'") == 1
+    world.store.close()
+
+
+def test_operational_recruiting_runs_for_unscheduled_ordinary_founders(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-recruiting.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_recapitalization_tick": 1,
+            "workforce_recovery_capital_per_worker_cents": 500_000,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+        health={"hospital": True, "insurer": True},
+    )
+    world.runtime.scheduler.scheduled_agents = lambda *args, **kwargs: []
+    world._apply_supply_recovery_recapitalization(1)
+
+    decisions = asyncio.run(world.runtime.decide_all(1))
+    founder_sectors = {
+        int(row["founder_agent_id"]): row["sector"]
+        for row in world.store.query(
+            "SELECT founder_agent_id,sector FROM firms "
+            "WHERE founder_agent_id IS NOT NULL")
+    }
+    recovery = [
+        decision for decision in decisions
+        if decision["purpose"] == "workforce_recovery"
+    ]
+    service_founder = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN firms f ON f.founder_agent_id=a.id "
+        "WHERE f.sector IN ('health','insurance') ORDER BY f.id LIMIT 1")
+    service_context = world.runtime.ctx.build(service_founder, 1)
+
+    assert recovery
+    assert "workforce_recovery_enabled" not in service_context
+    assert service_context["my_firm"]["target_headcount"] == 3
+    assert {
+        founder_sectors[int(decision["agent_id"])]
+        for decision in recovery
+    }.isdisjoint({"health", "insurance"})
+    assert {
+        founder_sectors[int(decision["agent_id"])]
+        for decision in recovery
+    } == {
+        row["sector"] for row in world.store.query(
+            "SELECT DISTINCT sector FROM firms "
+            "WHERE sector NOT IN ('health','insurance')")
+    }
+    assert all(decision["llm_call_id"] is None for decision in recovery)
+    assert all(
+        len([
+            action for action in decision["envelope"]["actions"]
+            if action["type"] == "post_job"
+        ]) == 4
+        for decision in recovery
+    )
+    world.store.close()
+
+
+def test_recruit_to_target_uses_configured_recovery_headcount_without_tick(tmp_path):
+    world = _world(
+        tmp_path,
+        "recruit-to-target-headcount.db",
+        engine_semantics_version=7,
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "recruit_to_target": True,
+            "workforce_recovery_target_headcount": 9,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    founder = world.store.query_one(
+        "SELECT a.* FROM agents a JOIN firms f ON f.founder_agent_id=a.id "
+        "WHERE f.sector NOT IN ('health','insurance') ORDER BY f.id LIMIT 1")
+
+    context = world.runtime.ctx.build(founder, 0)
+
+    assert context["workforce_recovery_enabled"] is True
+    assert context["my_firm"]["target_headcount"] == 9
+    world.store.close()
+
+
+def test_operational_recovery_replaces_model_staffing_with_audited_actions(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-staffing-owner.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    founder = world.store.query_one(
+        "SELECT a.*,f.id AS firm_id FROM agents a "
+        "JOIN firms f ON f.founder_agent_id=a.id "
+        "WHERE f.sector NOT IN ('health','insurance') ORDER BY f.id LIMIT 1")
+    decision = {
+        "agent_id": int(founder["id"]),
+        "purpose": "founder",
+        "envelope": {
+            "actions": [
+                {
+                    "type": "post_job",
+                    "firm_id": int(founder["firm_id"]),
+                    "title": "worker",
+                    "wage": 5_000,
+                },
+                {
+                    "type": "set_price",
+                    "firm_id": int(founder["firm_id"]),
+                    "price": 600,
+                },
+            ],
+        },
+        "llm_call_id": 99,
+    }
+
+    world.runtime._replace_operational_workforce_actions(
+        1, [decision], participant_agent_id=None)
+
+    assert decision["envelope"]["actions"] == [{
+        "type": "set_price",
+        "firm_id": int(founder["firm_id"]),
+        "price": 600,
+    }]
+    assert decision["operational_overrides"] == [{
+        "type": "post_job",
+        "firm_id": int(founder["firm_id"]),
+        "title": "worker",
+        "wage": 5_000,
+    }]
+    decision["llm_call_id"] = None
+    world.runtime.execute_decisions(1, [decision])
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='workforce_recovery_model_action_replaced'") == 1
+    world.store.close()
+
+
+def test_operational_recovery_wakes_candidate_for_a_fair_recorded_offer(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-candidate-response.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    firm = world.store.query_one(
+        "SELECT * FROM firms WHERE sector NOT IN ('health','insurance') "
+        "ORDER BY id LIMIT 1")
+    founder_id = int(firm["founder_agent_id"])
+    candidate_id = int(world.store.scalar(
+        "SELECT a.id FROM agents a "
+        "JOIN accounts ac ON ac.id=a.checking_account_id "
+        "WHERE a.kind='citizen' AND a.alive=1 AND a.retired=0 "
+        "AND a.employer_id IS NULL AND a.id NOT IN "
+        "(SELECT founder_agent_id FROM firms WHERE founder_agent_id IS NOT NULL) "
+        "AND ac.currency_code=? ORDER BY a.id LIMIT 1",
+        (firm["currency_code"],),
+    ))
+    job_id = world.economy.labor.post_job(
+        1, int(firm["id"]), "worker", 250_000)
+    application_id = world.economy.labor.apply_job(
+        1, candidate_id, job_id)
+    offer_id = world.economy.labor.make_offer(
+        1, int(application_id), founder_id, 250_000)
+    world.runtime.scheduler.scheduled_agents = lambda *args, **kwargs: []
+
+    decisions = asyncio.run(world.runtime.decide_all(2))
+    candidate_decisions = [
+        decision for decision in decisions
+        if decision["purpose"] == "workforce_recovery_candidate"
+    ]
+
+    assert candidate_decisions == [{
+        "agent_id": candidate_id,
+        "purpose": "workforce_recovery_candidate",
+        "envelope": {
+            "reasoning": "accepting a fair recorded recovery offer",
+            "actions": [{
+                "type": "accept_job_offer",
+                "offer_id": int(offer_id),
+            }],
+            "belief_updates": [],
+        },
+        "reasoning": "accepting a fair recorded recovery offer",
+        "llm_call_id": None,
+    }]
+    world.runtime.execute_decisions(2, candidate_decisions)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM employments "
+        "WHERE agent_id=? AND status='active'",
+        (candidate_id,),
+    ) == 1
+    world.store.close()
+
+
+def test_operational_recovery_accepts_at_most_one_offer_per_job(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-candidate-job-reservation.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    firm = world.store.query_one(
+        "SELECT * FROM firms WHERE sector NOT IN ('health','insurance') "
+        "ORDER BY id LIMIT 1")
+    founder_id = int(firm["founder_agent_id"])
+    candidate_ids = [
+        int(row["id"]) for row in world.store.query(
+            "SELECT a.id FROM agents a "
+            "JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.retired=0 "
+            "AND a.employer_id IS NULL AND a.id NOT IN "
+            "(SELECT founder_agent_id FROM firms WHERE founder_agent_id IS NOT NULL) "
+            "AND ac.currency_code=? ORDER BY a.id LIMIT 2",
+            (firm["currency_code"],),
+        )
+    ]
+    first_job = world.economy.labor.post_job(
+        1, int(firm["id"]), "worker", 250_000)
+    second_job = world.economy.labor.post_job(
+        1, int(firm["id"]), "worker", 250_000)
+    first_on_first = world.economy.labor.apply_job(
+        1, candidate_ids[0], first_job)
+    first_on_second = world.economy.labor.apply_job(
+        1, candidate_ids[0], second_job)
+    second_on_first = world.economy.labor.apply_job(
+        1, candidate_ids[1], first_job)
+    world.economy.labor.make_offer(
+        1, int(first_on_first), founder_id, 250_000)
+    first_second_offer = world.economy.labor.make_offer(
+        1, int(first_on_second), founder_id, 250_000)
+    second_first_offer = world.economy.labor.make_offer(
+        1, int(second_on_first), founder_id, 250_000)
+    world.runtime.scheduler.scheduled_agents = lambda *args, **kwargs: []
+
+    decisions = asyncio.run(world.runtime.decide_all(2))
+    candidate_decisions = [
+        decision for decision in decisions
+        if decision["purpose"] == "workforce_recovery_candidate"
+    ]
+
+    assert {
+        decision["envelope"]["actions"][0]["offer_id"]
+        for decision in candidate_decisions
+    } == {int(first_second_offer), int(second_first_offer)}
+    world.runtime.execute_decisions(2, candidate_decisions)
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM employments "
+        "WHERE agent_id IN (?,?) AND status='active'",
+        tuple(candidate_ids),
+    ) == 2
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM action_proposals "
+        "WHERE tick=2 AND action_type='accept_job_offer' "
+        "AND validation_status='rejected'",
+    ) == 0
+    world.store.close()
+
+
+def test_operational_recovery_coordinates_scheduled_candidate_acceptances(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-scheduled-candidate-reservation.db",
+        engine_semantics_version=7,
+        population={"target_total": 1_000},
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    firm = world.store.query_one(
+        "SELECT * FROM firms WHERE sector NOT IN ('health','insurance') "
+        "ORDER BY id LIMIT 1")
+    founder_id = int(firm["founder_agent_id"])
+    candidate_ids = [
+        int(row["id"]) for row in world.store.query(
+            "SELECT a.id FROM agents a "
+            "JOIN accounts ac ON ac.id=a.checking_account_id "
+            "WHERE a.kind='citizen' AND a.alive=1 AND a.retired=0 "
+            "AND a.employer_id IS NULL AND a.id NOT IN "
+            "(SELECT founder_agent_id FROM firms WHERE founder_agent_id IS NOT NULL) "
+            "AND ac.currency_code=? ORDER BY a.id LIMIT 2",
+            (firm["currency_code"],),
+        )
+    ]
+    job_id = world.economy.labor.post_job(
+        1, int(firm["id"]), "worker", 250_000)
+    offers = []
+    for candidate_id in candidate_ids:
+        application_id = world.economy.labor.apply_job(
+            1, candidate_id, job_id)
+        offers.append(world.economy.labor.make_offer(
+            1, int(application_id), founder_id, 250_000))
+    decisions = [{
+        "agent_id": candidate_id,
+        "purpose": "decision",
+        "envelope": {
+            "reasoning": "accepting the available fair offer",
+            "actions": [{
+                "type": "accept_job_offer",
+                "offer_id": int(offer_id),
+            }],
+            "belief_updates": [],
+        },
+        "reasoning": "accepting the available fair offer",
+        "llm_call_id": None,
+    } for candidate_id, offer_id in zip(candidate_ids, offers)]
+
+    world.runtime._coordinate_workforce_recovery_candidate_acceptances(
+        2, decisions, participant_agent_id=None)
+    world.runtime.execute_decisions(2, decisions)
+
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM action_proposals "
+        "WHERE tick=2 AND action_type='accept_job_offer' "
+        "AND validation_status='accepted'",
+    ) == 1
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM action_proposals "
+        "WHERE tick=2 AND action_type='accept_job_offer' "
+        "AND validation_status='rejected'",
+    ) == 0
+    world.store.close()
+
+
+def test_operational_recovery_leaves_malformed_offer_for_validation(tmp_path):
+    world = _world(
+        tmp_path,
+        "operational-malformed-offer.db",
+        engine_semantics_version=7,
+        firms={
+            "count": 3,
+            "listed": 1,
+            "target_headcount": 3,
+            "workforce_recovery_activation_tick": 1,
+            "workforce_recovery_target_headcount": 80,
+            "workforce_recovery_operational_activation_tick": 1,
+            "workforce_recovery_batch_size": 4,
+            "workforce_recovery_excluded_sectors": ["health", "insurance"],
+        },
+    )
+    candidate_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' AND alive=1 ORDER BY id LIMIT 1"))
+    decisions = [{
+        "agent_id": candidate_id,
+        "purpose": "decision",
+        "envelope": {
+            "reasoning": "attempting a malformed offer reference",
+            "actions": [{"type": "accept_job_offer", "offer_id": None}],
+            "belief_updates": [],
+        },
+        "reasoning": "attempting a malformed offer reference",
+        "llm_call_id": None,
+    }]
+
+    world.runtime._coordinate_workforce_recovery_candidate_acceptances(
+        2, decisions, participant_agent_id=None)
+    world.runtime.execute_decisions(2, decisions)
+
+    proposal = world.store.query_one(
+        "SELECT validation_status,result_json FROM action_proposals "
+        "WHERE tick=2 AND action_type='accept_job_offer'")
+    assert proposal["validation_status"] == "rejected"
+    assert json.loads(proposal["result_json"]) == {
+        "ok": False,
+        "reason": "offer_id must be a positive integer",
+    }
+    world.store.close()
+
+
 def test_citizen_goods_context_only_exposes_same_currency_sellers(tmp_path):
     world = _world(
         tmp_path, "local-goods-offers.db",
@@ -248,9 +960,12 @@ def test_v2_currency_surfaces_follow_primary_wallet_and_reject_foreign_ids(tmp_p
             "type": "place_order", "firm_id": foreign_id, "side": "buy",
             "qty": 1, "limit_price": 1,
         })["ok"]
-        assert not executor.execute_action(1, actor_id, {
+        assert executor.execute_action(1, actor_id, {
             "type": "apply_job", "job_id": foreign_job,
-        })["ok"]
+        }) == {
+            "ok": False,
+            "reason": "job must use the applicant's primary currency",
+        }
         assert not executor.execute_action(1, actor_id, {
             "type": "apply_loan", "bank_id": foreign_bank, "amount": 100,
             "purpose": "foreign currency",
@@ -263,6 +978,14 @@ def test_v2_currency_surfaces_follow_primary_wallet_and_reject_foreign_ids(tmp_p
             "type": "place_order", "firm_id": local_id, "side": "buy",
             "qty": 1, "limit_price": 1,
         })["ok"]
+        store.update("jobs", local_job, status="filled")
+        assert executor.execute_action(1, actor_id, {
+            "type": "apply_job", "job_id": local_job,
+        }) == {
+            "ok": False,
+            "reason": "job unavailable",
+        }
+        store.update("jobs", local_job, status="open")
         assert executor.execute_action(1, actor_id, {
             "type": "apply_job", "job_id": local_job,
         })["ok"]
@@ -273,6 +996,10 @@ def test_v2_currency_surfaces_follow_primary_wallet_and_reject_foreign_ids(tmp_p
 
         bypassed = world.economy.labor.apply_job(1, actor_id, foreign_job)
         assert bypassed is not None
+        assert int(bypassed) not in {
+            application["application_id"]
+            for application in world.runtime.ctx._firm_applications(foreign_id)
+        }
         assert not executor.execute_action(1, int(foreign_firm["founder_agent_id"]), {
             "type": "hire", "application_id": bypassed,
         })["ok"]
@@ -1219,6 +1946,38 @@ def test_concurrent_steps_cannot_cross_the_served_tick_bound(tmp_path):
     world.store.close()
 
 
+def test_dashboard_status_reports_an_inflight_step_as_running(tmp_path):
+    world = _world(tmp_path, "served-inflight-step-status.db")
+    controller = RunController(world, served_ticks=1)
+
+    async def observe_inflight_step():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def yielding_step():
+            entered.set()
+            await release.wait()
+            tick = world.store.tick + 1
+            world.store.set_meta(tick=tick)
+            world.store.commit()
+            return {"tick": tick}
+
+        world.step = yielding_step
+        task = asyncio.create_task(controller.step())
+        await entered.wait()
+        status = controller.status()
+        release.set()
+        result = await task
+        return status, result
+
+    status, result = asyncio.run(observe_inflight_step())
+
+    assert status["status"] == "running"
+    assert status["running"] is True
+    assert result["tick"] == 1
+    world.store.close()
+
+
 def test_stop_interrupts_before_waiting_for_an_active_step(tmp_path):
     world = _world(tmp_path, "served-stop-interrupt.db")
     controller = RunController(world, served_ticks=1)
@@ -1261,7 +2020,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
         "SELECT COUNT(*) FROM events WHERE kind='provider_pause'") == 1
 
 
-def test_production_config_inherits_world_and_requires_both_keys():
+def test_production_config_inherits_world_and_enforces_minimax_m3():
     cfg = load_config("runs/production.yaml")
     assert cfg["budget"]["cap_usd"] is None
     assert cfg["population"]["size"] == 87
@@ -1273,46 +2032,45 @@ def test_production_config_inherits_world_and_requires_both_keys():
     assert cfg["llm"]["providers"]["minimax"]["request_defaults"] == {
         "reasoning_split": True, "max_completion_tokens": 4096}
     assert cfg["llm"]["routes"]["oracle"] == {
-        "provider": "kimi", "model": "kimi-for-coding"}
-    kimi = cfg["llm"]["providers"]["kimi"]
-    assert kimi["base_url"] == "https://api.kimi.com/coding/v1"
-    assert kimi["timeout_s"] == 180
-    assert kimi["max_tokens_field"] == "max_tokens"
-    assert kimi["request_defaults"] == {
-        "reasoning_effort": "medium", "temperature": 1.0,
-        "max_tokens": 4096}
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert cfg["llm"]["route_contract"] == {
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert set(cfg["llm"]["providers"]) == {"minimax"}
+    assert {
+        (route["provider"], route["model"])
+        for route in [cfg["llm"]["default_route"], *cfg["llm"]["routes"].values()]
+    } == {("minimax", "MiniMax-M3")}
 
     missing = validate_llm_config(cfg, environ={}, raise_on_error=False)
     assert not missing["ready"]
     assert any("MINIMAX_API_KEY" in error for error in missing["errors"])
-    assert any("KIMI_API_KEY" in error for error in missing["errors"])
 
     ready = validate_llm_config(
-        cfg, environ={"MINIMAX_API_KEY": "sk-cp-present",
-                      "KIMI_API_KEY": "sk-kimi-present"},
+        cfg, environ={"MINIMAX_API_KEY": "sk-cp-present"},
         raise_on_error=False)
     assert ready["ready"] and ready["mode"] == "network"
-    assert {p["name"] for p in ready["providers"]} == {"minimax", "kimi"}
+    assert {p["name"] for p in ready["providers"]} == {"minimax"}
+    assert ready["route_contract"] == {
+        "enforced": True, "provider": "minimax", "model": "MiniMax-M3",
+        "scope": "all_gateway_routes",
+    }
     assert all("api_key" not in p for p in ready["providers"])
 
-    wrong_service = load_config("runs/production.yaml")
-    wrong_service["llm"]["providers"]["kimi"]["base_url"] = \
-        "https://api.moonshot.ai/v1"
+    route_drift = load_config("runs/production.yaml")
+    route_drift["llm"]["routes"]["oracle"] = {
+        "provider": "scripted", "model": "scripted"}
     mismatch = validate_llm_config(
-        wrong_service,
-        environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "KIMI_API_KEY": "sk-kimi-present"},
+        route_drift, environ={"MINIMAX_API_KEY": "sk-cp-present"},
         raise_on_error=False)
     assert not mismatch["ready"]
-    assert any("Kimi Code key" in error for error in mismatch["errors"])
+    assert any("violates llm.route_contract" in error for error in mismatch["errors"])
 
     wrong_minimax_service = load_config("runs/production.yaml")
     wrong_minimax_service["llm"]["providers"]["minimax"]["base_url"] = \
         "https://api.minimaxi.com/v1"
     minimax_mismatch = validate_llm_config(
         wrong_minimax_service,
-        environ={"MINIMAX_API_KEY": "sk-cp-present",
-                 "KIMI_API_KEY": "sk-kimi-present"},
+        environ={"MINIMAX_API_KEY": "sk-cp-present"},
         raise_on_error=False)
     assert not minimax_mismatch["ready"]
     assert any("MiniMax Token Plan key" in error

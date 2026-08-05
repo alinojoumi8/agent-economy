@@ -46,6 +46,7 @@ def validate_llm_config(
     routes = llm.get("routes", {}) or {}
     default_route = llm.get(
         "default_route", {"provider": "scripted", "model": "scripted"}) or {}
+    route_contract = llm.get("route_contract")
 
     route_items = [("default", default_route), *sorted(routes.items())]
     referenced: dict[str, set[str]] = {}
@@ -64,6 +65,47 @@ def validate_llm_config(
         if not model:
             errors.append(f"route '{route_name}' has no model")
         referenced.setdefault(provider, set()).add(model)
+
+    contract_report: dict[str, Any] = {"enforced": False}
+    if route_contract is not None:
+        if not isinstance(route_contract, dict):
+            errors.append("llm.route_contract must be a mapping")
+        else:
+            raw_contract_provider = route_contract.get("provider")
+            raw_contract_model = route_contract.get("model")
+            contract_provider = (
+                raw_contract_provider.strip()
+                if isinstance(raw_contract_provider, str)
+                else ""
+            )
+            contract_model = (
+                raw_contract_model.strip()
+                if isinstance(raw_contract_model, str)
+                else ""
+            )
+            complete_contract = bool(contract_provider and contract_model)
+            contract_report = {
+                "enforced": complete_contract,
+                "provider": contract_provider or None,
+                "model": contract_model or None,
+                "scope": "all_gateway_routes",
+            }
+            if not contract_provider:
+                errors.append("llm.route_contract has no provider")
+            if not contract_model:
+                errors.append("llm.route_contract has no model")
+            if complete_contract:
+                for route_name, route in route_items:
+                    if not isinstance(route, dict):
+                        continue
+                    actual = (
+                        str(route.get("provider", "")).strip(),
+                        str(route.get("model", "")).strip(),
+                    )
+                    if actual != (contract_provider, contract_model):
+                        errors.append(
+                            f"route '{route_name}' violates llm.route_contract; "
+                            f"expected {contract_provider}/{contract_model}")
 
     provider_rows: list[dict[str, Any]] = []
     for provider in sorted(referenced):
@@ -161,6 +203,7 @@ def validate_llm_config(
         "mode": mode,
         "routed_providers": sorted(referenced),
         "providers": provider_rows,
+        "route_contract": contract_report,
         "errors": errors,
         "warnings": warnings,
     }

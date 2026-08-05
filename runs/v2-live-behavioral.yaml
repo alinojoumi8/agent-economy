@@ -6,6 +6,12 @@ extends: v2-live-hybrid.yaml
 population:
   target_total: 36
 
+# This gate deliberately uses a 36-person fixture, not the 1,000-person
+# flagship labor market.  Reserve a small job-seeking cohort so its behavioral
+# assertions exercise both employed and unemployed households.
+firms:
+  target_headcount: 1
+
 living_world:
   enabled: true
   core_agents: 4

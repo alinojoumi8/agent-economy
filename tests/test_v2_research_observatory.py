@@ -34,6 +34,11 @@ def test_v2_observatory_projections_god_action_and_static_export(v2_world, tmp_p
                      "startups", "markets", "datasets"):
             response = client.get(f"/api/v2/{path}")
             assert response.status_code == 200, response.text
+        assert client.get("/api/v2/map").json()["enabled"] is True
+        assert client.get("/api/v2/legal").json()["enabled"] is True
+        politics = client.get("/api/v2/politics").json()
+        assert politics["enabled"] is True
+        assert politics["institutional_actions_enabled"] is False
         actor_id = int(store.scalar("SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
         response = client.post("/api/v2/god/action", json={
             "actor_id": actor_id, "expected_tick": 0,
@@ -47,6 +52,28 @@ def test_v2_observatory_projections_god_action_and_static_export(v2_world, tmp_p
     assert "replay-data" in document
     assert "fred-fedfunds-2020" in document
     assert "private chain-of-thought" in document
+
+
+def test_institutional_observatory_profile_starts_with_live_surfaces(tmp_path: Path):
+    config = load_config("runs/v2-institutional-rehearsal.yaml")
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        with TestClient(create_app(world)) as client:
+            economic_map = client.get("/api/v2/map").json()
+            legal = client.get("/api/v2/legal").json()
+            politics = client.get("/api/v2/politics").json()
+
+        assert economic_map["enabled"] is True
+        assert len(economic_map["regions"]) == 3
+        assert legal["enabled"] is True
+        assert len(legal["contracts"]) >= 1
+        assert len(legal["items"]) >= 1
+        assert legal["items"][0]["ruleset_key"] == "northstar-us-inspired-1.0"
+        assert politics["enabled"] is True
+        assert politics["institutional_actions_enabled"] is True
+    finally:
+        store.close()
 
 
 def test_dataset_manifest_fails_closed_on_checksum_and_missing_vintage(tmp_path: Path):

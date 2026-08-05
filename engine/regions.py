@@ -362,6 +362,11 @@ class RegionalEconomy:
                 "JOIN regions r ON r.id=f.region_id "
                 "JOIN currencies c ON c.code=f.currency_code "
                 "WHERE j.status='open' AND f.status NOT IN ('bankrupt','acquired') "
+                "AND NOT EXISTS ("
+                " SELECT 1 FROM applications ap JOIN job_offers jo "
+                " ON jo.application_id=ap.id "
+                " WHERE ap.job_id=j.id AND jo.status='pending'"
+                ") "
                 "ORDER BY f.region_id,j.wage_cents DESC,j.id"):
             region_id = int(row["region_id"])
             if region_id in best_by_region:

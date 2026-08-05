@@ -37,6 +37,23 @@ def _fresh_world(tmp_path, name="w.db", **over) -> World:
     return w
 
 
+def test_genesis_honors_configured_firm_target_headcount(tmp_path):
+    world = _fresh_world(
+        tmp_path,
+        "configured-headcount.db",
+        population={"size": 20},
+        firms={"count": 2, "listed": 0, "target_headcount": 1},
+    )
+
+    headcounts = world.store.query(
+        "SELECT f.id,COUNT(e.id) AS employees "
+        "FROM firms f LEFT JOIN employments e "
+        "ON e.firm_id=f.id AND e.status='active' "
+        "GROUP BY f.id ORDER BY f.id")
+
+    assert [int(row["employees"]) for row in headcounts] == [1, 1]
+
+
 def test_provider_request_is_cancelled_when_operator_interrupts(tmp_path):
     world = _fresh_world(tmp_path, "interrupt.db")
 
@@ -257,6 +274,24 @@ def test_checkpoint_and_resume(tmp_path):
     assert w2.store.tick == tick_before + 4
     ok, _ = w2.economy.ledger.reconcile()
     assert ok
+
+
+def test_repeated_checkpoint_at_same_tick_reuses_catalog_row(tmp_path):
+    w = _fresh_world(tmp_path, "idempotent-ck.db", checkpoint_every=5,
+                     checkpoint_dir=str(tmp_path / "ckpts"))
+
+    first = w.checkpoint(w.store.tick, reason="interval")
+    w.store.set_meta(status="finished")
+    w.store.commit()
+    refreshed = w.checkpoint(w.store.tick, reason="stop")
+
+    assert refreshed == first
+    rows = w.store.query(
+        "SELECT tick,path FROM checkpoints WHERE tick=?", (w.store.tick,))
+    assert [dict(row) for row in rows] == [{"tick": 0, "path": first}]
+    snapshot = Store(first)
+    assert snapshot.get_meta()["status"] == "finished"
+    snapshot.close()
 
 
 # ── oracle ask/resolve offline ───────────────────────────────────────────────

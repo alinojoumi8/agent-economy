@@ -9,7 +9,8 @@ in `run_meta`, so a database remains self-describing.
 | Profile | Purpose | Network/cost |
 |---|---|---|
 | `runs/base.yaml` | Default offline development world | None |
-| `runs/production.yaml` | Approx. 100-agent MiniMax/Kimi runtime | Live inference |
+| `runs/v2-live-minimax.yaml` | Default 1,000-agent MiniMax M3 runtime | Live core/shared services, deterministic periphery, $150 cap |
+| `runs/production.yaml` | Approx. 100-agent MiniMax M3 runtime | Live inference |
 | `runs/acceptance/rehearsal.yaml` | Free 365-tick acceptance rehearsal | None |
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
@@ -27,7 +28,7 @@ Secrets belong in the ignored `.env` file or process environment.
 | Variable | Purpose |
 |---|---|
 | `MINIMAX_API_KEY` | MiniMax Token Plan route in production profiles |
-| `KIMI_API_KEY` | Kimi Code membership route in production profiles |
+| `KIMI_API_KEY` | Optional Kimi Code membership route for custom profiles |
 | `ANTHROPIC_API_KEY` | Optional custom Anthropic route |
 | `AGENT_ECONOMY_LOG_LEVEL` | Python operational log threshold; default `INFO` |
 | `AGENT_ECONOMY_HOSTED_CONFIG` | Optional default path for `python -m hosted.cli` |
@@ -183,14 +184,17 @@ clamped and audited; non-finite output is rejected.
 
 ## Provider routing and failure policy
 
-`runs/production.yaml` routes citizens/founders to `MiniMax-M3` and
-institutional roles plus the Oracle to Kimi's `kimi-for-coding`. Conversation
-and memory purposes inherit the agent's role route.
+`runs/v2-live-minimax.yaml` is the no-argument default. Semantics 7 runs all
+gateway/model-eligible core and shared-service work through `MiniMax-M3`; the
+900-agent periphery follows deterministic policies so the 1,000-agent world
+remains bounded. `llm.route_contract` makes startup fail if any gateway route
+drifts to another provider or model. `runs/production.yaml` applies the same
+contract to the smaller legacy production world.
 
 Every call passes through the gateway. Before a live run:
 
 ```powershell
-python run.py --config runs/production.yaml --preflight-live
+python run.py --preflight-live --approve-live-inference
 ```
 
 Readiness validates environment variables, endpoints, and model catalogs before

@@ -35,6 +35,46 @@ def test_resume_accepts_every_supported_persisted_semantics(tmp_path, version):
         store.close()
 
 
+def test_resume_hydrates_terminal_status_and_existing_report(tmp_path):
+    run_id = "finished-observatory"
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    report_path = report_dir / f"run_{run_id}_t12.html"
+    report_path.write_text("finished", encoding="utf-8")
+    store = Store(str(tmp_path / f"{run_id}.db"))
+    store.init_run_meta(run_id, 42, {
+        "engine_semantics_version": CURRENT_ENGINE_SEMANTICS_VERSION,
+        "report_dir": str(report_dir),
+    })
+    store.set_meta(status="finished", tick=12)
+    store.close()
+
+    resumed_store, world, _ = open_run({}, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.status == "finished"
+        assert world.last_report_path == str(report_path)
+        assert resumed_store.get_meta()["status"] == "finished"
+    finally:
+        world.close()
+
+
+def test_resume_converts_stale_running_marker_to_paused(tmp_path):
+    run_id = "interrupted-observatory"
+    _stored_run(
+        tmp_path / f"{run_id}.db", run_id,
+        CURRENT_ENGINE_SEMANTICS_VERSION)
+    store = Store(str(tmp_path / f"{run_id}.db"))
+    store.set_meta(status="running")
+    store.close()
+
+    resumed_store, world, _ = open_run({}, run_id, None, data_dir=tmp_path)
+    try:
+        assert world.status == "paused"
+        assert resumed_store.get_meta()["status"] == "paused"
+    finally:
+        world.close()
+
+
 @pytest.mark.parametrize("version", [-1, 0, 8, 999])
 def test_fresh_run_rejects_unsupported_semantics_before_creating_database(
         tmp_path, version):

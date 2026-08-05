@@ -8,7 +8,7 @@ import pytest
 
 from agents.policies import citizen_decision, founder_decision
 from engine.ledger import LedgerError, SYS_EXTERNAL
-from run import open_run
+from run import activate_supply_recovery_for_run, open_run
 from run_config import load_config
 
 
@@ -84,6 +84,102 @@ def test_flagship_population_regions_tiers_and_currency_reconciliation(v2_world)
     ok, diagnostic = world.economy.ledger.reconcile()
     assert ok, diagnostic
     assert diagnostic["currency_sums"] == {"IVC": 0, "NSD": 0, "SCD": 0, "USD": 0}
+
+
+def test_flagship_genesis_scales_labor_supply_and_firm_capital(v2_world):
+    store, _ = v2_world
+    labor_force = int(store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE kind='citizen' AND alive=1 "
+        "AND retired=0 AND age BETWEEN 18 AND 64"))
+    employed = int(store.scalar(
+        "SELECT COUNT(*) FROM agents a WHERE a.kind='citizen' AND a.alive=1 "
+        "AND a.retired=0 AND a.age BETWEEN 18 AND 64 AND ("
+        "EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id AND e.status='active') "
+        "OR EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id "
+        "AND f.status NOT IN ('bankrupt','acquired')))"))
+    daily_capacity = int(store.scalar(
+        "SELECT COALESCE(SUM("
+        "(SELECT COUNT(*) FROM employments e WHERE e.firm_id=f.id AND e.status='active') "
+        "* CAST(json_extract(f.product_json,'$.output_per_worker') AS INTEGER)"
+        "),0) FROM firms f WHERE f.sector NOT IN ('health','insurance')"))
+    population = int(store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE kind='citizen'"))
+    firm_cash = int(store.scalar(
+        "SELECT COALESCE(SUM(a.balance_cents),0) FROM firms f "
+        "JOIN accounts a ON a.id=f.account_id "
+        "WHERE f.sector NOT IN ('health','insurance')"))
+    payroll = int(store.scalar(
+        "SELECT COALESCE(SUM(e.wage_cents),0) FROM employments e "
+        "JOIN firms f ON f.id=e.firm_id "
+        "WHERE e.status='active' AND f.sector NOT IN ('health','insurance')"))
+
+    assert 1 - (employed / labor_force) < 0.15
+    assert daily_capacity >= population * 3
+    assert firm_cash >= payroll * 2
+
+
+def test_supply_recovery_expires_cross_currency_pending_offers(v2_world):
+    store, world = v2_world
+    parties = store.query_one(
+        "SELECT f.id AS firm_id,f.founder_agent_id,f.currency_code AS firm_currency,"
+        "a.id AS candidate_id,ca.currency_code AS candidate_currency "
+        "FROM firms f JOIN agents a ON a.alive=1 AND a.retired=0 "
+        "JOIN accounts ca ON ca.id=a.checking_account_id "
+        "WHERE ca.currency_code<>f.currency_code "
+        "AND a.id<>f.founder_agent_id "
+        "ORDER BY f.id,a.id LIMIT 1")
+    assert parties is not None
+    job_id = world.economy.labor.post_job(
+        0, int(parties["firm_id"]), "currency-safe recovery", 250_000)
+    application_id = world.economy.labor.apply_job(
+        0, int(parties["candidate_id"]), job_id)
+    assert application_id is not None
+    offer_id = world.economy.labor.make_offer(
+        0,
+        application_id,
+        int(parties["founder_agent_id"]),
+        250_000,
+    )
+    assert offer_id is not None
+
+    activate_supply_recovery_for_run(world, target_headcount=80)
+    activate_supply_recovery_for_run(world, target_headcount=80)
+
+    assert store.scalar(
+        "SELECT status FROM job_offers WHERE id=?", (offer_id,)) == "expired"
+    assert store.scalar(
+        "SELECT state FROM applications WHERE id=?",
+        (application_id,),
+    ) == "rejected"
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='job_offer_expired_incompatible_currency' "
+        "AND json_extract(payload_json,'$.offer_id')=?",
+        (offer_id,),
+    ) == 1
+    assert store.scalar(
+        "SELECT status FROM jobs WHERE id=?", (job_id,)) == "open"
+
+    second_job_id = world.economy.labor.post_job(
+        1, int(parties["firm_id"]), "market-phase cleanup", 250_000)
+    second_application_id = world.economy.labor.apply_job(
+        1, int(parties["candidate_id"]), second_job_id)
+    second_offer_id = world.economy.labor.make_offer(
+        1,
+        second_application_id,
+        int(parties["founder_agent_id"]),
+        250_000,
+    )
+
+    world._phase_market(1)
+
+    event = store.query_one(
+        "SELECT phase FROM events "
+        "WHERE kind='job_offer_expired_incompatible_currency' "
+        "AND json_extract(payload_json,'$.offer_id')=?",
+        (second_offer_id,),
+    )
+    assert event["phase"] == "MARKET"
 
 
 def test_fx_is_inventory_backed_and_migration_changes_primary_currency(v2_world):
@@ -513,6 +609,14 @@ def test_peripheral_agents_never_create_model_call_records(v2_world):
         "WHERE a.population_tier='periphery' AND p.action_type='buy_goods' "
         "AND p.validation_status='accepted'"
     ) > 0
+    buy_total = int(store.scalar(
+        "SELECT COUNT(*) FROM action_proposals "
+        "WHERE tick=1 AND action_type='buy_goods'"))
+    buy_rejected = int(store.scalar(
+        "SELECT COUNT(*) FROM action_proposals WHERE tick=1 "
+        "AND action_type='buy_goods' AND validation_status='rejected'"))
+    assert buy_total > 0
+    assert buy_rejected / buy_total < 0.10
     assert store.scalar("SELECT COUNT(*) FROM trades") > 0
     assert store.scalar(
         "SELECT value FROM metrics WHERE name='index' ORDER BY tick DESC LIMIT 1"
@@ -546,6 +650,55 @@ def test_scripted_households_form_a_first_stock_price_from_fundamentals():
                        if action["type"] == "place_order")
     assert buyer_order["side"] == "buy"
     assert buyer_order["limit_price"] >= seller_order["limit_price"]
+
+
+def test_scripted_households_supply_both_sides_of_a_neutral_priced_market():
+    common = {
+        "tick": 12, "purpose": "decision", "portfolio_day": True,
+        "actor_price_discovery_enabled": True,
+        "beliefs": {"sentiment": 0.0}, "prices": [], "jobs": [],
+        "listed_firms": [{"firm_id": 7, "last_price": 1_000,
+                           "book_value_per_share": 1_000,
+                           "goods_price": 500}],
+    }
+    seller = citizen_decision({
+        **common,
+        "agent": {"id": 11, "health": "healthy", "risk_tolerance": 0.1},
+        "state": {"checking_balance": 1_000_000, "employed": True,
+                  "shares": {"7": 10}},
+    })
+    buyer = citizen_decision({
+        **common,
+        "agent": {"id": 12, "health": "healthy", "risk_tolerance": 0.9},
+        "state": {"checking_balance": 1_000_000, "employed": True,
+                  "shares": {}},
+    })
+    sell_order = next(action for action in seller["actions"]
+                      if action["type"] == "place_order")
+    buy_order = next(action for action in buyer["actions"]
+                     if action["type"] == "place_order")
+    assert sell_order["side"] == "sell"
+    assert buy_order["side"] == "buy"
+    assert sell_order["limit_price"] <= 1_000 <= buy_order["limit_price"]
+    assert buy_order["limit_price"] >= sell_order["limit_price"]
+
+
+def test_scripted_household_updates_trust_from_public_bank_confidence():
+    decision = citizen_decision({
+        "tick": 4, "purpose": "decision", "portfolio_day": False,
+        "agent": {"id": 9, "health": "healthy", "risk_tolerance": 0.5},
+        "state": {"checking_balance": 0, "bank_id": 1, "employed": True,
+                  "shares": {}},
+        "beliefs": {"trust:bank:1": 0.6, "trust:bank:2": 0.6},
+        "banks": [
+            {"id": 1, "status": "open", "confidence_signal": "strong"},
+            {"id": 2, "status": "open", "confidence_signal": "strained"},
+        ],
+        "prices": [], "jobs": [], "listed_firms": [],
+    })
+    updates = {item["key"]: item["value"] for item in decision["belief_updates"]}
+    assert updates["trust:bank:1"] == pytest.approx(0.61)
+    assert updates["trust:bank:2"] == pytest.approx(0.584)
 
 
 def test_vc_opportunity_set_requires_matching_currency(v2_world):

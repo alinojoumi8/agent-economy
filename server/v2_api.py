@@ -51,7 +51,13 @@ def install_v2_routes(app, world, controller) -> None:
             "SELECT id,origin_region_id AS source_region_id,destination_region_id AS target_region_id,"
             "'migration' AS kind,1 AS magnitude,status FROM migrations ORDER BY id DESC LIMIT 100"):
             flows.append(dict(row))
-        return {"regions": regions, "core_agents": core_agents, "firms": firms, "flows": flows}
+        return {
+            "enabled": bool(world.economy.regions.enabled),
+            "regions": regions,
+            "core_agents": core_agents,
+            "firms": firms,
+            "flows": flows,
+        }
 
     @router.get("/network")
     async def interaction_network(limit: int = Query(150, ge=1, le=500)):
@@ -71,7 +77,9 @@ def install_v2_routes(app, world, controller) -> None:
     @router.get("/legal")
     async def legal_projection(after_id: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)):
         matters = store.query(
-            "SELECT * FROM legal_matters WHERE id>? ORDER BY id LIMIT ?", (after_id, limit))
+            "SELECT m.*,c.ruleset_key FROM legal_matters m "
+            "LEFT JOIN contracts c ON c.id=m.contract_id "
+            "WHERE m.id>? ORDER BY m.id LIMIT ?", (after_id, limit))
         page = _page(matters, limit)
         for item in page["items"]:
             item["requested_remedy"] = load_json(item.pop("requested_remedy_json", None), {})
@@ -81,6 +89,7 @@ def install_v2_routes(app, world, controller) -> None:
             "ORDER BY id DESC LIMIT 100")]
         page["obligations"] = [dict(row) for row in store.query(
             "SELECT * FROM obligations WHERE status NOT IN ('performed','expired') ORDER BY due_tick,id LIMIT 100")]
+        page["enabled"] = bool(world.economy.legal.enabled)
         return page
 
     @router.get("/politics")
@@ -92,6 +101,10 @@ def install_v2_routes(app, world, controller) -> None:
         state["active_rules"] = [dict(row) for row in store.query(
             "SELECT * FROM policy_rules WHERE effective_tick<=? AND status='active' "
             "ORDER BY rule_key,effective_tick DESC", (store.tick,))]
+        state["enabled"] = bool(world.economy.politics.enabled)
+        state["institutional_actions_enabled"] = bool(
+            world.config.get("llm", {}).get("institutional_role_purposes", False)
+        )
         return state
 
     @router.get("/information")

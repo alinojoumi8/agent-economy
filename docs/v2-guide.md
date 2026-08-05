@@ -96,6 +96,11 @@ voter, market, and exposure mechanics. Promotion is recalculated every 30 ticks
 from office, ownership, wealth, litigation, exposure, and activity. Controlled
 participants are pinned.
 
+Scheduler wake-up inputs are loaded in bounded sets for the whole population,
+so employment, event, and unpriced-listing checks do not create per-agent SQL
+queries. The observatory likewise loads at most 100 agents per request and uses
+server-side cursor pagination, literal search, and core/periphery filtering.
+
 On the reference Windows development machine, the verified 1,000-agent genesis
 completed in about 2.1 seconds. The final offline 365-tick gate completed on
 2026-07-13 in 384.651 seconds (6 minutes 25 seconds) with a measured 52.25 MB
@@ -122,6 +127,11 @@ The core `/api/conversations` endpoint supports bounded literal search over
 stored message text, topic, and speaker name, with optional agent, tick-range,
 cursor, and limit filters. The observatory search box queries the complete run
 rather than only the most recent in-memory page.
+
+`/api/agents` keeps its historical unpaginated array response when called with
+no query parameters. Scalable clients should use
+`/api/agents?limit=100&after_id=100&q=engineer&population_tier=core`; the paged
+response includes `items`, matching and population totals, and `next_after_id`.
 
 Static export embeds all required replay data in a single HTML file. It displays
 structured rationales and provenance, never private reasoning.

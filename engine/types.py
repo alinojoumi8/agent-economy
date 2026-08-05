@@ -14,6 +14,13 @@ class ValidationError(ValueError):
     """Raised when a proposed public value object is not engine-safe."""
 
 
+def positive_integer_id(value: object) -> int | None:
+    """Return a strict positive JSON integer, excluding booleans and coercions."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 def _currency(value: object) -> str:
     code = str(value or "USD").upper().strip()
     if len(code) != 3 or not code.isalpha():

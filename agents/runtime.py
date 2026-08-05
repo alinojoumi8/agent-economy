@@ -15,6 +15,7 @@ from typing import Optional
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
+from engine.types import positive_integer_id
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
@@ -27,7 +28,11 @@ from .personas.library import (
     validate_persona_enrichment,
 )
 from .prompts import ContextBuilder
-from .policies import register_scripted_policies, scripted_decision
+from .policies import (
+    register_scripted_policies,
+    scripted_decision,
+    workforce_recovery_actions,
+)
 from .scheduler import Scheduler
 from .participant import ParticipantService
 from observability import get_logger, log_event as operational_log
@@ -47,6 +52,46 @@ async def _gather_fail_fast(coroutines):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+
+
+def _maximum_candidate_job_matching(offers: list[dict]) -> list[dict]:
+    """Return a deterministic maximum matching of candidate offers to jobs."""
+    offers_by_job: dict[int, list[dict]] = {}
+    for offer in offers:
+        offers_by_job.setdefault(int(offer["job_id"]), []).append(offer)
+
+    job_by_candidate: dict[int, int] = {}
+    selected_by_job: dict[int, dict] = {}
+
+    def reserve(job_id: int, seen_candidates: set[int]) -> bool:
+        candidates = sorted(
+            offers_by_job[job_id],
+            key=lambda row: (
+                -int(row["offered_wage"]),
+                int(row["candidate_agent_id"]),
+                int(row["offer_id"]),
+            ),
+        )
+        for offer in candidates:
+            candidate_id = int(offer["candidate_agent_id"])
+            if candidate_id in seen_candidates:
+                continue
+            seen_candidates.add(candidate_id)
+            previous_job = job_by_candidate.get(candidate_id)
+            if previous_job is None or reserve(previous_job, seen_candidates):
+                job_by_candidate[candidate_id] = job_id
+                selected_by_job[job_id] = offer
+                return True
+        return False
+
+    for job_id in sorted(
+            offers_by_job,
+            key=lambda value: (len(offers_by_job[value]), value)):
+        reserve(job_id, set())
+    return sorted(
+        selected_by_job.values(),
+        key=lambda row: int(row["candidate_agent_id"]),
+    )
 
 
 class AgentRuntime:
@@ -155,6 +200,7 @@ class AgentRuntime:
         gov = self.gw.governor
         agents = self.scheduler.scheduled_agents(
             tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
+        self.ctx.prepare_decision_cohort(agents, tick)
         participant_decision = self.participant.decision_for_tick(tick)
         participant_agent_id = (
             int(participant_decision["agent_id"]) if participant_decision is not None else None)
@@ -187,9 +233,497 @@ class AgentRuntime:
                             scheduled_agents=len(agents))
             raise RuntimeError(
                 f"LLM outage suspected: {errors}/{len(agents)} decisions failed at tick {tick}")
+        self._replace_operational_workforce_actions(
+            tick,
+            decisions,
+            participant_agent_id=participant_agent_id,
+        )
+        decisions.extend(self._workforce_recovery_decisions(
+            tick,
+            decisions,
+            participant_agent_id=participant_agent_id,
+        ))
+        decisions.extend(self._workforce_recovery_candidate_decisions(
+            tick,
+            decisions,
+            participant_agent_id=participant_agent_id,
+        ))
+        self._coordinate_workforce_recovery_candidate_acceptances(
+            tick,
+            decisions,
+            participant_agent_id=participant_agent_id,
+        )
         # deterministic execution order
         decisions.sort(key=lambda d: d["agent_id"])
         return decisions
+
+    def _replace_operational_workforce_actions(
+            self, tick: int, decisions: list[dict], *,
+            participant_agent_id: int | None) -> None:
+        """Reserve recovery staffing transitions for the deterministic overlay."""
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_operational_activation_tick")
+        if activation_tick is None or tick < int(activation_tick):
+            return
+        excluded_sectors = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        eligible_founders = {
+            int(row["founder_agent_id"])
+            for row in self.store.query(
+                "SELECT founder_agent_id,sector FROM firms "
+                "WHERE founder_agent_id IS NOT NULL "
+                "AND status IN ('private','listed') ORDER BY founder_agent_id")
+            if str(row["sector"] or "").strip().lower() not in excluded_sectors
+        }
+        controlled_types = {
+            "post_job",
+            "hire",
+            "make_job_offer",
+            "counter_job_offer",
+            "accept_job_offer",
+            "reject_job_offer",
+        }
+        for decision in decisions:
+            agent_id = int(decision["agent_id"])
+            if (
+                agent_id not in eligible_founders
+                or (
+                    participant_agent_id is not None
+                    and agent_id == participant_agent_id
+                )
+            ):
+                continue
+            envelope = decision.get("envelope")
+            if not isinstance(envelope, dict):
+                continue
+            actions = envelope.get("actions", [])
+            if not isinstance(actions, list):
+                continue
+            overrides = [
+                dict(action)
+                for action in actions
+                if (
+                    isinstance(action, dict)
+                    and action.get("type") in controlled_types
+                )
+            ]
+            if not overrides:
+                continue
+            envelope["actions"] = [
+                action for action in actions
+                if not (
+                    isinstance(action, dict)
+                    and action.get("type") in controlled_types
+                )
+            ]
+            decision["operational_overrides"] = overrides
+
+    def _workforce_recovery_decisions(
+            self, tick: int, existing_decisions: list[dict], *,
+            participant_agent_id: int | None) -> list[dict]:
+        """Advance every eligible legacy firm's labor pipeline without LLM cadence."""
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_operational_activation_tick")
+        if activation_tick is None or tick < int(activation_tick):
+            return []
+
+        excluded_sectors = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        proposed_by_agent: dict[int, list[dict]] = {}
+        for decision in existing_decisions:
+            agent_id = int(decision["agent_id"])
+            envelope = decision.get("envelope") or {}
+            proposed_by_agent.setdefault(agent_id, []).extend(
+                action for action in envelope.get("actions", [])
+                if isinstance(action, dict)
+            )
+
+        recovery: list[dict] = []
+        firms = self.store.query(
+            "SELECT a.*,f.id AS recovery_firm_id,f.sector AS recovery_sector "
+            "FROM firms f JOIN agents a ON a.id=f.founder_agent_id "
+            "WHERE f.status IN ('private','listed') AND a.alive=1 "
+            "ORDER BY f.id")
+        for founder in firms:
+            agent_id = int(founder["id"])
+            firm_id = int(founder["recovery_firm_id"])
+            if (
+                participant_agent_id is not None
+                and agent_id == participant_agent_id
+            ):
+                continue
+            if str(founder["recovery_sector"] or "").strip().lower() in excluded_sectors:
+                continue
+            context = self.ctx.build(founder, tick, firm_id=firm_id)
+            actions = workforce_recovery_actions(
+                context,
+                proposed_actions=proposed_by_agent.get(agent_id, []),
+            )
+            if not actions:
+                continue
+            reasoning = (
+                "advancing the configured forward-only workforce recovery "
+                "pipeline from recorded vacancies and applications"
+            )
+            recovery.append({
+                "agent_id": agent_id,
+                "purpose": "workforce_recovery",
+                "envelope": {
+                    "reasoning": reasoning,
+                    "actions": actions,
+                    "belief_updates": [],
+                },
+                "reasoning": reasoning,
+                "llm_call_id": None,
+                "recovery_firm_id": firm_id,
+            })
+        return recovery
+
+    def _workforce_recovery_firm_slots(self, tick: int) -> dict[int, int]:
+        """Remaining hires each recovery firm may still accept this tick."""
+        firms_config = self.config.get("firms", {})
+        target = max(0, int(firms_config.get(
+            "workforce_recovery_target_headcount",
+            firms_config.get("target_headcount", 3),
+        )))
+        excluded_sectors = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        slots: dict[int, int] = {}
+        for row in self.store.query(
+                "SELECT f.id,f.sector,"
+                "(SELECT COUNT(*) FROM employments e "
+                " WHERE e.firm_id=f.id AND e.status='active') AS employees "
+                "FROM firms f WHERE f.status IN ('private','listed') "
+                "ORDER BY f.id"):
+            if str(row["sector"] or "").strip().lower() in excluded_sectors:
+                continue
+            slots[int(row["id"])] = max(0, target - int(row["employees"] or 0))
+        return slots
+
+    def _offer_firm_id(self, offer_id: int) -> int | None:
+        row = self.store.query_one(
+            "SELECT j.firm_id FROM job_offers jo "
+            "JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id WHERE jo.id=?",
+            (offer_id,),
+        )
+        return int(row["firm_id"]) if row else None
+
+    def _consume_accept_slots(
+            self, decisions: list[dict], slots: dict[int, int]) -> None:
+        """Debit firm hiring slots for already-planned accept_job_offer actions."""
+        for decision in decisions:
+            envelope = decision.get("envelope") or {}
+            actions = envelope.get("actions", []) if isinstance(
+                envelope, dict) else []
+            if not isinstance(actions, list):
+                continue
+            for action in actions:
+                if not (
+                    isinstance(action, dict)
+                    and action.get("type") == "accept_job_offer"
+                ):
+                    continue
+                offer_id = positive_integer_id(action.get("offer_id"))
+                if offer_id is None:
+                    continue
+                firm_id = self._offer_firm_id(offer_id)
+                if firm_id is None or firm_id not in slots:
+                    continue
+                slots[firm_id] = max(0, slots[firm_id] - 1)
+
+    def _select_offers_within_firm_slots(
+            self, offers: list[dict], slots: dict[int, int]) -> list[dict]:
+        """Match candidates to jobs then keep only accepts that fit firm capacity."""
+        matched = _maximum_candidate_job_matching(offers)
+        selected: list[dict] = []
+        # Prefer higher wages so capacity is spent on the best recorded offers.
+        for offer in sorted(
+                matched,
+                key=lambda row: (
+                    -int(row["offered_wage"]),
+                    int(row["candidate_agent_id"]),
+                    int(row["offer_id"]),
+                )):
+            firm_id = int(offer["firm_id"])
+            if slots.get(firm_id, 0) <= 0:
+                continue
+            slots[firm_id] -= 1
+            selected.append(offer)
+        return selected
+
+    def _workforce_recovery_candidate_decisions(
+            self, tick: int, existing_decisions: list[dict], *,
+            participant_agent_id: int | None) -> list[dict]:
+        """Wake unscheduled candidates to answer fair, already-recorded offers."""
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_operational_activation_tick")
+        if activation_tick is None or tick < int(activation_tick):
+            return []
+        excluded_sectors = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        already_scheduled = {
+            int(decision["agent_id"]) for decision in existing_decisions
+        }
+        slots = self._workforce_recovery_firm_slots(tick)
+        # Firm recovery decisions are already in existing_decisions and must
+        # share the same headcount budget as candidate auto-accepts.
+        self._consume_accept_slots(existing_decisions, slots)
+        eligible_offers: list[dict] = []
+        rows = self.store.query(
+            "SELECT jo.id AS offer_id,jo.wage_cents AS offered_wage,"
+            "ap.agent_id AS candidate_agent_id,j.wage_cents AS posted_wage,"
+            "j.id AS job_id,j.firm_id,f.sector,f.currency_code AS firm_currency,"
+            "candidate_wallet.currency_code AS candidate_currency,a.alive,a.retired,"
+            "EXISTS(SELECT 1 FROM employments e "
+            "WHERE e.agent_id=ap.agent_id AND e.status='active') AS employed "
+            "FROM job_offers jo "
+            "JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id "
+            "JOIN firms f ON f.id=j.firm_id "
+            "JOIN agents a ON a.id=ap.agent_id "
+            "JOIN accounts candidate_wallet ON candidate_wallet.id=a.checking_account_id "
+            "WHERE jo.status='pending' AND ap.state='negotiating' "
+            "AND jo.proposer_agent_id<>ap.agent_id AND j.status='open' "
+            "AND f.status IN ('private','listed') "
+            "ORDER BY ap.agent_id,jo.wage_cents DESC,jo.id")
+        for offer in rows:
+            candidate_id = int(offer["candidate_agent_id"])
+            firm_id = int(offer["firm_id"])
+            if (
+                candidate_id in already_scheduled
+                or (
+                    participant_agent_id is not None
+                    and candidate_id == participant_agent_id
+                )
+                or not bool(offer["alive"])
+                or bool(offer["retired"])
+                or bool(offer["employed"])
+                or str(offer["sector"] or "").strip().lower() in excluded_sectors
+                or int(offer["offered_wage"]) < int(offer["posted_wage"])
+                or str(offer["candidate_currency"] or "USD")
+                != str(offer["firm_currency"] or "USD")
+                or slots.get(firm_id, 0) <= 0
+            ):
+                continue
+            eligible_offers.append(dict(offer))
+
+        decisions: list[dict] = []
+        reasoning = "accepting a fair recorded recovery offer"
+        for offer in self._select_offers_within_firm_slots(
+                eligible_offers, slots):
+            candidate_id = int(offer["candidate_agent_id"])
+            decisions.append({
+                "agent_id": candidate_id,
+                "purpose": "workforce_recovery_candidate",
+                "envelope": {
+                    "reasoning": reasoning,
+                    "actions": [{
+                        "type": "accept_job_offer",
+                        "offer_id": int(offer["offer_id"]),
+                    }],
+                    "belief_updates": [],
+                },
+                "reasoning": reasoning,
+                "llm_call_id": None,
+            })
+        return decisions
+
+    def _coordinate_workforce_recovery_candidate_acceptances(
+            self, tick: int, decisions: list[dict], *,
+            participant_agent_id: int | None) -> None:
+        """Make scheduled and recovery candidate acceptances race-free."""
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_operational_activation_tick")
+        if activation_tick is None or tick < int(activation_tick):
+            return
+        excluded_sectors = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        offer_cache: dict[int, dict | None] = {}
+
+        def offer_row(offer_id: int) -> dict | None:
+            if offer_id not in offer_cache:
+                row = self.store.query_one(
+                    "SELECT jo.id AS offer_id,jo.status AS offer_status,"
+                    "jo.proposer_agent_id,jo.wage_cents AS offered_wage,"
+                    "ap.agent_id AS candidate_agent_id,ap.state AS application_state,"
+                    "j.id AS job_id,j.status AS job_status,"
+                    "j.wage_cents AS posted_wage,f.status AS firm_status,"
+                    "f.sector,f.currency_code AS firm_currency,"
+                    "candidate_wallet.currency_code AS candidate_currency,"
+                    "a.alive,a.retired,"
+                    "EXISTS(SELECT 1 FROM employments e "
+                    " WHERE e.agent_id=ap.agent_id AND e.status='active') AS employed "
+                    "FROM job_offers jo "
+                    "JOIN applications ap ON ap.id=jo.application_id "
+                    "JOIN jobs j ON j.id=ap.job_id "
+                    "JOIN firms f ON f.id=j.firm_id "
+                    "JOIN agents a ON a.id=ap.agent_id "
+                    "JOIN accounts candidate_wallet "
+                    " ON candidate_wallet.id=a.checking_account_id "
+                    "WHERE jo.id=?",
+                    (offer_id,),
+                )
+                offer_cache[offer_id] = dict(row) if row else None
+            return offer_cache[offer_id]
+
+        controlled_by_agent: dict[int, set[int]] = {}
+        eligible_by_offer: dict[int, dict] = {}
+        participant_jobs: set[int] = set()
+        participant_candidates: set[int] = set()
+        for decision in decisions:
+            candidate_id = int(decision["agent_id"])
+            envelope = decision.get("envelope") or {}
+            actions = envelope.get("actions", []) if isinstance(
+                envelope, dict) else []
+            if not isinstance(actions, list):
+                continue
+            for action in actions:
+                if not (
+                    isinstance(action, dict)
+                    and action.get("type") == "accept_job_offer"
+                ):
+                    continue
+                offer_id = positive_integer_id(action.get("offer_id"))
+                if offer_id is None:
+                    continue
+                offer = offer_row(offer_id)
+                if (
+                    not offer
+                    or int(offer["candidate_agent_id"]) != candidate_id
+                    or int(offer["proposer_agent_id"]) == candidate_id
+                    or str(offer["sector"] or "").strip().lower()
+                    in excluded_sectors
+                ):
+                    continue
+                valid = (
+                    offer["offer_status"] == "pending"
+                    and offer["application_state"] == "negotiating"
+                    and offer["job_status"] == "open"
+                    and offer["firm_status"] in ("private", "listed")
+                    and bool(offer["alive"])
+                    and not bool(offer["retired"])
+                    and not bool(offer["employed"])
+                    and int(offer["offered_wage"]) >= int(offer["posted_wage"])
+                    and str(offer["candidate_currency"] or "USD")
+                    == str(offer["firm_currency"] or "USD")
+                )
+                if (
+                    participant_agent_id is not None
+                    and candidate_id == participant_agent_id
+                ):
+                    if valid:
+                        participant_jobs.add(int(offer["job_id"]))
+                        participant_candidates.add(candidate_id)
+                    continue
+                controlled_by_agent.setdefault(candidate_id, set()).add(
+                    offer_id)
+                if valid:
+                    eligible_by_offer[offer_id] = offer
+
+        eligible = [
+            offer for offer in eligible_by_offer.values()
+            if int(offer["job_id"]) not in participant_jobs
+            and int(offer["candidate_agent_id"]) not in participant_candidates
+        ]
+        # Share the remaining headcount budget with firm-side recovery accepts
+        # already present on founder decisions (not candidate-controlled).
+        slots = self._workforce_recovery_firm_slots(tick)
+        for decision in decisions:
+            agent_id = int(decision["agent_id"])
+            if agent_id in controlled_by_agent:
+                continue
+            envelope = decision.get("envelope") or {}
+            actions = envelope.get("actions", []) if isinstance(
+                envelope, dict) else []
+            if not isinstance(actions, list):
+                continue
+            for action in actions:
+                if not (
+                    isinstance(action, dict)
+                    and action.get("type") == "accept_job_offer"
+                ):
+                    continue
+                offer_id = positive_integer_id(action.get("offer_id"))
+                if offer_id is None:
+                    continue
+                firm_id = self._offer_firm_id(offer_id)
+                if firm_id is not None and firm_id in slots:
+                    slots[firm_id] = max(0, slots[firm_id] - 1)
+        for offer in eligible:
+            firm_id = self._offer_firm_id(int(offer["offer_id"]))
+            if firm_id is not None:
+                offer["firm_id"] = firm_id
+        selected_by_candidate = {
+            int(offer["candidate_agent_id"]): int(offer["offer_id"])
+            for offer in self._select_offers_within_firm_slots(
+                [row for row in eligible if "firm_id" in row], slots)
+        }
+        for decision in decisions:
+            candidate_id = int(decision["agent_id"])
+            controlled_ids = controlled_by_agent.get(candidate_id)
+            if not controlled_ids:
+                continue
+            envelope = decision.get("envelope") or {}
+            actions = envelope.get("actions", [])
+            selected_offer_id = selected_by_candidate.get(candidate_id)
+            selected_action = None
+            removed = []
+            retained = []
+            for action in actions:
+                offer_id = (
+                    positive_integer_id(action.get("offer_id"))
+                    if isinstance(action, dict)
+                    and action.get("type") == "accept_job_offer"
+                    else None
+                )
+                if offer_id not in controlled_ids:
+                    retained.append(action)
+                    continue
+                if (
+                    selected_offer_id == offer_id
+                    and selected_action is None
+                ):
+                    selected_action = dict(action)
+                else:
+                    removed.append(dict(action))
+            if selected_action is not None:
+                retained.append(selected_action)
+            envelope["actions"] = retained
+            if removed or selected_action is None:
+                decision["candidate_acceptance_overrides"] = {
+                    "removed": removed,
+                    "selected_offer_id": selected_offer_id,
+                }
 
     async def _decide_guarded(self, tick: int, agent):
         try:
@@ -223,6 +757,38 @@ class AgentRuntime:
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
         for d in decisions:
             agent_id = d["agent_id"]
+            operational_overrides = d.get("operational_overrides") or []
+            if operational_overrides:
+                self.store.log_event(
+                    tick,
+                    "workforce_recovery_model_action_replaced",
+                    {
+                        "agent_id": int(agent_id),
+                        "model_call_id": d.get("llm_call_id"),
+                        "actions": operational_overrides,
+                        "replacement": "deterministic_workforce_recovery",
+                    },
+                    phase="EXECUTION",
+                    subject_type="agent",
+                    subject_id=int(agent_id),
+                    importance=1.5,
+                )
+            candidate_overrides = d.get(
+                "candidate_acceptance_overrides") or {}
+            if candidate_overrides:
+                self.store.log_event(
+                    tick,
+                    "workforce_recovery_candidate_actions_coordinated",
+                    {
+                        "agent_id": int(agent_id),
+                        "model_call_id": d.get("llm_call_id"),
+                        **candidate_overrides,
+                    },
+                    phase="EXECUTION",
+                    subject_type="agent",
+                    subject_id=int(agent_id),
+                    importance=1.0,
+                )
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
             model_call_id = d.get("llm_call_id")

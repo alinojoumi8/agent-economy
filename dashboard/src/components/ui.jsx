@@ -26,8 +26,8 @@ export function SectionTitle({ index, title, description }) {
   );
 }
 
-export function Empty({ children = "Nothing recorded yet." }) {
-  return <div className="p-5 text-sm leading-relaxed text-slate-500">{children}</div>;
+export function Empty({ children, text }) {
+  return <div className="p-5 text-sm leading-relaxed text-slate-500">{children ?? text ?? "Nothing recorded yet."}</div>;
 }
 
 export function Badge({ children, tone = "neutral" }) {

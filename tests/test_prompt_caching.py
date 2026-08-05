@@ -117,6 +117,45 @@ def test_openai_cache_modes_control_wire_key_and_preserve_usage(monkeypatch):
     assert "prompt_cache_key" not in bodies[-1]
 
 
+def test_openai_call_token_limit_overrides_provider_request_default(monkeypatch):
+    import httpx
+
+    bodies: list[dict] = []
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, endpoint, *, headers, json):
+            bodies.append(json)
+            return _Response({
+                "choices": [{"message": {"content": "{}"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            })
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    adapter = OpenAICompatAdapter({
+        "base_url": "https://example.test/v1",
+        "max_tokens_field": "max_completion_tokens",
+        "request_defaults": {
+            "reasoning_split": True,
+            "max_completion_tokens": 4096,
+        },
+    })
+
+    asyncio.run(adapter.complete(
+        "MiniMax-M3", [{"role": "user", "content": "JSON"}], max_tokens=900))
+
+    assert bodies[-1]["reasoning_split"] is True
+    assert bodies[-1]["max_completion_tokens"] == 900
+
+
 def test_anthropic_ephemeral_marks_only_the_shared_system_prefix(monkeypatch):
     import httpx
 

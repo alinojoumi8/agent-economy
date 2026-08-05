@@ -162,8 +162,10 @@ class OpenAICompatAdapter(Adapter):
             "model": model, "messages": messages,
             "temperature": temperature, "response_format": {"type": "json_object"},
         }
-        body[self.max_tokens_field] = max_tokens
         body.update(self.request_defaults)
+        # Provider extras are defaults; the purpose-specific gateway budget is
+        # the authoritative output limit for this logical call.
+        body[self.max_tokens_field] = max_tokens
         if self.prompt_cache_mode == "openai_key" and cache_key:
             body["prompt_cache_key"] = cache_key
         async with httpx.AsyncClient(timeout=self.timeout) as client:

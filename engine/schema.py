@@ -1363,6 +1363,12 @@ def initialize_schema(conn) -> None:
     _ensure_column(conn, "agents", "region_id", "INTEGER")
     _ensure_column(conn, "agents", "population_tier", "TEXT NOT NULL DEFAULT 'periphery'")
     _ensure_column(conn, "agents", "pinned_core", "INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_agents_alive_tier "
+        "ON agents(alive, population_tier, id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_agents_region_alive "
+        "ON agents(region_id, alive, id)")
     _ensure_column(conn, "firms", "region_id", "INTEGER")
     _ensure_column(conn, "firms", "currency_code", "TEXT NOT NULL DEFAULT 'USD'")
     _ensure_column(conn, "banks", "region_id", "INTEGER")

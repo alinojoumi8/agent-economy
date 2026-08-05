@@ -80,7 +80,7 @@ adding it to the observatory's frequent polling payload.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/metrics?names=...` | Named time series; includes output, labor income, CPI, inflation, labor, market, and distribution metrics |
-| `GET` | `/api/agents` | Agent identity/status list |
+| `GET` | `/api/agents` | Legacy identity/status array; add `limit` (1–200), `after_id`, `q`, or `population_tier=core|periphery` for a bounded cursor page |
 | `GET` | `/api/agents/{id}` | Persona, accounts, loans, bounded beliefs, `belief_history`, memories, holdings, and decision audit |
 | `GET` | `/api/banks` | Operator ground-truth balance sheets and trust |
 | `GET` | `/api/firms` | Sector, status, inventory, price, workers, cash, and stock price |

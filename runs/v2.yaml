@@ -10,6 +10,20 @@ checkpoint_every: 90
 population:
   target_total: 1000
 
+firms:
+  # The base world's three-person firms were calibrated for roughly 70
+  # citizens. The flagship needs enough regional labor and productive capacity
+  # to serve 1,000 households without an artificial 95% unemployment floor.
+  target_headcount: 80
+  opening_capital_per_worker_cents: 500000
+  recruit_to_target: true
+
+behavior:
+  # Morning decisions share an inventory snapshot. Heterogeneous, capacity-
+  # weighted supplier choice prevents every scripted household from racing to
+  # the same cheapest seller.
+  inventory_aware_shopping: true
+
 banks:
   count: 3
   names: ["Northstar Bank", "Ironvale Industrial Bank", "Suncoast Exchange Bank"]

@@ -8,7 +8,12 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from agents.policies import credit_officer_decision, founder_decision
+from agents.policies import (
+    citizen_decision,
+    credit_officer_decision,
+    founder_decision,
+    workforce_recovery_actions,
+)
 from agents.prompts import ContextBuilder, SYSTEM_PREFIX
 from agents.runtime import _gather_fail_fast
 from engine.actions import ActionExecutor
@@ -48,6 +53,302 @@ def test_real_provider_prompt_exposes_counterparty_ids_as_json_integers():
     assert "firm7:" not in user and "job2@" not in user
     assert system == SYSTEM_PREFIX
     assert "MUST be a JSON integer" in system
+
+
+def test_inventory_aware_shoppers_do_not_all_herd_to_one_seller():
+    selected_firms = set()
+    for seed in range(1, 61):
+        decision = citizen_decision({
+            "rng_seed": seed,
+            "inventory_aware_shopping_enabled": True,
+            "agent": {
+                "id": seed, "health": "healthy", "retired": False,
+                "dependents": 0, "risk_tolerance": 0.5,
+            },
+            "state": {
+                "checking_balance": 100_000, "employed": True, "shares": {},
+            },
+            "beliefs": {},
+            "news": [],
+            "heard": [],
+            "prices": [
+                {"firm_id": 1, "product": "food", "price": 100, "inventory": 100},
+                {"firm_id": 2, "product": "food", "price": 100, "inventory": 100},
+                {"firm_id": 3, "product": "food", "price": 100, "inventory": 100},
+            ],
+            "jobs": [],
+            "banks": [],
+        })
+        selected_firms.add(next(
+            action["firm_id"] for action in decision["actions"]
+            if action["type"] == "buy_goods"))
+
+    assert selected_firms == {1, 2, 3}
+
+
+def test_scripted_founder_posts_one_job_at_genesis_wage_when_below_target():
+    decision = founder_decision({
+        "workforce_recovery_enabled": True,
+        "agent": {"id": 7, "health": "healthy"},
+        "state": {"checking_balance": 100_000},
+        "my_firm": {
+            "firm_id": 4,
+            "name": "Capacity Co",
+            "inventory": 20,
+            "price": 500,
+            "unit_cost": 200,
+            "cash": 2_000_000,
+            "employees": 2,
+            "payroll": 500_000,
+            "recent_sales": 10,
+            "target_headcount": 3,
+            "open_jobs": 0,
+            "has_pending_loan": False,
+            "has_pending_pitch": False,
+            "is_private": True,
+        },
+        "firm_applications": [],
+        "firm_job_offers": [],
+    })
+
+    assert [
+        action for action in decision["actions"] if action["type"] == "post_job"
+    ] == [{
+        "type": "post_job",
+        "firm_id": 4,
+        "title": "worker",
+        "wage": 250_000,
+    }]
+
+
+def test_operational_recovery_uses_founder_default_when_target_is_missing():
+    context = {
+        "workforce_recovery_enabled": True,
+        "workforce_recovery_operational_enabled": True,
+        "workforce_recovery_batch_size": 4,
+        "my_firm": {
+            "firm_id": 4,
+            "sector": "manufacturing",
+            "inventory": 20,
+            "price": 500,
+            "unit_cost": 200,
+            "cash": 2_000_000,
+            "employees": 2,
+            "payroll": 500_000,
+            "open_jobs": 0,
+        },
+        "firm_applications": [],
+        "firm_job_offers": [],
+    }
+
+    assert workforce_recovery_actions(context) == [{
+        "type": "post_job",
+        "firm_id": 4,
+        "title": "worker",
+        "wage": 250_000,
+    }]
+
+
+def test_operational_workforce_recovery_posts_a_bounded_batch_at_genesis_wage():
+    context = {
+        "workforce_recovery_enabled": True,
+        "workforce_recovery_operational_enabled": True,
+        "workforce_recovery_batch_size": 4,
+        "my_firm": {
+            "firm_id": 4,
+            "sector": "manufacturing",
+            "inventory": 20,
+            "price": 500,
+            "unit_cost": 200,
+            "cash": 40_000_000,
+            "employees": 3,
+            "payroll": 750_000,
+            "target_headcount": 80,
+            "open_jobs": 1,
+        },
+        "firm_applications": [],
+        "firm_job_offers": [],
+    }
+
+    actions = workforce_recovery_actions(
+        context,
+        proposed_actions=[{
+            "type": "post_job",
+            "firm_id": 4,
+            "title": "worker",
+            "wage": 250_000,
+        }],
+    )
+
+    assert actions == [{
+        "type": "post_job",
+        "firm_id": 4,
+        "title": "worker",
+        "wage": 250_000,
+    }] * 3
+
+
+def test_operational_workforce_recovery_advances_pending_hiring_stages():
+    actions = workforce_recovery_actions({
+        "workforce_recovery_enabled": True,
+        "workforce_recovery_operational_enabled": True,
+        "workforce_recovery_batch_size": 4,
+        "my_firm": {
+            "firm_id": 4,
+            "sector": "manufacturing",
+            "inventory": 20,
+            "price": 500,
+            "unit_cost": 200,
+            "cash": 40_000_000,
+            "employees": 3,
+            "payroll": 750_000,
+            "target_headcount": 80,
+            "open_jobs": 2,
+        },
+        "firm_applications": [{
+            "application_id": 10,
+            "posted_wage": 250_000,
+            "current_offer_id": None,
+            "job_pending_offer_count": 0,
+        }],
+        "firm_job_offers": [{
+            "offer_id": 20,
+            "application_id": 11,
+            "requested_wage": 260_000,
+        }],
+    })
+
+    assert actions[:2] == [
+        {"type": "accept_job_offer", "offer_id": 20},
+        {"type": "make_job_offer", "application_id": 10, "wage": 250_000},
+    ]
+    assert actions[2:] == [{
+        "type": "post_job",
+        "firm_id": 4,
+        "title": "worker",
+        "wage": 250_000,
+    }] * 4
+
+
+def test_operational_recovery_respects_combined_payroll_and_headcount():
+    actions = workforce_recovery_actions({
+        "workforce_recovery_enabled": True,
+        "workforce_recovery_operational_enabled": True,
+        "workforce_recovery_batch_size": 4,
+        "my_firm": {
+            "firm_id": 4,
+            "sector": "manufacturing",
+            "inventory": 20,
+            "price": 500,
+            "unit_cost": 200,
+            "cash": 1_050_000,
+            "employees": 1,
+            "payroll": 500_000,
+            "target_headcount": 3,
+            "open_jobs": 0,
+        },
+        "firm_applications": [{
+            "application_id": 10,
+            "posted_wage": 250_000,
+            "current_offer_id": None,
+            "job_pending_offer_count": 0,
+        }],
+        "firm_job_offers": [{
+            "offer_id": 20,
+            "application_id": 11,
+            "requested_wage": 300_000,
+        }],
+    })
+
+    assert actions == [
+        {"type": "accept_job_offer", "offer_id": 20},
+        {"type": "make_job_offer", "application_id": 10, "wage": 250_000},
+    ]
+
+
+def test_operational_workforce_recovery_reserves_jobs_with_pending_offers():
+    actions = workforce_recovery_actions({
+        "workforce_recovery_enabled": True,
+        "workforce_recovery_operational_enabled": True,
+        "workforce_recovery_batch_size": 1,
+        "my_firm": {
+            "firm_id": 4,
+            "price": 500,
+            "cash": 40_000_000,
+            "employees": 3,
+            "payroll": 750_000,
+            "target_headcount": 80,
+            "open_jobs": 2,
+        },
+        "firm_applications": [{
+            "application_id": 10,
+            "posted_wage": 250_000,
+            "current_offer_id": None,
+            "job_pending_offer_count": 1,
+        }, {
+            "application_id": 11,
+            "posted_wage": 250_000,
+            "current_offer_id": None,
+            "job_pending_offer_count": 0,
+        }],
+        "firm_job_offers": [],
+    })
+
+    assert actions[0] == {
+        "type": "make_job_offer",
+        "application_id": 11,
+        "wage": 250_000,
+    }
+
+
+def test_application_aware_job_seekers_distribute_across_equal_openings():
+    selected_jobs = set()
+    for seed in range(1, 61):
+        decision = citizen_decision({
+            "rng_seed": seed,
+            "job_application_aware_enabled": True,
+            "agent": {
+                "id": seed, "health": "healthy", "retired": False,
+                "dependents": 0, "risk_tolerance": 0.5,
+            },
+            "state": {
+                "checking_balance": 0, "employed": False, "shares": {},
+            },
+            "beliefs": {},
+            "news": [],
+            "heard": [],
+            "prices": [],
+            "jobs": [
+                {"job_id": 1, "firm_id": 1, "wage": 250_000,
+                 "application_count": 0},
+                {"job_id": 2, "firm_id": 2, "wage": 250_000,
+                 "application_count": 0},
+                {"job_id": 3, "firm_id": 3, "wage": 250_000,
+                 "application_count": 0},
+            ],
+            "banks": [],
+        })
+        selected_jobs.add(next(
+            action["job_id"] for action in decision["actions"]
+            if action["type"] == "apply_job"))
+
+    assert selected_jobs == {1, 2, 3}
+
+
+def test_real_provider_prompt_disambiguates_cents_from_currency_units():
+    context = {
+        "agent": {"name": "Counsel", "age": 51, "occupation": "lawyer"},
+        "state": {
+            "checking_balance": 300_000, "bank_id": 1, "currency_code": "NSD",
+            "debt": 0, "employed": False, "net_worth": 300_000, "shares": {},
+        },
+    }
+
+    system, user = ContextBuilder.__new__(ContextBuilder).render_prompt(context)
+
+    assert "300000 cents equals 3000.00 currency units" in system
+    assert "checking_balance_cents=300000 cents (= 3000.00 NSD)" in user
+    assert "net_worth_cents=300000 cents (= 3000.00 NSD)" in user
 
 
 def test_provider_batch_failure_cancels_outstanding_work():
@@ -703,5 +1004,5 @@ def test_schema_hint_repairs_valid_json_with_the_wrong_contract(tmp_path, monkey
     store.close()
 
 
-def test_no_argument_runtime_uses_locked_production_profile():
-    assert DEFAULT_CONFIG == "runs/production.yaml"
+def test_no_argument_runtime_uses_locked_v2_minimax_profile():
+    assert DEFAULT_CONFIG == "runs/v2-live-minimax.yaml"

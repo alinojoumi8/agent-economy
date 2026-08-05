@@ -66,6 +66,7 @@ class RunController:
         self.store = world.store
         self.hub = WebSocketHub()
         self.task: asyncio.Task[None] | None = None
+        self._step_active = False
         self.loop: asyncio.AbstractEventLoop | None = None
         self._control_lock = asyncio.Lock()
         self._tick_broadcasts: set[Future[None]] = set()
@@ -85,7 +86,7 @@ class RunController:
         self.hosted_safe = bool(hosted_safe)
 
     def is_running(self) -> bool:
-        return bool(self.task and not self.task.done())
+        return bool(self._step_active or (self.task and not self.task.done()))
 
     def remaining_ticks(self) -> int | None:
         if self.target_tick is None:
@@ -172,11 +173,12 @@ class RunController:
         return payload
 
     def run_status_payload(self, *, running: bool | None = None) -> dict:
+        active = self.is_running() if running is None else running
         payload = {
             "type": "run_status",
             "tick": self.store.tick,
-            "status": self.world.status,
-            "running": self.is_running() if running is None else running,
+            "status": "running" if active else self.world.status,
+            "running": active,
             "target_tick": self.target_tick,
             "remaining_ticks": self.remaining_ticks(),
             "governor": self.world.gateway.governor.status(),
@@ -418,17 +420,23 @@ class RunController:
         self.world._pause_requested = False
         self.world._stop_requested = False
         self.world.gateway.clear_interrupt()
+        self._step_active = True
+        try:
+            if self.acceptance_configured:
+                from reports.acceptance import advance_acceptance_run
+                target = min(self.acceptance_target_tick, self.store.tick + 1)
+                acceptance = await advance_acceptance_run(self.world, target_tick=target)
+            else:
+                summary = await self.world.step()
+        finally:
+            self._step_active = False
         if self.acceptance_configured:
-            from reports.acceptance import advance_acceptance_run
-            target = min(self.acceptance_target_tick, self.store.tick + 1)
-            acceptance = await advance_acceptance_run(self.world, target_tick=target)
             self.world.status = "paused"
             self.store.set_meta(status="paused")
             self.store.commit()
             summary = {"tick": self.store.tick, "paused": True, "acceptance": acceptance}
             await self.hub.broadcast(self.tick_payload(self.store.tick, summary))
             return summary
-        summary = await self.world.step()
         if not summary.get("paused") and self.world.status != "halted":
             self.world.status = "paused"
             self.store.set_meta(status="paused")
@@ -449,6 +457,7 @@ class RunController:
 
     def status(self) -> dict:
         meta = self.store.get_meta()
+        running = self.is_running()
         orchestration = None
         if self.acceptance_configured:
             from reports.acceptance import acceptance_schedule_status
@@ -460,7 +469,8 @@ class RunController:
                 "artifacts": {} if self.hosted_safe else self.acceptance_artifacts,
             })
         payload = {
-            "run_id": meta["run_id"], "status": self.world.status,
+            "run_id": meta["run_id"],
+            "status": "running" if running else self.world.status,
             "tick": self.store.tick, "seed": meta["seed"],
             "active_tick": meta["active_tick"],
             "next_phase": meta["next_phase"],
@@ -469,7 +479,7 @@ class RunController:
             "target_tick": self.target_tick,
             "remaining_ticks": self.remaining_ticks(),
             "governor": self.world.gateway.governor.status(),
-            "running": self.is_running(),
+            "running": running,
             "provider_readiness": self.world.gateway.readiness(),
             "rate_limit": self.world.gateway.rate_limit_status(),
             "pause_reason": self.world.last_pause_reason,

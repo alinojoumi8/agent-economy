@@ -200,9 +200,66 @@ class Labor:
     def open_jobs(self) -> list:
         return self.store.query("SELECT * FROM jobs WHERE status='open' ORDER BY id")
 
-    def expire_stale_jobs(self, tick: int, max_age: int = 20) -> None:
+    def expire_incompatible_offers(
+            self, tick: int, *, phase: str = "NIGHT_CLOSE") -> int:
+        """Retire offers whose payroll currency can never be settled.
+
+        Modern action validation prevents new cross-currency offers, but a
+        resumed run may contain offers written under older semantics. Leaving
+        one pending reserves its job until the generic age limit, even though
+        accepting it is correctly impossible.
+        """
+        rows = self.store.query(
+            "SELECT jo.id AS offer_id,jo.application_id,ap.agent_id AS candidate_agent_id,"
+            "j.id AS job_id,j.firm_id,f.currency_code AS firm_currency,"
+            "candidate_wallet.currency_code AS candidate_currency "
+            "FROM job_offers jo "
+            "JOIN applications ap ON ap.id=jo.application_id "
+            "JOIN jobs j ON j.id=ap.job_id "
+            "JOIN firms f ON f.id=j.firm_id "
+            "JOIN agents a ON a.id=ap.agent_id "
+            "LEFT JOIN accounts candidate_wallet "
+            "ON candidate_wallet.id=a.checking_account_id "
+            "WHERE jo.status='pending' "
+            "AND (candidate_wallet.id IS NULL "
+            "OR candidate_wallet.currency_code IS NULL "
+            "OR candidate_wallet.currency_code<>COALESCE(f.currency_code,'USD')) "
+            "ORDER BY jo.id")
+        for row in rows:
+            offer_id = int(row["offer_id"])
+            application_id = int(row["application_id"])
+            self.store.update(
+                "job_offers", offer_id, status="expired", decided_tick=tick)
+            self.store.execute(
+                "UPDATE applications SET state='rejected' "
+                "WHERE id=? AND state IN ('pending','negotiating')",
+                (application_id,),
+            )
+            self.store.log_event(
+                tick,
+                "job_offer_expired_incompatible_currency",
+                {
+                    "offer_id": offer_id,
+                    "application_id": application_id,
+                    "job_id": int(row["job_id"]),
+                    "firm_id": int(row["firm_id"]),
+                    "candidate_agent_id": int(row["candidate_agent_id"]),
+                    "firm_currency": str(row["firm_currency"]),
+                    "candidate_currency": str(row["candidate_currency"]),
+                },
+                phase=phase,
+                subject_type="job_offer",
+                subject_id=offer_id,
+                importance=1.5,
+            )
+        return len(rows)
+
+    def expire_stale_jobs(
+            self, tick: int, max_age: int = 20, *,
+            phase: str = "NIGHT_CLOSE") -> None:
         # Only negotiations use job_offers, so this remains a no-op for legacy
         # semantics while making modern capabilities explicitly non-dangling.
+        self.expire_incompatible_offers(tick, phase=phase)
         self.store.execute(
             "UPDATE job_offers SET status='expired', decided_tick=? WHERE status='pending' "
             "AND application_id IN (SELECT ap.id FROM applications ap "

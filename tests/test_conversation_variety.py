@@ -91,6 +91,99 @@ def test_conversation_replaces_ungrounded_provider_output(tmp_path):
     assert len(set(lines)) == len(lines)
 
 
+def test_conversation_uses_the_configured_output_budget(tmp_path):
+    world = _world(tmp_path)
+    world.conversations.config["llm"]["conversation_max_tokens"] = 800
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    requested_budgets = []
+
+    async def completion(request, **kwargs):
+        requested_budgets.append(request.max_tokens)
+        return SimpleNamespace(parsed={
+            "text": f"A grounded response for turn {len(requested_budgets)}.",
+            "rumor_bank": None,
+        })
+
+    world.conversations.gw.complete = completion
+    asyncio.run(world.conversations._converse(1, agent_ids[0], agent_ids[1]))
+
+    assert requested_budgets == [800, 800, 800]
+
+
+def test_newsroom_uses_configured_reporter_and_editor_output_budgets(tmp_path):
+    world = _world(tmp_path)
+    world.newsroom.config["llm"].update({
+        "reporter_max_tokens": 1600,
+        "newsroom_max_tokens": 1200,
+    })
+    requested_budgets = []
+
+    async def completion(request, **kwargs):
+        requested_budgets.append((request.purpose, request.max_tokens))
+        if request.purpose == "reporter":
+            return SimpleNamespace(parsed={"stories": []})
+        return SimpleNamespace(parsed={
+            "headline": "Measured production",
+            "body": "Output changed within the supplied evidence.",
+            "tone": 0.0,
+            "slant_tags": [],
+            "source_event_ids": [1],
+        })
+
+    world.newsroom.gw.complete = completion
+
+    async def exercise_newsroom():
+        outlet = {"id": 1, "name": "A", "slant": "cautious"}
+        events = [{"id": 1, "kind": "production", "payload": {"quantity": 4}}]
+        drafts = await world.newsroom._report_stories(1, outlet, events)
+        await world.newsroom._write_story(1, outlet, events, None, drafts)
+
+    asyncio.run(exercise_newsroom())
+
+    assert requested_budgets == [("reporter", 1600), ("newsroom", 1200)]
+
+
+def test_live_output_budget_activation_preserves_historical_tick_contracts(tmp_path):
+    world = _world(tmp_path)
+    world.newsroom.config["llm"].update({
+        "reporter_max_tokens": 1600,
+        "newsroom_max_tokens": 1200,
+        "output_budget_activation_tick": 2,
+    })
+    requested_budgets = []
+
+    async def completion(request, **kwargs):
+        requested_budgets.append((request.tick, request.purpose, request.max_tokens))
+        if request.purpose == "reporter":
+            return SimpleNamespace(parsed={"stories": []})
+        return SimpleNamespace(parsed={
+            "headline": "Measured production",
+            "body": "Output changed within the supplied evidence.",
+            "tone": 0.0,
+            "slant_tags": [],
+            "source_event_ids": [1],
+        })
+
+    world.newsroom.gw.complete = completion
+
+    async def exercise_newsroom():
+        outlet = {"id": 1, "name": "A", "slant": "cautious"}
+        events = [{"id": 1, "kind": "production", "payload": {"quantity": 4}}]
+        for tick in (1, 2):
+            drafts = await world.newsroom._report_stories(tick, outlet, events)
+            await world.newsroom._write_story(tick, outlet, events, None, drafts)
+
+    asyncio.run(exercise_newsroom())
+
+    assert requested_budgets == [
+        (1, "reporter", 500),
+        (1, "newsroom", 400),
+        (2, "reporter", 1600),
+        (2, "newsroom", 1200),
+    ]
+
+
 def test_shared_topics_rotate_across_conversation_pairs(tmp_path):
     world = _world(tmp_path)
     for index, headline in enumerate(("Jobs rise", "Prices ease", "Bank expands", "Sales climb"), 1):

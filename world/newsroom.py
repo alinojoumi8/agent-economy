@@ -36,6 +36,15 @@ DEFAULT_CONVERSATION_THEMES = [
 ]
 
 
+def _output_budget(config: dict, key: str, historical_default: int, tick: int) -> int:
+    """Resolve a structured-output budget without changing pre-activation replay."""
+    llm = config.get("llm", {}) or {}
+    activation_tick = llm.get("output_budget_activation_tick")
+    if activation_tick is not None and int(tick) < int(activation_tick):
+        return historical_default
+    return int(llm.get(key, historical_default))
+
+
 class Newsroom:
     def __init__(self, economy: Economy, gateway: Gateway, config: dict, shocks):
         self.e = economy
@@ -271,7 +280,8 @@ class Newsroom:
         req = LLMRequest(role="reporter", purpose="reporter", system=system,
                          user=json.dumps({"events": events})[:3000], context=context,
                          agent_id=self._desk_agent("reporter", outlet["id"]),
-                         tick=tick, max_tokens=500)
+                         tick=tick, max_tokens=_output_budget(
+                             self.config, "reporter_max_tokens", 500, tick))
         resp = await self.gw.complete(req)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         stories = env.get("stories", [])
@@ -295,7 +305,8 @@ class Newsroom:
                   "Only use the given true events; framing and selection reflect your slant.")
         req = LLMRequest(role="editor", purpose="newsroom", system=system, user=user,
                          context=context, agent_id=self._desk_agent("editor", outlet["id"]),
-                         tick=tick, max_tokens=400)
+                         tick=tick, max_tokens=_output_budget(
+                             self.config, "newsroom_max_tokens", 400, tick))
         resp = await self.gw.complete(req)
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
         return art
@@ -435,7 +446,8 @@ class Conversations:
                     key: value for key, value in context.items()
                     if key != "avoid_texts"
                 })[:2400], context=context,
-                agent_id=speaker, tick=tick, max_tokens=120)
+                agent_id=speaker, tick=tick, max_tokens=_output_budget(
+                    self.config, "conversation_max_tokens", 120, tick))
             if (int(self.config.get("engine_semantics_version", 1)) >= 5
                     and profiles[speaker].get("population_tier") != "core"):
                 # Peripheral dialogue is generated directly by the bounded,

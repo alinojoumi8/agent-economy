@@ -3,15 +3,47 @@ import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { Badge } from "./ui";
 
+export function runControlState(status, busy = "") {
+  const running = Boolean(
+    status?.running || status?.status === "running" || busy === "start" || busy === "step"
+  );
+  const interruptibleBusy = busy === "start" || busy === "step";
+  return {
+    running,
+    displayStatus: running ? "running" : status?.status || "loading",
+    pauseDisabled: !running || Boolean(busy && !interruptibleBusy),
+    stopDisabled: status?.status === "halted" || Boolean(busy && !interruptibleBusy),
+  };
+}
+
 export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
   hosted = false, canControl = true }) {
   const [busy, setBusy] = useState("");
-  const running = Boolean(status?.running || status?.status === "running");
+  const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(status, busy);
   const terminal = status?.status === "halted";
   const participantActive = Boolean(participant?.active);
   const participantReady = Boolean(participant?.queued_action);
   const limitReached = status?.remaining_ticks === 0;
   const { spend, cap, capped, fraction } = budgetState(status?.governor);
+  const readiness = status?.provider_readiness;
+  const routeContract = readiness?.route_contract;
+  const routedProviders = Array.isArray(readiness?.routed_providers)
+    ? readiness.routed_providers
+    : [];
+  const networkReady = Boolean(
+    readiness?.ready && readiness?.mode === "network" && routedProviders.length
+  );
+  const enforcedLive = Boolean(
+    networkReady && routeContract?.enforced
+    && routeContract?.provider && routeContract?.model
+  );
+  const providerLabel = enforcedLive
+    ? `LIVE · ${routeContract.model}`
+    : networkReady
+      ? `HYBRID · ${routedProviders.join(" + ")}`
+      : readiness?.mode === "network"
+        ? "UNAVAILABLE · provider routing"
+        : "OFFLINE · scripted";
 
   async function action(name, path, body) {
     setBusy(name);
@@ -40,7 +72,8 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         <div className="flex items-center gap-2 rounded-xl border border-mint-300/10 bg-ink-850 px-3 py-1.5">
           <span className="text-[10px] uppercase tracking-widest text-slate-500">Day</span>
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
-          <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{status?.status || "loading"}</Badge>
+          <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{displayStatus}</Badge>
+          {readiness && <Badge tone={enforcedLive ? "good" : readiness.mode === "network" ? "warn" : "neutral"}>{providerLabel}</Badge>}
           {participantActive && <Badge tone="good">playing {participant?.controlled_agent?.name}</Badge>}
           {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.target_tick != null && <Badge tone={limitReached ? "good" : "warn"}>{limitReached ? `target t${status.target_tick} reached` : `${status.remaining_ticks} days to t${status.target_tick}`}</Badge>}
@@ -51,8 +84,8 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
           <button className="button button-primary" disabled={!canControl || loading || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
           <button className="button" disabled={!canControl || loading || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
-          <button className="button" disabled={!canControl || loading || !running || busy} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={!canControl || loading || terminal || busy} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
+          <button className="button" disabled={!canControl || loading || pauseDisabled} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
+          <button className="button button-danger" disabled={!canControl || loading || stopDisabled} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
           <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>

@@ -241,6 +241,7 @@ class Genesis:
     def _firms(self) -> None:
         firm_cfg = self.config.get("firms", {})
         count = int(firm_cfg.get("count", 12))
+        configured_target_headcount = firm_cfg.get("target_headcount")
         sectors = firm_cfg.get("sectors", ["food", "retail", "manufacturing", "services", "tech", "energy"])
         # Founders: pick suitable citizens.
         candidates = self.store.query(
@@ -253,6 +254,15 @@ class Genesis:
         firm_samples = (self.calibration.sample_firms(actual_count)
                         if calibrated else [])
         for i in range(actual_count):
+            target_headcount = (
+                firm_samples[i].requested_employees
+                if calibrated
+                else (
+                    max(0, int(configured_target_headcount))
+                    if configured_target_headcount is not None
+                    else None
+                )
+            )
             founder = founders[i]
             sector = sectors[i % len(sectors)]
             price = self.prng.randint(300, 900)
@@ -260,6 +270,12 @@ class Genesis:
                        "base_input_cost_cents": int(price * 0.4),
                        "output_per_worker": self.prng.randint(4, 8)}
             capital = self.prng.randint(500_000, 3_000_000)
+            capital_per_worker = firm_cfg.get(
+                "opening_capital_per_worker_cents")
+            if capital_per_worker is not None and target_headcount is not None:
+                capital = max(
+                    capital,
+                    max(0, int(capital_per_worker)) * target_headcount)
             firm_id = self.e.firms.found_firm(0, founder, f"{sector.title()} Co {i+1}", sector,
                                               product=product, opening_capital_cents=0)
             # Endow firm operating capital from external so it can pay wages/inputs.
@@ -273,7 +289,6 @@ class Genesis:
                 memo=f"seed firm {firm_id}")
             self.store.update("firms", firm_id, inventory=self.prng.randint(10, 40))
             # Initial employees.
-            target_headcount = firm_samples[i].requested_employees if calibrated else None
             realized_headcount = self._staff_firm(
                 firm_id, product["unit_price_cents"],
                 target_headcount=target_headcount)
@@ -311,7 +326,7 @@ class Genesis:
         for r in pool:
             aid = int(r["id"])
             employee_wage = wage
-            if target_headcount is not None:
+            if self.calibration and self.calibration.enabled:
                 employee_wage = max(
                     self.calibration.minimum_wage_per_interval_cents,
                     min(self.calibration.maximum_wage_per_interval_cents,
@@ -398,8 +413,10 @@ class Genesis:
                 pool = self.store.query_one(
                     "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND alive=1 "
                     "AND employer_id IS NULL AND age BETWEEN 20 AND 64 "
+                    "AND (? IS NULL OR region_id=?) "
                     "AND id NOT IN (SELECT founder_agent_id FROM firms WHERE founder_agent_id "
-                    "IS NOT NULL) ORDER BY id LIMIT 1")
+                    "IS NOT NULL) ORDER BY id LIMIT 1",
+                    (region_id, region_id))
                 if not pool:
                     break
                 aid = int(pool["id"])

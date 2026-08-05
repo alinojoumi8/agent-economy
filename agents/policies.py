@@ -16,6 +16,8 @@ import random
 import re
 from typing import Any, Callable
 
+from engine.types import positive_integer_id
+
 
 def _rng(context: dict) -> random.Random:
     return random.Random(int(context.get("rng_seed", 0)))
@@ -26,10 +28,18 @@ def _env(payload: dict, actions: list, beliefs: list | None = None, reasoning: s
             "belief_updates": beliefs or []}
 
 
+def _first_legal_action(context: dict):
+    eligible = list((context.get("legal_work") or {}).get("eligible_actions") or [])
+    return dict(eligible[0]) if eligible else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Citizens / households
 # ─────────────────────────────────────────────────────────────────────────────
 def citizen_decision(context: dict) -> dict:
+    legal_action = _first_legal_action(context)
+    if legal_action:
+        return _env(None, [legal_action], [], "pursuing an unresolved recorded legal claim")
     rng = _rng(context)
     agent = context.get("agent", {})
     state = context.get("state", {})
@@ -42,7 +52,29 @@ def citizen_decision(context: dict) -> dict:
     cash = int(state.get("checking_balance", 0))
     run_threshold = float(context.get("run_threshold", 0.35))
 
-    # 1) React to news: shift sentiment + inflation expectation.
+    # 1) Update bank trust from the coarse public confidence signal. The signal
+    # exposes no balance-sheet value; it is the public evidence that lets trust
+    # move in ordinary runs instead of changing only after an explicit rumor.
+    confidence_targets = {
+        "failed": 0.05,
+        "critical": 0.20,
+        "strained": 0.40,
+        "stable": 0.60,
+        "strong": 0.72,
+    }
+    for bank in context.get("banks", []):
+        signal = bank.get("confidence_signal")
+        bank_id = bank.get("id")
+        if signal not in confidence_targets or bank_id is None:
+            continue
+        key = f"trust:bank:{bank_id}"
+        previous = float(beliefs.get(key, 0.6))
+        updated = round(previous + 0.08 * (confidence_targets[signal] - previous), 3)
+        beliefs[key] = updated
+        if updated != previous:
+            belief_updates.append({"key": key, "value": updated})
+
+    # 2) React to news: shift sentiment + inflation expectation.
     sentiment = float(beliefs.get("sentiment", 0.0))
     infl = float(beliefs.get("inflation_expectation", 0.02))
     for item in context.get("news", []):
@@ -50,7 +82,7 @@ def citizen_decision(context: dict) -> dict:
         sentiment += 0.06 * tone
         if item.get("mentions_inflation"):
             infl += 0.004
-    # 2) Process things heard (conversations / rumors) into beliefs.
+    # 3) Process things heard (conversations / rumors) into beliefs.
     for heard in context.get("heard", []):
         bank_id = heard.get("rumor_bank")
         if bank_id is not None:
@@ -63,7 +95,7 @@ def citizen_decision(context: dict) -> dict:
     belief_updates.append({"key": "sentiment", "value": round(sentiment, 3)})
     belief_updates.append({"key": "inflation_expectation", "value": round(min(0.25, max(-0.05, infl)), 4)})
 
-    # 2.5) Retirement liquidity: the engine validates that this is a same-owner,
+    # 3.5) Retirement liquidity: the engine validates that this is a same-owner,
     # same-currency savings-to-checking transfer. It is deliberately proposed
     # before any consumption action so the drawdown contract is observable.
     if agent.get("retired") and "retirement_drawdown_target_cents" in context:
@@ -77,7 +109,7 @@ def citizen_decision(context: dict) -> dict:
             cash += draw
             reasons.append(f"drawing {draw} from retirement savings for liquidity")
 
-    # 3) Bank run: if trust in my bank collapsed, move deposits somewhere safer.
+    # 4) Bank run: if trust in my bank collapsed, move deposits somewhere safer.
     my_bank = state.get("bank_id")
     ran = False
     if my_bank is not None:
@@ -89,17 +121,29 @@ def citizen_decision(context: dict) -> dict:
                 reasons.append(f"pulling deposits from bank {my_bank} (trust {trust:.2f})")
                 ran = True
 
-    # 4) Consumption: buy goods (unless critically ill). Households with dependents buy more.
+    # 5) Consumption: buy goods (unless critically ill). Households with dependents buy more.
     if health != "critical" and not ran:
-        firm = _cheapest_stocked_firm(context)
+        firm = _select_stocked_firm(context, rng)
         if firm and cash > firm["price"] * 2:
             budget = int(cash * (0.12 + 0.03 * int(agent.get("dependents", 0))))
-            qty = max(1, min(budget // max(1, firm["price"]), firm["inventory"], 8))
+            qty_cap = (
+                max(1, int(context.get("shopping_qty_cap", 8)))
+                if context.get("inventory_aware_shopping_enabled")
+                else 8
+            )
+            qty = max(
+                1,
+                min(
+                    budget // max(1, firm["price"]),
+                    firm["inventory"],
+                    qty_cap,
+                ),
+            )
             if qty > 0:
                 actions.append({"type": "buy_goods", "firm_id": firm["firm_id"], "qty": qty})
                 reasons.append(f"buying {qty} {firm['product']}")
 
-    # 4.5) Health insurance: cautious or older agents cover themselves (R17).
+    # 5.5) Health insurance: cautious or older agents cover themselves (R17).
     if not ran and health == "healthy" and not context.get("insured"):
         offer = context.get("insurance_offer")
         if offer:
@@ -109,7 +153,7 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "buy_insurance"})
                 reasons.append("buying health coverage")
 
-    # 5) Career mobility: Semantics 7 exposes only destination actions whose
+    # 6) Career mobility: Semantics 7 exposes only destination actions whose
     # numeraire-adjusted wage gain clears the configured threshold.  Migration
     # remains a career-cadence decision and preempts a same-day local job action.
     migration_requested = False
@@ -133,7 +177,7 @@ def citizen_decision(context: dict) -> dict:
                 f"migrating for a {int(destination['wage_gain_bps'])}bps wage gain")
             migration_requested = True
 
-    # 5.5) Labour: negotiate a pending offer before applying elsewhere.
+    # 6.5) Labour: negotiate a pending offer before applying elsewhere.
     if (not migration_requested and not state.get("employed")
             and not agent.get("retired") and health == "healthy"):
         offers = sorted(
@@ -149,12 +193,31 @@ def citizen_decision(context: dict) -> dict:
                                 "wage": int(offer["posted_wage"])})
                 reasons.append("countering below-posted wage")
         else:
-            jobs = sorted(context.get("jobs", []), key=lambda j: -int(j.get("wage", 0)))
+            jobs = list(context.get("jobs", []))
             if jobs:
-                actions.append({"type": "apply_job", "job_id": jobs[0]["job_id"]})
+                if context.get("job_application_aware_enabled"):
+                    max_wage = max(1, max(int(job.get("wage", 0)) for job in jobs))
+                    weights = [
+                        max(1, (1_000 * int(job.get("wage", 0))) // max_wage)
+                        / (1 + max(0, int(job.get("application_count", 0))))
+                        for job in jobs
+                    ]
+                    selected_job = rng.choices(jobs, weights=weights, k=1)[0]
+                else:
+                    selected_job = min(
+                        jobs,
+                        key=lambda job: (
+                            -int(job.get("wage", 0)),
+                            int(job.get("job_id", 0)),
+                        ),
+                    )
+                actions.append({
+                    "type": "apply_job",
+                    "job_id": selected_job["job_id"],
+                })
                 reasons.append("seeking work")
 
-    # 6) Portfolio: act on sentiment occasionally (weekly-ish cadence gate upstream).
+    # 7) Portfolio: act on sentiment occasionally (weekly-ish cadence gate upstream).
     if context.get("portfolio_day") and health == "healthy" and not ran:
         offerings = context.get("ipo_offerings", [])
         affordable_offerings = [offering for offering in offerings
@@ -214,24 +277,60 @@ def citizen_decision(context: dict) -> dict:
                 actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "buy",
                                 "qty": qty, "limit_price": max(1, (price * 101) // 100)})
                 reasons.append("bidding for an unpriced listing from fundamentals")
-            elif last_price is not None and sentiment > 0.15 and cash > max(50_000, price * 3):
-                qty = max(1, min(5, cash // (price * 4)))
-                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "buy",
-                                "qty": qty, "limit_price": int(price * 1.02)})
-                reasons.append("bullish: buying equities")
-            elif last_price is not None and sentiment < -0.15 and held > 0:
-                actions.append({"type": "place_order", "firm_id": pick["firm_id"], "side": "sell",
-                                "qty": min(held, 5), "limit_price": int(price * 0.98)})
-                reasons.append("bearish: trimming equities")
+            elif last_price is not None:
+                # Every portfolio review produces an actor-specific valuation,
+                # including in neutral markets. Heterogeneous risk preferences
+                # and deterministic private noise supply both sides of the book;
+                # the exchange still sets no price and only matches crossing
+                # agent-authored limits.
+                opinion_bps = (
+                    int(round(sentiment * 600.0))
+                    + int(round((risk - 0.5) * 250.0))
+                    + rng.randint(-40, 40)
+                )
+                opinion_bps = max(-500, min(500, opinion_bps))
+                limit_price = max(1, (price * (10_000 + opinion_bps)) // 10_000)
+                if opinion_bps > 0 and cash > max(50_000, limit_price * 3):
+                    qty = max(1, min(5, cash // max(1, limit_price * 4)))
+                    actions.append({"type": "place_order", "firm_id": pick["firm_id"],
+                                    "side": "buy", "qty": qty,
+                                    "limit_price": limit_price})
+                    reasons.append("bidding at my own equity valuation")
+                elif opinion_bps <= 0 and held > 0:
+                    actions.append({"type": "place_order", "firm_id": pick["firm_id"],
+                                    "side": "sell", "qty": min(held, 5),
+                                    "limit_price": limit_price})
+                    reasons.append("offering shares at my own equity valuation")
 
     if not actions:
         actions.append({"type": "do_nothing"})
     return _env(None, actions, belief_updates, "; ".join(reasons) or "quiet day")
 
 
-def _cheapest_stocked_firm(context: dict):
-    firms = [f for f in context.get("prices", []) if int(f.get("inventory", 0)) > 0 and int(f.get("price", 0)) > 0]
-    return min(firms, key=lambda f: f["price"]) if firms else None
+def _select_stocked_firm(context: dict, rng: random.Random):
+    firms = [
+        firm for firm in context.get("prices", [])
+        if int(firm.get("inventory", 0)) > 0 and int(firm.get("price", 0)) > 0
+    ]
+    if not firms:
+        return None
+    if not context.get("inventory_aware_shopping_enabled"):
+        return min(firms, key=lambda firm: firm["price"])
+
+    # Every household decides from the same morning snapshot. A universal
+    # cheapest-seller rule therefore sends the entire cohort to one firm even
+    # when the rest of the market has stock. Preserve price sensitivity while
+    # distributing demand in proportion to advertised capacity.
+    lowest_price = min(int(firm["price"]) for firm in firms)
+    weights = [
+        max(1, int(firm["inventory"]))
+        * (
+            7_500
+            + (2_500 * lowest_price) // int(firm["price"])
+        )
+        for firm in firms
+    ]
+    return rng.choices(firms, weights=weights, k=1)[0]
 
 
 def _safest_other_bank(context: dict, my_bank: int):
@@ -249,10 +348,135 @@ def _first_startup_action(context: dict):
     return dict(eligible[0]) if eligible else None
 
 
+def workforce_recovery_actions(
+        context: dict, proposed_actions: list[dict] | None = None) -> list[dict]:
+    """Return deterministic labor-pipeline actions for an activated recovery."""
+    if not (
+        context.get("workforce_recovery_enabled")
+        and context.get("workforce_recovery_operational_enabled")
+    ):
+        return []
+    firm = context.get("my_firm") or {}
+    if not firm:
+        return []
+
+    employees = max(0, int(firm.get("employees", 0)))
+    target_headcount = max(0, int(firm.get("target_headcount", 3)))
+    gap = target_headcount - employees
+    if gap <= 0:
+        return []
+
+    batch_size = max(1, int(context.get("workforce_recovery_batch_size", 1)))
+    proposed = [
+        action for action in (proposed_actions or [])
+        if isinstance(action, dict)
+    ]
+    proposed_offer_ids = {
+        offer_id
+        for action in proposed
+        if action.get("type") == "accept_job_offer"
+        for offer_id in [positive_integer_id(action.get("offer_id"))]
+        if offer_id is not None
+    }
+    proposed_application_ids = {
+        application_id
+        for action in proposed
+        if action.get("type") == "make_job_offer"
+        for application_id in [
+            positive_integer_id(action.get("application_id"))
+        ]
+        if application_id is not None
+    }
+    proposed_posts = sum(
+        1 for action in proposed if action.get("type") == "post_job")
+
+    cash = max(0, int(firm.get("cash", 0)))
+    payroll = max(0, int(firm.get("payroll", 0)))
+    price = max(0, int(firm.get("price", 0)))
+    recovery_wage = max(250_000, price * 400)
+    actions: list[dict] = []
+    committed_payroll = 0
+    remaining_gap = gap
+
+    for offer in list(context.get("firm_job_offers", []))[:batch_size]:
+        if remaining_gap <= 0:
+            break
+        offer_id = positive_integer_id(offer.get("offer_id"))
+        requested_wage = max(0, int(
+            offer.get("requested_wage", recovery_wage)))
+        # Do not end another firm's employment during recovery staffing.
+        if (
+            offer.get("candidate_employed")
+            or offer.get("candidate_retired")
+            or offer.get("candidate_alive") is False
+        ):
+            continue
+        if (
+            offer_id is not None
+            and offer_id not in proposed_offer_ids
+            and cash >= payroll + committed_payroll + requested_wage
+        ):
+            actions.append({
+                "type": "accept_job_offer",
+                "offer_id": offer_id,
+            })
+            committed_payroll += requested_wage
+            remaining_gap -= 1
+
+    offers_made = 0
+    for application in context.get("firm_applications", []):
+        if offers_made >= batch_size or remaining_gap <= 0:
+            break
+        application_id = positive_integer_id(
+            application.get("application_id"))
+        if (
+            application_id is None
+            or application_id in proposed_application_ids
+            or application.get("current_offer_id") is not None
+            or int(application.get("job_pending_offer_count", 0)) > 0
+        ):
+            continue
+        posted_wage = max(0, int(
+            application.get("posted_wage", recovery_wage)))
+        if cash < payroll + committed_payroll + posted_wage:
+            continue
+        actions.append({
+            "type": "make_job_offer",
+            "application_id": application_id,
+            "wage": posted_wage,
+        })
+        committed_payroll += posted_wage
+        remaining_gap -= 1
+        offers_made += 1
+
+    open_jobs = max(0, int(firm.get("open_jobs", 0)))
+    available_slots = max(
+        0,
+        (cash - payroll - committed_payroll) // recovery_wage
+        if cash > payroll + committed_payroll and recovery_wage > 0
+        else 0,
+    )
+    posts_to_add = min(
+        max(0, batch_size - proposed_posts),
+        max(0, remaining_gap - open_jobs - proposed_posts),
+        max(0, available_slots - open_jobs - proposed_posts),
+    )
+    actions.extend({
+        "type": "post_job",
+        "firm_id": int(firm["firm_id"]),
+        "title": "worker",
+        "wage": recovery_wage,
+    } for _ in range(posts_to_add))
+    return actions
+
+
 def founder_decision(context: dict) -> dict:
     firm = context.get("my_firm")
     if not firm:
         return citizen_decision(context)
+    legal_action = _first_legal_action(context)
+    if legal_action:
+        return _env(None, [legal_action], [], "pursuing an unresolved recorded legal claim")
     startup_action = _first_startup_action(context)
     if startup_action:
         return _env(None, [startup_action], [], "performing the next authorized startup step")
@@ -296,10 +520,29 @@ def founder_decision(context: dict) -> dict:
     elif applicants and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
         actions.append({"type": "hire", "application_id": applicants[0]["application_id"]})
         reasons.append("hiring")
-    elif employees == 0 and cash > 0:
-        wage = max(200_00, int(cost * 20))
-        actions.append({"type": "post_job", "firm_id": firm["firm_id"], "title": "worker", "wage": wage})
-        reasons.append("posting a job")
+    else:
+        wage = max(250_000, int(price * 400))
+        target_headcount = int(firm.get("target_headcount", 3))
+        open_jobs = int(firm.get("open_jobs", 0))
+        workforce_recovery = bool(context.get("workforce_recovery_enabled"))
+        should_post = (
+            employees < target_headcount
+            and open_jobs == 0
+            and cash > payroll + wage
+            if workforce_recovery
+            else employees == 0 and cash > 0
+        )
+        if should_post:
+            actions.append({
+                "type": "post_job",
+                "firm_id": firm["firm_id"],
+                "title": "worker",
+                "wage": wage,
+            })
+            reasons.append(
+                "posting a job toward target headcount"
+                if workforce_recovery
+                else "posting a job")
 
     # Seek a loan when cash is thin relative to payroll.
     recent_loan = bool(firm.get("has_recent_loan_application"))
@@ -431,13 +674,13 @@ def lawyer_decision(context: dict) -> dict:
             for filing in matter.get("filings", [])
             for event_id in filing.get("evidence_event_ids", [])
         }
-        breach_events = [
+        supported_events = [
             int(event["event_id"])
             for event in matter.get("evidence_events", [])
-            if event.get("kind") == "obligation_breached"
+            if event.get("kind") in {"obligation_breached", "wage_missed"}
             and int(event["event_id"]) not in filed_evidence
         ]
-        if breach_events and matter.get("status") in {
+        if supported_events and matter.get("status") in {
                 "filed", "pleading", "hearing", "settlement_offered"}:
             matter_id = int(matter["matter_id"])
             return _env(None, [{
@@ -446,8 +689,8 @@ def lawyer_decision(context: dict) -> dict:
                 "filer_type": "agent",
                 "filer_id": agent_id,
                 "filing_type": "evidence",
-                "evidence_event_ids": breach_events,
-                "body": "The admitted simulation event records the overdue typed obligation.",
+                "evidence_event_ids": supported_events,
+                "body": "The admitted simulation event records the supported unpaid obligation.",
             }], [], f"file breach evidence in matter {matter_id}")
 
         remedy = dict(matter.get("requested_remedy", {}) or {})

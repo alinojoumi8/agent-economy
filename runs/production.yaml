@@ -1,5 +1,5 @@
-# PRD production profile. Inherits deterministic world mechanics from base.yaml
-# while replacing the offline scripted route with current official provider IDs.
+# PRD production profile. Every model-eligible call is contractually routed to
+# live MiniMax M3; validation fails closed if any route drifts from that pair.
 extends: base.yaml
 
 population:
@@ -29,27 +29,14 @@ llm:
         # M3 may spend most of a 700-token ceiling on reasoning and truncate
         # before emitting its JSON action envelope.
         max_completion_tokens: 4096
-    kimi:
-      kind: openai_compat
-      # The configured key is a Kimi Code membership key (sk-kimi-*), not a
-      # Moonshot pay-as-you-go key. These key families are not interchangeable.
-      base_url: https://api.kimi.com/coding/v1
-      api_key_env: KIMI_API_KEY
-      prompt_cache_mode: "off"
-      timeout_s: 180
-      healthcheck_path: /models
-      max_tokens_field: max_tokens
-      request_defaults:
-        reasoning_effort: medium
-        temperature: 1.0
-        max_tokens: 4096
+  route_contract: {provider: minimax, model: MiniMax-M3}
   default_route: {provider: minimax, model: MiniMax-M3}
   routes:
     citizen:        {provider: minimax, model: MiniMax-M3}
     founder:        {provider: minimax, model: MiniMax-M3}
-    central_banker: {provider: kimi, model: kimi-for-coding}
-    credit_officer: {provider: kimi, model: kimi-for-coding}
-    reporter:       {provider: kimi, model: kimi-for-coding}
-    editor:         {provider: kimi, model: kimi-for-coding}
-    vc_partner:     {provider: kimi, model: kimi-for-coding}
-    oracle:         {provider: kimi, model: kimi-for-coding}
+    central_banker: {provider: minimax, model: MiniMax-M3}
+    credit_officer: {provider: minimax, model: MiniMax-M3}
+    reporter:       {provider: minimax, model: MiniMax-M3}
+    editor:         {provider: minimax, model: MiniMax-M3}
+    vc_partner:     {provider: minimax, model: MiniMax-M3}
+    oracle:         {provider: minimax, model: MiniMax-M3}

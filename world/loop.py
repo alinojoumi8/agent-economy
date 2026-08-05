@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from engine.core import Economy
-from engine.ledger import ReconciliationError, SYS_HOUSING, SYS_INFLOW
+from engine.ledger import (
+    Leg,
+    ReconciliationError,
+    SYS_EXTERNAL,
+    SYS_HOUSING,
+    SYS_INFLOW,
+)
 from engine.semantics import semantics_version
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
@@ -389,6 +395,11 @@ class World:
 
     def _phase_night_close(self, tick: int) -> None:
         e = self.economy
+        # A legacy semantics-7 run may opt into a forward-only supply recovery.
+        # Its one-time endowment is a normal balanced ledger transaction and is
+        # applied before payroll/production at the configured untouched tick.
+        self._apply_supply_recovery_recapitalization(tick)
+        self._enforce_workforce_recovery_job_floor(tick)
         # Interest on savings (annual rate ≈ policy - 200bps, floored at 0).
         self._accrue_savings_interest(tick)
         # Loan payments + defaults.
@@ -422,6 +433,170 @@ class World:
             self.oracle.resolve_open(tick)
         # Reconcile scheduled/opening mechanics before any LLM decisions.
         self._assert_reconciled(tick, "NIGHT_CLOSE")
+
+    def _apply_supply_recovery_recapitalization(self, tick: int) -> None:
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_recapitalization_tick")
+        if activation_tick is None or int(tick) < int(activation_tick):
+            return
+        if self.store.query_one(
+                "SELECT 1 FROM events "
+                "WHERE kind='supply_recovery_recapitalization_applied' LIMIT 1"):
+            return
+
+        target_headcount = max(0, int(firms_config.get(
+            "workforce_recovery_target_headcount",
+            firms_config.get("target_headcount", 0),
+        )))
+        capital_per_worker = max(0, int(firms_config.get(
+            "workforce_recovery_capital_per_worker_cents", 0)))
+        target_capital = target_headcount * capital_per_worker
+        excluded = [
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        ]
+        where = "status IN ('private','listed')"
+        params: list[object] = []
+        if excluded:
+            where += (
+                " AND lower(COALESCE(sector,'')) NOT IN ("
+                + ",".join("?" for _ in excluded)
+                + ")"
+            )
+            params.extend(excluded)
+        eligible = self.store.query(
+            "SELECT id,account_id,currency_code,sector FROM firms "
+            f"WHERE {where} ORDER BY id",
+            params,
+        )
+
+        total_endowment = 0
+        funded_firms = 0
+        for firm in eligible:
+            account_id = int(firm["account_id"])
+            previous_balance = self.economy.ledger.balance(account_id)
+            shortfall = max(0, target_capital - previous_balance)
+            if shortfall <= 0:
+                continue
+            currency = str(firm["currency_code"] or "USD")
+            external = self.economy.ledger.system_account(
+                SYS_EXTERNAL, currency_code=currency)
+            self.economy.ledger.post(
+                tick,
+                "supply_recovery_recapitalization",
+                [
+                    Leg(account_id, shortfall, "legacy operating-capital correction"),
+                    Leg(external, -shortfall, "external recovery endowment"),
+                ],
+                memo=f"forward-only supply recovery firm {int(firm['id'])}",
+            )
+            self.store.log_event(
+                tick,
+                "supply_recovery_recapitalized",
+                {
+                    "firm_id": int(firm["id"]),
+                    "sector": str(firm["sector"] or ""),
+                    "currency_code": currency,
+                    "previous_balance_cents": previous_balance,
+                    "target_balance_cents": target_capital,
+                    "endowment_cents": shortfall,
+                    "source_account": SYS_EXTERNAL,
+                },
+                phase="NIGHT_CLOSE",
+                subject_type="firm",
+                subject_id=int(firm["id"]),
+                importance=2.5,
+            )
+            total_endowment += shortfall
+            funded_firms += 1
+
+        self.store.log_event(
+            tick,
+            "supply_recovery_recapitalization_applied",
+            {
+                "activation_tick": int(activation_tick),
+                "eligible_firms": len(eligible),
+                "funded_firms": funded_firms,
+                "target_headcount": target_headcount,
+                "capital_per_worker_cents": capital_per_worker,
+                "target_balance_cents": target_capital,
+                "total_endowment_cents": total_endowment,
+                "excluded_sectors": excluded,
+            },
+            phase="NIGHT_CLOSE",
+            importance=3.0,
+        )
+
+    def _enforce_workforce_recovery_job_floor(self, tick: int) -> None:
+        firms_config = self.config.get("firms", {})
+        activation_tick = firms_config.get(
+            "workforce_recovery_wage_floor_activation_tick")
+        operational_tick = firms_config.get(
+            "workforce_recovery_operational_activation_tick")
+        if (
+            activation_tick is None
+            or operational_tick is None
+            or tick < int(activation_tick)
+        ):
+            return
+        minimum_wage = max(0, int(firms_config.get(
+            "workforce_recovery_min_wage_cents", 0)))
+        excluded = {
+            str(value).strip().lower()
+            for value in firms_config.get(
+                "workforce_recovery_excluded_sectors",
+                ["health", "insurance"],
+            )
+        }
+        rows = self.store.query(
+            "SELECT j.id,j.firm_id,j.wage_cents,f.sector "
+            "FROM jobs j JOIN firms f ON f.id=j.firm_id "
+            "WHERE j.status='open' AND j.tick>=? AND j.wage_cents<? "
+            "AND f.status IN ('private','listed') ORDER BY j.id",
+            (int(operational_tick), minimum_wage),
+        )
+        for job in rows:
+            if str(job["sector"] or "").strip().lower() in excluded:
+                continue
+            job_id = int(job["id"])
+            application_count = int(self.store.scalar(
+                "SELECT COUNT(*) FROM applications WHERE job_id=? "
+                "AND state IN ('pending','negotiating')",
+                (job_id,),
+                default=0,
+            ))
+            self.store.execute(
+                "UPDATE job_offers SET status='expired',decided_tick=? "
+                "WHERE status='pending' AND application_id IN "
+                "(SELECT id FROM applications WHERE job_id=?)",
+                (tick, job_id),
+            )
+            self.store.execute(
+                "UPDATE applications SET state='rejected' "
+                "WHERE job_id=? AND state IN ('pending','negotiating')",
+                (job_id,),
+            )
+            self.store.update("jobs", job_id, status="closed")
+            self.store.log_event(
+                tick,
+                "workforce_recovery_job_floor_enforced",
+                {
+                    "job_id": job_id,
+                    "firm_id": int(job["firm_id"]),
+                    "sector": str(job["sector"] or ""),
+                    "posted_wage_cents": int(job["wage_cents"]),
+                    "minimum_wage_cents": minimum_wage,
+                    "applications_rejected": application_count,
+                },
+                phase="NIGHT_CLOSE",
+                subject_type="job",
+                subject_id=job_id,
+                importance=2.0,
+            )
 
     def _phase_finalize(self, tick: int) -> None:
         # Tick-T metrics describe the completed day, including its settled actions.
@@ -488,7 +663,7 @@ class World:
         self.economy.exchange.expire_session(tick)
         if self.engine_semantics_version >= 5:
             self.economy.regions.match_fx(tick)
-        self.economy.labor.expire_stale_jobs(tick)
+        self.economy.labor.expire_stale_jobs(tick, phase="MARKET")
         # Expire stale pending loan applications (older than a week).
         self.store.execute(
             "UPDATE loan_applications SET status='expired' WHERE status='pending' AND tick < ?",
@@ -602,9 +777,23 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
-            self.store.insert("checkpoints", tick=tick, path=str(dest),
-                              created_at=__import__("datetime").datetime.now(
-                                  __import__("datetime").timezone.utc).isoformat())
+            created_at = __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc).isoformat()
+            existing = self.store.query_one(
+                "SELECT id FROM checkpoints WHERE tick=? AND path=? ORDER BY id LIMIT 1",
+                (tick, str(dest)),
+            )
+            if existing is None:
+                self.store.insert(
+                    "checkpoints", tick=tick, path=str(dest), created_at=created_at)
+            else:
+                # Interval completion, Run teardown, and an explicit Stop can all
+                # checkpoint the same committed tick. The snapshot should be
+                # refreshed, but its catalog entry is one logical artifact.
+                self.store.execute(
+                    "UPDATE checkpoints SET created_at=? WHERE id=?",
+                    (created_at, int(existing["id"])),
+                )
             self.store.commit()
             operational_log(logger, logging.INFO, "world.checkpoint.created",
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))

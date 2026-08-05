@@ -39,6 +39,10 @@ class Scheduler:
                 "SELECT * FROM agents WHERE alive=1 AND population_tier='core' ORDER BY id")
         else:
             agents = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
+        # Resolve wake-up state in three bounded queries.  At flagship scale the
+        # former per-citizen probes caused up to three extra SQLite queries for
+        # every living agent on every tick.
+        wake_state = self._wake_state(tick)
         out = []
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
         liquidity_decision_due = (
@@ -61,12 +65,48 @@ class Scheduler:
                 out.append(a)
                 continue
             if not citizens_enabled:
-                if self._event_triggered(int(a["id"]), tick):
+                if int(a["id"]) in wake_state["event_triggered"]:
                     out.append(a)
                 continue
-            if self._citizen_wakes(a, tick, cadence_multiplier):
+            if self._citizen_wakes(
+                    a, tick, cadence_multiplier,
+                    employed_ids=wake_state["employed"],
+                    event_triggered_ids=wake_state["event_triggered"],
+                    unpriced_holder_ids=wake_state["unpriced_holders"]):
                 out.append(a)
         return out
+
+    def _wake_state(self, tick: int) -> dict[str, set[int]]:
+        employed = {
+            int(row["agent_id"])
+            for row in self.store.query(
+                "SELECT agent_id FROM employments WHERE status='active'")
+        }
+        event_triggered = {
+            int(row["agent_id"])
+            for row in self.store.query(
+                "SELECT DISTINCT agent_id FROM memories "
+                "WHERE tick>=? AND kind='observation' AND importance>=?",
+                (tick - 1, self.event_wake_importance))
+        }
+        unpriced_holders: set[int] = set()
+        if self.engine_semantics_version >= 7:
+            unpriced_holders = {
+                int(row["agent_id"])
+                for row in self.store.query(
+                    "SELECT DISTINCT s.holder_id AS agent_id FROM shares s "
+                    "JOIN firms f ON f.id=s.firm_id "
+                    "WHERE s.holder_type='agent' AND s.qty>0 "
+                    "AND f.status='listed' "
+                    "AND NOT EXISTS (SELECT 1 FROM trades t WHERE t.firm_id=f.id) "
+                    "AND NOT EXISTS (SELECT 1 FROM metrics m "
+                    " WHERE m.name='stock:' || f.id)")
+            }
+        return {
+            "employed": employed,
+            "event_triggered": event_triggered,
+            "unpriced_holders": unpriced_holders,
+        }
 
     def _has_pending_liquidity_request(self) -> bool:
         return self.store.query_one(
@@ -75,14 +115,29 @@ class Scheduler:
             "WHERE r.status='pending' AND b.status='open' "
             "ORDER BY r.request_event_id LIMIT 1") is not None
 
-    def _citizen_wakes(self, a, tick: int, cadence_multiplier: int) -> bool:
+    def _citizen_wakes(
+        self,
+        a,
+        tick: int,
+        cadence_multiplier: int,
+        *,
+        employed_ids: set[int] | None = None,
+        event_triggered_ids: set[int] | None = None,
+        unpriced_holder_ids: set[int] | None = None,
+    ) -> bool:
         agent_id = int(a["id"])
         # A listing cannot form its first price unless at least two holders see
         # the same book in the same session. Wake every holder while any of
         # their listed positions is still genuinely unpriced; the actors still
         # choose the bid/ask and therefore determine the price.
-        if self.engine_semantics_version >= 7 and self._holds_unpriced_listing(agent_id):
-            return True
+        if self.engine_semantics_version >= 7:
+            holds_unpriced = (
+                agent_id in unpriced_holder_ids
+                if unpriced_holder_ids is not None
+                else self._holds_unpriced_listing(agent_id)
+            )
+            if holds_unpriced:
+                return True
         cadence = load_json(a["cadence_json"], {}) or {}
         act_every = max(1, int(cadence.get("act", self.base_act_every)) * max(1, cadence_multiplier))
         portfolio_every = max(1, int(cadence.get("portfolio", 7)) * max(1, cadence_multiplier))
@@ -104,10 +159,17 @@ class Scheduler:
             return True
         # Unemployed working-age agents search more actively.
         if not a["retired"] and a["health"] == "healthy":
-            employed = self.store.query_one(
-                "SELECT 1 FROM employments WHERE agent_id=? AND status='active'", (agent_id,))
+            employed = (
+                agent_id in employed_ids
+                if employed_ids is not None
+                else self.store.query_one(
+                    "SELECT 1 FROM employments WHERE agent_id=? AND status='active'",
+                    (agent_id,)) is not None
+            )
             if not employed and tick % 2 == agent_id % 2:
                 return True
+        if event_triggered_ids is not None:
+            return agent_id in event_triggered_ids
         return self._event_triggered(agent_id, tick)
 
     def _holds_unpriced_listing(self, agent_id: int) -> bool:

@@ -28,6 +28,14 @@ On macOS or Linux, activate with `source .venv/bin/activate`.
 python run.py --config runs/base.yaml
 ```
 
+That command is the compact core-engine smoke world. To exercise every
+Observatory surface without an API key, including regions, contracts, legal
+matters, legislation, and lobbying, run:
+
+```powershell
+python run.py --config runs/v2-institutional-rehearsal.yaml
+```
+
 Open <http://127.0.0.1:8000/>. The world starts paused:
 
 - **Run** advances continuously.
@@ -71,14 +79,16 @@ Copy the environment template and populate it locally:
 
 ```powershell
 Copy-Item .env.example .env
-python run.py --config runs/production.yaml --preflight
-python run.py --config runs/production.yaml --preflight-live
+python run.py --preflight
+python run.py --preflight-live --approve-live-inference
+python run.py --serve --approve-live-inference
 ```
 
 `--preflight` validates configuration without inference. `--preflight-live`
 contacts provider model-catalog endpoints but does not request chat completion.
-The production route uses MiniMax for citizen/founder roles and Kimi Code for
-institutional roles and the Oracle.
+The default route uses MiniMax M3 for every model-eligible core/shared-service
+call in the 1,000-agent profile. The long-tail periphery remains deterministic
+and auditable rather than issuing 900 paid calls per simulated day.
 
 Paid acceptance never starts implicitly. The bounded pilot and full run require
 the explicit `--approve-live-inference` flag; read the

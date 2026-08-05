@@ -18,7 +18,7 @@ from .core import Economy
 from .credit import LoanTerms
 from .ledger import Leg
 from .semantics import semantics_version
-from .types import ActionEnvelope, ValidationError
+from .types import ActionEnvelope, ValidationError, positive_integer_id
 from observability import get_logger, log_event as operational_log
 
 
@@ -294,8 +294,11 @@ class ActionExecutor:
             actor_currency = self.store.scalar(
                 "SELECT ac.currency_code FROM agents a JOIN accounts ac "
                 "ON ac.id=a.checking_account_id WHERE a.id=?", (actor_id,))
-            if (not job or job["status"] != "open" or actor_currency is None
-                    or str(job["currency_code"] or "USD") != str(actor_currency or "USD")):
+            if not job or job["status"] != "open":
+                return {"ok": False, "reason": "job unavailable"}
+            if (actor_currency is None
+                    or str(job["currency_code"] or "USD")
+                    != str(actor_currency or "USD")):
                 return {"ok": False, "reason": "job must use the applicant's primary currency"}
         app_id = self.e.labor.apply_job(tick, actor_id, job_id)
         if app_id is None:
@@ -359,7 +362,9 @@ class ActionExecutor:
     def _do_counter_job_offer(self, tick, actor_id, action, phase) -> dict:
         if self.engine_semantics_version < 6:
             return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
-        offer_id = int(action.get("offer_id", 0))
+        offer_id = positive_integer_id(action.get("offer_id"))
+        if offer_id is None:
+            return {"ok": False, "reason": "offer_id must be a positive integer"}
         wage = int(action.get("wage", -1))
         offer = self._job_offer(offer_id)
         reason = self._job_offer_counterparty_error(actor_id, offer)
@@ -379,7 +384,9 @@ class ActionExecutor:
     def _do_accept_job_offer(self, tick, actor_id, action, phase) -> dict:
         if self.engine_semantics_version < 6:
             return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
-        offer_id = int(action.get("offer_id", 0))
+        offer_id = positive_integer_id(action.get("offer_id"))
+        if offer_id is None:
+            return {"ok": False, "reason": "offer_id must be a positive integer"}
         offer = self._job_offer(offer_id)
         reason = self._job_offer_counterparty_error(actor_id, offer)
         if reason:
@@ -397,7 +404,9 @@ class ActionExecutor:
     def _do_reject_job_offer(self, tick, actor_id, action, phase) -> dict:
         if self.engine_semantics_version < 6:
             return {"ok": False, "reason": "wage bargaining requires engine semantics 6"}
-        offer_id = int(action.get("offer_id", 0))
+        offer_id = positive_integer_id(action.get("offer_id"))
+        if offer_id is None:
+            return {"ok": False, "reason": "offer_id must be a positive integer"}
         offer = self._job_offer(offer_id)
         reason = self._job_offer_counterparty_error(actor_id, offer)
         if reason:

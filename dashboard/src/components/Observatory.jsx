@@ -72,7 +72,7 @@ export function Observatory({ hostedSession = null }) {
 
       <SectionTitle index="5" title="People" description={hosted ? "Inspect sanitized persona, balance, belief, memory, and decision provenance." : "Audit any persona from identity through balances, beliefs, memory, and exact decision prompts."} />
       {!hosted && <ParticipantPanel participant={participant} act={act} />}
-      <AgentsPanel agents={data.agents} participant={participant} status={status} act={act} />
+      <AgentsPanel participant={participant} status={status} act={act} />
     </main>
 
     {!hosted && shockOpen && <ShockModal library={data.shocks?.library} tick={status?.tick || 0} act={act} onClose={() => setShockOpen(false)} />}

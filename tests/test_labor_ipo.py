@@ -117,6 +117,47 @@ def test_wage_offer_counter_and_accept_is_bilateral_persisted_and_audited(store)
             "offer_id"] == second_counter["offer_id"]
 
 
+def test_accept_job_offer_rejects_non_integer_identifiers(store):
+    economy, _, executor = _modern_economy(store)
+    bank_id = make_bank(economy)
+    actor, _ = make_agent(economy, bank_id, name="Actor", cash=50_000)
+
+    for offer_id in (None, "1", 1.5, True, 0):
+        result = executor.execute_action(
+            1,
+            actor,
+            {"type": "accept_job_offer", "offer_id": offer_id},
+        )
+        assert result == {
+            "ok": False,
+            "reason": "offer_id must be a positive integer",
+        }
+
+
+def test_incompatible_offer_cleanup_includes_missing_candidate_wallets(store):
+    economy, _, _ = _modern_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Founder", cash=1_000_000)
+    missing_wallet, _ = make_agent(
+        economy, bank_id, name="Missing Wallet", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, missing_wallet, job_id)
+    offer_id = economy.labor.make_offer(
+        1, application_id, founder, 200_00)
+    store.update("agents", missing_wallet, checking_account_id=None)
+
+    expired = economy.labor.expire_incompatible_offers(2, phase="MARKET")
+
+    assert expired == 1
+    assert store.scalar(
+        "SELECT status FROM job_offers WHERE id=?", (offer_id,)) == "expired"
+    assert store.scalar(
+        "SELECT COUNT(*) FROM events "
+        "WHERE kind='job_offer_expired_incompatible_currency' "
+        "AND phase='MARKET'") == 1
+
+
 def test_negotiated_hire_rejects_cross_currency_at_every_transition(store):
     economy, _, executor = _modern_economy(store)
     bank_id = make_bank(economy)

@@ -48,7 +48,13 @@ export function MacroOverview({ metrics }) {
                       <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#fill-${key})`} isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
-                ) : <div className="mt-4 h-px bg-mint-300/10" />}
+                ) : (
+                  <div className="pt-3 text-[9px] leading-tight text-slate-600">
+                    {key === "index"
+                      ? (series.length ? "Awaiting another market close" : "Awaiting first listed firm")
+                      : "Awaiting metric history"}
+                  </div>
+                )}
               </div>
             </article>
           );

@@ -79,6 +79,19 @@ def test_bank_information_is_role_scoped_and_legacy_default_is_full(tmp_path):
     legacy.store.close()
 
 
+def test_semantics_7_public_bank_view_exposes_coarse_confidence_not_reserves(tmp_path):
+    world = _world(tmp_path, "bank-confidence.db", semantics=7)
+    citizen = world.store.query_one(
+        "SELECT * FROM agents WHERE kind='citizen' AND role IS NULL ORDER BY id LIMIT 1")
+    banks = world.runtime.ctx.build(citizen, 1)["banks"]
+    assert banks
+    assert all(bank["confidence_signal"] in {
+        "failed", "critical", "strained", "stable", "strong"
+    } for bank in banks)
+    assert all("reserve_ratio" not in bank for bank in banks)
+    world.store.close()
+
+
 def test_reserved_beliefs_are_normalized_and_provenance_is_exposed(tmp_path):
     world = _world(tmp_path, "beliefs.db")
     agent_id = int(world.store.scalar(

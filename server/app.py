@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -105,6 +105,15 @@ def create_app(world: World, *, served_ticks: int | None = None,
     install_v2_routes(app, world, controller)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
+
+    @app.get("/api/v2/mode")
+    async def application_mode():
+        """Make the local/hosted shell handshake explicit and error-free."""
+        return {
+            "hosted": hosted_safe,
+            "mode": "hosted" if hosted_safe else "local",
+            "api_base": "/api",
+        }
 
     @app.middleware("http")
     async def log_http_request(request: Request, call_next):
@@ -264,11 +273,151 @@ def create_app(world: World, *, served_ticks: int | None = None,
         return out
 
     @app.get("/api/agents")
-    async def agents():
+    async def agents(
+        limit: Optional[int] = Query(default=None, ge=1, le=200),
+        after_id: Optional[int] = Query(default=None, ge=0),
+        q: str = Query(default="", max_length=120),
+        population_tier: Optional[Literal["core", "periphery"]] = None,
+    ):
+        columns = (
+            "a.id, a.name, a.kind, a.role, a.occupation, a.age, a.health, "
+            "a.alive, a.retired, a.employer_id, a.population_tier, "
+            "a.region_id, r.region_key"
+        )
+        base = " FROM agents a LEFT JOIN regions r ON r.id=a.region_id"
+        filters: list[str] = []
+        filter_params: list[object] = []
+        needle = q.strip()
+        if population_tier:
+            filters.append("a.population_tier=?")
+            filter_params.append(population_tier)
+        if needle:
+            escaped = (needle.replace("\\", "\\\\")
+                       .replace("%", "\\%")
+                       .replace("_", "\\_"))
+            pattern = f"%{escaped}%"
+            searchable = (
+                "a.name", "a.occupation", "a.role", "a.kind", "a.health",
+                "a.population_tier", "r.region_key",
+            )
+            filters.append("(" + " OR ".join(
+                f"COALESCE({field}, '') LIKE ? ESCAPE '\\'"
+                for field in searchable) + ")")
+            filter_params.extend([pattern] * len(searchable))
+        filter_sql = " WHERE " + " AND ".join(filters) if filters else ""
+
+        # Keep the original no-parameter array contract for integrations while
+        # exposing a bounded cursor page to the 1,000-agent observatory.
+        paged = bool(limit is not None or after_id is not None or needle or population_tier)
+        if not paged:
+            rows = store.query("SELECT " + columns + base + " ORDER BY a.id")
+            return [dict(row) for row in rows]
+
+        page_limit = int(limit or 100)
+        page_filters = list(filters)
+        page_params = list(filter_params)
+        if after_id is not None:
+            page_filters.append("a.id>?")
+            page_params.append(after_id)
+        page_where = " WHERE " + " AND ".join(page_filters) if page_filters else ""
         rows = store.query(
-            "SELECT id, name, kind, role, occupation, age, health, alive, retired, employer_id "
-            "FROM agents ORDER BY id")
-        return [dict(r) for r in rows]
+            "SELECT " + columns + base + page_where
+            + " ORDER BY a.id LIMIT ?",
+            (*page_params, page_limit + 1),
+        )
+        items = [dict(row) for row in rows[:page_limit]]
+        matched_total = int(store.scalar(
+            "SELECT COUNT(*)" + base + filter_sql,
+            filter_params,
+            default=0,
+        ))
+        population_total = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
+        return {
+            "items": items,
+            "total": matched_total,
+            "population_total": population_total,
+            "limit": page_limit,
+            "next_after_id": items[-1]["id"] if len(rows) > page_limit else None,
+        }
+
+    def agent_output_page(
+        agent_id: int,
+        kind: Literal["model", "action"],
+        limit: int,
+        before_id: int | None = None,
+    ) -> dict:
+        cursor_clause = " AND id<?" if before_id is not None else ""
+        params = [agent_id]
+        if before_id is not None:
+            params.append(before_id)
+        params.append(limit + 1)
+        if kind == "model":
+            rows = store.query(
+                "SELECT * FROM llm_calls WHERE agent_id=?" + cursor_clause
+                + " ORDER BY id DESC LIMIT ?", params)
+            items = []
+            for row in rows[:limit]:
+                item = {
+                    "id": int(row["id"]),
+                    "tick": int(row["tick"]),
+                    "role": row["role"],
+                    "purpose": row["purpose"],
+                    "provider": row["provider"],
+                    "model": row["model"],
+                    "cached": bool(row["cached"]),
+                    "cost_usd": float(row["cost_usd"] or 0.0),
+                    "latency_ms": row["latency_ms"],
+                }
+                if not hosted_safe:
+                    item.update({
+                        "request": load_json(row["request_json"], {}),
+                        "response": load_json(row["response_json"], {}),
+                    })
+                items.append(item)
+        else:
+            rows = store.query(
+                "SELECT * FROM action_proposals WHERE actor_id=?" + cursor_clause
+                + " ORDER BY id DESC LIMIT ?", params)
+            items = [{
+                "id": int(row["id"]),
+                "tick": int(row["tick"]),
+                "action_type": row["action_type"],
+                "validation_status": row["validation_status"],
+                "model_call_id": row["model_call_id"],
+                "rationale": row["rationale_summary"],
+                "payload": load_json(row["payload_json"], {}),
+                "evidence_event_ids": load_json(
+                    row["evidence_event_ids_json"], []),
+                "result": load_json(row["result_json"], None),
+            } for row in rows[:limit]]
+        return {
+            "kind": kind,
+            "items": items,
+            "next_before_id": items[-1]["id"] if len(rows) > limit else None,
+        }
+
+    def agent_output_counts(agent_id: int) -> dict:
+        row = store.query_one(
+            "SELECT "
+            "(SELECT COUNT(*) FROM llm_calls WHERE agent_id=?) AS model_calls, "
+            "(SELECT COUNT(*) FROM action_proposals WHERE actor_id=?) AS actions, "
+            "(SELECT COUNT(*) FROM action_proposals WHERE actor_id=? "
+            " AND validation_status='accepted') AS accepted_actions, "
+            "(SELECT COUNT(*) FROM action_proposals WHERE actor_id=? "
+            " AND validation_status='rejected') AS rejected_actions, "
+            "(SELECT COUNT(*) FROM action_proposals WHERE actor_id=? "
+            " AND model_call_id IS NULL) AS deterministic_actions, "
+            "(SELECT COUNT(*) FROM messages WHERE agent_id=?) AS messages, "
+            "(SELECT COUNT(*) FROM memories WHERE agent_id=?) AS memories, "
+            "(SELECT COUNT(*) FROM events WHERE subject_type='agent' AND subject_id=? "
+            " AND kind IN ('belief_updated','belief_update_normalized',"
+            "'belief_update_rejected')) AS belief_updates, "
+            "(SELECT COUNT(*) FROM information_items WHERE author_agent_id=?) "
+            " AS authored_information_items",
+            (agent_id,) * 9,
+        )
+        return {key: int(row[key] or 0) for key in row.keys()}
 
     @app.get("/api/agents/{agent_id}")
     async def agent_detail(agent_id: int):
@@ -295,21 +444,8 @@ def create_app(world: World, *, served_ticks: int | None = None,
             "ORDER BY id DESC LIMIT 30", (agent_id,))]
         shares = [dict(r) for r in store.query(
             "SELECT firm_id, qty FROM shares WHERE holder_type='agent' AND holder_id=?", (agent_id,))]
-        decisions = []
-        for r in store.query(
-                "SELECT * FROM llm_calls WHERE agent_id=? AND purpose IN "
-                "('decision','citizen','founder','credit_officer','central_banker') "
-                "ORDER BY id DESC LIMIT 10", (agent_id,)):
-            decision = {
-                "tick": r["tick"], "purpose": r["purpose"], "model": r["model"],
-                "cost_usd": r["cost_usd"],
-            }
-            if not hosted_safe:
-                decision.update({
-                    "request": load_json(r["request_json"], {}),
-                    "response": load_json(r["response_json"], {}),
-                })
-            decisions.append(decision)
+        model_outputs = agent_output_page(agent_id, "model", 20)
+        actions = agent_output_page(agent_id, "action", 20)
         persona = {k: load_json(a[k], None) for k in
                    ("personality_json", "media_diet_json", "cadence_json")}
         calibration_event = store.query_one(
@@ -333,8 +469,27 @@ def create_app(world: World, *, served_ticks: int | None = None,
         return {"agent": dict(a), "persona": persona, "accounts": accounts, "loans": loans,
                 "beliefs": beliefs, "belief_history": belief_history,
                 "memories": memories, "shares": shares,
-                "recent_decisions": decisions,
+                # Keep the established key for API compatibility while widening
+                # it to every model purpose, not just five historical roles.
+                "recent_decisions": model_outputs["items"],
+                "recent_actions": actions["items"],
+                "output_counts": agent_output_counts(agent_id),
+                "output_cursors": {
+                    "model": model_outputs["next_before_id"],
+                    "action": actions["next_before_id"],
+                },
                 "calibration_profile": calibration_profile}
+
+    @app.get("/api/agents/{agent_id}/outputs")
+    async def agent_outputs(
+        agent_id: int,
+        kind: Literal["model", "action"] = "model",
+        limit: int = Query(default=20, ge=1, le=100),
+        before_id: Optional[int] = Query(default=None, ge=1),
+    ):
+        if not store.query_one("SELECT id FROM agents WHERE id=?", (agent_id,)):
+            raise HTTPException(status_code=404, detail="agent not found")
+        return agent_output_page(agent_id, kind, limit, before_id)
 
     @app.get("/api/banks")
     async def banks():

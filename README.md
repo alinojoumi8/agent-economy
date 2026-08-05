@@ -123,11 +123,17 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --require-hashes -r requirements.lock
 
-# Free, deterministic, no API key
+# Free core-engine smoke world, deterministic and provider-free
 python run.py --config runs/base.yaml
+
+# Free full Observatory world: regions, contracts, legal matters, and politics
+python run.py --config runs/v2-institutional-rehearsal.yaml
 ```
 
 Open <http://127.0.0.1:8000>. The world starts paused; press **Run** or **Step**.
+Use the institutional rehearsal when validating the Living economy map or the
+legal and political panels; the base profile is intentionally a smaller core
+engine smoke world.
 
 To play one citizen through the same validator and ledger used by autonomous
 agents, start the provider-free participant sandbox instead:
@@ -197,7 +203,8 @@ baseline and fails closed when history is missing.
 |---|---|---|
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
-| `runs/production.yaml` | Approx. 100-agent live world | MiniMax citizens/founders; Kimi institutions/Oracle |
+| `runs/v2-live-minimax.yaml` | Default 1,000-agent live world | MiniMax M3 for the 100-agent core/shared services; deterministic periphery; $150 cap |
+| `runs/production.yaml` | Approx. 100-agent live world | MiniMax M3 for every model-eligible call |
 | `runs/v2-spec-closure-rehearsal.yaml` | Five-tick semantics-7 closure fixture | Scripted, free, deterministic |
 | `runs/v2-spec-closure-live.yaml` | Five-tick bounded semantics-7 pilot | MiniMax persona/strategic roles; scripted background; $1 cap |
 | `runs/r21-real-us.yaml` | SCF/SUSB calibrated fictional genesis | Scripted, free, deterministic |
@@ -214,16 +221,16 @@ Provider configs select `prompt_cache_mode` from `off`,
 
 ```powershell
 Copy-Item .env.example .env
-# Add MINIMAX_API_KEY and KIMI_API_KEY locally; never commit .env.
+# Add MINIMAX_API_KEY locally; never commit .env.
 
-python run.py --config runs/production.yaml --preflight
-python run.py --config runs/production.yaml --preflight-live
-python run.py --config runs/production.yaml
+python run.py --preflight
+python run.py --preflight-live --approve-live-inference
+python run.py --serve --approve-live-inference
 ```
 
 The preflight commands validate configuration and provider model catalogs; they
-do not request chat completions. Paid acceptance requires the additional,
-explicit `--approve-live-inference` flag. Read the
+do not request chat completions. Every live run requires the explicit
+`--approve-live-inference` flag. Read the
 [operator runbook](docs/operator-runbook.md) before starting it.
 
 ## Resume, replay, and reports

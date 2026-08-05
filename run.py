@@ -37,7 +37,7 @@ from observability import configure_logging, get_logger, log_event as operationa
 from run_config import load_config
 
 DATA_DIR = Path("data/runs")
-DEFAULT_CONFIG = "runs/production.yaml"
+DEFAULT_CONFIG = "runs/v2-live-minimax.yaml"
 logger = get_logger("cli")
 REPLAY_INPUT_TABLES = (
     "dataset_manifests",
@@ -84,6 +84,211 @@ def _restore_replay_inputs(store: Store, inputs: dict[str, list[dict]]) -> None:
     store.commit()
 
 
+def _hydrate_resumed_world(world: World, meta, config: dict) -> None:
+    """Restore persisted Observatory lifecycle state without reviving a task."""
+    persisted = str(meta["status"] or "paused")
+    # A process-local task cannot survive a restart. Treat a stale running
+    # marker as paused while retaining all completed tick data.
+    world.status = "paused" if persisted == "running" else persisted
+    if world.status != persisted:
+        world.store.set_meta(status=world.status)
+        world.store.commit()
+    if world.status == "finished":
+        report = Path(str(config.get("report_dir", "reports/out"))) / (
+            f"run_{meta['run_id']}_t{int(meta['tick'])}.html")
+        if report.exists():
+            world.last_report_path = str(report)
+
+
+LLM_OUTPUT_BUDGET_KEYS = (
+    "reporter_max_tokens",
+    "newsroom_max_tokens",
+    "conversation_max_tokens",
+)
+
+
+def activate_llm_output_budgets_for_run(world: World, profile: dict) -> dict:
+    """Persist a forward-only output-budget upgrade for a completed run tick."""
+    stored_llm = world.config.setdefault("llm", {})
+    profile_llm = profile.get("llm", {}) or {}
+    stored_contract = stored_llm.get("route_contract")
+    profile_contract = profile_llm.get("route_contract")
+    if stored_contract != profile_contract:
+        raise RuntimeError(
+            "output-budget profile route contract does not match the stored run")
+
+    budgets = {}
+    for key in LLM_OUTPUT_BUDGET_KEYS:
+        if key not in profile_llm or int(profile_llm[key]) <= 0:
+            raise ValueError(
+                f"output-budget profile requires a positive llm.{key}")
+        budgets[key] = int(profile_llm[key])
+
+    existing_activation = stored_llm.get("output_budget_activation_tick")
+    existing_budgets = {key: stored_llm.get(key) for key in LLM_OUTPUT_BUDGET_KEYS}
+    if existing_activation is not None:
+        if existing_budgets != budgets:
+            raise RuntimeError(
+                "stored output-budget activation already uses different values")
+        return {"activation_tick": int(existing_activation), **budgets}
+    if all(existing_budgets[key] == budgets[key] for key in LLM_OUTPUT_BUDGET_KEYS):
+        # The profile was present at genesis, so no forward boundary is needed.
+        return {"activation_tick": 1, **budgets}
+    if any(value is not None for value in existing_budgets.values()):
+        raise RuntimeError(
+            "stored run has unversioned output budgets; refusing a partial upgrade")
+
+    meta = world.store.get_meta()
+    if meta["active_tick"] is not None:
+        raise RuntimeError(
+            "output budgets can only be activated at a completed tick boundary")
+    activation_tick = int(meta["tick"]) + 1
+    stored_llm.update(budgets)
+    stored_llm["output_budget_activation_tick"] = activation_tick
+    world.store.set_meta(config_json=json.dumps(world.config, sort_keys=True))
+    world.store.log_event(
+        int(meta["tick"]),
+        "llm_output_budget_activation",
+        {"activation_tick": activation_tick, **budgets},
+        phase="OPERATOR",
+        importance=2.0,
+    )
+    world.store.commit()
+    return {"activation_tick": activation_tick, **budgets}
+
+
+def activate_supply_recovery_for_run(
+        world: World, *, target_headcount: int) -> dict:
+    """Persist a replay-safe, forward-only supply/labor recovery boundary."""
+    if int(world.config.get("engine_semantics_version", 1)) < 7:
+        raise ValueError("supply recovery requires engine semantics 7")
+    target = max(1, int(target_headcount))
+    firms = world.config.setdefault("firms", {})
+    behavior = world.config.setdefault("behavior", {})
+    workforce_tick = firms.get("workforce_recovery_activation_tick")
+    shopping_tick = behavior.get(
+        "inventory_aware_shopping_activation_tick")
+    existing_target = firms.get("workforce_recovery_target_headcount")
+    meta = world.store.get_meta()
+    active_tick = meta["active_tick"]
+    next_untouched_tick = (
+        int(active_tick) + 1
+        if active_tick is not None
+        else int(meta["tick"]) + 1
+    )
+
+    if workforce_tick is not None or shopping_tick is not None:
+        if (
+            workforce_tick is None
+            or shopping_tick is None
+            or int(workforce_tick) != int(shopping_tick)
+            or existing_target is None
+        ):
+            raise RuntimeError("stored supply recovery activation is incomplete")
+        if int(existing_target) != target:
+            raise RuntimeError(
+                "supply recovery is already active with target headcount "
+                f"{int(existing_target)}")
+        activation_tick = int(workforce_tick)
+    else:
+        activation_tick = next_untouched_tick
+        firms["workforce_recovery_activation_tick"] = activation_tick
+        firms["workforce_recovery_target_headcount"] = target
+        behavior[
+            "inventory_aware_shopping_activation_tick"
+        ] = activation_tick
+
+    operational_tick_value = firms.get(
+        "workforce_recovery_operational_activation_tick")
+    advanced_fields = {
+        "recapitalization_tick": firms.get(
+            "workforce_recovery_recapitalization_tick"),
+        "batch_size": firms.get("workforce_recovery_batch_size"),
+        "excluded_sectors": firms.get(
+            "workforce_recovery_excluded_sectors"),
+        "capital_per_worker": firms.get(
+            "workforce_recovery_capital_per_worker_cents"),
+        "job_application_tick": behavior.get(
+            "job_application_aware_activation_tick"),
+    }
+    if operational_tick_value is None:
+        if any(value is not None for value in advanced_fields.values()):
+            raise RuntimeError(
+                "stored operational supply recovery activation is incomplete")
+        operational_tick = max(activation_tick, next_untouched_tick)
+        firms[
+            "workforce_recovery_operational_activation_tick"
+        ] = operational_tick
+        firms[
+            "workforce_recovery_recapitalization_tick"
+        ] = operational_tick
+        firms["workforce_recovery_batch_size"] = 4
+        firms["workforce_recovery_excluded_sectors"] = [
+            "health", "insurance"]
+        firms[
+            "workforce_recovery_capital_per_worker_cents"
+        ] = max(0, int(firms.get(
+            "opening_capital_per_worker_cents", 500_000)))
+        behavior[
+            "job_application_aware_activation_tick"
+        ] = operational_tick
+    else:
+        operational_tick = int(operational_tick_value)
+        if (
+            advanced_fields["recapitalization_tick"] is None
+            or int(advanced_fields["recapitalization_tick"]) != operational_tick
+            or advanced_fields["batch_size"] is None
+            or advanced_fields["excluded_sectors"] is None
+            or advanced_fields["capital_per_worker"] is None
+            or advanced_fields["job_application_tick"] is None
+            or int(advanced_fields["job_application_tick"]) != operational_tick
+        ):
+            raise RuntimeError(
+                "stored operational supply recovery activation is incomplete")
+
+    minimum_wage_value = firms.get(
+        "workforce_recovery_min_wage_cents")
+    wage_floor_tick_value = firms.get(
+        "workforce_recovery_wage_floor_activation_tick")
+    if minimum_wage_value is None and wage_floor_tick_value is None:
+        firms["workforce_recovery_min_wage_cents"] = 250_000
+        firms[
+            "workforce_recovery_wage_floor_activation_tick"
+        ] = max(operational_tick, next_untouched_tick)
+    elif minimum_wage_value is None or wage_floor_tick_value is None:
+        raise RuntimeError(
+            "stored workforce recovery wage floor is incomplete")
+    elif int(wage_floor_tick_value) < operational_tick:
+        raise RuntimeError(
+            "workforce recovery wage floor predates operational activation")
+
+    persisted_config = json.loads(meta["config_json"])
+    if persisted_config != world.config:
+        world.store.set_meta(
+            config_json=json.dumps(world.config, sort_keys=True))
+        world.store.commit()
+
+    expired_incompatible_offers = (
+        world.economy.labor.expire_incompatible_offers(
+            int(meta["tick"]), phase="FINALIZE"))
+    if expired_incompatible_offers:
+        world.store.commit()
+        world.checkpoint(
+            int(meta["tick"]),
+            reason="supply_recovery_currency_cleanup",
+        )
+
+    # ContextBuilder caches activation thresholds at construction. Keep the
+    # already-open live process aligned with the newly persisted config.
+    world.runtime.ctx.inventory_aware_shopping_activation_tick = (
+        activation_tick)
+    return {
+        "activation_tick": activation_tick,
+        "target_headcount": target,
+        "operational_activation_tick": operational_tick,
+    }
+
+
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +299,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         try:
-            stored_cfg = json.loads(store.get_meta()["config_json"])
+            meta = store.get_meta()
+            stored_cfg = json.loads(meta["config_json"])
             # Markerless databases predate completed-day finalization and must keep
             # their original phase/metric/prompt behavior for exact replay.
             stored_cfg["engine_semantics_version"] = semantics_version(
@@ -104,6 +310,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
         world = World(store, stored_cfg)
+        _hydrate_resumed_world(world, meta, stored_cfg)
         world.restore_prng_state()
         return store, world, run_id
     if replay:
@@ -392,10 +599,36 @@ def main() -> None:
     configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
-                    help="world config (default: locked MiniMax/Kimi production profile)")
+                    help="world config (default: 1,000-agent MiniMax M3 live profile)")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
+    ap.add_argument(
+        "--activate-supply-recovery",
+        action="store_true",
+        help=(
+            "only with --resume/--fork: activate inventory-aware shopping and "
+            "workforce recovery after the current partial tick"
+        ),
+    )
+    ap.add_argument(
+        "--supply-recovery-target-headcount",
+        type=int,
+        default=None,
+        help=(
+            "with --activate-supply-recovery: forward-only recovery headcount "
+            "per firm (default: persisted workforce_recovery_target_headcount, "
+            "else 80). Never aliases genesis firms.target_headcount."
+        ),
+    )
+    ap.add_argument(
+        "--activate-llm-output-budgets",
+        action="store_true",
+        help=(
+            "only with --resume/--fork: persist the configured reporter, "
+            "newsroom, and conversation output budgets at the next tick"
+        ),
+    )
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
     ap.add_argument("--fork", default=None,
                     help="fork a what-if branch: checkpoint .db path or RUNID@TICK")
@@ -438,6 +671,14 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
+    if args.activate_supply_recovery and not (args.resume or args.fork):
+        ap.error("--activate-supply-recovery requires --resume or --fork")
+    if args.activate_supply_recovery and args.replay:
+        ap.error("--activate-supply-recovery cannot modify a replay")
+    if args.activate_llm_output_budgets and not (args.resume or args.fork):
+        ap.error("--activate-llm-output-budgets requires --resume or --fork")
+    if args.activate_llm_output_budgets and args.replay:
+        ap.error("--activate-llm-output-budgets cannot modify a replay")
     mode = ("dataset_refresh" if args.refresh_datasets else
             "dataset_verify" if args.verify_datasets else
             "counterfactual" if args.counterfactual else
@@ -543,6 +784,40 @@ def main() -> None:
     if args.fork:
         args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
     store, world, run_id = open_run(config, args.resume, args.replay)
+    if args.activate_supply_recovery:
+        try:
+            firms_cfg = world.config.get("firms", {}) or {}
+            if args.supply_recovery_target_headcount is not None:
+                recovery_target = int(args.supply_recovery_target_headcount)
+            elif firms_cfg.get("workforce_recovery_target_headcount") is not None:
+                recovery_target = int(
+                    firms_cfg["workforce_recovery_target_headcount"])
+            else:
+                # Genesis target_headcount is the pre-recovery staffing floor
+                # (often 3). Recovery defaults to the flagship 80-worker target.
+                recovery_target = 80
+            recovery = activate_supply_recovery_for_run(
+                world,
+                target_headcount=recovery_target,
+            )
+        except BaseException:
+            _close_run(world, store)
+            raise
+        print(
+            "[agent-economy] supply recovery activates at tick "
+            f"{recovery['activation_tick']} with target headcount "
+            f"{recovery['target_headcount']}"
+        )
+    if args.activate_llm_output_budgets:
+        try:
+            output_budgets = activate_llm_output_budgets_for_run(world, config)
+        except BaseException:
+            _close_run(world, store)
+            raise
+        print(
+            "[agent-economy] LLM output budgets activate at tick "
+            f"{output_budgets['activation_tick']}"
+        )
     if not args.replay:
         try:
             require_live_inference_approval(

@@ -239,7 +239,9 @@ def test_semantics7_context_exposes_declared_savings_and_target_without_jobs(sto
     assert context["career_day"] is False
     _, prompt = builder.render_prompt(context)
     assert prompt.count("[STATE]") == 1
-    assert "[RETIREMENT LIQUIDITY] savings 200000c" in prompt
+    assert (
+        "[RETIREMENT LIQUIDITY] savings_balance_cents="
+        "200000 cents (= 2000.00 currency units)" in prompt)
 
     # The savings addition must not disturb the historical local-currency
     # state branch when no retirement fields are present.

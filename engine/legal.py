@@ -34,7 +34,10 @@ OBLIGATION_CLAUSE_TYPES = {
     "covenant", "closing_condition", "indemnity",
 }
 AVAILABLE_REMEDIES = {"none", "dismissal", "damages", "terminate_contract", "injunction"}
-DECISION_ROLES = {"judge", "regulator", "competition_regulator", "gov_official"}
+DECISION_ROLES = {
+    "judge", "regulator", "competition_regulator", "labor_regulator",
+    "gov_official",
+}
 
 
 @dataclass(frozen=True)
@@ -463,7 +466,17 @@ class LegalInstitution:
             return {"ok": False, "reason": "only a judge or authorized regulator may decide"}
         matter_id = int(decision.get("matter_id", 0))
         matter = self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (matter_id,))
-        if not matter or matter["status"] not in {"filed", "pleading", "hearing"}:
+        response_due_tick = (
+            matter["response_due_tick"]
+            if matter is not None
+            else None
+        )
+        ready_status = bool(matter and (
+            matter["status"] in {"filed", "pleading", "hearing"}
+            or (matter["status"] == "settlement_offered"
+                and response_due_tick is not None
+                and tick >= int(response_due_tick))))
+        if not ready_status:
             return {"ok": False, "reason": "matter is not ready for decision"}
         if self.store.query_one("SELECT 1 FROM legal_decisions WHERE matter_id=?", (matter_id,)):
             return {"ok": False, "reason": "matter already has a decision"}

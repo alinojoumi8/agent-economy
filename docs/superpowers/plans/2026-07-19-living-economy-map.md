@@ -86,6 +86,39 @@ test("aggregateFlows groups routes and preserves status counts", () => {
   ]);
 });
 
+test("aggregateFlows bounds recent rows and rejects malformed numeric fields", () => {
+  const flows = [
+    {
+      id: 0, source_region_id: 1, target_region_id: 2,
+      kind: "trade", magnitude: 1_000, status: "completed",
+    },
+    ...Array.from({ length: 99 }, (_, index) => ({
+      id: index + 1, source_region_id: 1, target_region_id: 2,
+      kind: "trade", magnitude: 1, status: "completed",
+    })),
+    {
+      id: 100, source_region_id: 1, target_region_id: 2,
+      kind: "trade", magnitude: null, status: "completed",
+    },
+  ];
+
+  assert.deepEqual(aggregateFlows(flows, regionIds), [{
+    id: "trade:1:2",
+    kind: "trade",
+    source_region_id: 1,
+    target_region_id: 2,
+    magnitude: 99,
+    count: 99,
+    statuses: { completed: 99 },
+  }]);
+  assert.deepEqual(aggregateFlows([{
+    source_region_id: null,
+    target_region_id: 1,
+    kind: "trade",
+    magnitude: 7,
+  }], new Set([0, 1])), []);
+});
+
 test("normalizeMapData clamps coordinates and derives regional totals", () => {
   const scene = normalizeMapData({
     enabled: true,
@@ -153,9 +186,15 @@ Create `dashboard/src/components/livingEconomyMapModel.js` with:
 
 ```js
 const asArray = value => Array.isArray(value) ? value : [];
-const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const finite = (value, fallback = 0) => {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return fallback;
+  return Number.isFinite(Number(value)) ? Number(value) : fallback;
+};
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
-const numericId = value => Number.isFinite(Number(value)) ? Number(value) : null;
+const numericId = value => {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+};
 
 function specializations(region) {
   if (Array.isArray(region.specialization)) return region.specialization.map(String);
@@ -171,7 +210,7 @@ export function aggregateFlows(flows, regionIds) {
   const allowed = regionIds instanceof Set ? regionIds : new Set();
   const grouped = new Map();
 
-  for (const flow of asArray(flows)) {
+  for (const flow of asArray(flows).slice(-100)) {
     const kind = flow?.kind === "trade" || flow?.kind === "migration" ? flow.kind : null;
     const sourceId = numericId(flow?.source_region_id);
     const targetId = numericId(flow?.target_region_id);
@@ -179,7 +218,9 @@ export function aggregateFlows(flows, regionIds) {
 
     const id = `${kind}:${sourceId}:${targetId}`;
     const status = String(flow?.status || "unknown");
-    const magnitude = Math.max(0, finite(flow?.magnitude, 1));
+    const measuredMagnitude = finite(flow?.magnitude, null);
+    if (measuredMagnitude === null) continue;
+    const magnitude = Math.max(0, measuredMagnitude);
     const route = grouped.get(id) || {
       id,
       kind,

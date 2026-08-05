@@ -1,6 +1,7 @@
 """P1 features: government fiscal layer + elections (R12), VC track (R13),
 health economy (R17). Engine-level units + one world integration run."""
 import asyncio
+import json
 
 from engine.government import Government
 from engine.ledger import Leg, SYS_EXTERNAL, SYS_GOV
@@ -39,6 +40,35 @@ def test_payroll_withholds_income_tax(economy):
     assert '"tax_cents": 20000' in ev["payload_json"]
     ok, diag = economy.ledger.reconcile()
     assert ok, diag
+
+
+def test_missed_wage_event_preserves_employment_and_amount(economy):
+    bank = make_bank(economy)
+    founder, _ = make_agent(economy, bank, "Founder", 50_000)
+    worker, _ = make_agent(economy, bank, "Worker", 0)
+    firm_id = economy.firms.found_firm(0, founder, "InsolventCo", "services")
+    employment_id = economy.store.insert(
+        "employments",
+        firm_id=firm_id,
+        agent_id=worker,
+        title="worker",
+        wage_cents=125_000,
+        start_tick=0,
+        status="active",
+        pay_interval_ticks=30,
+        next_pay_tick=30,
+    )
+
+    economy.firms.process_payroll(30)
+
+    event = economy.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='wage_missed'")
+    assert json.loads(event["payload_json"]) == {
+        "firm_id": firm_id,
+        "agent_id": worker,
+        "employment_id": employment_id,
+        "wage_cents": 125_000,
+    }
 
 
 def test_unemployment_benefits_flow_to_jobless_only(economy):
