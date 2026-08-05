@@ -253,7 +253,7 @@ async def _resolve_narrative(store: Store, world=None) -> tuple[str, dict]:
     report_config = config.get("reports", {}) if isinstance(config, dict) else {}
     if not isinstance(report_config, dict):
         report_config = {}
-    max_tokens = max(128, min(1200, int(report_config.get("narrative_max_tokens", 600))))
+    max_tokens = max(128, min(4096, int(report_config.get("narrative_max_tokens", 600))))
     timeout_s = max(0.1, min(120.0, float(
         report_config.get("narrative_timeout_s", 45.0))))
     summary, summary_json = _bounded_summary(store)

@@ -6,12 +6,14 @@ from run_config import load_config
 
 
 def test_live_minimax_reserves_output_space_for_short_agent_contracts():
-    llm = load_config("runs/v2-live-minimax.yaml")["llm"]
+    config = load_config("runs/v2-live-minimax.yaml")
+    llm = config["llm"]
 
     assert llm.get("founder_max_tokens", 0) >= 4096
     assert llm.get("reporter_max_tokens", 0) >= 1200
     assert llm.get("newsroom_max_tokens", 0) >= 1000
     assert llm.get("conversation_max_tokens", 0) >= 600
+    assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
 def test_minimax_only_profile_reserves_reasoning_room_for_agent_decisions():
@@ -31,11 +33,13 @@ def test_founder_contract_can_use_a_larger_budget_than_ordinary_decisions():
 
 
 def test_minimax_only_profile_reserves_reasoning_room_for_short_contracts():
-    llm = load_config("runs/hermes-minimax-m3-only-live.yaml")["llm"]
+    config = load_config("runs/hermes-minimax-m3-only-live.yaml")
+    llm = config["llm"]
 
     assert llm.get("reporter_max_tokens", 0) >= 1200
     assert llm.get("newsroom_max_tokens", 0) >= 1000
     assert llm.get("conversation_max_tokens", 0) >= 600
+    assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
 def test_output_budget_activation_is_forward_only_persisted_and_idempotent():

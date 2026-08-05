@@ -347,6 +347,46 @@ def test_report_narrative_timeout_is_bounded_and_operational(tmp_path):
     world.store.close()
 
 
+def test_configured_report_budget_allows_reasoning_model_to_finish_json(tmp_path):
+    world = _world(tmp_path, "reasoning-budget.db")
+    config = load_json(world.store.get_meta()["config_json"], {})
+    config["reports"]["narrative_max_tokens"] = 1600
+    world.store.execute(
+        "UPDATE run_meta SET config_json=?", (json.dumps(config),))
+    world.store.commit()
+
+    class ReasoningBudgetAdapter:
+        async def complete(
+            self, _model, _messages, *, max_tokens=700, **_kwargs,
+        ):
+            if max_tokens < 1600:
+                return AdapterResult(
+                    text='{"narrative":"truncated',
+                    in_tokens=40,
+                    out_tokens=max_tokens,
+                    raw={"choices": [{"finish_reason": "length"}]},
+                )
+            return AdapterResult(
+                text='{"narrative":"Reasoning budget completed the JSON contract."}',
+                in_tokens=40,
+                out_tokens=20,
+                raw={"choices": [{"finish_reason": "stop"}]},
+            )
+
+    _install_report_route(world, ReasoningBudgetAdapter())
+    report_path = Path(asyncio.run(generate_report_async(
+        world.store, world, out_dir=str(tmp_path / "reasoning-budget"))))
+    event = world.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='report_generated' "
+        "ORDER BY id DESC LIMIT 1")
+    provenance = load_json(event["payload_json"], {})["narrative"]
+
+    assert "Reasoning budget completed" in report_path.read_text(encoding="utf-8")
+    assert provenance["source"] == "llm"
+    assert provenance["fallback"] is False
+    world.store.close()
+
+
 def test_failed_report_repair_persists_and_meters_the_initial_completion(tmp_path):
     world = _world(tmp_path, "repair-failure.db")
 
