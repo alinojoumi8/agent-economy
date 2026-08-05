@@ -24,9 +24,27 @@ def test_workspace_is_separate_versioned_audited_and_redacted(tmp_path):
         created["id"], owner_id="alice", expected_version=1,
         title="Causal trace v2", layout={"left": 320})
     assert updated["version"] == 2
+    audit_count_before_conflict = workspace.conn.execute(
+        "SELECT COUNT(*) FROM operator_audit").fetchone()[0]
     with pytest.raises(WorkspaceConflict, match="version conflict"):
         workspace.update_investigation(
             created["id"], owner_id="alice", expected_version=1, title="stale")
+    current = workspace.get_investigation(created["id"], owner_id="alice")
+    assert (current["title"], current["version"]) == ("Causal trace v2", 2)
+    assert workspace.conn.execute(
+        "SELECT COUNT(*) FROM operator_audit").fetchone()[0] == audit_count_before_conflict
+
+    copied = workspace.create_investigation(
+        owner_id=current["owner_id"], title="Local draft", run_id=current["run_id"],
+        fork_id=current["fork_id"], pinned_tick=current["pinned_tick"],
+        query=current["query"], layout=current["layout"],
+    )
+    assert copied["id"] != current["id"]
+    assert copied["version"] == 1
+    for field in ("owner_id", "run_id", "fork_id", "pinned_tick", "query", "layout"):
+        assert copied[field] == current[field]
+    assert copied["items"] == []
+    assert copied["hypotheses"] == []
     with pytest.raises(WorkspaceNotFound):
         workspace.get_investigation(created["id"], owner_id="bob")
 

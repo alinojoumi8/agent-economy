@@ -44,6 +44,7 @@ export function openInvestigationConflict(state, record) {
     conflict: {
       server: record,
       submittedVersion: state.server.version,
+      open: true,
     },
     error: "",
   };
@@ -58,5 +59,27 @@ export function investigationUpdatePayload(state) {
   return {
     expected_version: state.server.version,
     title: state.titleDraft.trim(),
+  };
+}
+
+export function continueInvestigationConflict(state) {
+  if (!state.conflict) return state;
+  return { ...state, conflict: { ...state.conflict, open: false } };
+}
+
+export function reopenInvestigationConflict(state) {
+  if (!state.conflict) return state;
+  return { ...state, conflict: { ...state.conflict, open: true } };
+}
+
+export function saveInvestigationAsNewPayload(state) {
+  if (!state.conflict) throw new Error("No investigation conflict is available.");
+  const current = state.conflict.server;
+  return {
+    title: state.titleDraft.trim(),
+    fork_id: current.fork_id ?? null,
+    pinned_tick: current.pinned_tick ?? null,
+    query: current.query || {},
+    layout: current.layout || {},
   };
 }

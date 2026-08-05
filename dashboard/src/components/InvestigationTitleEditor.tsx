@@ -6,6 +6,7 @@ type InvestigationTitleEditorProps = {
   serverTitle: string;
   version: number;
   pending: boolean;
+  blocked?: boolean;
   error: string;
   inputRef?: RefObject<HTMLInputElement | null>;
   onChange(title: string): void;
@@ -14,13 +15,13 @@ type InvestigationTitleEditorProps = {
 };
 
 export function InvestigationTitleEditor({
-  title, serverTitle, version, pending, error, inputRef, onChange, onSave, onCancel,
+  title, serverTitle, version, pending, blocked = false, error, inputRef, onChange, onSave, onCancel,
 }: InvestigationTitleEditorProps) {
   const validation = investigationTitleError(title);
   const unchanged = title === serverTitle;
   return <form className="world-os-title-editor" onSubmit={event => {
     event.preventDefault();
-    if (!validation && !unchanged && !pending) onSave();
+    if (!validation && !unchanged && !pending && !blocked) onSave();
   }}>
     <label htmlFor="investigation-title">Investigation title</label>
     <div className="world-os-title-editor__row">
@@ -29,12 +30,14 @@ export function InvestigationTitleEditor({
         aria-invalid={Boolean(validation || error)}
         onChange={event => onChange(event.target.value)} />
       <button className="button button-primary" type="submit"
-        disabled={Boolean(validation) || unchanged || pending}>Save</button>
+        disabled={Boolean(validation) || unchanged || pending || blocked}>Save</button>
       <button className="button" type="button" disabled={unchanged || pending}
         onClick={onCancel}>Cancel</button>
     </div>
     <div id="investigation-title-guidance" className={validation || error ? "world-os-form-error" : "world-os-form-guidance"} role={error ? "alert" : undefined}>
-      {error || validation || `Saved as version ${version}. Titles are limited to 160 characters.`}
+      {error || validation || (blocked
+        ? "Resolve the server version conflict before saving this draft."
+        : `Saved as version ${version}. Titles are limited to 160 characters.`)}
     </div>
   </form>;
 }

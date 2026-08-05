@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
 
 import { workspaceErrorMessage } from "../src/app/api.ts";
 import {
@@ -12,6 +15,7 @@ import {
   investigationUpdatePayload,
   openInvestigationConflict,
   reloadInvestigationConflict,
+  saveInvestigationAsNewPayload,
 } from "../src/workspaces/investigationState.js";
 
 test("workspace API preserves HTTP status without exposing response internals", async () => {
@@ -89,5 +93,51 @@ test("investigation title editor submits the authoritative expected version", as
   assert.deepEqual(investigationUpdatePayload(state), {
     expected_version: 1,
     title: "Local draft",
+  });
+});
+
+test("version conflict renders explicit recovery without a hidden retry", async () => {
+  const vite = await createServer({
+    appType: "custom", logLevel: "silent", server: { middlewareMode: true },
+  });
+  try {
+    const { InvestigationConflictDialog } = await vite.ssrLoadModule(
+      "/src/components/InvestigationConflictDialog.tsx",
+    );
+    const markup = renderToStaticMarkup(React.createElement(InvestigationConflictDialog, {
+      draftTitle: "Local draft", serverTitle: "Remote title", serverVersion: 2,
+      pending: false, onReload: () => {}, onSaveAsNew: () => {}, onContinue: () => {},
+    }));
+    assert.match(markup, /Your draft:[^<]*<[^>]*>Local draft/);
+    assert.match(markup, /Server version 2:[^<]*<[^>]*>Remote title/);
+    assert.match(markup, /Reload server version/);
+    assert.match(markup, /Save draft as new investigation/);
+    assert.match(markup, /Continue editing/);
+  } finally {
+    await vite.close();
+  }
+
+  const workspaceSource = await readFile(
+    new URL("../src/workspaces/InvestigationsWorkspace.tsx", import.meta.url), "utf8",
+  );
+  assert.match(workspaceSource, /reason instanceof WorkspaceApiError/);
+  assert.match(workspaceSource, /reason\.status === 409/);
+  assert.equal((workspaceSource.match(/method:\s*"PATCH"/g) || []).length, 1);
+});
+
+test("save-as-new copies context but never evidence or hypotheses", () => {
+  const server = {
+    id: "inv-1", title: "Remote title", version: 2, run_id: "run-demo",
+    fork_id: "fork-1", pinned_tick: 6, query: { relation: "cited" },
+    layout: { left: 320 }, items: [{ id: "item-private" }],
+    hypotheses: [{ id: "hyp-private" }],
+  };
+  let state = editInvestigationTitle(createInvestigationDraft({
+    ...server, title: "Original", version: 1,
+  }), "Local draft");
+  state = openInvestigationConflict(state, server);
+  assert.deepEqual(saveInvestigationAsNewPayload(state), {
+    title: "Local draft", fork_id: "fork-1", pinned_tick: 6,
+    query: { relation: "cited" }, layout: { left: 320 },
   });
 });
