@@ -627,6 +627,42 @@ python run.py --acceptance-report <RUN_ID> `
 The first command creates isolated treatment/control worlds. The second derives
 an evidence receipt from persisted run data without advancing the simulation.
 
+## Independent external connector evidence
+
+The external connector harness targets an already deployed HTTPS test tenant.
+It never creates a tenant, deploys infrastructure, or authorizes provider or
+hosting spend. Before each invocation, record the exact candidate commit/tree,
+hosted origin, tenant/run, independent signer, expected infrastructure cost,
+and receipt/source retention period. Approval is per connector; one checked
+line does not authorize any other line:
+
+- [ ] Independent MCP client, including OAuth and protected-resource discovery.
+- [ ] Hermes, including exactly three completed wakes and executed receipts.
+- [ ] OpenClaw, including exactly three completed wakes and executed receipts.
+- [ ] Independent Python client submit/read flow.
+- [ ] Independent TypeScript client submit/read flow.
+
+Put the process-only access credential and a cross-tenant isolation probe path
+in an ignored JSON file with mode `600`. The runner verifies the mode, refuses
+symlinks and loopback/private targets, revokes the credential after the test,
+and writes only public hashes and sanitized identifiers:
+
+```bash
+python scripts/run_external_connector_acceptance.py \
+  --connector independent_mcp \
+  --base-url https://HOSTED_TEST_ORIGIN \
+  --commit <CANDIDATE_COMMIT> --tree <CANDIDATE_TREE> \
+  --credential-file <IGNORED_MODE_600_JSON> \
+  --output benchmarks/receipts/release-v1/independent-mcp.json \
+  --signer-label <INDEPENDENT_SIGNER> \
+  --server-operator <SERVER_OPERATOR> \
+  --client-name <CLIENT_NAME> --client-version <CLIENT_VERSION>
+```
+
+Repeat only after separately approving the selected connector. A local mock,
+same-operator signer, failed revocation/isolation probe, short wake set, or
+receipt that contains credentials or private payloads is ineligible.
+
 ## Evidence retention
 
 For a release candidate, retain:
