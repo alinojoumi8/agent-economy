@@ -621,6 +621,40 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await expect(commandClose).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(reopenedCommand.getByLabel("Inline command note")).toBeFocused();
+  await reopenedCommand.evaluate(dialog => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-label", "Embedded evidence");
+    iframe.style.width = "40px";
+    iframe.style.height = "20px";
+    const details = document.createElement("details");
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.setAttribute("aria-label", "Evidence summary");
+    summary.textContent = "Evidence summary";
+    details.append(summary);
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.setAttribute("aria-label", "Audio evidence");
+    const video = document.createElement("video");
+    video.controls = true;
+    video.setAttribute("aria-label", "Video evidence");
+    video.style.width = "80px";
+    video.style.height = "40px";
+    dialog.append(iframe, details, audio, video);
+  });
+  await reopenedCommand.getByLabel("Inline command note").focus();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Embedded evidence")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Evidence summary")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Audio evidence")).toBeFocused();
+  await reopenedCommand.getByLabel("Audio evidence").evaluate(element => {
+    element.tabIndex = -1;
+  });
+  await reopenedCommand.getByLabel("Evidence summary").focus();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Video evidence")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 
@@ -671,6 +705,51 @@ test("modal focus predicate excludes hidden and fieldset-disabled controls", asy
     disabledDescendant: false,
     contentEditable: true,
   });
+});
+
+test("participant mutation failures render, recover controls, and reset across identity changes", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountParticipantHarness } = await import("/tests/e2e/fixtures/participantHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "participant-test-root";
+    document.body.append(container);
+    (window as any).__participantHarness = mountParticipantHarness(container, {
+      enabled: true,
+      active: true,
+      running: false,
+      completed_tick: 6,
+      next_tick: 7,
+      controlled_agent: {
+        id: 1, name: "Ada Tester", occupation: "engineer", health: "healthy",
+      },
+      action_catalog: [{ type: "rest", label: "Rest", enabled: true, fields: [] }],
+    });
+  });
+  const harness = page.locator("#participant-test-root");
+  const queue = harness.getByRole("button", { name: "Queue action for next day" });
+  await queue.click();
+  await expect(harness.getByRole("alert")).toContainText("queue rejected");
+  await expect(queue).toBeEnabled();
+
+  await page.evaluate(() => (window as any).__participantHarness.update({
+    controlled_agent: {
+      id: 2, name: "Grace Tester", occupation: "analyst", health: "healthy",
+    },
+  }));
+  await expect(harness.getByRole("alert")).toBeHidden();
+  await expect(harness.getByText("Grace Tester")).toBeVisible();
+
+  const release = harness.getByRole("button", { name: "Release citizen" });
+  await release.click();
+  await expect(harness.getByRole("alert")).toContainText("release rejected");
+  await expect(release).toBeEnabled();
+  await page.evaluate(() => (window as any).__participantHarness.update({ active: false }));
+  await expect(harness.getByRole("alert")).toBeHidden();
+  await expect(harness.getByText(/Take control/)).toBeVisible();
+
+  const requests = await page.evaluate(() => (window as any).__participantHarness.requests);
+  expect(requests).toEqual(["/api/participant/action", "/api/participant/release"]);
 });
 
 test("authorized entity search preserves fork and historical tick", async ({ page }) => {

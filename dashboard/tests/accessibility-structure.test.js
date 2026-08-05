@@ -43,5 +43,7 @@ test("city instrumentation keeps supporting copy inside each definition", () => 
 test("decorative metric sparklines do not duplicate accessible labels and values", () => {
   assert.match(macroSource, /className="mt-2 h-10" aria-hidden="true"/);
   assert.match(macroSource, /<AreaChart[^>]*accessibilityLayer=\{false\}/);
+  assert.match(macroSource, /const gradientPrefix = useId\(\)/);
+  assert.match(macroSource, /macroGradientId\(gradientPrefix, key\)/);
   assert.doesNotMatch(macroSource, /aria-label=\{`\$\{label\} history`\}/);
 });

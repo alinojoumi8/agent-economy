@@ -32,6 +32,10 @@ export function ParticipantPanel({ participant, act }) {
     setReasoning(participant?.queued_action?.reasoning || "");
   }, [descriptor, participant?.queued_action?.id]);
 
+  useEffect(() => {
+    setError("");
+  }, [enabled, active, participant?.controlled_agent?.id]);
+
   if (!enabled) return null;
 
   async function queue() {

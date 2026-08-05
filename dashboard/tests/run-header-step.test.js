@@ -38,11 +38,20 @@ test("all terminal and unknown run states fail closed across controls", async ()
     const { isTerminalRunStatus, runControlState } = await vite.ssrLoadModule(
       "/src/components/RunHeader.jsx",
     );
-    for (const status of [
+    const terminalStatuses = [
       "halted", "completed", "failed", "finished", "stopped", "snapshot_failed",
-    ]) {
+    ];
+    for (const status of terminalStatuses) {
       assert.equal(isTerminalRunStatus?.(status), true, status);
-      assert.equal(runControlState({ status, running: false }).stopDisabled, true, status);
+    }
+    for (const status of [...terminalStatuses, "unrecognized"]) {
+      for (const running of [false, true]) {
+        assert.equal(
+          runControlState({ status, running }).stopDisabled,
+          true,
+          `${status}:${running}`,
+        );
+      }
     }
     for (const status of ["created", "paused", "running", "active"]) {
       assert.equal(isTerminalRunStatus?.(status), false, status);

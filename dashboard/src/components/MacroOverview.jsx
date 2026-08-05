@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { formatMetricDelta, formatMetricValue } from "../api";
 import { rollingSumSeries } from "../metrics";
@@ -15,7 +16,13 @@ const DEFINITIONS = [
   ["sentiment", "Sentiment", "Average belief", "#86efac"],
 ];
 
+export function macroGradientId(prefix, key) {
+  const safePrefix = String(prefix || "macro").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `${safePrefix || "macro"}-fill-${key}`;
+}
+
 export function MacroOverview({ metrics }) {
+  const gradientPrefix = useId();
   return (
     <Panel title="Macro pulse" eyebrow="Engine-measured · never narrated" className="col-span-full">
       <div className="grid grid-cols-2 gap-px bg-mint-300/10 sm:grid-cols-3 xl:grid-cols-9">
@@ -25,6 +32,7 @@ export function MacroOverview({ metrics }) {
           const latest = series.at(-1)?.value;
           const previous = series.at(-2)?.value;
           const delta = previous === undefined ? null : Number(latest) - Number(previous);
+          const gradientId = macroGradientId(gradientPrefix, key);
           return (
             <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help}>
               <div className="truncate text-[10px] font-semibold uppercase tracking-[.12em] text-slate-500">{label}</div>
@@ -36,9 +44,9 @@ export function MacroOverview({ metrics }) {
                 {series.length > 1 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={series} accessibilityLayer={false} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-                      <defs><linearGradient id={`fill-${key}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={.35}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
+                      <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={.35}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
                       <Tooltip content={() => null} />
-                      <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#fill-${key})`} isAnimationActive={false} />
+                      <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#${gradientId})`} isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
