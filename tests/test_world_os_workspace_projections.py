@@ -329,6 +329,71 @@ def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(ec
     assert not any("SELECT *" in sql.upper() for sql in market_order_reads)
 
 
+def test_market_workspace_bounds_only_known_circuit_breaker_events(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.executemany(
+        "INSERT INTO events (id,tick,phase,kind,subject_type,subject_id,importance) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [
+            (event_id, 4, "MARKETS", "circuit_breaker", "firm", 1, 2.0)
+            for event_id in range(1_000, 1_105)
+        ] + [
+            (1_105, 4, "MARKETS", "not_a_circuit_breaker", "firm", 1, 2.0),
+        ],
+    )
+
+    payload = build_markets_workspace(store, as_of_tick=10)
+
+    assert len(payload["circuit_breakers"]) == 100
+    assert [row["id"] for row in payload["circuit_breakers"]] == list(
+        range(1_005, 1_105))
+    assert {row["kind"] for row in payload["circuit_breakers"]} == {
+        "circuit_breaker"}
+
+
+def test_experiments_workspace_omits_current_artifacts_and_masks_acceptance_history(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.execute(
+        "INSERT INTO acceptance_checkpoints "
+        "(id,scheduled_tick,question,status,prediction_id,detail,completed_at) "
+        "VALUES (99,4,'Historical acceptance','completed',NULL,"
+        "'future-resolution-canary','later')")
+    store.execute(
+        "INSERT INTO dataset_manifests "
+        "(id,dataset_key,source_url,retrieval_time,release_date,vintage_date,"
+        "checksum_sha256,transform_version,usage_terms,snapshot_path,status,metadata_json) "
+        "VALUES (99,'future-dataset-canary','https://example.invalid','later','2026-01-01',"
+        "'2026-01-01','sha','v1','test','snapshot','verified','{}')")
+    store.execute(
+        "INSERT INTO scenario_packs "
+        "(id,scenario_key,version,title,manifest_path,manifest_checksum,limitations,metadata_json) "
+        "VALUES (99,'future-scenario-canary','1','Future scenario','scenario.yaml','sha','test','{}')")
+
+    historical = build_experiments_workspace(store, as_of_tick=4)
+    current = build_experiments_workspace(store, as_of_tick=10)
+
+    assert historical["current_only_artifacts_omitted"] is True
+    assert historical["datasets"] == []
+    assert historical["scenarios"] == []
+    assert historical["acceptance"] == [{
+        "id": 99,
+        "scheduled_tick": 4,
+        "question": "Historical acceptance",
+        "status": "pending",
+        "prediction_id": None,
+        "detail": None,
+    }]
+    assert current["current_only_artifacts_omitted"] is False
+    assert current["acceptance"][0]["status"] == "completed"
+    assert current["acceptance"][0]["detail"] == "future-resolution-canary"
+    assert [row["dataset_key"] for row in current["datasets"]] == [
+        "future-dataset-canary"]
+    assert [row["scenario_key"] for row in current["scenarios"]] == [
+        "future-scenario-canary"]
+
+
 def test_world_workspace_bounds_historical_migrations_and_shipments(economy):
     _seed_workspace_history(economy)
     store = economy.store

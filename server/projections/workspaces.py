@@ -323,8 +323,10 @@ def build_markets_workspace(store, *, as_of_tick: int) -> dict:
         "FROM (SELECT * FROM fx_trades WHERE tick<=? "
         "ORDER BY tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
     circuit_breakers = _dicts(store.query(
+        "SELECT id,tick,phase,kind,subject_type,subject_id,importance FROM ("
         "SELECT id,tick,phase,kind,subject_type,subject_id,importance FROM events "
-        "WHERE tick<=? AND kind LIKE '%circuit%' ORDER BY tick,id", (tick,)))
+        "WHERE tick<=? AND kind IN ('circuit_breaker') "
+        "ORDER BY tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
     metrics = _dicts(store.query(
         "SELECT tick,name,value FROM metrics WHERE tick<=? ORDER BY tick DESC,id DESC LIMIT 200",
         (tick,)))
@@ -494,15 +496,20 @@ def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
     acceptance = _dicts(store.query(
         "SELECT id,scheduled_tick,question,status,prediction_id,detail FROM acceptance_checkpoints "
         "WHERE scheduled_tick<=? ORDER BY scheduled_tick,id", (tick,)))
-    datasets = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
-        "SELECT id,dataset_key,release_date,vintage_date,checksum_sha256,transform_version,"
-        "usage_terms,status,metadata_json FROM dataset_manifests ORDER BY id"))]
-    scenarios = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
-        "SELECT id,scenario_key,version,title,manifest_checksum,limitations,metadata_json "
-        "FROM scenario_packs ORDER BY id"))]
+    if not current:
+        for row in acceptance:
+            row.update({"status": "pending", "prediction_id": None, "detail": None})
+    datasets = []
+    scenarios = []
     experiments = []
     results = []
     if current:
+        datasets = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
+            "SELECT id,dataset_key,release_date,vintage_date,checksum_sha256,transform_version,"
+            "usage_terms,status,metadata_json FROM dataset_manifests ORDER BY id"))]
+        scenarios = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
+            "SELECT id,scenario_key,version,title,manifest_checksum,limitations,metadata_json "
+            "FROM scenario_packs ORDER BY id"))]
         experiments = [_json_fields(row, "paired_seeds_json", "treatment_variables_json") for row in _dicts(store.query(
             "SELECT id,experiment_key,scenario_key,created_at,checkpoint_hash,paired_seeds_json,"
             "treatment_variables_json,status FROM counterfactual_experiments ORDER BY id"))]
