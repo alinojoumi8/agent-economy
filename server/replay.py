@@ -150,21 +150,23 @@ class ReplayReader:
                     ),
                     "importance": float(source["importance"]),
                 })
-            original = f"{article['headline']} {article['body']}"
-            sanitized = sanitize_model_numeric_narrative(
-                original,
+            original_headline = str(article["headline"] or "")
+            headline = sanitize_model_numeric_narrative(
+                original_headline,
                 grounding_enabled=grounding_enabled,
                 fallback="",
                 sources=sources,
             )
-            redacted = bool(original.strip() and sanitized == "")
-            headline = article["headline"]
+            redacted = bool(original_headline.strip() and not headline.strip())
             if redacted:
                 readable = (
                     str(sources[0]["kind"]).replace("_", " ")
                     if sources else "recorded event"
                 )
                 headline = f"{article['outlet_name']} archived brief: {readable}"
+            # The body is intentionally excluded from the public replay view.
+            # Sanitize it independently before adding it to this payload in the
+            # future so hidden text cannot affect a grounded headline.
             news.append({
                 "headline": headline,
                 "outlet": article["outlet_name"],

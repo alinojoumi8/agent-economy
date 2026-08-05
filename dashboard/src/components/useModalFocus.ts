@@ -9,6 +9,11 @@ const FOCUSABLE = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
+function tabbableElements(dialog: HTMLElement): HTMLElement[] {
+  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)]
+    .filter(element => element.tabIndex >= 0);
+}
+
 type ModalFocusOptions = {
   active?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
@@ -26,10 +31,14 @@ export function useModalFocus({
   useEffect(() => {
     if (!active || !dialogRef.current) return;
     const dialog = dialogRef.current;
+    const hadTabIndex = dialog.hasAttribute("tabindex");
+    if (!hadTabIndex) dialog.tabIndex = -1;
     const previous = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    (initialFocusRef?.current || dialog.querySelector<HTMLElement>(FOCUSABLE) || dialog).focus();
+    // A caller-provided target may deliberately have tabIndex=-1 so focus can
+    // start on a heading without adding that heading to the Tab sequence.
+    (initialFocusRef?.current || tabbableElements(dialog)[0] || dialog).focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -39,7 +48,7 @@ export function useModalFocus({
         return;
       }
       if (event.key !== "Tab") return;
-      const focusable = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      const focusable = tabbableElements(dialog);
       if (!focusable.length) {
         event.preventDefault();
         dialog.focus();
@@ -58,6 +67,7 @@ export function useModalFocus({
     dialog.addEventListener("keydown", onKeyDown);
     return () => {
       dialog.removeEventListener("keydown", onKeyDown);
+      if (!hadTabIndex) dialog.removeAttribute("tabindex");
       (returnFocusRef?.current || previous)?.focus();
     };
   }, [active, initialFocusRef, returnFocusRef]);

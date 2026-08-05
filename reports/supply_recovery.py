@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -238,11 +240,10 @@ def write_supply_recovery_receipt(
     if output is None:
         return receipt
     json_path, markdown_path = _receipt_paths(Path(output))
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    markdown_path.write_text(render_supply_recovery_markdown(receipt), encoding="utf-8")
+    _atomic_write_receipts((
+        (json_path, json.dumps(receipt, indent=2, sort_keys=True) + "\n"),
+        (markdown_path, render_supply_recovery_markdown(receipt)),
+    ))
     return {
         **receipt,
         "artifacts": {"json": json_path.name, "markdown": markdown_path.name},
@@ -521,9 +522,8 @@ def _unemployment_evidence(store: Store, tick: int | None) -> tuple[bool, dict[s
         if value is None:
             invalid_ticks.add(metric_tick)
             values.pop(metric_tick, None)
-        else:
+        elif metric_tick not in invalid_ticks:
             values[metric_tick] = value
-            invalid_ticks.discard(metric_tick)
 
     windows: list[dict[str, Any]] = []
     for window_end in range(first_window_end, tick + 1):
@@ -1444,8 +1444,16 @@ def _checkpoint_evidence(
         for row in rows
         if _strict_tick(row["tick"]) is None
     ]
+    try:
+        database_parent = Path(store.path).resolve().parent
+    except (OSError, RuntimeError, ValueError):
+        database_parent = None
     checkpoint_dir = _checkpoint_directory_from_rows(
-        rows, run_id=run_id, configured_value=checkpoint_dir_value)
+        rows,
+        run_id=run_id,
+        configured_value=checkpoint_dir_value,
+        database_parent=database_parent,
+    )
     if checkpoint_dir is None:
         return False, {
             "configured_keep_last": keep_last,
@@ -1553,13 +1561,21 @@ def _checkpoint_evidence(
 
 
 def _checkpoint_directory_from_rows(
-        rows: list[Any], *, run_id: str, configured_value: str) -> Path | None:
+        rows: list[Any], *, run_id: str, configured_value: str,
+        database_parent: Path | None) -> Path | None:
     configured = Path(configured_value)
     if configured.is_absolute():
         try:
             return configured.resolve()
         except (OSError, RuntimeError):
             return None
+
+    if database_parent is None:
+        return None
+    try:
+        expected = (database_parent / configured).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
 
     candidates: set[Path] = set()
     for row in rows:
@@ -1577,7 +1593,7 @@ def _checkpoint_directory_from_rows(
         if str(database) != str(resolved):
             continue
         candidates.add(resolved.parent)
-    return next(iter(candidates)) if len(candidates) == 1 else None
+    return expected if candidates == {expected} else None
 
 
 def _validate_checkpoint_artifact(
@@ -1716,6 +1732,30 @@ def _receipt_paths(output: Path) -> tuple[Path, Path]:
     return output.with_name(output.name + ".json"), output.with_name(output.name + ".md")
 
 
+def _atomic_write_receipts(outputs: tuple[tuple[Path, str], ...]) -> None:
+    staged: list[tuple[Path, Path]] = []
+    try:
+        for target, content in outputs:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+            staged.append((temporary, target))
+        for temporary, target in staged:
+            os.replace(temporary, target)
+    finally:
+        for temporary, _target in staged:
+            temporary.unlink(missing_ok=True)
+
+
 def _empty_receipt(error: str) -> dict[str, Any]:
     checks = {name: False for name in _CHECK_NAMES}
     return {
@@ -1801,13 +1841,11 @@ def _strict_tick(value: Any) -> int | None:
 
 
 def _nonnegative_integer(value: Any) -> int | None:
-    integer = _integer(value)
-    return integer if integer is not None and integer >= 0 else None
+    return value if type(value) is int and value >= 0 else None
 
 
 def _positive_integer(value: Any) -> int | None:
-    integer = _integer(value)
-    return integer if integer is not None and integer > 0 else None
+    return value if type(value) is int and value > 0 else None
 
 
 def _ratio(value: Any) -> float | None:

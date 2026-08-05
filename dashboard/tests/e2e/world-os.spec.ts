@@ -605,6 +605,10 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await expect(commandClose).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(reopenedSearch).toBeFocused();
+  await commandClose.evaluate(button => { button.tabIndex = -2; });
+  await page.keyboard.press("Tab");
+  await expect(reopenedSearch).toBeFocused();
+  await commandClose.evaluate(button => { button.tabIndex = 0; });
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 

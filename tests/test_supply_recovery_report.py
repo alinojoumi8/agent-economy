@@ -1502,6 +1502,30 @@ def test_relative_checkpoint_config_is_db_relative_and_receipts_do_not_leak_abso
     assert str(tmp_path.resolve()) not in rendered
 
 
+def test_relative_checkpoint_rows_cannot_redirect_validation_outside_database_directory(
+        tmp_path: Path):
+    store = _seed_healthy_store(tmp_path, checkpoint_dir="relative-checkpoints")
+    unrelated = tmp_path.parent / f"{tmp_path.name}-unrelated-checkpoints"
+    unrelated.mkdir()
+    try:
+        for tick in (900, 1000):
+            source = tmp_path / "relative-checkpoints" / f"{RUN_ID}_t{tick}.db"
+            target = unrelated / source.name
+            source.replace(target)
+            checkpoint_manifest_path(source).replace(checkpoint_manifest_path(target))
+            store.execute(
+                "UPDATE checkpoints SET path=? WHERE tick=?", (str(target), tick))
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["checkpoint_retention"] is False
+    assert report["evidence"]["checkpoints"]["error"] == (
+        "checkpoint directory cannot be reconstructed from persisted rows")
+
+
 def test_report_fails_closed_when_unemployment_rebounds_thirteen_points(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:
@@ -1519,6 +1543,22 @@ def test_report_fails_closed_when_unemployment_rebounds_thirteen_points(tmp_path
     assert report["checks"]["unemployment_rebound_within_10pp"] is False
     assert report["evidence"]["unemployment"]["worst_window"]["rebound"] == 0.13
     assert report["evidence"]["unemployment"]["latest_window"]["rebound"] == 0.03
+
+
+def test_invalid_duplicate_unemployment_value_remains_sticky_for_its_tick(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute(
+            "UPDATE metrics SET value='invalid' WHERE name='unemployment' AND tick=700")
+        store.insert("metrics", tick=700, name="unemployment", value=0.45)
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["unemployment_rebound_within_10pp"] is False
+    assert 700 in report["evidence"]["unemployment"]["worst_window"]["invalid_ticks"]
 
 
 def test_report_compares_unrounded_unemployment_rebound_to_the_threshold(tmp_path: Path):
@@ -1821,6 +1861,30 @@ def test_cli_writes_no_receipt_by_default_and_writes_json_and_markdown_on_reques
     assert str(tmp_path.resolve()) not in (tmp_path / "receipt.md").read_text(encoding="utf-8")
 
 
+def test_receipt_writer_never_writes_directly_to_final_artifact_paths(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    store = _seed_healthy_store(tmp_path)
+    db_path = Path(store.path)
+    _close(store)
+    original_write_text = Path.write_text
+
+    def guarded_write_text(path, *args, **kwargs):
+        if path.suffix in {".json", ".md"}:
+            raise AssertionError("final receipt paths require atomic replacement")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", guarded_write_text)
+    output = tmp_path / "atomic-receipt"
+
+    receipt = supply_recovery_report.write_supply_recovery_receipt(
+        db_path, output=output)
+
+    assert receipt["passed"] is True
+    assert output.with_suffix(".json").is_file()
+    assert output.with_suffix(".md").is_file()
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
 def test_cli_returns_nonzero_for_a_nonpassing_receipt(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     db_path = Path(store.path)
@@ -1951,6 +2015,44 @@ def test_fractional_producer_event_tick_fails_instead_of_truncating(tmp_path: Pa
     assert report["evidence"]["unit_economics"]["malformed_producer_events"] == [
         {"event_id": 1, "firm_id": 1, "kind": "production", "tick": 1000.5}
     ]
+
+
+def test_fractional_production_cost_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        payload = json.loads(store.query_one(
+            "SELECT payload_json FROM events WHERE kind='production'")["payload_json"])
+        payload["unit_cost_cents"] = 180.5
+        store.execute(
+            "UPDATE events SET payload_json=? WHERE kind='production'",
+            (json.dumps(payload),),
+        )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["checks"]["unit_economics_validated"] is False
+    assert report["evidence"]["unit_economics"]["malformed_producer_events"] == [
+        {"event_id": 1, "firm_id": 1, "kind": "production", "tick": 1000}
+    ]
+
+
+def test_fractional_employment_wage_fails_instead_of_truncating(tmp_path: Path):
+    store = _seed_healthy_store(tmp_path)
+    try:
+        store.execute("UPDATE employments SET wage_cents=15000.5")
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    employment = report["unit_economics"][0]["employment"][0]
+    assert report["checks"]["unit_economics_validated"] is False
+    assert employment["wage_cents"] is None
+    assert employment["validated"] is False
 
 
 def test_fractional_terminal_event_tick_fails_instead_of_truncating(tmp_path: Path):

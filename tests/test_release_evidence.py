@@ -108,6 +108,22 @@ def test_complete_manifest_passes_only_for_exact_candidate(tmp_path):
     assert result["errors"] == []
 
 
+def test_collector_decodes_the_same_bytes_used_for_hashing(tmp_path, monkeypatch):
+    repo, manifest = release_fixture(tmp_path)
+    original_read_text = Path.read_text
+
+    def guarded_read_text(path, *args, **kwargs):
+        if path.suffix in {".json", ".txt"}:
+            raise AssertionError("receipt and artifact text must come from hashed bytes")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "passed"
+
+
 def test_collector_reports_all_missing_required_gates(tmp_path):
     repo, manifest = release_fixture(
         tmp_path, omit={"oracle_v9", "rumor_pilot"}

@@ -84,14 +84,6 @@ _SECRET_PATTERNS = (
 )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _error(gate_id: str, code: str, message: str) -> dict[str, str]:
     return {"gate_id": gate_id, "code": code, "message": message}
 
@@ -190,17 +182,19 @@ def _validate_artifacts(
         if not isinstance(expected, str) or not _HEX_64.fullmatch(expected):
             errors.append(_error(gate_id, "invalid_artifact_hash", f"artifact {index} hash is invalid"))
             continue
-        actual = _sha256(path)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            errors.append(_error(gate_id, "artifact_read_failed", f"artifact {index} cannot be read"))
+            continue
+        actual = hashlib.sha256(raw).hexdigest()
         if actual != expected:
             errors.append(_error(gate_id, "artifact_hash_mismatch", f"artifact {index} hash differs"))
             continue
         try:
-            text = path.read_text(encoding="utf-8")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError:
             text = ""
-        except OSError:
-            errors.append(_error(gate_id, "artifact_read_failed", f"artifact {index} cannot be read"))
-            continue
         if text and _contains_secret(text):
             errors.append(_error(gate_id, "secret_detected", f"artifact {index} contains sensitive text"))
         collected.append({"path": str(path_value), "sha256": actual})
@@ -360,7 +354,21 @@ def collect_release_evidence(
             })
             continue
         expected_hash = row.get("sha256")
-        actual_hash = _sha256(receipt_path)
+        try:
+            receipt_raw = receipt_path.read_bytes()
+        except OSError:
+            errors.append(_error(gate_id, "invalid_receipt", "receipt JSON cannot be loaded"))
+            gates.append({
+                "gate_id": gate_id,
+                "execution_scope": "local",
+                "status": manifest_status if manifest_status in STATUSES else "not_run",
+                "receipt": row.get("receipt", ""),
+                "receipt_sha256": "",
+                "artifacts": [],
+                "summary": "receipt is unreadable",
+            })
+            continue
+        actual_hash = hashlib.sha256(receipt_raw).hexdigest()
         if not isinstance(expected_hash, str) or not _HEX_64.fullmatch(expected_hash):
             errors.append(_error(gate_id, "invalid_receipt_hash", "manifest receipt hash is invalid"))
         elif actual_hash != expected_hash:
@@ -376,8 +384,8 @@ def collect_release_evidence(
             })
             continue
         try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            receipt = json.loads(receipt_raw.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
             errors.append(_error(gate_id, "invalid_receipt", "receipt JSON cannot be loaded"))
             receipt = None
         gate, receipt_errors = _validate_receipt(
