@@ -11,6 +11,47 @@ PR #20 is authorized for squash merge after the complete local gate. Do not
 tag, publish, or deploy publicly until the pending live gates and final
 provenance audit pass under separate authorization.
 
+## Current execution backlog — 2026-08-05
+
+This is the master queue for the remaining integration and release work. Close
+a row only when every acceptance step in its linked implementation plan has
+qualifying evidence. A local pass, partial run, blocked external gate, or
+historical receipt cannot substitute for the named boundary.
+
+- [ ] Publish the verified local `main` stack, then integrate dependency PRs 39
+  and 40 independently. Follow the
+  [design](docs/superpowers/specs/2026-08-05-repository-publication-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-05-repository-publication.md).
+- [ ] Reconcile `codex/reconcile-release` in an isolated worktree, implement the
+  supply-recovery contract, and produce full-horizon source/integrity/replay
+  evidence. Follow the
+  [design](docs/superpowers/specs/2026-08-05-recovery-reconciliation-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-05-recovery-reconciliation.md).
+- [ ] Preserve, classify, and either integrate or explicitly retain every dirty
+  `living-economy-map` worktree artifact without deleting unrelated data.
+  Follow the
+  [design](docs/superpowers/specs/2026-08-05-dirty-worktree-salvage-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-05-dirty-worktree-salvage.md).
+- [ ] Complete the investigation title editor, conflict resolution, export UI,
+  two-context browser coverage, privacy, and accessibility gates. Follow the
+  [design](docs/superpowers/specs/2026-08-05-investigation-workspace-completion-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-05-investigation-workspace-completion.md).
+- [ ] Replace all five `LegacyWorkspace` World OS routes with tested,
+  tick/fork-aware route-specific workspaces and shared UI primitives. Follow
+  the [design](docs/superpowers/specs/2026-08-05-world-os-route-completion-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-05-world-os-route-completion.md).
+- [ ] Complete the fail-closed release-evidence campaign: independent clients,
+  Semantics 10 hosted evidence, V9 MiniMax Oracle, 30-day pilot, 365-day
+  acceptance, final audits, and separately approved deployment. Follow the
+  [design](docs/superpowers/specs/2026-08-05-release-evidence-design.md) and
+  [implementation plan](docs/superpowers/plans/2026-08-05-release-evidence.md).
+
+Publication is first. Recovery reconciliation and dirty-worktree salvage run
+in isolated worktrees after that baseline is fixed. Investigation and route
+completion start from the reconciled shared baseline. Release evidence starts
+only after accepted code is merged, and every live, external, paid, hosted, or
+deployment stage retains its own explicit approval boundary.
+
 ## Legal-Economy v2 semantics-7 closure
 
 ### Implementation
@@ -193,7 +234,7 @@ provenance audit pass under separate authorization.
   resumed-wall-clock scheduled latency to at least the conservatively rounded
   sum of the persisted governed-call latencies. The completion validator keeps
   rejecting any event shorter than its own call floor.
-- [ ] After the V7 archive inventory is durable, prune only the 200 source
+- [x] After the V7 archive inventory is durable, prune only the 200 source
   checkpoint database bodies matching anchored regex
   `^oracle-calibration-v7-s736[1-5]_t\d+\.db$` (40 each), reclaiming exactly
   49,647,239,168 bytes (`46.237595 GiB`). Retain all 360 source/replay
