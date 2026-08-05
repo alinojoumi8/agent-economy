@@ -326,7 +326,7 @@ def test_model_reasoning_is_grounded_publicly_while_raw_call_remains_auditable(
     world.close()
 
 
-def test_memory_summaries_ground_numbers_only_in_raw_observations(tmp_path):
+def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
     world = _world(tmp_path, "summary-grounding.db")
     world.config["beliefs"].update({"model_grounding_from_tick": 1})
     world.runtime.config = world.config
@@ -356,7 +356,7 @@ def test_memory_summaries_ground_numbers_only_in_raw_observations(tmp_path):
     assert daily[0] == "I reviewed today's recorded observations."
     world.runtime.mem.write_summary(agent_id, 1, "A prior model summary said 777.", 2)
     weekly = asyncio.run(world.runtime._rollup_week(1, agent_id, 1))
-    assert weekly[0] == "I reviewed the recorded weekly summaries."
+    assert weekly[0] == "The prior model summary said 777."
     world.close()
 
 

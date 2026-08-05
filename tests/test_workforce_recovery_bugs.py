@@ -10,6 +10,7 @@ import pytest
 import run as cli
 from agents.policies import workforce_recovery_actions
 from agents.runtime import AgentRuntime
+from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import Store
 from world.loop import World
@@ -254,6 +255,53 @@ def test_recovery_post_hook_ignores_success_without_an_employment_id(tmp_path):
     )
 
     assert world.runtime._recovery_completed_hires == {}
+    world.close()
+
+
+def test_pre_action_hook_failure_is_persisted_as_a_rejection(tmp_path):
+    world = _world(tmp_path, "pre-hook-failure.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+
+    def fail_pre_hook(*_args):
+        raise RuntimeError("pre-hook-canary")
+
+    executor = ActionExecutor(world.economy, pre_action_hook=fail_pre_hook)
+    result = executor.execute_action(
+        1, actor_id, {"type": "do_nothing"}, "EXECUTION")
+
+    assert result == {"ok": False, "reason": "pre-action hook error: pre-hook-canary"}
+    proposal = world.store.query_one(
+        "SELECT validation_status,result_json FROM action_proposals ORDER BY id DESC LIMIT 1")
+    assert proposal["validation_status"] == "rejected"
+    assert "pre-action hook error: pre-hook-canary" in proposal["result_json"]
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='action_rejected'", default=0) == 1
+    world.close()
+
+
+def test_post_action_hook_failure_does_not_undo_or_escape_committed_action(tmp_path):
+    world = _world(tmp_path, "post-hook-failure.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+
+    def fail_post_hook(*_args):
+        raise RuntimeError("post-hook-canary")
+
+    executor = ActionExecutor(world.economy, post_action_hook=fail_post_hook)
+    result = executor.execute_action(
+        1,
+        actor_id,
+        {"type": "say_public", "text": "Committed before the hook."},
+        "EXECUTION",
+    )
+
+    assert result == {"ok": True}
+    proposal = world.store.query_one(
+        "SELECT validation_status,result_json FROM action_proposals ORDER BY id DESC LIMIT 1")
+    assert proposal["validation_status"] == "accepted"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='public_statement'", default=0) == 1
     world.close()
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 import yaml
@@ -146,6 +148,29 @@ def test_collector_decodes_the_same_bytes_used_for_hashing(tmp_path, monkeypatch
     assert result["overall_status"] == "passed"
 
 
+def test_collector_rejects_non_finite_receipt_constants(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(item for item in payload["gates"] if item["gate_id"] == "oracle_v9")
+    receipt_path = repo / row["receipt"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["verifier"]["score"] = float("nan")
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True, allow_nan=True) + "\n",
+        encoding="utf-8",
+    )
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "failed"
+    assert ("oracle_v9", "invalid_receipt") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
+    assert "NaN" not in canonical_release_json(result)
+
+
 def test_collector_reports_all_missing_required_gates(tmp_path):
     repo, manifest = release_fixture(
         tmp_path, omit={"oracle_v9", "rumor_pilot"}
@@ -263,3 +288,8 @@ def test_package_writer_is_byte_identical_across_repeated_output(tmp_path):
 
     assert first_bytes == (second_json.read_bytes(), second_markdown.read_bytes())
     assert not list(output.glob(".*.tmp"))
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    expected_mode = 0o666 & ~current_umask
+    assert stat.S_IMODE(second_json.stat().st_mode) == expected_mode
+    assert stat.S_IMODE(second_markdown.stat().st_mode) == expected_mode

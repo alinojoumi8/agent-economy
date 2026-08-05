@@ -88,6 +88,16 @@ def _error(gate_id: str, code: str, message: str) -> dict[str, str]:
     return {"gate_id": gate_id, "code": code, "message": message}
 
 
+def _reject_non_finite(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
+
+
+def _published_artifact_mode() -> int:
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    return 0o666 & ~current_umask
+
+
 def _valid_candidate(value: Any) -> bool:
     return (
         isinstance(value, dict)
@@ -384,8 +394,11 @@ def collect_release_evidence(
             })
             continue
         try:
-            receipt = json.loads(receipt_raw.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError):
+            receipt = json.loads(
+                receipt_raw.decode("utf-8"),
+                parse_constant=_reject_non_finite,
+            )
+        except (UnicodeError, ValueError):
             errors.append(_error(gate_id, "invalid_receipt", "receipt JSON cannot be loaded"))
             receipt = None
         gate, receipt_errors = _validate_receipt(
@@ -464,6 +477,7 @@ def _atomic_write(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(temporary, _published_artifact_mode())
         os.replace(temporary, path)
         if os.name != "nt":
             directory = os.open(path.parent, os.O_RDONLY)

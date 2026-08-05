@@ -1572,7 +1572,10 @@ class AgentRuntime:
                 raw_summary,
                 grounding_enabled=model_grounding_active(self.config, tick),
                 fallback="I reviewed the recorded weekly summaries.",
-                sources=observations,
+                sources=observations + [
+                    {"tick": item["tick"], "text": item["text"]}
+                    for item in daily
+                ],
             )
         else:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]

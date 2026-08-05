@@ -204,7 +204,34 @@ class ActionExecutor:
                               result_json=json.dumps(result, sort_keys=True))
             return result
         if self.pre_action_hook is not None:
-            reason = self.pre_action_hook(tick, actor_id, action, phase)
+            try:
+                reason = self.pre_action_hook(tick, actor_id, action, phase)
+            except Exception as exc:
+                operational_log(
+                    logger,
+                    logging.ERROR,
+                    "action.pre_hook.failed",
+                    tick=tick,
+                    actor_id=actor_id,
+                    action_type=atype,
+                    phase=phase,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                result = self._reject(
+                    tick,
+                    actor_id,
+                    action,
+                    f"pre-action hook error: {exc}",
+                    phase,
+                )
+                self.store.update(
+                    "action_proposals",
+                    proposal_id,
+                    validation_status="rejected",
+                    result_json=json.dumps(result, sort_keys=True),
+                )
+                return result
             if reason:
                 result = self._reject(tick, actor_id, action, reason, phase)
                 self.store.update("action_proposals", proposal_id, validation_status="rejected",
@@ -292,7 +319,23 @@ class ActionExecutor:
             validation_status="accepted" if result.get("ok") else "rejected",
             result_json=json.dumps(result, sort_keys=True, default=str))
         if self.post_action_hook is not None:
-            self.post_action_hook(tick, actor_id, action, phase, result)
+            try:
+                self.post_action_hook(tick, actor_id, action, phase, result)
+            except Exception as exc:
+                # The validated action and its authoritative effects are already
+                # committed to the current phase transaction.  A best-effort
+                # observer must never turn that success into an ambiguous retry.
+                operational_log(
+                    logger,
+                    logging.ERROR,
+                    "action.post_hook.failed",
+                    tick=tick,
+                    actor_id=actor_id,
+                    action_type=atype,
+                    phase=phase,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
         return result
 
     def _reject(self, tick: int, actor_id: int, action: dict, reason: str, phase: str) -> dict:
