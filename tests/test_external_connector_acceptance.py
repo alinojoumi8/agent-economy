@@ -232,6 +232,50 @@ def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):
         load_credential_file(target)
 
 
+def test_credential_loader_requires_current_user_ownership(tmp_path, monkeypatch):
+    path = tmp_path / "credential.json"
+    path.write_text(json.dumps({
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }), encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(connector_runner.os, "geteuid", lambda: path.stat().st_uid + 1)
+
+    with pytest.raises(PermissionError, match="owned by the current user"):
+        load_credential_file(path)
+
+
+def test_wake_rejects_null_target_tick_with_stable_runtime_error(monkeypatch):
+    monkeypatch.setattr(
+        connector_runner,
+        "_request",
+        lambda *_args, **_kwargs: (
+            200,
+            json.dumps({"target_tick": None, "projection_hash": HASH}).encode("utf-8"),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="lacks target tick or projection hash"):
+        connector_runner._execute_wake(
+            "https://agents.example.test", "process-only-token",
+            after_tick=None, timeout=1.0,
+        )
+
+
+def test_candidate_ids_use_character_terminology_and_named_hex_helper(tmp_path):
+    assert connector_runner.is_lowercase_hex(COMMIT, 40) is True
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit="not-a-commit",
+        tree=TREE,
+        credential_file=tmp_path / "unused.json",
+    )
+
+    with pytest.raises(ValueError, match="40-character hex IDs"):
+        connector_runner.run_acceptance(args)
+
+
 def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
     tmp_path, monkeypatch,
 ):

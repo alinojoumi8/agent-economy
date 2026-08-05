@@ -1859,6 +1859,8 @@ def _ratio(value: Any) -> float | None:
 
 
 def _json_scalar(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)

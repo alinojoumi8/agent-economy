@@ -599,7 +599,7 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const reopenedCommand = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(reopenedCommand).toBeVisible();
   const reopenedSearch = reopenedCommand.getByPlaceholder("Search routes, people, firms, events…");
-  const commandClose = reopenedCommand.getByRole("button", { name: "Close command menu" });
+  const commandClose = reopenedCommand.locator('button[aria-label="Close command menu"]');
   await expect(reopenedSearch).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(commandClose).toBeFocused();
@@ -616,6 +616,43 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
   await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+test("modal focus predicate excludes hidden and fieldset-disabled controls", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+
+  const focusability = await page.evaluate(async () => {
+    const focusModule = await import("/src/components/useModalFocus.ts") as unknown as {
+      isTabbableElement(element: HTMLElement): boolean;
+    };
+    const visible = document.createElement("button");
+    visible.textContent = "Visible";
+    document.body.append(visible);
+    const displayNone = visible.cloneNode(true) as HTMLButtonElement;
+    displayNone.style.display = "none";
+    document.body.append(displayNone);
+    const visibilityHidden = visible.cloneNode(true) as HTMLButtonElement;
+    visibilityHidden.style.visibility = "hidden";
+    document.body.append(visibilityHidden);
+    const fieldset = document.createElement("fieldset");
+    fieldset.disabled = true;
+    const disabledDescendant = visible.cloneNode(true) as HTMLButtonElement;
+    fieldset.append(disabledDescendant);
+    document.body.append(fieldset);
+    return {
+      visible: focusModule.isTabbableElement(visible),
+      displayNone: focusModule.isTabbableElement(displayNone),
+      visibilityHidden: focusModule.isTabbableElement(visibilityHidden),
+      disabledDescendant: focusModule.isTabbableElement(disabledDescendant),
+    };
+  });
+
+  expect(focusability).toEqual({
+    visible: true,
+    displayNone: false,
+    visibilityHidden: false,
+    disabledDescendant: false,
+  });
 });
 
 test("authorized entity search preserves fork and historical tick", async ({ page }) => {

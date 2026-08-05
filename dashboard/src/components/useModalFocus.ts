@@ -9,9 +9,17 @@ const FOCUSABLE = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
+export function isTabbableElement(element: HTMLElement): boolean {
+  if (element.tabIndex < 0 || element.matches(":disabled")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none"
+    && style.visibility !== "hidden"
+    && element.getClientRects().length > 0;
+}
+
 function tabbableElements(dialog: HTMLElement): HTMLElement[] {
   return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)]
-    .filter(element => element.tabIndex >= 0);
+    .filter(isTabbableElement);
 }
 
 type ModalFocusOptions = {

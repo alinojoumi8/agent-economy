@@ -2055,6 +2055,14 @@ def test_fractional_employment_wage_fails_instead_of_truncating(tmp_path: Path):
     assert employment["validated"] is False
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_json_scalar_stringifies_non_finite_numbers(value: float):
+    observed = supply_recovery_report._json_scalar(value)
+
+    assert observed == str(value)
+    json.dumps(observed, allow_nan=False)
+
+
 def test_fractional_terminal_event_tick_fails_instead_of_truncating(tmp_path: Path):
     store = _seed_healthy_store(tmp_path)
     try:

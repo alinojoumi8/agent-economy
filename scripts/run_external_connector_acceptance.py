@@ -49,9 +49,12 @@ def load_credential_file(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     if source.is_symlink() or not source.is_file():
         raise ValueError("credential path must be a regular file, not a symlink")
-    mode = stat.S_IMODE(source.stat().st_mode)
+    info = source.stat()
+    mode = stat.S_IMODE(info.st_mode)
     if mode != 0o600:
         raise PermissionError("credential file must have mode 600")
+    if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+        raise PermissionError("credential file must be owned by the current user")
     try:
         value = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -69,7 +72,10 @@ def load_credential_file(path: str | Path) -> dict[str, Any]:
         or urlsplit(probe).scheme
         or urlsplit(probe).netloc
     ):
-        raise ValueError("credential file requires a relative isolation_probe_path")
+        raise ValueError(
+            "credential file requires isolation_probe_path to be a root-relative "
+            "path that starts with a single '/'"
+        )
     return value
 
 
@@ -164,7 +170,8 @@ def _execute_wake(
         timeout=max(31.0, timeout),
     )
     turn = _json_response(status, body, expected={200}, label="turn read")
-    target_tick = int(turn.get("target_tick", -1))
+    raw_tick = turn.get("target_tick")
+    target_tick = raw_tick if type(raw_tick) is int else -1
     projection_hash = str(turn.get("projection_hash") or "")
     if target_tick < 0 or len(projection_hash) != 64:
         raise RuntimeError("turn response lacks target tick or projection hash")
@@ -382,8 +389,8 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("unsupported connector")
     if not _public_https_origin(args.base_url):
         raise ValueError("base URL must be a public HTTPS origin")
-    if not re_full_hex(args.commit, 40) or not re_full_hex(args.tree, 40):
-        raise ValueError("candidate commit and tree must be lowercase 40-byte hex IDs")
+    if not is_lowercase_hex(args.commit, 40) or not is_lowercase_hex(args.tree, 40):
+        raise ValueError("candidate commit and tree must be lowercase 40-character hex IDs")
     credential = load_credential_file(args.credential_file)
     revoker = _CredentialRevoker(args.base_url, credential)
     flow_failed = False
@@ -401,7 +408,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                     raise
 
 
-def re_full_hex(value: str, length: int) -> bool:
+def is_lowercase_hex(value: str, length: int) -> bool:
     return len(value) == length and all(character in "0123456789abcdef" for character in value)
 
 
