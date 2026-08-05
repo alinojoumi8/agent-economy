@@ -1,7 +1,7 @@
 # Frozen provider baseline for immutable Oracle calibration campaigns v1-v9.
 # The resolved values are receipt-bound; current live routing belongs in
 # production.yaml and must not retroactively alter historical commitments.
-extends: base.yaml
+extends: base-oracle-archive.yaml
 
 population:
   size: 63

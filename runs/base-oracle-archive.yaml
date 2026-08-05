@@ -1,0 +1,135 @@
+# Frozen semantics-7 base for immutable Oracle calibration campaigns v1-v9.
+# Do not inherit the mutable base.yaml here: adding a new default would change
+# receipt-bound effective-config hashes for completed historical campaigns.
+seed: 42
+engine_semantics_version: 7
+
+legal:
+  enabled: true
+  ruleset: northstar-us-inspired-1.0
+  response_ticks: 14
+  max_damages_cents: 10000000000
+
+information:
+  citizen_bank_visibility: public_status
+  daily_news_required: true
+
+information_economy:
+  enabled: true
+  base_reach: 0.15
+  diffusion_window_ticks: 30
+
+political_model:
+  enabled: true
+  actor_bound_authorization: true
+  house_seats: 12
+  senate_seats: 6
+  house_election_interval_ticks: 180
+  executive_election_interval_ticks: 360
+  lobbying_disclosure_delay_ticks: 5
+
+beliefs:
+  audit_history: true
+  enforce_reserved_ranges: true
+
+population:
+  baseline_citizens_core: true
+  size: 70
+
+banks:
+  count: 2
+  names: ["First Bank", "Union Bank"]
+  initial_reserve_ratio: 0.6
+  reserve_requirement_bps: 1000
+  risk_policy:
+    min_rate_bps: 300
+    max_rate_bps: 3000
+    default_rate_bps: 900
+
+firms:
+  count: 12
+  listed: 3
+  target_headcount: 3
+  pay_interval_ticks: 30
+
+exchange:
+  circuit_breaker_drop: 0.20
+
+central_bank:
+  neutral_rate_bps: 500
+  max_step_bps: 50
+  min_rate_bps: 0
+  max_rate_bps: 2000
+  target_inflation: 0.02
+  natural_unemployment: 0.05
+
+lifecycle:
+  retirement_age: 65
+  medical_cost_cents: 5000
+  housing_cost_cents: 75000
+  population_mode: stable
+
+government:
+  tax_rate_bps: 1500
+  unemployment_benefit_cents: 120000
+  benefit_interval_ticks: 30
+  election_interval_ticks: 180
+  tax_step_bps: 300
+  benefit_step_cents: 40000
+  min_tax_bps: 500
+  max_tax_bps: 3000
+  min_benefit_cents: 0
+  max_benefit_cents: 400000
+
+vc:
+  fund_cents: 10000000
+
+health:
+  hospital: true
+  insurer: true
+  premium_cents: 3000
+  coverage_bps: 8000
+  premium_interval_ticks: 30
+  hospital_capital_cents: 3000000
+  insurer_capital_cents: 5000000
+
+behavior:
+  act_every: 3
+  run_threshold: 0.35
+  event_wake_importance: 2.0
+
+conversations:
+  turns: 3
+
+budget:
+  cap_usd: 200.0
+  oracle_reserve_usd: 10.0
+  report_reserve_usd: 0.25
+  oracle_plan_in_reserve: true
+  conversation_pairs: 15
+  thresholds: [0.60, 0.80, 0.95]
+
+oracle:
+  default_horizon_ticks: 30
+  max_horizon_ticks: 365
+  strict_resolution_rules: true
+
+reports:
+  narrative_max_tokens: 600
+  narrative_timeout_s: 45
+
+llm:
+  concurrency: 8
+  decision_max_tokens: 900
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+checkpoint_every: 10
+checkpoint_dir: data/checkpoints
+speed_delay_s: 0.0
+
+outlets:
+  - {id: 1, name: "The Ledger", slant: "pro-market-sensational"}
+  - {id: 2, name: "Commons Dispatch", slant: "cautious-pro-labor"}
+
+shocks: []
