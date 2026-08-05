@@ -5,6 +5,7 @@ import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWor
 import { OverviewWorkspace } from "../workspaces/OverviewWorkspace";
 import { CommonsWorkspace } from "../workspaces/CommonsWorkspace";
 import { PeopleWorkspace } from "../workspaces/PeopleWorkspace";
+import { WorldWorkspace } from "../workspaces/WorldWorkspace";
 import { workspaceFallbackPath } from "../lib/routes";
 
 function WorkspaceFallback() {
@@ -31,7 +32,7 @@ export function WorldOSApp() {
       <Route path="investigations" element={<InvestigationsWorkspace />} />
       <Route path="investigations/:investigationId" element={<InvestigationsWorkspace />} />
       <Route path="commons" element={<CommonsWorkspace />} />
-      <Route path="world" element={<LegacyWorkspace title="World" />} />
+      <Route path="world" element={<WorldWorkspace />} />
       <Route path="people" element={<PeopleWorkspace />} />
       <Route path="people/:agentId" element={<PeopleWorkspace />} />
       <Route path="organizations" element={<LegacyWorkspace title="Organizations" />} />
