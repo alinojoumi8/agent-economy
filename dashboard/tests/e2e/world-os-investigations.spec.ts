@@ -241,6 +241,7 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.getByRole("navigation", { name: "Saved investigations" })
     .getByRole("button", { name: /Remote second/ }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
+  await expect(titleB).toHaveValue("Remote second");
   await titleB.fill("Unsaved navigation draft");
   const navigationTrigger = pageB.getByRole("navigation", { name: "Saved investigations" })
     .getByRole("button", { name: /Local copy/ });
