@@ -12,6 +12,7 @@
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
   python run.py --acceptance-report RUNID               # evaluate persisted production evidence
   python run.py --oracle-calibration-report MANIFEST    # curated Oracle campaign evidence
+  python run.py --release-evidence-report MANIFEST --output reports/out/release-v1
   python run.py --config runs/oracle/v4-seed-7331-control.yaml --oracle-campaign-run --approve-live-inference
   python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
@@ -973,6 +974,7 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--report": args.report,
         "--export-static": args.export_static,
         "--acceptance-report": args.acceptance_report,
+        "--release-evidence-report": args.release_evidence_report,
         "--acceptance-run": args.acceptance_run,
         "--replay": args.replay,
         "--fork": args.fork,
@@ -1010,6 +1012,57 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
             parser.error(
                 "--oracle-calibration-report is mutually exclusive with "
                 + ", ".join(incompatible))
+
+
+def _validate_release_evidence_cli_exclusivity(
+    args, parser: argparse.ArgumentParser
+) -> None:
+    """Keep offline evidence rendering separate from every runtime boundary."""
+    if not args.release_evidence_report:
+        return
+    if not args.output:
+        parser.error("--release-evidence-report requires --output")
+    incompatible = [
+        name
+        for name, active in {
+            "--ticks": args.ticks is not None,
+            "--resume": bool(args.resume),
+            "--activate-entrepreneurship": args.activate_entrepreneurship,
+            "--activate-numeric-grounding": args.activate_numeric_grounding,
+            "--activate-supply-recovery": args.activate_supply_recovery,
+            "--supply-recovery-target-headcount": (
+                args.supply_recovery_target_headcount is not None
+            ),
+            "--activate-llm-output-budgets": args.activate_llm_output_budgets,
+            "--replay": bool(args.replay),
+            "--fork": bool(args.fork),
+            "--upgrade-semantics": args.upgrade_semantics is not None,
+            "--report": bool(args.report),
+            "--export-static": bool(args.export_static),
+            "--experiment": bool(args.experiment),
+            "--counterfactual": bool(args.counterfactual),
+            "--scenario-ticks": args.scenario_ticks is not None,
+            "--refresh-datasets": bool(args.refresh_datasets),
+            "--refresh-dataset-key": bool(args.refresh_dataset_key),
+            "--verify-datasets": bool(args.verify_datasets),
+            "--acceptance-report": bool(args.acceptance_report),
+            "--oracle-calibration-report": bool(args.oracle_calibration_report),
+            "--oracle-campaign-run": args.oracle_campaign_run,
+            "--acceptance-run": args.acceptance_run,
+            "--approve-live-inference": args.approve_live_inference,
+            "--experiment-evidence": bool(args.experiment_evidence),
+            "--phenomena-evidence": bool(args.phenomena_evidence),
+            "--serve": args.serve,
+            "--preflight": args.preflight,
+            "--preflight-live": args.preflight_live,
+        }.items()
+        if active
+    ]
+    if incompatible:
+        parser.error(
+            "--release-evidence-report is mutually exclusive with "
+            + ", ".join(incompatible)
+        )
 
 
 def _initialize_claimed_oracle_genesis(
@@ -1238,6 +1291,11 @@ def main() -> None:
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
     ap.add_argument("--oracle-calibration-report", default=None,
                     help="evaluate an explicit Oracle campaign manifest and write receipts")
+    ap.add_argument(
+        "--release-evidence-report",
+        default=None,
+        help="offline validation of a content-addressed release manifest",
+    )
     ap.add_argument("--oracle-campaign-run", action="store_true",
                     help="run one predeclared live-Oracle campaign arm and exact replay")
     ap.add_argument("--acceptance-run", action="store_true",
@@ -1278,6 +1336,7 @@ def main() -> None:
     if args.activate_llm_output_budgets and args.replay:
         ap.error("--activate-llm-output-budgets cannot modify a replay")
     _validate_oracle_cli_exclusivity(args, ap)
+    _validate_release_evidence_cli_exclusivity(args, ap)
     if args.acceptance_report and args.oracle_calibration_report:
         ap.error("--acceptance-report and --oracle-calibration-report are mutually exclusive")
     if args.acceptance_run and args.oracle_campaign_run:
@@ -1291,6 +1350,7 @@ def main() -> None:
             "counterfactual" if args.counterfactual else
             "static_export" if args.export_static else "experiment" if args.experiment else
             "oracle_calibration_report" if args.oracle_calibration_report else
+            "release_evidence_report" if args.release_evidence_report else
             "acceptance_report" if args.acceptance_report else
             "oracle_campaign_run" if args.oracle_campaign_run else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
@@ -1298,6 +1358,24 @@ def main() -> None:
             "fork" if args.fork else "replay" if args.replay else
             "resume" if args.resume else "run")
     operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
+
+    if args.release_evidence_report:
+        from reports.release_evidence import write_release_evidence_package
+
+        json_path, markdown_path = write_release_evidence_package(
+            args.release_evidence_report,
+            args.output,
+            repo_root=Path(__file__).resolve().parent,
+        )
+        result = json.loads(json_path.read_text(encoding="utf-8"))
+        print(json.dumps({
+            "overall_status": result["overall_status"],
+            "json": str(json_path),
+            "markdown": str(markdown_path),
+        }, indent=2))
+        if result["overall_status"] != "passed":
+            raise SystemExit(5)
+        return
 
     if args.refresh_datasets:
         from research.datasets import refresh_datasets

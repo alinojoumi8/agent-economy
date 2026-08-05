@@ -11,6 +11,7 @@ from reports.release_evidence import (
     canonical_release_json,
     collect_release_evidence,
     render_release_markdown,
+    write_release_evidence_package,
 )
 
 
@@ -206,3 +207,19 @@ def test_canonical_renderers_are_deterministic(tmp_path):
     assert first_markdown.startswith("# Agent Economy release evidence\n")
     assert "| Gate | Scope | Status |" in first_markdown
     assert first_markdown.endswith("\n")
+
+
+def test_package_writer_is_byte_identical_across_repeated_output(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    output = tmp_path / "out"
+
+    first_json, first_markdown = write_release_evidence_package(
+        manifest, output, repo_root=repo
+    )
+    first_bytes = (first_json.read_bytes(), first_markdown.read_bytes())
+    second_json, second_markdown = write_release_evidence_package(
+        manifest, output, repo_root=repo
+    )
+
+    assert first_bytes == (second_json.read_bytes(), second_markdown.read_bytes())
+    assert not list(output.glob(".*.tmp"))
