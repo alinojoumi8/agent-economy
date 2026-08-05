@@ -6,6 +6,7 @@ import { parseObserverViewState, projectionScopeParams } from "../app/observerVi
 import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import { InvestigationTitleEditor } from "../components/InvestigationTitleEditor";
 import { InvestigationConflictDialog } from "../components/InvestigationConflictDialog";
+import { useModalFocus } from "../components/useModalFocus";
 import { InvestigationExportActions } from "../components/InvestigationExportActions";
 import type { CausalEdge, CausalNode, StableReference } from "../generated/worldOs";
 import { CausalGraph } from "../visualizations/CausalGraph";
@@ -56,6 +57,11 @@ export function InvestigationsWorkspace() {
   const [pendingInvestigationId, setPendingInvestigationId] = useState<string | null>(null);
   const navigationDialogHeading = useRef<HTMLHeadingElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const navigationDialogRef = useModalFocus({
+    active: Boolean(pendingInvestigationId),
+    initialFocusRef: navigationDialogHeading,
+    onEscape: () => setPendingInvestigationId(null),
+  });
 
   const events = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "investigation-events", tick],
@@ -116,9 +122,6 @@ export function InvestigationsWorkspace() {
       return current;
     });
   }, [currentInvestigation, investigationId]);
-  useEffect(() => {
-    if (pendingInvestigationId) navigationDialogHeading.current?.focus();
-  }, [pendingInvestigationId]);
   const refreshWorkspace = () => queryClient.invalidateQueries({ queryKey: ["world-os", runId, "investigations"] });
   const replaceCachedInvestigation = (record: Investigation) => queryClient.setQueryData<{ items: Investigation[] }>(
     ["world-os", runId, "investigations"],
@@ -303,7 +306,8 @@ export function InvestigationsWorkspace() {
       onSaveAsNew={() => saveInvestigationAsNew.mutate(draft)}
       onContinue={() => setDraft((current: any) => continueInvestigationConflict(current))} />}
     {pendingInvestigationId && <div className="world-os-dialog-backdrop">
-      <section className="world-os-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-draft-title">
+      <section ref={navigationDialogRef} className="world-os-dialog" role="dialog"
+        aria-modal="true" aria-labelledby="discard-draft-title" tabIndex={-1}>
         <h3 id="discard-draft-title" ref={navigationDialogHeading} tabIndex={-1}>Discard unsaved title draft?</h3>
         <p>Your title edit has not been saved. Stay here or discard it before opening another investigation.</p>
         <div className="world-os-dialog-actions">

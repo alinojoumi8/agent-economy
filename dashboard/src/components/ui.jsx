@@ -1,3 +1,5 @@
+import { useModalFocus } from "./useModalFocus";
+
 export function Panel({ title, eyebrow, action, className = "", children }) {
   return (
     <section className={`panel min-w-0 overflow-hidden ${className}`}>
@@ -41,11 +43,13 @@ export function Badge({ children, tone = "neutral" }) {
 }
 
 export function Modal({ title, onClose, children, wide = false }) {
+  const dialogRef = useModalFocus({ onEscape: onClose });
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={event => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section className={`modal ${wide ? "!w-[min(100%,1180px)]" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section ref={dialogRef} className={`modal ${wide ? "!w-[min(100%,1180px)]" : ""}`}
+        role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <header className="flex items-center justify-between border-b border-mint-300/10 px-4 py-3">
           <h2 className="text-sm font-semibold">{title}</h2>
           <button className="button" onClick={onClose} aria-label={`Close ${title}`}>Close</button>

@@ -36,9 +36,10 @@ def _seed_workspace_history(economy) -> None:
     store.execute(
         "INSERT INTO agents (id,name,kind,occupation,age,alive,arrived_tick,region_id,population_tier) "
         "VALUES (1,'Public Agent','citizen','worker',30,1,0,1,'core')")
+    store.execute("UPDATE agents SET died_tick=9 WHERE id=1")
     store.execute(
-        "INSERT INTO firms (id,name,sector,status,founded_tick,bankrupt_tick,region_id) "
-        "VALUES (1,'Past Firm','food','bankrupt',2,9,1)")
+        "INSERT INTO firms (id,name,sector,status,founded_tick,listed_tick,bankrupt_tick,region_id) "
+        "VALUES (1,'Past Firm','food','bankrupt',2,8,9,1)")
     store.execute(
         "INSERT INTO firms (id,name,sector,status,founded_tick,region_id) "
         "VALUES (2,'future-order-canary','tech','private',9,1)")
@@ -82,7 +83,25 @@ def _seed_workspace_history(economy) -> None:
         "VALUES (1,1,1,1,'floor','yes',4),(2,2,1,1,'floor','yes',9)")
     store.execute(
         "INSERT INTO policy_rules (id,bill_id,rule_key,value_json,enacted_tick,effective_tick,status) "
-        "VALUES (1,1,'past-rule','{}',4,4,'active'),(2,2,'future-rule-canary','{}',9,9,'active')")
+        "VALUES (1,1,'past-rule','{}',4,9,'active'),(2,2,'future-rule-canary','{}',9,9,'active')")
+    store.execute(
+        "UPDATE bills SET executive_action_tick=8,effective_tick=9 WHERE id=1")
+    store.execute(
+        "INSERT INTO lobbying_activities (id,tick,sponsor_type,sponsor_id,lobbyist_agent_id,"
+        "target_agent_id,bill_id,activity_type,position,amount_cents,transaction_id,"
+        "salience_effect,disclosure_tick,disclosed) "
+        "VALUES (1,4,'firm',1,1,1,1,'meeting','support',50,900,.1,9,1)")
+    store.execute(
+        "INSERT INTO places (id,place_key,region_id,name,kind,owner_type,owner_id,x,y,capacity,"
+        "created_tick,closed_tick,metadata_json) VALUES "
+        "(1,'north-commons',1,'North Commons','public_commons','region',1,.2,.3,10,4,9,'{}')")
+    store.execute(
+        "INSERT INTO migrations (id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick,completed_tick,status) VALUES (1,1,1,1,4,9,'completed')")
+    store.execute(
+        "INSERT INTO trade_shipments (id,created_tick,exporter_firm_id,importer_firm_id,"
+        "origin_region_id,destination_region_id,quantity,invoice_cents,invoice_currency,"
+        "arrival_tick,status) VALUES (1,4,1,1,1,1,2,100,'USD',9,'delivered')")
     store.execute(
         "INSERT INTO legal_matters (id,matter_type,venue,status,claimant_type,claimant_id,respondent_type,respondent_id,claim_type,filed_tick,response_due_tick,requested_remedy_json,metadata_json) "
         "VALUES (1,'civil','court','filed','agent',1,'firm',1,'breach',4,8,'{}','{}'),"
@@ -137,6 +156,16 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     assert [item["tick"] for item in markets["fx_trades"]] == [4]
     assert payloads["organizations"]["organizations"][0]["status"] == "private"
     assert payloads["organizations"]["organizations"][0]["active"] is True
+    assert payloads["organizations"]["organizations"][0]["listed_tick"] is None
+    assert payloads["organizations"]["organizations"][0]["bankrupt_tick"] is None
+    assert payloads["world"]["agents"][0]["died_tick"] is None
+    assert payloads["world"]["places"][0]["closed_tick"] is None
+    migration = next(item for item in payloads["world"]["flows"] if item["kind"] == "migration")
+    assert migration["status"] == "pending"
+    assert migration["completed_tick"] is None
+    shipment = next(item for item in payloads["world"]["flows"] if item["kind"] == "trade")
+    assert shipment["status"] == "in_transit"
+    assert shipment["arrival_tick"] is None
     assert [item["tick"] for item in payloads["politics"]["votes"]] == [4]
     assert [item["tick"] for item in payloads["experiments"]["checkpoints"]] == [4]
 
@@ -145,6 +174,12 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     for field in ("executed_tick", "effective_tick", "expiry_tick", "terminated_tick"):
         assert organizations_contract[field] is None
     politics = payloads["politics"]
+    assert politics["bills"][0]["executive_action_tick"] is None
+    assert politics["bills"][0]["effective_tick"] is None
+    assert politics["rules"][0]["status"] == "pending"
+    assert politics["rules"][0]["effective_tick"] is None
+    assert politics["lobbying"][0]["disclosed"] == 0
+    assert politics["lobbying"][0]["disclosure_tick"] is None
     assert politics["contracts"][0]["status"] == "offered"
     assert politics["contracts"][0]["executed_tick"] is None
     assert politics["contracts"][0]["expiry_tick"] is None

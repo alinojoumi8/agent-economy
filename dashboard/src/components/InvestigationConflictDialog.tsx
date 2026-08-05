@@ -1,4 +1,5 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useRef, type RefObject } from "react";
+import { useModalFocus } from "./useModalFocus";
 
 type InvestigationConflictDialogProps = {
   draftTitle: string;
@@ -15,40 +16,17 @@ export function InvestigationConflictDialog({
   draftTitle, serverTitle, serverVersion, pending, returnFocusRef,
   onReload, onSaveAsNew, onContinue,
 }: InvestigationConflictDialogProps) {
-  const dialogRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    headingRef.current?.focus();
-    return () => (returnFocusRef?.current || previous)?.focus();
-  }, [returnFocusRef]);
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape" && !pending) {
-      event.preventDefault();
-      onContinue();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-      "button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex='-1'])",
-    ) || [])];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last?.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
+  const dialogRef = useModalFocus({
+    initialFocusRef: headingRef,
+    returnFocusRef,
+    onEscape: () => { if (!pending) onContinue(); },
+  });
 
   return <div className="world-os-dialog-backdrop">
     <section ref={dialogRef} className="world-os-dialog world-os-conflict-dialog"
       role="dialog" aria-modal="true" aria-labelledby="investigation-conflict-title"
-      onKeyDown={onKeyDown}>
+      tabIndex={-1}>
       <p className="world-os-kicker">Optimistic write stopped</p>
       <h3 id="investigation-conflict-title" ref={headingRef} tabIndex={-1}>Investigation changed on the server</h3>
       <div className="world-os-conflict-compare">

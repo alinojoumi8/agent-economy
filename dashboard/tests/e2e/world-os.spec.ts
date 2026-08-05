@@ -596,7 +596,15 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
 
   const trigger = page.getByRole("button", { name: "Open command menu" });
   await trigger.click();
-  await expect(page.getByRole("dialog", { name: "Navigate and inspect" })).toBeVisible();
+  const reopenedCommand = page.getByRole("dialog", { name: "Navigate and inspect" });
+  await expect(reopenedCommand).toBeVisible();
+  const reopenedSearch = reopenedCommand.getByPlaceholder("Search routes, people, firms, events…");
+  const commandClose = reopenedCommand.getByRole("button", { name: "Close command menu" });
+  await expect(reopenedSearch).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(commandClose).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(reopenedSearch).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 

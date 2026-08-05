@@ -206,15 +206,34 @@ def _execute_wake(
     return action, submitted, _safe_receipt(last)
 
 
-def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
-    """Execute exactly one connector against an existing hosted test identity."""
-    if args.connector not in CONNECTORS:
-        raise ValueError("unsupported connector")
-    if not _public_https_origin(args.base_url):
-        raise ValueError("base URL must be a public HTTPS origin")
-    if not re_full_hex(args.commit, 40) or not re_full_hex(args.tree, 40):
-        raise ValueError("candidate commit and tree must be lowercase 40-byte hex IDs")
-    credential = load_credential_file(args.credential_file)
+class _CredentialRevoker:
+    """Make the single revocation attempt observable and idempotent."""
+
+    def __init__(self, base_url: str, credential: dict[str, Any]) -> None:
+        self.base_url = base_url
+        self.token = str(
+            credential.get("revocation_token") or credential["access_token"]
+        )
+        self.attempted = False
+
+    def revoke(self) -> None:
+        if self.attempted:
+            return
+        self.attempted = True
+        status, _body = _request(
+            "POST",
+            _url(self.base_url, "/oauth/revoke"),
+            form_body={"token": self.token},
+        )
+        if status not in {200, 204}:
+            raise RuntimeError(f"credential revocation returned HTTP {status}")
+
+
+def _run_authenticated_acceptance(
+    args: argparse.Namespace,
+    credential: dict[str, Any],
+    revoker: _CredentialRevoker,
+) -> dict[str, Any]:
     token = credential["access_token"]
     started_at = _now()
     public_requests: list[dict[str, Any]] = []
@@ -304,13 +323,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         token=token,
     )
     isolation_passed = isolation_status in {403, 404}
-    revoke_status, _revoke_body = _request(
-        "POST",
-        _url(args.base_url, "/oauth/revoke"),
-        form_body={"token": str(credential.get("revocation_token") or token)},
-    )
-    if revoke_status not in {200, 204}:
-        raise RuntimeError(f"credential revocation returned HTTP {revoke_status}")
+    revoker.revoke()
     post_status, _post_body = _request(
         "GET", _url(args.base_url, "/api/v2/agent/me"), token=token
     )
@@ -361,6 +374,31 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         expected_candidate={"commit": args.commit, "tree": args.tree},
         expected_connector=args.connector,
     )
+
+
+def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
+    """Execute exactly one connector against an existing hosted test identity."""
+    if args.connector not in CONNECTORS:
+        raise ValueError("unsupported connector")
+    if not _public_https_origin(args.base_url):
+        raise ValueError("base URL must be a public HTTPS origin")
+    if not re_full_hex(args.commit, 40) or not re_full_hex(args.tree, 40):
+        raise ValueError("candidate commit and tree must be lowercase 40-byte hex IDs")
+    credential = load_credential_file(args.credential_file)
+    revoker = _CredentialRevoker(args.base_url, credential)
+    flow_failed = False
+    try:
+        return _run_authenticated_acceptance(args, credential, revoker)
+    except BaseException:
+        flow_failed = True
+        raise
+    finally:
+        if not revoker.attempted:
+            try:
+                revoker.revoke()
+            except BaseException:
+                if not flow_failed:
+                    raise
 
 
 def re_full_hex(value: str, length: int) -> bool:

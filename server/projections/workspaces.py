@@ -73,6 +73,7 @@ def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     result = []
     for row in rows:
         status = _firm_status(row, as_of_tick)
+        _mask_future_ticks(row, as_of_tick, "listed_tick", "bankrupt_tick")
         account_id = row.pop("account_id", None)
         row["status"] = status
         row["active"] = status != "bankrupt"
@@ -152,6 +153,7 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         (tick, tick)))
     agent_regions = _agent_regions_at(store, agents, tick)
     for agent in agents:
+        _mask_future_ticks(agent, tick, "died_tick")
         agent["region_id"] = agent_regions[int(agent["id"])]
         region = region_by_id.get(agent["region_id"])
         agent["region_name"] = region["name"] if region else None
@@ -159,6 +161,8 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,place_key,region_id,name,kind,owner_type,owner_id,x,y,capacity,"
         "created_tick,closed_tick,metadata_json FROM places WHERE created_tick<=? "
         "AND (closed_tick IS NULL OR closed_tick>?) ORDER BY id", (tick, tick)))]
+    for place in places:
+        _mask_future_ticks(place, tick, "closed_tick")
     presence = _dicts(store.query(
         "SELECT ep.id,ep.tick,ep.slot,ep.agent_id,ep.place_id,ep.source_type "
         "FROM effective_presence ep WHERE ep.tick=? ORDER BY ep.slot,ep.agent_id", (tick,)))
@@ -167,10 +171,17 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,agent_id,origin_region_id,destination_region_id,requested_tick AS tick,"
         "completed_tick,status FROM migrations WHERE requested_tick<=? ORDER BY requested_tick,id",
         (tick,)))
+    for migration in migrations:
+        if (migration["completed_tick"] is not None
+                and int(migration["completed_tick"]) > tick):
+            migration.update({"completed_tick": None, "status": "pending"})
     shipments = _dicts(store.query(
         "SELECT id,created_tick AS tick,exporter_firm_id,importer_firm_id,origin_region_id,"
         "destination_region_id,quantity,invoice_cents,invoice_currency,arrival_tick,status "
         "FROM trade_shipments WHERE created_tick<=? ORDER BY created_tick,id", (tick,)))
+    for shipment in shipments:
+        if int(shipment["arrival_tick"]) > tick:
+            shipment.update({"arrival_tick": None, "status": "in_transit"})
     flows = [
         {"kind": "migration", **row} for row in migrations
     ] + [
@@ -322,6 +333,7 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
             (int(row["id"]), tick), default=1)
         row["status"] = str(action["action_type"]) if action else "introduced"
         row["current_version"] = int(version or 1)
+        _mask_future_ticks(row, tick, "executive_action_tick", "effective_tick")
     versions = [_json_fields(row, "text_json") for row in _dicts(store.query(
         "SELECT id,bill_id,version,tick,summary,text_json FROM bill_versions "
         "WHERE tick<=? ORDER BY tick,id", (tick,)))]
@@ -331,10 +343,18 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
     rules = [_json_fields(row, "value_json") for row in _dicts(store.query(
         "SELECT id,bill_id,rule_key,value_json,enacted_tick,effective_tick,status "
         "FROM policy_rules WHERE enacted_tick<=? ORDER BY enacted_tick,id", (tick,)))]
+    for row in rules:
+        if int(row["effective_tick"]) > tick:
+            row["status"] = "pending"
+        _mask_future_ticks(row, tick, "effective_tick")
     lobbying = _dicts(store.query(
         "SELECT id,tick,sponsor_type,sponsor_id,bill_id,activity_type,position,amount_cents,"
         "disclosure_tick,disclosed FROM lobbying_activities WHERE tick<=? ORDER BY tick,id",
         (tick,)))
+    for row in lobbying:
+        if int(row["disclosure_tick"]) > tick:
+            row["disclosed"] = 0
+        _mask_future_ticks(row, tick, "disclosure_tick")
     contracts = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
         "SELECT id,contract_type,title,jurisdiction,ruleset_key,offered_tick,executed_tick,"
         "expiry_tick,terminated_tick,metadata_json FROM contracts WHERE offered_tick<=? "

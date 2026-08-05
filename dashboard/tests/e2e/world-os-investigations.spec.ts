@@ -241,6 +241,23 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.getByRole("navigation", { name: "Saved investigations" })
     .getByRole("button", { name: /Remote second/ }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
+  await titleB.fill("Unsaved navigation draft");
+  const navigationTrigger = pageB.getByRole("navigation", { name: "Saved investigations" })
+    .getByRole("button", { name: /Local copy/ });
+  await navigationTrigger.click();
+  const discardDialog = pageB.getByRole("dialog", { name: "Discard unsaved title draft?" });
+  await expect(discardDialog.getByRole("heading")).toBeFocused();
+  const stayButton = discardDialog.getByRole("button", { name: "Stay" });
+  const discardButton = discardDialog.getByRole("button", { name: "Discard draft and continue" });
+  await discardButton.focus();
+  await pageB.keyboard.press("Tab");
+  await expect(stayButton).toBeFocused();
+  await pageB.keyboard.press("Shift+Tab");
+  await expect(discardButton).toBeFocused();
+  await pageB.keyboard.press("Escape");
+  await expect(discardDialog).toBeHidden();
+  await expect(navigationTrigger).toBeFocused();
+  await pageB.getByRole("button", { name: "Cancel", exact: true }).click();
   const jsonDownloadPromise = pageB.waitForEvent("download");
   await pageB.getByRole("button", { name: "Download JSON" }).click();
   const jsonDownload = await jsonDownloadPromise;

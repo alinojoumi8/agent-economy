@@ -4,6 +4,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from benchmarks.external_connector_acceptance import (
     validate_external_connector_receipt,
     write_external_connector_receipt,
 )
+from scripts import run_external_connector_acceptance as connector_runner
 from scripts.run_external_connector_acceptance import _request, load_credential_file
 
 
@@ -228,6 +230,61 @@ def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):
         load_credential_file(link)
     with pytest.raises(ValueError, match="isolation_probe_path"):
         load_credential_file(target)
+
+
+def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
+    tmp_path, monkeypatch,
+):
+    credential_path = tmp_path / "credential.json"
+    credential_path.write_text(json.dumps({
+        "access_token": "process-only-token",
+        "revocation_token": "process-only-revocation-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }), encoding="utf-8")
+    credential_path.chmod(0o600)
+    requests = []
+
+    def request(method, url, **kwargs):
+        requests.append((method, url, kwargs))
+        if url.endswith("/.well-known/oauth-authorization-server"):
+            return 200, b"{}"
+        if url.endswith("/.well-known/oauth-protected-resource/mcp"):
+            return 200, b"{}"
+        if url.endswith("/api/v2/agent/me"):
+            return 200, json.dumps({
+                "actor": {"id": "agent-1"},
+                "scopes": ["world.read", "world.act"],
+            }).encode("utf-8")
+        if url.endswith("/oauth/revoke"):
+            raise RuntimeError("revocation failed")
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(connector_runner, "_request", request)
+    def fail_wake(*_args, **_kwargs):
+        raise RuntimeError("wake failed")
+
+    monkeypatch.setattr(connector_runner, "_execute_wake", fail_wake)
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit=COMMIT,
+        tree=TREE,
+        credential_file=credential_path,
+        client_name="outside-python",
+        client_version="1.2.3",
+        timeout=30.0,
+        signer_label="independent-lab",
+        server_operator="agent-economy-operator",
+    )
+
+    with pytest.raises(RuntimeError, match="wake failed"):
+        connector_runner.run_acceptance(args)
+
+    revocations = [item for item in requests if item[1].endswith("/oauth/revoke")]
+    assert len(revocations) == 1
+    assert revocations[0][2]["form_body"] == {
+        "token": "process-only-revocation-token",
+    }
 
 
 def test_hosted_runner_refuses_redirects_without_forwarding_bearer_token():

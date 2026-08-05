@@ -4,6 +4,7 @@ import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams }
 import worldOsEmblem from "../assets/world-os-emblem.png";
 import { CitizenMenu } from "../components/CitizenMenu";
 import { FreshnessBadge, type ProjectionTransport } from "../components/FreshnessBadge";
+import { useModalFocus } from "../components/useModalFocus";
 import { projectionApi } from "./api";
 import { searchResultPath, workspacePath, type SearchResultItem, type SearchResultKind } from "./commandNavigation";
 import { parseObserverViewState, projectionScopeParams } from "./observerViewState";
@@ -204,8 +205,13 @@ export function WorkspaceShell() {
   }, []);
   const closeCommand = useCallback(() => {
     setCommandOpen(false);
-    window.requestAnimationFrame(() => commandReturnFocus.current?.focus());
   }, []);
+  const commandDialogRef = useModalFocus({
+    active: commandOpen,
+    initialFocusRef: commandInput,
+    returnFocusRef: commandReturnFocus,
+    onEscape: closeCommand,
+  });
 
   useEffect(() => setDraftTick(tick === "live" ? "" : tick), [tick]);
   useEffect(() => {
@@ -215,14 +221,10 @@ export function WorkspaceShell() {
         if (commandOpen) closeCommand();
         else openCommand();
       }
-      if (event.key === "Escape" && commandOpen) closeCommand();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeCommand, commandOpen, openCommand]);
-  useEffect(() => {
-    if (commandOpen) window.requestAnimationFrame(() => commandInput.current?.focus());
-  }, [commandOpen]);
   useEffect(() => {
     setActiveCommandIndex(commandChoices.length ? 0 : -1);
   }, [commandChoices]);
@@ -316,7 +318,8 @@ export function WorkspaceShell() {
     </section>
 
     {commandOpen && <div className="world-os-command-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) closeCommand(); }}>
-      <section className="world-os-command" role="dialog" aria-modal="true" aria-labelledby="world-os-command-title">
+      <section ref={commandDialogRef} className="world-os-command" role="dialog"
+        aria-modal="true" aria-labelledby="world-os-command-title" tabIndex={-1}>
         <header><div><p className="world-os-kicker">World OS command</p><h2 id="world-os-command-title">Navigate and inspect</h2></div><button type="button" onClick={closeCommand} aria-label="Close command menu">Esc</button></header>
         <label className="world-os-command-search"><Glyph name="search" /><input
           ref={commandInput}
