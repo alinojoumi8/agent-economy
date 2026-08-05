@@ -331,6 +331,81 @@ def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
     }
 
 
+@pytest.mark.parametrize(
+    ("isolation_status", "post_revoke_status"),
+    [(500, 401), (403, 200)],
+)
+def test_authenticated_runner_status_fails_when_a_security_gate_fails(
+    monkeypatch, isolation_status, post_revoke_status,
+):
+    identity_reads = 0
+
+    def request(method, url, **_kwargs):
+        nonlocal identity_reads
+        if url.endswith("/.well-known/oauth-authorization-server"):
+            return 200, b"{}"
+        if url.endswith("/.well-known/oauth-protected-resource/mcp"):
+            return 200, b"{}"
+        if url.endswith("/api/v2/agent/me"):
+            identity_reads += 1
+            if identity_reads == 1:
+                return 200, json.dumps({
+                    "actor": {"id": "agent-1"},
+                    "tenant_id": "tenant-1",
+                    "run_id": "run-1",
+                    "scopes": ["world.read", "world.act"],
+                }).encode("utf-8")
+            return post_revoke_status, b"{}"
+        if url.endswith("/api/v2/tenants/other/run"):
+            return isolation_status, b"{}"
+        if url.endswith("/oauth/revoke") and method == "POST":
+            return 204, b""
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(connector_runner, "_request", request)
+    monkeypatch.setattr(
+        connector_runner,
+        "_execute_wake",
+        lambda *_args, **_kwargs: (
+            {"action_type": "wait"},
+            {"submission_id": "receipt-1", "status": "accepted"},
+            {"receipt_id": "receipt-1", "target_tick": 1, "status": "executed"},
+        ),
+    )
+    monkeypatch.setattr(
+        connector_runner,
+        "validate_external_connector_receipt",
+        lambda result, **_kwargs: result,
+    )
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit=COMMIT,
+        tree=TREE,
+        client_name="outside-python",
+        client_version="1.2.3",
+        timeout=30.0,
+        signer_label="independent-lab",
+        server_operator="agent-economy-operator",
+    )
+    credential = {
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }
+
+    result = connector_runner._run_authenticated_acceptance(
+        args,
+        credential,
+        connector_runner._CredentialRevoker(args.base_url, credential),
+    )
+
+    assert result["status"] == "failed"
+    assert result["revocation"]["passed"] is (post_revoke_status == 401)
+    assert result["cross_tenant_isolation"]["passed"] is (
+        isolation_status in {403, 404}
+    )
+
+
 def test_hosted_runner_refuses_redirects_without_forwarding_bearer_token():
     received_authorization = []
 

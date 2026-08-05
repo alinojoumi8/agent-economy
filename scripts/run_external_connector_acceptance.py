@@ -334,12 +334,14 @@ def _run_authenticated_acceptance(
     post_status, _post_body = _request(
         "GET", _url(args.base_url, "/api/v2/agent/me"), token=token
     )
+    revocation_passed = post_status == 401
+    gates_passed = revocation_passed and isolation_passed
 
     result: dict[str, Any] = {
         "schema": "agent-economy-external-connector-v1",
         "connector": args.connector,
         "execution_scope": "independent_external",
-        "status": "passed",
+        "status": "passed" if gates_passed else "failed",
         "candidate": {"commit": args.commit, "tree": args.tree},
         "client": {"name": args.client_name, "version": args.client_version},
         "signer": {"label": args.signer_label, "independent": True},
@@ -358,7 +360,7 @@ def _run_authenticated_acceptance(
         },
         "executed_receipts": executed,
         "revocation": {
-            "passed": post_status == 401,
+            "passed": revocation_passed,
             "post_revoke_status": post_status,
         },
         "cross_tenant_isolation": {

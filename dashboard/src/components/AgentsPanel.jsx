@@ -30,6 +30,15 @@ export function handleAgentRowKeyDown(event, inspect, agentId) {
   inspect(agentId);
 }
 
+export function applyAgentDetailFailure(
+  reason, setDetail, setError, { clearDetail = false } = {},
+) {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  if (clearDetail) setDetail(null);
+  setError(message || "Agent details could not be loaded.");
+  return message || "Agent details could not be loaded.";
+}
+
 export function AgentsPanel({ agents = null, initialDirectory = null, participant, status, act }) {
   const [filter, setFilter] = useState("");
   const [tier, setTier] = useState("");
@@ -43,6 +52,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
   const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState("");
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     let active = true;
@@ -88,6 +98,8 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
 
   async function inspect(id) {
     setLoading(true);
+    setDetail(null);
+    setDetailError("");
     try {
       const agentDetail = await api(`/api/agents/${id}`);
       let participantHistory = null;
@@ -95,6 +107,10 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         participantHistory = await api(`/api/participant/history?agent_id=${id}&limit=50`);
       }
       setDetail({ ...agentDetail, participantHistory });
+    } catch (reason) {
+      applyAgentDetailFailure(
+        reason, setDetail, setDetailError, { clearDetail: true },
+      );
     } finally { setLoading(false); }
   }
 
@@ -102,6 +118,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     const cursor = detail?.participantHistory?.next_before_id;
     if (!detail?.agent?.id || !cursor) return;
     setLoading(true);
+    setDetailError("");
     try {
       const page = await api(
         `/api/participant/history?agent_id=${detail.agent.id}&limit=50&before_id=${cursor}`);
@@ -109,6 +126,8 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         ...current,
         participantHistory: appendParticipantHistory(current?.participantHistory, page),
       }));
+    } catch (reason) {
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
     } finally { setLoading(false); }
   }
 
@@ -116,6 +135,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     const cursor = detail?.output_cursors?.[kind];
     if (!detail?.agent?.id || !cursor) return;
     setLoading(true);
+    setDetailError("");
     try {
       const page = await api(
         `/api/agents/${detail.agent.id}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
@@ -128,17 +148,22 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
           output_cursors: { ...current?.output_cursors, [kind]: page.next_before_id },
         };
       });
+    } catch (reason) {
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
     } finally { setLoading(false); }
   }
 
   async function takeControl(agentId) {
     setLoading(true);
+    setDetailError("");
     try {
       await act("/api/participant/control", {
         agent_id: agentId,
         expected_tick: status?.tick ?? 0,
       });
       setDetail(null);
+    } catch (reason) {
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
     } finally { setLoading(false); }
   }
 
@@ -168,15 +193,17 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         <div className="flex gap-2"><button className="button !min-h-8" disabled={pageIndex === 0 || directoryLoading} onClick={() => setPageIndex(current => Math.max(0, current - 1))}>Previous</button><button className="button !min-h-8" disabled={!directory.next_after_id || directoryLoading} onClick={nextPage}>Next</button></div>
       </div>
     </Panel>
+    {detailError && !detail && <div role="alert" className="col-span-full rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Agent details unavailable: {detailError}</div>}
     {loading && <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-mint-300 px-3 py-2 text-xs font-semibold text-ink-950">Loading agent…</div>}
     {detail && <AgentModal detail={detail} participant={participant} running={status?.running}
+      error={detailError}
       historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
       onLoadOlderOutputs={loadOlderAgentOutputs}
-      onTakeControl={takeControl} onClose={() => setDetail(null)} />}
+      onTakeControl={takeControl} onClose={() => { setDetail(null); setDetailError(""); }} />}
   </>;
 }
 
-export function AgentModal({ detail, participant, running, historyLoading, onLoadOlder, onLoadOlderOutputs, onTakeControl, onClose }) {
+export function AgentModal({ detail, error = "", participant, running, historyLoading, onLoadOlder, onLoadOlderOutputs, onTakeControl, onClose }) {
   const agent = detail.agent;
   const counts = detail.output_counts || {};
   const modelOutputs = detail.recent_decisions || [];
@@ -185,6 +212,7 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
   const controlledId = participant?.controlled_agent?.id;
   const execution = agentExecutionPresentation(detail.execution);
   return <Modal title={`${agent.name} · agent ${agent.id}`} onClose={onClose} wide>
+    {error && <div role="alert" className="mb-4 rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Agent detail request failed: {error}</div>}
     {selectable && <div className="mb-4 flex items-center justify-between rounded-xl border border-mint-300/15 bg-mint-300/[.05] p-3">
       <div><div className="eyebrow">Participant Mode</div><p className="mt-1 text-xs text-slate-400">Control this citizen one validated day at a time.</p></div>
       <button className="button button-primary" disabled={running || (controlledId && controlledId !== agent.id)}

@@ -1,4 +1,5 @@
 import { useRef, type RefObject } from "react";
+import { investigationTitleError } from "../workspaces/investigationState";
 import { useModalFocus } from "./useModalFocus";
 
 type InvestigationConflictDialogProps = {
@@ -16,6 +17,7 @@ export function InvestigationConflictDialog({
   draftTitle, serverTitle, serverVersion, pending, returnFocusRef,
   onReload, onSaveAsNew, onContinue,
 }: InvestigationConflictDialogProps) {
+  const validation = investigationTitleError(draftTitle);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const dialogRef = useModalFocus({
     initialFocusRef: headingRef,
@@ -34,9 +36,10 @@ export function InvestigationConflictDialog({
         <p>Server version {serverVersion}: <strong>{serverTitle}</strong></p>
       </div>
       <p>No automatic merge or overwrite occurred. Evidence and hypotheses stay with the original investigation if you save this title as a new investigation.</p>
+      {validation && <p className="world-os-form-error" role="alert">{validation}</p>}
       <div className="world-os-dialog-actions">
         <button className="button button-primary" type="button" disabled={pending} onClick={onReload}>Reload server version</button>
-        <button className="button" type="button" disabled={pending} onClick={onSaveAsNew}>Save draft as new investigation</button>
+        <button className="button" type="button" disabled={pending || Boolean(validation)} onClick={onSaveAsNew}>Save draft as new investigation</button>
         <button className="button" type="button" disabled={pending} onClick={onContinue}>Continue editing</button>
       </div>
     </section>

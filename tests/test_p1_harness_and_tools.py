@@ -1,5 +1,6 @@
 """P1 tooling: experiment harness (R14), Oracle calibration (R15), replay reader (R16)."""
 import asyncio
+import json
 import logging
 import sqlite3
 
@@ -132,6 +133,33 @@ def test_replay_reader_lists_and_pages_ticks(tmp_path):
     # Unknown/invalid run ids are refused, not crashed.
     assert reader.tick_view("nope", 1) is None
     assert reader.tick_view("../etc/passwd", 1) is None
+
+
+def test_replay_reader_projects_public_event_payloads(tmp_path):
+    store = Store(str(tmp_path / "public-events.db"))
+    store.init_run_meta("public-events", 1, {})
+    store.log_event(
+        1,
+        "production",
+        {
+            "firm_id": 4,
+            "units": 7,
+            "agent_id": 99,
+            "private_reasoning": "replay-private-payload-canary",
+        },
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    store.set_meta(status="paused", tick=1)
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    event = reader.tick_view("public-events", 1)["events"][0]
+
+    assert event["payload"] == {"firm_id": 4, "units": 7}
+    assert "replay-private-payload-canary" not in json.dumps(event)
+    reader.close()
 
 
 def test_replay_reader_uses_requested_tick_for_grounding_activation(tmp_path):

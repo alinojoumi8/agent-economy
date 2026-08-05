@@ -5,6 +5,7 @@ import {
   classifyEventLayer,
   deriveCityModel,
   eventActorIds,
+  semanticReceiptForEvent,
 } from "../src/lib/civicCity.js";
 
 test("city layers map civic roles and committed events to named evidence families", () => {
@@ -31,6 +32,25 @@ test("event actor extraction ignores entity ids that are not people", () => {
   });
 
   assert.deepEqual(ids.sort((left, right) => left - right), [7, 11, 13]);
+});
+
+test("semantic receipts never fall back to a different selected event", () => {
+  const receipts = [{ eventId: 11, tick: 4, semantic: "matched" }];
+
+  assert.deepEqual(
+    semanticReceiptForEvent({ id: 11, tick: 4, payload: {} }, receipts),
+    receipts[0],
+  );
+  assert.equal(
+    semanticReceiptForEvent({ id: 12, tick: 4, payload: {} }, receipts),
+    null,
+  );
+  assert.deepEqual(
+    semanticReceiptForEvent({
+      id: 13, tick: 5, payload: { semantic_receipt: { semantic: "embedded" } },
+    }, receipts),
+    { eventId: 13, tick: 5, semantic: "embedded" },
+  );
 });
 
 test("derived city layout is deterministic and labels actor-linked activity", () => {

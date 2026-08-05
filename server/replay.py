@@ -121,7 +121,8 @@ class ReplayReader:
             return None
         events = [{"id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
                    "phase": r["phase"], "importance": float(r["importance"]),
-                   "payload": _load_json(r["payload_json"], {})}
+                   "payload": public_event_payload(
+                       r["kind"], _load_json(r["payload_json"], {}) or {})}
                   for r in conn.execute(
                       "SELECT * FROM events WHERE tick=? AND kind NOT IN "
                       "('metrics_snapshot','action_rejected') ORDER BY id LIMIT 80", (tick,))]

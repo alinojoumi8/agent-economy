@@ -16,6 +16,7 @@ import {
   investigationUpdatePayload,
   openInvestigationConflict,
   reloadInvestigationConflict,
+  requestInvestigationSaveAsNew,
   saveInvestigationAsNewPayload,
 } from "../src/workspaces/investigationState.js";
 
@@ -142,6 +143,48 @@ test("save-as-new copies context but never evidence or hypotheses", () => {
     title: "Local draft", fork_id: "fork-1", pinned_tick: 6,
     query: { relation: "cited" }, layout: { left: 320 },
   });
+});
+
+test("save-as-new rejects an invalid conflict title before mutation", () => {
+  const server = { id: "inv-1", title: "Original", version: 1 };
+  let state = openInvestigationConflict(
+    editInvestigationTitle(createInvestigationDraft(server), "   "),
+    { ...server, title: "Remote", version: 2 },
+  );
+  const mutations = [];
+  const errors = [];
+
+  assert.equal(requestInvestigationSaveAsNew(
+    state,
+    draft => mutations.push(draft),
+    error => errors.push(error),
+  ), false);
+  assert.deepEqual(mutations, []);
+  assert.deepEqual(errors, ["Title is required."]);
+
+  state = editInvestigationTitle(state, "Local copy");
+  assert.equal(requestInvestigationSaveAsNew(
+    state,
+    draft => mutations.push(draft),
+    error => errors.push(error),
+  ), true);
+  assert.equal(mutations[0], state);
+});
+
+test("dirty investigation routes use one router and unload guard", async () => {
+  const mainSource = await readFile(
+    new URL("../src/main.jsx", import.meta.url), "utf8",
+  );
+  const workspaceSource = await readFile(
+    new URL("../src/workspaces/InvestigationsWorkspace.tsx", import.meta.url), "utf8",
+  );
+  assert.match(mainSource, /createBrowserRouter/);
+  assert.match(mainSource, /RouterProvider/);
+  assert.doesNotMatch(mainSource, /<BrowserRouter>/);
+  assert.match(workspaceSource, /useBlocker/);
+  assert.match(workspaceSource, /useBeforeUnload/);
+  assert.match(workspaceSource, /blocker\.proceed\(\)/);
+  assert.match(workspaceSource, /blocker\.reset\(\)/);
 });
 
 test("text downloads click once and always revoke their object URL", () => {

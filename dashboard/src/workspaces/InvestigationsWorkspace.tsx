@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useBeforeUnload, useBlocker, useLocation, useNavigate, useParams, useSearchParams,
+} from "react-router";
 import { projectionApi, workspaceApi, WorkspaceApiError } from "../app/api";
 import { parseObserverViewState, projectionScopeParams } from "../app/observerViewState";
 import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
@@ -19,6 +21,7 @@ import {
   openInvestigationConflict,
   reloadInvestigationConflict,
   reopenInvestigationConflict,
+  requestInvestigationSaveAsNew,
   saveInvestigationAsNewPayload,
 } from "./investigationState";
 
@@ -55,12 +58,28 @@ export function InvestigationsWorkspace() {
   const [hypothesis, setHypothesis] = useState("");
   const [draft, setDraft] = useState<any>(null);
   const [pendingInvestigationId, setPendingInvestigationId] = useState<string | null>(null);
+  const location = useLocation();
+  const allowNavigation = useRef(false);
+  const blocker = useBlocker(useCallback(
+    () => Boolean(draft?.dirty) && !allowNavigation.current,
+    [draft?.dirty],
+  ));
+  useBeforeUnload(useCallback(event => {
+    if (!draft?.dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }, [draft?.dirty]));
+  useEffect(() => { allowNavigation.current = false; }, [location.key]);
   const navigationDialogHeading = useRef<HTMLHeadingElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const resetNavigationGuard = () => {
+    if (blocker.state === "blocked") blocker.reset();
+    setPendingInvestigationId(null);
+  };
   const navigationDialogRef = useModalFocus({
-    active: Boolean(pendingInvestigationId),
+    active: Boolean(pendingInvestigationId) || blocker.state === "blocked",
     initialFocusRef: navigationDialogHeading,
-    onEscape: () => setPendingInvestigationId(null),
+    onEscape: resetNavigationGuard,
   });
 
   const events = useQuery({
@@ -217,6 +236,7 @@ export function InvestigationsWorkspace() {
       setDraft(createInvestigationDraft(record));
       insertCachedInvestigation(record);
       refreshWorkspace();
+      allowNavigation.current = true;
       navigate(investigationPath(record.id));
     },
     onError: reason => setDraft((current: any) => current ? {
@@ -315,20 +335,29 @@ export function InvestigationsWorkspace() {
         setDraft((current: any) => reloadInvestigationConflict(current));
         refreshWorkspace();
       }}
-      onSaveAsNew={() => saveInvestigationAsNew.mutate(draft)}
+      onSaveAsNew={() => requestInvestigationSaveAsNew(
+        draft,
+        (activeDraft: any) => saveInvestigationAsNew.mutate(activeDraft),
+        (error: string) => setDraft((current: any) => current ? { ...current, error } : current),
+      )}
       onContinue={() => setDraft((current: any) => continueInvestigationConflict(current))} />}
-    {pendingInvestigationId && <div className="world-os-dialog-backdrop">
+    {(pendingInvestigationId || blocker.state === "blocked") && <div className="world-os-dialog-backdrop">
       <section ref={navigationDialogRef} className="world-os-dialog" role="dialog"
         aria-modal="true" aria-labelledby="discard-draft-title" tabIndex={-1}>
         <h3 id="discard-draft-title" ref={navigationDialogHeading} tabIndex={-1}>Discard unsaved title draft?</h3>
         <p>Your title edit has not been saved. Stay here or discard it before opening another investigation.</p>
         <div className="world-os-dialog-actions">
-          <button className="button button-primary" type="button" onClick={() => setPendingInvestigationId(null)}>Stay</button>
+          <button className="button button-primary" type="button" onClick={resetNavigationGuard}>Stay</button>
           <button className="button" type="button" onClick={() => {
             const nextId = pendingInvestigationId;
             setPendingInvestigationId(null);
             setDraft((current: any) => cancelInvestigationEdit(current));
-            navigate(investigationPath(nextId));
+            if (blocker.state === "blocked") {
+              blocker.proceed();
+            } else if (nextId) {
+              allowNavigation.current = true;
+              navigate(investigationPath(nextId));
+            }
           }}>Discard draft and continue</button>
         </div>
       </section>

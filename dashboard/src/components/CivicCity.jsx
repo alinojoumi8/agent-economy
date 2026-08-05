@@ -12,6 +12,7 @@ import {
   CITY_LAYERS,
   deriveCityModel,
   humanize,
+  semanticReceiptForEvent,
 } from "../lib/civicCity.js";
 
 const DISTRICT_PATHS = {
@@ -122,9 +123,7 @@ export function CivicCity(props) {
     ? null
     : model.firms.find(firm => String(firm.id) === String(selected.employer_id));
   const eventFacts = payloadFacts(selected?.event?.payload);
-  const semanticReceipt = selected?.event?.payload?.semantic_receipt
-    || model.receipts[0]
-    || null;
+  const semanticReceipt = semanticReceiptForEvent(selected?.event, model.receipts);
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const commonParams = new URLSearchParams();

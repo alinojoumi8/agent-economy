@@ -271,6 +271,17 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.keyboard.press("Escape");
   await expect(discardDialog).toBeHidden();
   await expect(navigationTrigger).toBeFocused();
+  await pageB.getByRole("link", { name: "Live City" }).click();
+  await expect(discardDialog).toBeVisible();
+  await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
+  await discardDialog.getByRole("button", { name: "Stay" }).click();
+  await expect(discardDialog).toBeHidden();
+  await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
+  await pageB.evaluate(() => history.back());
+  await expect(discardDialog).toBeVisible();
+  await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
+  await discardDialog.getByRole("button", { name: "Stay" }).click();
+  await expect(discardDialog).toBeHidden();
   await pageB.getByRole("button", { name: "Cancel", exact: true }).click();
   const jsonDownloadPromise = pageB.waitForEvent("download");
   await pageB.getByRole("button", { name: "Download JSON" }).click();

@@ -74,6 +74,8 @@ export function reopenInvestigationConflict(state) {
 
 export function saveInvestigationAsNewPayload(state) {
   if (!state.conflict) throw new Error("No investigation conflict is available.");
+  const validation = investigationTitleError(state.titleDraft);
+  if (validation) throw new Error(validation);
   const current = state.conflict.server;
   return {
     title: state.titleDraft.trim(),
@@ -82,4 +84,14 @@ export function saveInvestigationAsNewPayload(state) {
     query: current.query || {},
     layout: current.layout || {},
   };
+}
+
+export function requestInvestigationSaveAsNew(state, mutate, reportError) {
+  const validation = investigationTitleError(state?.titleDraft);
+  if (validation) {
+    reportError(validation);
+    return false;
+  }
+  mutate(state);
+  return true;
 }

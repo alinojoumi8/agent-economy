@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import React from "react";
@@ -214,6 +215,50 @@ test("agent directory renders a bounded population page and encodes server filte
     assert.match(markup, /northstar/);
     assert.match(markup, /core/);
     assert.match(markup, />Next<\/button>/);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("agent detail failures clear stale data and render an alert", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const {
+      AgentModal,
+      applyAgentDetailFailure,
+    } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    const updates = [];
+    const message = applyAgentDetailFailure(
+      new Error("detail unavailable"),
+      value => updates.push(["detail", value]),
+      value => updates.push(["error", value]),
+      { clearDetail: true },
+    );
+    assert.equal(message, "detail unavailable");
+    assert.deepEqual(updates, [
+      ["detail", null],
+      ["error", "detail unavailable"],
+    ]);
+
+    const markup = renderToStaticMarkup(React.createElement(AgentModal, {
+      detail: {
+        agent: { id: 1, name: "Ada", kind: "citizen", alive: 1 },
+        accounts: [], loans: [], beliefs: {}, belief_history: [], memories: [],
+        recent_decisions: [], recent_actions: [], output_counts: {}, output_cursors: {},
+      },
+      error: "Older actions could not be loaded.",
+      participant: { enabled: false }, running: false, historyLoading: false,
+      onLoadOlder: () => {}, onLoadOlderOutputs: () => {},
+      onTakeControl: () => {}, onClose: () => {},
+    }));
+    assert.match(markup, /role="alert"/);
+    assert.match(markup, /Older actions could not be loaded\./);
+
+    const source = await readFile(
+      new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8",
+    );
+    assert.ok((source.match(/catch \(reason\)/g) || []).length >= 3);
   } finally {
     await vite.close();
   }
