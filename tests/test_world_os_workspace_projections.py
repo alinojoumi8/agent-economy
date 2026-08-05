@@ -14,6 +14,7 @@ from server.projections import (
     build_politics_law_workspace,
     build_world_workspace,
 )
+from server.projections.workspaces import _balances_as_of
 from server.v2_api import install_v2_routes
 
 
@@ -213,6 +214,10 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     assert politics["rules"][0]["effective_tick"] is None
     assert politics["lobbying"][0]["disclosed"] == 0
     assert politics["lobbying"][0]["disclosure_tick"] is None
+    assert politics["lobbying"][0]["sponsor_type"] is None
+    assert politics["lobbying"][0]["sponsor_id"] is None
+    assert politics["lobbying"][0]["position"] is None
+    assert politics["lobbying"][0]["amount_cents"] is None
     assert politics["contracts"][0]["status"] == "offered"
     assert politics["contracts"][0]["executed_tick"] is None
     assert politics["contracts"][0]["expiry_tick"] is None
@@ -311,6 +316,33 @@ def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(ec
     ]
     assert len(trade_reads) <= 2
     assert len(fx_trade_reads) <= 2
+    market_order_reads = [
+        sql for sql in statements
+        if "FROM orders" in sql or "FROM fx_orders" in sql
+    ]
+    assert market_order_reads
+    assert not any("SELECT *" in sql.upper() for sql in market_order_reads)
+
+
+def test_balance_projection_chunks_large_account_sets_below_sqlite_variable_limit():
+    class CapturingStore:
+        def __init__(self):
+            self.parameter_counts = []
+
+        def query(self, _sql, params):
+            self.parameter_counts.append(len(params))
+            assert len(params) <= 501
+            return [
+                {"account_id": account_id, "balance": account_id * 10}
+                for account_id in params[1:]
+            ]
+
+    store = CapturingStore()
+    balances = _balances_as_of(store, range(1, 1_202), 7)
+
+    assert store.parameter_counts == [501, 501, 202]
+    assert balances[1] == 10
+    assert balances[1_201] == 12_010
 
 
 def test_world_workspace_resolves_agent_regions_with_bounded_queries(economy):

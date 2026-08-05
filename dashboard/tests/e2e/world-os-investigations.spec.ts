@@ -13,6 +13,7 @@ type Investigation = {
   pinned_tick: number | null; query: Record<string, unknown>; layout: Record<string, unknown>;
   version: number; items: Array<Record<string, unknown>>;
   hypotheses: Array<Record<string, unknown>>;
+  private_message_body?: string;
 };
 
 function initialState() {
@@ -22,13 +23,13 @@ function initialState() {
     version: 1,
     items: [{ id: "item-1", item_kind: "event", stable_ref: { kind: "event", id: 9 }, note: "Committed evidence" }],
     hypotheses: [{ id: "hyp-1", statement: "Delivery changed demand", status: "open" }],
+    private_message_body: PRIVATE_CANARY,
   };
   return {
     records: new Map<string, Investigation>([[original.id, original]]),
     patchRequests: 0,
     createRequests: 0,
     delayNextListMs: 0,
-    privateInternal: PRIVATE_CANARY,
   };
 }
 
@@ -149,9 +150,12 @@ async function installApi(context: BrowserContext, state: ReturnType<typeof init
       const id = decodeURIComponent(exportMatch[1]);
       const record = state.records.get(id);
       if (!record) return route.fulfill({ status: 404, json: { detail: "investigation not found" } });
+      const publicRecord = Object.fromEntries(
+        Object.entries(record).filter(([key]) => key !== "private_message_body"),
+      );
       return route.fulfill({ json: {
         json: {
-          format: "world-os-investigation-v1", investigation: record,
+          format: "world-os-investigation-v1", investigation: publicRecord,
           redaction_manifest: { private_message_bodies: "not_copied", operator_audit: "not_included" },
         },
         markdown: `# ${record.title}\n\nRun: \`${record.run_id}\`\n\n## Hypotheses\n\n- [open] Delivery changed demand\n\n## Evidence\n\n- \`{\"id\":9,\"kind\":\"event\"}\` Committed evidence\n`,

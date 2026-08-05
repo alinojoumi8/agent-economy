@@ -36,16 +36,20 @@ def _balances_as_of(store, account_ids, as_of_tick: int) -> dict[int, int]:
                        if account_id is not None})
     if not relevant:
         return {}
-    placeholders = ",".join("?" for _ in relevant)
-    return {
-        int(row["account_id"]): int(row["balance"])
-        for row in store.query(
-            "SELECT account_id,COALESCE(SUM(delta_cents),0) AS balance "
-            f"FROM ledger_entries WHERE tick<=? AND account_id IN ({placeholders}) "
-            "GROUP BY account_id",
-            (int(as_of_tick), *relevant),
-        )
-    }
+    balances: dict[int, int] = {}
+    for start in range(0, len(relevant), 500):
+        chunk = relevant[start:start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        balances.update({
+            int(row["account_id"]): int(row["balance"])
+            for row in store.query(
+                "SELECT account_id,COALESCE(SUM(delta_cents),0) AS balance "
+                f"FROM ledger_entries WHERE tick<=? AND account_id IN ({placeholders}) "
+                "GROUP BY account_id",
+                (int(as_of_tick), *chunk),
+            )
+        })
+    return balances
 
 
 def _mask_future_ticks(row: dict[str, Any], as_of_tick: int, *fields: str) -> None:
@@ -249,8 +253,21 @@ def build_organizations_workspace(store, *, as_of_tick: int) -> dict:
 
 
 def _market_orders(store, table: str, trades_table: str, as_of_tick: int) -> list[dict[str, Any]]:
+    columns_by_table = {
+        "orders": (
+            "id", "tick", "agent_id", "firm_id", "side", "order_type",
+            "qty", "limit_price_cents", "seq",
+        ),
+        "fx_orders": (
+            "id", "tick", "actor_id", "pair", "base_currency",
+            "quote_currency", "side", "qty", "limit_rate_ppm", "seq",
+        ),
+    }
+    if table not in columns_by_table:
+        raise ValueError("unsupported market order table")
+    columns = ",".join(columns_by_table[table])
     rows = _dicts(store.query(
-        f"SELECT * FROM (SELECT * FROM {table} WHERE tick<=? "
+        f"SELECT {columns} FROM (SELECT {columns} FROM {table} WHERE tick<=? "
         "ORDER BY tick DESC,id DESC LIMIT 100) ORDER BY tick,id",
         (int(as_of_tick),)))
     order_ids = [int(row["id"]) for row in rows]
@@ -359,8 +376,15 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
         "disclosure_tick,disclosed FROM lobbying_activities WHERE tick<=? ORDER BY tick,id",
         (tick,)))
     for row in lobbying:
-        if int(row["disclosure_tick"]) > tick:
-            row["disclosed"] = 0
+        disclosure_tick = row.get("disclosure_tick")
+        if disclosure_tick is None or int(disclosure_tick) > tick:
+            row.update({
+                "disclosed": 0,
+                "sponsor_type": None,
+                "sponsor_id": None,
+                "position": None,
+                "amount_cents": None,
+            })
         _mask_future_ticks(row, tick, "disclosure_tick")
     contracts = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
         "SELECT id,contract_type,title,jurisdiction,ruleset_key,offered_tick,executed_tick,"

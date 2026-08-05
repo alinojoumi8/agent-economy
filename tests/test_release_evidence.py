@@ -17,6 +17,24 @@ from reports.release_evidence import (
 
 COMMIT = "1" * 40
 TREE = "2" * 40
+V1_REQUIRED_GATES = frozenset({
+    "dependency_license_secret_audit",
+    "deployment_receipt",
+    "hermes_connector",
+    "hosted_backup_restore",
+    "independent_mcp",
+    "openclaw_connector",
+    "oracle_v9",
+    "production_acceptance",
+    "provenance_audit",
+    "python_connector",
+    "rumor_pilot",
+    "semantics10_experiment",
+    "semantics10_hosted_ops",
+    "semantics10_hosted_ui",
+    "tenant_isolation_load",
+    "typescript_connector",
+})
 
 
 def _sha256(path: Path) -> str:
@@ -36,7 +54,7 @@ def release_fixture(
     artifacts.mkdir()
     omitted = omit or set()
     gates = []
-    for gate_id in sorted(REQUIRED_GATES):
+    for gate_id in sorted(V1_REQUIRED_GATES):
         if gate_id in omitted:
             continue
         artifact = artifacts / f"{gate_id}.txt"
@@ -104,8 +122,12 @@ def test_complete_manifest_passes_only_for_exact_candidate(tmp_path):
 
     assert result["overall_status"] == "passed"
     assert result["candidate"] == {"commit": COMMIT, "tree": TREE}
-    assert len(result["gates"]) == len(REQUIRED_GATES)
+    assert len(result["gates"]) == len(V1_REQUIRED_GATES)
     assert result["errors"] == []
+
+
+def test_production_required_gates_match_independent_v1_contract():
+    assert REQUIRED_GATES == V1_REQUIRED_GATES
 
 
 def test_collector_decodes_the_same_bytes_used_for_hashing(tmp_path, monkeypatch):

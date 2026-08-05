@@ -137,6 +137,35 @@ def test_numeric_grounding_activation_uses_next_untouched_boundary(
     store.close()
 
 
+def test_existing_numeric_grounding_boundary_is_normalized_and_persisted(tmp_path):
+    store = Store(str(tmp_path / "existing-numeric-boundary.db"))
+    store.init_run_meta(
+        "existing-numeric-boundary",
+        42,
+        {"beliefs": {
+            "audit_history": True,
+            "model_grounding_from_tick": "-2",
+            "model_max_reserved_step": "0.125",
+        }},
+    )
+    store.set_meta(status="paused", tick=8, active_tick=None, next_phase="MORNING")
+    store.commit()
+
+    settings = activate_numeric_grounding_for_run(store)
+    persisted = json.loads(store.get_meta()["config_json"])["beliefs"]
+
+    assert settings == {
+        "model_grounding_from_tick": 0,
+        "model_max_reserved_step": 0.125,
+    }
+    assert persisted == {
+        "audit_history": True,
+        "model_grounding_from_tick": 0,
+        "model_max_reserved_step": 0.125,
+    }
+    store.close()
+
+
 def test_grounded_model_reserved_beliefs_require_baseline_and_bounded_step(tmp_path):
     store = Store(str(tmp_path / "grounded-beliefs.db"))
     config = {

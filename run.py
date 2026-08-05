@@ -154,10 +154,15 @@ def activate_numeric_grounding_for_run(store: Store) -> dict:
             raise ValueError(
                 "beliefs.model_grounding_from_tick must be a nonnegative integer"
             ) from exc
-        return {
+        settings = {
             "model_grounding_from_tick": boundary,
             "model_max_reserved_step": maximum_step,
         }
+        beliefs.update(settings)
+        config["beliefs"] = beliefs
+        store.set_meta(config_json=json.dumps(config, sort_keys=True))
+        store.commit()
+        return settings
 
     completed_tick = int(meta["tick"])
     active_tick = (
