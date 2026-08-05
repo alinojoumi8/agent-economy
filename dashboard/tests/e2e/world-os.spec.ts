@@ -650,9 +650,12 @@ test("superseded entity searches never replace the newest result", async ({ page
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
+  const atlasRequest = page.waitForRequest(
+    request => new URL(request.url()).searchParams.get("q") === "atlas",
+  );
   await input.fill("Atlas");
   await expect(command.getByText("Searching authorized entities…")).toBeVisible();
-  await page.waitForRequest(request => new URL(request.url()).searchParams.get("q") === "atlas");
+  await atlasRequest;
   await input.fill("Zephyr");
   await expect(command.getByRole("option", { name: /Zephyr current result/ })).toBeVisible();
   await page.waitForTimeout(600);

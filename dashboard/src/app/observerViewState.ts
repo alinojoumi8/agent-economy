@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router";
 import {
   commonObserverParamsFromState as commonObserverParamsFromStateCore,
@@ -60,12 +60,21 @@ export function useObserverViewState(): [
   (patch: ObserverViewPatch, options?: { replace?: boolean }) => void,
 ] {
   const [params, setParams] = useSearchParams();
+  const pendingParams = useRef(params);
+  const renderedSearch = useRef(params.toString());
+  const search = params.toString();
+  if (renderedSearch.current !== search) {
+    renderedSearch.current = search;
+    pendingParams.current = params;
+  }
   const state = useMemo(() => parseObserverViewState(params), [params]);
   const patch = useCallback((
     update: ObserverViewPatch,
     options: { replace?: boolean } = {},
   ) => {
-    setParams(patchObserverViewState(params, update), { replace: options.replace });
-  }, [params, setParams]);
+    const next = patchObserverViewState(pendingParams.current, update);
+    pendingParams.current = next;
+    setParams(next, { replace: options.replace });
+  }, [setParams]);
   return [state, patch];
 }
