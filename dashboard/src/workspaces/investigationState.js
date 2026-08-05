@@ -53,3 +53,10 @@ export function reloadInvestigationConflict(state) {
   if (!state.conflict) return state;
   return createInvestigationDraft(state.conflict.server);
 }
+
+export function investigationUpdatePayload(state) {
+  return {
+    expected_version: state.server.version,
+    title: state.titleDraft.trim(),
+  };
+}

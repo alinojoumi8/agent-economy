@@ -9,6 +9,7 @@ import {
   createInvestigationDraft,
   editInvestigationTitle,
   investigationTitleError,
+  investigationUpdatePayload,
   openInvestigationConflict,
   reloadInvestigationConflict,
 } from "../src/workspaces/investigationState.js";
@@ -67,4 +68,26 @@ test("investigation draft transitions validate, cancel, save, and switch records
     server: saved, titleDraft: "Saved", dirty: false, conflict: null, error: "",
   });
   assert.deepEqual(createInvestigationDraft(second).server, second);
+});
+
+test("investigation title editor submits the authoritative expected version", async () => {
+  const editorSource = await readFile(
+    new URL("../src/components/InvestigationTitleEditor.tsx", import.meta.url), "utf8",
+  );
+  const workspaceSource = await readFile(
+    new URL("../src/workspaces/InvestigationsWorkspace.tsx", import.meta.url), "utf8",
+  );
+  assert.match(editorSource, /htmlFor="investigation-title"/);
+  assert.match(editorSource, /maxLength=\{160\}/);
+  assert.match(editorSource, />Save</);
+  assert.match(editorSource, />Cancel</);
+  assert.match(workspaceSource, /expected_version:\s*draft\.server\.version/);
+
+  const state = editInvestigationTitle(createInvestigationDraft({
+    id: "inv-1", title: "Original", version: 1,
+  }), "Local draft");
+  assert.deepEqual(investigationUpdatePayload(state), {
+    expected_version: 1,
+    title: "Local draft",
+  });
 });
