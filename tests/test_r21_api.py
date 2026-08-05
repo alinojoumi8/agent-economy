@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,22 +48,24 @@ def test_local_observatory_mode_probe_is_an_explicit_success(r21_client):
 
     assert response.status_code == 200
     assert response.json() == {
-        "hosted": False, "mode": "local", "api_base": "/api"}
+        "hosted": False, "mode": "local", "api_base": "/api/v2"}
 
 
-def test_hosted_safe_observatory_mode_probe_reports_hosted():
-    world = SimpleNamespace(
-        store=SimpleNamespace(tick=0),
-        runtime=SimpleNamespace(participant=None),
-        config={},
+def test_hosted_safe_observatory_mode_probe_reports_hosted(tmp_path):
+    store, world, _ = open_run(
+        load_config("runs/acceptance/rehearsal.yaml"),
+        None,
+        None,
+        data_dir=tmp_path,
     )
-    app = create_app(world, hosted_safe=True)
-    route = next(
-        route for route in app.routes
-        if getattr(route, "path", None) == "/api/v2/mode")
-
-    assert asyncio.run(route.endpoint()) == {
-        "hosted": True, "mode": "hosted", "api_base": "/api"}
+    try:
+        with TestClient(create_app(world, hosted_safe=True)) as client:
+            response = client.get("/api/v2/mode")
+        assert response.status_code == 200
+        assert response.json() == {
+            "hosted": True, "mode": "hosted", "api_base": "/api/v2"}
+    finally:
+        world.close()
 
 
 def test_agent_directory_is_cursor_paginated_searchable_and_compatible(r21_client):

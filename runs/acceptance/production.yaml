@@ -1,5 +1,5 @@
 # Live PRD acceptance profile. Provider rate limits are the only throughput ceiling.
-extends: ../production.yaml
+extends: ../production-oracle-archive.yaml
 
 acceptance:
   min_ticks: 365

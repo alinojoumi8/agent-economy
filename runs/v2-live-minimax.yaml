@@ -23,6 +23,9 @@ llm:
   # MiniMax-M3 includes reasoning in completion usage. 2,400 covers the
   # observed p90 while bounding the long tail that made days appear frozen.
   decision_max_tokens: 2400
+  # The founder contract includes firm, labor, and financing surfaces and needs
+  # a separate ceiling so ordinary citizen calls remain bounded at 2,400.
+  founder_max_tokens: 4096
   providers:
     minimax:
       kind: openai_compat

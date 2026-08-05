@@ -214,15 +214,6 @@ def create_app(world: World, *, served_ticks: int | None = None,
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 
-    @app.get("/api/v2/mode")
-    async def application_mode():
-        """Make the local/hosted shell handshake explicit and error-free."""
-        return {
-            "hosted": hosted_safe,
-            "mode": "hosted" if hosted_safe else "local",
-            "api_base": "/api",
-        }
-
     def agent_execution_maps() -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
         readiness_mode = str(world.gateway.readiness().get("mode") or "offline")
         latest_routes = {

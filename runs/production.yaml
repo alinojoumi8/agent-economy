@@ -16,6 +16,8 @@ llm:
   # Safe for the Token Plan's documented 3-4 concurrent-agent entry tier.
   concurrency: 3
   provider_retries: 1
+  decision_max_tokens: 2400
+  founder_max_tokens: 4096
   providers:
     minimax:
       kind: openai_compat

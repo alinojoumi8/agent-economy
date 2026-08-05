@@ -46,6 +46,14 @@ from observability import get_logger, log_event as operational_log
 logger = get_logger("agents")
 
 
+def _decision_output_budget(llm_config: dict, purpose: str) -> int:
+    """Return a purpose override without shrinking ordinary decision bounds."""
+    return int(llm_config.get(
+        f"{purpose}_max_tokens",
+        llm_config.get("decision_max_tokens", 900),
+    ))
+
+
 async def _gather_fail_fast(coroutines):
     """Preserve input ordering while cancelling queued work after a failure."""
     tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
@@ -812,10 +820,11 @@ class AgentRuntime:
                     "attention_context_key": attention_context_key or None,
                     "attention_source_event_ids": attention_source_event_ids}
         system, user = self.ctx.render_prompt(context)
+        llm_config = self.config.get("llm", {})
         req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
                          agent_id=int(a["id"]), tick=tick,
-                         max_tokens=int(self.config.get("llm", {}).get(
-                             "decision_max_tokens", 900)))
+                         max_tokens=_decision_output_budget(
+                             llm_config, str(purpose)))
         resp = await self.gw.complete(req)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,

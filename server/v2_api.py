@@ -116,7 +116,12 @@ def install_v2_routes(app, world, controller) -> None:
 
     @router.get("/mode")
     async def local_mode():
-        return {"mode": "local", "hosted": False, "api_base": "/api/v2"}
+        hosted = bool(controller.hosted_safe)
+        return {
+            "mode": "hosted" if hosted else "local",
+            "hosted": hosted,
+            "api_base": "/api/v2",
+        }
 
     @router.get("/snapshot")
     async def world_snapshot(

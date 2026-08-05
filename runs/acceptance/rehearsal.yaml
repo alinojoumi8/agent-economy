@@ -4,7 +4,6 @@
 extends: production.yaml
 
 llm:
-  route_contract: null
   default_route: {provider: scripted, model: scripted}
   routes:
     citizen:        {provider: scripted, model: scripted}

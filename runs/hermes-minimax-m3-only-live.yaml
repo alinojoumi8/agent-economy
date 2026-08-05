@@ -26,7 +26,15 @@ llm:
   concurrency: 2
   logical_deadline_s: 600
   provider_retries: 1
-  decision_max_tokens: 900
+  # M3 includes hidden reasoning in the completion budget. A 900-token cap can
+  # end at length before any JSON action text is emitted.
+  decision_max_tokens: 2400
+  # Founder prompts expose the larger firm, labor, and financing contract. Live
+  # M3 can exhaust 2,400 tokens before it reaches the required JSON envelope.
+  founder_max_tokens: 4096
+  reporter_max_tokens: 1600
+  newsroom_max_tokens: 1200
+  conversation_max_tokens: 800
 
   providers:
     minimax:
@@ -42,6 +50,7 @@ llm:
         reasoning_split: true
         max_completion_tokens: 16384
 
+  route_contract: {provider: minimax, model: MiniMax-M3}
   default_route: {provider: minimax, model: MiniMax-M3}
   routes: {}
   citizen_model_cohorts:
