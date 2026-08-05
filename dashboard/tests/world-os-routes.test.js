@@ -15,6 +15,7 @@ import {
   filterMarketRows,
   normalizeMarketsWorkspace,
 } from "../src/workspaces/marketsWorkspaceModel.js";
+import { normalizePoliticsLawWorkspace } from "../src/workspaces/politicsLawWorkspaceModel.js";
 
 test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(
@@ -204,4 +205,50 @@ test("World OS maps Markets to the canonical workspace", () => {
   assert.match(source, /import \{ MarketsWorkspace \}/);
   assert.match(source, /path="markets" element=\{<MarketsWorkspace \/>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Markets"/);
+});
+
+test("politics and law keeps institutional record types and historical states separate", () => {
+  const model = normalizePoliticsLawWorkspace({
+    politics: { enabled: true, institutional_actions_enabled: false },
+    legal: { enabled: true },
+    bills: [{ id: 2, introduced_tick: 4, title: "Second", status: "introduced" }, { id: 1, introduced_tick: 2, title: "First", status: "enacted" }],
+    bill_versions: [{ id: 3, bill_id: 1, version: 1, tick: 2, summary: "Public" }],
+    votes: [{ id: 4, bill_id: 1, tick: 3, vote: "yes", stage: "floor" }],
+    rules: [{ id: 5, bill_id: 1, rule_key: "tax_rate", enacted_tick: 3, effective_tick: 4, status: "active" }],
+    lobbying: [{ id: 6, tick: 3, bill_id: 1, position: "support", disclosed: 0, disclosure_tick: null, amount_cents: 100 }],
+    contracts: [{ id: 7, title: "Supply", offered_tick: 2, status: "executed" }],
+    obligations: [{ id: 8, contract_id: 7, obligation_type: "pay", due_tick: 6, amount_cents: 200, currency_code: "USD", status: "pending" }],
+    matters: [{ id: 9, matter_type: "civil", filed_tick: 3, claim_type: "breach", status: "filed" }],
+    mergers: [{ id: 10, proposed_tick: 3, status: "under_review", price_cents: 500, currency_code: "USD" }],
+    merger_reviews: [{ id: 11, merger_id: 10, tick: 4, outcome: "review" }],
+  });
+  assert.deepEqual(model.configuration, { politicsEnabled: true, institutionalActionsEnabled: false, legalEnabled: true });
+  assert.deepEqual(model.bills.map(row => row.id), [1, 2]);
+  assert.equal(model.lobbying[0].disclosureState, "undisclosed");
+  assert.equal(model.contracts[0].title, "Supply");
+  assert.equal(model.obligations[0].obligation_type, "pay");
+  assert.equal(model.matters[0].status, "filed");
+  assert.equal(model.mergers[0].status, "under_review");
+  assert.equal(model.mergerReviews[0].merger_id, 10);
+  assert.notStrictEqual(model.contracts, model.obligations);
+});
+
+test("politics and law model hides retained rows for disabled institutions", () => {
+  const model = normalizePoliticsLawWorkspace({
+    politics: { enabled: false }, legal: { enabled: false },
+    bills: [{ id: 1, title: "retained politics canary" }],
+    matters: [{ id: 2, claim_type: "retained legal canary" }],
+  });
+  assert.equal(model.configuration.politicsEnabled, false);
+  assert.equal(model.configuration.legalEnabled, false);
+  for (const key of ["bills", "votes", "rules", "lobbying", "contracts", "obligations", "matters", "mergers", "mergerReviews"]) {
+    assert.deepEqual(model[key], []);
+  }
+});
+
+test("World OS maps Politics and Law to the canonical workspace", () => {
+  const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ PoliticsLawWorkspace \}/);
+  assert.match(source, /path="politics-law" element=\{<PoliticsLawWorkspace \/>\}/);
+  assert.doesNotMatch(source, /LegacyWorkspace title="Politics & Law"/);
 });
