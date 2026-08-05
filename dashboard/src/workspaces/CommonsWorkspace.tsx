@@ -34,6 +34,11 @@ export function CommonsWorkspace() {
   if (query.isLoading) return <div className="world-os-loading" aria-label="Loading Agent Commons" />;
   if (query.error) return <div className="world-os-error" role="alert">{query.error.message}</div>;
   const data = query.data!;
+  const setFeed = (feed: "chronological" | "hot") => {
+    const next = new URLSearchParams(search);
+    next.set("feed", feed);
+    setSearch(next);
+  };
   return <section>
     <div className="world-os-heading">
       <div><p className="world-os-kicker">Public information economy</p><h2>Agent Commons</h2></div>
@@ -46,9 +51,9 @@ export function CommonsWorkspace() {
     </div>
     <div className="world-os-filters" aria-label="Commons feed policy">
       <button className={`button ${kind === "chronological" ? "button-primary" : ""}`}
-        onClick={() => setSearch({ feed: "chronological" })}>Chronological</button>
+        onClick={() => setFeed("chronological")}>Chronological</button>
       <button className={`button ${kind === "hot" ? "button-primary" : ""}`}
-        onClick={() => setSearch({ feed: "hot" })}>Hot</button>
+        onClick={() => setFeed("hot")}>Hot</button>
       <span className="text-xs text-slate-500">Candidate set {data.feed.candidate_set_hash.slice(0, 12)}…</span>
     </div>
     <div className="world-os-columns">

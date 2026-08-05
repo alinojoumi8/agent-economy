@@ -131,7 +131,9 @@ export function InvestigationsWorkspace() {
     queryKey: ["world-os", runId, "investigations"],
     queryFn: () => workspaceApi<{ items: Investigation[] }>("/api/v2/operator/investigations"),
   });
-  const currentInvestigation = investigations.data?.items.find(item => item.id === investigationId);
+  const currentInvestigation = investigations.data?.items.find(
+    item => String(item.id) === String(investigationId),
+  );
   useEffect(() => {
     if (!currentInvestigation) {
       if (!investigationId) setDraft(null);
@@ -287,7 +289,7 @@ export function InvestigationsWorkspace() {
     </div>
     {investigations.data?.items.length ? <nav className="world-os-investigation-list" aria-label="Saved investigations">
       {investigations.data.items.map(item => <button type="button" key={item.id}
-        className={item.id === investigationId ? "selected" : ""}
+        className={String(item.id) === String(investigationId) ? "selected" : ""}
         onClick={() => chooseInvestigation(item.id)}>{item.title}<small>v{item.version}</small></button>)}
     </nav> : null}
     {!rootId && !events.isLoading && <div className="world-os-empty"><h3>No causal root yet</h3><p>Run the world or enter an event ID to begin a bounded trace.</p></div>}

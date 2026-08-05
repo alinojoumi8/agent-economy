@@ -113,6 +113,10 @@ test("investigation title editor submits the authoritative expected version", as
   assert.match(workspaceSource, /expected_version:\s*activeDraft\.server\.version/);
   assert.doesNotMatch(workspaceSource, /expected_version:\s*draft\.server\.version/);
   assert.match(workspaceSource, /onSuccess: record => \{ refreshWorkspace\(\); navigate\(investigationPath\(record\.id\)\); \}/);
+  assert.match(
+    workspaceSource,
+    /items\.find\(\s*item => String\(item\.id\) === String\(investigationId\),?\s*\)/,
+  );
 
   const state = editInvestigationTitle(createInvestigationDraft({
     id: "inv-1", title: "Original", version: 1,

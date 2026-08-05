@@ -74,6 +74,16 @@ test("legacy Commons aliases select Commons instead of overview", () => {
   assert.equal(worldOSIndexWorkspace("/runs/run-demo"), "overview");
 });
 
+test("Commons feed changes preserve the complete observer query state", () => {
+  const source = readFileSync(
+    new URL("../src/workspaces/CommonsWorkspace.tsx", import.meta.url), "utf8",
+  );
+  assert.match(source, /const next = new URLSearchParams\(search\)/);
+  assert.match(source, /next\.set\("feed", feed\)/);
+  assert.match(source, /setSearch\(next\)/);
+  assert.doesNotMatch(source, /setSearch\(\{ feed:/);
+});
+
 test("world workspace normalizes public map data without inventing coordinates", () => {
   const normalized = normalizeWorldWorkspace({
     enabled: false,
