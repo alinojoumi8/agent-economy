@@ -1154,6 +1154,10 @@ body::before {
 
 .civic-city__instruments dd {
   margin: .24rem 0 .05rem;
+}
+
+.civic-city__instrument-value {
+  display: block;
   color: var(--civic-chartreuse);
   font: 700 1.25rem var(--civic-font-display);
   letter-spacing: -.015em;

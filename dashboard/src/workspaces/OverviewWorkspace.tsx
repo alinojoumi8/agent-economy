@@ -165,7 +165,7 @@ export function OverviewWorkspace() {
       onObserverStateChange={patchObserverState}
     />
 
-    <div className="world-os-metrics" aria-label="World summary">
+    <div className="world-os-metrics" role="group" aria-label="World summary">
       <Link to={workspaceUrl("world")}>
         <span className="world-os-metric-label"><i className="world-os-metric-signal world-os-metric-signal--mint" />World state</span>
         <strong>{title(data.summary?.status || "unknown")}</strong>

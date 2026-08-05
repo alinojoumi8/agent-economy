@@ -343,7 +343,7 @@ export function CivicCity(props) {
           <span>Agent and event marks will appear from canonical APIs.</span>
         </div>}
 
-        <div className="civic-city__legend" aria-label="City map legend">
+        <div className="civic-city__legend" role="group" aria-label="City map legend">
           <span><i className="has-event" />Committed event</span>
           <span><i />Assigned or resident</span>
           <span><b />Firm footprint</span>
@@ -428,14 +428,14 @@ export function CivicCity(props) {
     </div>
 
     <dl className="civic-city__instruments" aria-label="City instrumentation">
-      <div><dt>Actor-linked marks</dt><dd>{model.counts.active}</dd><small>agents in latest event sample</small></div>
-      <div><dt>Operating firms</dt><dd>{model.counts.firms}</dd><small>canonical firm endpoint</small></div>
-      <div><dt>Real places</dt><dd>{model.counts.places}</dd><small>stable city coordinates</small></div>
-      <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></div>
-      <div><dt>Office load</dt><dd>{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</dd><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></div>
-      <div><dt>AI inference</dt><dd>{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</dd><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></div>
-      <div><dt>World time</dt><dd>{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</dd><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></div>
-      <div><dt>Layout proof</dt><dd>{humanize(model.coordinateMode)}</dd><small>{model.counts.assigned} role assignments</small></div>
+      <div><dt>Actor-linked marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>agents in latest event sample</small></dd></div>
+      <div><dt>Operating firms</dt><dd><span className="civic-city__instrument-value">{model.counts.firms}</span><small>canonical firm endpoint</small></dd></div>
+      <div><dt>Real places</dt><dd><span className="civic-city__instrument-value">{model.counts.places}</span><small>stable city coordinates</small></dd></div>
+      <div><dt>Permit queue</dt><dd><span className="civic-city__instrument-value">{model.civic?.enabled ? model.counts.queue : "—"}</span><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></dd></div>
+      <div><dt>Office load</dt><dd><span className="civic-city__instrument-value">{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</span><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></dd></div>
+      <div><dt>AI inference</dt><dd><span className="civic-city__instrument-value">{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</span><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></dd></div>
+      <div><dt>World time</dt><dd><span className="civic-city__instrument-value">{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</span><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></dd></div>
+      <div><dt>Layout proof</dt><dd><span className="civic-city__instrument-value">{humanize(model.coordinateMode)}</span><small>{model.counts.assigned} role assignments</small></dd></div>
     </dl>
   </section>;
 }

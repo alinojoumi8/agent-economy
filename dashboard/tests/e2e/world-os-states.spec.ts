@@ -144,7 +144,7 @@ test("live city paused status is truthful and does not invent agents", async ({ 
   await expect(page.getByText("Run paused", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Current");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Current");
 });
 
 test("live city failed status is truthful", async ({ page }) => {
@@ -154,7 +154,7 @@ test("live city failed status is truthful", async ({ page }) => {
   await expect(page.getByText("Run failed", { exact: true })).toBeVisible();
   await expect(page.getByText("Final inference fabric", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Current");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Current");
 });
 
 test("historical tick preserves run identity and label", async ({ page }) => {
@@ -200,7 +200,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await expect(page.getByText("Mixed projected + derived layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(1);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Live");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Live");
 
   await page.getByLabel("Find an agent").fill("zzz-no-match");
   await expect(page.locator(".civic-city__agent")).toHaveCount(0);
