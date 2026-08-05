@@ -134,6 +134,50 @@ def test_replay_reader_lists_and_pages_ticks(tmp_path):
     assert reader.tick_view("../etc/passwd", 1) is None
 
 
+def test_replay_reader_redacts_unsupported_historical_news_numbers(tmp_path):
+    config = {
+        "seed": 1,
+        "beliefs": {
+            "model_grounding_from_tick": 2,
+            "model_max_reserved_step": 0.05,
+        },
+    }
+    store = Store(str(tmp_path / "numeric-news.db"))
+    store.init_run_meta("numeric-news", 1, config)
+    event_id = store.log_event(
+        1,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    store.insert(
+        "news_articles",
+        tick=1,
+        outlet_id=1,
+        outlet_name="The Ledger",
+        headline="Firm 1 reports a 987654321% output lead",
+        body="The company says its lead reached 987654321%.",
+        slant_tags='["market"]',
+        source_event_ids=f"[{event_id}]",
+        tone=0.2,
+        truthful=1,
+    )
+    store.set_meta(
+        status="paused", tick=1, active_tick=2, next_phase="MORNING")
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    article = reader.tick_view("numeric-news", 1)["news"][0]
+
+    assert article["numeric_claims_redacted"] is True
+    assert article["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    assert "987654321" not in article["headline"]
+    reader.close()
+
+
 def test_replay_reader_bounds_and_closes_cached_connections(tmp_path):
     for index in range(4):
         store = Store(str(tmp_path / f"run-{index}.db"))

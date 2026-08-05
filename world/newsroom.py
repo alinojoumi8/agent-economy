@@ -23,6 +23,11 @@ from llm.gateway import (
     sanitize_provider_text,
 )
 from agents.memory import Memory
+from agents.numeric_grounding import (
+    model_grounding_active,
+    narrative_numbers_are_grounded,
+    sanitize_model_numeric_narrative,
+)
 from agents.policies import conversation_turn
 from world.event_visibility import (
     PUBLIC_REPORTABLE_EVENT_KINDS,
@@ -259,7 +264,8 @@ class Newsroom:
 
     def _ground_article(self, outlet: dict, article: Optional[dict],
                         events: list[dict], *,
-                        directive: Optional[str] = None) -> Optional[dict]:
+                        directive: Optional[str] = None,
+                        grounding_tick: Optional[int] = None) -> Optional[dict]:
         """Fail closed to a deterministic brief when source provenance is bad."""
         if not events:
             return None
@@ -293,10 +299,26 @@ class Newsroom:
             elif local_event_id not in source_ids:
                 source_ids.append(local_event_id)
 
+        cited_events = [
+            event for event in events if int(event["id"]) in source_ids
+        ]
+        effective_tick = grounding_tick
+        if effective_tick is None:
+            effective_tick = int(events[0].get("tick", self.store.tick) or 0)
+        numeric_claims_valid = (
+            not model_grounding_active(self.config, int(effective_tick))
+            or (
+                narrative_numbers_are_grounded(str(headline or ""), cited_events)
+                and narrative_numbers_are_grounded(str(body or ""), cited_events)
+            )
+        )
+
         # An editor response without a valid local source is not publishable.
         # A compact engine-written brief preserves the daily promise without
         # manufacturing facts or hiding the provider contract failure.
-        if not contract_valid or not source_ids or not all_sources_valid:
+        numeric_redacted = bool(contract_valid and not numeric_claims_valid)
+        if (not contract_valid or not source_ids or not all_sources_valid
+                or not numeric_claims_valid):
             event = events[0]
             kind = str(event.get("kind", "event"))
             readable = kind.replace("_", " ")
@@ -321,7 +343,73 @@ class Newsroom:
             if directive:
                 art["tone"] = max(-1.0, art["tone"] - 0.3)
                 art["slant_tags"].append("directed")
+        art["numeric_claims_redacted"] = numeric_redacted
+        art["numeric_claims_redaction_reason"] = (
+            "ungrounded_numeric_claim" if numeric_redacted else None)
         return art
+
+    def public_article_projection(
+        self, article, *, enforcement_tick: int,
+    ) -> dict:
+        """Return a public article without promoting unsupported stored math."""
+        row = dict(article)
+        raw_source_ids = row.get("source_event_ids", [])
+        source_ids = (
+            raw_source_ids
+            if isinstance(raw_source_ids, list)
+            else load_json(raw_source_ids, []) or []
+        )
+        events = []
+        for event_id in source_ids:
+            try:
+                source_id = int(event_id)
+            except (TypeError, ValueError):
+                continue
+            event = self.store.query_one(
+                "SELECT id,tick,kind,payload_json,importance FROM events WHERE id=?",
+                (source_id,),
+            )
+            if event is None:
+                continue
+            events.append({
+                "id": int(event["id"]),
+                "tick": int(event["tick"]),
+                "kind": event["kind"],
+                "payload": public_event_payload(
+                    event["kind"], load_json(event["payload_json"], {}) or {}),
+                "importance": float(event["importance"]),
+            })
+        original = f"{row.get('headline', '')} {row.get('body', '')}"
+        grounding_enabled = model_grounding_active(
+            self.config, int(enforcement_tick))
+        sanitized = sanitize_model_numeric_narrative(
+            original,
+            grounding_enabled=grounding_enabled,
+            fallback="",
+            sources=events,
+        )
+        redacted = bool(original.strip() and sanitized == "")
+        if redacted:
+            readable = (
+                str(events[0]["kind"]).replace("_", " ")
+                if events else "recorded event"
+            )
+            outlet_name = str(row.get("outlet_name") or "News")
+            row["headline"] = f"{outlet_name} archived brief: {readable}"
+            row["body"] = (
+                f"The public event spine recorded {readable}. "
+                "Unsupported numeric narrative was removed."
+            )
+        row["source_event_ids"] = source_ids
+        raw_tags = row.get("slant_tags", [])
+        row["slant_tags"] = (
+            raw_tags if isinstance(raw_tags, list)
+            else load_json(raw_tags, []) or []
+        )
+        row["numeric_claims_redacted"] = redacted
+        row["numeric_claims_redaction_reason"] = (
+            "ungrounded_numeric_claim" if redacted else None)
+        return row
 
     def _salient_events(self, tick: int) -> list[dict]:
         kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS - {"quiet_day"}))
@@ -354,6 +442,11 @@ class Newsroom:
                   "2-4 short candidate stories as JSON: {\"stories\": [{\"headline\":..., "
                   "\"body\":..., \"tone\": -1..1, \"kind\":..., \"source_event_ids\":[...]}]}. "
                   "Report only what the events support; no invented facts.")
+        if model_grounding_active(self.config, tick):
+            system += (
+                " Do not calculate or estimate numeric values. Copy a number "
+                "only when it appears exactly in a supplied event."
+            )
         req = LLMRequest(role="reporter", purpose="reporter", system=system,
                          user=json.dumps({"events": events})[:3000], context=context,
                          agent_id=self._desk_agent("reporter", outlet["id"]),
@@ -382,6 +475,11 @@ class Newsroom:
                   "drafts), then frame it. Reply as JSON: {\"headline\":..., \"body\":..., "
                   "\"tone\": -1..1, \"slant_tags\":[...], \"source_event_ids\":[...]}. "
                   "Only use the given true events; framing and selection reflect your slant.")
+        if model_grounding_active(self.config, tick):
+            system += (
+                " Do not calculate or estimate numeric values. Copy a number "
+                "only when it appears exactly in a supplied event."
+            )
         req = LLMRequest(role="editor", purpose="newsroom", system=system, user=user,
                          context=context, agent_id=self._desk_agent("editor", outlet["id"]),
                          tick=tick, max_tokens=_output_budget(
@@ -390,7 +488,7 @@ class Newsroom:
             req,
             parsed_transform=lambda parsed: self._ground_article(
                 outlet, parsed if isinstance(parsed, dict) else {}, events,
-                directive=directive),
+                directive=directive, grounding_tick=tick),
         )
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
         return art
@@ -601,10 +699,22 @@ class Conversations:
                 # deterministic policy. Only the 100-agent core may create a
                 # model-call record in living-world runs.
                 env = conversation_turn(context)
+                model_authored = False
             else:
                 resp = await self.gw.complete(req, schema_hint=schema)
                 env = resp.parsed if isinstance(resp.parsed, dict) else {}
+                model_authored = True
             text = str(env.get("text", "")).strip()[:300]
+            if model_authored:
+                sanitized_text = sanitize_model_numeric_narrative(
+                    text,
+                    grounding_enabled=model_grounding_active(self.config, tick),
+                    fallback="",
+                    sources=context,
+                )
+                if text and not sanitized_text:
+                    env = conversation_turn(context)
+                    text = str(env.get("text", "")).strip()[:300]
             avoid_texts = recent_utterances + conversation_so_far
             if not text:
                 text = self._unique_fallback_line(

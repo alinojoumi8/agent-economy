@@ -126,6 +126,85 @@ def test_news_grounding_rejects_a_mixed_valid_and_dangling_source_list(tmp_path)
     world.store.close()
 
 
+def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
+        tmp_path):
+    active = _world(
+        tmp_path,
+        "numeric-news-active.db",
+        beliefs={"model_grounding_from_tick": 2},
+    )
+    event_id = active.store.log_event(
+        2,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    active.store.commit()
+    events = active.newsroom._daily_events(2)
+    unsupported = {
+        "headline": "Firm 1 reports a 987654321% output lead",
+        "body": "The company says its lead reached 987654321%.",
+        "source_event_ids": [event_id],
+        "slant_tags": ["market"],
+        "tone": 0.2,
+    }
+
+    rejected = active.newsroom._ground_article(
+        active.newsroom.outlets[0], unsupported, events, grounding_tick=2)
+    supported = active.newsroom._ground_article(
+        active.newsroom.outlets[0], {
+            **unsupported,
+            "headline": "Firm 1 produced 4 units",
+            "body": "The recorded production event lists 4 units.",
+        }, events, grounding_tick=2)
+
+    assert rejected["headline"] == "The Ledger daily brief: production"
+    assert "987654321" not in rejected["headline"] + rejected["body"]
+    assert supported["headline"] == "Firm 1 produced 4 units"
+
+    active.store.insert(
+        "news_articles",
+        tick=2,
+        outlet_id=1,
+        outlet_name="The Ledger",
+        headline=unsupported["headline"],
+        body=unsupported["body"],
+        source_event_ids=json.dumps([event_id]),
+        slant_tags=json.dumps(["market"]),
+        tone=0.2,
+        truthful=1,
+    )
+    active.store.set_meta(
+        status="paused", tick=1, active_tick=2, next_phase="MORNING")
+    active.store.commit()
+    with TestClient(create_app(active)) as client:
+        projected = client.get("/api/news").json()[0]
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    assert "987654321" not in projected["headline"] + projected["body"]
+    active.close()
+
+    legacy = _world(tmp_path, "numeric-news-legacy.db")
+    legacy_event = legacy.store.log_event(
+        2,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    legacy.store.commit()
+    legacy_article = legacy.newsroom._ground_article(
+        legacy.newsroom.outlets[0],
+        {**unsupported, "source_event_ids": [legacy_event]},
+        legacy.newsroom._daily_events(2),
+        grounding_tick=2,
+    )
+    assert legacy_article["headline"] == unsupported["headline"]
+    legacy.close()
+
+
 def test_news_grounding_falls_back_on_malformed_article_fields(tmp_path):
     world = _world(tmp_path, "malformed-article.db")
     event_id = world.store.log_event(

@@ -8,7 +8,7 @@ export function NewsPanel({ news }) {
     <Panel title="Newsroom" eyebrow="Event-grounded stories" className="col-span-full md:col-span-6 xl:col-span-4">
       <div className="scrollbar max-h-[390px] overflow-y-auto px-4">
         {news.length ? news.map(article => <article key={article.id} className="border-b border-mint-300/10 py-3 last:border-0">
-          <div className="mb-1 flex items-center gap-2"><Badge>{article.outlet_name || "Outlet"}</Badge><span className="tabular text-[10px] text-slate-600">day {article.tick}</span></div>
+          <div className="mb-1 flex items-center gap-2"><Badge>{article.outlet_name || "Outlet"}</Badge><span className="tabular text-[10px] text-slate-600">day {article.tick}</span>{article.numeric_claims_redacted && <Badge tone="warn">unsupported number removed</Badge>}</div>
           <h3 className="text-sm font-semibold leading-snug text-slate-200">{article.headline}</h3>
           <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">{article.body}</p>
         </article>) : <Empty>Stories publish after the newsroom has events to cover.</Empty>}

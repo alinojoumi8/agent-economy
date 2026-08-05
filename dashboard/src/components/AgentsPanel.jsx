@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, money, number, shortKind } from "../api";
+import { api, formatBeliefValue, money, number, shortKind } from "../api";
 import { agentExecutionPresentation } from "../lib/agentExecution";
 import { appendParticipantHistory } from "../participant";
 import { Badge, Empty, Modal, Panel } from "./ui";
@@ -202,10 +202,10 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Beliefs</div>
-        <div className="space-y-2">{Object.entries(detail.beliefs).slice(0, 12).map(([key, value]) => <div key={key} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-500">{shortKind(key)}</span><span className="tabular">{number(value, 3)}</span></div>)}</div>
+        <div className="space-y-2">{Object.entries(detail.beliefs).slice(0, 12).map(([key, value]) => <div key={key} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-500">{shortKind(key)}</span><span className="tabular">{formatBeliefValue(key, value)}</span></div>)}</div>
         {detail.belief_history?.length > 0 && <details className="mt-4 border-t border-mint-300/10 pt-3">
           <summary className="cursor-pointer text-xs text-mint-300">Belief provenance · {detail.belief_history.length} events</summary>
-          <div className="scrollbar mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">{detail.belief_history.slice(0, 30).map(update => <div key={update.event_id} className="text-[10px] text-slate-500"><span className="text-slate-300">Day {update.tick} · {shortKind(update.key || update.kind)}</span><br />{number(update.old_value, 3)} → {number(update.new_value, 3)} · {update.source || shortKind(update.kind)}</div>)}</div>
+          <div className="scrollbar mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">{detail.belief_history.slice(0, 30).map(update => <div key={update.event_id} className="text-[10px] text-slate-500"><span className="text-slate-300">Day {update.tick} · {shortKind(update.key || update.kind)}</span><br />{formatBeliefValue(update.key || update.kind, update.old_value)} → {formatBeliefValue(update.key || update.kind, update.new_value)} · {update.source || shortKind(update.kind)}</div>)}</div>
         </details>}
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-3">
@@ -225,10 +225,12 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Memory</div>
+        <p className="mb-3 text-[10px] leading-relaxed text-amber-300">Historical agent recollections; numeric claims may be stale.</p>
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{detail.memories.length ? detail.memories.map((memory, index) => <article key={`${memory.tick}-${index}`} className="border-t border-mint-300/10 pt-2 first:border-0"><div className="mb-1 text-[10px] uppercase tracking-wider text-slate-600">Day {memory.tick} · {shortKind(memory.kind)} · importance {number(memory.importance, 1)}</div><p className="text-xs leading-relaxed text-slate-400">{memory.text}</p></article>) : <Empty>No memories yet.</Empty>}</div>
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Model output audit</div>
+        <p className="mb-3 text-[10px] leading-relaxed text-amber-300">Raw model I/O for provenance; numeric claims are unverified.</p>
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{modelOutputs.length ? modelOutputs.map(output => <details key={output.id} className="border-t border-mint-300/10 pt-2 first:border-0"><summary className="cursor-pointer text-xs text-slate-300">Day {output.tick} · {shortKind(output.purpose || output.role || "model output")} · {output.model || "model"}</summary><pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(output, null, 2)}</pre></details>) : <Empty>{Number(counts.actions || 0) > 0 ? "No model calls recorded; inspect the deterministic action audit." : "No model outputs recorded for this agent."}</Empty>}</div>
         {detail.output_cursors?.model && <button className="button mt-3" disabled={historyLoading} onClick={() => onLoadOlderOutputs("model")}>{historyLoading ? "Loading..." : "Load older model outputs"}</button>}
       </section>

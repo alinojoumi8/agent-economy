@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, money, number, shortKind } from "../api";
+import { api, formatMetricValue, money, shortKind } from "../api";
 import { clientLog } from "../logging.js";
 import { Badge, Empty, Modal } from "./ui";
 
@@ -55,10 +55,10 @@ export function ReplayModal({ onClose }) {
         <div className="text-center"><div className="eyebrow">Day</div><div className="tabular text-3xl font-semibold text-mint-300">{tick}</div></div>
       </div>
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1">{view?.ticker?.map(item => <div key={item.firm_id} className="whitespace-nowrap rounded-lg border border-mint-300/10 px-3 py-2 text-xs"><span className="text-slate-500">{item.name}</span><strong className="ml-2 tabular text-mint-300">{money(item.price_cents, false)}</strong></div>)}</div>
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">{Object.entries(view?.metrics || {}).slice(0, 8).map(([key, value]) => <div key={key} className="rounded-lg border border-mint-300/10 bg-ink-950/30 p-2"><div className="truncate text-[9px] uppercase tracking-wider text-slate-600">{shortKind(key)}</div><div className="tabular text-sm font-semibold">{number(value, 2)}</div></div>)}</div>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">{Object.entries(view?.metrics || {}).slice(0, 8).map(([key, value]) => <div key={key} className="rounded-lg border border-mint-300/10 bg-ink-950/30 p-2"><div className="truncate text-[9px] uppercase tracking-wider text-slate-600">{shortKind(key)}</div><div className="tabular text-sm font-semibold">{formatMetricValue(key, value)}</div></div>)}</div>
       <div className="grid gap-4 md:grid-cols-3">
         <section><div className="eyebrow mb-2">Events</div><div className="scrollbar max-h-80 overflow-y-auto rounded-xl border border-mint-300/10 px-3">{view?.events?.length ? view.events.map(event => <div key={event.id} className="border-b border-mint-300/10 py-2 text-xs last:border-0"><span className="text-slate-300">{shortKind(event.kind)}</span>{event.importance >= 3 && <span className="ml-2"><Badge tone="warn">material</Badge></span>}</div>) : <Empty />}</div></section>
-        <section><div className="eyebrow mb-2">News</div><div className="scrollbar max-h-80 overflow-y-auto rounded-xl border border-mint-300/10 px-3">{view?.news?.length ? view.news.map((article, index) => <article key={index} className="border-b border-mint-300/10 py-2 last:border-0"><div className="text-[10px] text-slate-600">{article.outlet}</div><div className="text-xs text-slate-300">{article.headline}</div></article>) : <Empty />}</div></section>
+        <section><div className="eyebrow mb-2">News</div><div className="scrollbar max-h-80 overflow-y-auto rounded-xl border border-mint-300/10 px-3">{view?.news?.length ? view.news.map((article, index) => <article key={index} className="border-b border-mint-300/10 py-2 last:border-0"><div className="flex items-center gap-2 text-[10px] text-slate-600"><span>{article.outlet}</span>{article.numeric_claims_redacted && <Badge tone="warn">unsupported number removed</Badge>}</div><div className="text-xs text-slate-300">{article.headline}</div></article>) : <Empty />}</div></section>
         <section><div className="eyebrow mb-2">Conversations</div><div className="scrollbar max-h-80 overflow-y-auto rounded-xl border border-mint-300/10 px-3">{view?.conversations?.length ? view.conversations.map(conversation => <article key={conversation.id} className="border-b border-mint-300/10 py-2 last:border-0">{conversation.messages.map((message, index) => <p key={index} className="mb-1 text-xs"><strong className="mr-1 text-mint-300">{message.name}</strong><span className="text-slate-500">{message.text}</span></p>)}</article>) : <Empty />}</div></section>
       </div>
     </>}

@@ -17,7 +17,13 @@ from world.loop import World
 from world.replay_verify import verify_replay
 
 
-def _world(tmp_path: Path, name: str = "report.db", *, cap_usd: float = 10.0) -> World:
+def _world(
+    tmp_path: Path,
+    name: str = "report.db",
+    *,
+    cap_usd: float = 10.0,
+    model_grounding_from_tick: int | None = None,
+) -> World:
     config = {
         "seed": 17,
         "population": {"size": 4},
@@ -42,6 +48,11 @@ def _world(tmp_path: Path, name: str = "report.db", *, cap_usd: float = 10.0) ->
         "report_dir": str(tmp_path / "reports"),
         "outlets": [{"id": 1, "name": "Public Wire", "slant": "neutral"}],
     }
+    if model_grounding_from_tick is not None:
+        config["beliefs"] = {
+            "model_grounding_from_tick": model_grounding_from_tick,
+            "model_max_reserved_step": 0.05,
+        }
     store = Store(str(tmp_path / name))
     store.init_run_meta(name, int(config["seed"]), config)
     world = World(store, config)
@@ -108,6 +119,46 @@ def test_llm_report_narrative_is_public_bounded_metered_and_provenanced(tmp_path
     }
     assert f"local call #{call['id']}" in html
     world.store.close()
+
+
+def test_report_rejects_model_arithmetic_not_present_in_bounded_facts(tmp_path):
+    world = _world(
+        tmp_path,
+        "numeric-report.db",
+        model_grounding_from_tick=0,
+    )
+
+    class ArithmeticAdapter:
+        async def complete(self, *_args, **_kwargs):
+            return AdapterResult(
+                text=(
+                    '{"narrative":"Output improved by 987654321% while '
+                    'unemployment fell 123456789 points."}'
+                ),
+                in_tokens=30,
+                out_tokens=15,
+            )
+
+    _install_report_route(world, ArithmeticAdapter())
+    report_path = Path(asyncio.run(generate_report_async(
+        world.store, world, out_dir=str(tmp_path / "numeric-report"))))
+    event = world.store.query_one(
+        "SELECT payload_json FROM events WHERE kind='report_generated' "
+        "ORDER BY id DESC LIMIT 1")
+    provenance = load_json(event["payload_json"], {})["narrative"]
+    rendered = report_path.read_text(encoding="utf-8")
+
+    assert "987654321" not in rendered
+    assert provenance == {
+        "source": "engine",
+        "fallback": True,
+        "reason": "ungrounded_numeric_claim",
+    }
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM llm_calls WHERE purpose='report_narrative'",
+        default=0,
+    ) == 1
+    world.close()
 
 
 def test_report_narrative_uses_explicit_offline_and_replay_fallbacks(tmp_path):

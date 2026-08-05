@@ -827,7 +827,16 @@ def create_app(world: World, *, served_ticks: int | None = None,
     @app.get("/api/news")
     async def news(limit: int = Query(default=30, ge=1, le=200)):
         rows = store.query("SELECT * FROM news_articles ORDER BY id DESC LIMIT ?", (limit,))
-        return [dict(r) for r in rows]
+        meta = store.get_meta()
+        enforcement_tick = (
+            int(meta["active_tick"])
+            if meta["active_tick"] is not None else int(meta["tick"])
+        )
+        return [
+            world.newsroom.public_article_projection(
+                row, enforcement_tick=enforcement_tick)
+            for row in rows
+        ]
 
     @app.get("/api/conversations")
     async def conversations(

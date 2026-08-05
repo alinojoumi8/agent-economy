@@ -99,6 +99,56 @@ export const percent = (value, digits = 1) => {
   return `${(Number(value) * 100).toFixed(digits)}%`;
 };
 
+const signed = (value, formatted) => {
+  const numeric = Number(value);
+  if (numeric > 0) return `+${formatted}`;
+  if (numeric < 0) return `−${formatted.replace(/^-/, "")}`;
+  return formatted;
+};
+
+const compactNumber = value => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact", maximumFractionDigits: 1,
+  }).format(Number(value));
+};
+
+export const formatMetricValue = (key, value) => {
+  if (key === "unemployment") return percent(value, 1);
+  if (key === "policy_rate") return `${number(value, 0)} bps`;
+  if (["money_supply", "gdp_proxy", "gdp_proxy_30d", "labor_income"].includes(key)) {
+    return compactNumber(value);
+  }
+  return number(value, ["cpi", "gini", "sentiment"].includes(key) ? 3 : 2);
+};
+
+export const formatMetricDelta = (key, value) => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  if (key === "unemployment") {
+    const points = Number(value) * 100;
+    return signed(points, `${Math.abs(points).toFixed(1)} pp`);
+  }
+  if (key === "policy_rate") {
+    return signed(value, `${number(Math.abs(Number(value)), 0)} bps`);
+  }
+  if (["money_supply", "gdp_proxy", "gdp_proxy_30d", "labor_income"].includes(key)) {
+    return signed(value, compactNumber(Math.abs(Number(value))));
+  }
+  return signed(value, number(Math.abs(Number(value)), 3));
+};
+
+export const formatTrust = value => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(4)} (${percent(value, 2)})`;
+};
+
+export const formatBeliefValue = (key, value) => {
+  const normalized = String(key || "").toLowerCase();
+  if (normalized.startsWith("trust")) return formatTrust(value);
+  if (normalized.endsWith("_cents")) return money(value, false);
+  return number(value, 3);
+};
+
 export const budgetState = (governor = {}) => {
   const spend = Number(governor?.total_spend_usd || 0);
   const rawCap = governor?.cap_usd;

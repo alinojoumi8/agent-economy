@@ -62,6 +62,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{displayStatus}</Badge>
           <span title={inference.title}><Badge tone={inference.tone}>{inference.label}</Badge></span>
+          {status?.active_tick != null && Number(status.active_tick) > Number(status?.tick ?? -1) && <Badge tone="warn">partial day {status.active_tick} · {status?.phase || status?.next_phase || "in progress"}</Badge>}
           {participantActive && <Badge tone="good">playing {participant?.controlled_agent?.name}</Badge>}
           {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.target_tick != null && <Badge tone={limitReached ? "good" : "warn"}>{limitReached ? `target t${status.target_tick} reached` : `${status.remaining_ticks} days to t${status.target_tick}`}</Badge>}

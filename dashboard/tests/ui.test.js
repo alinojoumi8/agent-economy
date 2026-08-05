@@ -5,6 +5,28 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 
+import {
+  formatBeliefValue,
+  formatMetricDelta,
+  formatMetricValue,
+  formatTrust,
+} from "../src/api.js";
+
+
+test("engine metrics, cents, and trust retain their units and precision", () => {
+  assert.equal(formatMetricValue("unemployment", 0.9699421965), "97.0%");
+  assert.equal(formatMetricValue("policy_rate", 525), "525 bps");
+  assert.equal(formatMetricValue("cpi", 69.5534138), "69.553");
+  assert.equal(formatMetricDelta("unemployment", -0.002312), "−0.2 pp");
+  assert.equal(formatMetricDelta("policy_rate", 25), "+25 bps");
+  assert.equal(formatTrust(0.702131), "0.7021 (70.21%)");
+  assert.equal(
+    formatBeliefValue("trust:bank:1", 0.702131),
+    "0.7021 (70.21%)",
+  );
+  assert.equal(formatBeliefValue("checking_balance_cents", 300000), "$3,000.00");
+});
+
 
 test("Empty renders text-prop guidance and gives children precedence", async () => {
   const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
@@ -111,7 +133,54 @@ test("agent audit reflects deterministic actions without claiming missing decisi
     assert.match(markup, /Actions<\/dt><dd[^>]*>126<\/dd>/);
     assert.match(markup, /No model calls recorded; inspect the deterministic action audit\./);
     assert.match(markup, /buy goods/);
+    assert.match(markup, /Historical agent recollections; numeric claims may be stale/);
+    assert.match(markup, /Raw model I\/O for provenance; numeric claims are unverified/);
     assert.doesNotMatch(markup, /No decisions yet/);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("public panels expose metric units, partial days, and numeric redaction", async () => {
+  const vite = await createServer({
+    appType: "custom", logLevel: "silent", server: { middlewareMode: true },
+  });
+  try {
+    const { MacroOverview } = await vite.ssrLoadModule("/src/components/MacroOverview.jsx");
+    const { BanksPanel } = await vite.ssrLoadModule("/src/components/WorldPanels.jsx");
+    const { NewsPanel } = await vite.ssrLoadModule("/src/components/InformationPanels.jsx");
+    const { RunHeader } = await vite.ssrLoadModule("/src/components/RunHeader.jsx");
+    const macro = renderToStaticMarkup(React.createElement(MacroOverview, {
+      metrics: { unemployment: [{ tick: 368, value: 0.9699421965 }] },
+    }));
+    const banks = renderToStaticMarkup(React.createElement(BanksPanel, { banks: [{
+      id: 1, name: "Northstar Bank", deposits_cents: 100, reserves_cents: 50,
+      reserve_ratio: 0.5, avg_trust: 0.702131, status: "open",
+    }] }));
+    const news = renderToStaticMarkup(React.createElement(NewsPanel, { news: [{
+      id: 3, tick: 7, outlet_name: "Ledger", headline: "Grounded headline",
+      body: "Grounded body", numeric_claims_redacted: true,
+    }] }));
+    const header = renderToStaticMarkup(React.createElement(RunHeader, {
+      status: {
+        tick: 368, status: "paused", running: false,
+        active_tick: 369, next_phase: "MORNING", governor: {},
+      },
+      participant: {}, connected: true, loading: false,
+      act: async () => {}, onShock: () => {}, onReplay: () => {},
+    }));
+
+    assert.match(macro, /97\.0%/);
+    assert.match(
+      macro,
+      /Living, non-retired working-age citizens without active employment or an operating firm/,
+    );
+    assert.match(banks, /0\.7021 \(70\.21%\)/);
+    assert.match(news, /unsupported number removed/);
+    assert.match(header, /partial day 369/);
+    assert.match(header, /MORNING/);
+    assert.match(header, />368</);
   } finally {
     await vite.close();
   }
