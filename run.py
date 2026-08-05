@@ -1234,6 +1234,13 @@ def _execute_oracle_campaign_run(config: dict, args) -> None:
 
 def main() -> None:
     load_dotenv()
+    read_only_supply_report = any(
+        argument == "--supply-recovery-report"
+        or argument.startswith("--supply-recovery-report=")
+        for argument in sys.argv[1:]
+    )
+    if not read_only_supply_report:
+        configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: evolving live-agent desktop profile)")
@@ -1389,7 +1396,6 @@ def main() -> None:
             raise SystemExit(5)
         return
 
-    configure_logging()
     mode = ("dataset_refresh" if args.refresh_datasets else
             "dataset_verify" if args.verify_datasets else
             "counterfactual" if args.counterfactual else

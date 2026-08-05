@@ -1079,8 +1079,10 @@ class AgentRuntime:
             self._recovery_completed_hires.get(firm_key, 0) + 1)
 
     def _reset_recovery_hire_count(self, tick: int) -> None:
-        if self._recovery_hire_tick != int(tick):
+        if getattr(self, "_recovery_hire_tick", None) != int(tick):
             self._recovery_hire_tick = int(tick)
+            self._recovery_completed_hires = {}
+        elif not hasattr(self, "_recovery_completed_hires"):
             self._recovery_completed_hires = {}
 
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────

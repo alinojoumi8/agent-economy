@@ -232,8 +232,9 @@ def test_prd_traceable_test_catalog_structure_and_references():
         test_ref = fields.get("test", "").strip()
         if status == "contractual-gap" or test_ref in {"", "none", "-"}:
             continue
-        # Catalog may reference a file or a directory-like path relative to repo root.
-        candidate = ROOT / test_ref
-        if not candidate.exists():
-            problems.append(f"{entry_id}: missing test reference {test_ref}")
+        # A catalog row may name a semicolon-separated verification matrix.
+        for reference in (item.strip() for item in test_ref.split(";")):
+            candidate = ROOT / reference
+            if not reference or not candidate.exists():
+                problems.append(f"{entry_id}: missing test reference {reference}")
     assert not problems, "catalog structural issues:\n" + "\n".join(problems)
