@@ -130,6 +130,16 @@ export function InvestigationsWorkspace() {
       items: current.items.map(item => item.id === record.id ? record : item),
     } : current,
   );
+  const insertCachedInvestigation = (record: Investigation) => queryClient.setQueryData<{ items: Investigation[] }>(
+    ["world-os", runId, "investigations"],
+    current => ({
+      ...current,
+      items: [
+        ...(current?.items.filter(item => item.id !== record.id) || []),
+        record,
+      ],
+    }),
+  );
   const createInvestigation = useMutation({
     mutationFn: () => workspaceApi<Investigation>("/api/v2/operator/investigations", {
       method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
@@ -204,6 +214,8 @@ export function InvestigationsWorkspace() {
       },
     ),
     onSuccess: record => {
+      setDraft(createInvestigationDraft(record));
+      insertCachedInvestigation(record);
       refreshWorkspace();
       navigate(investigationPath(record.id));
     },

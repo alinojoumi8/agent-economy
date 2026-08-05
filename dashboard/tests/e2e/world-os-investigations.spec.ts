@@ -27,6 +27,7 @@ function initialState() {
     records: new Map<string, Investigation>([[original.id, original]]),
     patchRequests: 0,
     createRequests: 0,
+    delayNextListMs: 0,
     privateInternal: PRIVATE_CANARY,
   };
 }
@@ -105,6 +106,11 @@ async function installApi(context: BrowserContext, state: ReturnType<typeof init
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
     }
     if (path === "/api/v2/operator/investigations" && request.method() === "GET") {
+      if (state.delayNextListMs) {
+        const delay = state.delayNextListMs;
+        state.delayNextListMs = 0;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
       return route.fulfill({ json: { items: [...state.records.values()] } });
     }
     if (path === "/api/v2/operator/investigations" && request.method() === "POST") {
@@ -230,8 +236,11 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await titleB.fill("Local copy");
   await pageB.getByRole("button", { name: "Save", exact: true }).click();
   await expect(conflict).toContainText("Server version 3: Remote second");
+  state.delayNextListMs = 2_000;
   await conflict.getByRole("button", { name: "Save draft as new investigation" }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-2\?/);
+  await expect(conflict).toBeHidden({ timeout: 500 });
+  await expect(titleB).toHaveValue("Local copy", { timeout: 500 });
   expect(state.createRequests).toBe(1);
   expect(state.records.get("inv-1")?.title).toBe("Remote second");
   expect(state.records.get("inv-1")?.version).toBe(3);
