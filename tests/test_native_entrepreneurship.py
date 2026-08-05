@@ -315,6 +315,33 @@ def test_mid_run_activation_is_forward_only_and_spreads_established_reviews(stor
     assert len(set(review_ticks)) >= 3
 
 
+def test_odd_entrepreneurship_review_interval_stays_on_agent_wake_parity(store):
+    economy, config, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=20,
+        review_interval_ticks=3,
+    )
+    agent_id, _ = _citizen(
+        economy, bank_id, name="Parity Founder", arrived_tick=0,
+    )
+    make_agent(
+        economy, bank_id, name="Parity Counsel", occupation="lawyer",
+        role="lawyer", health="healthy",
+    )
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    agent = store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+
+    due_on_wakes = [
+        tick for tick in range(20, 41)
+        if tick % 2 == agent_id % 2
+        and "entrepreneurship_opportunity" in builder.build(agent, tick)
+    ]
+
+    assert len(due_on_wakes) >= 3
+    assert {right - left for left, right in zip(due_on_wakes, due_on_wakes[1:])} == {4}
+
+
 def test_native_company_formation_is_capped_per_tick_after_activation(store):
     economy, _, bank_id = _economy(
         store,

@@ -177,3 +177,24 @@ def test_export_is_owner_scoped_and_strips_private_reference_fields(tmp_path):
         assert '"kind":"message"' in markdown
     finally:
         workspace.close()
+
+
+@pytest.mark.parametrize("identifier", ["", "x" * 201])
+def test_workspace_rejects_unbounded_string_reference_identifiers(tmp_path, identifier):
+    workspace = OperatorWorkspace(tmp_path / "operator.db")
+    try:
+        investigation = workspace.create_investigation(
+            owner_id="alice", title="Bounded reference", run_id="run-1",
+        )
+
+        with pytest.raises(ValueError, match="bounded kind and id"):
+            workspace.add_item(
+                investigation["id"], owner_id="alice", item_kind="event",
+                stable_ref={"kind": "event", "id": identifier},
+            )
+
+        assert workspace.conn.execute(
+            "SELECT COUNT(*) FROM investigation_items"
+        ).fetchone()[0] == 0
+    finally:
+        workspace.close()

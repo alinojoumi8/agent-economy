@@ -220,6 +220,31 @@ def test_workforce_recovery_skips_employed_counter_offers():
     assert all(action.get("type") != "accept_job_offer" for action in actions)
 
 
+def test_invalid_recovery_hiring_inputs_keep_their_fail_closed_reason(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path, "invalid-recovery-inputs.db")
+    firm = world.store.query_one("SELECT * FROM firms ORDER BY id LIMIT 1")
+    founder_id = int(firm["founder_agent_id"])
+    firm_id = int(firm["id"])
+    monkeypatch.setattr(
+        world.runtime.ctx,
+        "_firm_view",
+        lambda _firm, _tick: {
+            "recovery": {"active": True, "settings": {}, "inputs": {}},
+        },
+    )
+
+    reason = world.runtime._pre_recovery_employment_action(
+        1,
+        founder_id,
+        {"type": "post_job", "firm_id": firm_id, "title": "worker", "wage": 100},
+        "EXECUTION",
+    )
+
+    assert reason == "recovery policy rejects action: recovery pricing inputs are invalid"
+    world.close()
+
+
 def test_joint_firm_and_candidate_accepts_respect_remaining_headcount(
         tmp_path):
     """Firm counter-accept + candidate auto-accept must share one capacity budget."""

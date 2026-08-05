@@ -815,6 +815,8 @@ class ContextBuilder:
         # parity. Align the first review to that parity so a 30-tick review
         # cadence cannot permanently miss every actual decision turn.
         review_interval = max(1, int(settings.get("review_interval_ticks", 30)))
+        if review_interval % 2:
+            review_interval += 1
         if activation_tick:
             # Spread an established population across the full review interval
             # instead of waking one large parity cohort on the activation day.

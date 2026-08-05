@@ -59,6 +59,15 @@ def _decision_output_budget(llm_config: dict, purpose: str) -> int:
     ))
 
 
+def _decision_numeric_sources(context: dict) -> dict:
+    """Expose only the current authoritative sections named by the prompt contract."""
+    return {
+        key: context[key]
+        for key in ("state", "metrics", "banks", "prices", "jobs", "my_firm")
+        if key in context
+    }
+
+
 async def _gather_fail_fast(coroutines):
     """Preserve input ordering while cancelling queued work after a failure."""
     tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
@@ -845,7 +854,7 @@ class AgentRuntime:
             fallback=(
                 "I used the current structured engine facts to choose this action."
             ),
-            sources=context,
+            sources=_decision_numeric_sources(context),
         )
         if raw_reasoning or public_reasoning:
             env["reasoning"] = public_reasoning
@@ -937,7 +946,7 @@ class AgentRuntime:
         settings = recovery.get("settings")
         inputs = recovery.get("inputs")
         if not isinstance(settings, dict) or not isinstance(inputs, dict):
-            return (0, None, 0, 1)
+            return (0, None, 0, 1, "recovery pricing inputs are invalid")
         try:
             floor = int(settings["wage_floor_cents"])
             assessment = assess_recovery(
@@ -958,8 +967,8 @@ class AgentRuntime:
             max_hires = max(0, int(settings["max_hires_per_firm_per_period"]))
             open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
         except (KeyError, TypeError, ValueError):
-            return (0, None, 0, 1)
-        return floor, assessment, max_hires, open_vacancies
+            return (0, None, 0, 1, "recovery pricing inputs are invalid")
+        return floor, assessment, max_hires, open_vacancies, None
 
     def _recovery_pricing_target(
             self, actor_id: int, action: dict) -> tuple[int, int] | None:
@@ -1023,7 +1032,9 @@ class AgentRuntime:
             firm_id, wage_cents, action_type = target
             state = self._recovery_hiring_state(tick, firm_id, wage_cents)
             if state is not None:
-                floor, assessment, max_hires, open_vacancies = state
+                floor, assessment, max_hires, open_vacancies, state_error = state
+                if state_error is not None:
+                    return f"recovery policy rejects action: {state_error}"
                 if assessment is None or floor <= 0 or wage_cents < floor:
                     return "recovery policy rejects a wage below the configured floor"
                 if assessment.allowed_new_hires < 1:
@@ -1058,8 +1069,9 @@ class AgentRuntime:
         if employment is None:
             return
         firm_key = int(employment["firm_id"])
-        if self._recovery_hiring_state(
-                tick, firm_key, int(employment["wage_cents"])) is None:
+        state = self._recovery_hiring_state(
+            tick, firm_key, int(employment["wage_cents"]))
+        if state is None or state[4] is not None:
             return
         self._recovery_completed_hires[firm_key] = (
             self._recovery_completed_hires.get(firm_key, 0) + 1)
@@ -1507,7 +1519,7 @@ class AgentRuntime:
                 raw_summary,
                 grounding_enabled=model_grounding_active(self.config, tick),
                 fallback="I reviewed today's recorded observations.",
-                sources=context,
+                sources=obs,
             )
         else:
             summary = " | ".join(str(item.get("text", item)) for item in obs)[:1800]
@@ -1531,6 +1543,14 @@ class AgentRuntime:
             return None
         daily = [{"tick": int(r["tick"]), "text": r["text"],
                   "importance": float(r["importance"])} for r in rows]
+        observations = [
+            {"tick": int(row["tick"]), "text": row["text"]}
+            for row in self.store.query(
+                "SELECT tick,text FROM memories WHERE agent_id=? "
+                "AND kind='observation' AND tick BETWEEN ? AND ? ORDER BY tick,id",
+                (agent_id, start, tick),
+            )
+        ]
         context = {"weekly_summaries": daily, "tick": tick,
                    "rng_seed": agent_id * 701 + tick}
         schema = '{"summary":"concise weekly memory","importance":1.0}'
@@ -1548,7 +1568,7 @@ class AgentRuntime:
                 raw_summary,
                 grounding_enabled=model_grounding_active(self.config, tick),
                 fallback="I reviewed the recorded weekly summaries.",
-                sources=context,
+                sources=observations,
             )
         else:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]

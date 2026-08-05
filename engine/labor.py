@@ -274,6 +274,13 @@ class Labor:
             # reached negotiation, including vacancies closed before a later
             # activation.
             self.store.execute(
+                "UPDATE job_offers SET status='expired', decided_tick=? "
+                "WHERE status='pending' AND application_id IN "
+                "(SELECT ap.id FROM applications ap JOIN jobs j ON j.id=ap.job_id "
+                "WHERE j.status IN ('open','closed') AND j.tick < ?)",
+                (tick, tick - max_age),
+            )
+            self.store.execute(
                 "UPDATE applications SET state='rejected' "
                 "WHERE state IN ('pending','negotiating') AND job_id IN "
                 "(SELECT id FROM jobs WHERE status IN ('open','closed') AND tick < ?)",

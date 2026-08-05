@@ -43,6 +43,15 @@ def _seed_workspace_history(economy) -> None:
         "INSERT INTO firms (id,name,sector,status,founded_tick,region_id) "
         "VALUES (2,'future-order-canary','tech','private',9,1)")
     store.execute(
+        "INSERT INTO accounts (id,owner_type,owner_id,kind,label,balance_cents) "
+        "VALUES (900,'firm',1,'checking','workspace firm',125)")
+    store.execute("UPDATE firms SET account_id=900 WHERE id=1")
+    store.execute(
+        "INSERT INTO transactions (id,tick,kind,memo) VALUES (900,3,'seed','workspace')")
+    store.execute(
+        "INSERT INTO ledger_entries (id,tick,txn_id,account_id,delta_cents) "
+        "VALUES (900,3,900,900,125)")
+    store.execute(
         "INSERT INTO orders (id,tick,agent_id,firm_id,side,qty,qty_remaining,seq,status) "
         "VALUES (1,4,1,1,'buy',3,3,1,'filled'),(2,9,1,2,'sell',7,7,2,'open')")
     store.execute(
@@ -79,6 +88,20 @@ def _seed_workspace_history(economy) -> None:
         "VALUES (1,'civil','court','filed','agent',1,'firm',1,'breach',4,8,'{}','{}'),"
         "(2,'civil','court','filed','agent',1,'firm',2,'future-case-canary',9,12,'{}','{}')")
     store.execute(
+        "UPDATE legal_matters SET resolved_tick=9,settlement_json='{}' WHERE id=1")
+    store.execute(
+        "INSERT INTO contracts (id,contract_type,title,jurisdiction,ruleset_key,drafter_agent_id,"
+        "offered_tick,executed_tick,effective_tick,expiry_tick,terminated_tick,metadata_json) "
+        "VALUES (1,'sale','Lifecycle contract','national','rules',1,4,5,6,8,9,'{}')")
+    store.execute(
+        "INSERT INTO obligations (id,contract_id,clause_id,obligation_type,obligor_type,"
+        "obligor_id,obligee_type,obligee_id,due_tick,performed_tick,breached_tick,terms_json) "
+        "VALUES (1,1,1,'pay','firm',1,'agent',1,6,7,8,'{}')")
+    store.execute(
+        "INSERT INTO mergers (id,proposed_tick,acquirer_firm_id,target_firm_id,proposer_agent_id,"
+        "price_cents,target_approved_tick,regulator_notified_tick,closed_tick,terminated_tick,metadata_json) "
+        "VALUES (1,4,1,2,1,1000,5,6,8,9,'{}')")
+    store.execute(
         "INSERT INTO checkpoints (id,tick,path,created_at) VALUES (1,4,'safe.db','now'),(2,9,'future-checkpoint-canary','later')")
     store.execute(
         "INSERT INTO shocks (id,kind,trigger_type,trigger_json,label,fired,fired_tick) "
@@ -93,7 +116,7 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     _seed_workspace_history(economy)
     world = SimpleNamespace(store=economy.store, config=economy.config, economy=economy)
     payloads = {
-        "world": build_world_workspace(world, economy.store, as_of_tick=4),
+        "world": build_world_workspace(economy.store, as_of_tick=4),
         "organizations": build_organizations_workspace(economy.store, as_of_tick=4),
         "markets": build_markets_workspace(economy.store, as_of_tick=4),
         "politics": build_politics_law_workspace(economy.store, as_of_tick=4),
@@ -117,6 +140,26 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     assert [item["tick"] for item in payloads["politics"]["votes"]] == [4]
     assert [item["tick"] for item in payloads["experiments"]["checkpoints"]] == [4]
 
+    organizations_contract = payloads["organizations"]["contracts"][0]
+    assert organizations_contract["status"] == "offered"
+    for field in ("executed_tick", "effective_tick", "expiry_tick", "terminated_tick"):
+        assert organizations_contract[field] is None
+    politics = payloads["politics"]
+    assert politics["contracts"][0]["status"] == "offered"
+    assert politics["contracts"][0]["executed_tick"] is None
+    assert politics["contracts"][0]["expiry_tick"] is None
+    assert politics["contracts"][0]["terminated_tick"] is None
+    assert politics["obligations"][0]["status"] == "pending"
+    assert politics["obligations"][0]["performed_tick"] is None
+    assert politics["obligations"][0]["breached_tick"] is None
+    assert politics["matters"][0]["status"] == "filed"
+    assert politics["matters"][0]["resolved_tick"] is None
+    assert politics["mergers"][0]["status"] == "proposed"
+    for field in (
+        "target_approved_tick", "regulator_notified_tick", "closed_tick", "terminated_tick",
+    ):
+        assert politics["mergers"][0][field] is None
+
     at_ten = build_organizations_workspace(economy.store, as_of_tick=10)
     assert next(item for item in at_ten["organizations"] if item["id"] == 1)["status"] == "bankrupt"
 
@@ -128,7 +171,7 @@ def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(econo
     app = FastAPI()
     install_v2_routes(app, world, controller)
     expected = {
-        "world": build_world_workspace(world, economy.store, as_of_tick=4),
+        "world": build_world_workspace(economy.store, as_of_tick=4),
         "organizations": build_organizations_workspace(economy.store, as_of_tick=4),
         "markets": build_markets_workspace(economy.store, as_of_tick=4),
         "politics-law": build_politics_law_workspace(economy.store, as_of_tick=4),
@@ -147,3 +190,88 @@ def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(econo
         assert client.get(
             "/api/v2/workspaces/markets", params={"fork_id": "wrong"}).status_code == 409
     app.state.operator_workspace.close()
+
+
+def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    rows = range(100, 205)
+    store.executemany(
+        "INSERT INTO orders (id,tick,agent_id,firm_id,side,qty,qty_remaining,seq,status) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        [(row, row, 1, 1, "buy", 2, 1, row, "partial") for row in rows],
+    )
+    store.executemany(
+        "INSERT INTO trades (id,tick,firm_id,buy_order_id,sell_order_id,buyer_id,seller_id,qty,price_cents) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        [(row, row, 1, row, row, 1, 1, 1, 100) for row in rows],
+    )
+    store.executemany(
+        "INSERT INTO fx_orders (id,tick,actor_id,pair,base_currency,quote_currency,side,qty,"
+        "qty_remaining,seq,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(row, row, 1, "USD/USD", "USD", "USD", "buy", 2, 1, row, "partial")
+         for row in rows],
+    )
+    store.executemany(
+        "INSERT INTO fx_trades (id,tick,order_id,actor_id,pair,side,base_qty,quote_qty,rate_ppm,"
+        "base_account_id,quote_account_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(row, row, row, 1, "USD/USD", "buy", 1, 1, 1_000_000, 900, 900)
+         for row in rows],
+    )
+    statements = []
+    store.conn.set_trace_callback(statements.append)
+    try:
+        payload = build_markets_workspace(store, as_of_tick=300)
+    finally:
+        store.conn.set_trace_callback(None)
+
+    for key in ("orders", "trades", "fx_orders", "fx_trades"):
+        assert len(payload[key]) == 100
+        assert [row["id"] for row in payload[key]] == list(range(105, 205))
+    assert all(row["qty_remaining"] == 1 for row in payload["orders"])
+    assert all(row["qty_remaining"] == 1 for row in payload["fx_orders"])
+    assert sum("SELECT COALESCE(SUM(qty)" in sql for sql in statements) <= 1
+    assert sum("SELECT COALESCE(SUM(base_qty)" in sql for sql in statements) <= 1
+
+
+def test_world_workspace_resolves_agent_regions_with_bounded_queries(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.executemany(
+        "INSERT INTO agents (id,name,kind,occupation,age,alive,arrived_tick,region_id,population_tier) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        [(agent_id, f"Agent {agent_id}", "citizen", "worker", 30, 1, 0, 1, "core")
+         for agent_id in range(2, 22)],
+    )
+    store.executemany(
+        "INSERT INTO migrations (id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick,completed_tick,status) VALUES (?,?,?,?,?,?,?)",
+        [(agent_id, agent_id, 1, 1, 2, 3, "completed") for agent_id in range(2, 22)],
+    )
+    statements = []
+    store.conn.set_trace_callback(statements.append)
+    try:
+        payload = build_world_workspace(store, as_of_tick=4)
+    finally:
+        store.conn.set_trace_callback(None)
+
+    assert len(payload["agents"]) == 21
+    migration_queries = [sql for sql in statements if "FROM migrations" in sql]
+    assert len(migration_queries) <= 3
+    assert not any("WHERE agent_id=" in sql for sql in migration_queries)
+
+
+def test_organization_balance_projection_scopes_ledger_aggregation(economy):
+    _seed_workspace_history(economy)
+    statements = []
+    economy.store.conn.set_trace_callback(statements.append)
+    try:
+        payload = build_organizations_workspace(economy.store, as_of_tick=4)
+    finally:
+        economy.store.conn.set_trace_callback(None)
+
+    firm = next(row for row in payload["firms"] if row["id"] == 1)
+    assert firm["balance_cents"] == 125
+    ledger_queries = [sql for sql in statements if "FROM ledger_entries" in sql]
+    assert ledger_queries
+    assert all("account_id IN" in sql for sql in ledger_queries)

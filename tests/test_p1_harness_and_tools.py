@@ -134,7 +134,7 @@ def test_replay_reader_lists_and_pages_ticks(tmp_path):
     assert reader.tick_view("../etc/passwd", 1) is None
 
 
-def test_replay_reader_redacts_unsupported_historical_news_numbers(tmp_path):
+def test_replay_reader_uses_requested_tick_for_grounding_activation(tmp_path):
     config = {
         "seed": 1,
         "beliefs": {
@@ -171,10 +171,9 @@ def test_replay_reader_redacts_unsupported_historical_news_numbers(tmp_path):
     reader = ReplayReader(runs_dir=str(tmp_path))
     article = reader.tick_view("numeric-news", 1)["news"][0]
 
-    assert article["numeric_claims_redacted"] is True
-    assert article["numeric_claims_redaction_reason"] == (
-        "ungrounded_numeric_claim")
-    assert "987654321" not in article["headline"]
+    assert article["numeric_claims_redacted"] is False
+    assert article["numeric_claims_redaction_reason"] is None
+    assert "987654321" in article["headline"]
     reader.close()
 
 

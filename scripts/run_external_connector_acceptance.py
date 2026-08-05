@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -73,6 +73,16 @@ def load_credential_file(path: str | Path) -> dict[str, Any]:
     return value
 
 
+class _RejectRedirects(HTTPRedirectHandler):
+    """Return redirects to the caller instead of replaying credentialed requests."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_RejectRedirects())
+
+
 def _request(
     method: str,
     url: str,
@@ -97,7 +107,7 @@ def _request(
         headers["Content-Type"] = "application/x-www-form-urlencoded"
     request = Request(url, data=data, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _NO_REDIRECT_OPENER.open(request, timeout=timeout) as response:
             return int(response.status), response.read(2 * 1024 * 1024)
     except HTTPError as exc:
         try:

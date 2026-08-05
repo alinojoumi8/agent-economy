@@ -186,6 +186,32 @@ def test_grounded_model_reserved_beliefs_require_baseline_and_bounded_step(tmp_p
     store.close()
 
 
+@pytest.mark.parametrize("enforce_ranges", [True, False])
+def test_grounded_model_belief_step_uses_raw_value_even_without_range_clamping(
+        tmp_path, enforce_ranges):
+    store = Store(str(tmp_path / f"raw-step-{enforce_ranges}.db"))
+    config = {
+        "beliefs": {
+            "audit_history": True,
+            "enforce_reserved_ranges": enforce_ranges,
+            "model_grounding_from_tick": 1,
+            "model_max_reserved_step": 0.05,
+        },
+    }
+    store.init_run_meta("raw-step", 42, config)
+    memory = Memory(store, config)
+    memory.set_belief(1, "sentiment", 0.98, 0, source="direct")
+
+    with pytest.raises(ValueError, match="step"):
+        memory.set_belief(
+            1, "sentiment", 2.0, 1, source="decision",
+            source_llm_call_id=99,
+        )
+
+    assert memory.get_beliefs(1)["sentiment"] == pytest.approx(0.98)
+    store.close()
+
+
 def test_grounded_prompt_labels_authoritative_facts_and_stale_memories(tmp_path):
     world = _world(tmp_path, "grounded-prompt.db")
     world.config["beliefs"].update({
@@ -219,6 +245,9 @@ def test_model_reasoning_is_grounded_publicly_while_raw_call_remains_auditable(
     world.runtime.ctx.config = world.config
     citizen = world.store.query_one(
         "SELECT * FROM agents WHERE kind='citizen' AND role IS NULL ORDER BY id LIMIT 1"
+    )
+    world.runtime.mem.observe(
+        int(citizen["id"]), 0, "A stale memory claimed output rose 987654321%.",
     )
     raw = {
         "reasoning": "Output rose 987654321%.",
@@ -256,8 +285,42 @@ def test_model_reasoning_is_grounded_publicly_while_raw_call_remains_auditable(
     )
     assert proposal["rationale_summary"] == decision["reasoning"]
     assert not world.store.query_one(
-        "SELECT 1 FROM memories WHERE text LIKE '%987654321%'"
+        "SELECT 1 FROM memories WHERE text='Output rose 987654321%.'"
     )
+    world.close()
+
+
+def test_memory_summaries_ground_numbers_only_in_raw_observations(tmp_path):
+    world = _world(tmp_path, "summary-grounding.db")
+    world.config["beliefs"].update({"model_grounding_from_tick": 1})
+    world.runtime.config = world.config
+    agent_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"
+    ))
+    world.runtime.mem.observe(agent_id, 1, "Demand changed without a measured figure.")
+
+    class SummaryGateway:
+        async def complete(self, request, **_kwargs):
+            if request.user.startswith("["):
+                return SimpleNamespace(
+                    parsed={"summary": "The prior model summary said 777.", "importance": 2},
+                    call_id=2,
+                )
+            return SimpleNamespace(
+                parsed={
+                    "summary": f"The random seed was {request.context['rng_seed']}.",
+                    "importance": 2,
+                    "belief_updates": [],
+                },
+                call_id=1,
+            )
+
+    world.runtime.gw = SummaryGateway()
+    daily = asyncio.run(world.runtime._compress_one(1, agent_id))
+    assert daily[0] == "I reviewed today's recorded observations."
+    world.runtime.mem.write_summary(agent_id, 1, "A prior model summary said 777.", 2)
+    weekly = asyncio.run(world.runtime._rollup_week(1, agent_id, 1))
+    assert weekly[0] == "I reviewed the recorded weekly summaries."
     world.close()
 
 

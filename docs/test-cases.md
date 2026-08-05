@@ -124,7 +124,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Observatory panels render
 - **then**: Macro, agents, and event surfaces remain usable
 - **oracle**: Dashboard unit and e2e smoke
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -579,7 +579,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: World renders, selects a region/place, and follows a related workspace link
 - **then**: Invalid coordinates and unknown/duplicate flows are rejected; run/fork/tick and public lineage are preserved
 - **oracle**: Pure-model tests, projection tests, and Chromium route flow
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -592,7 +592,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Directory filters, keyboard selection, and a validated deep link are used
 - **then**: Currency units and as-of lifecycle remain explicit; owner, tenant, and private fields are absent
 - **oracle**: Pure-model tests, typed build, and Chromium desktop/mobile flow
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -605,7 +605,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Market tabs and filters render at live and empty historical ticks
 - **then**: Books and executions remain separate, units/direction are explicit, and empty evidence is not reported as measured zero activity
 - **oracle**: Pure-model tests and Chromium empty/live route flows
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -618,7 +618,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Institutional sections render at enabled and configured-disabled ticks
 - **then**: Record families stay distinct and retained rows from disabled institutions remain hidden
 - **oracle**: Pure-model tests and Chromium disabled-state canary flow
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -631,7 +631,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Evidence is classified and live/historical detail routes render
 - **then**: Mechanics, partial, blocked, failed, live, and eligible evidence fail closed; observer routes start no provider spend or mutation
 - **oracle**: Classification unit matrix and Chromium current-only/deep-link flows
-- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **test**: dashboard/tests/world-os-routes.test.js; dashboard/tests/observer-view-state.test.js; tests/test_world_os_workspace_projections.py; dashboard/tests/e2e/world-os-routes.spec.ts; dashboard/tests/e2e/world-os-states.spec.ts; dashboard/tests/e2e/world-os-privacy.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 

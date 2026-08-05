@@ -295,3 +295,32 @@ def test_failed_checkpoint_creation_does_not_prune_existing_checkpoints(tmp_path
         assert retained.exists() and _manifest(retained).exists()
     finally:
         world.close()
+
+
+def test_prune_failure_does_not_erase_a_successful_checkpoint_result(tmp_path, monkeypatch):
+    world = _world(tmp_path, keep_last=1)
+    try:
+        def fail_prune(_run_id: str, _keep_last: int) -> None:
+            raise RuntimeError("retention subsystem unavailable")
+
+        monkeypatch.setattr(world, "_prune_checkpoints", fail_prune)
+
+        created = world.checkpoint(100)
+
+        assert created is not None
+        database = Path(created)
+        assert database.exists() and _manifest(database).exists()
+        assert [int(row["tick"]) for row in _checkpoint_rows(world)] == [100]
+        assert world.store.query_one(
+            "SELECT id FROM events WHERE kind='checkpoint_failed' LIMIT 1"
+        ) is None
+        event = world.store.query_one(
+            "SELECT payload_json FROM events WHERE kind='checkpoint_prune_failed' "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        assert event is not None
+        payload = json.loads(event["payload_json"])
+        assert payload["error_type"] == "RuntimeError"
+        assert "retention subsystem unavailable" not in json.dumps(payload)
+    finally:
+        world.close()

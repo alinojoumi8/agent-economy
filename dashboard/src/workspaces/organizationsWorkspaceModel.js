@@ -31,9 +31,9 @@ function compareId(left, right) {
 function organizationSource(source) {
   if (Array.isArray(source.organizations)) return source.organizations;
   return [
-    ...records(source.firms).map(row => ({ type: "firm", ...row })),
-    ...records(source.banks).map(row => ({ type: "bank", ...row })),
-    ...records(source.institutions?.agencies).map(row => ({ type: "agency", ...row })),
+    ...records(source.firms).map(row => ({ ...row, type: "firm" })),
+    ...records(source.banks).map(row => ({ ...row, type: "bank" })),
+    ...records(source.institutions?.agencies).map(row => ({ ...row, type: "agency" })),
   ];
 }
 

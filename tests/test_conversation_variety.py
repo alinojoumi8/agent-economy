@@ -165,6 +165,29 @@ def test_conversation_replaces_ungrounded_provider_output(tmp_path):
     assert len(set(lines)) == len(lines)
 
 
+def test_conversation_rng_and_prior_lines_are_not_numeric_grounding_sources(tmp_path):
+    world = _world(tmp_path)
+    world.config["beliefs"] = {"model_grounding_from_tick": 1}
+    world.conversations.config = world.config
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    raw_lines = []
+
+    async def seeded_completion(request, **kwargs):
+        raw = f"Conditions may shift around {request.context['rng_seed']}."
+        raw_lines.append(raw)
+        return SimpleNamespace(parsed={"text": raw, "rumor_bank": None})
+
+    world.conversations.gw.complete = seeded_completion
+    asyncio.run(world.conversations._converse(1, agent_ids[0], agent_ids[1]))
+
+    stored = [str(row["text"]) for row in world.store.query(
+        "SELECT text FROM messages ORDER BY seq")]
+    assert raw_lines
+    assert not set(raw_lines) & set(stored)
+    world.close()
+
+
 def test_conversation_uses_the_configured_output_budget(tmp_path):
     world = _world(tmp_path)
     world.conversations.config["llm"]["conversation_max_tokens"] = 800

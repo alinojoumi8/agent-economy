@@ -33,6 +33,9 @@ def _stable_reference(value: dict) -> dict:
     if not kind or len(kind) > 80 or isinstance(identifier, bool) or not isinstance(
             identifier, (str, int)):
         raise ValueError("stable reference requires a bounded kind and id")
+    if isinstance(identifier, str) and (
+            not identifier.strip() or len(identifier) > 200):
+        raise ValueError("stable reference requires a bounded kind and id")
     result = {"kind": kind, "id": identifier}
     if value.get("tick") is not None:
         tick = value["tick"]

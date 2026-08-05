@@ -1071,14 +1071,13 @@ def _validate_supply_recovery_report_cli(
     """Keep a persisted-evidence receipt command free of ignored run modifiers."""
     if not args.supply_recovery_report:
         return
-    allowed = {"--supply-recovery-report", "--output"}
-    incompatible = []
-    for token in sys.argv[1:]:
-        if not token.startswith("-"):
-            continue
-        option = token.split("=", 1)[0]
-        if option not in allowed:
-            incompatible.append(option)
+    allowed_destinations = {"supply_recovery_report", "output"}
+    incompatible = [
+        "--" + destination.replace("_", "-")
+        for destination, value in vars(args).items()
+        if destination not in allowed_destinations
+        and value != parser.get_default(destination)
+    ]
     if incompatible:
         parser.error(
             "--supply-recovery-report only accepts --output; incompatible options: "

@@ -15,7 +15,10 @@ export function normalizeWorkspaceFilters(filters, allowedKeys) {
 export function workspaceRouteUrl(runId, path, state, extra = {}) {
   const params = new URLSearchParams();
   if (state?.fork) params.set("fork", String(state.fork));
-  if (state?.tick && state.tick !== "live") params.set("tick", String(state.tick));
+  if (state?.tick !== null && state?.tick !== undefined
+      && state.tick !== "" && state.tick !== "live") {
+    params.set("tick", String(state.tick));
+  }
   for (const [key, value] of Object.entries(extra)) {
     if (value !== null && value !== undefined && value !== "" && value !== false) {
       params.set(key, String(value));
@@ -26,3 +29,10 @@ export function workspaceRouteUrl(runId, path, state, extra = {}) {
 }
 
 export const workspaceUrl = workspaceRouteUrl;
+
+export function organizationWorkspaceUrl(runId, id, state) {
+  const selectedId = validatedSelectedId(id);
+  return selectedId === null
+    ? null
+    : workspaceRouteUrl(runId, `organizations/${selectedId}`, state);
+}

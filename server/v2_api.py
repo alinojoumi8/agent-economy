@@ -341,7 +341,7 @@ def install_v2_routes(app, world, controller) -> None:
                 (as_of_tick,))]
         if "organizations" in selected:
             data["organizations"] = build_world_workspace(
-                world, store, as_of_tick=as_of_tick)["organizations"]
+                store, as_of_tick=as_of_tick)["organizations"]
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
         if "presence" in selected:
@@ -359,7 +359,7 @@ def install_v2_routes(app, world, controller) -> None:
     async def world_workspace(tick: str = Query("live"), fork_id: str | None = None):
         as_of_tick = projection_tick(tick, fork_id)
         return workspace_envelope(
-            "world", build_world_workspace(world, store, as_of_tick=as_of_tick), as_of_tick)
+            "world", build_world_workspace(store, as_of_tick=as_of_tick), as_of_tick)
 
     @router.get("/workspaces/organizations")
     async def organizations_workspace(

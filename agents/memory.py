@@ -151,7 +151,8 @@ class Memory:
             raise ValueError("belief value must be finite")
 
         normalized = raw_value
-        bounds = self._reserved_range(key) if self.enforce_reserved_ranges else None
+        reserved_bounds = self._reserved_range(key)
+        bounds = reserved_bounds if self.enforce_reserved_ranges else None
         if bounds is not None:
             normalized = min(bounds[1], max(bounds[0], raw_value))
 
@@ -159,7 +160,7 @@ class Memory:
             "SELECT id, value FROM beliefs WHERE agent_id=? AND key=?", (agent_id, key))
         old_value = float(existing["value"]) if existing else None
         if (
-            bounds is not None
+            reserved_bounds is not None
             and self._is_model_authored(source_llm_call_id)
             and model_grounding_active(self.config, tick)
         ):
@@ -176,7 +177,7 @@ class Memory:
                 )
                 raise ValueError(
                     "grounded model belief update requires an existing baseline")
-            if abs(normalized - old_value) > self.model_max_reserved_step:
+            if abs(raw_value - old_value) > self.model_max_reserved_step:
                 self._log_grounding_rejection(
                     agent_id,
                     key,

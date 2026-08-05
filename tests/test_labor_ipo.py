@@ -259,6 +259,7 @@ def test_expiring_stale_job_terminalizes_every_actionable_application_when_opted
     assert pending_application is not None
     assert negotiating_application is not None
     assert offer_id is not None
+    store.update("jobs", job_id, status="closed")
 
     economy.labor.expire_stale_jobs(22, terminalize_stale_applications=True)
 

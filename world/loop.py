@@ -1006,7 +1006,25 @@ class World:
             self.store.commit()
             keep_last = self.config.get("checkpoint_keep_last")
             if type(keep_last) is int and keep_last > 0:
-                self._prune_checkpoints(run_id, keep_last)
+                try:
+                    self._prune_checkpoints(run_id, keep_last)
+                except Exception as exc:
+                    # Retention is maintenance after the snapshot, manifest,
+                    # and catalog row have already committed. Preserve that
+                    # successful checkpoint while making pruning observable.
+                    self.store.log_event(
+                        tick,
+                        "checkpoint_prune_failed",
+                        {"error": type(exc).__name__,
+                         "error_type": type(exc).__name__},
+                        importance=2.0,
+                    )
+                    self.store.commit()
+                    operational_log(
+                        logger, logging.WARNING, "world.checkpoint.prune_failed",
+                        run_id=run_id, tick=tick, reason=reason,
+                        error_type=type(exc).__name__,
+                    )
             operational_log(logger, logging.INFO, "world.checkpoint.created",
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)

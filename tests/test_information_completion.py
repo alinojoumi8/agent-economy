@@ -126,6 +126,36 @@ def test_news_grounding_rejects_a_mixed_valid_and_dangling_source_list(tmp_path)
     world.store.close()
 
 
+def test_news_grounding_labels_an_empty_citation_failure(tmp_path):
+    world = _world(
+        tmp_path, "missing-citation.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0,
+    )
+    world.store.commit()
+
+    article = world.newsroom._ground_article(
+        world.newsroom.outlets[0],
+        {
+            "headline": "Production reached 4 units",
+            "body": "The recorded total was 4.",
+            "source_event_ids": [],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        },
+        world.newsroom._daily_events(1),
+        grounding_tick=1,
+    )
+
+    assert article["source_event_ids"] == [event_id]
+    assert article["numeric_claims_redacted"] is True
+    assert article["numeric_claims_redaction_reason"] == "missing_source_citation"
+    world.close()
+
+
 def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
         tmp_path):
     active = _world(

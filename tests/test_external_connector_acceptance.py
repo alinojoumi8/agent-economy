@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -10,7 +12,7 @@ from benchmarks.external_connector_acceptance import (
     validate_external_connector_receipt,
     write_external_connector_receipt,
 )
-from scripts.run_external_connector_acceptance import load_credential_file
+from scripts.run_external_connector_acceptance import _request, load_credential_file
 
 
 COMMIT = "1" * 40
@@ -204,3 +206,52 @@ def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):
         load_credential_file(link)
     with pytest.raises(ValueError, match="isolation_probe_path"):
         load_credential_file(target)
+
+
+def test_hosted_runner_refuses_redirects_without_forwarding_bearer_token():
+    received_authorization = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received_authorization.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"target")
+
+        def log_message(self, _format, *_args):
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+    target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header(
+                "Location", f"http://127.0.0.1:{target.server_port}/elsewhere",
+            )
+            self.end_headers()
+            self.wfile.write(b"redirect refused")
+
+        def log_message(self, _format, *_args):
+            pass
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+    redirect_thread.start()
+    try:
+        status, _body = _request(
+            "GET", f"http://127.0.0.1:{redirect.server_port}/start",
+            token="process-only-secret", timeout=2,
+        )
+
+        assert status == 302
+        assert received_authorization == []
+    finally:
+        redirect.shutdown()
+        target.shutdown()
+        redirect.server_close()
+        target.server_close()
+        redirect_thread.join(timeout=2)
+        target_thread.join(timeout=2)

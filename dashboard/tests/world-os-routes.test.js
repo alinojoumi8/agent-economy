@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  organizationWorkspaceUrl,
   normalizeWorkspaceFilters,
   validatedSelectedId,
   workspaceRouteUrl,
@@ -33,6 +34,10 @@ test("workspace URLs preserve only validated observer and route state", () => {
       workspaceRouteUrl("run", "world", { fork: null, tick: "live" }, {}),
       "/runs/run/world",
     );
+    assert.equal(
+      workspaceRouteUrl("run", "world", { fork: null, tick: 0 }, {}),
+      "/runs/run/world?tick=0",
+    );
     assert.deepEqual(
       normalizeWorkspaceFilters(
         { side: "buy", selected: "12", future_canary: "private" },
@@ -44,6 +49,13 @@ test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(validatedSelectedId("0"), null);
     assert.equal(validatedSelectedId("1.5"), null);
     assert.equal(validatedSelectedId("private"), null);
+    assert.equal(
+      organizationWorkspaceUrl("run/id", "12", { tick: 0 }),
+      "/runs/run%2Fid/organizations/12?tick=0",
+    );
+    for (const invalid of [0, -1, "1.5", "private", Number.MAX_SAFE_INTEGER + 1]) {
+      assert.equal(organizationWorkspaceUrl("run", invalid, {}), null);
+    }
 });
 
 test("world workspace normalizes public map data without inventing coordinates", () => {
@@ -149,6 +161,19 @@ test("organization workspace preserves public lifecycle and currency while dropp
   assert.deepEqual(model.institutions, { legalEnabled: false, politicsEnabled: true });
   assert.equal(model.contracts[0].metadata, undefined);
   assert.equal(model.disclosures[0].tick, 4);
+});
+
+test("legacy organization rows cannot override their authoritative source type", () => {
+  const model = normalizeOrganizationsWorkspace({
+    firms: [{ id: 1, name: "Firm", type: "bank" }],
+    banks: [{ id: 2, name: "Bank", type: "agency" }],
+    institutions: { agencies: [{ id: 3, name: "Agency", type: "firm" }] },
+  });
+
+  assert.deepEqual(model.organizations.map(row => row.type), ["firm", "bank", "agency"]);
+  assert.deepEqual(model.firms.map(row => row.id), [1]);
+  assert.deepEqual(model.banks.map(row => row.id), [2]);
+  assert.deepEqual(model.agencies.map(row => row.id), [3]);
 });
 
 test("organization filters are deterministic across search, type, region, sector, status, and active state", () => {

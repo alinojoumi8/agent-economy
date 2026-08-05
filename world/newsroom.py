@@ -316,6 +316,7 @@ class Newsroom:
         # An editor response without a valid local source is not publishable.
         # A compact engine-written brief preserves the daily promise without
         # manufacturing facts or hiding the provider contract failure.
+        citation_invalid = not source_ids or not all_sources_valid
         numeric_redacted = bool(contract_valid and not numeric_claims_valid)
         if (not contract_valid or not source_ids or not all_sources_valid
                 or not numeric_claims_valid):
@@ -345,7 +346,11 @@ class Newsroom:
                 art["slant_tags"].append("directed")
         art["numeric_claims_redacted"] = numeric_redacted
         art["numeric_claims_redaction_reason"] = (
-            "ungrounded_numeric_claim" if numeric_redacted else None)
+            (
+                "missing_source_citation"
+                if citation_invalid else "ungrounded_numeric_claim"
+            )
+            if numeric_redacted else None)
         return art
 
     def public_article_projection(
@@ -710,7 +715,11 @@ class Conversations:
                     text,
                     grounding_enabled=model_grounding_active(self.config, tick),
                     fallback="",
-                    sources=context,
+                    sources={
+                        "speaker_profile": context["speaker_profile"],
+                        "speaker_rumor_bank": context["speaker_rumor_bank"],
+                        "shared_topic": context["shared_topic"],
+                    },
                 )
                 if text and not sanitized_text:
                     env = conversation_turn(context)

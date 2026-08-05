@@ -1,10 +1,10 @@
 import { Link, useSearchParams } from "react-router";
 import { normalizePoliticsLawWorkspace } from "./politicsLawWorkspaceModel.js";
+import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
 import {
   WorkspaceHeader,
   WorkspaceState,
   WorkspaceTable,
-  workspaceUrl,
   useWorkspaceProjection,
 } from "./workspaceShared";
 
@@ -44,7 +44,9 @@ export function PoliticsLawWorkspace() {
     else next.set("view", nextView);
     setSearchParams(next, { replace: true });
   };
-  const organizationUrl = (id: unknown) => workspaceUrl(projection.runId, `organizations/${Number(id)}`, projection.observerState);
+  const organizationUrl = (id: unknown) => organizationWorkspaceUrl(
+    projection.runId, id, projection.observerState,
+  );
 
   return <section className="world-os-politics-law-workspace">
     <WorkspaceHeader title="Politics & Law" kicker="Institutional record spine"
@@ -131,8 +133,8 @@ export function PoliticsLawWorkspace() {
       {view === "mergers" && <div className="world-os-politics-grid">
         <article className="world-os-workspace-card"><header><div><p className="world-os-kicker">Transactions</p><h3>Mergers & acquisitions</h3></div></header>
           <WorkspaceTable caption="Mergers" rows={model.mergers as EvidenceRow[]} empty={model.configuration.legalEnabled ? "No mergers are proposed at this tick." : "Legal systems are disabled for this run."} columns={[
-            { key: "acquirer", label: "Acquirer", render: row => Number.isSafeInteger(Number(row.acquirer_firm_id)) ? <Link to={organizationUrl(row.acquirer_firm_id)}>Organization {text(row.acquirer_firm_id)}</Link> : "—" },
-            { key: "target", label: "Target", render: row => Number.isSafeInteger(Number(row.target_firm_id)) ? <Link to={organizationUrl(row.target_firm_id)}>Organization {text(row.target_firm_id)}</Link> : "—" },
+            { key: "acquirer", label: "Acquirer", render: row => { const href = organizationUrl(row.acquirer_firm_id); return href ? <Link to={href}>Organization {text(row.acquirer_firm_id)}</Link> : "—"; } },
+            { key: "target", label: "Target", render: row => { const href = organizationUrl(row.target_firm_id); return href ? <Link to={href}>Organization {text(row.target_firm_id)}</Link> : "—"; } },
             { key: "price", label: "Consideration", render: row => amount(row.price_cents, row.currency_code) },
             { key: "status", label: "Status", render: row => text(row.status) }, { key: "tick", label: "Proposed", render: row => tick(row.proposed_tick) },
           ]} />

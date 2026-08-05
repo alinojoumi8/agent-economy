@@ -159,7 +159,7 @@ export function InvestigationsWorkspace() {
       `/api/v2/operator/investigations/${activeDraft.server.id}`, {
         method: "PATCH", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
         body: JSON.stringify({
-          expected_version: draft.server.version,
+          expected_version: activeDraft.server.version,
           title: activeDraft.titleDraft.trim(),
         }),
       },

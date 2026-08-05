@@ -86,7 +86,8 @@ test("investigation title editor submits the authoritative expected version", as
   assert.match(editorSource, /maxLength=\{160\}/);
   assert.match(editorSource, />Save</);
   assert.match(editorSource, />Cancel</);
-  assert.match(workspaceSource, /expected_version:\s*draft\.server\.version/);
+  assert.match(workspaceSource, /expected_version:\s*activeDraft\.server\.version/);
+  assert.doesNotMatch(workspaceSource, /expected_version:\s*draft\.server\.version/);
 
   const state = editInvestigationTitle(createInvestigationDraft({
     id: "inv-1", title: "Original", version: 1,

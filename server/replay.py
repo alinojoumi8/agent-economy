@@ -127,12 +127,7 @@ class ReplayReader:
                       "('metrics_snapshot','action_rejected') ORDER BY id LIMIT 80", (tick,))]
         meta = conn.execute("SELECT * FROM run_meta WHERE id=1").fetchone()
         config = _load_json(meta["config_json"], {}) or {}
-        active_tick = (
-            int(meta["active_tick"])
-            if "active_tick" in set(meta.keys()) and meta["active_tick"] is not None
-            else int(meta["tick"])
-        )
-        grounding_enabled = model_grounding_active(config, active_tick)
+        grounding_enabled = model_grounding_active(config, int(tick))
         news = []
         for article in conn.execute(
                 "SELECT * FROM news_articles WHERE tick=? ORDER BY id", (tick,)):
