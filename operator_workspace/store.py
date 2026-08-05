@@ -25,6 +25,28 @@ def _json(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def _stable_reference(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("stable reference must be an object")
+    kind = str(value.get("kind", "")).strip()
+    identifier = value.get("id")
+    if not kind or len(kind) > 80 or isinstance(identifier, bool) or not isinstance(
+            identifier, (str, int)):
+        raise ValueError("stable reference requires a bounded kind and id")
+    result = {"kind": kind, "id": identifier}
+    if value.get("tick") is not None:
+        tick = value["tick"]
+        if isinstance(tick, bool) or not isinstance(tick, int) or tick < 0:
+            raise ValueError("stable reference tick must be a nonnegative integer")
+        result["tick"] = tick
+    if value.get("order_key") is not None:
+        order_key = str(value["order_key"])
+        if len(order_key) > 200:
+            raise ValueError("stable reference order key is too long")
+        result["order_key"] = order_key
+    return result
+
+
 SCHEMA = """
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS investigations (
@@ -197,6 +219,7 @@ class OperatorWorkspace:
         color: str | None = None,
     ) -> dict:
         investigation = self.get_investigation(investigation_id, owner_id=owner_id)
+        stable_ref = _stable_reference(stable_ref)
         item_id = str(uuid4())
         sort_order = int(self.conn.execute(
             "SELECT COALESCE(MAX(sort_order),-1)+1 FROM investigation_items "

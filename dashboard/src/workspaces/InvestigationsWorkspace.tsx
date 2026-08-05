@@ -6,6 +6,7 @@ import { parseObserverViewState, projectionScopeParams } from "../app/observerVi
 import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
 import { InvestigationTitleEditor } from "../components/InvestigationTitleEditor";
 import { InvestigationConflictDialog } from "../components/InvestigationConflictDialog";
+import { InvestigationExportActions } from "../components/InvestigationExportActions";
 import type { CausalEdge, CausalNode, StableReference } from "../generated/worldOs";
 import { CausalGraph } from "../visualizations/CausalGraph";
 import {
@@ -272,7 +273,7 @@ export function InvestigationsWorkspace() {
       </aside>
     </div>}
     {currentInvestigation && <article className="world-os-panel world-os-hypotheses">
-      <header><div><p className="world-os-kicker">Observer-owned workspace</p><h3>{currentInvestigation.title}</h3></div><span>v{currentInvestigation.version}</span></header>
+      <header><div><p className="world-os-kicker">Observer-owned workspace</p><h3>{currentInvestigation.title}</h3></div><div className="world-os-investigation-record-actions"><span>v{currentInvestigation.version}</span><InvestigationExportActions investigationId={currentInvestigation.id} /></div></header>
       {draft && <InvestigationTitleEditor title={draft.titleDraft}
         serverTitle={draft.server.title} version={draft.server.version}
         pending={updateInvestigation.isPending} blocked={Boolean(draft.conflict)}

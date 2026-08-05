@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 
 import { workspaceErrorMessage } from "../src/app/api.ts";
+import { downloadText } from "../src/lib/downloadText.js";
 import {
   acceptSavedInvestigation,
   cancelInvestigationEdit,
@@ -140,4 +141,94 @@ test("save-as-new copies context but never evidence or hypotheses", () => {
     title: "Local draft", fork_id: "fork-1", pinned_tick: 6,
     query: { relation: "cited" }, layout: { left: 320 },
   });
+});
+
+test("text downloads click once and always revoke their object URL", () => {
+  const createdBlobs = [];
+  const revokedUrls = [];
+  let appended = null;
+  const anchor = {
+    download: "", href: "", hidden: false, clicks: 0, removed: 0,
+    click() { this.clicks += 1; },
+    remove() { this.removed += 1; },
+  };
+  class FakeBlob {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+      createdBlobs.push(this);
+    }
+  }
+  const documentRef = {
+    createElement(tag) { assert.equal(tag, "a"); return anchor; },
+    body: { appendChild(value) { appended = value; } },
+  };
+  const urlApi = {
+    createObjectURL(blob) { assert.equal(blob, createdBlobs[0]); return "blob:test"; },
+    revokeObjectURL(url) { revokedUrls.push(url); },
+  };
+
+  downloadText({
+    documentRef, urlApi, BlobCtor: FakeBlob, filename: "inv-1.json",
+    mimeType: "application/json", text: "{\"safe\":true}\n",
+  });
+  assert.deepEqual(createdBlobs[0].parts, ["{\"safe\":true}\n"]);
+  assert.deepEqual(createdBlobs[0].options, { type: "application/json" });
+  assert.equal(anchor.download, "inv-1.json");
+  assert.equal(anchor.clicks, 1);
+  assert.equal(anchor.removed, 1);
+  assert.equal(appended, anchor);
+  assert.deepEqual(revokedUrls, ["blob:test"]);
+});
+
+test("text download cleanup survives click failure and rejects unsafe filenames", () => {
+  let removed = 0;
+  const revokedUrls = [];
+  const documentRef = {
+    createElement() { return {
+      click() { throw new Error("blocked click"); },
+      remove() { removed += 1; },
+    }; },
+    body: { appendChild() {} },
+  };
+  const urlApi = {
+    createObjectURL() { return "blob:failure"; },
+    revokeObjectURL(url) { revokedUrls.push(url); },
+  };
+  class FakeBlob {}
+  assert.throws(() => downloadText({
+    documentRef, urlApi, BlobCtor: FakeBlob, filename: "inv-1.md",
+    mimeType: "text/markdown;charset=utf-8", text: "# Safe\n",
+  }), /blocked click/);
+  assert.equal(removed, 1);
+  assert.deepEqual(revokedUrls, ["blob:failure"]);
+  assert.throws(() => downloadText({
+    documentRef, urlApi, BlobCtor: FakeBlob, filename: "../unsafe.json",
+    mimeType: "application/json", text: "{}",
+  }), /safe JSON or Markdown filename/);
+});
+
+test("investigation export controls expose only backend-redacted JSON and Markdown", async () => {
+  const vite = await createServer({
+    appType: "custom", logLevel: "silent", server: { middlewareMode: true },
+  });
+  try {
+    const { InvestigationExportActions } = await vite.ssrLoadModule(
+      "/src/components/InvestigationExportActions.tsx",
+    );
+    const markup = renderToStaticMarkup(React.createElement(
+      InvestigationExportActions, { investigationId: "inv-1" },
+    ));
+    assert.match(markup, /Download JSON/);
+    assert.match(markup, /Download Markdown/);
+  } finally {
+    await vite.close();
+  }
+  const source = await readFile(
+    new URL("../src/components/InvestigationExportActions.tsx", import.meta.url), "utf8",
+  );
+  assert.match(source, /JSON\.stringify\(payload\.json, null, 2\) \+ "\\n"/);
+  assert.match(source, /application\/json/);
+  assert.match(source, /text\/markdown;charset=utf-8/);
+  assert.doesNotMatch(source, /localStorage|sessionStorage|console\./);
 });

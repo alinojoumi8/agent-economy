@@ -131,3 +131,49 @@ def test_workspace_validation_listing_empty_export_and_delete_guard(tmp_path):
         workspace.conn.rollback()
     finally:
         workspace.close()
+
+
+def test_export_is_owner_scoped_and_strips_private_reference_fields(tmp_path):
+    canary = "PRIVATE-MESSAGE-CANARY-9f3c"
+    workspace = OperatorWorkspace(tmp_path / "operator.db")
+    try:
+        created = workspace.create_investigation(
+            owner_id="alice", title="Redacted trace", run_id="run-private",
+            fork_id="fork-private", pinned_tick=8,
+            query={"authority": "engine"}, layout={"left": 280},
+        )
+        workspace.add_item(
+            created["id"], owner_id="alice", item_kind="message",
+            stable_ref={
+                "kind": "message", "id": 77, "tick": 8,
+                "order_key": "message:77", "body_text": canary,
+                "sensitive_external_action": {"secret": canary},
+            },
+            note="Stable reference only",
+        )
+        workspace.add_hypothesis(
+            created["id"], owner_id="alice", statement="Delivery changed demand",
+        )
+
+        with pytest.raises(WorkspaceNotFound):
+            workspace.export(created["id"], owner_id="bob")
+        payload, markdown = workspace.export(created["id"], owner_id="alice")
+        serialized = json.dumps(payload, sort_keys=True)
+        assert payload["format"] == "world-os-investigation-v1"
+        assert payload["redaction_manifest"] == {
+            "private_message_bodies": "not_copied",
+            "operator_audit": "not_included",
+        }
+        assert "operator_audit" not in payload["investigation"]
+        assert payload["investigation"]["items"][0]["stable_ref"] == {
+            "kind": "message", "id": 77, "tick": 8,
+            "order_key": "message:77",
+        }
+        assert canary not in serialized
+        assert canary not in markdown
+        assert "# Redacted trace" in markdown
+        assert "Run: `run-private`" in markdown
+        assert "Delivery changed demand" in markdown
+        assert '"kind":"message"' in markdown
+    finally:
+        workspace.close()
