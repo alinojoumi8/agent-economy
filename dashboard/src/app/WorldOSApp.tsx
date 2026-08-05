@@ -9,20 +9,12 @@ import { WorldWorkspace } from "../workspaces/WorldWorkspace";
 import { OrganizationsWorkspace } from "../workspaces/OrganizationsWorkspace";
 import { MarketsWorkspace } from "../workspaces/MarketsWorkspace";
 import { PoliticsLawWorkspace } from "../workspaces/PoliticsLawWorkspace";
+import { ExperimentsWorkspace } from "../workspaces/ExperimentsWorkspace";
 import { workspaceFallbackPath } from "../lib/routes";
 
 function WorkspaceFallback() {
   const { runId } = useParams<{ runId?: string }>();
   return <Navigate to={workspaceFallbackPath(runId)} replace />;
-}
-
-function LegacyWorkspace({ title }: { title: string }) {
-  return <section className="world-os-empty">
-    <p className="world-os-kicker">Canonical route established</p>
-    <h2>{title}</h2>
-    <p>This semantic lake preserves the current Observatory panel while deeper cross-domain projections follow the communications and causal gate.</p>
-    <a className="button" href="/">Open the current panel</a>
-  </section>;
 }
 
 export function WorldOSApp() {
@@ -42,8 +34,8 @@ export function WorldOSApp() {
       <Route path="organizations/:organizationId" element={<OrganizationsWorkspace />} />
       <Route path="markets" element={<MarketsWorkspace />} />
       <Route path="politics-law" element={<PoliticsLawWorkspace />} />
-      <Route path="experiments" element={<LegacyWorkspace title="Experiments" />} />
-      <Route path="experiments/:experimentId" element={<LegacyWorkspace title="Experiments" />} />
+      <Route path="experiments" element={<ExperimentsWorkspace />} />
+      <Route path="experiments/:experimentId" element={<ExperimentsWorkspace />} />
       <Route path="*" element={<WorkspaceFallback />} />
     </Route>
   </Routes>;

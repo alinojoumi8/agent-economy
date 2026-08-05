@@ -16,6 +16,11 @@ import {
   normalizeMarketsWorkspace,
 } from "../src/workspaces/marketsWorkspaceModel.js";
 import { normalizePoliticsLawWorkspace } from "../src/workspaces/politicsLawWorkspaceModel.js";
+import {
+  classifyEvidence,
+  experimentActionState,
+  normalizeExperimentsWorkspace,
+} from "../src/workspaces/experimentsWorkspaceModel.js";
 
 test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(
@@ -251,4 +256,53 @@ test("World OS maps Politics and Law to the canonical workspace", () => {
   assert.match(source, /import \{ PoliticsLawWorkspace \}/);
   assert.match(source, /path="politics-law" element=\{<PoliticsLawWorkspace \/>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Politics & Law"/);
+});
+
+test("experiment evidence classification fails closed across release gates", () => {
+  assert.equal(classifyEvidence({ passed: true, real_providers: false }), "mechanics-only");
+  assert.equal(classifyEvidence({ status: "running" }), "partial");
+  assert.equal(classifyEvidence({ passed: true, exact_replay: true, eligible: true }), "eligible");
+  assert.equal(classifyEvidence({ blocked: true }), "blocked");
+  assert.equal(classifyEvidence({ passed: false }), "failed");
+  assert.equal(classifyEvidence({ status: "not_run" }), "not-run");
+  assert.equal(classifyEvidence({ passed: true, external_agent_contamination: true }), "blocked");
+  assert.equal(classifyEvidence({ passed: true, participant_influence: true }), "blocked");
+  assert.equal(classifyEvidence({ passed: true, stale_commit: true }), "blocked");
+  assert.equal(classifyEvidence({ passed: true, dirty_tree: true }), "blocked");
+  assert.equal(classifyEvidence({ passed: true, missing_artifacts: ["receipt.json"] }), "blocked");
+  assert.equal(classifyEvidence({ passed: true, real_providers: true }), "live-evidence");
+});
+
+test("experiment workspace separates artifact families and omits private provider material", () => {
+  const model = normalizeExperimentsWorkspace({
+    run: { run_id: "run", parent_run_id: "parent", fork_tick: 3, status: "paused" },
+    checkpoints: [{ id: 1, tick: 3, created_at: "now", path: "/private/path" }],
+    shocks: [{ id: 2, kind: "oil", label: "Oil shock", fired: 1, fired_tick: 3, params: { api_key: "secret" } }],
+    predictions: [{ id: 3, asked_tick: 2, question: "Growth?", status: "open", p: 0.6 }],
+    acceptance: [{ id: 4, scheduled_tick: 3, question: "Replay?", status: "passed", passed: true, exact_replay: true, eligible: true }],
+    datasets: [{ id: 5, dataset_key: "public", status: "ready", metadata: { token: "secret" } }],
+    scenarios: [{ id: 6, scenario_key: "base", title: "Base" }],
+    experiments: [{ id: 7, experiment_key: "exp", status: "complete", private_prompt: "drop" }],
+    results: [{ id: 8, experiment_id: 7, arm: "control", seed: 1, run_id: "child", replay_hash: "abc", metrics: { score: 1 } }],
+  });
+  assert.equal(model.acceptance[0].classification, "eligible");
+  assert.equal(model.checkpoints[0].path, undefined);
+  assert.equal(model.shocks[0].params, undefined);
+  assert.equal(model.datasets[0].metadata, undefined);
+  assert.equal(model.experiments[0].private_prompt, undefined);
+  assert.equal(model.results[0].experiment_id, 7);
+});
+
+test("experiment action state requires a paused live observer boundary", () => {
+  assert.deepEqual(experimentActionState({ status: "paused" }, "live"), { canPrepareFork: true, canPrepareShock: true, reason: null });
+  assert.equal(experimentActionState({ status: "running" }, "live").canPrepareFork, false);
+  assert.equal(experimentActionState({ status: "paused" }, "4").canPrepareShock, false);
+});
+
+test("World OS maps experiment routes canonically and has no legacy placeholders", () => {
+  const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ ExperimentsWorkspace \}/);
+  assert.match(source, /path="experiments" element=\{<ExperimentsWorkspace \/>\}/);
+  assert.match(source, /path="experiments\/:experimentId" element=\{<ExperimentsWorkspace \/>\}/);
+  assert.doesNotMatch(source, /LegacyWorkspace|Canonical route established/);
 });
