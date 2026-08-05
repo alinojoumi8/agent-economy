@@ -7,6 +7,10 @@ import {
   workspaceRouteUrl,
 } from "../src/workspaces/workspaceRouteState.js";
 import { normalizeWorldWorkspace } from "../src/workspaces/worldWorkspaceModel.js";
+import {
+  filterOrganizations,
+  normalizeOrganizationsWorkspace,
+} from "../src/workspaces/organizationsWorkspaceModel.js";
 
 test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(
@@ -111,4 +115,47 @@ test("World OS maps the World route to its canonical workspace", () => {
   assert.match(source, /import \{ WorldWorkspace \}/);
   assert.match(source, /path="world" element=\{<WorldWorkspace \/>\}/);
   assert.doesNotMatch(source, /path="world" element=\{<LegacyWorkspace/);
+});
+
+test("organization workspace preserves public lifecycle and currency while dropping private ownership", () => {
+  const model = normalizeOrganizationsWorkspace({
+    organizations: [
+      { id: 3, type: "agency", name: "Civic Office", status: "active", active: true, mandate: "permits" },
+      { id: 1, type: "firm", name: "North Foods", sector: "food", region_id: 2, region_name: "North", status: "listed", active: true, employees: 4, balance_cents: 1200, currency_code: "CAD", private_owner: "canary", owner_id: 99 },
+      { id: 2, type: "bank", name: "South Bank", region_name: "South", status: "failed", active: false, reserve_cents: 500, equity_cents: -10, currency_code: "USD", tenant_id: "other-run" },
+      { id: 4, type: "cooperative", name: "Open Guild", status: "custom_state", active: true },
+    ],
+    institutions: { legal_enabled: false, politics_enabled: true, agencies: [] },
+    contracts: [{ id: 8, title: "Public charter", offered_tick: 2, status: "executed", metadata: { private_note: "drop" } }],
+    disclosures: [{ id: 9, tick: 4, firm_id: 1, disclosure_type: "earnings", facts: { revenue_cents: 100 } }],
+  });
+
+  assert.deepEqual(model.organizations.map(item => item.id), [1, 2, 3, 4]);
+  assert.equal(model.organizations[0].currency_code, "CAD");
+  assert.equal(model.organizations[0].balance_cents, 1200);
+  assert.equal("private_owner" in model.organizations[0], false);
+  assert.equal("owner_id" in model.organizations[0], false);
+  assert.equal("tenant_id" in model.organizations[1], false);
+  assert.deepEqual(model.institutions, { legalEnabled: false, politicsEnabled: true });
+  assert.equal(model.contracts[0].metadata, undefined);
+  assert.equal(model.disclosures[0].tick, 4);
+});
+
+test("organization filters are deterministic across search, type, region, sector, status, and active state", () => {
+  const organizations = normalizeOrganizationsWorkspace({ organizations: [
+    { id: 3, type: "firm", name: "Dormant Foods", sector: "food", region_name: "North", status: "bankrupt", active: false },
+    { id: 2, type: "firm", name: "Active Foods", sector: "food", region_name: "North", status: "listed", active: true },
+    { id: 1, type: "bank", name: "Active Bank", region_name: "South", status: "open", active: true },
+  ] }).organizations;
+  assert.deepEqual(filterOrganizations(organizations, { q: "active", activeOnly: true }).map(item => item.id), [1, 2]);
+  assert.deepEqual(filterOrganizations(organizations, { type: "firm", sector: "food", region: "North", status: "listed" }).map(item => item.id), [2]);
+  assert.deepEqual(filterOrganizations(organizations, { type: "missing" }), []);
+});
+
+test("World OS maps organization list and detail routes to the canonical workspace", () => {
+  const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ OrganizationsWorkspace \}/);
+  assert.match(source, /path="organizations" element=\{<OrganizationsWorkspace \/>\}/);
+  assert.match(source, /path="organizations\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
+  assert.doesNotMatch(source, /LegacyWorkspace title="Organizations"/);
 });
