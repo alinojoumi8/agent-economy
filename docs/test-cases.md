@@ -551,11 +551,11 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **preconditions**: Browser-level multi-investigator conflict UI
 - **given**: Concurrent operator investigations
 - **when**: Conflict resolution is requested in the browser
-- **then**: Product surface is not implemented under this test plan
-- **oracle**: none — contractual gap
-- **test**: none
+- **then**: Stale writes stop at HTTP 409 and offer Reload, Continue editing, or Save-as-new without automatic overwrite
+- **oracle**: Two isolated Chromium contexts preserve both titles, the winning version, focus, and original evidence ownership
+- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts — `two analyst contexts resolve stale titles and download redacted evidence`
 - **tier**: full-offline
-- **status**: contractual-gap
+- **status**: newly-automated
 
 ### AE-EXT-EXPORT-BROWSER-UI-001
 
@@ -564,8 +564,8 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **preconditions**: In-browser research export workflow
 - **given**: Operator requests an export from the UI
 - **when**: Export UI is used
-- **then**: Product surface is not implemented under this test plan
-- **oracle**: none — contractual gap
-- **test**: none
+- **then**: JSON and Markdown downloads use safe filenames and only backend-redacted bytes
+- **oracle**: Chromium download events, parsed schema and manifest, evidence text, and private-canary absence across browser storage and downloaded bytes
+- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts — `two analyst contexts resolve stale titles and download redacted evidence`
 - **tier**: full-offline
-- **status**: contractual-gap
+- **status**: newly-automated

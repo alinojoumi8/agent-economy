@@ -128,6 +128,18 @@ async function mockPrivacyApis(page: Page) {
     if (path === "/api/v2/operator/investigations") {
       return route.fulfill({ json: { items: [] } });
     }
+    if (path === "/api/v2/operator/investigations/inv-safe/export") {
+      return route.fulfill({ json: {
+        json: {
+          format: "world-os-investigation-v1",
+          investigation: { id: "inv-safe", title: "Public evidence", items: [] },
+          redaction_manifest: {
+            private_message_bodies: "not_copied", operator_audit: "not_included",
+          },
+        },
+        markdown: "# Public evidence\n\nNo private bodies copied.\n",
+      } });
+    }
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
   await page.route("**/api/agents", route => route.fulfill({ json: [
@@ -145,10 +157,31 @@ async function mockPrivacyApis(page: Page) {
 async function assertNoCanaryLeak(page: Page) {
   await expect(page.locator("body")).not.toContainText(CANARY);
   expect(page.url()).not.toContain(CANARY);
-  const storage = await page.evaluate(() => ({
-    local: { ...localStorage },
-    session: { ...sessionStorage },
-  }));
+  const storage = await page.evaluate(async () => {
+    const databases = "databases" in indexedDB ? await indexedDB.databases() : [];
+    const indexed = [];
+    for (const info of databases) {
+      if (!info.name) continue;
+      const values = await new Promise(resolve => {
+        const request = indexedDB.open(info.name!);
+        request.onerror = () => resolve([]);
+        request.onsuccess = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.length) { db.close(); resolve([]); return; }
+          const transaction = db.transaction([...db.objectStoreNames], "readonly");
+          const collected: unknown[] = [];
+          for (const name of db.objectStoreNames) {
+            const all = transaction.objectStore(name).getAll();
+            all.onsuccess = () => collected.push(...all.result);
+          }
+          transaction.oncomplete = () => { db.close(); resolve(collected); };
+          transaction.onerror = () => { db.close(); resolve([]); };
+        };
+      });
+      indexed.push({ name: info.name, values });
+    }
+    return { local: { ...localStorage }, session: { ...sessionStorage }, indexed };
+  });
   expect(JSON.stringify(storage)).not.toContain(CANARY);
 }
 
@@ -165,6 +198,13 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   });
   expect(unauthorized.status).toBe(404);
   expect(unauthorized.body).not.toContain(CANARY);
+  const exported = await page.evaluate(async () => {
+    const response = await fetch("/api/v2/operator/investigations/inv-safe/export");
+    return { status: response.status, body: await response.text() };
+  });
+  expect(exported.status).toBe(200);
+  expect(exported.body).toContain("world-os-investigation-v1");
+  expect(exported.body).not.toContain(CANARY);
   await assertNoCanaryLeak(page);
 
   await page.goto("/runs/run-demo/overview?tick=3");
