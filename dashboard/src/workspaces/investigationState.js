@@ -1,3 +1,7 @@
+export function normalizedInvestigationTitle(title) {
+  return String(title ?? "").trim();
+}
+
 export function investigationTitleError(title) {
   const value = String(title ?? "");
   if (!value.trim()) return "Title is required.";
@@ -16,10 +20,12 @@ export function createInvestigationDraft(record) {
 }
 
 export function editInvestigationTitle(state, title) {
+  const titleDraft = String(title ?? "");
   return {
     ...state,
-    titleDraft: title,
-    dirty: title !== state.server.title,
+    titleDraft,
+    dirty: normalizedInvestigationTitle(titleDraft)
+      !== normalizedInvestigationTitle(state.server.title),
     error: "",
   };
 }
@@ -58,7 +64,7 @@ export function reloadInvestigationConflict(state) {
 export function investigationUpdatePayload(state) {
   return {
     expected_version: state.server.version,
-    title: state.titleDraft.trim(),
+    title: normalizedInvestigationTitle(state.titleDraft),
   };
 }
 
@@ -78,7 +84,7 @@ export function saveInvestigationAsNewPayload(state) {
   if (validation) throw new Error(validation);
   const current = state.conflict.server;
   return {
-    title: state.titleDraft.trim(),
+    title: normalizedInvestigationTitle(state.titleDraft),
     fork_id: current.fork_id ?? null,
     pinned_tick: current.pinned_tick ?? null,
     query: current.query || {},

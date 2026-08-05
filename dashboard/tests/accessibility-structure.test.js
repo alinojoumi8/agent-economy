@@ -10,6 +10,10 @@ const overviewSource = readFileSync(
   new URL("../src/workspaces/OverviewWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const macroSource = readFileSync(
+  new URL("../src/components/MacroOverview.jsx", import.meta.url),
+  "utf8",
+);
 
 test("labeled World OS summary groups expose a valid semantic role", () => {
   assert.match(
@@ -33,4 +37,10 @@ test("city instrumentation keeps supporting copy inside each definition", () => 
     instruments,
     /<dd><span className="civic-city__instrument-value">[\s\S]*?<small>[\s\S]*?<\/small><\/dd>/,
   );
+});
+
+test("decorative metric sparklines do not duplicate accessible labels and values", () => {
+  assert.match(macroSource, /className="mt-2 h-10" aria-hidden="true"/);
+  assert.match(macroSource, /<AreaChart[^>]*accessibilityLayer=\{false\}/);
+  assert.doesNotMatch(macroSource, /aria-label=\{`\$\{label\} history`\}/);
 });

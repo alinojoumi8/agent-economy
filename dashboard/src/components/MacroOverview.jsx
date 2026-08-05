@@ -32,10 +32,10 @@ export function MacroOverview({ metrics }) {
                 <strong className="tabular truncate text-lg font-semibold text-slate-100">{formatMetricValue(key, latest)}</strong>
                 {delta !== null && <span className={`tabular text-[10px] ${delta > 0 ? "text-mint-300" : delta < 0 ? "text-coral-300" : "text-slate-600"}`}>{formatMetricDelta(key, delta)}</span>}
               </div>
-              <div className="mt-2 h-10" aria-label={`${label} history`}>
+              <div className="mt-2 h-10" aria-hidden="true">
                 {series.length > 1 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={series} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+                    <AreaChart data={series} accessibilityLayer={false} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
                       <defs><linearGradient id={`fill-${key}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={.35}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
                       <Tooltip content={() => null} />
                       <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#fill-${key})`} isAnimationActive={false} />

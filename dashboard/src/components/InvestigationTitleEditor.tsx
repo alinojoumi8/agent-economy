@@ -1,5 +1,7 @@
 import type { RefObject } from "react";
-import { investigationTitleError } from "../workspaces/investigationState";
+import {
+  investigationTitleError, normalizedInvestigationTitle,
+} from "../workspaces/investigationState";
 
 type InvestigationTitleEditorProps = {
   title: string;
@@ -18,7 +20,8 @@ export function InvestigationTitleEditor({
   title, serverTitle, version, pending, blocked = false, error, inputRef, onChange, onSave, onCancel,
 }: InvestigationTitleEditorProps) {
   const validation = investigationTitleError(title);
-  const unchanged = title === serverTitle;
+  const unchanged = normalizedInvestigationTitle(title)
+    === normalizedInvestigationTitle(serverTitle);
   return <form className="world-os-title-editor" onSubmit={event => {
     event.preventDefault();
     if (!validation && !unchanged && !pending && !blocked) onSave();
