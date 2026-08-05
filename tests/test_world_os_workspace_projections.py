@@ -358,6 +358,34 @@ def test_world_workspace_bounds_historical_migrations_and_shipments(economy):
     assert payload["summary"]["trade_count"] == 100
 
 
+def test_world_workspace_handles_in_transit_shipment_without_arrival_tick(economy):
+    _seed_workspace_history(economy)
+
+    class NullArrivalStore:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+
+        def __getattr__(self, name):
+            return getattr(self.wrapped, name)
+
+        def query(self, sql, params=()):
+            if "FROM trade_shipments" in sql:
+                return [{
+                    "id": 2, "tick": 4, "exporter_firm_id": 1,
+                    "importer_firm_id": 1, "origin_region_id": 1,
+                    "destination_region_id": 1, "quantity": 1,
+                    "invoice_cents": 100, "invoice_currency": "USD",
+                    "arrival_tick": None, "status": "in_transit",
+                }]
+            return self.wrapped.query(sql, params)
+
+    payload = build_world_workspace(NullArrivalStore(economy.store), as_of_tick=4)
+
+    shipment = next(row for row in payload["flows"] if row["id"] == 2)
+    assert shipment["arrival_tick"] is None
+    assert shipment["status"] == "in_transit"
+
+
 def test_balance_projection_chunks_large_account_sets_below_sqlite_variable_limit():
     class CapturingStore:
         def __init__(self):

@@ -10,7 +10,9 @@ export function mountOracleHarness(container) {
     }
     throw new Error("oracle unavailable");
   };
-  createRoot(container).render(
+  const root = createRoot(container);
+  root.render(
     <OraclePanel oracle={{ predictions: [], scorecard: {} }} act={act} />,
   );
+  return root;
 }

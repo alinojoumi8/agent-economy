@@ -609,6 +609,19 @@ def test_recovery_founder_rejects_existing_high_wage_offer_and_direct_hire():
     assert "hire" not in {action["type"] for action in direct["actions"]}
 
 
+def test_recovery_founder_selects_first_sustainable_counteroffer():
+    decision = founder_decision(_recovery_founder_context(
+        allowed_new_hires=1,
+        safe_wage_ceiling_cents=46_080,
+        counters=[
+            {"offer_id": 5, "requested_wage": 250_000},
+            {"offer_id": 6, "requested_wage": 25_000},
+        ],
+    ))
+
+    assert {"type": "accept_job_offer", "offer_id": 6} in decision["actions"]
+
+
 def test_recovery_founder_rechecks_cash_at_the_counteroffer_wage():
     decision = founder_decision(_recovery_founder_context(
         allowed_new_hires=1,

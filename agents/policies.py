@@ -742,11 +742,17 @@ def founder_decision(context: dict) -> dict:
     if recovery_profile is not None:
         floor, _, _, open_vacancies = recovery_profile
         if floor > 0:
-            if counters:
-                requested = int(counters[0].get("requested_wage", 0))
-                if _recovery_wage_can_hire(firm, requested):
-                    actions.append({"type": "accept_job_offer", "offer_id": counters[0]["offer_id"]})
-                    reasons.append("accepting a sustainable candidate wage counteroffer")
+            eligible_counter = next((
+                counter for counter in counters
+                if _recovery_wage_can_hire(
+                    firm, int(counter.get("requested_wage", 0)))
+            ), None)
+            if eligible_counter is not None:
+                actions.append({
+                    "type": "accept_job_offer",
+                    "offer_id": eligible_counter["offer_id"],
+                })
+                reasons.append("accepting a sustainable candidate wage counteroffer")
             elif context.get("labor_negotiation_enabled") and applicants:
                 candidate = next(
                     (row for row in applicants if row.get("current_offer_id") is None), None)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatBeliefValue, money, number, shortKind } from "../api";
 import { agentExecutionPresentation } from "../lib/agentExecution";
 import { appendParticipantHistory } from "../participant";
@@ -54,6 +54,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   const [detail, setDetail] = useState(null);
   const [detailError, setDetailError] = useState("");
   const [loading, setLoading] = useState(false);
+  const detailRequest = useRef(0);
   useEffect(() => {
     let active = true;
     const timer = scheduleAgentDirectoryRefresh({
@@ -97,6 +98,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   }
 
   async function inspect(id) {
+    const requestId = ++detailRequest.current;
     setLoading(true);
     setDetail(null);
     setDetailError("");
@@ -106,41 +108,60 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
       if (participant?.enabled && agentDetail.agent?.kind === "citizen") {
         participantHistory = await api(`/api/participant/history?agent_id=${id}&limit=50`);
       }
+      if (requestId !== detailRequest.current) return;
       setDetail({ ...agentDetail, participantHistory });
     } catch (reason) {
+      if (requestId !== detailRequest.current) return;
       applyAgentDetailFailure(
         reason, setDetail, setDetailError, { clearDetail: true },
       );
-    } finally { setLoading(false); }
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function loadOlderParticipantActions() {
     const cursor = detail?.participantHistory?.next_before_id;
     if (!detail?.agent?.id || !cursor) return;
+    const agentId = detail.agent.id;
+    const requestId = detailRequest.current;
     setLoading(true);
     setDetailError("");
     try {
       const page = await api(
-        `/api/participant/history?agent_id=${detail.agent.id}&limit=50&before_id=${cursor}`);
-      setDetail(current => ({
-        ...current,
-        participantHistory: appendParticipantHistory(current?.participantHistory, page),
-      }));
+        `/api/participant/history?agent_id=${agentId}&limit=50&before_id=${cursor}`);
+      setDetail(current => {
+        if (requestId !== detailRequest.current
+            || current?.agent?.id !== agentId
+            || current?.participantHistory?.next_before_id !== cursor) return current;
+        return {
+          ...current,
+          participantHistory: appendParticipantHistory(current.participantHistory, page),
+        };
+      });
     } catch (reason) {
+      if (requestId !== detailRequest.current) return;
       applyAgentDetailFailure(reason, setDetail, setDetailError);
-    } finally { setLoading(false); }
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function loadOlderAgentOutputs(kind) {
     const cursor = detail?.output_cursors?.[kind];
     if (!detail?.agent?.id || !cursor) return;
+    const agentId = detail.agent.id;
+    const requestId = detailRequest.current;
     setLoading(true);
     setDetailError("");
     try {
       const page = await api(
-        `/api/agents/${detail.agent.id}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
+        `/api/agents/${agentId}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
       const field = kind === "model" ? "recent_decisions" : "recent_actions";
       setDetail(current => {
+        if (requestId !== detailRequest.current
+            || current?.agent?.id !== agentId
+            || current?.output_cursors?.[kind] !== cursor) return current;
         const known = new Set((current?.[field] || []).map(item => item.id));
         return {
           ...current,
@@ -149,8 +170,11 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         };
       });
     } catch (reason) {
+      if (requestId !== detailRequest.current) return;
       applyAgentDetailFailure(reason, setDetail, setDetailError);
-    } finally { setLoading(false); }
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function takeControl(agentId) {
@@ -183,7 +207,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
           <tbody>{listed.map(agent => {
             const execution = agentExecutionPresentation(agent.execution);
             return <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => handleAgentRowKeyDown(event, inspect, agent.id)}>
-              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
+              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
             </tr>;
           })}</tbody>
         </table> : <Empty>{directoryLoading ? "Loading agents…" : "No agents match this search."}</Empty>}
@@ -199,7 +223,12 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
       error={detailError}
       historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
       onLoadOlderOutputs={loadOlderAgentOutputs}
-      onTakeControl={takeControl} onClose={() => { setDetail(null); setDetailError(""); }} />}
+      onTakeControl={takeControl} onClose={() => {
+        detailRequest.current += 1;
+        setDetail(null);
+        setDetailError("");
+        setLoading(false);
+      }} />}
   </>;
 }
 

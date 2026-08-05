@@ -166,12 +166,13 @@ export function InvestigationsWorkspace() {
       ],
     }),
   );
+  const investigationPath = (id: string) => `/runs/${encodeURIComponent(runId)}/investigations/${encodeURIComponent(id)}?${search}`;
   const createInvestigation = useMutation({
     mutationFn: () => workspaceApi<Investigation>("/api/v2/operator/investigations", {
       method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
       body: JSON.stringify({ title: `Investigation at ${rootKind}:${rootId}`, pinned_tick: causal.data?.tick }),
     }),
-    onSuccess: record => { refreshWorkspace(); navigate(`/runs/${runId}/investigations/${record.id}?${search}`); },
+    onSuccess: record => { refreshWorkspace(); navigate(investigationPath(record.id)); },
   });
   const pinEvidence = useMutation({
     mutationFn: () => workspaceApi(
@@ -252,7 +253,6 @@ export function InvestigationsWorkspace() {
     } : current),
   });
 
-  const investigationPath = (id: string) => `/runs/${encodeURIComponent(runId)}/investigations/${encodeURIComponent(id)}?${search}`;
   const chooseInvestigation = (id: string) => {
     if (id === investigationId) return;
     if (draft?.dirty) {

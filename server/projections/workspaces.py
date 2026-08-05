@@ -196,7 +196,8 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "arrival_tick,status FROM trade_shipments WHERE created_tick<=? "
         "ORDER BY created_tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
     for shipment in shipments:
-        if int(shipment["arrival_tick"]) > tick:
+        if (shipment["arrival_tick"] is None
+                or int(shipment["arrival_tick"]) > tick):
             shipment.update({"arrival_tick": None, "status": "in_transit"})
     flows = [
         {"kind": "migration", **row} for row in migrations

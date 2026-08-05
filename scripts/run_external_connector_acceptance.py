@@ -47,18 +47,32 @@ def _hash(value: Any) -> str:
 def load_credential_file(path: str | Path) -> dict[str, Any]:
     """Read a process-only credential file after strict ownership-mode checks."""
     source = Path(path)
-    if source.is_symlink() or not source.is_file():
-        raise ValueError("credential path must be a regular file, not a symlink")
-    info = source.stat()
-    mode = stat.S_IMODE(info.st_mode)
-    if mode != 0o600:
-        raise PermissionError("credential file must have mode 600")
-    if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
-        raise PermissionError("credential file must be owned by the current user")
+    descriptor: int | None = None
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        value = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ValueError("credential file must contain a JSON object") from exc
+        try:
+            descriptor = os.open(source, flags)
+        except OSError as exc:
+            raise ValueError(
+                "credential path must be a regular file, not a symlink"
+            ) from exc
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("credential path must be a regular file, not a symlink")
+        mode = stat.S_IMODE(info.st_mode)
+        if mode != 0o600:
+            raise PermissionError("credential file must have mode 600")
+        if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+            raise PermissionError("credential file must be owned by the current user")
+        try:
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = None
+                value = json.load(handle)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("credential file must contain a JSON object") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if not isinstance(value, dict):
         raise ValueError("credential file must contain a JSON object")
     token = value.get("access_token")
@@ -149,8 +163,11 @@ def _safe_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("receipt read returned a non-integer target tick")
     if target_tick < 0:
         raise RuntimeError("receipt read returned a negative target tick")
+    receipt_id = receipt.get("submission_id")
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
+        raise RuntimeError("receipt read omitted its submission ID")
     return {
-        "receipt_id": str(receipt.get("submission_id") or ""),
+        "receipt_id": receipt_id,
         "target_tick": target_tick,
         "status": str(receipt.get("status") or ""),
         "resulting_state_hash": receipt.get("resulting_state_hash"),
@@ -215,6 +232,8 @@ def _execute_wake(
         raise RuntimeError(
             f"action receipt did not execute (status={last.get('status', 'unknown')})"
         )
+    if last.get("submission_id") != submission_id:
+        raise RuntimeError("receipt read returned a different submission ID")
     return action, submitted, _safe_receipt(last)
 
 
@@ -227,9 +246,10 @@ class _CredentialRevoker:
             credential.get("revocation_token") or credential["access_token"]
         )
         self.attempted = False
+        self.revoked = False
 
     def revoke(self) -> None:
-        if self.attempted:
+        if self.revoked:
             return
         self.attempted = True
         status, _body = _request(
@@ -239,6 +259,7 @@ class _CredentialRevoker:
         )
         if status not in {200, 204}:
             raise RuntimeError(f"credential revocation returned HTTP {status}")
+        self.revoked = True
 
 
 def _run_authenticated_acceptance(
@@ -423,7 +444,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         flow_failed = True
         raise
     finally:
-        if not revoker.attempted:
+        if not revoker.revoked:
             try:
                 revoker.revoke()
             except BaseException:

@@ -264,6 +264,18 @@ test("agent detail failures clear stale data and render an alert", async () => {
   }
 });
 
+test("agent modal requests ignore stale agent and cursor responses", async () => {
+  const source = await readFile(
+    new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8",
+  );
+  assert.match(source, /const detailRequest = useRef\(0\)/);
+  assert.match(source, /requestId !== detailRequest\.current/);
+  assert.match(source, /current\?\.agent\?\.id !== agentId/);
+  assert.match(source, /current\?\.participantHistory\?\.next_before_id !== cursor/);
+  assert.match(source, /current\?\.output_cursors\?\.\[kind\] !== cursor/);
+  assert.match(source, /onKeyDown=\{event => event\.stopPropagation\(\)\}/);
+});
+
 
 test("run header distinguishes an enforced MiniMax M3 route from a hybrid run", async () => {
   const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });

@@ -10,6 +10,7 @@ import pytest
 
 from benchmarks.external_connector_acceptance import (
     ExternalConnectorReceiptError,
+    _public_https_origin,
     validate_external_connector_receipt,
     write_external_connector_receipt,
 )
@@ -164,6 +165,23 @@ def test_agent_connector_wakes_require_strict_ticks_and_unique_ids(mutate, messa
         )
 
 
+def test_agent_connector_wakes_require_unique_target_ticks():
+    value = receipt("hermes")
+    value["wakes"][1]["target_tick"] = value["wakes"][0]["target_tick"]
+
+    with pytest.raises(ExternalConnectorReceiptError, match="target ticks"):
+        validate_external_connector_receipt(
+            value,
+            expected_candidate={"commit": COMMIT, "tree": TREE},
+            expected_connector="hermes",
+        )
+
+
+def test_private_embedded_ipv6_origins_are_rejected():
+    assert _public_https_origin("https://[::ffff:127.0.0.1]") is False
+    assert _public_https_origin("https://[2002:7f00:1::]") is False
+
+
 def test_mcp_requires_discovery_and_protected_resource_proof():
     value = receipt("independent_mcp")
     del value["discovery"]["protected_resource_sha256"]
@@ -236,6 +254,24 @@ def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):
         load_credential_file(target)
 
 
+def test_credential_loader_reads_from_the_validated_descriptor(tmp_path, monkeypatch):
+    path = tmp_path / "credential.json"
+    path.write_text(json.dumps({
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }), encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("path reopened after validation")
+        ),
+    )
+
+    assert load_credential_file(path)["access_token"] == "process-only-token"
+
+
 def test_credential_loader_requires_current_user_ownership(tmp_path, monkeypatch):
     path = tmp_path / "credential.json"
     path.write_text(json.dumps({
@@ -274,6 +310,33 @@ def test_safe_receipt_rejects_non_integer_target_ticks(target_tick):
             "target_tick": target_tick,
             "status": "executed",
         })
+
+
+@pytest.mark.parametrize("submission_id", [None, "", "   ", 1])
+def test_safe_receipt_requires_a_nonempty_string_submission_id(submission_id):
+    with pytest.raises(RuntimeError, match="omitted its submission ID"):
+        _safe_receipt({
+            "submission_id": submission_id,
+            "target_tick": 1,
+            "status": "executed",
+        })
+
+
+def test_wake_rejects_receipt_for_a_different_submission(monkeypatch):
+    responses = iter([
+        (200, json.dumps({"target_tick": 1, "projection_hash": HASH}).encode()),
+        (202, json.dumps({"submission_id": "receipt-1", "status": "accepted"}).encode()),
+        (200, json.dumps({
+            "submission_id": "receipt-other", "target_tick": 1, "status": "executed",
+        }).encode()),
+    ])
+    monkeypatch.setattr(connector_runner, "_request", lambda *_args, **_kwargs: next(responses))
+
+    with pytest.raises(RuntimeError, match="different submission ID"):
+        connector_runner._execute_wake(
+            "https://agents.example.test", "process-only-token",
+            after_tick=None, timeout=1.0,
+        )
 
 
 def test_authenticated_runner_requires_identity_scopes_to_be_a_list(monkeypatch):
@@ -349,17 +412,26 @@ def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
         if url.endswith("/api/v2/agent/me"):
             return 200, json.dumps({
                 "actor": {"id": "agent-1"},
+                "tenant_id": "tenant-1",
+                "run_id": "run-1",
                 "scopes": ["world.read", "world.act"],
             }).encode("utf-8")
+        if url.endswith("/api/v2/tenants/other/run"):
+            return 403, b"{}"
         if url.endswith("/oauth/revoke"):
             raise RuntimeError("revocation failed")
         raise AssertionError(f"unexpected request: {method} {url}")
 
     monkeypatch.setattr(connector_runner, "_request", request)
-    def fail_wake(*_args, **_kwargs):
-        raise RuntimeError("wake failed")
-
-    monkeypatch.setattr(connector_runner, "_execute_wake", fail_wake)
+    monkeypatch.setattr(
+        connector_runner,
+        "_execute_wake",
+        lambda *_args, **_kwargs: (
+            {"action_type": "wait"},
+            {"submission_id": "receipt-1", "status": "accepted"},
+            {"receipt_id": "receipt-1", "target_tick": 1, "status": "executed"},
+        ),
+    )
     args = SimpleNamespace(
         connector="python",
         base_url="https://agents.example.test",
@@ -373,11 +445,11 @@ def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
         server_operator="agent-economy-operator",
     )
 
-    with pytest.raises(RuntimeError, match="wake failed"):
+    with pytest.raises(RuntimeError, match="revocation failed"):
         connector_runner.run_acceptance(args)
 
     revocations = [item for item in requests if item[1].endswith("/oauth/revoke")]
-    assert len(revocations) == 1
+    assert len(revocations) == 2
     assert revocations[0][2]["form_body"] == {
         "token": "process-only-revocation-token",
     }

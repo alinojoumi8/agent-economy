@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,14 @@ def _public_https_origin(value: Any) -> bool:
         address = ipaddress.ip_address(hostname)
     except ValueError:
         return "." in hostname
+    if isinstance(address, ipaddress.IPv6Address):
+        embedded = (
+            address.ipv4_mapped
+            or address.sixtofour
+            or (address.teredo[1] if address.teredo else None)
+        )
+        if embedded is not None:
+            address = embedded
     return not (
         address.is_private
         or address.is_loopback
@@ -261,10 +270,15 @@ def validate_external_connector_receipt(
                     "each Hermes and OpenClaw wake requires a tick, submission ID, "
                     "receipt ID, and executed status")
         if (
+            len({wake["target_tick"] for wake in wakes}) != 3
+            or
             len({wake["submission_id"] for wake in wakes}) != 3
             or len({wake["receipt_id"] for wake in wakes}) != 3
         ):
-            _fail("Hermes and OpenClaw wakes require unique submission and receipt IDs")
+            _fail(
+                "Hermes and OpenClaw wakes require unique target ticks, submission IDs, "
+                "and receipt IDs"
+            )
         if len(executed) != 3:
             _fail("Hermes and OpenClaw require exactly three executed receipt reads")
     else:
@@ -330,6 +344,6 @@ def write_external_connector_receipt(
             finally:
                 os.close(directory)
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
     return target
