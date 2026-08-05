@@ -964,7 +964,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==============================================================================
-recharts@3.9.2
+recharts@3.10.1
 Declared license: MIT
 ==============================================================================
 The MIT License (MIT)
