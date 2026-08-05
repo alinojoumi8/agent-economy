@@ -25,6 +25,16 @@
 
 | Gate | Command | Result |
 |---|---|---|
+| Python package compatibility | `uv pip check --python /mnt/data/projects/agent-economy/.venv/bin/python` | Passed: 76 installed packages compatible. The existing project virtual environment has no `pip` module, so `uv pip check` inspected that exact interpreter. |
+| Dashboard locked install | `npm ci` | Passed: 85 packages installed; 0 vulnerabilities. |
+| Python suite, 8 deterministic shards | `pytest tests/ -q -p scripts.pytest_shard --ci-shard-index N --ci-shard-count 8`, N = 0..7 | Passed: 993 passed, 7 environment-gated skips, 0 failed. |
+| Dashboard unit tests | `npm test` | Passed: 65 passed, 0 failed. |
+| Dashboard typecheck | `npm run typecheck` | Passed. |
+| Third-party notices | `npm run licenses:check` | Passed; committed notice is current. |
+| Dependency audit | `npm audit --audit-level=high` | Passed: 0 vulnerabilities. |
+| Chromium end-to-end | `npm run test:e2e -- --project=chromium` | Passed: 25 passed, 0 failed. |
+| Production build | `npm run build` | Passed: 732 modules; committed `server/static` remained byte-identical. |
+| Tracked diff | `git status --short` and `git diff --check` | Passed: clean after the maintained build. |
 
 ## Remote publication
 
