@@ -226,9 +226,11 @@ def test_blocked_receipt_is_visible_and_fails_aggregate(tmp_path):
 
     assert result["overall_status"] == "failed"
     assert {gate["status"] for gate in result["gates"]} == {"blocked"}
-    assert all(
-        error["code"] == "gate_not_passed" for error in result["errors"]
-    )
+    assert {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    } == {
+        (gate_id, "gate_not_passed") for gate_id in V1_REQUIRED_GATES
+    }
 
 
 def test_canonical_renderers_are_deterministic(tmp_path):

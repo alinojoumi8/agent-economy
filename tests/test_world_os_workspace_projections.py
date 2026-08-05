@@ -146,6 +146,7 @@ def _seed_workspace_history(economy) -> None:
     store.execute(
         "INSERT INTO shocks (id,kind,trigger_type,trigger_json,label,fired,fired_tick) "
         "VALUES (1,'oil','shock','{}','past shock',1,4),(2,'oil','shock','{}','future-shock-canary',1,9)")
+    store.execute("UPDATE shocks SET active_until_tick=9 WHERE id=1")
     store.execute(
         "INSERT INTO llm_calls (id,tick,agent_id,role,provider,model,purpose,response_json) "
         "VALUES (1,4,1,'citizen','private','private','decision','private-communication-canary')")
@@ -202,6 +203,7 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     assert shipment["arrival_tick"] is None
     assert [item["tick"] for item in payloads["politics"]["votes"]] == [4]
     assert [item["tick"] for item in payloads["experiments"]["checkpoints"]] == [4]
+    assert payloads["experiments"]["shocks"][0]["active_until_tick"] is None
 
     organizations_contract = payloads["organizations"]["contracts"][0]
     assert organizations_contract["status"] == "offered"
@@ -386,3 +388,49 @@ def test_organization_balance_projection_scopes_ledger_aggregation(economy):
     ledger_queries = [sql for sql in statements if "FROM ledger_entries" in sql]
     assert ledger_queries
     assert all("account_id IN" in sql for sql in ledger_queries)
+
+
+def test_politics_rules_treat_null_effective_ticks_as_pending(economy):
+    _seed_workspace_history(economy)
+
+    class NullRuleStore:
+        def __init__(self, store):
+            self._store = store
+
+        def __getattr__(self, name):
+            return getattr(self._store, name)
+
+        def query(self, sql, params=()):
+            if "FROM policy_rules" in sql:
+                return [{
+                    "id": 99,
+                    "bill_id": 1,
+                    "rule_key": "legacy-null-effective",
+                    "value_json": "{}",
+                    "enacted_tick": 4,
+                    "effective_tick": None,
+                    "status": "active",
+                }]
+            return self._store.query(sql, params)
+
+    payload = build_politics_law_workspace(
+        NullRuleStore(economy.store), as_of_tick=4)
+
+    assert payload["rules"][0]["status"] == "pending"
+    assert payload["rules"][0]["effective_tick"] is None
+
+
+def test_politics_bill_status_and_version_queries_are_batched(economy):
+    _seed_workspace_history(economy)
+    statements = []
+    economy.store.conn.set_trace_callback(statements.append)
+    try:
+        payload = build_politics_law_workspace(economy.store, as_of_tick=10)
+    finally:
+        economy.store.conn.set_trace_callback(None)
+
+    assert len(payload["bills"]) == 2
+    action_reads = [sql for sql in statements if "FROM bill_actions" in sql]
+    version_reads = [sql for sql in statements if "FROM bill_versions" in sql]
+    assert len(action_reads) == 1
+    assert len(version_reads) <= 2

@@ -348,15 +348,28 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,bill_key,title,origin_chamber,committee_id,introduced_tick,"
         "executive_action_tick,effective_tick,policy_changes_json,metadata_json "
         "FROM bills WHERE introduced_tick<=? ORDER BY introduced_tick,id", (tick,)))]
+    latest_actions = {
+        int(row["bill_id"]): str(row["action_type"])
+        for row in store.query(
+            "SELECT bill_id,action_type FROM ("
+            "SELECT bill_id,action_type,ROW_NUMBER() OVER ("
+            "PARTITION BY bill_id ORDER BY tick DESC,id DESC) AS position "
+            "FROM bill_actions WHERE tick<=?) WHERE position=1",
+            (tick,),
+        )
+    }
+    latest_versions = {
+        int(row["bill_id"]): int(row["version"])
+        for row in store.query(
+            "SELECT bill_id,COALESCE(MAX(version),1) AS version "
+            "FROM bill_versions WHERE tick<=? GROUP BY bill_id",
+            (tick,),
+        )
+    }
     for row in bills:
-        action = store.query_one(
-            "SELECT action_type,tick FROM bill_actions WHERE bill_id=? AND tick<=? "
-            "ORDER BY tick DESC,id DESC LIMIT 1", (int(row["id"]), tick))
-        version = store.scalar(
-            "SELECT COALESCE(MAX(version),1) FROM bill_versions WHERE bill_id=? AND tick<=?",
-            (int(row["id"]), tick), default=1)
-        row["status"] = str(action["action_type"]) if action else "introduced"
-        row["current_version"] = int(version or 1)
+        bill_id = int(row["id"])
+        row["status"] = latest_actions.get(bill_id, "introduced")
+        row["current_version"] = latest_versions.get(bill_id, 1)
         _mask_future_ticks(row, tick, "executive_action_tick", "effective_tick")
     versions = [_json_fields(row, "text_json") for row in _dicts(store.query(
         "SELECT id,bill_id,version,tick,summary,text_json FROM bill_versions "
@@ -368,7 +381,8 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,bill_id,rule_key,value_json,enacted_tick,effective_tick,status "
         "FROM policy_rules WHERE enacted_tick<=? ORDER BY enacted_tick,id", (tick,)))]
     for row in rules:
-        if int(row["effective_tick"]) > tick:
+        effective_tick = row.get("effective_tick")
+        if effective_tick is None or int(effective_tick) > tick:
             row["status"] = "pending"
         _mask_future_ticks(row, tick, "effective_tick")
     lobbying = _dicts(store.query(
@@ -456,6 +470,8 @@ def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,kind,trigger_type,trigger_json,duration_ticks,params_json,label,fired,"
         "fired_tick,active_until_tick FROM shocks WHERE fired_tick IS NULL OR fired_tick<=? "
         "ORDER BY COALESCE(fired_tick,0),id", (tick,)))]
+    for row in shocks:
+        _mask_future_ticks(row, tick, "active_until_tick")
     predictions = [_json_fields(row, "drivers_json", "resolution_rule_json", "evidence_json") for row in _dicts(store.query(
         "SELECT id,asked_tick,question,p,confidence,drivers_json,resolution_rule_json,deadline_tick,"
         "resolved_tick,outcome,brier,evidence_json,status FROM predictions WHERE asked_tick<=? "
