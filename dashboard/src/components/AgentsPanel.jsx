@@ -104,12 +104,21 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     setDetailError("");
     try {
       const agentDetail = await api(`/api/agents/${id}`);
-      let participantHistory = null;
-      if (participant?.enabled && agentDetail.agent?.kind === "citizen") {
-        participantHistory = await api(`/api/participant/history?agent_id=${id}&limit=50`);
-      }
       if (requestId !== detailRequest.current) return;
-      setDetail({ ...agentDetail, participantHistory });
+      setDetail({ ...agentDetail, participantHistory: null });
+      if (participant?.enabled && agentDetail.agent?.kind === "citizen") {
+        try {
+          const participantHistory = await api(
+            `/api/participant/history?agent_id=${id}&limit=50`);
+          if (requestId !== detailRequest.current) return;
+          setDetail({ ...agentDetail, participantHistory });
+        } catch (reason) {
+          if (requestId !== detailRequest.current) return;
+          applyAgentDetailFailure(
+            reason, setDetail, setDetailError, { clearDetail: false },
+          );
+        }
+      }
     } catch (reason) {
       if (requestId !== detailRequest.current) return;
       applyAgentDetailFailure(
@@ -178,6 +187,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   }
 
   async function takeControl(agentId) {
+    const requestId = ++detailRequest.current;
     setLoading(true);
     setDetailError("");
     try {
@@ -185,10 +195,14 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         agent_id: agentId,
         expected_tick: status?.tick ?? 0,
       });
+      if (requestId !== detailRequest.current) return;
       setDetail(null);
     } catch (reason) {
+      if (requestId !== detailRequest.current) return;
       applyAgentDetailFailure(reason, setDetail, setDetailError);
-    } finally { setLoading(false); }
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   const listed = directory.items || [];

@@ -274,6 +274,10 @@ test("agent modal requests ignore stale agent and cursor responses", async () =>
   assert.match(source, /current\?\.participantHistory\?\.next_before_id !== cursor/);
   assert.match(source, /current\?\.output_cursors\?\.\[kind\] !== cursor/);
   assert.match(source, /onKeyDown=\{event => event\.stopPropagation\(\)\}/);
+  assert.match(source, /setDetail\(\{ \.\.\.agentDetail, participantHistory: null \}\)/);
+  assert.match(source, /clearDetail: false/);
+  assert.match(source, /async function takeControl\(agentId\) \{\s*const requestId = \+\+detailRequest\.current/);
+  assert.match(source, /if \(requestId !== detailRequest\.current\) return;\s*setDetail\(null\)/);
 });
 
 
