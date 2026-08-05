@@ -74,7 +74,8 @@ and heard statements. Memories and simulated-world narratives are historical cla
 whose numbers may be stale. In public reasoning, do not calculate or estimate new
 numbers; copy an exact supplied value or describe the condition without a number.
 belief_updates should normally be empty. A model may update an existing supplied
-trust, sentiment, or inflation belief only within the configured bounded step."""
+trust, sentiment, or inflation belief only when the absolute change from its
+supplied baseline does not exceed model_max_reserved_step={model_max_reserved_step}."""
 
 INSTITUTIONAL_ACTIONS_SUFFIX = """
 Institutional actions: sponsor_bill{title,topic,summary,policy_changes},
@@ -2389,7 +2390,16 @@ class ContextBuilder:
                 "action. Reply with the JSON envelope only.")
         system = SYSTEM_PREFIX
         if grounding_active:
-            system += NUMERIC_GROUNDING_SUFFIX
+            memory = getattr(self, "mem", None)
+            validator_step = (
+                memory.model_max_reserved_step
+                if memory is not None
+                else float(config.get("beliefs", {}).get(
+                    "model_max_reserved_step", 0.05))
+            )
+            system += NUMERIC_GROUNDING_SUFFIX.format(
+                model_max_reserved_step=repr(float(validator_step)),
+            )
         if bool(config.get("entrepreneurship", {}).get("enabled", False)):
             system = system.replace(
                 "found_company{name,sector,lawyer_agent_id}, ", "")

@@ -272,6 +272,17 @@ def test_credential_loader_reads_from_the_validated_descriptor(tmp_path, monkeyp
     assert load_credential_file(path)["access_token"] == "process-only-token"
 
 
+def test_connector_urls_resolve_root_paths_against_the_origin():
+    assert connector_runner._url(
+        "https://agents.example.test/tenant/run?ignored=true",
+        "/api/v2/agent/me",
+    ) == "https://agents.example.test/api/v2/agent/me"
+    assert connector_runner._url(
+        "https://agents.example.test/tenant/run",
+        "/../oauth/revoke",
+    ) == "https://agents.example.test/oauth/revoke"
+
+
 def test_credential_loader_requires_current_user_ownership(tmp_path, monkeypatch):
     path = tmp_path / "credential.json"
     path.write_text(json.dumps({

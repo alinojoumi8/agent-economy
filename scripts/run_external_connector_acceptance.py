@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -154,7 +154,9 @@ def _json_response(status: int, body: bytes, *, expected: set[int], label: str) 
 
 
 def _url(base_url: str, path: str) -> str:
-    return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+    parts = urlsplit(base_url)
+    origin = urlunsplit((parts.scheme, parts.netloc, "/", "", ""))
+    return urljoin(origin, path)
 
 
 def _safe_receipt(receipt: dict[str, Any]) -> dict[str, Any]:

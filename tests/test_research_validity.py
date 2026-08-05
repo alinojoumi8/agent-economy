@@ -252,8 +252,9 @@ def test_grounded_prompt_labels_authoritative_facts_and_stale_memories(tmp_path)
     world = _world(tmp_path, "grounded-prompt.db")
     world.config["beliefs"].update({
         "model_grounding_from_tick": 1,
-        "model_max_reserved_step": 0.05,
+        "model_max_reserved_step": 0.125,
     })
+    world.runtime.mem.model_max_reserved_step = 0.125
     world.runtime.ctx.config = world.config
     citizen = world.store.query_one(
         "SELECT * FROM agents WHERE kind='citizen' AND role IS NULL ORDER BY id LIMIT 1"
@@ -265,6 +266,7 @@ def test_grounded_prompt_labels_authoritative_facts_and_stale_memories(tmp_path)
     system, prompt = world.runtime.ctx.render_prompt(context)
 
     assert "CURRENT ENGINE FACTS ARE AUTHORITATIVE" in system
+    assert "model_max_reserved_step=0.125" in system
     assert "MEMORIES - HISTORICAL; NUMERIC VALUES MAY BE STALE" in prompt
     assert "cents (= " in prompt
     world.close()
