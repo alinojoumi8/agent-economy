@@ -120,6 +120,13 @@ export function InvestigationsWorkspace() {
     queryKey: ["world-os", "operator-session"],
     queryFn: () => workspaceApi<{ owner_id: string; csrf_token: string }>("/api/v2/operator/session"),
   });
+  const canMutate = Boolean(session.data?.csrf_token);
+  const requireCsrfToken = () => {
+    if (!session.data?.csrf_token) {
+      throw new Error("Operator authorization is not ready.");
+    }
+    return session.data.csrf_token;
+  };
   const investigations = useQuery({
     queryKey: ["world-os", runId, "investigations"],
     queryFn: () => workspaceApi<{ items: Investigation[] }>("/api/v2/operator/investigations"),
@@ -161,7 +168,7 @@ export function InvestigationsWorkspace() {
   );
   const createInvestigation = useMutation({
     mutationFn: () => workspaceApi<Investigation>("/api/v2/operator/investigations", {
-      method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+      method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
       body: JSON.stringify({ title: `Investigation at ${rootKind}:${rootId}`, pinned_tick: causal.data?.tick }),
     }),
     onSuccess: record => { refreshWorkspace(); navigate(`/runs/${runId}/investigations/${record.id}?${search}`); },
@@ -169,7 +176,7 @@ export function InvestigationsWorkspace() {
   const pinEvidence = useMutation({
     mutationFn: () => workspaceApi(
       `/api/v2/operator/investigations/${investigationId}/items`, {
-        method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify({
           item_kind: selected?.kind || causal.data?.data.root.kind,
           stable_ref: selected || causal.data?.data.root,
@@ -181,7 +188,7 @@ export function InvestigationsWorkspace() {
   const addHypothesis = useMutation({
     mutationFn: () => workspaceApi(
       `/api/v2/operator/investigations/${investigationId}/hypotheses`, {
-        method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify({ statement: hypothesis, status: "open" }),
       }),
     onSuccess: () => { setHypothesis(""); refreshWorkspace(); },
@@ -189,7 +196,7 @@ export function InvestigationsWorkspace() {
   const updateInvestigation = useMutation({
     mutationFn: (activeDraft: any) => workspaceApi<Investigation>(
       `/api/v2/operator/investigations/${activeDraft.server.id}`, {
-        method: "PATCH", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "PATCH", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify({
           expected_version: activeDraft.server.version,
           title: activeDraft.titleDraft.trim(),
@@ -228,7 +235,7 @@ export function InvestigationsWorkspace() {
   const saveInvestigationAsNew = useMutation({
     mutationFn: (activeDraft: any) => workspaceApi<Investigation>(
       "/api/v2/operator/investigations", {
-        method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify(saveInvestigationAsNewPayload(activeDraft)),
       },
     ),
@@ -266,8 +273,8 @@ export function InvestigationsWorkspace() {
       <div className="world-os-heading-actions">
         <FreshnessBadge transport={transport} tick={tick} envelope={causal.data || events.data} sourceLabel="Causal evidence projection" />
         <div className="world-os-investigation-actions">
-          {!currentInvestigation && <button className="button" disabled={!rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
-          {currentInvestigation && <button className="button" disabled={!selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+          {!currentInvestigation && <button className="button" disabled={!canMutate || !rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
+          {currentInvestigation && <button className="button" disabled={!canMutate || !selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
         </div>
       </div>
     </div>
@@ -311,7 +318,8 @@ export function InvestigationsWorkspace() {
       <header><div><p className="world-os-kicker">Observer-owned workspace</p><h3>{currentInvestigation.title}</h3></div><div className="world-os-investigation-record-actions"><span>v{currentInvestigation.version}</span><InvestigationExportActions investigationId={currentInvestigation.id} /></div></header>
       {draft && <InvestigationTitleEditor title={draft.titleDraft}
         serverTitle={draft.server.title} version={draft.server.version}
-        pending={updateInvestigation.isPending} blocked={Boolean(draft.conflict)}
+        pending={updateInvestigation.isPending} mutationReady={canMutate}
+        blocked={Boolean(draft.conflict)}
         error={draft.error} inputRef={titleInputRef}
         onChange={title => setDraft((current: any) => editInvestigationTitle(current, title))}
         onSave={() => updateInvestigation.mutate(draft)}
@@ -323,13 +331,14 @@ export function InvestigationsWorkspace() {
       <ul>{currentInvestigation.hypotheses.map(item => <li key={item.id}><span>{item.status}</span>{item.statement}</li>)}</ul>
       <form onSubmit={event => { event.preventDefault(); if (hypothesis.trim()) addHypothesis.mutate(); }}>
         <label htmlFor="hypothesis">New hypothesis</label><textarea id="hypothesis" value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} />
-        <button className="button" disabled={!hypothesis.trim() || addHypothesis.isPending}>Add hypothesis</button>
+        <button className="button" disabled={!canMutate || !hypothesis.trim() || addHypothesis.isPending}>Add hypothesis</button>
       </form>
     </article>}
     {draft?.conflict?.open && <InvestigationConflictDialog
       draftTitle={draft.titleDraft} serverTitle={draft.conflict.server.title}
       serverVersion={draft.conflict.server.version}
-      pending={saveInvestigationAsNew.isPending} returnFocusRef={titleInputRef}
+      pending={saveInvestigationAsNew.isPending} canSaveAsNew={canMutate}
+      returnFocusRef={titleInputRef}
       onReload={() => {
         replaceCachedInvestigation(draft.conflict.server);
         setDraft((current: any) => reloadInvestigationConflict(current));

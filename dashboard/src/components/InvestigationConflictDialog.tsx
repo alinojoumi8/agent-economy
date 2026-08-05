@@ -7,6 +7,7 @@ type InvestigationConflictDialogProps = {
   serverTitle: string;
   serverVersion: number;
   pending: boolean;
+  canSaveAsNew?: boolean;
   returnFocusRef?: RefObject<HTMLInputElement | null>;
   onReload(): void;
   onSaveAsNew(): void;
@@ -14,7 +15,7 @@ type InvestigationConflictDialogProps = {
 };
 
 export function InvestigationConflictDialog({
-  draftTitle, serverTitle, serverVersion, pending, returnFocusRef,
+  draftTitle, serverTitle, serverVersion, pending, canSaveAsNew = true, returnFocusRef,
   onReload, onSaveAsNew, onContinue,
 }: InvestigationConflictDialogProps) {
   const validation = investigationTitleError(draftTitle);
@@ -39,7 +40,7 @@ export function InvestigationConflictDialog({
       {validation && <p className="world-os-form-error" role="alert">{validation}</p>}
       <div className="world-os-dialog-actions">
         <button className="button button-primary" type="button" disabled={pending} onClick={onReload}>Reload server version</button>
-        <button className="button" type="button" disabled={pending || Boolean(validation)} onClick={onSaveAsNew}>Save draft as new investigation</button>
+        <button className="button" type="button" disabled={pending || !canSaveAsNew || Boolean(validation)} onClick={onSaveAsNew}>Save draft as new investigation</button>
         <button className="button" type="button" disabled={pending} onClick={onContinue}>Continue editing</button>
       </div>
     </section>

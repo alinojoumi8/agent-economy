@@ -144,9 +144,14 @@ def _url(base_url: str, path: str) -> str:
 
 
 def _safe_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    target_tick = receipt.get("target_tick")
+    if type(target_tick) is not int:
+        raise RuntimeError("receipt read returned a non-integer target tick")
+    if target_tick < 0:
+        raise RuntimeError("receipt read returned a negative target tick")
     return {
         "receipt_id": str(receipt.get("submission_id") or ""),
-        "target_tick": int(receipt.get("target_tick", 0)),
+        "target_tick": target_tick,
         "status": str(receipt.get("status") or ""),
         "resulting_state_hash": receipt.get("resulting_state_hash"),
         "event_ids": receipt.get("event_ids") or [],
@@ -267,7 +272,12 @@ def _run_authenticated_acceptance(
     actor = identity.get("actor")
     if not isinstance(actor, dict) or actor.get("id") is None:
         raise RuntimeError("hosted connector identity has no active actor")
-    scopes = sorted(str(scope) for scope in identity.get("scopes", []))
+    raw_scopes = identity.get("scopes")
+    if not isinstance(raw_scopes, list) or not raw_scopes:
+        raise RuntimeError("hosted connector identity returned no scope list")
+    scopes = sorted({str(scope) for scope in raw_scopes})
+    if any(not scope.strip() or scope != scope.strip() for scope in scopes):
+        raise RuntimeError("hosted connector identity returned an invalid scope list")
 
     discovery = None
     if args.connector == "independent_mcp":
@@ -336,12 +346,23 @@ def _run_authenticated_acceptance(
     )
     revocation_passed = post_status == 401
     gates_passed = revocation_passed and isolation_passed
+    if not gates_passed:
+        failed_gates = []
+        if not revocation_passed:
+            failed_gates.append("revocation")
+        if not isolation_passed:
+            failed_gates.append("cross_tenant_isolation")
+        raise RuntimeError(
+            "external connector security gates failed "
+            f"(gates={','.join(failed_gates)}; post_status={post_status}; "
+            f"isolation_status={isolation_status})"
+        )
 
     result: dict[str, Any] = {
         "schema": "agent-economy-external-connector-v1",
         "connector": args.connector,
         "execution_scope": "independent_external",
-        "status": "passed" if gates_passed else "failed",
+        "status": "passed",
         "candidate": {"commit": args.commit, "tree": args.tree},
         "client": {"name": args.client_name, "version": args.client_version},
         "signer": {"label": args.signer_label, "independent": True},

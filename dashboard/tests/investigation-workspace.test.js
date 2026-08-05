@@ -122,6 +122,18 @@ test("investigation title editor submits the authoritative expected version", as
   });
 });
 
+test("operator mutations stay disabled until a CSRF token is available", async () => {
+  const workspaceSource = await readFile(
+    new URL("../src/workspaces/InvestigationsWorkspace.tsx", import.meta.url), "utf8",
+  );
+  assert.match(workspaceSource, /const canMutate = Boolean\(session\.data\?\.csrf_token\)/);
+  assert.match(workspaceSource, /disabled=\{!canMutate \|\| !rootId \|\| createInvestigation\.isPending\}/);
+  assert.match(workspaceSource, /disabled=\{!canMutate \|\| !selectedKey \|\| pinEvidence\.isPending\}/);
+  assert.match(workspaceSource, /mutationReady=\{canMutate\}/);
+  assert.match(workspaceSource, /canSaveAsNew=\{canMutate\}/);
+  assert.match(workspaceSource, /disabled=\{!canMutate \|\| !hypothesis\.trim\(\) \|\| addHypothesis\.isPending\}/);
+});
+
 test("investigation title editor announces an in-progress save", async () => {
   const vite = await createServer({
     appType: "custom", logLevel: "silent", server: { middlewareMode: true },

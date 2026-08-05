@@ -21,6 +21,7 @@ export function OraclePanel({ oracle, act, readOnly = false }) {
     event.preventDefault();
     if (!question.trim()) return;
     setAsking(true);
+    setAnswer(null);
     setError("");
     try { setAnswer(await act("/api/oracle/ask", { question: question.trim() })); }
     catch (reason) {

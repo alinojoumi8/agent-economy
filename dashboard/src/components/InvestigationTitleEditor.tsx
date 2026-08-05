@@ -8,6 +8,7 @@ type InvestigationTitleEditorProps = {
   serverTitle: string;
   version: number;
   pending: boolean;
+  mutationReady?: boolean;
   blocked?: boolean;
   error: string;
   inputRef?: RefObject<HTMLInputElement | null>;
@@ -17,14 +18,15 @@ type InvestigationTitleEditorProps = {
 };
 
 export function InvestigationTitleEditor({
-  title, serverTitle, version, pending, blocked = false, error, inputRef, onChange, onSave, onCancel,
+  title, serverTitle, version, pending, mutationReady = true, blocked = false,
+  error, inputRef, onChange, onSave, onCancel,
 }: InvestigationTitleEditorProps) {
   const validation = investigationTitleError(title);
   const unchanged = normalizedInvestigationTitle(title)
     === normalizedInvestigationTitle(serverTitle);
   return <form className="world-os-title-editor" onSubmit={event => {
     event.preventDefault();
-    if (!validation && !unchanged && !pending && !blocked) onSave();
+    if (!validation && !unchanged && !pending && mutationReady && !blocked) onSave();
   }}>
     <label htmlFor="investigation-title">Investigation title</label>
     <div className="world-os-title-editor__row">
@@ -33,12 +35,14 @@ export function InvestigationTitleEditor({
         aria-invalid={Boolean(validation || error)}
         onChange={event => onChange(event.target.value)} />
       <button className="button button-primary" type="submit"
-        disabled={Boolean(validation) || unchanged || pending || blocked}>Save</button>
+        disabled={Boolean(validation) || unchanged || pending || !mutationReady || blocked}>Save</button>
       <button className="button" type="button" disabled={unchanged || pending}
         onClick={onCancel}>Cancel</button>
     </div>
     <div id="investigation-title-guidance" className={validation || error ? "world-os-form-error" : "world-os-form-guidance"} role={validation || error ? "alert" : undefined}>
-      {error || validation || (blocked
+      {error || validation || (!mutationReady
+        ? "Operator authorization is loading; saving is temporarily disabled."
+        : blocked
         ? "Resolve the server version conflict before saving this draft."
         : pending
           ? "Saving…"

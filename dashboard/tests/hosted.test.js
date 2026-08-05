@@ -35,6 +35,8 @@ function hosted(runId = RUN) {
 test("hosted access mode switch uses standard button-group semantics", () => {
   assert.match(hostedShellSource, /role="group" aria-label="Hosted access"/);
   assert.doesNotMatch(hostedShellSource, /role="tablist"/);
+  assert.match(hostedShellSource, /aria-pressed=\{view === "login"\}/);
+  assert.match(hostedShellSource, /aria-pressed=\{view === "register"\}/);
 });
 
 test("local API and WebSocket routes remain byte-for-byte compatible", () => {

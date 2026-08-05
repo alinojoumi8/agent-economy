@@ -782,6 +782,26 @@ test("Oracle failures render an alert and restore the request control", async ({
   await expect(ask).toBeEnabled();
 });
 
+test("Oracle failures clear a forecast from the previous request", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountOracleHarness } = await import("/tests/e2e/fixtures/oracleHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "oracle-stale-test-root";
+    document.body.append(container);
+    mountOracleHarness(container);
+  });
+  const harness = page.locator("#oracle-stale-test-root");
+  const question = harness.getByLabel("Question for the Oracle");
+  await question.fill("First forecast");
+  await harness.getByRole("button", { name: "Ask Oracle" }).click();
+  await expect(harness.getByText("60%")).toBeVisible();
+  await question.fill("Second forecast fails");
+  await harness.getByRole("button", { name: "Ask Oracle" }).click();
+  await expect(harness.getByRole("alert")).toContainText("oracle unavailable");
+  await expect(harness.getByText("60%")).toBeHidden();
+});
+
 test("authorized entity search preserves fork and historical tick", async ({ page }) => {
   let searchUrl = "";
   await page.route("**/api/v2/search?*", async route => {

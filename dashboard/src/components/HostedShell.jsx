@@ -100,8 +100,8 @@ function HostedAccess({ config, onAuthenticated }) {
 
       <section className="rounded-2xl border border-mint-300/15 bg-ink-850 p-6">
         <div className="mb-5 flex gap-2" role="group" aria-label="Hosted access">
-          <button className={`button ${view === "login" ? "button-primary" : ""}`} onClick={() => setView("login")}>Sign in</button>
-          <button className={`button ${view === "register" ? "button-primary" : ""}`} onClick={() => setView("register")}>Use invite</button>
+          <button aria-pressed={view === "login"} className={`button ${view === "login" ? "button-primary" : ""}`} onClick={() => setView("login")}>Sign in</button>
+          <button aria-pressed={view === "register"} className={`button ${view === "register" ? "button-primary" : ""}`} onClick={() => setView("register")}>Use invite</button>
         </div>
         {notice && <p role="status" className="mb-4 rounded-lg border border-mint-300/20 bg-mint-300/[.05] p-3 text-xs text-mint-300">{notice}</p>}
         {error && <p role="alert" className="mb-4 rounded-lg border border-coral-300/20 bg-coral-300/[.05] p-3 text-xs text-coral-300">{error}</p>}

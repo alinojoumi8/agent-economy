@@ -14,7 +14,11 @@ from benchmarks.external_connector_acceptance import (
     write_external_connector_receipt,
 )
 from scripts import run_external_connector_acceptance as connector_runner
-from scripts.run_external_connector_acceptance import _request, load_credential_file
+from scripts.run_external_connector_acceptance import (
+    _request,
+    _safe_receipt,
+    load_credential_file,
+)
 
 
 COMMIT = "1" * 40
@@ -262,6 +266,54 @@ def test_wake_rejects_null_target_tick_with_stable_runtime_error(monkeypatch):
         )
 
 
+@pytest.mark.parametrize("target_tick", [None, True, "1", 1.0])
+def test_safe_receipt_rejects_non_integer_target_ticks(target_tick):
+    with pytest.raises(RuntimeError, match="non-integer target tick"):
+        _safe_receipt({
+            "submission_id": "receipt-1",
+            "target_tick": target_tick,
+            "status": "executed",
+        })
+
+
+def test_authenticated_runner_requires_identity_scopes_to_be_a_list(monkeypatch):
+    def request(_method, url, **_kwargs):
+        if url.endswith("/.well-known/oauth-authorization-server"):
+            return 200, b"{}"
+        if url.endswith("/.well-known/oauth-protected-resource/mcp"):
+            return 200, b"{}"
+        if url.endswith("/api/v2/agent/me"):
+            return 200, json.dumps({
+                "actor": {"id": "agent-1"},
+                "scopes": "world.read",
+            }).encode("utf-8")
+        raise AssertionError(f"unexpected request: {url}")
+
+    monkeypatch.setattr(connector_runner, "_request", request)
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit=COMMIT,
+        tree=TREE,
+        client_name="outside-python",
+        client_version="1.2.3",
+        timeout=30.0,
+        signer_label="independent-lab",
+        server_operator="agent-economy-operator",
+    )
+    credential = {
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }
+
+    with pytest.raises(RuntimeError, match="scope list"):
+        connector_runner._run_authenticated_acceptance(
+            args,
+            credential,
+            connector_runner._CredentialRevoker(args.base_url, credential),
+        )
+
+
 def test_candidate_ids_use_character_terminology_and_named_hex_helper(tmp_path):
     assert connector_runner.is_lowercase_hex(COMMIT, 40) is True
     args = SimpleNamespace(
@@ -372,11 +424,6 @@ def test_authenticated_runner_status_fails_when_a_security_gate_fails(
             {"receipt_id": "receipt-1", "target_tick": 1, "status": "executed"},
         ),
     )
-    monkeypatch.setattr(
-        connector_runner,
-        "validate_external_connector_receipt",
-        lambda result, **_kwargs: result,
-    )
     args = SimpleNamespace(
         connector="python",
         base_url="https://agents.example.test",
@@ -393,17 +440,16 @@ def test_authenticated_runner_status_fails_when_a_security_gate_fails(
         "isolation_probe_path": "/api/v2/tenants/other/run",
     }
 
-    result = connector_runner._run_authenticated_acceptance(
-        args,
-        credential,
-        connector_runner._CredentialRevoker(args.base_url, credential),
-    )
+    with pytest.raises(RuntimeError, match="security gates failed") as caught:
+        connector_runner._run_authenticated_acceptance(
+            args,
+            credential,
+            connector_runner._CredentialRevoker(args.base_url, credential),
+        )
 
-    assert result["status"] == "failed"
-    assert result["revocation"]["passed"] is (post_revoke_status == 401)
-    assert result["cross_tenant_isolation"]["passed"] is (
-        isolation_status in {403, 404}
-    )
+    message = str(caught.value)
+    assert f"post_status={post_revoke_status}" in message
+    assert f"isolation_status={isolation_status}" in message
 
 
 def test_hosted_runner_refuses_redirects_without_forwarding_bearer_token():
