@@ -267,7 +267,7 @@ test("politics and law keeps institutional record types and historical states se
   const model = normalizePoliticsLawWorkspace({
     politics: { enabled: true, institutional_actions_enabled: false },
     legal: { enabled: true },
-    bills: [{ id: 2, introduced_tick: 4, title: "Second", status: "introduced" }, { id: 1, introduced_tick: 2, title: "First", status: "enacted" }],
+    bills: [{ id: 2, introduced_tick: 4, title: "Second", status: "introduced" }, { id: null, introduced_tick: 1, title: "Missing identity", status: "introduced" }, { id: 1, introduced_tick: 2, title: "First", status: "enacted" }],
     bill_versions: [{ id: 3, bill_id: 1, version: 1, tick: 2, summary: "Public" }],
     votes: [{ id: 4, bill_id: 1, tick: 3, vote: "yes", stage: "floor" }],
     rules: [{ id: 5, bill_id: 1, rule_key: "tax_rate", enacted_tick: 3, effective_tick: 4, status: "active" }],

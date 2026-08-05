@@ -620,3 +620,7 @@ def test_hosted_runner_refuses_redirects_without_forwarding_bearer_token():
         target.server_close()
         redirect_thread.join(timeout=2)
         target_thread.join(timeout=2)
+
+
+def test_hosted_runner_disables_environment_proxies_for_credentialed_requests():
+    assert connector_runner._DIRECT_PROXY_HANDLER.proxies == {}

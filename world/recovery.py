@@ -86,11 +86,14 @@ def assess_recovery(*, enabled: bool, price_cents: int, input_cost_cents: int,
     unmet_units = max(0, unmet_demand_units)
     observed_demand = sales_units + unmet_units
     output_units = max(0, output_per_worker)
-    demand_denominator = max(1, output_units) * normalized["sales_observation_ticks"]
-    demand_cap = 0 if observed_demand == 0 else (
-        observed_demand + normalized["demand_buffer_ticks"] * output_units
-    ) // demand_denominator
-    if unmet_units > 0:
+    if output_units <= 0:
+        demand_cap = 0
+    else:
+        demand_denominator = output_units * normalized["sales_observation_ticks"]
+        demand_cap = 0 if observed_demand == 0 else (
+            observed_demand + normalized["demand_buffer_ticks"] * output_units
+        ) // demand_denominator
+    if unmet_units > 0 and output_units > 0:
         # The bounded buffer retains the prior conservative behavior, while
         # observed stockouts cannot strand a firm just below another worker's
         # actual output capacity.  Deliberately do not round the buffer itself.

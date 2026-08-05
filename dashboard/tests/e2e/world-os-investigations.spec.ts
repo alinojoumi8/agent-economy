@@ -30,6 +30,8 @@ function initialState() {
     patchRequests: 0,
     createRequests: 0,
     delayNextListMs: 0,
+    delayedListRequestsStarted: 0,
+    delayedListResponsesCompleted: 0,
   };
 }
 
@@ -107,12 +109,15 @@ async function installApi(context: BrowserContext, state: ReturnType<typeof init
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
     }
     if (path === "/api/v2/operator/investigations" && request.method() === "GET") {
+      const items = [...state.records.values()].map(record => ({ ...record }));
       if (state.delayNextListMs) {
         const delay = state.delayNextListMs;
         state.delayNextListMs = 0;
+        state.delayedListRequestsStarted += 1;
         await new Promise(resolve => setTimeout(resolve, delay));
+        state.delayedListResponsesCompleted += 1;
       }
-      return route.fulfill({ json: { items: [...state.records.values()] } });
+      return route.fulfill({ json: { items } });
     }
     if (path === "/api/v2/operator/investigations" && request.method() === "POST") {
       expect(request.headers()["x-csrf-token"]).toBe("test");
@@ -232,8 +237,10 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await expect(titleB).toBeFocused();
   await expect(titleB).toHaveValue("Local draft");
   await expect(pageB.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  state.delayNextListMs = 10_000;
   await pageB.getByRole("button", { name: "Save", exact: true }).click();
   await expect(pageB.getByText("Saved as version 3.")).toBeVisible();
+  await expect.poll(() => state.delayedListRequestsStarted).toBe(1);
   expect(state.patchRequests).toBe(3);
 
   await titleA.fill("Remote second");
@@ -246,7 +253,6 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await titleB.fill("Local copy");
   await pageB.getByRole("button", { name: "Save", exact: true }).click();
   await expect(conflict).toContainText("Server version 4: Remote second");
-  state.delayNextListMs = 2_000;
   await conflict.getByRole("button", { name: "Save draft as new investigation" }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-2\?/);
   await expect(conflict).toBeHidden({ timeout: 500 });
@@ -256,6 +262,14 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   expect(state.records.get("inv-1")?.version).toBe(4);
   expect(state.records.get("inv-2")?.items).toEqual([]);
   expect(state.records.get("inv-2")?.hypotheses).toEqual([]);
+  await expect.poll(
+    () => state.delayedListResponsesCompleted,
+    { timeout: 12_000 },
+  ).toBe(1);
+  await expect(pageB).toHaveURL(/\/investigations\/inv-2\?/);
+  await expect(titleB).toHaveValue("Local copy");
+  await expect(pageB.getByRole("navigation", { name: "Saved investigations" })
+    .getByRole("button", { name: /Local copy/ })).toHaveClass(/selected/);
 
   await pageB.getByRole("navigation", { name: "Saved investigations" })
     .getByRole("button", { name: /Remote second/ }).click();

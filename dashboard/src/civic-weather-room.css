@@ -1334,13 +1334,13 @@ body::before {
   color: var(--civic-cobalt);
 }
 
-.world-os-topbar .citizen-menu-dropdown__panel {
+.world-os-topbar .citizen-menu--panel {
   border-color: var(--civic-navy);
   border-radius: 6px;
   background: var(--civic-white);
 }
 
-.world-os-topbar .citizen-menu-dropdown__panel a {
+.world-os-topbar .citizen-menu--panel a {
   color: var(--civic-ink);
 }
 

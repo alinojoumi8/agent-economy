@@ -283,6 +283,18 @@ def test_zero_sales_permit_no_new_hires_despite_demand_buffer():
     assert assessment.allowed_new_hires == 0
 
 
+def test_zero_worker_output_has_no_demand_capacity_even_with_unmet_demand():
+    assessment = _assessment(
+        output_per_worker=0,
+        recent_sales_units=180,
+        unmet_demand_units=180,
+    )
+
+    assert assessment.demand_limited_headcount == 0
+    assert assessment.capacity_limited_headcount == 0
+    assert assessment.allowed_new_hires == 0
+
+
 def test_positive_sales_keep_the_bounded_demand_buffer():
     assessment = _assessment(recent_sales_units=150, target_headcount=10)
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -101,7 +101,8 @@ class _RejectRedirects(HTTPRedirectHandler):
         return None
 
 
-_NO_REDIRECT_OPENER = build_opener(_RejectRedirects())
+_DIRECT_PROXY_HANDLER = ProxyHandler({})
+_NO_REDIRECT_OPENER = build_opener(_DIRECT_PROXY_HANDLER, _RejectRedirects())
 
 
 def _request(

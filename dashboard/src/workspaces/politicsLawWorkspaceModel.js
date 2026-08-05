@@ -18,7 +18,7 @@ function records(value) {
 function normalize(value, fields, tickField) {
   return records(value).map(row => Object.fromEntries(
     fields.filter(field => row[field] !== undefined).map(field => [field, row[field]]),
-  )).filter(row => row.id !== undefined).sort((left, right) => (
+  )).filter(row => row.id !== undefined && row.id !== null).sort((left, right) => (
     Number(left[tickField] ?? 0) - Number(right[tickField] ?? 0)
     || Number(left.id ?? 0) - Number(right.id ?? 0)
   ));
