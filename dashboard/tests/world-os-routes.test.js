@@ -11,6 +11,10 @@ import {
   filterOrganizations,
   normalizeOrganizationsWorkspace,
 } from "../src/workspaces/organizationsWorkspaceModel.js";
+import {
+  filterMarketRows,
+  normalizeMarketsWorkspace,
+} from "../src/workspaces/marketsWorkspaceModel.js";
 
 test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(
@@ -158,4 +162,46 @@ test("World OS maps organization list and detail routes to the canonical workspa
   assert.match(source, /path="organizations" element=\{<OrganizationsWorkspace \/>\}/);
   assert.match(source, /path="organizations\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Organizations"/);
+});
+
+test("market workspace keeps books, executions, FX direction, and units distinct", () => {
+  const model = normalizeMarketsWorkspace({
+    orders: [
+      { id: 2, tick: 4, firm_id: 8, side: "sell", qty: 5, qty_remaining: 5, limit_price_cents: 250, status: "open" },
+      { id: 1, tick: 3, firm_id: 8, side: "buy", qty: 3, qty_remaining: 0, limit_price_cents: 125, status: "filled" },
+    ],
+    trades: [
+      { id: 2, tick: 4, firm_id: 8, qty: Infinity, price_cents: 250 },
+      { id: 1, tick: 3, firm_id: 8, qty: 3, price_cents: 125 },
+    ],
+    fx_orders: [{ id: 4, tick: 4, pair: "USD/CAD", base_currency: "USD", quote_currency: "CAD", side: "buy", qty: 10, qty_remaining: 4, limit_rate_ppm: 1350000, status: "partial" }],
+    fx_trades: [{ id: 5, tick: 4, pair: "USD/CAD", side: "buy", base_qty: 6, quote_qty: 8, rate_ppm: 1333333 }],
+    circuit_breakers: [{ id: 9, tick: 4, kind: "market_circuit_breaker", importance: 3 }],
+    currencies: [{ code: "CAD", name: "Canadian dollar", minor_unit: 2 }, { code: "USD", name: "Dollar", minor_unit: 2 }],
+  });
+  assert.deepEqual(model.orders.map(row => row.id), [1, 2]);
+  assert.deepEqual(model.trades.map(row => row.id), [1, 2]);
+  assert.equal(model.trades[1].qty, undefined);
+  assert.equal(model.fxTrades[0].baseCurrency, "USD");
+  assert.equal(model.fxTrades[0].quoteCurrency, "CAD");
+  assert.equal(model.fxTrades[0].rate_ppm, 1333333);
+  assert.equal(model.circuitBreakers[0].kind, "market_circuit_breaker");
+  assert.deepEqual(model.totals, { tradeCount: 2, tradeVolume: 3, fxTradeCount: 1 });
+  assert.deepEqual(filterMarketRows(model.orders, { side: "buy", status: "filled" }).map(row => row.id), [1]);
+});
+
+test("empty market books are empty evidence, not measured zero activity", () => {
+  const model = normalizeMarketsWorkspace({});
+  assert.deepEqual(model.orders, []);
+  assert.deepEqual(model.trades, []);
+  assert.deepEqual(model.fxOrders, []);
+  assert.deepEqual(model.fxTrades, []);
+  assert.deepEqual(model.totals, { tradeCount: 0, tradeVolume: null, fxTradeCount: 0 });
+});
+
+test("World OS maps Markets to the canonical workspace", () => {
+  const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ MarketsWorkspace \}/);
+  assert.match(source, /path="markets" element=\{<MarketsWorkspace \/>\}/);
+  assert.doesNotMatch(source, /LegacyWorkspace title="Markets"/);
 });
