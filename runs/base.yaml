@@ -29,6 +29,8 @@ political_model:
 beliefs:
   audit_history: true
   enforce_reserved_ranges: true
+  model_grounding_from_tick: 0
+  model_max_reserved_step: 0.05
 
 population:
   # Persisted semantics-7 opt-in: baseline citizens remain fully active unless

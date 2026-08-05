@@ -20,6 +20,7 @@ from engine.store import load_json
 from communications.projections import AgentKnowledgeProjection
 from engine.types import positive_integer_id
 from .memory import Memory
+from .numeric_grounding import model_grounding_active
 
 
 INSTITUTIONAL_DECISION_ROLES = {
@@ -63,6 +64,16 @@ where an integer ID is required.
 You are never obligated to act. Every monetary action value is an integer number of cents:
 300000 cents equals 3000.00 currency units, not 300000 currency units. Stay in character."""
 
+NUMERIC_GROUNDING_SUFFIX = """
+
+CURRENT ENGINE FACTS ARE AUTHORITATIVE. Exact numeric values in current structured
+STATE, MACRO, BANKS, GOODS, JOBS, and YOUR FIRM sections override memories, news,
+and heard statements. Memories and simulated-world narratives are historical claims
+whose numbers may be stale. In public reasoning, do not calculate or estimate new
+numbers; copy an exact supplied value or describe the condition without a number.
+belief_updates should normally be empty. A model may update an existing supplied
+trust, sentiment, or inflation belief only within the configured bounded step."""
+
 INSTITUTIONAL_ACTIONS_SUFFIX = """
 Institutional actions: sponsor_bill{title,topic,summary,policy_changes},
 committee_vote{bill_id,vote}, cast_legislative_vote{bill_id,vote},
@@ -88,11 +99,14 @@ chosen by agents from supplied facts; never invent an offering or entity ID."""
 
 STARTUP_ACTIONS_SUFFIX = """
 Startup actions are available only when supplied in startup_work.eligible_actions:
+pitch_vc{firm_id,ask,summary},
 propose_term_sheet{firm_id,investor_agent_id,instrument_type,amount_cents,currency_code,
 pre_money_cents,equity_bps,liquidation_preference_bps,pro_rata,board_seat,metadata},
 accept_term_sheet{term_sheet_id}, run_due_diligence{term_sheet_id},
 close_funding_round{term_sheet_id}, register_ip{firm_id,creator_agent_id,asset_type,
-title,scope,valuation_cents,metadata}. Copy the supplied action exactly."""
+title,scope,valuation_cents,metadata}, propose_merger{acquirer_firm_id,target_firm_id,
+price_cents,currency_code,metadata}, approve_merger{merger_id},
+close_merger{merger_id}. Copy the supplied action exactly."""
 
 COMMUNICATION_ACTIONS_SUFFIX = """
 Semantics 8 communication actions are asynchronous and deliver no earlier than the next
@@ -1939,6 +1953,8 @@ class ContextBuilder:
     # ── render LLM messages from a context ───────────────────────────────────
     def render_prompt(self, context: dict) -> tuple[str, str]:
         config = getattr(self, "config", {}) or {}
+        grounding_active = model_grounding_active(
+            config, int(context.get("tick", -1)))
         a = context.get("agent", {})
         s = context.get("state", {})
         lines = [f"[PERSONA] agent_id {a.get('id')}, {a.get('name')}, "
@@ -2015,7 +2031,11 @@ class ContextBuilder:
             lines.append("[BELIEFS] " + ", ".join(f"{k}={v}" for k, v in list(beliefs.items())[:8]))
         mems = context.get("memories", [])
         if mems:
-            lines.append("[MEMORIES]\n- " + "\n- ".join(mems[:6]))
+            label = (
+                "[MEMORIES - HISTORICAL; NUMERIC VALUES MAY BE STALE]"
+                if grounding_active else "[MEMORIES]"
+            )
+            lines.append(label + "\n- " + "\n- ".join(mems[:6]))
         news = context.get("news", [])
         if news:
             lines.append("[TODAY — NEWS]\n- " + "\n- ".join(n["headline"] for n in news[:5]))
@@ -2269,6 +2289,8 @@ class ContextBuilder:
                 "action exactly. Attendance consumes this entire turn; submit no other "
                 "action. Reply with the JSON envelope only.")
         system = SYSTEM_PREFIX
+        if grounding_active:
+            system += NUMERIC_GROUNDING_SUFFIX
         if bool(config.get("entrepreneurship", {}).get("enabled", False)):
             system = system.replace(
                 "found_company{name,sector,lawyer_agent_id}, ", "")

@@ -15,6 +15,7 @@ import math
 from typing import Optional
 
 from engine.store import Store, load_json
+from .numeric_grounding import model_grounding_active
 
 RECENCY_HALFLIFE = 10.0   # ticks
 
@@ -28,10 +29,22 @@ def retrieval_score(*, recency_decay: float, importance: float,
 class Memory:
     def __init__(self, store: Store, config: Optional[dict] = None):
         self.store = store
+        self.config = config or {}
         beliefs = (config or {}).get("beliefs", {})
         self.audit_history = bool(beliefs.get("audit_history", False))
         self.enforce_reserved_ranges = bool(
             beliefs.get("enforce_reserved_ranges", False))
+        try:
+            self.model_max_reserved_step = float(
+                beliefs.get("model_max_reserved_step", 0.05))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "beliefs.model_max_reserved_step must be finite and nonnegative"
+            ) from exc
+        if (not math.isfinite(self.model_max_reserved_step)
+                or self.model_max_reserved_step < 0):
+            raise ValueError(
+                "beliefs.model_max_reserved_step must be finite and nonnegative")
 
     # ── capture ──────────────────────────────────────────────────────────────
     def observe(self, agent_id: int, tick: int, text: str, *, importance: float = 1.0,
@@ -145,6 +158,37 @@ class Memory:
         existing = self.store.query_one(
             "SELECT id, value FROM beliefs WHERE agent_id=? AND key=?", (agent_id, key))
         old_value = float(existing["value"]) if existing else None
+        if (
+            bounds is not None
+            and self._is_model_authored(source_llm_call_id)
+            and model_grounding_active(self.config, tick)
+        ):
+            if existing is None:
+                self._log_grounding_rejection(
+                    agent_id,
+                    key,
+                    raw_value,
+                    tick,
+                    source,
+                    source_llm_call_id,
+                    reason="missing_model_baseline",
+                    old_value=None,
+                )
+                raise ValueError(
+                    "grounded model belief update requires an existing baseline")
+            if abs(normalized - old_value) > self.model_max_reserved_step:
+                self._log_grounding_rejection(
+                    agent_id,
+                    key,
+                    raw_value,
+                    tick,
+                    source,
+                    source_llm_call_id,
+                    reason="model_reserved_step_limit",
+                    old_value=old_value,
+                )
+                raise ValueError(
+                    "grounded model belief update exceeds the configured step")
         if existing:
             self.store.update(
                 "beliefs", int(existing["id"]), value=normalized, updated_tick=tick)
@@ -169,6 +213,47 @@ class Memory:
                 tick, "belief_updated", payload, phase=phase,
                 subject_type="agent", subject_id=agent_id, importance=0.5)
         return normalized
+
+    def _is_model_authored(self, source_llm_call_id: Optional[int]) -> bool:
+        if source_llm_call_id is None:
+            return False
+        provider = self.store.scalar(
+            "SELECT provider FROM llm_calls WHERE id=?",
+            (int(source_llm_call_id),),
+            default=None,
+        )
+        return str(provider or "").lower() != "scripted"
+
+    def _log_grounding_rejection(
+        self,
+        agent_id: int,
+        key: str,
+        raw_value: float,
+        tick: int,
+        source: str,
+        source_llm_call_id: Optional[int],
+        *,
+        reason: str,
+        old_value: Optional[float],
+    ) -> None:
+        self.store.log_event(
+            tick,
+            "belief_update_rejected",
+            {
+                "agent_id": agent_id,
+                "key": key,
+                "old_value": old_value,
+                "raw_value": raw_value,
+                "reason": reason,
+                "source": source,
+                "source_llm_call_id": source_llm_call_id,
+                "model_max_reserved_step": self.model_max_reserved_step,
+            },
+            phase="MEMORY" if source == "memory" else "EXECUTION",
+            subject_type="agent",
+            subject_id=agent_id,
+            importance=1.0,
+        )
 
     def apply_belief_updates(
         self,

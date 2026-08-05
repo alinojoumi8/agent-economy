@@ -22,6 +22,10 @@ from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
 from .memory import Memory
+from .numeric_grounding import (
+    model_grounding_active,
+    sanitize_model_numeric_narrative,
+)
 from .personas.library import (
     PERSONA_SCHEMA_HINT,
     configured_outlet_ids,
@@ -826,9 +830,21 @@ class AgentRuntime:
                          max_tokens=_decision_output_budget(
                              llm_config, str(purpose)))
         resp = await self.gw.complete(req)
-        env = resp.parsed if isinstance(resp.parsed, dict) else {}
+        env = dict(resp.parsed) if isinstance(resp.parsed, dict) else {}
+        raw_reasoning = str(env.get("reasoning", "")).strip()
+        public_reasoning = sanitize_model_numeric_narrative(
+            raw_reasoning,
+            grounding_enabled=model_grounding_active(self.config, tick),
+            fallback=(
+                "I used the current structured engine facts to choose this action."
+            ),
+            sources=context,
+        )
+        if raw_reasoning or public_reasoning:
+            env["reasoning"] = public_reasoning
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                "reasoning": env.get("reasoning", ""),
+                "reasoning": public_reasoning,
+                "numeric_claims_redacted": public_reasoning != raw_reasoning,
                 "llm_call_id": getattr(resp, "call_id", None),
                 "communication_sources": context.get("communication_sources", []),
                 "communication_read_context_key": context.get(
@@ -840,6 +856,21 @@ class AgentRuntime:
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
         for d in decisions:
             agent_id = d["agent_id"]
+            if d.get("numeric_claims_redacted"):
+                self.store.log_event(
+                    tick,
+                    "model_numeric_narrative_redacted",
+                    {
+                        "agent_id": int(agent_id),
+                        "model_call_id": d.get("llm_call_id"),
+                        "purpose": str(d.get("purpose") or "decision"),
+                        "reason": "ungrounded_numeric_claim",
+                    },
+                    phase="EXECUTION",
+                    subject_type="agent",
+                    subject_id=int(agent_id),
+                    importance=1.0,
+                )
             operational_overrides = d.get("operational_overrides") or []
             if operational_overrides:
                 self.store.log_event(
@@ -1252,8 +1283,15 @@ class AgentRuntime:
             agent_id=agent_id, tick=tick, max_tokens=200)
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
-        summary = str(env.get("summary", "")).strip()
-        if not summary:
+        raw_summary = str(env.get("summary", "")).strip()
+        if raw_summary:
+            summary = sanitize_model_numeric_narrative(
+                raw_summary,
+                grounding_enabled=model_grounding_active(self.config, tick),
+                fallback="I reviewed today's recorded observations.",
+                sources=context,
+            )
+        else:
             summary = " | ".join(str(item.get("text", item)) for item in obs)[:1800]
         try:
             importance = float(env.get("importance", 1.0))
@@ -1286,8 +1324,15 @@ class AgentRuntime:
             agent_id=agent_id, tick=tick, max_tokens=240)
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
-        summary = str(env.get("summary", "")).strip()
-        if not summary:
+        raw_summary = str(env.get("summary", "")).strip()
+        if raw_summary:
+            summary = sanitize_model_numeric_narrative(
+                raw_summary,
+                grounding_enabled=model_grounding_active(self.config, tick),
+                fallback="I reviewed the recorded weekly summaries.",
+                sources=context,
+            )
+        else:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]
         importance = float(env.get("importance", max(r["importance"] for r in daily)))
         return summary, importance

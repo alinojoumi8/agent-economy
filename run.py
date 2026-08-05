@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -74,6 +75,9 @@ LIVE_ENTREPRENEURSHIP_DEFAULTS = {
     "maximum_merger_cash_share_bps": 4_000,
     "merger_premium_bps": 1_000,
 }
+LIVE_NUMERIC_GROUNDING_DEFAULTS = {
+    "model_max_reserved_step": 0.05,
+}
 
 
 def activate_entrepreneurship_for_run(store: Store) -> dict:
@@ -111,6 +115,70 @@ def activate_entrepreneurship_for_run(store: Store) -> dict:
         "activation_tick": activation_tick,
     }
     config["entrepreneurship"] = settings
+    store.set_meta(config_json=json.dumps(config, sort_keys=True))
+    store.commit()
+    return settings
+
+
+def activate_numeric_grounding_for_run(store: Store) -> dict:
+    """Persist numeric grounding at the next untouched decision boundary."""
+    meta = store.get_meta()
+    if str(meta["status"] or "") != "paused":
+        raise RuntimeError("numeric grounding activation requires a paused run")
+    if meta["parent_run_id"] is not None or meta["fork_tick"] is not None:
+        raise RuntimeError(
+            "numeric grounding activation requires an original run, not a replay or fork"
+        )
+    config = json.loads(meta["config_json"])
+    beliefs = dict(config.get("beliefs") or {})
+    try:
+        maximum_step = float(beliefs.get(
+            "model_max_reserved_step",
+            LIVE_NUMERIC_GROUNDING_DEFAULTS["model_max_reserved_step"],
+        ))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "beliefs.model_max_reserved_step must be finite and nonnegative"
+        ) from exc
+    if not math.isfinite(maximum_step) or maximum_step < 0:
+        raise ValueError(
+            "beliefs.model_max_reserved_step must be finite and nonnegative"
+        )
+
+    existing_boundary = beliefs.get("model_grounding_from_tick")
+    if existing_boundary is not None:
+        try:
+            boundary = max(0, int(existing_boundary))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "beliefs.model_grounding_from_tick must be a nonnegative integer"
+            ) from exc
+        return {
+            "model_grounding_from_tick": boundary,
+            "model_max_reserved_step": maximum_step,
+        }
+
+    completed_tick = int(meta["tick"])
+    active_tick = (
+        int(meta["active_tick"])
+        if meta["active_tick"] is not None
+        else completed_tick + 1
+    )
+    untouched_morning = (
+        active_tick > completed_tick
+        and str(meta["next_phase"] or "") == "MORNING"
+    )
+    activation_tick = (
+        active_tick
+        if untouched_morning
+        else max(completed_tick, active_tick) + 1
+    )
+    settings = {
+        "model_grounding_from_tick": activation_tick,
+        "model_max_reserved_step": maximum_step,
+    }
+    beliefs.update(settings)
+    config["beliefs"] = beliefs
     store.set_meta(config_json=json.dumps(config, sort_keys=True))
     store.commit()
     return settings
@@ -548,7 +616,8 @@ def _adopt_resume_local_citizenship(
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR,
              new_run_id_override: str | None = None,
-             activate_entrepreneurship: bool = False) -> tuple[Store, World, str]:
+             activate_entrepreneurship: bool = False,
+             activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     if resume:
         run_id = resume
@@ -559,6 +628,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         try:
             if activate_entrepreneurship:
                 activate_entrepreneurship_for_run(store)
+            if activate_numeric_grounding:
+                activate_numeric_grounding_for_run(store)
             meta = store.get_meta()
             stored_cfg = json.loads(meta["config_json"])
             # Markerless databases predate completed-day finalization and must keep
@@ -917,6 +988,7 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--scenario-ticks": args.scenario_ticks,
         "--upgrade-semantics": args.upgrade_semantics,
         "--activate-entrepreneurship": args.activate_entrepreneurship,
+        "--activate-numeric-grounding": args.activate_numeric_grounding,
     }
     if args.oracle_campaign_run:
         incompatible = [name for name, value in {
@@ -1106,6 +1178,14 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--activate-numeric-grounding",
+        action="store_true",
+        help=(
+            "only with --resume: ground model-authored numeric claims from "
+            "the next untouched decision boundary"
+        ),
+    )
+    ap.add_argument(
         "--activate-supply-recovery",
         action="store_true",
         help=(
@@ -1181,6 +1261,12 @@ def main() -> None:
             not args.resume or args.replay or args.fork):
         ap.error(
             "--activate-entrepreneurship requires --resume and cannot use "
+            "--replay/--fork"
+        )
+    if args.activate_numeric_grounding and (
+            not args.resume or args.replay or args.fork):
+        ap.error(
+            "--activate-numeric-grounding requires --resume and cannot use "
             "--replay/--fork"
         )
     if args.activate_supply_recovery and not (args.resume or args.fork):
@@ -1336,6 +1422,7 @@ def main() -> None:
         args.resume,
         args.replay,
         activate_entrepreneurship=args.activate_entrepreneurship,
+        activate_numeric_grounding=args.activate_numeric_grounding,
     )
     if args.activate_supply_recovery:
         try:
