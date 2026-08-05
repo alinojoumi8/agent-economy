@@ -2,9 +2,9 @@
 
 ## Preservation boundary
 
-The registered `feature/living-economy-map` worktree remains dirty and unmodified at `c86a9cf2662345209f6fa4698e149705678a9087`. Its registered `/home/ali/...` path resolves to `/mnt/data/projects/agent-economy/.worktrees/living-economy-map` on this machine.
+The registered `feature/living-economy-map` worktree remains dirty and unmodified at `c86a9cf2662345209f6fa4698e149705678a9087`. It remains a separate linked worktree; no machine-specific absolute checkout path is retained here.
 
-The restorable package is `/home/ali/.codex/worktree-snapshots/agent-economy/living-economy-map-20260805/`. It contains the binary tracked patch, the empty staged patch, all three untracked files, literal metadata, and SHA-256 checksums. Gitleaks 8.30.1 found no leaks. A detached restoration rehearsal reproduced the tracked, staged, and untracked hashes exactly before its temporary worktree was removed.
+The restorable package is stored outside the repository under `<codex-memory>/worktree-snapshots/agent-economy/living-economy-map-20260805/`. It contains the binary tracked patch, the empty staged patch, all three untracked files, literal metadata, and SHA-256 checksums. Gitleaks 8.30.1 found no leaks. A detached restoration rehearsal reproduced the tracked, staged, and untracked hashes exactly before its temporary worktree was removed.
 
 Allowed dispositions are `equivalent`, `superseded`, `portable`, `needs-design`, and `generated`.
 

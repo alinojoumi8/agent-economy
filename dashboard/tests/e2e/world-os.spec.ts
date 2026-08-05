@@ -609,6 +609,18 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await page.keyboard.press("Tab");
   await expect(reopenedSearch).toBeFocused();
   await commandClose.evaluate(button => { button.tabIndex = 0; });
+  await reopenedCommand.evaluate(dialog => {
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    editor.setAttribute("aria-label", "Inline command note");
+    editor.textContent = "Editable note";
+    dialog.append(editor);
+  });
+  await reopenedCommand.getByLabel("Inline command note").focus();
+  await page.keyboard.press("Tab");
+  await expect(commandClose).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(reopenedCommand.getByLabel("Inline command note")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 
@@ -639,11 +651,16 @@ test("modal focus predicate excludes hidden and fieldset-disabled controls", asy
     const disabledDescendant = visible.cloneNode(true) as HTMLButtonElement;
     fieldset.append(disabledDescendant);
     document.body.append(fieldset);
+    const contentEditable = document.createElement("div");
+    contentEditable.contentEditable = "true";
+    contentEditable.textContent = "Editable";
+    document.body.append(contentEditable);
     return {
       visible: focusModule.isTabbableElement(visible),
       displayNone: focusModule.isTabbableElement(displayNone),
       visibilityHidden: focusModule.isTabbableElement(visibilityHidden),
       disabledDescendant: focusModule.isTabbableElement(disabledDescendant),
+      contentEditable: focusModule.isTabbableElement(contentEditable),
     };
   });
 
@@ -652,6 +669,7 @@ test("modal focus predicate excludes hidden and fieldset-disabled controls", asy
     displayNone: false,
     visibilityHidden: false,
     disabledDescendant: false,
+    contentEditable: true,
   });
 });
 

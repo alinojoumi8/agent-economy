@@ -145,7 +145,10 @@ def _seed_workspace_history(economy) -> None:
         "INSERT INTO checkpoints (id,tick,path,created_at) VALUES (1,4,'safe.db','now'),(2,9,'future-checkpoint-canary','later')")
     store.execute(
         "INSERT INTO shocks (id,kind,trigger_type,trigger_json,label,fired,fired_tick) "
-        "VALUES (1,'oil','shock','{}','past shock',1,4),(2,'oil','shock','{}','future-shock-canary',1,9)")
+        "VALUES (1,'oil','shock','{}','past shock',1,4),"
+        "(2,'oil','shock','{}','future-shock-canary',1,9),"
+        "(3,'oil','conditional','{\"secret\":\"pending-trigger-canary\"}',"
+        "'pending-shock-canary',0,NULL)")
     store.execute("UPDATE shocks SET active_until_tick=9 WHERE id=1")
     store.execute(
         "INSERT INTO llm_calls (id,tick,agent_id,role,provider,model,purpose,response_json) "
@@ -167,7 +170,7 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     for canary in (
         "future-order-canary", "future-bill-canary", "future-rule-canary",
         "future-case-canary", "future-checkpoint-canary", "future-shock-canary",
-        "private-communication-canary",
+        "pending-trigger-canary", "pending-shock-canary", "private-communication-canary",
     ):
         assert canary not in serialized
 
@@ -324,6 +327,35 @@ def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(ec
     ]
     assert market_order_reads
     assert not any("SELECT *" in sql.upper() for sql in market_order_reads)
+
+
+def test_world_workspace_bounds_historical_migrations_and_shipments(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    rows = range(100, 205)
+    store.executemany(
+        "INSERT INTO migrations (id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick,status) VALUES (?,?,?,?,?,?)",
+        [(row, 1, 1, 2, row, "pending") for row in rows],
+    )
+    store.executemany(
+        "INSERT INTO trade_shipments (id,created_tick,exporter_firm_id,importer_firm_id,"
+        "origin_region_id,destination_region_id,quantity,invoice_cents,invoice_currency,"
+        "arrival_tick,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(row, row, 1, 1, 1, 2, 1, 100, "USD", row + 1, "in_transit")
+         for row in rows],
+    )
+
+    payload = build_world_workspace(store, as_of_tick=300)
+
+    migrations = [row for row in payload["flows"] if row["kind"] == "migration"]
+    shipments = [row for row in payload["flows"] if row["kind"] == "trade"]
+    assert len(migrations) == 100
+    assert len(shipments) == 100
+    assert [row["id"] for row in migrations] == list(range(105, 205))
+    assert [row["id"] for row in shipments] == list(range(105, 205))
+    assert payload["summary"]["migration_count"] == 100
+    assert payload["summary"]["trade_count"] == 100
 
 
 def test_balance_projection_chunks_large_account_sets_below_sqlite_variable_limit():

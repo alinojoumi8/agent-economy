@@ -178,17 +178,23 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "FROM effective_presence ep WHERE ep.tick=? ORDER BY ep.slot,ep.agent_id", (tick,)))
     organizations = [row for row in _firms_as_of(store, tick) if row["active"]]
     migrations = _dicts(store.query(
-        "SELECT id,agent_id,origin_region_id,destination_region_id,requested_tick AS tick,"
-        "completed_tick,status FROM migrations WHERE requested_tick<=? ORDER BY requested_tick,id",
+        "SELECT id,agent_id,origin_region_id,destination_region_id,tick,completed_tick,status "
+        "FROM (SELECT id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick AS tick,completed_tick,status FROM migrations "
+        "WHERE requested_tick<=? ORDER BY requested_tick DESC,id DESC LIMIT 100) "
+        "ORDER BY tick,id",
         (tick,)))
     for migration in migrations:
         if (migration["completed_tick"] is not None
                 and int(migration["completed_tick"]) > tick):
             migration.update({"completed_tick": None, "status": "pending"})
     shipments = _dicts(store.query(
-        "SELECT id,created_tick AS tick,exporter_firm_id,importer_firm_id,origin_region_id,"
+        "SELECT id,tick,exporter_firm_id,importer_firm_id,origin_region_id,"
         "destination_region_id,quantity,invoice_cents,invoice_currency,arrival_tick,status "
-        "FROM trade_shipments WHERE created_tick<=? ORDER BY created_tick,id", (tick,)))
+        "FROM (SELECT id,created_tick AS tick,exporter_firm_id,importer_firm_id,"
+        "origin_region_id,destination_region_id,quantity,invoice_cents,invoice_currency,"
+        "arrival_tick,status FROM trade_shipments WHERE created_tick<=? "
+        "ORDER BY created_tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
     for shipment in shipments:
         if int(shipment["arrival_tick"]) > tick:
             shipment.update({"arrival_tick": None, "status": "in_transit"})
@@ -464,11 +470,16 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
 
 def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
     tick = int(as_of_tick)
+    current = tick == int(store.tick)
     checkpoints = _dicts(store.query(
         "SELECT id,tick,created_at FROM checkpoints WHERE tick<=? ORDER BY tick,id", (tick,)))
+    shock_boundary = (
+        "fired_tick IS NULL OR fired_tick<=?"
+        if current else "fired_tick IS NOT NULL AND fired_tick<=?"
+    )
     shocks = [_json_fields(row, "trigger_json", "params_json") for row in _dicts(store.query(
         "SELECT id,kind,trigger_type,trigger_json,duration_ticks,params_json,label,fired,"
-        "fired_tick,active_until_tick FROM shocks WHERE fired_tick IS NULL OR fired_tick<=? "
+        f"fired_tick,active_until_tick FROM shocks WHERE {shock_boundary} "
         "ORDER BY COALESCE(fired_tick,0),id", (tick,)))]
     for row in shocks:
         _mask_future_ticks(row, tick, "active_until_tick")
@@ -488,7 +499,6 @@ def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
     scenarios = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
         "SELECT id,scenario_key,version,title,manifest_checksum,limitations,metadata_json "
         "FROM scenario_packs ORDER BY id"))]
-    current = tick == int(store.tick)
     experiments = []
     results = []
     if current:

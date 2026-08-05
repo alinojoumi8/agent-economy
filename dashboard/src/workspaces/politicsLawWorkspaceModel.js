@@ -30,7 +30,7 @@ export function normalizePoliticsLawWorkspace(data = {}) {
   const legalEnabled = source.legal?.enabled === true;
   const lobbying = (politicsEnabled ? normalize(source.lobbying, FIELDS.lobbying, "tick") : []).map(row => ({
     ...row,
-    disclosureState: row.disclosed === true || row.disclosed === 1 ? "disclosed" : "undisclosed",
+    disclosure_state: row.disclosed === true || row.disclosed === 1 ? "disclosed" : "undisclosed",
   }));
   return {
     configuration: {

@@ -270,7 +270,7 @@ test("politics and law keeps institutional record types and historical states se
   });
   assert.deepEqual(model.configuration, { politicsEnabled: true, institutionalActionsEnabled: false, legalEnabled: true });
   assert.deepEqual(model.bills.map(row => row.id), [1, 2]);
-  assert.equal(model.lobbying[0].disclosureState, "undisclosed");
+  assert.equal(model.lobbying[0].disclosure_state, "undisclosed");
   assert.equal(model.contracts[0].title, "Supply");
   assert.equal(model.obligations[0].obligation_type, "pay");
   assert.equal(model.matters[0].status, "filed");
@@ -294,9 +294,12 @@ test("politics and law model hides retained rows for disabled institutions", () 
 
 test("World OS maps Politics and Law to the canonical workspace", () => {
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../src/workspaces/PoliticsLawWorkspace.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ PoliticsLawWorkspace \}/);
   assert.match(source, /path="politics-law" element=\{<PoliticsLawWorkspace \/>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Politics & Law"/);
+  assert.match(workspace, /row\.disclosure_state/);
+  assert.doesNotMatch(workspace, /row\.disclosureState/);
 });
 
 test("experiment evidence classification fails closed across release gates", () => {

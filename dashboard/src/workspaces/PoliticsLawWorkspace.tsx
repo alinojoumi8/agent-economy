@@ -101,7 +101,7 @@ export function PoliticsLawWorkspace() {
           { key: "sponsor", label: "Sponsor", render: row => `${text(row.sponsor_type)} ${text(row.sponsor_id)}` },
           { key: "position", label: "Position", render: row => text(row.position) },
           { key: "amount", label: "Amount (cents)", render: row => Number.isFinite(row.amount_cents) ? `${row.amount_cents} cents` : "—" },
-          { key: "disclosure", label: "Disclosure", render: row => text(row.disclosureState) },
+          { key: "disclosure", label: "Disclosure", render: row => text(row.disclosure_state) },
         ]} />
       </article>}
 

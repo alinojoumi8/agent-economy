@@ -6,11 +6,15 @@ const FOCUSABLE = [
   "input:not([disabled]):not([tabindex='-1'])",
   "select:not([disabled]):not([tabindex='-1'])",
   "textarea:not([disabled]):not([tabindex='-1'])",
+  "[contenteditable]:not([contenteditable='false']):not([tabindex='-1'])",
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
 export function isTabbableElement(element: HTMLElement): boolean {
-  if (element.tabIndex < 0 || element.matches(":disabled")) return false;
+  const implicitContentEditable = element.matches(
+    "[contenteditable]:not([contenteditable='false']):not([tabindex])",
+  );
+  if ((!implicitContentEditable && element.tabIndex < 0) || element.matches(":disabled")) return false;
   const style = getComputedStyle(element);
   return style.display !== "none"
     && style.visibility !== "hidden"
