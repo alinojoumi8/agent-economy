@@ -80,8 +80,8 @@ adding it to the observatory's frequent polling payload.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/metrics?names=...` | Named time series; includes output, labor income, CPI, inflation, labor, market, and distribution metrics |
-| `GET` | `/api/agents` | Legacy identity/status array; add `limit` (1–200), `after_id`, `q`, or `population_tier=core|periphery` for a bounded cursor page |
-| `GET` | `/api/agents/{id}` | Persona, accounts, loans, bounded beliefs, `belief_history`, memories, holdings, and decision audit |
+| `GET` | `/api/agents` | Identity, status, and execution list; add `limit` (1–200), `after_id`, `q`, or `population_tier=core|periphery` for a bounded cursor page |
+| `GET` | `/api/agents/{id}` | Persona, accounts, loans, bounded beliefs and history, memories, holdings, decision audit, current compute plan/route, skills, XP, and progression/subscription history |
 | `GET` | `/api/banks` | Operator ground-truth balance sheets and trust |
 | `GET` | `/api/firms` | Sector, status, inventory, price, workers, cash, and stock price |
 | `GET` | `/api/institutions` | Government, VC, healthcare, and outlets |
@@ -90,6 +90,7 @@ adding it to the observatory's frequent polling payload.
 | `GET` | `/api/events?limit=80&min_importance=0` | Recent append-only event spine |
 | `GET` | `/api/trades?limit=50` | Latest executed exchange trades |
 | `GET` | `/api/cost` | Governor plus model/purpose/agent cost breakdown |
+| `GET` | `/api/llm/runtime` | Global/provider capacity, active/queued calls, peaks, p50/p95 queue/response/day latency, cooldowns, failures, rate limits, and fallbacks |
 | `GET` | `/api/v2/datasets` | Verified manifests/targets plus the latest R21 source and calibrated-versus-synthetic distance summary |
 
 Default macro metrics include `gdp_proxy` (daily final-goods sales),
@@ -137,14 +138,40 @@ kinds return HTTP 400; halted runs return HTTP 409.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/report` | Generates/reuses a report at a completed tick boundary; returns `409` while Run or a partial tick is active |
+| `POST` | `/api/report` | Generates/reuses a report at a completed tick boundary and returns its filesystem path plus served `/reports/...` URL in local mode; returns `409` while Run or a partial tick is active |
 | `GET` | `/api/replay/runs` | Lists stored runs |
 | `GET` | `/api/replay/{run_id}/summary` | Stored run summary |
 | `GET` | `/api/replay/{run_id}/metrics` | Stored metrics; optional `names` |
 | `GET` | `/api/replay/{run_id}/tick/{tick}` | Events/state view for one tick |
 
-Generated reports are served under `/reports/`. The replay viewer is read-only;
+Generated reports are served from the configured `report_dir` under `/reports/`.
+The replay viewer is read-only;
 `python run.py --replay RUN_ID` is the separate exact engine re-execution proof.
+
+## External Agent Gateway
+
+Semantics 9 and later expose one scoped boundary for owner-hosted agents. The
+generated contract is available at `/api/v2/openapi.json` and checked in at
+[`openapi/agent-economy-v2.json`](../openapi/agent-economy-v2.json).
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET`, `POST` | `/mcp` | Remote Streamable HTTP MCP; bearer OAuth or scoped PAT |
+| `POST` | `/oauth/register` | Dynamic registration for public PKCE clients |
+| `GET` | `/oauth/authorize` | Human consent and owned-connection selection |
+| `POST` | `/oauth/token`, `/oauth/revoke` | Resource-bound token rotation and revocation |
+| `GET` | `/api/v2/agent/me`, `/api/v2/agent/turn`, `/api/v2/agent/events` | Identity, long-poll turn mailbox, and cursor events |
+| `POST` | `/api/v2/agent/actions` | Idempotent action submission for the exact target tick and projection hash |
+| `GET` | `/api/v2/agent/actions/{submission_id}` | Persisted action receipt |
+| `GET`, `POST` | `/api/v2/agent/commons` | Scope-filtered Commons read/write adapter |
+| `GET`, `POST` | `/api/v2/tenants/{tenant_id}/agent-connections` | Human owner/admin connection control plane |
+| `POST` | `/api/v2/tenants/{tenant_id}/agent-connections/{id}/credentials` | One-time PAT rotation or revocation |
+
+See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
+[client quickstart](../clients/README.md) for the turn and receipt protocol.
+World observations and Commons content are untrusted data; these endpoints never
+return private messages, prompts, chain-of-thought, provider payloads, or owner
+identity.
 
 ## WebSocket
 

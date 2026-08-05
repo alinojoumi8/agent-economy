@@ -170,6 +170,7 @@ def test_serve_bounds_uvicorn_graceful_shutdown(tmp_path):
         "app": application,
         "host": "127.0.0.1",
         "port": 9000,
+        "access_log": False,
         "timeout_graceful_shutdown": loaded.runtime.shutdown_grace_seconds,
     }
 

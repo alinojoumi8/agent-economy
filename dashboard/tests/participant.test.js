@@ -44,3 +44,37 @@ test("participant history appends cursor pages without duplicate actions", () =>
     next_before_id: null,
   });
 });
+
+test("participant form reads and builds nested business ideas", () => {
+  const descriptor = {
+    type: "found_company",
+    fields: [
+      { name: "name", kind: "text", default: "New Firm" },
+      { name: "mission", kind: "text", action_path: ["business_idea", "mission"] },
+      { name: "offering", kind: "text", action_path: ["business_idea", "offering"] },
+    ],
+  };
+  const queued = {
+    type: "found_company",
+    name: "Queued Firm",
+    business_idea: { mission: "Serve neighbors", offering: "Local goods" },
+  };
+
+  assert.deepEqual(initialParticipantValues(descriptor, queued), {
+    name: "Queued Firm",
+    mission: "Serve neighbors",
+    offering: "Local goods",
+  });
+  assert.deepEqual(buildParticipantAction(descriptor, {
+    name: "New Firm",
+    mission: "Build useful things",
+    offering: "Useful goods",
+  }), {
+    type: "found_company",
+    name: "New Firm",
+    business_idea: {
+      mission: "Build useful things",
+      offering: "Useful goods",
+    },
+  });
+});

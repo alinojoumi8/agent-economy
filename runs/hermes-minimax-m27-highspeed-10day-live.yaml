@@ -1,0 +1,15 @@
+# Ten-day, MiniMax-M2.7-highspeed comparison run.
+# The seed and world shape match the M3 comparison profile.
+extends: hermes-minimax-m3-light-live.yaml
+
+seed: 20260729
+
+llm:
+  default_route: {provider: minimax, model: MiniMax-M2.7-highspeed}
+  citizen_model_cohorts:
+    - name: minimax-m27-highspeed-only
+      count: 8
+      primary: {provider: minimax, model: MiniMax-M2.7-highspeed, timeout_s: 240}
+  # USD per 1M tokens, pinned from MiniMax's current pay-as-you-go table.
+  pricing:
+    MiniMax-M2.7-highspeed: {in: 0.60, out: 2.40, cache: 0.06}

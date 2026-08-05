@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from agents.policies import conversation_turn
@@ -7,7 +8,7 @@ from world.loop import World
 from world.newsroom import Conversations
 
 
-def _world(tmp_path) -> World:
+def _world(tmp_path, conversation_config: dict | None = None) -> World:
     config = {
         "seed": 42,
         "population": {"size": 24},
@@ -23,11 +24,66 @@ def _world(tmp_path) -> World:
             {"id": 2, "name": "B", "slant": "cautious-pro-labor"},
         ],
     }
+    if conversation_config is not None:
+        config["conversations"] = conversation_config
     store = Store(str(tmp_path / "conversation-variety.db"))
     store.init_run_meta("conversation-variety", config["seed"], config)
     world = World(store, config)
     world.initialize()
     return world
+
+
+def test_full_horizon_similarity_window_retains_all_sixty_days(tmp_path):
+    world = _world(tmp_path, {
+        "turns": 2,
+        "recent_utterance_limit": 360,
+        "similarity_jaccard_threshold": 0.65,
+        "similarity_shingle_threshold": 0.65,
+    })
+    for index in range(120):
+        world.conversations._remember_line(
+            index % 25 + 1, "market conditions", f"unique line {index}")
+
+    assert world.conversations._recent_global.maxlen == 120
+    assert len(world.conversations._recent_global) == 120
+    assert world.conversations._recent_global[0] == "unique line 0"
+
+
+def test_coverage_first_pairs_give_every_eligible_agent_a_turn(tmp_path):
+    world = _world(tmp_path)
+    conversations = world.conversations
+    conversations.turns = 2
+    conversations.coverage_first = True
+    eligible = {
+        int(row["agent_id"])
+        for row in world.store.query(
+            "SELECT agent_a AS agent_id FROM social_ties "
+            "UNION SELECT agent_b AS agent_id FROM social_ties")
+    }
+
+    covered: set[int] = set()
+    for tick in range(1, len(eligible) * 2 + 1):
+        pairs = conversations._sample_pairs(tick, 1)
+        assert pairs
+        a_id, b_id = pairs[0]
+        asyncio.run(conversations._converse(tick, a_id, b_id))
+        covered.update((a_id, b_id))
+        if covered == eligible:
+            break
+
+    assert covered == eligible
+    for row in world.store.query(
+            "SELECT id,participant_ids FROM conversations ORDER BY id"):
+        participants = {int(value) for value in json.loads(
+            row["participant_ids"])}
+        authors = {
+            int(message["agent_id"])
+            for message in world.store.query(
+                "SELECT agent_id FROM messages WHERE conv_id=? ORDER BY seq",
+                (int(row["id"]),),
+            )
+        }
+        assert authors == participants
 
 
 def test_scripted_conversation_avoids_recent_lines_and_answers_questions():
@@ -70,6 +126,24 @@ def test_grounding_guard_rejects_live_provider_backstories():
     ]
     assert all(Conversations._has_ungrounded_detail(line) for line in unsupported)
     assert not any(Conversations._has_ungrounded_detail(line) for line in grounded)
+
+
+def test_configured_similarity_guard_rejects_repeated_stock_reply(tmp_path):
+    world = _world(tmp_path)
+    world.conversations.config["conversations"] = {
+        "similarity_jaccard_threshold": 0.65,
+        "similarity_shingle_threshold": 0.65,
+    }
+    prior = [
+        "That is fair, Reporter The Ledger; we may need tomorrow's "
+        "numbers to understand the effects."
+    ]
+    repeated = (
+        "That is fair, Secretary Lin; we may need tomorrow's numbers "
+        "to understand the effects."
+    )
+
+    assert world.conversations._previously_said(repeated, prior)
 
 
 def test_conversation_replaces_ungrounded_provider_output(tmp_path):
@@ -182,6 +256,60 @@ def test_live_output_budget_activation_preserves_historical_tick_contracts(tmp_p
         (2, "reporter", 1600),
         (2, "newsroom", 1200),
     ]
+
+
+def test_conversation_replaces_missing_provider_text(tmp_path):
+    world = _world(tmp_path)
+    world.conversations.turns = 2
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+
+    async def missing_text_completion(request, **kwargs):
+        return SimpleNamespace(parsed={
+            "actions": [{"type": "do_nothing"}],
+            "reasoning": "unparseable output; no-op",
+        })
+
+    world.conversations.gw.complete = missing_text_completion
+    asyncio.run(world.conversations._converse(
+        1, agent_ids[0], agent_ids[1]))
+
+    lines = list(world.store.query(
+        "SELECT agent_id,text FROM messages ORDER BY seq"))
+    assert len(lines) == 2
+    assert {int(row["agent_id"]) for row in lines} == set(agent_ids)
+    assert all(str(row["text"]).strip() for row in lines)
+
+
+def test_fallback_exhaustion_uses_a_genuinely_unique_line(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path)
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    repeated = "The part I keep coming back to is who bears the cost first."
+    world.conversations._remember_line(
+        agent_ids[0], "market conditions", repeated)
+
+    async def ungrounded_completion(request, **kwargs):
+        return SimpleNamespace(parsed={
+            "text": "I saw it on LinkedIn after my clients called last week.",
+            "rumor_bank": None,
+        })
+
+    monkeypatch.setattr(
+        "world.newsroom.conversation_turn",
+        lambda context: {"text": repeated, "rumor_bank": None},
+    )
+    world.conversations.gw.complete = ungrounded_completion
+    asyncio.run(world.conversations._converse(
+        1, agent_ids[0], agent_ids[1]))
+
+    prior = [repeated]
+    for row in world.store.query(
+            "SELECT text FROM messages ORDER BY seq"):
+        text = str(row["text"])
+        assert not world.conversations._too_similar(text, prior)
+        prior.append(text)
 
 
 def test_shared_topics_rotate_across_conversation_pairs(tmp_path):

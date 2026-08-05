@@ -4,14 +4,22 @@ import json
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 import pytest
 
 from engine.store import Store
 from engine.actions import ActionExecutor
+from llm.adapters import catalog_model_suggestions
 from llm.gateway import Gateway
-from observability import JsonFormatter, log_event, safe_fields
+from observability import (
+    JsonFormatter,
+    configure_logging,
+    log_event,
+    safe_fields,
+)
 import run as cli
+from run_config import load_config
 from world.loop import World
 
 
@@ -57,6 +65,37 @@ def test_log_event_attaches_testable_structured_fields(caplog):
     assert record.event_fields == {
         "run_id": "run-2", "authorization": "[REDACTED]",
     }
+
+
+def test_configure_logging_writes_to_a_bounded_json_file(tmp_path, monkeypatch):
+    path = tmp_path / "operations.jsonl.log"
+    monkeypatch.setenv("AGENT_ECONOMY_LOG_FILE", str(path))
+    root = logging.getLogger()
+    existing_handlers = list(root.handlers)
+
+    try:
+        configure_logging("INFO")
+        log_event(
+            logging.getLogger("agent_economy.test.file"),
+            logging.INFO, "file.test.completed", tick=7)
+        added = [handler for handler in root.handlers
+                 if handler not in existing_handlers]
+        for handler in added:
+            handler.flush()
+
+        payload = json.loads(path.read_text(encoding="utf-8").strip())
+        assert payload["event"] == "file.test.completed"
+        assert payload["tick"] == 7
+        rotating = next(
+            handler for handler in added
+            if isinstance(handler, RotatingFileHandler))
+        assert rotating.maxBytes == 10 * 1024 * 1024
+        assert rotating.backupCount == 5
+    finally:
+        for handler in list(root.handlers):
+            if handler not in existing_handlers:
+                root.removeHandler(handler)
+                handler.close()
 
 
 def test_cli_loads_dotenv_before_configuring_logging(monkeypatch):
@@ -303,6 +342,81 @@ def test_provider_preflight_emits_a_summary_without_secrets(tmp_path, caplog):
     store.close()
 
 
+def test_catalog_model_suggestions_are_bounded_and_do_not_alias():
+    suggestions = catalog_model_suggestions(
+        "MiniMax-M3-highspeed",
+        {"MiniMax-M3", "MiniMax-M2.7-highspeed", "unrelated-model"},
+    )
+
+    assert suggestions[0] == "MiniMax-M3"
+    assert "MiniMax-M3" in suggestions
+    assert "MiniMax-M2.7-highspeed" in suggestions
+    assert "unrelated-model" not in suggestions
+    assert len(suggestions) <= 3
+
+
+def test_live_preflight_rejects_catalog_miss_before_smoke_completion(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.llm")
+    config = {
+        "llm": {
+            "default_route": {
+                "provider": "scripted",
+                "model": "MiniMax-M3-highspeed",
+            },
+            "routes": {},
+        },
+        "budget": {"cap_usd": 1.0},
+    }
+    store = Store(str(tmp_path / "catalog-miss.db"))
+    store.init_run_meta("catalog-miss", 1, config)
+
+    class CatalogMissAdapter:
+        complete_calls = 0
+
+        async def healthcheck(self, model):
+            assert model == "MiniMax-M3-highspeed"
+            return {
+                "ok": False,
+                "model": model,
+                "model_available": False,
+                "live": True,
+                "models_returned": 2,
+                "suggested_models": ["MiniMax-M3", "MiniMax-M2.7-highspeed"],
+            }
+
+        async def complete(self, *_args, **_kwargs):
+            self.complete_calls += 1
+            raise AssertionError("catalog misses must not make a smoke completion")
+
+    gateway = Gateway(store, config)
+    adapter = CatalogMissAdapter()
+    gateway.adapters["scripted"] = adapter
+    report = asyncio.run(gateway.preflight(live=True))
+
+    assert report["ready"] is True
+    assert report["live_ready"] is False
+    assert report["checks"] == [{
+        "provider": "scripted",
+        "ok": False,
+        "model": "MiniMax-M3-highspeed",
+        "model_available": False,
+        "live": True,
+        "models_returned": 2,
+        "suggested_models": ["MiniMax-M3", "MiniMax-M2.7-highspeed"],
+        "contract_ok": False,
+        "reason": "model_not_in_catalog",
+    }]
+    assert adapter.complete_calls == 0
+    rejected = next(
+        record for record in caplog.records
+        if getattr(record, "event_name", "") == "llm.preflight.model_unavailable"
+    )
+    assert rejected.event_fields["suggested_models"] == [
+        "MiniMax-M3", "MiniMax-M2.7-highspeed",
+    ]
+    store.close()
+
+
 def test_world_run_lifecycle_and_checkpoint_are_logged(tmp_path, caplog):
     caplog.set_level(logging.INFO, logger="agent_economy.world")
     config = {
@@ -332,6 +446,9 @@ def test_world_run_lifecycle_and_checkpoint_are_logged(tmp_path, caplog):
 
     events = [getattr(record, "event_name", "") for record in caplog.records]
     assert "world.run.started" in events
+    assert "world.phase.started" in events
+    assert "world.phase.completed" in events
+    assert "world.tick.completed" in events
     assert "world.checkpoint.created" in events
     assert "world.run.finished" in events
     finished = next(record for record in caplog.records
@@ -340,6 +457,60 @@ def test_world_run_lifecycle_and_checkpoint_are_logged(tmp_path, caplog):
     assert finished.event_fields["end_tick"] == 1
     assert finished.event_fields["status"] == "paused"
     store.close()
+
+
+def test_resource_guard_pauses_after_a_sustained_limit(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="agent_economy.world")
+    config = load_config("runs/base.yaml")
+    config["resource_guard"] = {
+        "enabled": True,
+        "sample_interval_s": 0.1,
+        "max_cpu_percent": 95,
+        "max_memory_percent": 90,
+        "min_available_memory_gb": 4,
+        "consecutive_breaches": 1,
+    }
+    store = Store(str(tmp_path / "resource-guard.db"))
+    store.init_run_meta("resource-guard", int(config["seed"]), config)
+    world = World(store, config)
+    world.status = "running"
+    monkeypatch.setattr(world, "_resource_snapshot", lambda: {
+        "system_cpu_percent": 99.0,
+        "system_memory_percent": 50.0,
+        "available_memory_gb": 8.0,
+        "process_rss_mb": 500.0,
+        "global_in_flight": 2,
+        "global_queue_depth": 1,
+        "provider_in_flight": {"scripted": 2},
+        "provider_queue_depth": {"scripted": 1},
+    })
+
+    asyncio.run(world._monitor_resources())
+
+    assert world._pause_requested
+    assert world.last_pause_reason["reason"] == "resource_guard"
+    assert world.last_pause_reason["breaches"] == ["system_cpu"]
+    events = [getattr(record, "event_name", "") for record in caplog.records]
+    assert "runtime.resource.sample" in events
+    assert "runtime.resource.limit_reached" in events
+    world.close()
+
+
+def test_resource_guard_detects_pagefile_pressure(tmp_path):
+    config = load_config("runs/base.yaml")
+    store = Store(str(tmp_path / "swap-resource-guard.db"))
+    store.init_run_meta("swap-resource-guard", int(config["seed"]), config)
+    world = World(store, config)
+    world.resource_guard = {"max_swap_percent": 50}
+    try:
+        assert world._resource_breaches({
+            "system_cpu_percent": 10.0,
+            "system_memory_percent": 40.0,
+            "available_memory_gb": 32.0,
+            "system_swap_percent": 50.0,
+        }) == ["system_swap"]
+    finally:
+        world.close()
 
 
 def test_unexpected_action_handler_failure_is_logged(economy, caplog):

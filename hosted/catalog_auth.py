@@ -1,8 +1,7 @@
 """Durable tenant-aware authentication backed by :mod:`hosted.catalog`.
 
-Unlike the generic authentication domain service, this deployment service
-binds every invite and session to a tenant at creation time.  There is one
-record per credential: no in-memory or dual catalog/auth-store writes.
+This deployment service binds every invite and session to a tenant at creation
+time. There is one durable record per credential.
 """
 
 from __future__ import annotations
@@ -337,7 +336,7 @@ class CatalogAuthService:
             and user.disabled_at is None
             and membership is not None
             and membership.status == "active"
-            and membership.role in {"observer", "admin"}
+            and membership.role in {"observer", "agent_owner", "admin"}
         )
         if not verified or not eligible:
             self._audit(

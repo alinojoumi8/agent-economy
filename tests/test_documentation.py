@@ -3,6 +3,29 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_CASES_PATH = ROOT / "docs" / "test-cases.md"
+VALID_TIERS = {
+    "fast-offline",
+    "full-offline",
+    "hosted-integration",
+    "live-provider",
+    "release-evidence",
+}
+VALID_STATUSES = {
+    "existing-coverage",
+    "newly-automated",
+    "opt-in-gate",
+    "contractual-gap",
+}
+EXTENSION_GROUPS = (
+    "EXT-GATEWAY",
+    "EXT-COMMONS",
+    "EXT-COGNITION",
+    "EXT-CITIZENSHIP",
+    "EXT-LIVECITY",
+)
+ENTRY_HEADING = re.compile(r"^### (AE-[A-Z0-9-]+)\s*$", re.MULTILINE)
+FIELD = re.compile(r"^- \*\*([a-z_]+)\*\*: (.+)$", re.MULTILINE)
 MAINTAINED_ROOT_DOCS = (
     "README.md", "PRD.md", "TECH-SPEC.md", "TASKS.md",
     "CONTRIBUTING.md", "SECURITY.md",
@@ -99,3 +122,118 @@ def test_semantics_7_closure_status_records_merged_main_and_post_merge_ci():
         for stale_phrase in STALE_SEMANTICS_7_MERGE_PHRASES:
             assert stale_phrase not in lowered, (
                 f"{relative_path} retains stale pending-merge text: {stale_phrase}")
+
+
+def test_current_release_status_has_one_authoritative_ledger():
+    status = (ROOT / "docs/implementation-status.md").read_text(encoding="utf-8")
+    lowered = status.lower()
+    assert "single maintained release-status" in lowered
+    assert "ledger" in lowered
+    assert "schema 17 / semantics 12" in lowered
+    assert "semantics 8 / schema 12" in lowered
+    assert "**released deterministic causal baseline**" in lowered
+    assert "semantics 9 / schema 13" in lowered
+    assert "semantics 10 / schema 14" in lowered
+    assert lowered.count("**rollout-gated**") >= 2
+    assert "semantics 11 / schema 15" in lowered
+    assert "semantics 12 / schema 17" in lowered
+    assert "historical semantics-7 closure matrix" in lowered
+
+    status_indexes = {
+        "README.md": "docs/implementation-status.md",
+        "docs/README.md": "implementation-status.md",
+        "docs/implementation-status.html": "implementation-status.md",
+        "docs/world-os/README.md": "../implementation-status.md",
+        "docs/world-os/PRD.md": "../implementation-status.md",
+        "docs/world-os/TECH-SPEC.md": "../implementation-status.md",
+        "docs/world-os/REQUIREMENTS-MATRIX.md": "../implementation-status.md",
+        "docs/world-os/SEMANTICS-8-RELEASE-STATUS.md":
+            "../implementation-status.md",
+    }
+    for relative_path, expected_target in status_indexes.items():
+        text = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+        escaped_target = re.escape(expected_target)
+        markdown_link = re.search(
+            rf"\[[^\]]+\]\({escaped_target}(?:#[^)]+)?\)",
+            text,
+        )
+        html_link = re.search(
+            rf"""href=["']{escaped_target}(?:#[^"']+)?["']""",
+            text,
+        )
+        assert markdown_link or html_link, (
+            f"{relative_path} does not link to {expected_target}")
+
+
+def test_full_suite_ci_uses_deterministic_cross_platform_shards():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7]" in workflow
+    assert "python -m pytest tests/ -q" in workflow
+    assert "-p scripts.pytest_shard" in workflow
+    assert "--ci-shard-index ${{ matrix.shard }}" in workflow
+    assert "--ci-shard-count 8" in workflow
+
+
+def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
+    matches = list(ENTRY_HEADING.finditer(text))
+    entries: dict[str, dict[str, str]] = {}
+    for index, match in enumerate(matches):
+        entry_id = match.group(1)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[start:end]
+        fields = {key: value.strip() for key, value in FIELD.findall(body)}
+        entries[entry_id] = fields
+    return entries
+
+
+def test_prd_traceable_test_catalog_structure_and_references():
+    assert TEST_CASES_PATH.exists(), "docs/test-cases.md is required"
+    text = TEST_CASES_PATH.read_text(encoding="utf-8")
+    entries = _parse_test_case_catalog(text)
+    assert entries, "catalog must contain AE-* entries"
+
+    requirements = {
+        fields.get("requirement", "") for fields in entries.values()
+        if fields.get("requirement", "").startswith("R")
+    }
+    missing_requirements = [
+        f"R{number}" for number in range(1, 33)
+        if f"R{number}" not in requirements
+    ]
+    assert not missing_requirements, (
+        "catalog is missing requirements: " + ", ".join(missing_requirements))
+
+    extension_requirements = {
+        fields.get("requirement", "") for fields in entries.values()
+        if fields.get("requirement", "").startswith("EXT-")
+    }
+    missing_extensions = [
+        group for group in EXTENSION_GROUPS if group not in extension_requirements
+    ]
+    assert not missing_extensions, (
+        "catalog is missing extension groups: " + ", ".join(missing_extensions))
+
+    required_fields = (
+        "requirement", "risk", "preconditions", "given", "when", "then",
+        "oracle", "test", "tier", "status",
+    )
+    problems = []
+    for entry_id, fields in sorted(entries.items()):
+        for field in required_fields:
+            if field not in fields or not fields[field]:
+                problems.append(f"{entry_id}: missing {field}")
+        tier = fields.get("tier", "")
+        status = fields.get("status", "")
+        if tier not in VALID_TIERS:
+            problems.append(f"{entry_id}: invalid tier {tier!r}")
+        if status not in VALID_STATUSES:
+            problems.append(f"{entry_id}: invalid status {status!r}")
+        test_ref = fields.get("test", "").strip()
+        if status == "contractual-gap" or test_ref in {"", "none", "-"}:
+            continue
+        # Catalog may reference a file or a directory-like path relative to repo root.
+        candidate = ROOT / test_ref
+        if not candidate.exists():
+            problems.append(f"{entry_id}: missing test reference {test_ref}")
+    assert not problems, "catalog structural issues:\n" + "\n".join(problems)

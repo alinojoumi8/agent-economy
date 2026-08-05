@@ -8,6 +8,7 @@ import pytest
 
 from engine.store import Store
 from llm.gateway import GatewayInterrupted, Governor, LLMRequest
+from oracle.rules import ResolutionRuleError, validate_resolution_rule
 from world.loop import World
 
 
@@ -249,6 +250,68 @@ def test_rumor_propagation_moves_beliefs_and_deposits(tmp_path):
     assert ok, diag
 
 
+def test_semantics7_baseline_citizens_are_active_core_without_r19(tmp_path):
+    maintained = _fresh_world(
+        tmp_path, "sem7-baseline.db", engine_semantics_version=7,
+        population={"size": 12, "baseline_citizens_core": True})
+    citizens = maintained.store.query(
+        "SELECT id,population_tier,pinned_core FROM agents "
+        "WHERE role IS NULL ORDER BY id")
+
+    assert citizens
+    assert {row["population_tier"] for row in citizens} == {"core"}
+    assert {int(row["pinned_core"]) for row in citizens} == {1}
+    scheduled_ids = {
+        int(agent["id"])
+        for tick in range(1, 31)
+        for agent in maintained.runtime.scheduler.scheduled_agents(tick)
+        if agent["role"] is None
+    }
+    assert scheduled_ids == {int(row["id"]) for row in citizens}
+
+    # Markerless stored semantics 7 and every semantics 1-6 run retain the
+    # historical implicit peripheral tier.
+    unmarked = _fresh_world(
+        tmp_path, "sem7-unmarked.db", engine_semantics_version=7,
+        population={"size": 12})
+    assert unmarked.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='core'", default=0) == 0
+
+    legacy = _fresh_world(
+        tmp_path, "sem6-baseline.db", engine_semantics_version=6,
+        population={"size": 12, "baseline_citizens_core": True})
+    assert legacy.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='core'", default=0) == 0
+    assert legacy.store.scalar(
+        "SELECT COUNT(*) FROM agents WHERE role IS NULL "
+        "AND population_tier='periphery'", default=0) > 0
+
+
+def test_institutional_act_cadence_is_configurable_and_phased(tmp_path):
+    world = _fresh_world(
+        tmp_path, "institutional-cadence.db",
+        behavior={"institutional_act_every": 7})
+    agent = world.store.query_one(
+        "SELECT id,role FROM agents WHERE role IS NOT NULL "
+        "AND role NOT IN ('central_banker','permit_clerk') ORDER BY id LIMIT 1")
+    agent_id = int(agent["id"])
+
+    scheduled_ticks = [
+        tick
+        for tick in range(1, 15)
+        if agent_id in {
+            int(row["id"])
+            for row in world.runtime.scheduler.scheduled_agents(tick)
+        }
+    ]
+
+    phase = agent_id % 7
+    assert scheduled_ticks == [
+        tick for tick in range(1, 15) if tick % 7 == phase]
+
+
 # ── checkpoint / resume ──────────────────────────────────────────────────────
 def test_checkpoint_and_resume(tmp_path):
     w = _fresh_world(tmp_path, "ck.db", checkpoint_every=5,
@@ -325,3 +388,59 @@ def test_oracle_prediction_and_resolution(tmp_path):
     stored = w.store.query_one(
         "SELECT p, status FROM predictions WHERE id=?", (invalid["prediction_id"],))
     assert stored["p"] is None and stored["status"] == "insufficient_data"
+
+
+@pytest.mark.parametrize("rule", [
+    {"type": "invented_rule"},
+    {"type": "bank_run", "window": 1.5, "deposit_drop": 0.3},
+    {"type": "bank_run", "window": 5, "deposit_drop": float("nan")},
+    {"type": "metric_above", "metric": "missing metric", "threshold": 1},
+    {"type": "bank_failure", "unexpected": True},
+])
+def test_resolution_rule_contract_rejects_unknown_or_unbounded_rules(rule):
+    with pytest.raises(ResolutionRuleError):
+        validate_resolution_rule(rule, metric_exists=lambda _name: False)
+
+
+def test_strict_unknown_resolution_rule_fails_closed_without_false_score(tmp_path):
+    world = _fresh_world(
+        tmp_path, "strict-oracle.db",
+        oracle={"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                "strict_resolution_rules": True})
+    world.gateway.scripted.register("oracle", lambda context: {
+        "p": 0.8,
+        "drivers": ["bounded evidence"],
+        "confidence": "med",
+        "resolution_rule": {"type": "invented_rule"},
+        "deadline_tick": int(context["tick"]) + 30,
+        "reasoning": "unsupported contract",
+    })
+    rejected = asyncio.run(world.oracle.ask("Will an invented event happen?"))
+    assert rejected["insufficient_data"] is True
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_rule_rejected'") == 1
+
+    strict_id = world.store.insert(
+        "predictions", asked_tick=0, question="strict stored rule", p=0.8,
+        resolution_rule_json=json.dumps({"type": "invented_rule"}),
+        deadline_tick=1, status="open")
+    assert world.oracle.resolve_open(1) == []
+    strict = world.store.query_one(
+        "SELECT status,outcome,brier FROM predictions WHERE id=?", (strict_id,))
+    assert strict["status"] == "insufficient_data"
+    assert strict["outcome"] is None and strict["brier"] is None
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='oracle_resolution_invalid'") == 1
+
+    # Markerless/stored historical configs retain the old resolver behavior.
+    world.oracle.strict_resolution_rules = False
+    legacy_id = world.store.insert(
+        "predictions", asked_tick=0, question="legacy stored rule", p=0.8,
+        resolution_rule_json=json.dumps({"type": "invented_rule"}),
+        deadline_tick=1, status="open")
+    resolved = world.oracle.resolve_open(1)
+    assert resolved == [{"id": legacy_id, "outcome": 0, "brier": pytest.approx(0.64)}]
+    legacy = world.store.query_one(
+        "SELECT status,outcome,brier FROM predictions WHERE id=?", (legacy_id,))
+    assert legacy["status"] == "resolved"
+    assert legacy["outcome"] == 0 and legacy["brier"] == pytest.approx(0.64)

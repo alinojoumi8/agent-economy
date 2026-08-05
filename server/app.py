@@ -7,12 +7,13 @@ broadcast over WebSocket so the dashboard updates within 2s of tick completion
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -93,6 +94,111 @@ def _report_artifact_metadata(path: str, tick: int) -> dict:
     }
 
 
+def _utc_time(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _agent_execution_document(
+    *,
+    latest_route: Mapping[str, Any] | None,
+    readiness_mode: str,
+    current_tick: int | None = None,
+    connection: Mapping[str, Any] | None = None,
+    latest_turn: Mapping[str, Any] | None = None,
+    latest_submission: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Describe the decision source using durable evidence, never configuration alone."""
+    if connection is not None:
+        current_time = now or datetime.now(timezone.utc)
+        connection_status = str(connection.get("status") or "pending_actor")
+        lease_expires_at = connection.get("lease_expires_at")
+        lease_expiry = _utc_time(lease_expires_at)
+        actor_id = connection.get("actor_id")
+        receipt_is_current = (
+            latest_submission is not None
+            and str(latest_submission.get("status")) == "executed"
+            and current_tick is not None
+            and int(latest_submission.get("target_tick", -1)) == int(current_tick)
+        )
+        if actor_id is None or connection_status == "pending_actor":
+            state = "hermes_pending"
+        elif connection_status == "active" and (
+            receipt_is_current
+            or (lease_expiry is not None and lease_expiry > current_time)
+        ):
+            state = "hermes_connected"
+        else:
+            state = "offline_fallback"
+        document: dict[str, Any] = {
+            "source": "external",
+            "state": state,
+            "provider": None,
+            "model": None,
+            "purpose": "external_agent",
+            "tick": None,
+            "connection_status": connection_status,
+            "last_seen_at": connection.get("last_seen_at"),
+            "lease_expires_at": lease_expires_at,
+            "latest_turn": dict(latest_turn) if latest_turn else None,
+            "latest_receipt": dict(latest_submission) if latest_submission else None,
+        }
+        if latest_submission is not None:
+            document["tick"] = latest_submission.get("target_tick")
+        elif latest_turn is not None:
+            document["tick"] = latest_turn.get("target_tick")
+        return document
+
+    if latest_route is not None:
+        provider = str(latest_route.get("provider") or "scripted")
+        lowered = provider.lower()
+        if lowered in {"scripted", "mock"}:
+            state = "scripted"
+        elif lowered == "replay":
+            state = "recorded_replay"
+        else:
+            state = "live"
+        return {
+            "source": "native",
+            "state": state,
+            "provider": provider,
+            "model": latest_route.get("model"),
+            "purpose": latest_route.get("purpose"),
+            "tick": latest_route.get("tick"),
+            "connection_status": None,
+            "last_seen_at": None,
+            "lease_expires_at": None,
+            "latest_turn": None,
+            "latest_receipt": {
+                "kind": "llm_call",
+                "id": latest_route.get("id"),
+                "status": "recorded",
+                "tick": latest_route.get("tick"),
+            },
+        }
+
+    state = "awaiting_live" if str(readiness_mode).lower() == "network" else "scripted"
+    return {
+        "source": "native",
+        "state": state,
+        "provider": None,
+        "model": None,
+        "purpose": None,
+        "tick": None,
+        "connection_status": None,
+        "last_seen_at": None,
+        "lease_expires_at": None,
+        "latest_turn": None,
+        "latest_receipt": None,
+    }
+
+
 def create_app(world: World, *, served_ticks: int | None = None,
                hosted_safe: bool = False) -> FastAPI:
     controller = RunController(
@@ -103,6 +209,8 @@ def create_app(world: World, *, served_ticks: int | None = None,
     app.state.run_controller = controller
     from server.v2_api import install_v2_routes
     install_v2_routes(app, world, controller)
+    from server.external_api import install_external_routes
+    install_external_routes(app, world, hosted_safe=hosted_safe)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 
@@ -115,27 +223,206 @@ def create_app(world: World, *, served_ticks: int | None = None,
             "api_base": "/api",
         }
 
+    def agent_execution_maps() -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
+        readiness_mode = str(world.gateway.readiness().get("mode") or "offline")
+        latest_routes = {
+            int(row["agent_id"]): dict(row)
+            for row in store.query(
+                "SELECT c.id,c.agent_id,c.provider,c.model,c.purpose,c.tick "
+                "FROM llm_calls c JOIN ("
+                "SELECT agent_id,MAX(id) AS id FROM llm_calls "
+                "WHERE agent_id IS NOT NULL GROUP BY agent_id"
+                ") latest ON latest.id=c.id"
+            )
+        }
+        connections: dict[int, dict[str, Any]] = {}
+        connection_ids: dict[int, str] = {}
+        for row in store.query(
+            "SELECT id,status,actor_id,last_seen_at,lease_expires_at FROM ("
+            "SELECT id,status,actor_id,last_seen_at,lease_expires_at,"
+            "ROW_NUMBER() OVER (PARTITION BY actor_id "
+            "ORDER BY created_at DESC,id DESC) AS row_rank "
+            "FROM external_agent_connections WHERE actor_id IS NOT NULL"
+            ") WHERE row_rank=1"
+        ):
+            actor_id = int(row["actor_id"])
+            connections[actor_id] = dict(row)
+            connection_ids[actor_id] = str(row["id"])
+        turns: dict[str, dict[str, Any]] = {}
+        for row in store.query(
+            "SELECT connection_id,target_tick,status,projection_hash,"
+            "action_catalog_version,deadline_at,updated_at FROM ("
+            "SELECT connection_id,target_tick,status,projection_hash,"
+            "action_catalog_version,deadline_at,updated_at,"
+            "ROW_NUMBER() OVER (PARTITION BY connection_id "
+            "ORDER BY created_at DESC,id DESC) AS row_rank "
+            "FROM external_agent_turns"
+            ") WHERE row_rank=1"
+        ):
+            turns[str(row["connection_id"])] = {
+                "target_tick": int(row["target_tick"]),
+                "status": str(row["status"]),
+                "projection_hash": str(row["projection_hash"]),
+                "catalog_version": str(row["action_catalog_version"]),
+                "deadline_at": str(row["deadline_at"]),
+                "updated_at": str(row["updated_at"]),
+            }
+        submissions: dict[str, dict[str, Any]] = {}
+        for row in store.query(
+            "SELECT id,connection_id,target_tick,status,action_json,"
+            "validator_results_json,result_json,event_ids_json,resulting_state_hash,"
+            "created_at,completed_at FROM ("
+            "SELECT id,connection_id,target_tick,status,action_json,"
+            "validator_results_json,result_json,event_ids_json,resulting_state_hash,"
+            "created_at,completed_at,"
+            "ROW_NUMBER() OVER (PARTITION BY connection_id "
+            "ORDER BY created_at DESC,id DESC) AS row_rank "
+            "FROM external_action_submissions"
+            ") WHERE row_rank=1"
+        ):
+            action = load_json(row["action_json"], {})
+            validators = load_json(row["validator_results_json"], [])
+            results = load_json(row["result_json"], [])
+            submissions[str(row["connection_id"])] = {
+                "kind": "external_action",
+                "id": str(row["id"]),
+                "target_tick": int(row["target_tick"]),
+                "status": str(row["status"]),
+                "action_type": (
+                    str(action.get("type")) if isinstance(action, dict) and action.get("type")
+                    else None
+                ),
+                "validators": [
+                    {"validator": item.get("validator"), "ok": bool(item.get("ok"))}
+                    for item in validators if isinstance(item, dict)
+                ],
+                "result_count": len(results) if isinstance(results, list) else 0,
+                "all_results_ok": (
+                    bool(results) and all(
+                        isinstance(item, dict) and bool(item.get("ok")) for item in results
+                    )
+                ),
+                "event_ids": load_json(row["event_ids_json"], []),
+                "resulting_state_hash": row["resulting_state_hash"],
+                "created_at": str(row["created_at"]),
+                "completed_at": row["completed_at"],
+            }
+        agent_ids = {
+            int(row["id"]) for row in store.query("SELECT id FROM agents")
+        }
+        execution = {}
+        for agent_id in agent_ids:
+            connection = connections.get(agent_id)
+            connection_id = connection_ids.get(agent_id)
+            execution[agent_id] = _agent_execution_document(
+                latest_route=latest_routes.get(agent_id),
+                readiness_mode=readiness_mode,
+                current_tick=store.tick,
+                connection=connection,
+                latest_turn=turns.get(connection_id) if connection_id else None,
+                latest_submission=(
+                    submissions.get(connection_id) if connection_id else None
+                ),
+            )
+        return execution, connection_ids
+
+    def external_activity(connection_id: str | None) -> dict[str, list[dict[str, Any]]]:
+        if connection_id is None:
+            return {"turns": [], "receipts": []}
+        turns = [
+            {
+                "target_tick": int(row["target_tick"]),
+                "status": str(row["status"]),
+                "projection_hash": str(row["projection_hash"]),
+                "catalog_version": str(row["action_catalog_version"]),
+                "deadline_at": str(row["deadline_at"]),
+                "updated_at": str(row["updated_at"]),
+            }
+            for row in store.query(
+                "SELECT target_tick,status,projection_hash,action_catalog_version,"
+                "deadline_at,updated_at FROM external_agent_turns "
+                "WHERE connection_id=? ORDER BY created_at DESC,id DESC LIMIT 10",
+                (connection_id,),
+            )
+        ]
+        receipts = []
+        for row in store.query(
+            "SELECT id,target_tick,status,action_json,validator_results_json,"
+            "result_json,event_ids_json,resulting_state_hash,created_at,completed_at "
+            "FROM external_action_submissions WHERE connection_id=? "
+            "ORDER BY created_at DESC,id DESC LIMIT 10",
+            (connection_id,),
+        ):
+            action = load_json(row["action_json"], {})
+            validators = load_json(row["validator_results_json"], [])
+            results = load_json(row["result_json"], [])
+            receipts.append({
+                "kind": "external_action",
+                "id": str(row["id"]),
+                "target_tick": int(row["target_tick"]),
+                "status": str(row["status"]),
+                "action_type": (
+                    str(action.get("type")) if isinstance(action, dict) and action.get("type")
+                    else None
+                ),
+                "validators": [
+                    {"validator": item.get("validator"), "ok": bool(item.get("ok"))}
+                    for item in validators if isinstance(item, dict)
+                ],
+                "result_count": len(results) if isinstance(results, list) else 0,
+                "all_results_ok": (
+                    bool(results) and all(
+                        isinstance(item, dict) and bool(item.get("ok")) for item in results
+                    )
+                ),
+                "event_ids": load_json(row["event_ids_json"], []),
+                "resulting_state_hash": row["resulting_state_hash"],
+                "created_at": str(row["created_at"]),
+                "completed_at": row["completed_at"],
+            })
+        return {"turns": turns, "receipts": receipts}
+
+    @app.get("/api/commons")
+    async def commons_public_projection(
+        kind: str = Query(default="chronological"),
+        limit: int = Query(default=50, ge=1, le=100),
+    ):
+        from world.commons import CommonsError
+        try:
+            return world.commons.public_overview(kind=kind, limit=limit)
+        except CommonsError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
     @app.middleware("http")
     async def log_http_request(request: Request, call_next):
         started = time.perf_counter()
+        logged_path = (
+            "/claim/[REDACTED]"
+            if request.url.path.startswith("/claim/")
+            else request.url.path
+        )
         operational_log(
             logger, logging.DEBUG, "http.request.started",
-            method=request.method, path=request.url.path,
+            method=request.method, path=logged_path,
         )
         try:
             response = await call_next(request)
         except Exception as exc:
             operational_log(
                 logger, logging.ERROR, "http.request.failed",
-                method=request.method, path=request.url.path,
+                method=request.method, path=logged_path,
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
                 error_type=type(exc).__name__, error=str(exc),
             )
             raise
-        level = logging.WARNING if response.status_code >= 400 else logging.INFO
+        level = (
+            logging.WARNING if response.status_code >= 400
+            else logging.DEBUG if request.method in {"GET", "HEAD"}
+            else logging.INFO
+        )
         operational_log(
             logger, level, "http.request.completed",
-            method=request.method, path=request.url.path,
+            method=request.method, path=logged_path,
             status_code=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
@@ -165,7 +452,12 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
     @app.get("/api/run/status")
     async def run_status():
-        return controller.status()
+        payload = controller.status()
+        citizenship = getattr(app.state, "citizenship_service", None)
+        if citizenship is not None and citizenship.enabled:
+            from server.citizenship_api import navigation_document
+            payload["navigation"] = navigation_document(citizenship)
+        return payload
 
     @app.get("/api/acceptance/status")
     async def acceptance_status():
@@ -281,7 +573,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
     ):
         columns = (
             "a.id, a.name, a.kind, a.role, a.occupation, a.age, a.health, "
-            "a.alive, a.retired, a.employer_id, a.population_tier, "
+            "a.alive, a.retired, a.employer_id, a.model_tier, a.population_tier, "
             "a.region_id, r.region_key"
         )
         base = " FROM agents a LEFT JOIN regions r ON r.id=a.region_id"
@@ -308,10 +600,14 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
         # Keep the original no-parameter array contract for integrations while
         # exposing a bounded cursor page to the 1,000-agent observatory.
+        execution, _connection_ids = agent_execution_maps()
         paged = bool(limit is not None or after_id is not None or needle or population_tier)
         if not paged:
             rows = store.query("SELECT " + columns + base + " ORDER BY a.id")
-            return [dict(row) for row in rows]
+            return [
+                {**dict(row), "execution": execution[int(row["id"])]}
+                for row in rows
+            ]
 
         page_limit = int(limit or 100)
         page_filters = list(filters)
@@ -325,7 +621,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
             + " ORDER BY a.id LIMIT ?",
             (*page_params, page_limit + 1),
         )
-        items = [dict(row) for row in rows[:page_limit]]
+        items = [
+            {**dict(row), "execution": execution[int(row["id"])]}
+            for row in rows[:page_limit]
+        ]
         matched_total = int(store.scalar(
             "SELECT COUNT(*)" + base + filter_sql,
             filter_params,
@@ -424,6 +723,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
         a = store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
         if not a:
             return JSONResponse({"error": "not found"}, status_code=404)
+        execution, connection_ids = agent_execution_maps()
         accounts = [dict(r) for r in store.query(
             "SELECT id, kind, bank_id, balance_cents FROM accounts "
             "WHERE owner_type='agent' AND owner_id=?", (agent_id,))]
@@ -466,6 +766,11 @@ def create_app(world: World, *, served_ticks: int | None = None,
                     - int(calibration_profile["liquid_wealth_cents"]))
             calibration_profile["event_id"] = int(calibration_event["id"])
             calibration_profile["tick"] = int(calibration_event["tick"])
+        cognition = world.economy.cognition.agent_projection(agent_id)
+        latest_route = store.query_one(
+            "SELECT provider,model,purpose,tick FROM llm_calls WHERE agent_id=? "
+            "ORDER BY id DESC LIMIT 1", (agent_id,))
+        cognition["latest_route"] = dict(latest_route) if latest_route else None
         return {"agent": dict(a), "persona": persona, "accounts": accounts, "loans": loans,
                 "beliefs": beliefs, "belief_history": belief_history,
                 "memories": memories, "shares": shares,
@@ -478,7 +783,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
                     "model": model_outputs["next_before_id"],
                     "action": actions["next_before_id"],
                 },
-                "calibration_profile": calibration_profile}
+                "calibration_profile": calibration_profile,
+                "cognition": cognition,
+                "execution": execution[agent_id],
+                "external_activity": external_activity(connection_ids.get(agent_id))}
 
     @app.get("/api/agents/{agent_id}/outputs")
     async def agent_outputs(
@@ -608,6 +916,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
     @app.get("/api/cost")
     async def cost():
+        by_provider = [dict(r) for r in store.query(
+            "SELECT provider, COUNT(*) AS calls, SUM(in_tokens) AS in_tokens, "
+            "SUM(out_tokens) AS out_tokens, SUM(cost_usd) AS cost_usd "
+            "FROM llm_calls GROUP BY provider ORDER BY cost_usd DESC")]
         by_model = [dict(r) for r in store.query(
             "SELECT model, COUNT(*) AS calls, SUM(in_tokens) AS in_tokens, "
             "SUM(out_tokens) AS out_tokens, SUM(cost_usd) AS cost_usd "
@@ -622,8 +934,14 @@ def create_app(world: World, *, served_ticks: int | None = None,
             "SUM(c.cost_usd) AS cost_usd FROM llm_calls c "
             "LEFT JOIN agents a ON a.id=c.agent_id "
             "GROUP BY c.agent_id, a.name, c.role ORDER BY cost_usd DESC, calls DESC LIMIT 12")]
-        return {"governor": world.gateway.governor.status(), "by_model": by_model,
+        return {"governor": world.gateway.governor.status(),
+                "runtime": world.gateway.runtime_status(),
+                "by_provider": by_provider, "by_model": by_model,
                 "by_purpose": by_purpose, "by_agent": by_agent}
+
+    @app.get("/api/llm/runtime")
+    async def llm_runtime():
+        return world.gateway.runtime_status()
 
     # ── Oracle (PRD R6) ──────────────────────────────────────────────────────
     @app.post("/api/oracle/ask")
@@ -759,17 +1077,49 @@ def create_app(world: World, *, served_ticks: int | None = None,
                         run_id=world.gateway.run_id, tick=store.tick, path=path)
         if hosted_safe:
             return {"artifact": _report_artifact_metadata(path, store.tick)}
-        return {"path": path}
+        return {
+            "path": path,
+            "url": f"/reports/{Path(path).name}",
+        }
 
     # ── WebSocket ────────────────────────────────────────────────────────────
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        origin = ws.headers.get("origin")
+        allowed_origins = set(world.config.get("server", {}).get("allowed_origins", []))
+        if origin and allowed_origins and origin not in allowed_origins:
+            operational_log(
+                logger, logging.WARNING, "websocket.origin_denied",
+                run_id=world.gateway.run_id)
+            await ws.close(code=1008)
+            return
         await hub.connect(ws)
         try:
             await ws.send_text(json.dumps(controller.tick_payload(
                 store.tick, {"tick": store.tick})))
+            if int(getattr(world, "engine_semantics_version", 1)) >= 8:
+                from server.projections.transport import hello_message
+                await ws.send_text(json.dumps(hello_message(
+                    store, status=world.status)))
             while True:
-                await ws.receive_text()   # keepalive; controls go over REST
+                raw = await ws.receive_text()   # controls still go over REST
+                if int(getattr(world, "engine_semantics_version", 1)) < 8:
+                    continue
+                try:
+                    request = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(request, dict) or request.get("type") != "hello":
+                    continue
+                from server.projections.transport import recovery_messages
+                try:
+                    after_cursor = int(request.get("event_cursor", 0))
+                except (TypeError, ValueError):
+                    await ws.send_text(json.dumps({
+                        "type": "error", "code": "invalid_cursor"}))
+                    continue
+                for message in recovery_messages(store, after_cursor=after_cursor):
+                    await ws.send_text(json.dumps(message))
         except WebSocketDisconnect:
             hub.disconnect(ws)
         except Exception as exc:
@@ -783,10 +1133,17 @@ def create_app(world: World, *, served_ticks: int | None = None,
         static_dir = Path(__file__).parent / "static"
         if static_dir.exists():
             @app.get("/")
-            async def index():
+            @app.get("/runs/{run_id}", include_in_schema=False)
+            @app.get("/runs/{run_id}/{workspace_path:path}", include_in_schema=False)
+            @app.get("/commons", include_in_schema=False)
+            @app.get("/commons/{workspace_path:path}", include_in_schema=False)
+            async def index(
+                run_id: Optional[str] = None,
+                workspace_path: Optional[str] = None,
+            ):
                 return FileResponse(str(static_dir / "index.html"))
             app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-        reports_dir = Path("reports/out")
+        reports_dir = Path(str(world.config.get("report_dir", "reports/out")))
         reports_dir.mkdir(parents=True, exist_ok=True)
         app.mount("/reports", StaticFiles(directory=str(reports_dir)), name="reports")
 

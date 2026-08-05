@@ -1,7 +1,8 @@
 """Agent Economy entrypoint.
 
-  python run.py --config runs/base.yaml                 # serve dashboard + world (paused)
-  python run.py --config runs/base.yaml --ticks 30      # headless: run 30 ticks, report, exit
+  python run.py --preflight-live --serve --approve-live-inference  # default evolving live dashboard
+  python run.py --config runs/evolving-live.yaml --ticks 10 --preflight-live --approve-live-inference
+  python run.py --config runs/base.yaml --ticks 30      # explicit provider-free mechanics profile
   python run.py --config runs/production.yaml --preflight       # validate real-provider config
   python run.py --config runs/production.yaml --preflight-live  # authenticate + confirm models
   python run.py --config runs/base.yaml --resume RUNID  # resume an existing run db
@@ -10,6 +11,8 @@
   python run.py --report RUNID                          # generate report for a stored run
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
   python run.py --acceptance-report RUNID               # evaluate persisted production evidence
+  python run.py --oracle-calibration-report MANIFEST    # curated Oracle campaign evidence
+  python run.py --config runs/oracle/v4-seed-7331-control.yaml --oracle-campaign-run --approve-live-inference
   python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
 One process: FastAPI serves the static dashboard and drives the world loop.
@@ -37,7 +40,7 @@ from observability import configure_logging, get_logger, log_event as operationa
 from run_config import load_config
 
 DATA_DIR = Path("data/runs")
-DEFAULT_CONFIG = "runs/v2-live-minimax.yaml"
+DEFAULT_CONFIG = "runs/evolving-live.yaml"
 logger = get_logger("cli")
 REPLAY_INPUT_TABLES = (
     "dataset_manifests",
@@ -52,7 +55,12 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
         return {**report, "live_checked": False}
     store = Store(":memory:")
     store.init_run_meta("preflight", int(config.get("seed", 42)), config)
-    return await Gateway(store, config).preflight(live=True)
+    gateway = Gateway(store, config)
+    try:
+        return await gateway.preflight(live=True)
+    finally:
+        gateway.close()
+        store.close()
 
 
 def require_live_inference_approval(config: dict, *, approved: bool) -> None:
@@ -63,6 +71,28 @@ def require_live_inference_approval(config: dict, *, approved: bool) -> None:
         raise SystemExit(
             "live provider run requires explicit --approve-live-inference authorization"
         )
+
+
+def validate_open_oracle_campaign_source(
+    store: Store, requested_config: dict, profile_path: str | Path,
+) -> None:
+    """Fail before dispatch if a resumed source is not the requested fixed arm."""
+    from reports.oracle_campaign import validate_oracle_campaign_profile
+
+    meta = store.get_meta()
+    stored_config = json.loads(meta["config_json"])
+    stored_config["engine_semantics_version"] = semantics_version(
+        stored_config, default=1)
+    validate_oracle_campaign_profile(stored_config, profile_path=profile_path)
+    if stored_config != requested_config:
+        raise ValueError(
+            "stored campaign configuration differs from the requested profile")
+    if (meta["parent_run_id"] is not None or meta["fork_tick"] is not None
+            or str(meta["run_id"]).startswith("replay-")
+            or int(meta["participant_influenced"] or 0) != 0
+            or int(meta["external_agent_influenced"] or 0) != 0):
+        raise ValueError(
+            "Oracle campaign source must be an original observer-only run")
 
 
 def _recorded_replay_inputs(source: Store) -> dict[str, list[dict]]:
@@ -289,8 +319,168 @@ def activate_supply_recovery_for_run(
     }
 
 
+def _tighten_resume_operational_limits(
+        stored_config: dict, selected_config: dict) -> dict[str, object]:
+    """Apply safer runtime limits from the selected resume profile.
+
+    Provider identities, models, routes, prompts, and prices remain owned by
+    the persisted run. A resume profile may reduce concurrency, make the
+    resource guard more conservative, or lengthen operational timeouts and the
+    logical deadline needed for the resulting bounded queues to drain. A
+    selected profile may also add bounded transient-provider retries.
+    """
+    changes: dict[str, object] = {}
+
+    stored_llm = stored_config.get("llm")
+    selected_llm = selected_config.get("llm")
+    if isinstance(stored_llm, dict) and isinstance(selected_llm, dict):
+        for key in ("max_in_flight", "concurrency"):
+            current = int(stored_llm.get(key, 0) or 0)
+            selected = int(selected_llm.get(key, 0) or 0)
+            if selected > 0 and (current <= 0 or selected < current):
+                stored_llm[key] = selected
+                changes[f"llm.{key}"] = selected
+
+        current_deadline = float(stored_llm.get("logical_deadline_s", 0) or 0)
+        selected_deadline = float(
+            selected_llm.get("logical_deadline_s", 0) or 0)
+        if selected_deadline > current_deadline:
+            stored_llm["logical_deadline_s"] = selected_deadline
+            changes["llm.logical_deadline_s"] = selected_deadline
+
+        current_retries = int(stored_llm.get("provider_retries", 0) or 0)
+        selected_retries = int(selected_llm.get("provider_retries", 0) or 0)
+        if selected_retries > current_retries:
+            stored_llm["provider_retries"] = selected_retries
+            changes["llm.provider_retries"] = selected_retries
+
+        stored_providers = stored_llm.get("providers")
+        selected_providers = selected_llm.get("providers")
+        if isinstance(stored_providers, dict) and isinstance(selected_providers, dict):
+            for provider in sorted(set(stored_providers) & set(selected_providers)):
+                stored_provider = stored_providers.get(provider)
+                selected_provider = selected_providers.get(provider)
+                if not isinstance(stored_provider, dict) or not isinstance(
+                        selected_provider, dict):
+                    continue
+                current = int(stored_provider.get("concurrency", 0) or 0)
+                selected = int(selected_provider.get("concurrency", 0) or 0)
+                if selected > 0 and (current <= 0 or selected < current):
+                    stored_provider["concurrency"] = selected
+                    changes[f"llm.providers.{provider}.concurrency"] = selected
+
+                current_timeout = float(
+                    stored_provider.get("timeout_s", 0) or 0)
+                selected_timeout = float(
+                    selected_provider.get("timeout_s", 0) or 0)
+                if selected_timeout > current_timeout:
+                    stored_provider["timeout_s"] = selected_timeout
+                    changes[
+                        f"llm.providers.{provider}.timeout_s"
+                    ] = selected_timeout
+
+        stored_cohorts = stored_llm.get("citizen_model_cohorts")
+        selected_cohorts = selected_llm.get("citizen_model_cohorts")
+        if isinstance(stored_cohorts, list) and isinstance(selected_cohorts, list):
+            selected_by_name = {
+                str(cohort.get("name")): cohort
+                for cohort in selected_cohorts
+                if isinstance(cohort, dict) and cohort.get("name")
+            }
+            for stored_cohort in stored_cohorts:
+                if not isinstance(stored_cohort, dict):
+                    continue
+                cohort_name = str(stored_cohort.get("name") or "")
+                selected_cohort = selected_by_name.get(cohort_name)
+                if not isinstance(selected_cohort, dict):
+                    continue
+                for route_name in ("primary", "fallback"):
+                    stored_route = stored_cohort.get(route_name)
+                    selected_route = selected_cohort.get(route_name)
+                    if not isinstance(stored_route, dict) or not isinstance(
+                            selected_route, dict):
+                        continue
+                    if (
+                        stored_route.get("provider") != selected_route.get("provider")
+                        or stored_route.get("model") != selected_route.get("model")
+                    ):
+                        continue
+                    current_timeout = float(
+                        stored_route.get("timeout_s", 0) or 0)
+                    selected_timeout = float(
+                        selected_route.get("timeout_s", 0) or 0)
+                    if selected_timeout > current_timeout:
+                        stored_route["timeout_s"] = selected_timeout
+                        changes[
+                            "llm.citizen_model_cohorts."
+                            f"{cohort_name}.{route_name}.timeout_s"
+                        ] = selected_timeout
+
+    stored_guard = stored_config.setdefault("resource_guard", {})
+    selected_guard = selected_config.get("resource_guard")
+    if isinstance(stored_guard, dict) and isinstance(selected_guard, dict):
+        if bool(selected_guard.get("enabled")) and not bool(stored_guard.get("enabled")):
+            stored_guard["enabled"] = True
+            changes["resource_guard.enabled"] = True
+
+        for key in (
+                "sample_interval_s",
+                "max_cpu_percent",
+                "max_memory_percent",
+                "max_swap_percent",
+                "consecutive_breaches",
+        ):
+            current = float(stored_guard.get(key, 0) or 0)
+            selected = float(selected_guard.get(key, 0) or 0)
+            if selected > 0 and (current <= 0 or selected < current):
+                value: int | float = (
+                    int(selected) if key == "consecutive_breaches" else selected)
+                stored_guard[key] = value
+                changes[f"resource_guard.{key}"] = value
+
+        current_available = float(
+            stored_guard.get("min_available_memory_gb", 0) or 0)
+        selected_available = float(
+            selected_guard.get("min_available_memory_gb", 0) or 0)
+        if selected_available > current_available:
+            stored_guard["min_available_memory_gb"] = selected_available
+            changes["resource_guard.min_available_memory_gb"] = selected_available
+
+    return changes
+
+
+def _adopt_resume_local_citizenship(
+        stored_config: dict, selected_config: dict) -> dict[str, object]:
+    """Enable an explicitly selected local Passport UI for an older run.
+
+    Passport ownership lives in its own control-plane database. This runtime
+    overlay therefore does not rewrite the run's persisted simulation config,
+    provider routes, or replay inputs. An explicit stored disable still wins.
+    """
+    selected_gateway = selected_config.get("external_gateway")
+    if not isinstance(selected_gateway, dict):
+        return {}
+    selected_join = selected_gateway.get("public_join")
+    if not isinstance(selected_join, dict) or not bool(
+            selected_join.get("enabled", False)):
+        return {}
+
+    stored_gateway = stored_config.get("external_gateway")
+    if stored_gateway is None:
+        stored_gateway = {}
+        stored_config["external_gateway"] = stored_gateway
+    if not isinstance(stored_gateway, dict):
+        return {}
+    if stored_gateway.get("enabled") is False or "public_join" in stored_gateway:
+        return {}
+
+    stored_gateway["public_join"] = dict(selected_join)
+    return {"external_gateway.public_join.enabled": True}
+
+
 def open_run(config: dict, resume: str | None, replay: str | None, *,
-             data_dir: Path = DATA_DIR) -> tuple[Store, World, str]:
+             data_dir: Path = DATA_DIR,
+             new_run_id_override: str | None = None) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     if resume:
         run_id = resume
@@ -309,6 +499,18 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             store.close()
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        tightened = _tighten_resume_operational_limits(stored_cfg, config)
+        if tightened:
+            operational_log(
+                logger, logging.INFO, "run.resume.operational_limits_tightened",
+                run_id=run_id, limits=tightened)
+        local_control_plane = _adopt_resume_local_citizenship(
+            stored_cfg, config)
+        if local_control_plane:
+            operational_log(
+                logger, logging.INFO,
+                "run.resume.local_citizenship_enabled",
+                run_id=run_id, changes=local_control_plane)
         world = World(store, stored_cfg)
         _hydrate_resumed_world(world, meta, stored_cfg)
         world.restore_prng_state()
@@ -355,8 +557,12 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     # Unversioned callers retain the historical v2 contract.  The checked-in
     # v2 world profiles opt into semantics 4+ explicitly.
     config["engine_semantics_version"] = semantics_version(config, default=2)
-    run_id = new_run_id()
-    store = Store(str(data_dir / f"{run_id}.db"))
+    run_id = new_run_id_override or new_run_id()
+    database = data_dir / f"{run_id}.db"
+    if database.exists():
+        raise FileExistsError(
+            f"fresh run database already exists: {database}; use --resume")
+    store = Store(str(database))
     try:
         store.init_run_meta(run_id, int(config.get("seed", 42)), config)
         world = World(store, config)
@@ -539,7 +745,26 @@ async def replay_headless(world: World, target_tick: int) -> None:
 
         for prediction in predictions_by_tick.get(action_tick, []):
             source_prediction_id = int(prediction["id"])
-            result = await world.oracle.ask(str(prediction["question"]))
+            checkpoint = checkpoints.get(source_prediction_id)
+            governed_contract = None
+            acceptance = world.config.get("acceptance", {})
+            if (checkpoint is not None
+                    and acceptance.get("oracle_latency_source") == "scheduled_e2e_v1"):
+                matching_items = [
+                    item for item in acceptance.get("oracle_questions", [])
+                    if int(item.get("at_tick", -1)) == int(checkpoint["scheduled_tick"])
+                    and str(item.get("question", "")) == str(checkpoint["question"])
+                ]
+                if len(matching_items) != 1:
+                    raise RuntimeError(
+                        "recorded governed Oracle checkpoint has no unique schedule item")
+                from reports.acceptance import _scheduled_contract
+
+                governed_contract = _scheduled_contract(
+                    acceptance, matching_items[0])
+            result = await world.oracle.ask(
+                str(prediction["question"]),
+                governed_contract=governed_contract)
             try:
                 replay_prediction_id = int(result["prediction_id"])
             except (KeyError, TypeError, ValueError) as exc:
@@ -547,7 +772,6 @@ async def replay_headless(world: World, target_tick: int) -> None:
                     "replayed Oracle call produced no valid prediction reference"
                 ) from exc
 
-            checkpoint = checkpoints.get(source_prediction_id)
             if checkpoint is not None:
                 from reports.acceptance import _record_checkpoint
 
@@ -592,6 +816,205 @@ async def replay_headless(world: World, target_tick: int) -> None:
             f"checkpoints={missing_checkpoints}, events={missing_events}")
     if world.store.tick < target_tick:
         await world.run(max_ticks=target_tick - world.store.tick)
+    if world.store.tick != target_tick:
+        raise RuntimeError(
+            f"replay stopped at tick {world.store.tick} before target tick "
+            f"{target_tick}")
+
+
+def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> None:
+    """Reject ambiguous Oracle evidence commands before any side effect."""
+    primary = {
+        "--refresh-datasets": args.refresh_datasets,
+        "--verify-datasets": args.verify_datasets,
+        "--counterfactual": args.counterfactual,
+        "--experiment": args.experiment,
+        "--report": args.report,
+        "--export-static": args.export_static,
+        "--acceptance-report": args.acceptance_report,
+        "--acceptance-run": args.acceptance_run,
+        "--replay": args.replay,
+        "--fork": args.fork,
+        "--serve": args.serve,
+        "--preflight": args.preflight,
+        "--preflight-live": args.preflight_live,
+    }
+    modifiers = {
+        "--output": args.output,
+        "--refresh-dataset-key": args.refresh_dataset_key,
+        "--experiment-evidence": args.experiment_evidence,
+        "--phenomena-evidence": args.phenomena_evidence,
+        "--scenario-ticks": args.scenario_ticks,
+        "--upgrade-semantics": args.upgrade_semantics,
+    }
+    if args.oracle_campaign_run:
+        incompatible = [name for name, value in {
+            "--oracle-calibration-report": args.oracle_calibration_report,
+            **primary, **modifiers,
+        }.items() if value]
+        if incompatible:
+            parser.error(
+                "--oracle-campaign-run is mutually exclusive with "
+                + ", ".join(incompatible))
+    if args.oracle_calibration_report:
+        incompatible = [name for name, value in {
+            "--oracle-campaign-run": args.oracle_campaign_run,
+            "--resume": args.resume,
+            "--ticks": args.ticks,
+            **primary, **modifiers,
+        }.items() if value]
+        if incompatible:
+            parser.error(
+                "--oracle-calibration-report is mutually exclusive with "
+                + ", ".join(incompatible))
+
+
+def _initialize_claimed_oracle_genesis(
+        config: dict, campaign_claim: dict, *, data_dir: Path) -> Path:
+    """Build genesis in a unique directory, then publish it without clobbering."""
+    import shutil
+    import tempfile
+    from reports.oracle_campaign import (
+        finalize_sqlite_artifact,
+        publish_claimed_oracle_genesis,
+        recover_claimed_oracle_genesis,
+        validate_claimed_oracle_genesis,
+    )
+
+    recovered = recover_claimed_oracle_genesis(
+        campaign_claim, config, data_dir=data_dir)
+    if recovered is not None:
+        return recovered
+    pending_root = data_dir.resolve() / "oracle-pending"
+    pending_root.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(tempfile.mkdtemp(
+        prefix=f".{campaign_claim['run_id']}-", dir=pending_root)).resolve()
+    staged_path = staging_dir / f"{campaign_claim['run_id']}.db"
+    try:
+        pending_store, pending_world, _ = open_run(
+            config, None, None, data_dir=staging_dir,
+            new_run_id_override=str(campaign_claim["run_id"]))
+        _close_run(pending_world, pending_store)
+        finalize_sqlite_artifact(staged_path)
+        validate_claimed_oracle_genesis(
+            staged_path, campaign_claim, config)
+        return publish_claimed_oracle_genesis(
+            staged_path, campaign_claim, config, data_dir=data_dir)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _execute_oracle_campaign_run(config: dict, args) -> None:
+    """Execute the sole CLI path that may construct live campaign receipts."""
+    from reports.oracle_campaign import (
+        finalize_sqlite_artifact,
+        load_existing_oracle_source_receipt,
+        mark_oracle_campaign_initialized,
+        oracle_campaign_execution_lock,
+        prepare_oracle_campaign_run,
+        recover_claimed_oracle_genesis,
+        write_oracle_source_receipt,
+        write_replay_execution_receipt,
+    )
+
+    require_live_inference_approval(
+        config, approved=args.approve_live_inference)
+    campaign_claim = prepare_oracle_campaign_run(
+        config, args.config, data_dir=DATA_DIR,
+        resume_run_id=args.resume)
+    with oracle_campaign_execution_lock(campaign_claim, data_dir=DATA_DIR):
+        if campaign_claim.get("create_pending_database"):
+            _initialize_claimed_oracle_genesis(
+                config, campaign_claim, data_dir=DATA_DIR)
+        else:
+            recover_claimed_oracle_genesis(
+                campaign_claim, config, data_dir=DATA_DIR)
+        out_dir = str(config.get("report_dir", "reports/out"))
+        existing_receipt = load_existing_oracle_source_receipt(
+            campaign_claim=campaign_claim, profile_path=args.config,
+            out_dir=out_dir, data_dir=DATA_DIR)
+        if existing_receipt is not None:
+            replay_evidence = existing_receipt.get("run", {}).get("replay", {})
+            print(json.dumps({
+                "run_id": campaign_claim["run_id"],
+                "replay_run_id": replay_evidence.get("replay_run_id"),
+                "report": None,
+                "source_receipt": existing_receipt["artifact"],
+                "replay_execution_receipt": existing_receipt[
+                    "manifest_entry"]["replay_execution_receipt"],
+                "manifest_entry": existing_receipt["manifest_entry"],
+                "passed": True,
+                "reused": True,
+            }, indent=2))
+            return
+        store, world, run_id = open_run(
+            config, str(campaign_claim["run_id"]), None, data_dir=DATA_DIR)
+        try:
+            mark_oracle_campaign_initialized(campaign_claim, store.path)
+            validate_open_oracle_campaign_source(store, config, args.config)
+        except BaseException:
+            _close_run(world, store)
+            raise
+
+        operational_log(
+            logger, logging.INFO, "run.opened", run_id=run_id,
+            tick=store.tick, seed=store.get_meta()["seed"], replay=False,
+            resumed=bool(args.resume))
+        print(f"[agent-economy] run {run_id} @ tick {store.tick} "
+              f"(seed {store.get_meta()['seed']}, live)")
+
+        from reports.acceptance import execute_acceptance_run
+        from reports.generate import generate_report_async
+        target_tick = args.ticks or int(config["acceptance"]["min_ticks"])
+        source_path = Path(store.path).resolve()
+        report_path = None
+
+        async def execute_and_report_campaign_source() -> str:
+            await execute_acceptance_run(world, target_tick=target_tick)
+            return await generate_report_async(
+                store, world,
+                out_dir=str(config.get("report_dir", "reports/out")))
+
+        try:
+            if store.tick < target_tick:
+                report_path = asyncio.run(execute_and_report_campaign_source())
+            elif store.tick > target_tick:
+                raise RuntimeError(
+                    "Oracle campaign source advanced beyond its fixed horizon")
+        finally:
+            _close_run(world, store)
+        finalize_sqlite_artifact(source_path)
+
+        replay_store, replay_world, replay_run_id = open_run(
+            config, None, run_id, data_dir=DATA_DIR)
+        replay_path = Path(replay_store.path).resolve()
+        replay_tracker = None
+        try:
+            asyncio.run(replay_headless(replay_world, target_tick))
+            replay_tracker = replay_world.gateway.replay_execution_stats()
+        finally:
+            _close_run(replay_world, replay_store)
+        finalize_sqlite_artifact(replay_path)
+
+        replay_execution = write_replay_execution_receipt(
+            source_path, replay_path, args.config,
+            replay_tracker=replay_tracker, campaign_claim=campaign_claim,
+            out_dir=out_dir)
+        receipt = write_oracle_source_receipt(
+            source_path, replay_path, args.config,
+            replay_execution_receipt=replay_execution["artifact"],
+            campaign_claim=campaign_claim, out_dir=out_dir)
+        print(json.dumps({
+            "run_id": run_id,
+            "replay_run_id": replay_run_id,
+            "report": report_path,
+            "source_receipt": receipt["artifact"],
+            "replay_execution_receipt": replay_execution["artifact"],
+            "manifest_entry": receipt["manifest_entry"],
+            "passed": receipt["passed"],
+        }, indent=2))
+        if not receipt["passed"]:
+            raise SystemExit(5)
 
 
 def main() -> None:
@@ -599,7 +1022,7 @@ def main() -> None:
     configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
-                    help="world config (default: 1,000-agent MiniMax M3 live profile)")
+                    help="world config (default: evolving live-agent desktop profile)")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
@@ -654,6 +1077,10 @@ def main() -> None:
                     help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
+    ap.add_argument("--oracle-calibration-report", default=None,
+                    help="evaluate an explicit Oracle campaign manifest and write receipts")
+    ap.add_argument("--oracle-campaign-run", action="store_true",
+                    help="run one predeclared live-Oracle campaign arm and exact replay")
     ap.add_argument("--acceptance-run", action="store_true",
                     help="execute the configured acceptance horizon and scheduled Oracle checks")
     ap.add_argument("--approve-live-inference", "--approve-live-spend",
@@ -679,11 +1106,22 @@ def main() -> None:
         ap.error("--activate-llm-output-budgets requires --resume or --fork")
     if args.activate_llm_output_budgets and args.replay:
         ap.error("--activate-llm-output-budgets cannot modify a replay")
+    _validate_oracle_cli_exclusivity(args, ap)
+    if args.acceptance_report and args.oracle_calibration_report:
+        ap.error("--acceptance-report and --oracle-calibration-report are mutually exclusive")
+    if args.acceptance_run and args.oracle_campaign_run:
+        ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
+    if args.oracle_campaign_run and args.serve:
+        ap.error("--oracle-campaign-run is a finalized headless evidence command")
+    if args.oracle_campaign_run and (args.fork or args.replay):
+        ap.error("--oracle-campaign-run cannot use fork or replay inputs")
     mode = ("dataset_refresh" if args.refresh_datasets else
             "dataset_verify" if args.verify_datasets else
             "counterfactual" if args.counterfactual else
             "static_export" if args.export_static else "experiment" if args.experiment else
+            "oracle_calibration_report" if args.oracle_calibration_report else
             "acceptance_report" if args.acceptance_report else
+            "oracle_campaign_run" if args.oracle_campaign_run else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
             "preflight" if (args.preflight or args.preflight_live) else
             "fork" if args.fork else "replay" if args.replay else
@@ -759,11 +1197,32 @@ def main() -> None:
             raise SystemExit(5)
         return
 
+    if args.oracle_calibration_report:
+        from reports.oracle_campaign import write_oracle_campaign_package
+        receipt = write_oracle_campaign_package(args.oracle_calibration_report)
+        print(json.dumps(receipt, indent=2))
+        if not receipt["passed"]:
+            raise SystemExit(5)
+        return
+
     config = load_config(args.config)
+    preflight_then_run = bool(
+        args.preflight_live and (args.serve or args.ticks is not None))
+    if args.oracle_campaign_run:
+        from reports.oracle_campaign import validate_oracle_campaign_profile
+        validate_oracle_campaign_profile(config, profile_path=args.config)
+        campaign_horizon = int(config["acceptance"]["min_ticks"])
+        if args.ticks is not None and args.ticks != campaign_horizon:
+            ap.error(
+                f"--oracle-campaign-run has a fixed {campaign_horizon}-tick horizon")
     operational_log(logger, logging.INFO, "config.loaded",
                     path=str(Path(args.config).resolve()), mode=mode,
                     seed=config.get("seed", 42))
     fresh_run = not args.resume and not args.fork
+    if (fresh_run and not args.replay
+            and bool(config.get("llm", {}).get("require_preflight_live", False))
+            and not (args.preflight or args.preflight_live)):
+        ap.error("this live profile requires --preflight-live before starting")
     if fresh_run and not (args.preflight or args.preflight_live or args.replay):
         require_live_inference_approval(
             config, approved=args.approve_live_inference)
@@ -780,10 +1239,15 @@ def main() -> None:
         operational_log(logger, logging.INFO, "provider.preflight.completed",
                         live=args.preflight_live, ready=ready,
                         live_ready=live_ready)
-        return
+        if not preflight_then_run:
+            return
     if args.fork:
         args.resume = fork_run(args.fork, upgrade_semantics=args.upgrade_semantics)
-    store, world, run_id = open_run(config, args.resume, args.replay)
+    if args.oracle_campaign_run:
+        _execute_oracle_campaign_run(config, args)
+        return
+    store, world, run_id = open_run(
+        config, args.resume, args.replay)
     if args.activate_supply_recovery:
         try:
             firms_cfg = world.config.get("firms", {}) or {}
@@ -936,7 +1400,10 @@ def main() -> None:
         startup += f" (bounded to tick {store.tick + ticks})"
     print(f"[agent-economy] observatory: http://{args.host}:{args.port}  ({startup})")
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+        # Observer search is a GET projection; do not persist raw query text in access logs.
+        uvicorn.run(
+            app, host=args.host, port=args.port,
+            log_level="warning", access_log=False)
     finally:
         _close_run(world, store)
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import pytest
@@ -32,6 +33,8 @@ ADMIN_ID = UUID("30000000-0000-4000-8000-000000000003")
 OBSERVER_ID = UUID("40000000-0000-4000-8000-000000000004")
 RUN_A = UUID("50000000-0000-4000-8000-000000000005")
 RUN_B = UUID("60000000-0000-4000-8000-000000000006")
+EXTERNAL_AGENT_ID = UUID("70000000-0000-4000-8000-000000000007")
+RUN_CONNECTION_ID = UUID("80000000-0000-4000-8000-000000000008")
 
 def opaque_token(byte: bytes) -> str:
     return base64.urlsafe_b64encode(byte * 32).decode("ascii").rstrip("=")
@@ -256,9 +259,67 @@ class FakeCatalog:
             )
         }
         self.revoked_users: list[tuple[UUID, UUID]] = []
+        self.oauth_clients: dict[str, dict[str, Any]] = {}
+        self.external_agents = {
+            EXTERNAL_AGENT_ID: SimpleNamespace(
+                id=EXTERNAL_AGENT_ID,
+                tenant_id=TENANT_A,
+                owner_user_id=ADMIN_ID,
+                run_id=RUN_A,
+                run_connection_id=RUN_CONNECTION_ID,
+                external_agent_id=EXTERNAL_AGENT_ID,
+                display_name="Hosted Founder",
+                biography="",
+                preferred_occupation="builder",
+                tier="actor",
+                scopes=("world.read", "world.act", "commons.read", "commons.write"),
+                status="active",
+            )
+        }
 
     def ready(self) -> bool:
         return True
+
+    def register_external_oauth_client(
+        self, *, client_name: str, redirect_uris, grant_types, response_types,
+        token_endpoint_auth_method: str = "none",
+    ) -> dict[str, Any]:
+        client_id = "ae_client_hosted_test_123456"
+        value = {
+            "client_id": client_id,
+            "client_name": client_name,
+            "redirect_uris": list(redirect_uris),
+            "grant_types": list(grant_types),
+            "response_types": list(response_types),
+            "token_endpoint_auth_method": token_endpoint_auth_method,
+        }
+        self.oauth_clients[client_id] = value
+        return value
+
+    def get_external_oauth_client(self, client_id: str):
+        return self.oauth_clients.get(client_id)
+
+    def list_external_agents(
+        self, tenant_id: UUID, *, owner_user_id: UUID | None = None,
+        limit: int = 200,
+    ):
+        records = [
+            record for record in self.external_agents.values()
+            if record.tenant_id == UUID(str(tenant_id))
+            and (owner_user_id is None or record.owner_user_id == owner_user_id)
+        ]
+        return tuple(records[:limit])
+
+    def get_external_agent(
+        self, tenant_id: UUID, external_agent_id: UUID, *,
+        owner_user_id: UUID | None = None,
+    ):
+        record = self.external_agents.get(UUID(str(external_agent_id)))
+        if record is None or record.tenant_id != UUID(str(tenant_id)):
+            return None
+        if owner_user_id is not None and record.owner_user_id != owner_user_id:
+            return None
+        return record
 
     def get_membership(self, tenant_id: UUID, user_id: UUID) -> Membership | None:
         return self.memberships.get((UUID(str(tenant_id)), UUID(str(user_id))))
@@ -389,12 +450,24 @@ class FakeController:
         return {"delay_s": delay_s}
 
 
+class FakeExternalService:
+    def __init__(self) -> None:
+        self.authorization_calls: list[dict[str, Any]] = []
+
+    def create_authorization_code(self, connection_id: str, **kwargs: Any):
+        self.authorization_calls.append({"connection_id": connection_id, **kwargs})
+        return {"code": "hosted-oauth-code"}
+
+
 class Handle:
     def __init__(self, record: Run) -> None:
         self.public_run_id = record.id
         self.tenant_id = record.tenant_id
         self.profile_slug = record.run_key
         self.controller = FakeController()
+        self.external = FakeExternalService()
+        self.world = SimpleNamespace(
+            runtime=SimpleNamespace(external=self.external))
         self.app = FastAPI()
 
         @self.app.get("/api/agents")
@@ -652,6 +725,74 @@ def test_login_sets_exact_hardened_cookies_without_returning_credentials(client:
     assert response.headers["content-security-policy"].startswith("default-src 'self'")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_hosted_oauth_dcr_consent_and_redirect_flow(
+    client: TestClient,
+    services: tuple[FakeCatalog, FakeAuth, FakeSupervisor, dict[str, datetime]],
+):
+    login(client)
+    redirect_uri = "https://client.example/callback"
+    registration = client.post("/oauth/register", json={
+        "client_name": "<OpenClaw>",
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    })
+    assert registration.status_code == 201
+    assert registration.headers["cache-control"] == "no-store"
+    client_id = registration.json()["client_id"]
+
+    authorization_fields = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": "A" * 43,
+        "code_challenge_method": "S256",
+        "scope": "world.read world.act",
+        "state": "openclaw-state",
+        "resource": "https://testserver/mcp",
+    }
+    consent = client.get("/oauth/authorize", params=authorization_fields)
+    assert consent.status_code == 200
+    assert consent.headers["cache-control"] == "no-store"
+    assert "&lt;OpenClaw&gt;" in consent.text
+    assert "<strong><OpenClaw></strong>" not in consent.text
+    assert "Hosted Founder" in consent.text
+    assert ADMIN_CSRF in consent.text
+
+    complete = client.post(
+        "/oauth/authorize/complete",
+        data={
+            **authorization_fields,
+            "csrf_token": ADMIN_CSRF,
+            "tenant_id": str(TENANT_A),
+            "connection_id": str(EXTERNAL_AGENT_ID),
+        },
+        follow_redirects=False,
+    )
+    assert complete.status_code == 302
+    location = urlsplit(complete.headers["location"])
+    assert (location.scheme, location.netloc, location.path) == (
+        "https", "client.example", "/callback")
+    assert parse_qs(location.query) == {
+        "code": ["hosted-oauth-code"],
+        "iss": ["https://testserver"],
+        "state": ["openclaw-state"],
+    }
+    supervisor = services[2]
+    call = supervisor.handles[(TENANT_A, RUN_A)].external.authorization_calls[-1]
+    assert call == {
+        "connection_id": str(RUN_CONNECTION_ID),
+        "tenant_id": str(TENANT_A),
+        "owner_id": str(ADMIN_ID),
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": "A" * 43,
+        "scopes": ["world.read", "world.act"],
+        "admin": True,
+    }
 
 
 def test_mutating_request_body_is_bounded_before_validation(client: TestClient):

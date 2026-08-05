@@ -1,0 +1,52 @@
+{
+  "actors": {
+    "author": {
+      "id": 18,
+      "name": "Wade Ivanov"
+    },
+    "reader": {
+      "id": 19,
+      "name": "Sam Bianchi"
+    }
+  },
+  "candidate_set_hash": "a294fd27e4e54ab557c29d7805215e1a33985988dcd1bab9a060c46e473c25cb",
+  "criteria": {
+    "delivery_causal_link_recorded": true,
+    "explicit_read_recorded": true,
+    "feed_impression_delivered": true,
+    "post_published": true,
+    "public_projection_contains_post": true,
+    "publish_event_recorded": true,
+    "read_causal_link_recorded": true,
+    "read_event_recorded": true,
+    "repeat_read_idempotent": true,
+    "source_checkpoint_unchanged": true
+  },
+  "dashboard_url": "http://127.0.0.1:8001/runs/462688be84/commons",
+  "entry_id": 1,
+  "feed_policy": {
+    "algorithm": "chronological",
+    "id": 1,
+    "key": "chronological",
+    "version": 1
+  },
+  "fork_run_id": "462688be84",
+  "fork_tick": 60,
+  "impression_id": 1,
+  "memory_id": 3318,
+  "paid_inference_used": false,
+  "recorded_at": "2026-07-30T22:21:28.914844+00:00",
+  "row_deltas": {
+    "causal_links": 2,
+    "commons_entries": 1,
+    "commons_feed_impressions": 1,
+    "memories": 1
+  },
+  "schema": "agent-economy-commons-live-acceptance-v1",
+  "source_checkpoint": "026cb4145d_t60.db",
+  "source_checkpoint_sha256": "28d56d103e23b321e3051ad660d27bbe0cce66466836777e0dcb344e17f36cae",
+  "source_mutated": false,
+  "source_spec": "026cb4145d@60",
+  "status": "passed",
+  "synthetic_operator_scenario": true
+}

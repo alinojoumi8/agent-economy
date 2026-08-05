@@ -1,0 +1,9 @@
+# Free deterministic rehearsal for the control arm. It is never eligible for
+# the live calibration receipt because the Oracle provider is scripted.
+extends: calibration-base.yaml
+
+seed: 7398
+
+llm:
+  routes:
+    oracle: {provider: scripted, model: scripted}

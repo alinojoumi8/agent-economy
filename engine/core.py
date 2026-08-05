@@ -10,14 +10,17 @@ import random
 from typing import Optional
 
 from .credit import Bank
+from .city import City
+from .cognition import CognitionEconomy
 from .exchange import Exchange
 from .firms import Firms
 from .government import Government
 from .information import InformationEconomy
 from .labor import Labor
 from .legal import LegalInstitution
-from .ledger import (Ledger, SYS_COMMODITY, SYS_EXTERNAL, SYS_GOV, SYS_INFLOW,
-                     SYS_HOUSING, SYS_LOSS, SYS_MEDICAL)
+from .ledger import (Ledger, SYS_COMMODITY, SYS_COMPUTE, SYS_EDUCATION,
+                     SYS_EXTERNAL, SYS_GOV, SYS_INFLOW, SYS_HOUSING, SYS_LOSS,
+                     SYS_MEDICAL)
 from .lifecycle import Lifecycle
 from .store import Store
 from .startups import StartupLifecycle
@@ -44,7 +47,16 @@ class Economy:
             store, self.ledger,
             local_currency_action_surfaces=local_currency_action_surfaces,
             engine_semantics_version=self.engine_semantics_version)
-        self.firms = Firms(store, self.ledger)
+        city_enabled = (
+            self.engine_semantics_version >= 12
+            and bool(config.get("city", {}).get("enabled", False))
+        )
+        self.firms = Firms(
+            store,
+            self.ledger,
+            engine_semantics_version=self.engine_semantics_version,
+            city_enabled=city_enabled,
+        )
         self.labor = Labor(
             store,
             engine_semantics_version=self.engine_semantics_version,
@@ -63,11 +75,22 @@ class Economy:
         self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
         self.information = InformationEconomy(store, config.get("information_economy"))
         self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))
+        self.cognition = CognitionEconomy(
+            store, self.ledger, config.get("cognition"),
+            engine_semantics_version=self.engine_semantics_version,
+            seed=int(config.get("seed", 42)),
+        )
+        self.city = City(self, config.get("city"))
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:
-        for label in (SYS_EXTERNAL, SYS_COMMODITY, SYS_INFLOW, SYS_LOSS,
-                      SYS_MEDICAL, SYS_GOV, SYS_HOUSING):
+        labels = (
+            SYS_EXTERNAL, SYS_COMMODITY, SYS_INFLOW, SYS_LOSS,
+            SYS_MEDICAL, SYS_GOV, SYS_HOUSING,
+        )
+        if self.engine_semantics_version >= 11:
+            labels += (SYS_COMPUTE, SYS_EDUCATION)
+        for label in labels:
             self.ledger.ensure_system_account(label)
 
     # ── convenient references ────────────────────────────────────────────────

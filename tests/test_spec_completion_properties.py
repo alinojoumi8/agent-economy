@@ -8,6 +8,7 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
+import run as cli
 from agents.policies import (
     citizen_decision,
     credit_officer_decision,
@@ -30,6 +31,7 @@ from run import DEFAULT_CONFIG
 from server.app import create_app
 from tests.conftest import make_agent, make_bank
 from world.loop import World
+from world.replay_verify import verify_replay
 from world.shocks import Shocks
 
 
@@ -702,6 +704,391 @@ def test_json_repair_accounts_for_both_provider_completions(tmp_path, monkeypatc
     store.close()
 
 
+def test_semantic_contract_repair_is_one_durable_call_and_precedes_transform(
+        tmp_path, monkeypatch):
+    from engine.store import Store
+    config = {
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 1.0},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "SEMANTIC_REPAIR_TEST_KEY",
+            }},
+            "default_route": {"provider": "network", "model": "semantic-repair"},
+            "routes": {},
+            "pricing": {
+                "semantic-repair": {"in": 1.0, "out": 2.0, "cache": 0.1}},
+        },
+    }
+    store = Store(str(tmp_path / "semantic-repair.db"))
+    store.init_run_meta("semantic-repair", 1, config)
+    monkeypatch.setenv("SEMANTIC_REPAIR_TEST_KEY", "test-only")
+    gateway = Gateway(store, config)
+
+    class InvalidEnumThenValid:
+        def __init__(self):
+            self.messages = []
+
+        async def complete(self, _model, messages, **_kwargs):
+            self.messages.append(messages)
+            confidence = "medium" if len(self.messages) == 1 else "med"
+            return AdapterResult(
+                text=json.dumps({"p": 0.2, "confidence": confidence}),
+                in_tokens=10, out_tokens=5, raw={"attempt": len(self.messages)})
+
+    adapter = InvalidEnumThenValid()
+    gateway.adapters["network"] = adapter
+    transform_row_counts = []
+
+    def validate(parsed):
+        if parsed.get("confidence") not in {"low", "med", "high"}:
+            return "confidence must be low, med, or high"
+        return None
+
+    def transform(parsed):
+        transform_row_counts.append(store.scalar("SELECT COUNT(*) FROM llm_calls"))
+        return parsed
+
+    response = asyncio.run(gateway.complete(
+        LLMRequest(role="oracle", purpose="oracle", system="stable", user="dynamic"),
+        parsed_validator=validate, parsed_transform=transform))
+
+    assert response.ok and response.parsed["confidence"] == "med"
+    assert len(adapter.messages) == 2
+    assert "Contract error: confidence must be low, med, or high" in (
+        adapter.messages[1][-1]["content"])
+    assert transform_row_counts == [1]
+    assert store.scalar("SELECT COUNT(*) FROM llm_calls") == 1
+    row = store.query_one("SELECT response_json,in_tokens,out_tokens FROM llm_calls")
+    payload = json.loads(row["response_json"])
+    assert json.loads(payload["text"])["confidence"] == "med"
+    assert payload["raw"] == {
+        "provider_calls": 2,
+        "repair": {"initial": {"attempt": 1}, "final": {"attempt": 2}},
+    }
+    assert row["in_tokens"] == 20 and row["out_tokens"] == 10
+    store.close()
+
+
+@pytest.mark.parametrize(("bad_field", "bad_value", "repair_error"), [
+    ("confidence", "medium", "confidence must be low, med, or high"),
+    ("p", float("nan"), "forecast probability must be between 0 and 1"),
+    ("insufficient_data", True,
+     "governed forecast must provide a checkable prediction"),
+])
+@pytest.mark.parametrize(("semantics_version", "campaign_version", "repairs"), [
+    (6, 7, False),
+    (7, 6, False),
+    (7, 7, True),
+])
+def test_oracle_semantic_answer_repair_requires_semantics7_and_campaign7(
+        tmp_path, monkeypatch, bad_field, bad_value, repair_error,
+        semantics_version, campaign_version, repairs):
+    from engine.store import Store
+    key = f"ORACLE_SEMANTIC_REPAIR_{semantics_version}_{bad_field.upper()}"
+    monkeypatch.setenv(key, "test-only")
+    config = {
+        "seed": semantics_version,
+        "engine_semantics_version": semantics_version,
+        "population": {"size": 4},
+        "banks": {"count": 1},
+        "firms": {"count": 2, "listed": 0},
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 10.0,
+                   "conversation_pairs": 0},
+        "oracle": {"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                   "strict_resolution_rules": True},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": key,
+            }},
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "routes": {
+                "oracle": {"provider": "network", "model": "oracle-semantic"}},
+            "pricing": {
+                "oracle-semantic": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+        "checkpoint_every": 0,
+        "outlets": [],
+    }
+    store = Store(str(
+        tmp_path / f"oracle-semantic-{semantics_version}-{campaign_version}-{bad_field}.db"))
+    store.init_run_meta("oracle-semantic", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    class OracleSequence:
+        def __init__(self):
+            self.purposes = []
+            self.messages = []
+
+        async def complete(self, _model, messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.purposes.append(purpose)
+            self.messages.append(messages)
+            if purpose == "oracle_plan":
+                payload = {"queries": [{
+                    "tool": "read_news",
+                    "args": {"from_tick": 0, "to_tick": 0, "limit": 1},
+                }]}
+            else:
+                answer_attempt = self.purposes.count("oracle")
+                payload = {
+                    "p": 0.2,
+                    "drivers": ["bounded evidence"],
+                    "confidence": "med",
+                    "resolution_rule": {
+                        "type": "bank_run", "window": 5, "deposit_drop": 0.3},
+                    "deadline_tick": 30,
+                    "reasoning": "bounded answer",
+                }
+                if answer_attempt == 1:
+                    payload[bad_field] = bad_value
+            return AdapterResult(
+                text=json.dumps(payload), in_tokens=10, out_tokens=5,
+                raw={"purpose": purpose, "ordinal": len(self.purposes)})
+
+    adapter = OracleSequence()
+    world.gateway.adapters["network"] = adapter
+    contract = {
+        "campaign_id": "test-oracle-campaign",
+        "campaign_version": campaign_version,
+        "campaign_key": "bank_run_t000",
+        "scheduled_tick": 0,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.3},
+        "deadline_tick": 30,
+    }
+    try:
+        result = asyncio.run(world.oracle.ask(
+            "What is the probability of a bank run within 30 ticks?",
+            governed_contract=contract))
+        answer_rows = store.query(
+            "SELECT response_json FROM llm_calls "
+            "WHERE role='oracle' AND purpose='oracle'")
+        assert len(answer_rows) == 1
+        if repairs:
+            assert result["p"] == 0.2
+            assert result["confidence"] == "med"
+            assert adapter.purposes == ["oracle_plan", "oracle", "oracle"]
+            answer_payload = json.loads(answer_rows[0]["response_json"])
+            assert answer_payload["raw"]["provider_calls"] == 2
+            assert json.loads(answer_payload["text"])["confidence"] == "med"
+            assert repair_error in adapter.messages[-1][-1]["content"]
+            prediction = store.query_one(
+                "SELECT p,confidence,status FROM predictions WHERE id=?",
+                (result["prediction_id"],))
+            assert prediction["p"] == 0.2
+            assert prediction["confidence"] == "med"
+            assert prediction["status"] == "open"
+        else:
+            assert result["insufficient_data"] is True
+            assert adapter.purposes == ["oracle_plan", "oracle"]
+            answer_payload = json.loads(answer_rows[0]["response_json"])
+            assert "provider_calls" not in answer_payload["raw"]
+            prediction = store.query_one(
+                "SELECT p,status FROM predictions WHERE id=?",
+                (result["prediction_id"],))
+            assert prediction["p"] is None
+            assert prediction["status"] == "insufficient_data"
+    finally:
+        world.close()
+
+
+def test_non_governed_oracle_insufficient_data_does_not_repair(
+        tmp_path, monkeypatch):
+    from engine.store import Store
+    monkeypatch.setenv("ORACLE_NONGOVERNED_TEST_KEY", "test-only")
+    config = {
+        "seed": 7,
+        "engine_semantics_version": 7,
+        "population": {"size": 4},
+        "banks": {"count": 1},
+        "firms": {"count": 2, "listed": 0},
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 10.0,
+                   "conversation_pairs": 0},
+        "oracle": {"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                   "strict_resolution_rules": True},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "ORACLE_NONGOVERNED_TEST_KEY",
+            }},
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "routes": {
+                "oracle": {"provider": "network", "model": "oracle-nongoverned"}},
+            "pricing": {
+                "oracle-nongoverned": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+        "checkpoint_every": 0,
+        "outlets": [],
+    }
+    store = Store(str(tmp_path / "oracle-nongoverned.db"))
+    store.init_run_meta("oracle-nongoverned", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    class InsufficientSequence:
+        def __init__(self):
+            self.purposes = []
+
+        async def complete(self, _model, _messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.purposes.append(purpose)
+            payload = (
+                {"queries": [{
+                    "tool": "read_news",
+                    "args": {"from_tick": 0, "to_tick": 0, "limit": 1},
+                }]}
+                if purpose == "oracle_plan"
+                else {"insufficient_data": True, "reason": "not enough evidence"})
+            return AdapterResult(
+                text=json.dumps(payload), in_tokens=10, out_tokens=5,
+                raw={"purpose": purpose})
+
+    adapter = InsufficientSequence()
+    world.gateway.adapters["network"] = adapter
+    try:
+        result = asyncio.run(world.oracle.ask("Is the moon made of cheese?"))
+        assert result["insufficient_data"] is True
+        assert result["reason"] == "not enough evidence"
+        assert adapter.purposes == ["oracle_plan", "oracle"]
+        assert store.scalar(
+            "SELECT COUNT(*) FROM llm_calls WHERE role='oracle' AND purpose='oracle'") == 1
+    finally:
+        world.close()
+
+
+def test_semantics7_governed_oracle_repair_replays_exactly_offline(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("ORACLE_REPAIR_REPLAY_TEST_KEY", "test-only")
+    config = {
+        "seed": 7,
+        "engine_semantics_version": 7,
+        "population": {"size": 4},
+        "banks": {"count": 1},
+        "firms": {"count": 2, "listed": 0},
+        "budget": {"cap_usd": 10.0, "oracle_reserve_usd": 10.0,
+                   "conversation_pairs": 0},
+        "oracle": {"default_horizon_ticks": 30, "max_horizon_ticks": 365,
+                   "strict_resolution_rules": True},
+        "llm": {
+            "provider_retries": 0,
+            "providers": {"network": {
+                "kind": "openai_compat", "base_url": "https://invalid.example/v1",
+                "api_key_env": "ORACLE_REPAIR_REPLAY_TEST_KEY",
+            }},
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "routes": {
+                "oracle": {"provider": "network", "model": "oracle-replay"}},
+            "pricing": {
+                "oracle-replay": {"in": 0.0, "out": 0.0, "cache": 0.0}},
+        },
+        "checkpoint_every": 0,
+        "outlets": [],
+    }
+    question = "What is the probability of a bank run within 30 ticks?"
+    contract = {
+        "campaign_id": "test-oracle-repair-replay",
+        "campaign_version": 7,
+        "campaign_key": "bank_run_t000",
+        "scheduled_tick": 0,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.3},
+        "deadline_tick": 30,
+    }
+
+    class RepairSequence:
+        def __init__(self):
+            self.purposes = []
+
+        async def complete(self, _model, _messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.purposes.append(purpose)
+            if purpose == "oracle_plan":
+                payload = {"queries": [{
+                    "tool": "read_news",
+                    "args": {"from_tick": 0, "to_tick": 0, "limit": 1},
+                }]}
+            else:
+                payload = {
+                    "p": 0.2,
+                    "drivers": ["bounded evidence"],
+                    "confidence": (
+                        "medium" if self.purposes.count("oracle") == 1 else "med"),
+                    "resolution_rule": contract["resolution_rule"],
+                    "deadline_tick": contract["deadline_tick"],
+                    "reasoning": "bounded answer",
+                }
+            return AdapterResult(
+                text=json.dumps(payload), in_tokens=10, out_tokens=5,
+                raw={"purpose": purpose, "ordinal": len(self.purposes)})
+
+    source_store, source_world, source_id = cli.open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = source_store.path
+    adapter = RepairSequence()
+    source_world.gateway.adapters["network"] = adapter
+    replay_world = None
+    try:
+        source_result = asyncio.run(source_world.oracle.ask(
+            question, governed_contract=contract))
+        source_answer = source_store.query_one(
+            "SELECT response_json FROM llm_calls "
+            "WHERE role='oracle' AND purpose='oracle'")
+        assert source_store.scalar(
+            "SELECT COUNT(*) FROM llm_calls "
+            "WHERE role='oracle' AND purpose='oracle'") == 1
+        assert json.loads(source_answer["response_json"])["raw"]["provider_calls"] == 2
+        assert adapter.purposes == ["oracle_plan", "oracle", "oracle"]
+        source_prediction = dict(source_store.query_one(
+            "SELECT p,reasoning,resolution_rule_json,confidence,drivers_json,"
+            "deadline_tick,status FROM predictions"))
+        source_world.close()
+
+        replay_store, replay_world, _ = cli.open_run(
+            {}, None, source_id, data_dir=tmp_path)
+
+        class NoNetwork:
+            def __init__(self):
+                self.calls = 0
+
+            async def complete(self, *_args, **_kwargs):
+                self.calls += 1
+                raise AssertionError("exact replay must not dispatch to a provider")
+
+        no_network = NoNetwork()
+        replay_world.gateway.adapters["network"] = no_network
+        replay_result = asyncio.run(replay_world.oracle.ask(
+            question, governed_contract=contract))
+        replay_answer = replay_store.query_one(
+            "SELECT response_json FROM llm_calls "
+            "WHERE role='oracle' AND purpose='oracle'")
+        tracker = replay_world.gateway.replay_execution_stats()
+
+        assert replay_result == source_result
+        assert dict(replay_store.query_one(
+            "SELECT p,reasoning,resolution_rule_json,confidence,drivers_json,"
+            "deadline_tick,status FROM predictions")) == source_prediction
+        assert json.loads(replay_answer["response_json"])["raw"]["provider_calls"] == 2
+        assert no_network.calls == 0
+        assert tracker["live_dispatch_count"] == 0
+        assert tracker["compatibility_fallback_matches"] == 0
+        assert tracker["exact_key_matches"] == tracker["consumed_source_calls"]
+        assert tracker["all_nonoperational_calls_consumed_once"] is True
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"] is True
+        assert proof["differences"] == []
+    finally:
+        if replay_world is not None:
+            replay_world.close()
+        else:
+            source_world.close()
+
+
 def test_gateway_redacts_tagged_private_reasoning_before_persisting(
         tmp_path, monkeypatch):
     from engine.store import Store
@@ -1004,5 +1391,9 @@ def test_schema_hint_repairs_valid_json_with_the_wrong_contract(tmp_path, monkey
     store.close()
 
 
-def test_no_argument_runtime_uses_locked_v2_minimax_profile():
-    assert DEFAULT_CONFIG == "runs/v2-live-minimax.yaml"
+def test_no_argument_runtime_uses_fail_closed_live_desktop_profile():
+    assert DEFAULT_CONFIG == "runs/evolving-live.yaml"
+    config = cli.load_config(DEFAULT_CONFIG)
+    assert config["engine_semantics_version"] == 11
+    assert config["llm"]["live_only"] is True
+    assert config["llm"]["require_preflight_live"] is True

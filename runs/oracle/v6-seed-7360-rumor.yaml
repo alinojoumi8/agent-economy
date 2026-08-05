@@ -1,0 +1,15 @@
+extends: calibration-base-v6.yaml
+seed: 7360
+shocks:
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 4}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-004}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 6}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-006}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 64}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-064}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 66}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-066}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 124}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-124}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 126}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-126}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 184}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-184}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 186}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-186}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 244}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-244}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 246}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-246}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 304}, params: {bank_selector: largest_by_deposits, audience: all_citizens, n_agents: 1}, label: oracle-precursor-304}
+  - {kind: rumor, trigger: shock, trigger_params: {tick: 306}, params: {bank_selector: largest_by_deposits, audience: current_depositors, n_agents: 40}, label: oracle-rumor-306}

@@ -3,13 +3,14 @@
 Phase order per tick T (determinism requires ordered execution):
   1 NIGHT_CLOSE   interest, loan payments, payroll, production, lifecycle draws,
                   shock evaluation, pre-decision reconciliation check
-  2 MORNING       scheduled agents perceive + decide (LLM, concurrent)
-  3 EXECUTION     validator + engine apply queued actions (deterministic order)
-  4 MARKET        order book matches; session closes
-  5 NEWSROOM      outlets write stories from the day's true events
-  6 EVENING       conversation pairs
-  7 MEMORY        nightly compression, belief extraction
-  8 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
+  2 INBOX_DELIVERY due asynchronous mail resolves (Semantics 8 only)
+  3 MORNING       scheduled agents perceive + decide (LLM, concurrent)
+  4 EXECUTION     validator + engine apply queued actions (deterministic order)
+  5 MARKET        order book matches; session closes
+  6 NEWSROOM      outlets write stories from the day's true events
+  7 EVENING       conversation pairs
+  8 MEMORY        nightly compression, belief extraction
+  9 FINALIZE      post-action metrics, Oracle resolution, reconciliation check
 
 A failed reconciliation halts the run with a diagnostic dump (PRD R1). The budget
 governor is consulted every tick; at 100% the run pauses cleanly (PRD R7).
@@ -23,10 +24,17 @@ import random
 import shutil
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Callable, Optional
 
+import psutil
+
 from engine.core import Economy
+from engine.checkpoint_manifest import (
+    finalize_sqlite_artifact,
+    write_checkpoint_manifest,
+)
 from engine.ledger import (
     Leg,
     ReconciliationError,
@@ -38,24 +46,27 @@ from engine.semantics import semantics_version
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
+from communications.delivery import CommunicationDelivery
 from agents.personas.library import (
     configured_outlet_ids, sample_arrival_persona, sample_persona,
 )
 from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
+from .commons import CommonsService
 from .shocks import Shocks
+from .phases import (
+    LEGACY_PHASE_SPECS,
+    STANDARD_PHASE_SPECS,
+    SEMANTICS_8_PHASE_SPECS,
+    phase_names_for_semantics,
+)
 from oracle.analyst import Oracle
 from observability import get_logger, log_event as operational_log
 
-LEGACY_PHASES = (
-    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
-    "NEWSROOM", "EVENING", "MEMORY",
-)
-PHASES = (
-    "NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
-    "NEWSROOM", "EVENING", "MEMORY", "FINALIZE",
-)
+LEGACY_PHASES = tuple(spec.name for spec in LEGACY_PHASE_SPECS)
+PHASES = tuple(spec.name for spec in STANDARD_PHASE_SPECS)
+SEMANTICS_8_PHASES = tuple(spec.name for spec in SEMANTICS_8_PHASE_SPECS)
 logger = get_logger("world")
 
 
@@ -64,7 +75,7 @@ class World:
         self.store = store
         self.config = config
         self.engine_semantics_version = semantics_version(config, default=2)
-        self.phases = PHASES if self.engine_semantics_version >= 2 else LEGACY_PHASES
+        self.phases = phase_names_for_semantics(self.engine_semantics_version)
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
         self.lifecycle_prng = random.Random(seed ^ 0x5F5E5F)
@@ -75,6 +86,8 @@ class World:
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
         self.gateway = Gateway(store, cfg)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
+        self.commons = CommonsService(self.economy, self.runtime.mem)
+        self.communication_delivery = CommunicationDelivery(store, config)
         self.metrics = Metrics(
             self.economy, semantics_version=self.engine_semantics_version)
         self.shocks = Shocks(self.economy, config)
@@ -85,6 +98,7 @@ class World:
         self.status = "created"      # created|running|paused|halted|finished
         self.speed_delay_s = float(config.get("speed_delay_s", 0.0))
         self.checkpoint_every = int(config.get("checkpoint_every", 10))
+        self.resource_guard = dict(config.get("resource_guard", {}) or {})
         self._pause_requested = False
         self._stop_requested = False
         self.last_report_path: Optional[str] = None
@@ -96,6 +110,9 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
+            if self.engine_semantics_version >= 12:
+                self.economy.city.initialize(self.store.tick)
+                self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
             return
@@ -116,12 +133,17 @@ class World:
         if self.config.get("spec_closure_fixture", {}).get("enabled"):
             from world.spec_closure_fixture import SpecClosureFixtureSeeder
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
+        self.economy.cognition.seed_world(0)
         self.shocks.load_from_config()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
         self.metrics.snapshot(0)
         self.store.set_meta(status="paused", tick=0)
+        if self.engine_semantics_version >= 7:
+            # Genesis consumes the persona stream. Persist it immediately so a
+            # resume before tick 1 cannot reset arrival identities.
+            self._save_prng_state()
         self.store.commit()
         operational_log(logger, logging.INFO, "world.initialized",
                         run_id=self.gateway.run_id, seed=self.config.get("seed", 42),
@@ -140,6 +162,11 @@ class World:
         operational_log(logger, logging.INFO, "world.run.started",
                         run_id=self.gateway.run_id, start_tick=start_tick,
                         max_ticks=max_ticks, replay=self.gateway.replay)
+        resource_task = (
+            asyncio.create_task(self._monitor_resources())
+            if self.resource_guard.get("enabled") and not self.gateway.replay
+            else None
+        )
         try:
             while not self._stop_requested:
                 if end_tick is not None and self.store.tick >= end_tick:
@@ -152,6 +179,10 @@ class World:
                 if self.speed_delay_s > 0:
                     await asyncio.sleep(self.speed_delay_s)
         finally:
+            if resource_task is not None:
+                resource_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await resource_task
             new_status = "halted" if self.status == "halted" else "paused"
             if self._stop_requested:
                 new_status = "finished"
@@ -204,6 +235,84 @@ class World:
                             end_tick=self.store.tick, status=new_status,
                             stop_requested=self._stop_requested)
 
+    def _resource_snapshot(self) -> dict:
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        process = psutil.Process()
+        return {
+            "system_cpu_percent": round(float(psutil.cpu_percent(interval=None)), 1),
+            "system_memory_percent": round(float(memory.percent), 1),
+            "available_memory_gb": round(float(memory.available) / (1024 ** 3), 2),
+            "system_swap_percent": round(float(swap.percent), 1),
+            "available_swap_gb": round(float(swap.free) / (1024 ** 3), 2),
+            "process_rss_mb": round(float(process.memory_info().rss) / (1024 ** 2), 1),
+            "global_in_flight": int(self.gateway._live_in_flight),
+            "global_queue_depth": int(self.gateway._global_queue_depth()),
+            "provider_in_flight": {
+                name: int(gate.active)
+                for name, gate in sorted(self.gateway.provider_gates.items())
+            },
+            "provider_queue_depth": {
+                name: int(gate.queued)
+                for name, gate in sorted(self.gateway.provider_gates.items())
+            },
+        }
+
+    def _resource_breaches(self, sample: dict) -> list[str]:
+        breaches = []
+        if (float(self.resource_guard.get("max_cpu_percent", 0)) > 0
+                and sample["system_cpu_percent"]
+                >= float(self.resource_guard["max_cpu_percent"])):
+            breaches.append("system_cpu")
+        if (float(self.resource_guard.get("max_memory_percent", 0)) > 0
+                and sample["system_memory_percent"]
+                >= float(self.resource_guard["max_memory_percent"])):
+            breaches.append("system_memory")
+        if (float(self.resource_guard.get("min_available_memory_gb", 0)) > 0
+                and sample["available_memory_gb"]
+                <= float(self.resource_guard["min_available_memory_gb"])):
+            breaches.append("available_memory")
+        if (float(self.resource_guard.get("max_swap_percent", 0)) > 0
+                and sample["system_swap_percent"]
+                >= float(self.resource_guard["max_swap_percent"])):
+            breaches.append("system_swap")
+        return breaches
+
+    async def _monitor_resources(self) -> None:
+        interval_s = max(
+            0.1, float(self.resource_guard.get("sample_interval_s", 5.0)))
+        required = max(
+            1, int(self.resource_guard.get("consecutive_breaches", 3)))
+        consecutive = 0
+        while self.status == "running" and not self._pause_requested:
+            try:
+                sample = self._resource_snapshot()
+                breaches = self._resource_breaches(sample)
+                consecutive = consecutive + 1 if breaches else 0
+                operational_log(
+                    logger, logging.INFO, "runtime.resource.sample",
+                    run_id=self.gateway.run_id, tick=self.store.tick,
+                    breaches=breaches, consecutive_breaches=consecutive,
+                    **sample)
+                if consecutive >= required:
+                    self.last_pause_reason = {
+                        "reason": "resource_guard",
+                        "breaches": breaches,
+                        **sample,
+                    }
+                    operational_log(
+                        logger, logging.CRITICAL, "runtime.resource.limit_reached",
+                        run_id=self.gateway.run_id, tick=self.store.tick,
+                        consecutive_breaches=consecutive, **self.last_pause_reason)
+                    self.request_pause()
+                    return
+            except Exception as exc:
+                operational_log(
+                    logger, logging.WARNING, "runtime.resource.sample_failed",
+                    run_id=self.gateway.run_id, tick=self.store.tick,
+                    error_type=type(exc).__name__, error=str(exc))
+            await asyncio.sleep(interval_s)
+
     def request_pause(self) -> None:
         self._pause_requested = True
         self.gateway.interrupt_pending()
@@ -232,6 +341,8 @@ class World:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
         if meta["active_tick"] is None:
+            if self.engine_semantics_version >= 9:
+                await self.runtime.external.collect_online_turns(tick)
             self._persist_phase(tick, phase, state)
         elif meta["legacy_partial"] and phase == "MEMORY":
             state["observations_captured"] = bool(self.store.scalar(
@@ -244,6 +355,10 @@ class World:
             for index in range(self.phases.index(phase), len(self.phases)):
                 phase = self.phases[index]
                 self._persist_phase(tick, phase, state)
+                phase_started = time.perf_counter()
+                operational_log(
+                    logger, logging.INFO, "world.phase.started",
+                    run_id=self.gateway.run_id, tick=tick, phase=phase)
                 if phase == "NIGHT_CLOSE":
                     try:
                         with self.store.savepoint(f"tick_{tick}_night_close"):
@@ -252,12 +367,17 @@ class World:
                         self._record_reconciliation_halt(
                             tick, "NIGHT_CLOSE", getattr(exc, "diagnostic", {}))
                         raise
+                elif phase == "INBOX_DELIVERY":
+                    with self.store.savepoint(f"tick_{tick}_inbox_delivery"):
+                        self.communication_delivery.deliver_due(tick)
                 elif phase == "MORNING":
                     if self.gateway.governor.should_pause():
                         raise BudgetExceeded("world budget exhausted before MORNING")
                     if self.engine_semantics_version >= 7:
                         await self.runtime.enrich_pending_arrivals(tick)
                     decisions = await self.runtime.decide_all(tick)
+                    if self.engine_semantics_version >= 9:
+                        self.runtime.external.restore_replay_after_morning(tick)
                     state["decisions"] = decisions
                     decisions_count = len(decisions)
                 elif phase == "EXECUTION":
@@ -291,6 +411,11 @@ class World:
                             tick, "FINALIZE", getattr(exc, "diagnostic", {}))
                         raise
 
+                operational_log(
+                    logger, logging.INFO, "world.phase.completed",
+                    run_id=self.gateway.run_id, tick=tick, phase=phase,
+                    duration_ms=round(
+                        (time.perf_counter() - phase_started) * 1000.0, 2))
                 if index + 1 < len(self.phases):
                     self._persist_phase(tick, self.phases[index + 1], state)
                 else:
@@ -300,13 +425,13 @@ class World:
                     self._save_prng_state()
                     self.store.commit()
 
-            if self.checkpoint_every and tick % self.checkpoint_every == 0:
-                self.checkpoint(tick)
-
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": decisions_count,
                        "governor": self.gateway.governor.status()}
-            operational_log(logger, logging.DEBUG, "world.tick.completed",
+            self._record_runtime_tick(tick, summary)
+            if self.checkpoint_every and tick % self.checkpoint_every == 0:
+                self.checkpoint(tick)
+            operational_log(logger, logging.INFO, "world.tick.completed",
                             run_id=self.gateway.run_id, tick=tick, phase=phase,
                             wall_s=summary["wall_s"], decisions=decisions_count)
             self._notify_tick(tick, summary)
@@ -330,6 +455,35 @@ class World:
             }
             self._notify_tick(self.store.tick, summary)
             return summary
+
+    def _record_runtime_tick(self, tick: int, summary: dict) -> None:
+        """Persist host/provider timing as non-authoritative acceptance evidence."""
+        if self.engine_semantics_version < 11:
+            return
+        attempts = self.store.query_one(
+            "SELECT COUNT(*) attempts,"
+            "SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) successes,"
+            "SUM(CASE WHEN outcome<>'success' THEN 1 ELSE 0 END) failures,"
+            "SUM(fallback_used) fallbacks,SUM(rate_limited) rate_limits "
+            "FROM llm_attempts WHERE tick=?", (int(tick),))
+        runtime = self.gateway.runtime_status()
+        global_runtime = runtime["global"]
+        self.store.execute(
+            "INSERT OR REPLACE INTO runtime_tick_stats("
+            "tick,wall_ms,decisions,llm_attempts,llm_successes,llm_failures,"
+            "fallbacks,rate_limits,peak_live_in_flight,peak_queue_depth) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                int(tick), round(float(summary.get("wall_s", 0.0)) * 1000.0, 3),
+                max(0, int(summary.get("decisions", 0))),
+                int(attempts["attempts"] or 0), int(attempts["successes"] or 0),
+                int(attempts["failures"] or 0), int(attempts["fallbacks"] or 0),
+                int(attempts["rate_limits"] or 0),
+                int(global_runtime["peak_in_flight"]),
+                int(global_runtime["peak_queue_depth"]),
+            ),
+        )
+        self.store.commit()
 
     def _notify_tick(self, tick: int, summary: dict) -> None:
         if self.on_tick:
@@ -400,6 +554,10 @@ class World:
         # applied before payroll/production at the configured untouched tick.
         self._apply_supply_recovery_recapitalization(tick)
         self._enforce_workforce_recovery_job_floor(tick)
+        if self.engine_semantics_version >= 12:
+            # Fixed-slot presence is resolved before production. An office
+            # appointment removes a worker from output, but not from payroll.
+            e.city.run_nightly(tick)
         # Interest on savings (annual rate ≈ policy - 200bps, floored at 0).
         self._accrue_savings_interest(tick)
         # Loan payments + defaults.
@@ -421,6 +579,8 @@ class World:
             e.politics.run_nightly(tick)
             if self.engine_semantics_version >= 5:
                 e.regions.run_nightly(tick)
+        if self.engine_semantics_version >= 11:
+            e.cognition.run_nightly(tick)
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
@@ -599,12 +759,29 @@ class World:
             )
 
     def _phase_finalize(self, tick: int) -> None:
+        if self.engine_semantics_version >= 12:
+            # Civic maintenance stays inside the existing single-writer phase.
+            self.economy.city.finalize(tick)
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.
         self.oracle.resolve_open(tick)
         # The completed-tick invariant includes every action settled today.
         self._assert_reconciled(tick, "FINALIZE")
+        if self.engine_semantics_version >= 8:
+            domains = [
+                "summary", "events", "communications", "causal", "snapshot",
+            ]
+            if self.engine_semantics_version >= 12:
+                domains.extend(["city", "attention"])
+            self.store.execute(
+                "INSERT OR IGNORE INTO projection_commits (tick,phase,domains_json) "
+                "VALUES (?,'FINALIZE',?)",
+                (
+                    int(tick),
+                    json.dumps(domains, separators=(",", ":")),
+                ),
+            )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
         ok, diag = self.economy.ledger.reconcile()
@@ -684,18 +861,35 @@ class World:
                 p = sample_arrival_persona(self.persona_prng, outlet_ids)
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
+            external_identity = self.runtime.external.arrival_overrides(sched_id)
+            # The public identity is decided once so the agents row and the
+            # public arrival event never disagree about who moved to town.
+            arrival_name = (
+                external_identity["name"] if external_identity else p.name)
+            arrival_occupation = (
+                external_identity["occupation"]
+                if external_identity and external_identity["occupation"]
+                else p.occupation)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
             bank_id = self.economy.regions.bank_for_region(banks, region_id) \
                 if self.economy.regions.enabled else self.engine_prng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
+            baseline_core = (
+                self.engine_semantics_version >= 7
+                and bool(self.config.get("population", {}).get(
+                    "baseline_citizens_core", False))
+                and not self.economy.regions.enabled)
             agent_id = self.store.insert(
-                "agents", name=p.name, kind="citizen", occupation=p.occupation,
+                "agents", name=arrival_name,
+                kind="citizen", occupation=arrival_occupation,
                 age=max(20, min(55, p.age)), health="healthy", dependents=p.dependents,
                 personality_json=json.dumps(p.personality), political_lean=p.political_lean,
                 media_diet_json=json.dumps(p.media_diet), risk_tolerance=p.risk_tolerance,
                 cadence_json=json.dumps({"act": 2, "portfolio": 7, "career": 30}),
-                model_tier="citizen", population_tier="periphery", region_id=region_id,
+                model_tier="citizen",
+                population_tier="core" if baseline_core else "periphery",
+                pinned_core=1 if baseline_core else 0, region_id=region_id,
                 alive=1, retired=0, arrived_tick=tick)
             if self.engine_semantics_version >= 7:
                 checking_cents = int(p.wealth_cents * 0.7)
@@ -717,6 +911,7 @@ class World:
                     savings_account_id=sav)
             else:
                 self.store.update("agents", agent_id, checking_account_id=chk)
+            self.economy.cognition.seed_agent(agent_id, tick)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
             housing_cost = max(0, int(self.config.get("lifecycle", {}).get(
@@ -750,8 +945,10 @@ class World:
                 tick, "job_search_started", {"agent_id": agent_id, "reason": "arrival"},
                 phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                 importance=1.5)
+            self.runtime.external.bind_arrival(sched_id, agent_id, tick)
             arrival_payload = {
-                "agent_id": agent_id, "name": p.name, "occupation": p.occupation,
+                "agent_id": agent_id, "name": arrival_name,
+                "occupation": arrival_occupation,
                 "schedule_event_id": sched_id}
             if self.engine_semantics_version >= 7:
                 arrival_payload.update({
@@ -777,6 +974,8 @@ class World:
             with dst:
                 src.backup(dst)
             src.close(); dst.close()
+            finalize_sqlite_artifact(dest)
+            write_checkpoint_manifest(dest)
             created_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc).isoformat()
             existing = self.store.query_one(
@@ -806,15 +1005,28 @@ class World:
             return None
 
     def _save_prng_state(self) -> None:
+        engine_state = _prng_state(self.engine_prng)
+        if self.engine_semantics_version >= 7:
+            engine_state = {
+                "engine": engine_state,
+                "persona": _prng_state(self.persona_prng),
+            }
         self.store.set_meta(
-            prng_state=json.dumps(_prng_state(self.engine_prng)),
+            prng_state=json.dumps(engine_state),
             lifecycle_prng_state=json.dumps(_prng_state(self.lifecycle_prng)),
             governor_json=json.dumps(self.gateway.governor.status()))
 
     def restore_prng_state(self) -> None:
         meta = self.store.get_meta()
         if meta["prng_state"]:
-            self.engine_prng.setstate(_from_state(json.loads(meta["prng_state"])))
+            engine_state = json.loads(meta["prng_state"])
+            if isinstance(engine_state, dict):
+                self.engine_prng.setstate(_from_state(engine_state["engine"]))
+                self.persona_prng.setstate(_from_state(engine_state["persona"]))
+            else:
+                # Stored semantics 1-6 and pre-fix semantics-7 runs retain the
+                # historical list-form resume contract.
+                self.engine_prng.setstate(_from_state(engine_state))
         if meta["lifecycle_prng_state"]:
             self.lifecycle_prng.setstate(_from_state(json.loads(meta["lifecycle_prng_state"])))
 

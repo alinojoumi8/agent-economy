@@ -1,0 +1,85 @@
+{
+  "schema": "world-os-v8-benchmark-manifest-v1",
+  "semantics_version": 8,
+  "schema_version": 12,
+  "seed": 20260718,
+  "percentile_method": "nearest-rank",
+  "machine_class": {
+    "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+    "processor_signature": "AMD64 Family 23 Model 113 Stepping 0, AuthenticAMD",
+    "physical_cores": 16,
+    "logical_cores": 32,
+    "memory_bytes": 68637556736,
+    "os": "Microsoft Windows 11 Pro 10.0.28000 64-bit",
+    "platform": "Windows-10-10.0.28000-SP0",
+    "python": "3.11.15",
+    "sqlite": "3.53.1"
+  },
+  "sqlite": {
+    "journal_mode": "WAL",
+    "synchronous": "NORMAL",
+    "foreign_keys": true,
+    "busy_timeout_ms": 5000
+  },
+  "dependencies": [
+    "requirements.lock",
+    "dashboard/package-lock.json"
+  ],
+  "fixtures": [
+    "docs/world-os/protocol-manifest.json",
+    "research/hash-contract-v1.json"
+  ],
+  "interactive": {
+    "agents": 100,
+    "ticks_per_repetition": 30,
+    "repetitions": 5,
+    "messages_per_agent_per_tick": 1
+  },
+  "scale": {
+    "agents": 1000,
+    "strategic_agents": 100,
+    "periphery_agents": 900,
+    "ticks": 365,
+    "repetitions": 5,
+    "strategic_senders_per_tick": 4,
+    "periphery_wakes_per_tick": 9,
+    "periphery_messages_per_wake": 1
+  },
+  "communication": {
+    "audience": "direct",
+    "recipients_per_message": 1,
+    "body_characters": 512,
+    "causal_edges_per_delivery": 1,
+    "safe_events_per_message": 2
+  },
+  "projections": {
+    "warmup_ticks": 1,
+    "freshness_samples": 30,
+    "route_samples": 30,
+    "causal_depth": 3
+  },
+  "cache_rules": {
+    "interactive": "cold database per repetition; ticks after the first are warm",
+    "scale": "cold database per repetition; no SQLite page-cache reset inside a run",
+    "projection": "one unrecorded warmup followed by consecutive local samples"
+  },
+  "storage_accounting": [
+    "world.db",
+    "world.db-wal",
+    "world.db-shm",
+    "checkpoints",
+    "provider_receipts",
+    "script_receipts"
+  ],
+  "budgets": {
+    "interactive_tick_p95_seconds": 2.0,
+    "interactive_tick_p99_seconds": 5.0,
+    "scale_run_seconds": 900.0,
+    "peak_process_tree_rss_bytes": 2147483648,
+    "run_footprint_bytes": 1610612736,
+    "projection_freshness_p95_seconds": 2.0,
+    "route_bootstrap_p95_seconds": 0.75,
+    "inbox_p95_seconds": 0.1,
+    "causal_p95_seconds": 0.25
+  }
+}

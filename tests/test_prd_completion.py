@@ -1719,6 +1719,79 @@ def test_replay_compares_llm_provenance_by_logical_call_identity(tmp_path):
     assert dangling["differences"] == ["action_proposals"]
 
 
+def test_replay_canonicalizes_communication_model_provenance(tmp_path):
+    source = Store(str(tmp_path / "communication-source.db"))
+    replay = Store(str(tmp_path / "communication-replay.db"))
+    config = {"engine_semantics_version": 11,
+              "llm": {"institutional_role_purposes": True}}
+    source.init_run_meta("communication-source", 42, config)
+    replay.init_run_meta("communication-replay", 42, config)
+
+    for store, call_id, event_id in ((source, 5, 3), (replay, 9, 1)):
+        store.insert(
+            "agents", id=2, name="Credit officer", kind="staff",
+            role="credit_officer")
+        store.insert(
+            "llm_calls", id=call_id, tick=1, agent_id=2,
+            role="credit_officer", provider="minimax", model="MiniMax-M3",
+            purpose="credit_officer", cache_key="communication-call",
+            request_json='{"agent_id":2,"tick":1}',
+            response_json='{"text":"bounded","raw":{}}',
+            in_tokens=10, out_tokens=5, cached=0, cost_usd=0.001,
+            latency_ms=100, created_at="2026-07-21T00:00:00+00:00")
+        if store is source:
+            store.insert(
+                "events", id=1, tick=1, phase="MORNING",
+                kind="provider_failure", payload_json='{"reason":"transient"}')
+            store.insert(
+                "events", id=2, tick=1, phase="MORNING",
+                kind="provider_pause", payload_json='{"reason":"transient"}')
+        store.insert(
+            "events", id=event_id, tick=1, phase="EXECUTION",
+            kind="communication_queued", payload_json="{}")
+        store.insert(
+            "comm_threads", id=1, created_tick=1, created_by_agent_id=2,
+            subject="Bounded update", status="open", root_event_id=event_id)
+        store.insert(
+            "comm_messages", id=1, thread_id=1, sender_agent_id=2,
+            created_tick=1, deliver_at_tick=2, visibility="participants",
+            body_text="Status update", model_call_id=call_id,
+            created_event_id=event_id, status="queued")
+        action_result = {
+            "ok": True, "thread_id": 1, "message_id": 1,
+            "created_event_id": event_id,
+        }
+        store.insert(
+            "action_proposals", id=1, tick=1, actor_id=2,
+            action_type="send_message", payload_json="{}",
+            evidence_event_ids_json="[]", model_call_id=call_id,
+            rationale_summary="bounded", validation_status="executed",
+            result_json=json.dumps(action_result))
+        store.insert(
+            "causal_links", id=1, dedupe_key="c" * 64, created_tick=1,
+            source_kind="action_proposal", source_id="1", source_tick=1,
+            source_order_key="0001", target_kind="event",
+            target_id=str(event_id), target_tick=1, target_order_key="0002",
+            relation="triggered", authority="engine",
+            confidence=1.0,
+            provenance_json=json.dumps({
+                "action_type": "send_message",
+                "action_result": action_result,
+            }),
+            evidence_json="{}")
+        store.insert(
+            "agent_decisions", id=1, dedupe_key="d" * 64,
+            tick=1, agent_id=2, purpose="credit_officer",
+            method="model_call", model_call_id=call_id,
+            reasoning_fingerprint="r" * 64)
+        store.commit()
+
+    proof = verify_replay(source.path, replay.path)
+
+    assert proof["exact"], proof["differences"]
+    assert proof["source_hash"] == proof["replay_hash"]
+
+
 def test_replay_rejects_same_actor_turn_wrong_llm_purpose(tmp_path):
     source = Store(str(tmp_path / "purpose-source.db"))
     replay = Store(str(tmp_path / "purpose-replay.db"))
@@ -1869,6 +1942,7 @@ def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
             if not status["running"]:
                 break
         assert status["tick"] == 1
+        assert status["semantics_version"] == world.engine_semantics_version
         assert status["target_tick"] == 3
         assert status["remaining_ticks"] == 2
 
@@ -2023,7 +2097,7 @@ def test_replay_missing_response_pauses_without_calling_a_provider(tmp_path):
 def test_production_config_inherits_world_and_enforces_minimax_m3():
     cfg = load_config("runs/production.yaml")
     assert cfg["budget"]["cap_usd"] is None
-    assert cfg["population"]["size"] == 87
+    assert cfg["population"]["size"] == 63
     assert cfg["banks"]["count"] == 2
     assert cfg["llm"]["default_route"] == {
         "provider": "minimax", "model": "MiniMax-M3"}
@@ -2279,6 +2353,16 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
         tools.execute_plan([
             {"tool": "read_news", "args": {"limit": 1}}
             for _ in range(9)])
+    legacy = tools.execute_plan_legacy([{
+        "tool": "read_news",
+        "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+    }])
+    assert len(legacy) == 1
+    with pytest.raises(OracleToolError):
+        tools.execute_plan([{
+            "tool": "read_news",
+            "args": {"from_tick": 0, "to_tick": 1, "limit": "2"},
+        }])
 
     answer = asyncio.run(world.oracle.ask(
         "What is the probability of a bank run within 30 ticks?"))
@@ -2648,6 +2732,10 @@ def test_websocket_and_http_paths_emit_operational_logs(tmp_path, caplog):
                and record.event_fields["status_code"] == 200 for record in completed)
     assert any(record.event_fields["path"] == "/api/shocks"
                and record.event_fields["status_code"] == 400 for record in completed)
+    assert next(record for record in completed
+                if record.event_fields["path"] == "/api/run/status").levelno == logging.DEBUG
+    assert next(record for record in completed
+                if record.event_fields["path"] == "/api/run/step").levelno == logging.INFO
 
 
 def test_react_dashboard_bundle_is_local_and_current():
@@ -2662,6 +2750,35 @@ def test_react_dashboard_bundle_is_local_and_current():
     assert "https://" not in html and "http://" not in html
     for relative in set(part.split('"')[0] for part in html.split("/static/")[1:]):
         assert (Path("server/static") / relative).is_file(), relative
+
+
+def test_world_os_deep_links_serve_spa_entrypoint(tmp_path):
+    world = _world(tmp_path, "world-os-deep-links.db")
+
+    with TestClient(create_app(world)) as client:
+        for path in (
+            "/runs/run-demo/overview",
+            "/runs/run-demo/news-communications/thread-1?tick=2",
+            "/commons/overview",
+        ):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert response.headers["content-type"].startswith("text/html")
+            assert 'id="root"' in response.text
+
+
+def test_local_mode_probe_reports_non_hosted_v2_api(tmp_path):
+    world = _world(tmp_path, "local-mode-probe.db")
+
+    with TestClient(create_app(world)) as client:
+        response = client.get("/api/v2/mode")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mode": "local",
+        "hosted": False,
+        "api_base": "/api/v2",
+    }
 
 
 def test_each_required_shock_has_a_logged_downstream_effect(tmp_path):

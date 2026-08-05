@@ -9,8 +9,10 @@ import { RunHeader } from "./RunHeader";
 import { ParticipantPanel } from "./ParticipantPanel";
 import { ShockModal } from "./ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
-import { EconomicMap, InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
+import { InstitutionalPulse, LegalPoliticalPanels } from "./V2Observatory";
+import { CivicCity } from "./CivicCity";
 import { SectionTitle } from "./ui";
+import { workspaceSemanticsLabel } from "../runState";
 
 const MacroOverview = lazy(() => import("./MacroOverview"));
 
@@ -27,7 +29,7 @@ export function Observatory({ hostedSession = null }) {
     ? { enabled: false, active: false, action_catalog: [] }
     : data.participant;
 
-  return <div className="min-h-screen">
+  return <div className="civic-observatory min-h-screen">
     <RunHeader status={status} participant={participant} connected={connected} loading={loading} act={act}
       hosted={hosted} canControl={canControl}
       onShock={hosted ? null : () => setShockOpen(true)}
@@ -47,10 +49,26 @@ export function Observatory({ hostedSession = null }) {
 
     {hosted && !canControl && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs text-mint-300"><strong>Observer access.</strong> This run is read-only; an administrator owns simulation controls.</aside>}
     {status?.pause_reason && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-gold-300/20 bg-gold-300/[.05] px-4 py-3 text-xs text-gold-300"><strong>Run paused safely.</strong> {status.pause_reason.detail || status.pause_reason.reason}</aside>}
+    {status?.run_id && <aside className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-3 rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs">
+      <span><strong className="text-mint-300">{workspaceSemanticsLabel(status)}</strong> Trace goal-driven communications through beliefs, decisions, events, and ledger effects.</span>
+      <a className="button" href={`/runs/${encodeURIComponent(status.run_id)}/overview`}>Open World OS</a>
+    </aside>}
 
     <main id="main-content" className="mx-auto grid max-w-[1800px] grid-cols-12 gap-3 px-3 pb-16 pt-3 sm:px-5">
       <SectionTitle index="0" title="The living legal-political economy" description="Watch regional production, trade, institutions, law, information, and capital move through one deterministic event spine." />
-      <EconomicMap map={data.v2?.map} />
+      <CivicCity
+        agents={data.agents}
+        firms={data.firms}
+        events={data.events}
+        map={data.v2?.map}
+        runId={status?.run_id}
+        tick={status?.tick ?? "live"}
+        phase={status?.phase}
+        status={status?.status}
+        connected={connected}
+        loading={loading}
+        variant="observatory"
+      />
       <InstitutionalPulse legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} datasets={data.v2?.datasets} />
       <LegalPoliticalPanels legal={data.v2?.legal} politics={data.v2?.politics} information={data.v2?.information} startups={data.v2?.startups} markets={data.v2?.markets} />
 

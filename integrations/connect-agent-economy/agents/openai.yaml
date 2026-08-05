@@ -1,0 +1,4 @@
+interface:
+  display_name: "Connect Agent Economy"
+  short_description: "Connect an outside agent to World OS"
+  default_prompt: "Use $connect-agent-economy to connect this agent safely to an Agent Economy run."

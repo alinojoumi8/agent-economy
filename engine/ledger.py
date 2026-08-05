@@ -42,6 +42,8 @@ SYS_LOSS = "sys:loss"                  # destroyed wealth (bank-failure haircuts
 SYS_MEDICAL = "sys:medical"            # out-of-pocket medical costs leave here
 SYS_GOV = "sys:gov"                    # government treasury (P1 fiscal)
 SYS_HOUSING = "sys:housing"            # rent/move-in costs paid by households
+SYS_COMPUTE = "sys:compute_service"     # in-world compute subscription revenue
+SYS_EDUCATION = "sys:education_service" # in-world skill-study revenue
 
 
 class Ledger:

@@ -5,8 +5,10 @@ regenerate the receipt from persisted run evidence alone.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,6 +17,7 @@ import yaml
 
 from engine.ledger import Ledger
 from engine.store import Store, load_json
+from oracle.rules import ResolutionRuleError, validate_resolution_rule
 
 if TYPE_CHECKING:
     from world.loop import World
@@ -23,8 +26,10 @@ if TYPE_CHECKING:
 REQUIRED_SHOCKS = ("policy_rate", "oil", "rumor", "slant", "scandal")
 FAILURE_EVENTS = (
     "provider_failure", "provider_pause", "reconciliation_failure",
-    "budget_pause", "report_failed",
+    "budget_pause", "report_failed", "oracle_tool_execution_failed",
 )
+SCHEDULED_E2E_LATENCY_KIND = "scheduled_e2e_v1"
+_SCHEDULED_TIMER_DETAIL_KIND = "scheduled_e2e_timer_v1"
 
 
 def uses_paid_providers(config: dict) -> bool:
@@ -51,6 +56,443 @@ def _p90(values: list[int]) -> int | None:
         return None
     ordered = sorted(values)
     return ordered[max(0, math.ceil(0.90 * len(ordered)) - 1)]
+
+
+def _scheduled_e2e_enabled(config: dict) -> bool:
+    return config.get("acceptance", {}).get("oracle_latency_source") == (
+        SCHEDULED_E2E_LATENCY_KIND)
+
+
+def _scheduled_question_key(item: dict) -> str:
+    return str(item.get("campaign_key") or f"tick_{int(item['at_tick']):03d}")
+
+
+def _validate_scheduled_campaign(acceptance: dict, questions: list[dict]) -> None:
+    """Fail closed when the governed scheduled-campaign identity is ambiguous."""
+    if acceptance.get("oracle_latency_source") != SCHEDULED_E2E_LATENCY_KIND:
+        return
+    campaign_id = acceptance.get("oracle_campaign_id")
+    version = acceptance.get("oracle_campaign_version")
+    if not isinstance(campaign_id, str) or not campaign_id.strip():
+        raise ValueError("scheduled Oracle campaign requires oracle_campaign_id")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("scheduled Oracle campaign requires a positive integer version")
+    keys = [item.get("campaign_key") for item in questions]
+    if any(not isinstance(key, str) or not key.strip() for key in keys):
+        raise ValueError("every scheduled Oracle question requires campaign_key")
+    if len(set(keys)) != len(keys):
+        raise ValueError("scheduled Oracle campaign_key values must be unique")
+    for item in questions:
+        _scheduled_contract(acceptance, item)
+
+
+def _scheduled_contract(acceptance: dict, item: dict) -> dict:
+    """Build the exact engine-owned contract shown to a scheduled Oracle."""
+    scheduled_tick = item.get("at_tick")
+    horizon = item.get("horizon_ticks")
+    if (isinstance(scheduled_tick, bool) or not isinstance(scheduled_tick, int)
+            or scheduled_tick < 0):
+        raise ValueError("scheduled Oracle at_tick must be a non-negative integer")
+    if (isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 1):
+        raise ValueError("scheduled Oracle horizon_ticks must be a positive integer")
+    if "expected_rule" not in item:
+        raise ValueError("scheduled Oracle question requires expected_rule")
+    try:
+        expected_rule = validate_resolution_rule(item["expected_rule"])
+    except ResolutionRuleError as exc:
+        raise ValueError(f"scheduled Oracle expected_rule is invalid: {exc}") from exc
+    return {
+        "campaign_id": acceptance["oracle_campaign_id"],
+        "campaign_version": acceptance["oracle_campaign_version"],
+        "campaign_key": str(item["campaign_key"]),
+        "scheduled_tick": scheduled_tick,
+        "resolution_rule": expected_rule,
+        "deadline_tick": scheduled_tick + horizon,
+    }
+
+
+def _scheduled_request_rows(
+    store: Store, *, item: dict, acceptance: dict,
+) -> list[tuple[Any, dict, dict]]:
+    """Return durable Oracle calls bound to this exact governed contract."""
+    tick = int(item["at_tick"])
+    question = str(item["question"])
+    contract = _scheduled_contract(acceptance, item)
+    matched = []
+    for row in store.query(
+        "SELECT id,purpose,provider,model,cache_key,request_json,latency_ms "
+        "FROM llm_calls WHERE tick=? AND role='oracle' "
+        "AND purpose IN ('oracle_plan','oracle') ORDER BY id",
+        (tick,),
+    ):
+        request = load_json(row["request_json"], None)
+        context = request.get("context") if isinstance(request, dict) else None
+        if (isinstance(context, dict)
+                and context.get("question") == question
+                and context.get("tick") == tick
+                and context.get("governed_forecast_contract") == contract):
+            matched.append((row, request, context))
+    return matched
+
+
+def _scheduled_call_evidence(
+    store: Store, *, item: dict, acceptance: dict,
+) -> tuple[list[dict], str | None]:
+    """Reconstruct one governed checkpoint's durable logical model calls.
+
+    SQLite IDs are deliberately not part of this evidence.  A resume may reuse
+    calls written before the current ``advance_acceptance_run`` invocation, so
+    the stable identity is the exact engine-owned forecast contract persisted
+    in each request together with its deterministic gateway cache key.
+    """
+    tick = int(item["at_tick"])
+    question = str(item["question"])
+    contract = _scheduled_contract(acceptance, item)
+    matched = []
+    for row, request, context in _scheduled_request_rows(
+            store, item=item, acceptance=acceptance):
+        system = request.get("system")
+        user_text = request.get("user")
+        if (not isinstance(system, str) or not system
+                or not isinstance(user_text, str) or not user_text):
+            return [], "governed Oracle call request envelope is invalid"
+        try:
+            user = json.loads(user_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return [], "governed Oracle call user prompt is not valid JSON"
+        cache_key = row["cache_key"]
+        if not isinstance(cache_key, str) or not cache_key:
+            return [], "governed Oracle call has no deterministic request key"
+        provider = row["provider"]
+        model = row["model"]
+        purpose = str(row["purpose"])
+        if (not isinstance(provider, str) or not provider
+                or not isinstance(model, str) or not model):
+            return [], "governed Oracle call has no provider/model identity"
+        expected_key = hashlib.sha1(json.dumps({
+            "t": tick,
+            "a": None,
+            "p": purpose,
+            "m": model,
+            "msgs": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_text},
+            ],
+        }, sort_keys=True).encode()).hexdigest()
+        if cache_key != expected_key:
+            return [], "governed Oracle call request key does not match its prompt"
+        if any(call["request_key"] == cache_key for call in matched):
+            return [], "governed Oracle call set contains duplicate request keys"
+        if purpose == "oracle_plan" and user != context:
+            return [], "governed Oracle planner prompt differs from its context"
+        prior_plans = sum(
+            call["purpose"] == "oracle_plan" for call in matched)
+        if purpose == "oracle_plan" and prior_plans == 0 and (
+                "previous_plan_error" in context or "instruction" in context):
+            return [], "initial governed Oracle planner call has retry context"
+        if purpose == "oracle_plan" and prior_plans > 0 and (
+                not isinstance(context.get("previous_plan_error"), str)
+                or not context["previous_plan_error"].strip()
+                or not isinstance(context.get("instruction"), str)
+                or not context["instruction"].strip()):
+            return [], "governed Oracle planner retry lacks sequential retry context"
+        if purpose == "oracle":
+            common_keys = {
+                "governed_forecast_contract", "question",
+                "read_only_evidence", "world",
+            }
+            if (not isinstance(user, dict)
+                    or user.get("governed_forecast_contract") != contract
+                    or user.get("question") != question
+                    or user.get("read_only_evidence") != context.get("evidence")):
+                return [], (
+                    "governed Oracle answer prompt is not contract/evidence-bound")
+            hardened_shape = "tick" in user or "prompt_world" in context
+            if hardened_shape:
+                if (set(user) != common_keys | {"tick"}
+                        or user.get("tick") != tick
+                        or "prompt_world" not in context
+                        or user.get("world") != context.get("prompt_world")):
+                    return [], (
+                        "governed Oracle answer prompt has an invalid canonical shape")
+                try:
+                    canonical_user = json.dumps(
+                        user, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=False, allow_nan=False)
+                except (TypeError, ValueError, OverflowError):
+                    return [], "governed Oracle answer prompt is not canonical JSON"
+                if user_text != canonical_user:
+                    return [], "governed Oracle answer prompt is not canonically encoded"
+            else:
+                # Stored semantics 1-6 and pre-hardening semantics-7 calls used
+                # the full digest directly.  Reconstruct it exactly rather than
+                # weakening the contract/evidence binding for compatibility.
+                legacy_world = {
+                    key: value for key, value in context.items()
+                    if key not in {
+                        "question", "tick", "default_horizon",
+                        "governed_forecast_contract", "evidence",
+                    }
+                }
+                if set(user) != common_keys or user.get("world") != legacy_world:
+                    return [], (
+                        "governed Oracle answer prompt has an invalid legacy shape")
+        try:
+            call_latency_ms = int(row["latency_ms"] or 0)
+        except (TypeError, ValueError, OverflowError):
+            return [], "governed Oracle call has invalid latency evidence"
+        if call_latency_ms < 0:
+            return [], "governed Oracle call has invalid latency evidence"
+        matched.append({
+            "_id": int(row["id"]),
+            "purpose": purpose,
+            "provider": provider,
+            "model": model,
+            "request_key": cache_key,
+            "call_latency_ms": call_latency_ms,
+        })
+
+    plan_calls = [call for call in matched if call["purpose"] == "oracle_plan"]
+    answer_calls = [call for call in matched if call["purpose"] == "oracle"]
+    if not 1 <= len(plan_calls) <= 3:
+        return [], "governed Oracle checkpoint lacks its unique planner call set"
+    if len(answer_calls) != 1:
+        return [], "governed Oracle checkpoint lacks exactly one answer call"
+    if max(call["_id"] for call in plan_calls) >= answer_calls[0]["_id"]:
+        return [], "governed Oracle answer does not follow its planner call set"
+    request_keys = [call["request_key"] for call in matched]
+    if len(request_keys) != len(set(request_keys)):
+        return [], "governed Oracle call set contains duplicate request keys"
+    return [
+        {key: value for key, value in call.items() if key != "_id"}
+        for call in matched
+    ], None
+
+
+def _scheduled_timer_marker(
+    store: Store, *, item: dict, acceptance: dict, create: bool = True,
+) -> tuple[int, bool]:
+    """Persist or recover the wall-clock start of a governed checkpoint."""
+    tick = int(item["at_tick"])
+    question = str(item["question"])
+    campaign_key = _scheduled_question_key(item)
+    persisted = store.query_one(
+        "SELECT status,detail FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=? AND question=?", (tick, question))
+    if persisted is not None and str(persisted["status"]) == "pending":
+        marker = load_json(persisted["detail"], None)
+        start_ns = marker.get("started_epoch_ns") if isinstance(marker, dict) else None
+        if (
+            isinstance(start_ns, int) and not isinstance(start_ns, bool) and start_ns >= 0
+            and marker.get("kind") == _SCHEDULED_TIMER_DETAIL_KIND
+            and marker.get("campaign_id") == acceptance.get("oracle_campaign_id")
+            and marker.get("campaign_version") == acceptance.get("oracle_campaign_version")
+            and marker.get("campaign_key") == campaign_key
+            and marker.get("scheduled_tick") == tick
+            and marker.get("question") == question
+        ):
+            return start_ns, True
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {tick} has an invalid persisted timer marker")
+
+    if not create:
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {tick} has no persisted end-to-end timer")
+
+    if store.query_one(
+        "SELECT 1 FROM llm_calls WHERE tick=? AND role='oracle' "
+        "AND purpose IN ('oracle_plan','oracle') LIMIT 1", (tick,),
+    ) is not None:
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {tick} has durable Oracle calls but no "
+            "persisted end-to-end timer")
+
+    start_ns = time.time_ns()
+    marker = {
+        "kind": _SCHEDULED_TIMER_DETAIL_KIND,
+        "campaign_id": acceptance.get("oracle_campaign_id"),
+        "campaign_version": acceptance.get("oracle_campaign_version"),
+        "campaign_key": campaign_key,
+        "scheduled_tick": tick,
+        "question": question,
+        "started_epoch_ns": start_ns,
+    }
+    _record_checkpoint(
+        store, tick, question, "pending",
+        detail=json.dumps(marker, sort_keys=True, separators=(",", ":")))
+    return start_ns, False
+
+
+def _scheduled_latency_ms(elapsed_ns: int, calls: list[dict]) -> int:
+    """Clamp a measured interval to its conservatively rounded call floor."""
+    measured_ms = max(0, math.ceil(int(elapsed_ns) / 1_000_000))
+    # Protect the evidence from a backwards wall-clock adjustment.  Persisted
+    # provider latencies use separately sampled wall clocks, so their sum can
+    # sit a few milliseconds above the enclosing monotonic interval.
+    call_floor_ms = sum(int(call.get("call_latency_ms", 0)) for call in calls)
+    return max(measured_ms, call_floor_ms)
+
+
+def _resumed_scheduled_latency_ms(started_epoch_ns: int, calls: list[dict]) -> int:
+    """Measure resumed E2E time without pretending durable call reuse was free."""
+    return _scheduled_latency_ms(
+        time.time_ns() - int(started_epoch_ns), calls)
+
+
+def _valid_scheduled_prediction(
+    store: Store, row, item: dict, *, strict: bool,
+) -> tuple[bool, str | None]:
+    """Validate the exact forecast admitted for one scheduled checkpoint."""
+    if row is None:
+        return False, "scheduled prediction is missing"
+    evidence = load_json(row["evidence_json"], [])
+    if not (
+        isinstance(evidence, list)
+        and any(isinstance(entry, dict) and entry.get("tool") and "result" in entry
+                for entry in evidence)
+    ):
+        return False, "scheduled prediction has no successful bounded evidence"
+    if not strict:
+        return True, None
+    try:
+        probability = float(row["p"])
+    except (TypeError, ValueError, OverflowError):
+        return False, "scheduled prediction has no finite probability"
+    if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+        return False, "scheduled prediction probability is outside [0,1]"
+    if str(row["status"]) not in {"open", "resolved"}:
+        return False, f"scheduled prediction status is {row['status']!r}"
+    if str(row["confidence"] or "") not in {"low", "med", "high"}:
+        return False, "scheduled prediction confidence is invalid"
+    drivers = load_json(row["drivers_json"], [])
+    if not (isinstance(drivers, list) and drivers
+            and len(drivers) <= 10
+            and all(isinstance(driver, str) and driver.strip() and len(driver) <= 300
+                    for driver in drivers)):
+        return False, "scheduled prediction drivers are invalid"
+    rule = load_json(row["resolution_rule_json"], {})
+    try:
+        rule = validate_resolution_rule(
+            rule,
+            metric_exists=lambda name: store.query_one(
+                "SELECT 1 FROM metrics WHERE name=? LIMIT 1", (name,)) is not None,
+        )
+    except ResolutionRuleError as exc:
+        return False, str(exc)
+    expected_rule = item.get("expected_rule")
+    if expected_rule is not None:
+        try:
+            expected_rule = validate_resolution_rule(expected_rule)
+        except ResolutionRuleError as exc:
+            return False, f"configured expected rule is invalid: {exc}"
+        if rule != expected_rule:
+            return False, "scheduled prediction does not match its expected rule"
+    try:
+        asked_tick = int(row["asked_tick"])
+        deadline_tick = int(row["deadline_tick"])
+    except (TypeError, ValueError, OverflowError):
+        return False, "scheduled prediction deadline is invalid"
+    if asked_tick != int(item["at_tick"]) or deadline_tick <= asked_tick:
+        return False, "scheduled prediction tick/deadline is invalid"
+    horizon = item.get("horizon_ticks")
+    if horizon is not None and deadline_tick != asked_tick + int(horizon):
+        return False, "scheduled prediction deadline does not match its horizon"
+    return True, None
+
+
+def _completion_latency(
+    store: Store, *, prediction_id: int, item: dict, acceptance: dict,
+) -> tuple[dict | None, str | None]:
+    """Return exactly one prediction-bound persisted scheduled latency."""
+    bound: list[tuple[int, dict]] = []
+    for row in store.query(
+        "SELECT id,payload_json FROM events WHERE kind='acceptance_checkpoint_completed' "
+        "AND tick=? ORDER BY id", (int(item["at_tick"]),),
+    ):
+        payload = load_json(row["payload_json"], {})
+        if not isinstance(payload, dict):
+            continue
+        event_prediction_id = payload.get("prediction_id")
+        matches_schedule = (
+            payload.get("scheduled_tick") == int(item["at_tick"])
+            and payload.get("question") == str(item["question"])
+            and payload.get("campaign_key") == _scheduled_question_key(item)
+        )
+        references_prediction = (
+            isinstance(event_prediction_id, int)
+            and not isinstance(event_prediction_id, bool)
+            and event_prediction_id == prediction_id
+        )
+        if matches_schedule or references_prediction:
+            bound.append((int(row["id"]), payload))
+    if not bound:
+        return None, "prediction has no bound scheduled completion event"
+    if len(bound) != 1:
+        return None, "prediction has duplicate scheduled completion events"
+    event_id, payload = bound[0]
+    event_prediction_id = payload.get("prediction_id")
+    if (isinstance(event_prediction_id, bool)
+            or not isinstance(event_prediction_id, int)
+            or event_prediction_id != prediction_id):
+        return None, "completion event prediction_id is invalid or dangling"
+    if payload.get("scheduled_tick") != int(item["at_tick"]):
+        return None, "completion event scheduled_tick is invalid"
+    if payload.get("question") != str(item["question"]):
+        return None, "completion event question is invalid"
+    if payload.get("latency_kind") != SCHEDULED_E2E_LATENCY_KIND:
+        return None, "completion event latency_kind is invalid"
+    if payload.get("campaign_id") != acceptance.get("oracle_campaign_id"):
+        return None, "completion event campaign_id is invalid"
+    version = payload.get("campaign_version")
+    if (isinstance(version, bool) or not isinstance(version, int)
+            or version != acceptance.get("oracle_campaign_version")):
+        return None, "completion event campaign_version is invalid"
+    if payload.get("campaign_key") != _scheduled_question_key(item):
+        return None, "completion event campaign_key is invalid"
+    latency = payload.get("latency_ms")
+    if isinstance(latency, bool) or not isinstance(latency, int) or latency < 0:
+        return None, "completion event latency_ms is invalid"
+    calls = payload.get("model_calls")
+    if not (isinstance(calls, list) and calls
+            and all(isinstance(call, dict)
+                    and set(call) == {
+                        "purpose", "provider", "model", "request_key",
+                        "call_latency_ms",
+                    }
+                    and isinstance(call.get("purpose"), str)
+                    and isinstance(call.get("provider"), str)
+                    and call.get("provider")
+                    and isinstance(call.get("model"), str)
+                    and call.get("model")
+                    and isinstance(call.get("request_key"), str)
+                    and call.get("request_key")
+                    and isinstance(call.get("call_latency_ms"), int)
+                    and not isinstance(call.get("call_latency_ms"), bool)
+                    and call.get("call_latency_ms") >= 0
+                    for call in calls)):
+        return None, "completion event model-call evidence is invalid"
+    purposes = {call["purpose"] for call in calls}
+    if not {"oracle_plan", "oracle"}.issubset(purposes):
+        return None, "completion event lacks Oracle plan and answer evidence"
+    actual_calls, call_error = _scheduled_call_evidence(
+        store, item=item, acceptance=acceptance)
+    if call_error:
+        return None, f"completion event has no valid governed call set: {call_error}"
+    if calls != actual_calls:
+        return None, "completion event model_calls do not exactly match governed calls"
+    call_latency_floor = sum(
+        int(call["call_latency_ms"]) for call in actual_calls)
+    if latency < call_latency_floor:
+        return None, (
+            "completion event latency_ms is shorter than its governed call latency sum")
+    return {
+        "event_id": event_id, "latency_ms": latency,
+        "latency_kind": SCHEDULED_E2E_LATENCY_KIND,
+        "campaign_id": payload.get("campaign_id"),
+        "campaign_version": version,
+        "campaign_key": payload.get("campaign_key"),
+        "model_calls": actual_calls,
+    }, None
 
 
 def _event_payloads(store: Store, kind: str) -> list[tuple[int, int, dict]]:
@@ -387,8 +829,12 @@ def evaluate_acceptance(
         oracle_min_samples = int(acceptance.get("oracle_min_latency_samples", 5))
         tick = int(meta["tick"])
         status = str(meta["status"])
-        agent_count = int(store.scalar("SELECT COUNT(*) FROM agents", default=0))
+        living_agent_count = int(store.scalar(
+            "SELECT COUNT(*) FROM agents WHERE alive=1", default=0))
+        historical_agent_count = int(store.scalar(
+            "SELECT COUNT(*) FROM agents", default=0))
         participant_influenced = bool(meta["participant_influenced"])
+        external_agent_influenced = bool(meta["external_agent_influenced"])
         spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
         providers = {
             str(row["provider"]) for row in store.query("SELECT DISTINCT provider FROM llm_calls")
@@ -418,8 +864,9 @@ def evaluate_acceptance(
             (tick,), default=0,
         ))
         hard_failures = sum(
-            failures[kind] for kind in ("reconciliation_failure", "budget_pause", "report_failed")
-        )
+            failures[kind] for kind in (
+                "reconciliation_failure", "budget_pause", "report_failed",
+                "oracle_tool_execution_failed"))
         failure_evidence = {
             "counts": failures,
             "provider_incidents": provider_incidents,
@@ -429,13 +876,24 @@ def evaluate_acceptance(
             ),
             "unrecovered_provider_incidents": unrecovered_provider_incidents,
         }
-        oracle_latencies = [
-            int(row["latency_ms"]) for row in store.query(
-                "SELECT latency_ms FROM llm_calls WHERE purpose='oracle' AND latency_ms IS NOT NULL"
-            )
-        ]
-        oracle_p90 = _p90(oracle_latencies)
         oracle_schedule = acceptance_schedule_status(store, config, target_tick=min_ticks)
+        if _scheduled_e2e_enabled(config):
+            oracle_latencies = [
+                int(item["latency_ms"])
+                for item in oracle_schedule["checkpoints"]
+                if item.get("status") == "completed"
+                and isinstance(item.get("latency_ms"), int)
+            ]
+            oracle_latency_source = SCHEDULED_E2E_LATENCY_KIND
+        else:
+            oracle_latencies = [
+                int(row["latency_ms"]) for row in store.query(
+                    "SELECT latency_ms FROM llm_calls "
+                    "WHERE purpose='oracle' AND latency_ms IS NOT NULL"
+                )
+            ]
+            oracle_latency_source = "answer_call_legacy"
+        oracle_p90 = _p90(oracle_latencies)
         oracle_schedule_ok = (
             not oracle_schedule["missed"]
             and all(item["status"] == "completed" for item in oracle_schedule["checkpoints"])
@@ -463,12 +921,16 @@ def evaluate_acceptance(
             _check("run_horizon", f"Configured {min_ticks}-tick run completed cleanly",
                    tick >= min_ticks and status in {"paused", "finished"},
                    {"tick": tick, "minimum": min_ticks, "status": status}),
-            _check("population", "Production population is approximately 100 agents",
-                   min_agents <= agent_count <= max_agents,
-                   {"agents": agent_count, "range": [min_agents, max_agents]}),
-            _check("observer_integrity", "No participant actions contaminated the observer-only run",
-                   not participant_influenced,
-                   {"participant_influenced": participant_influenced}),
+            _check("population", "Production population is approximately 100 living agents",
+                   min_agents <= living_agent_count <= max_agents,
+                   {"agents": living_agent_count,
+                    "living_agents": living_agent_count,
+                    "historical_total_agents": historical_agent_count,
+                    "range": [min_agents, max_agents]}),
+            _check("observer_integrity", "No live participant or external-agent input contaminated the observer-only run",
+                   not participant_influenced and not external_agent_influenced,
+                   {"participant_influenced": participant_influenced,
+                    "external_agent_influenced": external_agent_influenced}),
             _check("real_providers", "Run used only configured real providers",
                    bool(real_providers) and not forbidden_providers,
                    {"providers": sorted(providers), "real": sorted(real_providers),
@@ -495,7 +957,8 @@ def evaluate_acceptance(
                    and oracle_p90 is not None and oracle_p90 < oracle_p90_limit,
                    {"samples": len(oracle_latencies), "p90_ms": oracle_p90,
                     "minimum_samples": oracle_min_samples,
-                    "limit_ms": oracle_p90_limit}),
+                    "limit_ms": oracle_p90_limit,
+                    "latency_source": oracle_latency_source}),
             _check("oracle_schedule", "Every configured Oracle checkpoint ran at its exact tick",
                    oracle_schedule_ok, oracle_schedule),
             _check("oracle_scoring", "At least one Oracle prediction resolved automatically",
@@ -619,21 +1082,22 @@ def write_acceptance_package(
 
 def _has_usable_oracle_evidence(
     store: Store, question: str, asked_tick: int | None = None,
+    *, item: dict | None = None, strict: bool = False,
 ) -> bool:
     if asked_tick is None:
         row = store.query_one(
-            "SELECT evidence_json FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM predictions WHERE question=? ORDER BY id DESC LIMIT 1",
             (question,))
     else:
         row = store.query_one(
-            "SELECT evidence_json FROM predictions WHERE question=? AND asked_tick=? "
+            "SELECT * FROM predictions WHERE question=? AND asked_tick=? "
             "ORDER BY id DESC LIMIT 1", (question, asked_tick))
-    evidence = load_json(row["evidence_json"], []) if row else []
-    return bool(
-        isinstance(evidence, list)
-        and any(isinstance(item, dict) and item.get("tool") and "result" in item
-                for item in evidence)
-    )
+    valid, _ = _valid_scheduled_prediction(
+        store, row, item or {
+            "at_tick": asked_tick if asked_tick is not None else row["asked_tick"] if row else -1,
+            "question": question,
+        }, strict=strict)
+    return valid
 
 
 class AcceptanceCheckpointMissed(RuntimeError):
@@ -646,26 +1110,47 @@ def acceptance_schedule_status(store: Store, config: dict, *, target_tick: int |
     horizon = int(target_tick or acceptance.get("min_ticks", 365))
     questions = sorted(
         acceptance.get("oracle_questions", []), key=lambda item: int(item["at_tick"]))
+    strict = _scheduled_e2e_enabled(config)
+    _validate_scheduled_campaign(acceptance, questions)
     checkpoints = []
     for item in questions:
         scheduled_tick = int(item["at_tick"])
         if scheduled_tick > horizon:
             continue
         question = str(item["question"])
-        prediction = store.query_one(
-            "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
-            (question, scheduled_tick))
         persisted = store.query_one(
             "SELECT status,detail,prediction_id FROM acceptance_checkpoints "
             "WHERE scheduled_tick=? AND question=?", (scheduled_tick, question))
-        usable = _has_usable_oracle_evidence(store, question, scheduled_tick)
-        status = "completed" if usable else (
+        prediction = None
+        if persisted and persisted["prediction_id"] is not None:
+            prediction = store.query_one(
+                "SELECT * FROM predictions WHERE id=? AND question=? AND asked_tick=?",
+                (int(persisted["prediction_id"]), question, scheduled_tick))
+        if prediction is None:
+            prediction = store.query_one(
+                "SELECT * FROM predictions WHERE question=? AND asked_tick=? "
+                "ORDER BY id DESC LIMIT 1", (question, scheduled_tick))
+        usable, validation_error = _valid_scheduled_prediction(
+            store, prediction, item, strict=strict)
+        completion = None
+        completion_error = None
+        if strict and usable and prediction is not None:
+            completion, completion_error = _completion_latency(
+                store, prediction_id=int(prediction["id"]), item=item,
+                acceptance=acceptance)
+        completed = usable and (not strict or completion is not None)
+        status = "completed" if completed else (
             "missed" if store.tick > scheduled_tick or (persisted and persisted["status"] == "missed")
             else "pending")
         checkpoints.append({
             "scheduled_tick": scheduled_tick, "question": question, "status": status,
-            "prediction_id": int(prediction["id"]) if prediction and usable else None,
+            "campaign_key": _scheduled_question_key(item) if strict else None,
+            "prediction_id": int(prediction["id"]) if prediction and completed else None,
             "detail": persisted["detail"] if persisted else None,
+            "validation_error": validation_error or completion_error,
+            "latency_ms": completion["latency_ms"] if completion else None,
+            "latency_kind": completion["latency_kind"] if completion else None,
+            "completion_event_id": completion["event_id"] if completion else None,
         })
     missed = [item for item in checkpoints if item["status"] == "missed"]
     pending = [item for item in checkpoints if item["status"] == "pending"]
@@ -682,6 +1167,17 @@ def _record_checkpoint(
     store: Store, scheduled_tick: int, question: str, status: str,
     *, prediction_id: int | None = None, detail: str | None = None,
 ) -> None:
+    existing = store.query_one(
+        "SELECT status,prediction_id,detail FROM acceptance_checkpoints "
+        "WHERE scheduled_tick=? AND question=?", (scheduled_tick, question))
+    if existing is not None and (
+        str(existing["status"]) == status
+        and existing["prediction_id"] == prediction_id
+        and existing["detail"] == detail
+    ):
+        # Preserve the original completed_at value and make repeated orchestration
+        # a true no-op instead of a timestamp-only mutation.
+        return
     completed_at = datetime.now(timezone.utc).isoformat() if status == "completed" else None
     store.execute(
         "INSERT INTO acceptance_checkpoints(scheduled_tick,question,status,prediction_id,detail,completed_at) "
@@ -689,6 +1185,102 @@ def _record_checkpoint(
         "status=excluded.status,prediction_id=excluded.prediction_id,detail=excluded.detail,"
         "completed_at=excluded.completed_at",
         (scheduled_tick, question, status, prediction_id, detail, completed_at))
+    store.commit()
+
+
+def _finalize_scheduled_checkpoint(
+    store: Store, *, item: dict, acceptance: dict, prediction_id: int,
+    latency_ms: int, model_calls: list[dict], latency_measurement: str,
+) -> None:
+    """Append exactly one completion event, then idempotently bind its checkpoint."""
+    tick = int(item["at_tick"])
+    question = str(item["question"])
+    payload: dict[str, Any] = {
+        "scheduled_tick": tick,
+        "question": question,
+        "prediction_id": prediction_id,
+        "latency_ms": int(latency_ms),
+        "latency_kind": SCHEDULED_E2E_LATENCY_KIND,
+        "latency_measurement": latency_measurement,
+        "campaign_id": acceptance["oracle_campaign_id"],
+        "campaign_version": acceptance["oracle_campaign_version"],
+        "campaign_key": _scheduled_question_key(item),
+        "model_calls": model_calls,
+    }
+    bound = []
+    for row in store.query(
+        "SELECT id,payload_json FROM events "
+        "WHERE kind='acceptance_checkpoint_completed' AND tick=? ORDER BY id",
+        (tick,),
+    ):
+        existing_payload = load_json(row["payload_json"], {})
+        if not isinstance(existing_payload, dict):
+            continue
+        if (
+            existing_payload.get("prediction_id") == prediction_id
+            or (
+                existing_payload.get("scheduled_tick") == tick
+                and existing_payload.get("question") == question
+                and existing_payload.get("campaign_key") == _scheduled_question_key(item)
+            )
+        ):
+            bound.append((int(row["id"]), existing_payload))
+    if len(bound) > 1:
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {tick} has duplicate completion events")
+    if bound:
+        _event_id, existing_payload = bound[0]
+        if existing_payload != payload:
+            # A completion event is release evidence, not an updatable status
+            # row.  Never overwrite or add a conflicting sample on resume.
+            completion, error = _completion_latency(
+                store, prediction_id=prediction_id, item=item, acceptance=acceptance)
+            if completion is None:
+                raise AcceptanceCheckpointMissed(
+                    f"Oracle checkpoint at tick {tick} has invalid completion evidence: "
+                    f"{error}")
+    else:
+        store.log_event(
+            tick, "acceptance_checkpoint_completed", payload,
+            phase="CONTROL", importance=2.0)
+    _record_checkpoint(
+        store, tick, question, "completed", prediction_id=prediction_id)
+
+
+def _record_missed_checkpoint(
+    store: Store, *, scheduled_tick: int, question: str, detail: str,
+    event_tick: int, prediction_id: int | None = None,
+) -> None:
+    """Persist a missed checkpoint and its diagnostic event exactly once."""
+    expected_payload: dict[str, Any] = {
+        "scheduled_tick": scheduled_tick,
+        "question": question,
+        "detail": detail,
+    }
+    if prediction_id is not None:
+        expected_payload["prediction_id"] = prediction_id
+    bound = []
+    for row in store.query(
+        "SELECT id,tick,payload_json FROM events "
+        "WHERE kind='acceptance_checkpoint_missed' ORDER BY id",
+    ):
+        payload = load_json(row["payload_json"], {})
+        if (isinstance(payload, dict)
+                and payload.get("scheduled_tick") == scheduled_tick
+                and payload.get("question") == question):
+            bound.append((int(row["id"]), int(row["tick"]), payload))
+    if len(bound) > 1:
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {scheduled_tick} has duplicate missed events")
+    if bound and bound[0][2] != expected_payload:
+        raise AcceptanceCheckpointMissed(
+            f"Oracle checkpoint at tick {scheduled_tick} has conflicting missed evidence")
+    _record_checkpoint(
+        store, scheduled_tick, question, "missed", detail=detail)
+    if not bound:
+        store.log_event(
+            event_tick, "acceptance_checkpoint_missed", expected_payload,
+            phase="CONTROL", importance=5.0)
     store.commit()
 
 
@@ -700,50 +1292,156 @@ async def advance_acceptance_run(
     horizon = int(target_tick or acceptance.get("min_ticks", 365))
     questions = sorted(
         acceptance.get("oracle_questions", []), key=lambda item: int(item["at_tick"]))
+    strict = _scheduled_e2e_enabled(world.config)
+    _validate_scheduled_campaign(acceptance, questions)
     for item in questions:
         at_tick = int(item["at_tick"])
         if at_tick > horizon:
             continue
         question = str(item["question"])
-        if _has_usable_oracle_evidence(world.store, question, at_tick):
-            prediction_id = world.store.scalar(
-                "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
-                (question, at_tick), default=None)
-            _record_checkpoint(
-                world.store, at_tick, question, "completed",
-                prediction_id=int(prediction_id) if prediction_id is not None else None)
+        existing = world.store.query_one(
+            "SELECT * FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
+            (question, at_tick))
+        existing_valid, _ = _valid_scheduled_prediction(
+            world.store, existing, item, strict=strict)
+        existing_completion = None
+        existing_completion_error = None
+        if strict and existing_valid and existing is not None:
+            existing_completion, existing_completion_error = _completion_latency(
+                world.store, prediction_id=int(existing["id"]), item=item,
+                acceptance=acceptance)
+        if existing_valid and (not strict or existing_completion is not None):
+            _record_checkpoint(world.store, at_tick, question, "completed",
+                               prediction_id=int(existing["id"]))
+            continue
+        if strict and existing_valid and existing is not None:
+            if existing_completion_error != (
+                    "prediction has no bound scheduled completion event"):
+                detail = (
+                    f"Oracle checkpoint at tick {at_tick} has invalid completion "
+                    f"evidence: {existing_completion_error}")
+                _record_missed_checkpoint(
+                    world.store, scheduled_tick=at_tick, question=question,
+                    detail=detail, event_tick=world.store.tick,
+                    prediction_id=int(existing["id"]))
+                raise AcceptanceCheckpointMissed(detail)
+            model_calls, call_error = _scheduled_call_evidence(
+                world.store, item=item, acceptance=acceptance)
+            if call_error:
+                detail = (
+                    f"Oracle checkpoint at tick {at_tick} has a prediction without "
+                    f"complete governed call evidence: {call_error}")
+                _record_missed_checkpoint(
+                    world.store, scheduled_tick=at_tick, question=question,
+                    detail=detail, event_tick=world.store.tick,
+                    prediction_id=int(existing["id"]))
+                raise AcceptanceCheckpointMissed(detail)
+            try:
+                started_epoch_ns, _ = _scheduled_timer_marker(
+                    world.store, item=item, acceptance=acceptance, create=False)
+            except AcceptanceCheckpointMissed as exc:
+                detail = str(exc)
+                _record_missed_checkpoint(
+                    world.store, scheduled_tick=at_tick, question=question,
+                    detail=detail, event_tick=world.store.tick,
+                    prediction_id=int(existing["id"]))
+                raise
+            _finalize_scheduled_checkpoint(
+                world.store, item=item, acceptance=acceptance,
+                prediction_id=int(existing["id"]),
+                latency_ms=_resumed_scheduled_latency_ms(
+                    started_epoch_ns, model_calls),
+                model_calls=model_calls,
+                latency_measurement="resumed_wall_clock",
+            )
             continue
         if world.store.tick > at_tick:
             detail = (
                 f"Oracle checkpoint at tick {at_tick} was passed without usable evidence; "
                 "a late prediction would be contaminated by later world state")
-            _record_checkpoint(world.store, at_tick, question, "missed", detail=detail)
-            world.store.log_event(
-                world.store.tick, "acceptance_checkpoint_missed",
-                {"scheduled_tick": at_tick, "question": question, "detail": detail},
-                phase="CONTROL", importance=5.0)
-            world.store.commit()
+            _record_missed_checkpoint(
+                world.store, scheduled_tick=at_tick, question=question,
+                detail=detail, event_tick=world.store.tick)
             raise AcceptanceCheckpointMissed(detail)
         if world.store.tick < at_tick:
             await world.run(max_ticks=at_tick - world.store.tick)
             if world.store.tick < at_tick:
                 return acceptance_schedule_status(
                     world.store, world.config, target_tick=horizon)
-        await world.oracle.ask(question)
-        if not _has_usable_oracle_evidence(world.store, question, at_tick):
-            raise RuntimeError(
-                f"Oracle checkpoint at tick {at_tick} produced no usable read evidence")
-        prediction_id = world.store.scalar(
-            "SELECT id FROM predictions WHERE question=? AND asked_tick=? ORDER BY id DESC LIMIT 1",
-            (question, at_tick), default=None)
-        _record_checkpoint(
-            world.store, at_tick, question, "completed",
-            prediction_id=int(prediction_id) if prediction_id is not None else None)
-        world.store.log_event(
-            at_tick, "acceptance_checkpoint_completed",
-            {"scheduled_tick": at_tick, "question": question, "prediction_id": prediction_id},
-            phase="CONTROL", importance=2.0)
-        world.store.commit()
+        started_epoch_ns = None
+        resumed_timing = False
+        if strict:
+            try:
+                started_epoch_ns, resumed_timing = _scheduled_timer_marker(
+                    world.store, item=item, acceptance=acceptance)
+            except AcceptanceCheckpointMissed as exc:
+                detail = str(exc)
+                _record_missed_checkpoint(
+                    world.store, scheduled_tick=at_tick, question=question,
+                    detail=detail, event_tick=world.store.tick)
+                raise
+        started_ns = time.perf_counter_ns()
+        governed_contract = (
+            _scheduled_contract(acceptance, item) if strict else None)
+        result = (
+            await world.oracle.ask(question, governed_contract=governed_contract)
+            if strict else await world.oracle.ask(question)
+        )
+        prediction_id = result.get("prediction_id") if isinstance(result, dict) else None
+        prediction = None
+        if isinstance(prediction_id, int) and not isinstance(prediction_id, bool):
+            prediction = world.store.query_one(
+                "SELECT * FROM predictions WHERE id=? AND question=? AND asked_tick=?",
+                (prediction_id, question, at_tick))
+        valid, validation_error = _valid_scheduled_prediction(
+            world.store, prediction, item, strict=strict)
+        if not valid:
+            detail = (
+                f"Oracle checkpoint at tick {at_tick} produced no usable read evidence: "
+                f"{validation_error}")
+            _record_missed_checkpoint(
+                world.store, scheduled_tick=at_tick, question=question,
+                detail=detail, event_tick=at_tick,
+                prediction_id=(prediction_id if isinstance(prediction_id, int)
+                               and not isinstance(prediction_id, bool) else None))
+            raise AcceptanceCheckpointMissed(detail)
+        payload: dict[str, Any] = {
+            "scheduled_tick": at_tick, "question": question,
+            "prediction_id": prediction_id,
+        }
+        if strict:
+            model_calls, call_error = _scheduled_call_evidence(
+                world.store, item=item, acceptance=acceptance)
+            if call_error:
+                detail = (
+                    f"Oracle checkpoint at tick {at_tick} produced a prediction "
+                    f"without complete governed call evidence: {call_error}")
+                _record_missed_checkpoint(
+                    world.store, scheduled_tick=at_tick, question=question,
+                    detail=detail, event_tick=at_tick,
+                    prediction_id=int(prediction_id))
+                raise AcceptanceCheckpointMissed(detail)
+            if resumed_timing:
+                latency_ms = _resumed_scheduled_latency_ms(
+                    int(started_epoch_ns), model_calls)
+                latency_measurement = "resumed_wall_clock"
+            else:
+                latency_ms = _scheduled_latency_ms(
+                    time.perf_counter_ns() - started_ns, model_calls)
+                latency_measurement = "continuous_monotonic"
+            _finalize_scheduled_checkpoint(
+                world.store, item=item, acceptance=acceptance,
+                prediction_id=int(prediction_id), latency_ms=latency_ms,
+                model_calls=model_calls,
+                latency_measurement=latency_measurement,
+            )
+        else:
+            world.store.log_event(
+                at_tick, "acceptance_checkpoint_completed", payload,
+                phase="CONTROL", importance=2.0)
+            _record_checkpoint(
+                world.store, at_tick, question, "completed",
+                prediction_id=int(prediction_id))
     if world.store.tick < horizon:
         await world.run(max_ticks=horizon - world.store.tick)
     return acceptance_schedule_status(world.store, world.config, target_tick=horizon)

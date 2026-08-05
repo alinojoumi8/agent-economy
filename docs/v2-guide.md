@@ -47,7 +47,19 @@ multicurrency behavior, and semantics 6 enables bilateral wage bargaining,
 qualified agent-priced IPOs, and agent-authored lender-of-last-resort decisions.
 Maintained profiles use semantics 7 for net loan-loss recognition, retirement
 liquidity and cadence, deterministic arrival/persona contracts, and autonomous
-qualified regional trade and migration. Schema remains v11.
+qualified regional trade and migration. They also schedule fully persisted
+peripheral agents through deterministic local policies without model-call rows,
+form first stock prices through actor bids/asks, expose only state-qualified
+startup work, filter local-currency action surfaces, and count unique workers in
+unemployment. Schema remains v11.
+
+Non-regional maintained profiles also persist
+`population.baseline_citizens_core: true`, which pins baseline citizens, health
+founders, and later arrivals to the fully scheduled core tier under semantics 7.
+Regional R19 profiles retain their own core/periphery policy. The marker is
+ignored by semantics 1–6, and markerless stored semantics-7 runs retain their
+historical peripheral assignment, so replay does not silently acquire new
+household decisions.
 
 Old runs retain their stored semantics. A run is never silently upgraded. Use
 an explicit child fork:
@@ -91,10 +103,11 @@ The flagship profile persists exactly 1,000 agents:
 | Suncoast Republic | 180 | SCD | agriculture, logistics, tourism |
 
 One hundred core agents receive strategic model/scripted turns. Nine hundred
-peripheral agents participate through deterministic labor, lifecycle, consumer,
-voter, market, and exposure mechanics. Promotion is recalculated every 30 ticks
-from office, ownership, wealth, litigation, exposure, and activity. Controlled
-participants are pinned.
+fully persisted peripheral agents receive scheduled, state-derived local policy
+turns without creating model-call records, in addition to deterministic labor,
+lifecycle, consumer, voter, market, and exposure mechanics. Promotion is
+recalculated every 30 ticks from office, ownership, wealth, litigation, exposure,
+and activity. Controlled participants are pinned.
 
 Scheduler wake-up inputs are loaded in bounded sets for the whole population,
 so employment, event, and unpriced-listing checks do not create per-agent SQL
@@ -102,14 +115,23 @@ queries. The observatory likewise loads at most 100 agents per request and uses
 server-side cursor pagination, literal search, and core/periphery filtering.
 
 On the reference Windows development machine, the verified 1,000-agent genesis
-completed in about 2.1 seconds. The final offline 365-tick gate completed on
+completed in about 2.1 seconds. The final offline R19 1,000-agent 365-tick
+performance gate completed on
 2026-07-13 in 384.651 seconds (6 minutes 25 seconds) with a measured 52.25 MB
 peak Python working set and a 643.68 MB SQLite database. It finished at tick 365
 with five checkpoints, zero paid spend, exactly 1,000 living agents, exactly 100
 living core agents, balanced NSD/IVC/SCD/USD ledgers, no account/ledger-total
-mismatches, no negative FX reserve, and zero calls made while an agent was in
-the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
+mismatches, no negative FX reserve, and zero model-call rows for decisions made
+while an agent was in the peripheral tier. This passes the 15-minute and 2 GB gates on the reference
 machine; downstream release hardware should publish its own measurement.
+
+The historical semantics-7 merge baseline at `c9f0b23` restored a visibly
+active observatory
+without engine-authored shortcuts: peripheral policy turns create accepted
+goods activity, household fundamentals drive the first matched stock price,
+qualified partner/founder/lawyer actions complete the startup funding chain and
+IP registration, regional contexts reject foreign-currency surfaces until FX,
+and unemployment deduplicates workers such as employed founders.
 
 ## Observatory and APIs
 
@@ -218,9 +240,121 @@ no enforcement before execution, no remedy outside a validated decision, no
 lobbying-funded vote mutation, no article-to-price shortcut, nonnegative FX
 inventory, and identical hashes under the same semantics.
 
-Provider calls and the outstanding paid-model v1 acceptance run remain separate
-operational gates. No live inference is run without `--approve-live-inference`.
-An unperformed paid gate must be reported as pending, never treated as passed.
+The pending V9 ten-profile Oracle campaign, live 30-day rumor
+pilot, 365-day/$200 acceptance run, and final provenance audit remain separate
+operational gates. V9 uses fresh seeds 7381–7390 in odd-control/even-rumor arms,
+routes only the Oracle to `MiniMax-M3`, and reuses no earlier campaign source,
+response, claim, checkpoint, replay, seed, or receipt. No V9 evidence is claimed
+before all ten arms and the aggregate receipt pass. V4 seeds 7331 and 7332 produced eligible
+exact source/replay receipts but remain diagnostic evidence because the fixed
+campaign did not survive seed 7333.
+
+V4 seed 7333 completed an exact source/replay pair, but its tick-125 forecast
+was correctly excluded. Planner attempt 1 requested the government ledger;
+runtime returned `entity ledger accounts not found` because the treasury is a
+system-owned `sys:gov` account, then incorrectly recorded and retried that
+post-preflight execution failure as a planner rejection. Attempt 2 failed the
+independently reproducible metric-name contract and attempt 3 succeeded, so the
+receipt could not reproduce or bind the first rejection. The v5 boundary used
+one tick- and catalog-aware preflight in runtime and receipt audit, maps
+government reads to the actual treasury account, and treats a genuine
+post-preflight tool failure as an execution failure rather than a retryable plan
+rejection.
+
+V5 seeds 7341–7347 subsequently produced eligible exact receipts for their
+source/replay pairs. Seed 7348 completed its source but failed exact replay when
+duplicated public citation classes at ticks 301 and 331 were mapped through
+ambiguous surrogate candidates. Four replay-only newsroom-grounder fallbacks
+then propagated into nine information tables; LLM calls, actions, and schedules
+still matched. Seeds 7349 and 7350 were never run. The entire v5 campaign is
+diagnostic only. The seven receipt-bound replay databases and fourteen Oracle
+source/replay receipts belong only to seeds 7341–7347; seed 7348 has no eligible
+replay database or Oracle source/replay receipt. Final corrected offline replay
+`replay-oracle-calibration-v5-s7348-5220b912ae` reached tick 335 with
+`exact: true`, identical logical hash `fee77b65…b378`, all 82 deterministic
+tables exact, and `differences: []`; this post-source fix remains diagnostic and
+creates no eligible v5 receipt. Cleanup of the v5 database bodies is complete:
+320 source checkpoints, 160 fixed-code replay checkpoints, four derived
+fixed-replay final databases, and the superseded partial seed-7343 replay were
+removed—485 database files and `111.945217 GiB` total. Retained artifacts are
+all authoritative final sources; the seven eligible replay databases and
+fourteen source/replay receipts for seeds 7341–7347; all source-checkpoint
+manifests/hashes, claims, and reports; the 160 fixed-code replay checkpoint
+manifests; and the ignored compact final exact receipt. Seed 7348 remains
+excluded and has no eligible source/replay receipt or retained replay database.
+
+V6 seed 7351 stopped at tick 65 after a successful Kimi answer returned
+`confidence: "medium"` instead of the strict `low|med|high` value. Runtime
+persisted `oracle_rule_rejected`, an `insufficient_data` prediction, and
+`acceptance_checkpoint_missed`. Spend was $0.18351, with no provider, budget, or
+tool-execution failure. V6 is preserved and excluded; seeds 7352–7360 were never
+run, and no V6 artifact enters a later corpus.
+
+V7 is archived as an incomplete diagnostic campaign. Seeds 7361–7364 each
+retain passed, eligible source receipts and exact 335-tick companion replays with
+zero differences. Seed 7365 remains paused at tick 335 in `FINALIZE`; its
+authoritative 518,561,792-byte standalone database has SHA-256
+`b48b0c5a02270f6b09eafb5c32c8480a44f42057289048faedde9474d8ca8ce5`, passes
+immutable read-only `quick_check`, has no WAL/SHM sidecars, and records 32,114
+calls, 12 Oracle calls, six resolved forecasts/checkpoints, no critical events,
+balanced USD, and `$0.2754108` spend. Receipt production exposed the continuous scheduled-latency floor defect: persisted E2E was 13,658 ms versus a 13,660 ms
+governed-call sum. Seed 7365 has no replay or receipt, seeds 7366–7370 were never
+run, and V7 has no aggregate manifest or receipt.
+
+The common scheduled-latency producer now clamps both continuous monotonic and
+resumed wall-clock duration to at least the sum of conservatively rounded
+governed call latencies. Seed 7365's claim binds commit
+`7642d7a193f8d0806d6043e8b105b6f469f649c8` and tree
+`d9e02a64efd555fb6d0a5c1414351a6db238ad62`, so the source cannot resume or mint
+an eligible post-fix receipt. Any post-fix replay would be diagnostic only. No
+V7 artifact or seed is reused in V8.
+
+The completed archive cleanup removed exactly the 200 V7 source checkpoint
+database bodies matching anchored regex
+`^oracle-calibration-v7-s736[1-5]_t\d+\.db$`, reclaiming 49,647,239,168 bytes
+(`46.237595 GiB`). No broad V7 wildcard was used. All 360 source/replay
+checkpoint manifests and hashes, five final source databases, four final replay
+databases, eight source/replay receipt JSONs for seeds 7361–7364, the five
+existing claim/initialized-marker pairs for seeds 7361–7365, the profiles,
+commitments, template, base, reports, and the authoritative seed-7365 database
+were retained.
+
+V8 is archived and excluded. Seeds 7371–7374 produced passed, eligible source
+receipts and exact tick-335 companion replays. Seed 7375 stopped at tick 245
+after four of six forecasts when Kimi returned HTTP 403 for its exhausted
+billing-cycle quota. Its healthy standalone source persisted one
+`provider_failure` and spent `$0.19651848`; it is not resumed, repaired, or
+substituted. Retain five source databases, four replay databases, eight
+source/replay receipts, and all checkpoint manifests. After the archive commit
+became durable, conservative cleanup removed exactly 189 V8 source-checkpoint
+database bodies—40 each for seeds 7371–7374 and 29 for seed 7375—totalling
+43,999,223,808 bytes. Retain 189 source checkpoint manifests, 160 replay
+checkpoint manifests, five claims, five initialized markers, and every final
+artifact listed above. The verified post-cleanup inventory contains zero
+source/replay checkpoint bodies and zero V8 SQLite sidecars. All nine retained
+final databases pass immutable read-only `quick_check`, and eligible source/
+replay hashes match their receipts. No V8 evidence enters V9.
+
+V9 retains occurrence-aware citation identity, governed-answer repair, engine
+semantics 7, and database schema 11. Its fresh version-9 commitment uses seeds
+7381–7390 and SHA-256
+`8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`.
+Only the Oracle is live through the exact MiniMax provider configuration:
+`kind: openai_compat`, `base_url: https://api.minimax.io/v1`,
+`api_key_env: MINIMAX_API_KEY`, `healthcheck_path: /models`, `timeout_s: 180`,
+`max_tokens_field: max_completion_tokens`, request defaults
+`max_completion_tokens: 4096` and `reasoning_split: true`,
+`prompt_cache_mode: provider_automatic`, and model `MiniMax-M3`. Standard ≤512k
+pricing is `$0.30/M` input, `$1.20/M` output, and `$0.06/M` automatic cache
+reads; each arm is capped at `$25`. A disposable one-call probe and a
+deliberately unclaimed five-tick Oracle rehearsal succeeded through the exact
+adapter, which establishes operational readiness but not V9 corpus evidence.
+The complete ten-arm and aggregate gate remains pending.
+
+No live inference is run without `--approve-live-inference`. An unperformed or
+failed live gate must be reported as pending or failed, never treated as passed.
+PR #20 implementation is authorized for squash merge; live evidence, tagging,
+publication, and public deployment require separate authorization.
 
 ## Hybrid live pilot
 
@@ -464,6 +598,19 @@ installed 80 packages with zero vulnerabilities, passed 16 tests, found zero
 high-severity audit vulnerabilities, built 599 Vite modules, confirmed the
 committed static bundle was fresh, and passed `git diff --check`.
 
+The preceding replay-integrity revision subsequently passed 590 Python tests with 8
+skipped, 23 dashboard tests, a fresh 603-module dashboard build, and checksum
+verification for the pinned FRED/BLS/SCF/SUSB datasets. The older counts above remain the historical
+semantics-7 merge receipt rather than the later revision total.
+
+The final v3 receipt-hardening tree then passed 599 Python tests with 8 skipped
+in 1,618.07 seconds.
+
+The reconciled V9 premerge tree subsequently passed all 663 Python tests with 8
+environment-gated skips, 23 dashboard tests, the 603-module production build
+and static-bundle freshness check, pinned-dataset verification, dependency
+checks, and `git diff --check`.
+
 Free rehearsal `5a0d40d773` completed five ticks at `$0` and exercised every
 target effect with zero rejected actions or provider failures. It wrote six
 checkpoints and reconciled every currency to zero. Offline replay
@@ -488,6 +635,18 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 `differences: []` and hash
 `ec2b24093ad599cca1b9750686a809f28ca08755ca0e4bc3bcbfef861c399ae2`.
 
+Free production-workflow rehearsal `881ed41994` then completed 365 ticks with
+exactly 100 living agents, zero spend, balanced ledger state, zero operational
+failures, six completed and resolved Oracle checkpoints, all five required
+shock traces including the scandal-citing article, the reconciled five-seed
+experiment, and three run-bound reviewed phenomena. Its acceptance receipt
+passed 19 of 20 checks; only `real_providers` was false because every route was
+intentionally scripted. Companion replay `replay-881ed41994-3465cb3101`
+matched tick 365 and hash
+`37d18cf45365532b39de68efffac68cacb0010ab453734110b8e057e498786ed`;
+every deterministic table was exact and `differences: []`. This rehearsal validates
+mechanics and evidence plumbing; it does not satisfy live-provider acceptance.
+
 | Gate | Status | Evidence |
 |---|---|---|
 | Focused + full Python | **Passed** | 86 initial focused / 93 final adversarial / 280 closure / 303 post-merge cleanup; compile and datasets green |
@@ -495,6 +654,9 @@ defects. Exact offline replay `replay-b4832032ba-8d99c25c56` matched tick 5 with
 | Free five-tick rehearsal | **Passed** | `5a0d40d773`; exact replay and all deterministic effects |
 | Five-tick live pilot | **Passed** | `b4832032ba`; `$0.01121124`, zero failures/defects, all targeted actions accepted |
 | Live offline replay | **Passed** | `replay-b4832032ba-8d99c25c56`; equal tick/hash, `differences: []` |
+| Preceding replay-integrity revision | **Passed** | 590 Python passed / 8 skipped; 23 dashboard tests; fresh 603-module build; pinned FRED/BLS/SCF/SUSB verification green |
+| Current V9 premerge tree | **Passed** | 663 Python passed / 8 skipped; 23 dashboard tests; 603-module build; pinned datasets and hygiene green |
+| Free 365-tick workflow rehearsal | **Passed mechanics + replay** | `881ed41994`; 19/20 checks, with only scripted `real_providers` false; replay matched tick/hash with every table exact and `differences: []` |
 | GitHub Actions / PR #15 | **Passed and merged** | Exact-head and post-merge dashboard plus Ubuntu/Windows Python 3.11/3.12 matrices passed; merge `255555c2`, post-merge run `29368193807` |
 
 The closure audit also passed the universal hash-locked Python install and
@@ -506,6 +668,18 @@ authorized PR #15's merge to `main` as
 `255555c2b24530c0bd39aed2f501277a468adc0a`; post-merge CI run `29368193807`
 repeated all five jobs successfully. Repeat the audits against any future
 release candidate.
+
+### Current semantics-7 observatory activity
+
+The later `c9f0b23` hardening pass preserved the four closure contracts and
+restored measured activity across the flagship world. Peripheral agents now take
+scheduled local policy turns without model-call rows; household fundamentals
+create the first stock price through ordinary matched bids and asks; bounded
+partner, founder, and lawyer contexts advance pitches through term sheet,
+diligence, funding close, and IP; action surfaces remain in the actor's currency
+until FX; and unemployment counts each living non-retired worker once. Focused
+tests assert each contract and a 31-tick rehearsal proves nonzero goods, trades,
+startup/legal activity, and reconciled ledgers.
 
 R21 real-U.S. initialization is now available through
 `runs/r21-real-us.yaml`. It uses pinned 2022 SCF family and SUSB firm-size
@@ -554,12 +728,72 @@ complete. Exact local stack
 evidence at `53081f2` passed TLS readiness, two-tenant isolation, immutable S3
 snapshot/restore, atomic database-password rotation, Prometheus scraping, and
 200/200 bounded load requests including 80 cross-tenant denials. PR #19 head
-`1cf1d0a` passed all six jobs in run `29409250171`. Any public production
-deployment remains a separate operational decision and is not claimed here.
+`1cf1d0a` passed all six jobs in run `29409250171` and merged as `1806294d4`.
+Post-merge run `29411023992` contains six zero-step jobs because GitHub blocked
+the account for billing/spending-limit reasons; no code ran in that push event.
+Any public production deployment remains a separate operational decision and
+is not claimed here.
 
-The 30-day rumor gate, Oracle latency/calibration campaign, and 365-day/$200
-acceptance run also remain separate release evidence. Tagging and publication
-remain separate release decisions.
+The archived v1 seed-7301 Oracle source completed tick 335 with valid
+live-provider provenance but is not acceptance evidence. Its replay diverged
+at the first arrival because staged genesis reset an uncheckpointed persona RNG
+stream, and checkpoint inspection retained SQLite WAL/SHM sidecars. The
+preceding replay-integrity revision persists and validates both semantics-7 RNG
+streams, finalizes standalone checkpoints, and enforces the replay target tick;
+its focused and full verification passed, and no v1 sample is reused.
+
+The immutable v2 seed-7311 source and generated offline replay both reached
+tick 335 and crossed the first arrival without the v1 divergence. Canonical
+verification returned `exact: true` with `differences: []`. Receipt generation
+then found a separate census-validation defect: the checkpoint audit
+counted all stored agent rows instead of validating the living and deceased
+populations separately. Preserving one deceased row and creating its replacement
+correctly produced 101 stored rows, 100 living agents, and one deceased agent.
+V2 is retained as diagnostic evidence and is never resumed, rewritten, or
+reused. The receipt correction validates the bounded living population and
+requires living plus deceased rows to reconcile to the stored total. It also
+authenticates chronological death/schedule/arrival linkage, `NIGHT_CLOSE` phase
+and agent-subject provenance, one-time due-schedule consumption, and the fixed
+5–20-tick replacement delay.
+
+V3 seed 7321 completed its source and exact companion replay, but its original
+receipt admitted only four of six forecasts after applying accepted-plan
+validation to authenticated rejected planner attempts. The original receipt
+records the pre-inspection source hash; the local source artifact was later
+write-opened during diagnosis and is not admissible. It remains excluded
+diagnostic evidence and is never reused.
+
+V4 seeds 7331 and 7332 retain eligible exact source/replay receipts as
+diagnostic evidence, while seed 7333 and the fixed v4 corpus remain excluded for
+the government-ledger retry/provenance failure described above. None of those
+sources, responses, claims, checkpoints, replays, or seeds is reused.
+
+V8 is now excluded for the seed-7375 Kimi quota failure described above; its
+four completed arms remain diagnostic only. The current pending
+`oracle-calibration-v9` campaign is separately precommitted to ten fixed arms
+with fresh seeds 7381–7390, odd control and even rumor. Its commitment SHA-256
+is `8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e`,
+and its manifest template is `runs/oracle/manifest-v9.template.yaml`. It routes
+only the Oracle to `MiniMax-M3` through the exact adapter documented above and
+retains a `$25` per-run cap. Before live dispatch, each arm consumes an
+immutable claim bound to its clean Git commit/tree, committed effective config,
+run ID, seed, initialized-state marker, and canonical data location. Source
+receipts bind every required checkpoint manifest and the companion replay
+tracker; eligibility requires exact one-time source-call consumption with zero
+compatibility fallback and zero live replay dispatch. Occurrence-aware citation
+mapping keeps repeated public article classes distinct under exact replay,
+governed answer semantics use the bounded repair call before persistence, and
+the scheduled-latency producer clamps both continuous monotonic and resumed
+wall-clock duration to the conservatively rounded governed-call sum. The V9
+commitment excludes every earlier campaign profile and evidence path. The local
+no-clobber receipt chain is strong accident/tamper evidence, but a public claim
+still requires independent signing or a separately administered append-only
+transparency log.
+
+Completion of the V9 Oracle campaign, 30-day rumor gate, 365-day/$200 acceptance
+run, and final provenance audit remain separate release evidence. PR #20
+implementation is authorized for squash merge. Tagging, publication, and public
+deployment remain separate release decisions.
 
 ## Release checklist
 
@@ -567,5 +801,5 @@ Before publication: run Python tests and compilation, dashboard tests/build,
 dependency checks, high-severity npm audit, API and browser smoke tests, static
 export verification, 30/365-tick performance gates, exact replay, secret scan,
 license audit, data-provenance review, and the complete GitHub Actions matrix.
-The repository is licensed under Apache-2.0; third-party data retain their own
-terms.
+The repository is licensed under the MIT License; third-party data retain their
+own terms.

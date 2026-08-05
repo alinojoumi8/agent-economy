@@ -5,11 +5,26 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel, Field
 
+from communications.policy import Principal
 from engine.actions import ActionExecutor
 from engine.store import load_json
+from operator_workspace import OperatorWorkspace, WorkspaceConflict, WorkspaceNotFound
+from server.projections import (
+    build_causal_projection,
+    build_envelope,
+    build_events,
+    build_message,
+    build_search,
+    build_snapshot,
+    build_threads,
+    resolve_tick,
+    SEARCH_KINDS,
+)
+from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
+from server.projections.events import build_backfill
 
 
 class GodActionBody(BaseModel):
@@ -23,6 +38,35 @@ class ForkBody(BaseModel):
     expected_tick: int
 
 
+class InvestigationCreateBody(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    fork_id: str | None = None
+    pinned_tick: int | None = Field(default=None, ge=0)
+    query: dict[str, Any] = Field(default_factory=dict)
+    layout: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationUpdateBody(BaseModel):
+    expected_version: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    pinned_tick: int | None = Field(default=None, ge=0)
+    query: dict[str, Any] | None = None
+    layout: dict[str, Any] | None = None
+
+
+class InvestigationItemBody(BaseModel):
+    item_kind: str = Field(min_length=1, max_length=80)
+    stable_ref: dict[str, Any]
+    note: str = Field(default="", max_length=4000)
+    label: str | None = Field(default=None, max_length=160)
+    color: str | None = Field(default=None, max_length=40)
+
+
+class HypothesisBody(BaseModel):
+    statement: str = Field(min_length=1, max_length=2000)
+    status: str = "open"
+
+
 def _page(rows, limit: int) -> dict[str, Any]:
     items = [dict(row) for row in rows]
     return {"items": items, "next_cursor": int(items[-1]["id"]) if len(items) == limit else None}
@@ -31,17 +75,438 @@ def _page(rows, limit: int) -> dict[str, Any]:
 def install_v2_routes(app, world, controller) -> None:
     router = APIRouter(prefix="/api/v2", tags=["legal-political-economy-v2"])
     store = world.store
+    workspace_config = world.config.get("operator_workspace", {})
+    workspace_path = Path(workspace_config.get(
+        "path", Path(store.path).parent / "operator-workspace.db"))
+    operator_workspace = OperatorWorkspace(workspace_path, world_path=store.path)
+    app.state.operator_workspace = operator_workspace
+    csrf_token = str(workspace_config.get("csrf_token", "local-observatory"))
+
+    def projection_principal(
+        *, agent_id: int | None = None, disclosure_case_id: int | None = None,
+        truth: bool = False, owner_id: str = "local-operator",
+    ) -> tuple[Principal, Any]:
+        if truth:
+            principal = Principal(
+                f"operator:{owner_id}", operator_truth=True,
+                disclosure_case_id=disclosure_case_id)
+            run_lineage = lineage(store)
+            audit = operator_workspace.truth_audit(
+                owner_id=owner_id, run_id=run_lineage["run_id"],
+                fork_id=run_lineage["fork_id"])
+            return principal, audit
+        if agent_id is not None:
+            if not store.query_one("SELECT 1 FROM agents WHERE id=?", (int(agent_id),)):
+                raise HTTPException(status_code=404, detail="view not found")
+            return Principal(
+                f"agent:{int(agent_id)}", agent_id=int(agent_id),
+                disclosure_case_id=disclosure_case_id), None
+        return Principal("ordinary-dashboard"), None
+
+    def projection_tick(tick: str | int | None, fork_id: str | None) -> int:
+        try:
+            validate_fork(store, fork_id)
+            return resolve_tick(store, tick)
+        except ProjectionRequestError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def require_csrf(value: str | None) -> None:
+        if not value or value != csrf_token:
+            raise HTTPException(status_code=403, detail="valid CSRF token required")
+
+    @router.get("/mode")
+    async def local_mode():
+        return {"mode": "local", "hosted": False, "api_base": "/api/v2"}
+
+    @router.get("/snapshot")
+    async def world_snapshot(
+        tick: str = Query("live"), fork_id: str | None = None,
+        domains: str = Query("summary,alerts,communications,events"),
+        agent_id: int | None = Query(default=None, gt=0),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal(agent_id=agent_id)
+        selected = tuple(sorted({item.strip() for item in domains.split(",") if item.strip()}))
+        data = build_snapshot(store, principal, as_of_tick=as_of_tick, domains=selected)
+        return build_envelope(
+            store, principal, "world.snapshot", data, as_of_tick=as_of_tick)
+
+    @router.get("/events")
+    async def event_projection(
+        tick: str = Query("live"), fork_id: str | None = None,
+        after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
+        filters: str = Query(""), agent_id: int | None = Query(default=None, gt=0),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal(agent_id=agent_id)
+        kinds = tuple(sorted({item.strip() for item in filters.split(",") if item.strip()}))
+        data = build_events(
+            store, as_of_tick=as_of_tick, after_id=after, limit=limit, kinds=kinds)
+        return build_envelope(store, principal, "events.page", data, as_of_tick=as_of_tick)
+
+    @router.get("/search")
+    async def search_projection(
+        q: str = Query(),
+        tick: str = Query("live"), fork_id: str | None = None,
+        kinds: str = Query(",".join(SEARCH_KINDS)),
+        limit: int = Query(8, ge=1, le=20),
+    ):
+        query = q.strip()
+        if not 2 <= len(query) <= 100:
+            raise HTTPException(status_code=422, detail="search query must contain 2-100 characters")
+        requested = tuple(item.strip() for item in kinds.split(",") if item.strip())
+        requested = requested or SEARCH_KINDS
+        unknown = sorted(set(requested) - set(SEARCH_KINDS))
+        if unknown:
+            raise HTTPException(status_code=422, detail="unsupported search kind")
+        selected = tuple(kind for kind in SEARCH_KINDS if kind in set(requested))
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal()
+        data = build_search(
+            store,
+            principal,
+            query=query,
+            as_of_tick=as_of_tick,
+            kinds=selected,
+            limit=limit,
+        )
+        return build_envelope(
+            store, principal, "search.results", data, as_of_tick=as_of_tick)
+
+    @router.get("/communications/summary")
+    async def communication_summary(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal = Principal("ordinary-dashboard")
+        data = build_snapshot(
+            store, principal, as_of_tick=as_of_tick, domains=("communications",))[
+                "communications"]
+        return build_envelope(
+            store, principal, "communications.summary", data, as_of_tick=as_of_tick)
+
+    @router.get("/communications/threads")
+    async def communication_threads(
+        tick: str = Query("live"), fork_id: str | None = None,
+        agent_id: int | None = Query(default=None, gt=0),
+        disclosure_case_id: int | None = Query(default=None, gt=0),
+        truth: bool = False, after: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=200),
+        x_operator_id: str = Header("local-operator"),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, audit = projection_principal(
+            agent_id=agent_id, disclosure_case_id=disclosure_case_id,
+            truth=truth, owner_id=x_operator_id)
+        data = build_threads(
+            store, principal, as_of_tick=as_of_tick,
+            after_thread_id=after, limit=limit, truth_audit=audit)
+        return build_envelope(
+            store, principal, "communications.threads", data, as_of_tick=as_of_tick)
+
+    @router.get("/communications/messages/{message_id}")
+    async def communication_message(
+        message_id: int, tick: str = Query("live"), fork_id: str | None = None,
+        agent_id: int | None = Query(default=None, gt=0),
+        disclosure_case_id: int | None = Query(default=None, gt=0),
+        truth: bool = False, x_operator_id: str = Header("local-operator"),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, audit = projection_principal(
+            agent_id=agent_id, disclosure_case_id=disclosure_case_id,
+            truth=truth, owner_id=x_operator_id)
+        data = build_message(
+            store, principal, int(message_id), as_of_tick=as_of_tick,
+            include_body=True, truth_audit=audit)
+        if data is None:
+            raise HTTPException(status_code=404, detail="message not found")
+        return build_envelope(
+            store, principal, "communications.message", data, as_of_tick=as_of_tick)
+
+    @router.get("/causal/{kind}/{object_id}")
+    async def causal_projection_v1(
+        kind: str, object_id: int, tick: str = Query("live"),
+        fork_id: str | None = None, depth: int = Query(3, ge=0, le=6),
+        relations: str = Query(""), authority: str = Query(""),
+        agent_id: int | None = Query(default=None, gt=0), truth: bool = False,
+        x_operator_id: str = Header("local-operator"),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, audit = projection_principal(
+            agent_id=agent_id, truth=truth, owner_id=x_operator_id)
+        try:
+            data = build_causal_projection(
+                store, principal, kind, object_id, as_of_tick=as_of_tick, depth=depth,
+                relations=tuple(sorted({item for item in relations.split(",") if item})),
+                authorities=tuple(sorted({item for item in authority.split(",") if item})),
+                truth_audit=audit)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="causal reference not found") from exc
+        if data["root"] is None:
+            raise HTTPException(status_code=404, detail="causal reference not found")
+        return build_envelope(
+            store, principal, "causal.neighborhood", data, as_of_tick=as_of_tick)
+
+    @router.get("/backfill")
+    async def projection_backfill(
+        after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500),
+        fork_id: str | None = None, agent_id: int | None = Query(default=None, gt=0),
+    ):
+        as_of_tick = projection_tick("live", fork_id)
+        principal, _ = projection_principal(agent_id=agent_id)
+        data = build_backfill(store, after_cursor=after, limit=limit)
+        return build_envelope(
+            store, principal, "projection.backfill", data, as_of_tick=as_of_tick)
+
+    @router.get("/entities/{kind}/{object_id}")
+    async def entity_projection(
+        kind: str, object_id: int, tick: str = Query("live"),
+        fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal = Principal("ordinary-dashboard")
+        if kind == "place":
+            data = world.economy.city.place_detail(object_id, as_of_tick)
+            if data is None:
+                raise HTTPException(status_code=404, detail="entity not found")
+            return build_envelope(
+                store, principal, "entity.detail",
+                {"kind": kind, **data},
+                as_of_tick=as_of_tick,
+            )
+        if kind == "agency":
+            data = world.economy.city.agency_detail(object_id, as_of_tick)
+            if data is None:
+                raise HTTPException(status_code=404, detail="entity not found")
+            return build_envelope(
+                store, principal, "entity.detail",
+                {"kind": kind, **data},
+                as_of_tick=as_of_tick,
+            )
+        table_and_fields = {
+            "agent": ("agents", "id,name,role,occupation,population_tier,region_id,alive"),
+            "firm": ("firms", "id,name,sector,status,region_id,inventory"),
+            "bank": ("banks", "id,name,status,reserve_requirement_bps"),
+        }
+        definition = table_and_fields.get(kind)
+        if definition is None:
+            raise HTTPException(status_code=404, detail="entity not found")
+        row = store.query_one(
+            f"SELECT {definition[1]} FROM {definition[0]} WHERE id=?", (int(object_id),))
+        if row is None:
+            raise HTTPException(status_code=404, detail="entity not found")
+        return build_envelope(
+            store, principal, "entity.detail", {"kind": kind, **dict(row)},
+            as_of_tick=as_of_tick)
+
+    @router.get("/world-map")
+    async def world_map_projection(
+        tick: str = Query("live"), fork_id: str | None = None,
+        layers: str = Query("regions,agents,organizations,places,presence"),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal = Principal("ordinary-dashboard")
+        selected = {item.strip() for item in layers.split(",") if item.strip()}
+        data: dict[str, Any] = {}
+        if "regions" in selected:
+            data["regions"] = world.economy.regions.region_state()
+        if "agents" in selected:
+            data["agents"] = [dict(row) for row in store.query(
+                "SELECT a.id,a.name,a.role,a.occupation,a.region_id,"
+                "a.population_tier,ep.slot,"
+                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
+                "AS place_id,"
+                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE p.name END "
+                "AS place_name,"
+                "CASE WHEN p.kind='licensing_office' THEN r.x "
+                "ELSE COALESCE(p.x,r.x) END AS x,"
+                "CASE WHEN p.kind='licensing_office' THEN r.y "
+                "ELSE COALESCE(p.y,r.y) END AS y "
+                "FROM agents a LEFT JOIN regions r ON r.id=a.region_id "
+                "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
+                "AND ep.tick=? AND ep.slot='business' "
+                "LEFT JOIN places p ON p.id=ep.place_id "
+                "WHERE a.alive=1 AND "
+                "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
+                (as_of_tick,))]
+        if "organizations" in selected:
+            data["organizations"] = [dict(row) for row in store.query(
+                "SELECT f.id,f.name,f.sector,f.status,f.region_id,p.id AS place_id,"
+                "p.name AS place_name,COALESCE(p.x,r.x) AS x,"
+                "COALESCE(p.y,r.y) AS y "
+                "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
+                "LEFT JOIN places p ON p.owner_type='firm' AND p.owner_id=f.id "
+                "AND p.kind='workplace' AND p.active=1 "
+                "WHERE f.status<>'bankrupt' ORDER BY f.id")]
+        if "places" in selected:
+            data["places"] = world.economy.city.map_places(as_of_tick)
+        if "presence" in selected:
+            data["presence"] = world.economy.city.map_presence(
+                as_of_tick, public=True)
+        return build_envelope(
+            store, principal, "world.map", data, as_of_tick=as_of_tick)
+
+    @router.get("/civic/summary")
+    async def civic_summary(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal = Principal("ordinary-dashboard")
+        return build_envelope(
+            store,
+            principal,
+            "civic.summary",
+            world.economy.city.public_summary(as_of_tick),
+            as_of_tick=as_of_tick,
+        )
+
+    @router.get("/civic/cases")
+    async def civic_cases(
+        tick: str = Query("live"), fork_id: str | None = None,
+        agent_id: int | None = Query(default=None, gt=0),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        principal, _ = projection_principal(agent_id=agent_id)
+        data = world.economy.city.cases_for_viewer(
+            principal.agent_id, as_of_tick)
+        return build_envelope(
+            store, principal, "civic.cases", data, as_of_tick=as_of_tick)
+
+    @router.get("/agents/{agent_id}/attention")
+    async def agent_attention(
+        agent_id: int,
+        viewer_agent_id: int = Query(gt=0),
+        tick: str = Query("live"),
+        fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        if int(viewer_agent_id) != int(agent_id):
+            raise HTTPException(
+                status_code=403,
+                detail="an agent may view only its own attention lanes",
+            )
+        principal, _ = projection_principal(agent_id=viewer_agent_id)
+        data = world.economy.city.attention_projection(
+            int(agent_id), as_of_tick)
+        return build_envelope(
+            store, principal, "agent.attention", data, as_of_tick=as_of_tick)
+
+    @router.get("/operator/session")
+    async def operator_session(x_operator_id: str = Header("local-operator")):
+        return {"owner_id": x_operator_id, "csrf_token": csrf_token}
+
+    @router.get("/operator/investigations")
+    async def investigations(x_operator_id: str = Header("local-operator")):
+        return {"items": operator_workspace.list_investigations(
+            owner_id=x_operator_id, run_id=lineage(store)["run_id"])}
+
+    @router.post("/operator/investigations")
+    async def create_investigation(
+        body: InvestigationCreateBody,
+        x_operator_id: str = Header("local-operator"),
+        x_csrf_token: str | None = Header(default=None),
+    ):
+        require_csrf(x_csrf_token)
+        return operator_workspace.create_investigation(
+            owner_id=x_operator_id, title=body.title, run_id=lineage(store)["run_id"],
+            fork_id=body.fork_id, pinned_tick=body.pinned_tick,
+            query=body.query, layout=body.layout)
+
+    @router.get("/operator/investigations/{investigation_id}")
+    async def investigation_detail(
+        investigation_id: str, x_operator_id: str = Header("local-operator"),
+    ):
+        try:
+            return operator_workspace.get_investigation(
+                investigation_id, owner_id=x_operator_id)
+        except WorkspaceNotFound as exc:
+            raise HTTPException(status_code=404, detail="investigation not found") from exc
+
+    @router.patch("/operator/investigations/{investigation_id}")
+    async def update_investigation(
+        investigation_id: str, body: InvestigationUpdateBody,
+        x_operator_id: str = Header("local-operator"),
+        x_csrf_token: str | None = Header(default=None),
+    ):
+        require_csrf(x_csrf_token)
+        try:
+            return operator_workspace.update_investigation(
+                investigation_id, owner_id=x_operator_id,
+                expected_version=body.expected_version, title=body.title,
+                pinned_tick=body.pinned_tick, query=body.query, layout=body.layout)
+        except WorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail="investigation version conflict") from exc
+        except WorkspaceNotFound as exc:
+            raise HTTPException(status_code=404, detail="investigation not found") from exc
+
+    @router.post("/operator/investigations/{investigation_id}/items")
+    async def add_investigation_item(
+        investigation_id: str, body: InvestigationItemBody,
+        x_operator_id: str = Header("local-operator"),
+        x_csrf_token: str | None = Header(default=None),
+    ):
+        require_csrf(x_csrf_token)
+        try:
+            return operator_workspace.add_item(
+                investigation_id, owner_id=x_operator_id, item_kind=body.item_kind,
+                stable_ref=body.stable_ref, note=body.note, label=body.label,
+                color=body.color)
+        except WorkspaceNotFound as exc:
+            raise HTTPException(status_code=404, detail="investigation not found") from exc
+
+    @router.post("/operator/investigations/{investigation_id}/hypotheses")
+    async def add_investigation_hypothesis(
+        investigation_id: str, body: HypothesisBody,
+        x_operator_id: str = Header("local-operator"),
+        x_csrf_token: str | None = Header(default=None),
+    ):
+        require_csrf(x_csrf_token)
+        try:
+            return operator_workspace.add_hypothesis(
+                investigation_id, owner_id=x_operator_id,
+                statement=body.statement, status=body.status)
+        except WorkspaceNotFound as exc:
+            raise HTTPException(status_code=404, detail="investigation not found") from exc
+
+    @router.get("/operator/investigations/{investigation_id}/export")
+    async def export_investigation(
+        investigation_id: str, x_operator_id: str = Header("local-operator"),
+    ):
+        try:
+            payload, markdown = operator_workspace.export(
+                investigation_id, owner_id=x_operator_id)
+        except WorkspaceNotFound as exc:
+            raise HTTPException(status_code=404, detail="investigation not found") from exc
+        return {"json": payload, "markdown": markdown}
 
     @router.get("/map")
     async def economic_map():
         regions = world.economy.regions.region_state()
         core_agents = [dict(row) for row in store.query(
-            "SELECT a.id,a.name,a.role,a.occupation,a.population_tier,a.region_id,r.x,r.y "
+            "SELECT a.id,a.name,a.role,a.occupation,a.population_tier,a.region_id,"
+            "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
+            "AS place_id,"
+            "CASE WHEN p.kind='licensing_office' THEN NULL ELSE p.name END "
+            "AS place_name,"
+            "CASE WHEN p.kind='licensing_office' THEN r.x "
+            "ELSE COALESCE(p.x,r.x) END AS x,"
+            "CASE WHEN p.kind='licensing_office' THEN r.y "
+            "ELSE COALESCE(p.y,r.y) END AS y "
             "FROM agents a LEFT JOIN regions r ON r.id=a.region_id "
-            "WHERE a.alive=1 AND (a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id")]
+            "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
+            "AND ep.tick=? AND ep.slot='business' "
+            "LEFT JOIN places p ON p.id=ep.place_id "
+            "WHERE a.alive=1 AND "
+            "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
+            (store.tick,))]
         firms = [dict(row) for row in store.query(
-            "SELECT f.id,f.name,f.sector,f.status,f.region_id,f.currency_code,r.x,r.y "
-            "FROM firms f LEFT JOIN regions r ON r.id=f.region_id WHERE f.status<>'bankrupt' ORDER BY f.id")]
+            "SELECT f.id,f.name,f.sector,f.status,f.region_id,f.currency_code,"
+            "p.id AS place_id,p.name AS place_name,"
+            "COALESCE(p.x,r.x) AS x,COALESCE(p.y,r.y) AS y "
+            "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
+            "LEFT JOIN places p ON p.owner_type='firm' AND p.owner_id=f.id "
+            "AND p.kind='workplace' AND p.active=1 "
+            "WHERE f.status<>'bankrupt' ORDER BY f.id")]
         flows = []
         for row in store.query(
             "SELECT id,origin_region_id AS source_region_id,destination_region_id AS target_region_id,"
@@ -57,6 +522,10 @@ def install_v2_routes(app, world, controller) -> None:
             "core_agents": core_agents,
             "firms": firms,
             "flows": flows,
+            "places": world.economy.city.map_places(store.tick),
+            "presence": world.economy.city.map_presence(
+                store.tick, public=True),
+            "civic": world.economy.city.public_summary(store.tick),
         }
 
     @router.get("/network")

@@ -20,17 +20,19 @@ class Scheduler:
         self.institutional_role_purposes = bool(
             config.get("llm", {}).get("institutional_role_purposes", False))
         self.engine_semantics_version = int(config.get("engine_semantics_version", 1))
+        self.periphery_cadence_multiplier = max(1, int(
+            config.get("behavior", {}).get("periphery_cadence_multiplier", 2)))
+        self.institutional_act_every = max(1, int(
+            config.get("behavior", {}).get("institutional_act_every", 1)))
         self.retired_news_every = max(1, int(
             config.get("lifecycle", {}).get("retired_news_every", 1)))
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
         semantics_version = int(self.config.get("engine_semantics_version", 1))
         if semantics_version >= 7:
-            # Core and peripheral citizens share the same state-derived wakeup
-            # cadence. AgentRuntime keeps the promoted core on its configured
-            # provider while routing the periphery through local scripted
-            # policies, so households actually consume and trade without
-            # creating model calls for the long tail.
+            # Semantics 11 separates scheduling from cognition: population tier
+            # controls wake frequency, while the compute subscription controls
+            # the live model. Semantics 7-10 retain their recorded behavior.
             agents = self.store.query(
                 "SELECT * FROM agents WHERE alive=1 ORDER BY id")
         elif semantics_version >= 5:
@@ -44,6 +46,10 @@ class Scheduler:
         # every living agent on every tick.
         wake_state = self._wake_state(tick)
         out = []
+        civic_enabled = (
+            semantics_version >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        )
         meeting_interval = int(self.config.get("central_bank", {}).get("meeting_interval_ticks", 7))
         liquidity_decision_due = (
             int(self.config.get("engine_semantics_version", 1)) >= 6
@@ -61,15 +67,32 @@ class Scheduler:
                 if liquidity_decision_due or tick % max(1, meeting_interval) == 0:
                     out.append(a)
                 continue
-            if a["role"]:  # other institutional agents act every tick
+            if a["role"] == "permit_clerk":
+                if civic_enabled and self._civic_wake(
+                        int(a["id"]), str(a["role"]), tick):
+                    out.append(a)
+                continue
+            if a["role"]:
+                # Phase institutional wakes by stable agent id so a reduced
+                # cadence remains deterministic and replayable.
+                phase = int(a["id"]) % self.institutional_act_every
+                if tick % self.institutional_act_every == phase:
+                    out.append(a)
+                continue
+            if civic_enabled and self._civic_wake(
+                    int(a["id"]), "", tick):
                 out.append(a)
                 continue
             if not citizens_enabled:
                 if int(a["id"]) in wake_state["event_triggered"]:
                     out.append(a)
                 continue
+            agent_cadence_multiplier = max(1, cadence_multiplier)
+            if (semantics_version >= 11
+                    and str(a["population_tier"] or "periphery") != "core"):
+                agent_cadence_multiplier *= self.periphery_cadence_multiplier
             if self._citizen_wakes(
-                    a, tick, cadence_multiplier,
+                    a, tick, agent_cadence_multiplier,
                     employed_ids=wake_state["employed"],
                     event_triggered_ids=wake_state["event_triggered"],
                     unpriced_holder_ids=wake_state["unpriced_holders"]):
@@ -107,6 +130,34 @@ class Scheduler:
             "event_triggered": event_triggered,
             "unpriced_holders": unpriced_holders,
         }
+
+    def _civic_wake(self, agent_id: int, role: str, tick: int) -> bool:
+        if role == "permit_clerk":
+            return self.store.query_one(
+                "SELECT 1 FROM institution_tasks "
+                "WHERE assigned_agent_id=? AND status='assigned' LIMIT 1",
+                (int(agent_id),),
+            ) is not None
+        if self.store.query_one(
+            "SELECT 1 FROM service_appointments "
+            "WHERE applicant_agent_id=? AND scheduled_tick=? "
+            "AND status='scheduled' LIMIT 1",
+            (int(agent_id), int(tick)),
+        ) is not None:
+            return True
+        if self.store.query_one(
+            "SELECT 1 FROM service_cases WHERE applicant_agent_id=? "
+            "AND outcome_event_id IS NOT NULL AND updated_tick BETWEEN ? AND ? "
+            "LIMIT 1",
+            (int(agent_id), max(0, int(tick) - 1), int(tick)),
+        ) is not None:
+            return True
+        return self.store.query_one(
+            "SELECT 1 FROM civic_authorizations "
+            "WHERE holder_agent_id=? AND status='active' AND expiry_tick>=? "
+            "LIMIT 1",
+            (int(agent_id), int(tick)),
+        ) is not None
 
     def _has_pending_liquidity_request(self) -> bool:
         return self.store.query_one(

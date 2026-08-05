@@ -1,13 +1,18 @@
 import { HostedShell } from "./components/HostedShell";
 import { Observatory } from "./components/Observatory";
 import { useHostedMode } from "./hooks/useHostedMode";
+import { Route, Routes } from "react-router";
+import { WorldOSApp } from "./app/WorldOSApp";
 
 export default function App() {
   const mode = useHostedMode();
   if (mode.loading) {
     return <div className="min-h-screen bg-ink-950" aria-label="Loading Agent Economy" />;
   }
-  return mode.hosted
-    ? <HostedShell config={mode.config} />
-    : <Observatory />;
+  if (mode.hosted) return <HostedShell config={mode.config} />;
+  return <Routes>
+    <Route path="/runs/:runId/*" element={<WorldOSApp />} />
+    <Route path="/commons/*" element={<WorldOSApp />} />
+    <Route path="*" element={<Observatory />} />
+  </Routes>;
 }

@@ -73,11 +73,17 @@ class RunController:
         self._tick_broadcasts_lock = Lock()
         self.world.on_tick = self.on_tick
         self.participant = world.runtime.participant
-        self.acceptance_configured = bool(world.config.get("acceptance"))
+        acceptance = world.config.get("acceptance", {})
+        # Desktop profiles also use the acceptance block for rehearsal and
+        # performance targets.  Only a configured horizon denotes a governed
+        # acceptance campaign whose dashboard controls must stay locked until
+        # --acceptance-run authorizes it.
+        self.acceptance_configured = (
+            isinstance(acceptance, dict) and "min_ticks" in acceptance)
         self.acceptance_authorized = bool(getattr(world, "acceptance_authorized", False))
         self.acceptance_target_tick = int(getattr(
             world, "acceptance_target_tick",
-            world.config.get("acceptance", {}).get("min_ticks", 365)))
+            acceptance.get("min_ticks", 365)))
         self.target_tick = (
             self.acceptance_target_tick if self.acceptance_authorized
             else self.store.tick + int(served_ticks) if served_ticks is not None
@@ -121,6 +127,13 @@ class RunController:
             replay_reader = getattr(_app.state, "replay_reader", None)
             if replay_reader is not None:
                 replay_reader.close()
+            operator_workspace = getattr(_app.state, "operator_workspace", None)
+            if operator_workspace is not None:
+                operator_workspace.close()
+            citizenship_service = getattr(
+                _app.state, "citizenship_service", None)
+            if citizenship_service is not None:
+                citizenship_service.close()
             operational_log(logger, logging.INFO, "server.stopped",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             run_active=self.is_running())
@@ -129,8 +142,16 @@ class RunController:
     def on_tick(self, tick: int, summary: dict) -> None:
         if self.loop is None or not self.loop.is_running():
             return
-        future = asyncio.run_coroutine_threadsafe(
-            self.hub.broadcast(self.tick_payload(tick, summary)), self.loop)
+        messages = [self.tick_payload(tick, summary)]
+        if int(getattr(self.world, "engine_semantics_version", 1)) >= 8:
+            from server.projections.transport import projection_delta_message
+            messages.append(projection_delta_message(self.store, tick=tick))
+
+        async def broadcast_all() -> None:
+            for message in messages:
+                await self.hub.broadcast(message)
+
+        future = asyncio.run_coroutine_threadsafe(broadcast_all(), self.loop)
         with self._tick_broadcasts_lock:
             self._tick_broadcasts.add(future)
         future.add_done_callback(self._tick_broadcast_done)
@@ -179,6 +200,7 @@ class RunController:
             "tick": self.store.tick,
             "status": "running" if active else self.world.status,
             "running": active,
+            "semantics_version": self.world.engine_semantics_version,
             "target_tick": self.target_tick,
             "remaining_ticks": self.remaining_ticks(),
             "governor": self.world.gateway.governor.status(),
@@ -475,6 +497,7 @@ class RunController:
             "active_tick": meta["active_tick"],
             "next_phase": meta["next_phase"],
             "legacy_partial": bool(meta["legacy_partial"]),
+            "semantics_version": self.world.engine_semantics_version,
             "speed_delay_s": self.world.speed_delay_s,
             "target_tick": self.target_tick,
             "remaining_ticks": self.remaining_ticks(),
@@ -482,6 +505,7 @@ class RunController:
             "running": running,
             "provider_readiness": self.world.gateway.readiness(),
             "rate_limit": self.world.gateway.rate_limit_status(),
+            "resource_guard": dict(self.world.resource_guard),
             "pause_reason": self.world.last_pause_reason,
             "acceptance_orchestration": orchestration,
             "participant_active": self.participant.active_agent_id() is not None,

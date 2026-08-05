@@ -1,0 +1,18 @@
+# Fresh pre-run commitment after v3 seed 7321 completed source and exact replay
+# but exposed a receipt-only planner-retry eligibility defect. The v3 receipt
+# chain is diagnostic and excluded; no response, claim, checkpoint, or seed is
+# reused.
+schema_version: 1
+campaign_id: oracle-calibration-v4
+campaign_version: 4
+runs:
+  - {seed: 7331, run_id: oracle-calibration-v4-s7331, profile: v4-seed-7331-control.yaml, effective_config_sha256: 86fb8c95a7a5ae186dfd672c68b0f0b114cf3b5ce5df7ef0cc69f3280c00caef}
+  - {seed: 7332, run_id: oracle-calibration-v4-s7332, profile: v4-seed-7332-rumor.yaml, effective_config_sha256: 91437776f7e49c28dfeee71fbf7133a4706a2bba023952b26ac1247258c8e7b1}
+  - {seed: 7333, run_id: oracle-calibration-v4-s7333, profile: v4-seed-7333-control.yaml, effective_config_sha256: 0626de4e61c14ab873e575a317ea1b406af6fc3ce7db7159fdc2b6830d2de49c}
+  - {seed: 7334, run_id: oracle-calibration-v4-s7334, profile: v4-seed-7334-rumor.yaml, effective_config_sha256: 87090481866d5f47d0d5ca2de78354837167e6f0b4e5f593fbf05b0594bd9139}
+  - {seed: 7335, run_id: oracle-calibration-v4-s7335, profile: v4-seed-7335-control.yaml, effective_config_sha256: 561b786cb51bd3a0e0b20af901e8170585b1fb87dc2d9e3401b6c0bf44623825}
+  - {seed: 7336, run_id: oracle-calibration-v4-s7336, profile: v4-seed-7336-rumor.yaml, effective_config_sha256: d1343b947fb45732c5101518edbcdd7c6bed2c7a47b04822c430640e98bde4ac}
+  - {seed: 7337, run_id: oracle-calibration-v4-s7337, profile: v4-seed-7337-control.yaml, effective_config_sha256: 4e11d4341b635fb875d9ce055320861451040ab564aba6d46a4eb1ab12fef666}
+  - {seed: 7338, run_id: oracle-calibration-v4-s7338, profile: v4-seed-7338-rumor.yaml, effective_config_sha256: 2cb9d9a48cd856065a38061ba7c30bec62c43b4114e2ae53ba23d90257ec6b08}
+  - {seed: 7339, run_id: oracle-calibration-v4-s7339, profile: v4-seed-7339-control.yaml, effective_config_sha256: 207d5c5c74bfc463eb2ead8e1e4376bdda9fd6a0134c655b98df761c10f9ba3a}
+  - {seed: 7340, run_id: oracle-calibration-v4-s7340, profile: v4-seed-7340-rumor.yaml, effective_config_sha256: 65e48a2c5b4170b1678b74d89e39dbde6faecf8e71ff4d372120cd93a22be56f}

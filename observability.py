@@ -12,6 +12,8 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 
@@ -74,16 +76,30 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str | int | None = None) -> None:
-    """Configure JSON stderr logging once while remaining friendly to host apps."""
+    """Configure JSON stderr and bounded file logging once."""
     configured_level = level or os.getenv("AGENT_ECONOMY_LOG_LEVEL", "INFO")
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(configured_level)
     root = logging.getLogger()
+    formatter = JsonFormatter()
     if not root.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(JsonFormatter())
+        handler.setFormatter(formatter)
         root.addHandler(handler)
         root.setLevel(configured_level)
+    log_path = Path(os.getenv(
+        "AGENT_ECONOMY_LOG_FILE",
+        "logs/agent-economy.jsonl.log",
+    )).expanduser().resolve()
+    if not any(getattr(handler, "baseFilename", None) == str(log_path)
+               for handler in root.handlers):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=10 * 1024 * 1024, backupCount=5,
+            encoding="utf-8", delay=True)
+        file_handler.setLevel(configured_level)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
 
 
 def get_logger(component: str) -> logging.Logger:

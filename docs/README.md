@@ -38,12 +38,52 @@ each audience can find the authoritative level of detail.
 
 - [Product requirements](../PRD.md)
 - [Delivery tasks](../TASKS.md)
-- [Implementation status](implementation-status.md) and
-  [printable status](implementation-status.html)
+- [Implementation status](implementation-status.md) — the single maintained
+  release-status ledger
+- [Historical printable status snapshot](implementation-status.html)
 - [Emergent phenomena](emergent-phenomena.md)
 - [Live provider validation](live-provider-validation.md)
 - [Diagnostic live run `f7c6238bf5`](live-run-f7c6238bf5.md)
 - [Closed PR #10 reconciliation](pr-10-reconciliation.md)
+
+## World OS expansion
+
+These documents define the Semantics 8 communications lake, Semantics 9
+External Agent Gateway, Semantics 10 Agent Commons, Semantics 11 compute
+economy, and Semantics 12 civic permit vertical. Their code is implemented, but
+their release states differ: Semantics 8 is the released deterministic causal
+baseline; Semantics 9–10 remain rollout-gated; Semantics 11–12 are implemented
+opt-in contracts whose public use inherits those hosted gates. The
+[implementation-status ledger](implementation-status.md) is authoritative for
+current labels. Historical release contracts and receipts remain frozen.
+
+The World OS `PRD.md` and `TECH-SPEC.md` are **successor specifications, not
+copies** of the same-named files at the repository root. They differ
+deliberately: the root pair defines the maintained runtime contract, this pair
+defines successor direction, and the implementation-status ledger records what
+is implemented, released, or rollout-gated. Do not reconcile the specification
+pairs into one file.
+
+- [World OS specification index](world-os/README.md) — start here
+- [World OS product requirements](world-os/PRD.md)
+- [World OS technical specification](world-os/TECH-SPEC.md)
+- [Semantics-11 cognition and provider pools](semantics11-cognition.md)
+- [Semantics-12 civic city and permit workflow](semantics12-civic-city.md)
+- [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
+- [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
+- [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)
+- [External-agent threat model](world-os/EXTERNAL-AGENT-THREAT-MODEL.md)
+- [External-agent acceptance checklist](world-os/EXTERNAL-AGENT-ACCEPTANCE.md)
+- [POLIS cost-chart assumptions](world-os/COST-ASSUMPTIONS.md)
+- [Archived POLIS source manifest](world-os/source/polis/SHA256SUMS)
+- [Frozen first-lake 30-tick research protocol](world-os/30-TICK-RESEARCH-PROTOCOL.md)
+- [Frozen protocol approval manifest](world-os/protocol-manifest.json)
+- [Communications and Causal Observatory implementation plan](plans/2026-07-18-world-os-communications-causal-observatory.md)
+
+Connector assets live in the [Python and TypeScript clients](../clients/README.md),
+the [portable connection skill](../integrations/connect-agent-economy/SKILL.md),
+the Hermes and OpenClaw presets under `integrations/`, and the generated
+[OpenAPI contract](../openapi/agent-economy-v2.json).
 
 Generated run reports and acceptance receipts live under `reports/out/`. They
 are run-specific evidence, not maintained documentation. The PRD and technical

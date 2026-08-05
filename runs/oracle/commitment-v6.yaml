@@ -1,0 +1,18 @@
+# Fresh pre-run commitment after v5 seed 7348 exposed ambiguous logical
+# newsroom citations for duplicate same-tick public events. V5 remains
+# diagnostic and excluded; no response, claim, checkpoint, run identity,
+# profile ancestry, manifest entry, or seed is reused.
+schema_version: 1
+campaign_id: oracle-calibration-v6
+campaign_version: 6
+runs:
+  - {seed: 7351, run_id: oracle-calibration-v6-s7351, profile: v6-seed-7351-control.yaml, effective_config_sha256: f31ffb8204b701eb8d724935e36cf6c4bb98b236c8b455df2eeba3fe055df52b}
+  - {seed: 7352, run_id: oracle-calibration-v6-s7352, profile: v6-seed-7352-rumor.yaml, effective_config_sha256: 8fe19716cc14df7a34b759cedcbeff4e08a9ebf6cdaf69bccee4fafd2bba2956}
+  - {seed: 7353, run_id: oracle-calibration-v6-s7353, profile: v6-seed-7353-control.yaml, effective_config_sha256: 0053e39ee2a0539f1f1cdbc2d062cf7a8a1ba0a8ef2a3192ed64b301a1aee96e}
+  - {seed: 7354, run_id: oracle-calibration-v6-s7354, profile: v6-seed-7354-rumor.yaml, effective_config_sha256: c2a76dc708fc0879689b64ae2115e4ace78ef6bd116e2e325a82c5f5f57b0bcc}
+  - {seed: 7355, run_id: oracle-calibration-v6-s7355, profile: v6-seed-7355-control.yaml, effective_config_sha256: 463c4f48449e9733dc5ed82953f28bb36134b1a41945a1975cae485ebda43371}
+  - {seed: 7356, run_id: oracle-calibration-v6-s7356, profile: v6-seed-7356-rumor.yaml, effective_config_sha256: f1e78a37ae09f4ee9b2d12b9f24c4204504c0496b4b6fd80d3548058104a0a2c}
+  - {seed: 7357, run_id: oracle-calibration-v6-s7357, profile: v6-seed-7357-control.yaml, effective_config_sha256: 65967b4eb5995a2d0be384eacfb86d7af38b82e6665e379e3f9576fd4407b806}
+  - {seed: 7358, run_id: oracle-calibration-v6-s7358, profile: v6-seed-7358-rumor.yaml, effective_config_sha256: e1724cbe2f02e6773f9564402bbeff28b7867a8f6dfa6e22086b98a062c318f9}
+  - {seed: 7359, run_id: oracle-calibration-v6-s7359, profile: v6-seed-7359-control.yaml, effective_config_sha256: 347178b98098c6dcd6e495921868fe43d370e622454506f896039a461857dba5}
+  - {seed: 7360, run_id: oracle-calibration-v6-s7360, profile: v6-seed-7360-rumor.yaml, effective_config_sha256: 9a3f9a39dc74dd3fd06c63508662379952d6d667434404d97bfce465487051db}

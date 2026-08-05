@@ -1,0 +1,14 @@
+{
+  "approved_at": "2026-07-18",
+  "approval_gate": "Gate -1",
+  "approval_source": "explicit_user_approval",
+  "policy_contract_id": "supplier-warning-policy-v1",
+  "policy_contract_sha256": "f29339c7ff21c653419226f2aee4c25eaeb99ccbc2886674519f9d24b05fc9a2",
+  "protocol_id": "world-os-v8-supplier-warning-v1",
+  "protocol_hash_canonicalization": "utf-8-lf",
+  "protocol_path": "docs/world-os/30-TICK-RESEARCH-PROTOCOL.md",
+  "protocol_sha256": "831f33fd4cfc32daac27d17353ec400baf4c03f79fffbaa26cf07cfd5640f7af",
+  "schema_version": 12,
+  "semantics_version": 8,
+  "status": "approved_frozen"
+}

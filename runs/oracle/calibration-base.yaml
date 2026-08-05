@@ -1,0 +1,35 @@
+# Profile-specific Oracle calibration: scripted world, live Kimi Oracle only.
+# Six governed forecasts resolve over 335 ticks; ten predeclared seed profiles
+# form the release corpus. This does not substitute for the 365-day production run.
+extends: ../acceptance/rehearsal.yaml
+
+seed: 7301
+
+acceptance:
+  min_ticks: 335
+  max_spend_usd: 25
+  efficiency_target_usd: 25
+  oracle_campaign_id: oracle-calibration-v1
+  oracle_campaign_version: 1
+  oracle_min_latency_samples: 6
+  required_shocks: []
+  require_oracle_scoring: true
+  require_experiment: false
+  require_phenomena: false
+
+budget:
+  cap_usd: 25
+  oracle_reserve_usd: 25
+  conversation_pairs: 0
+
+llm:
+  concurrency: 1
+  # Campaign evidence pins the modeled billing table instead of inheriting the
+  # gateway default. A receipt therefore proves the exact price used to meter
+  # every Kimi call even if application defaults change later.
+  pricing:
+    kimi-for-coding: {in: 0.95, out: 4.00, cache: 0.19}
+  routes:
+    oracle: {provider: kimi, model: kimi-for-coding}
+
+shocks: []

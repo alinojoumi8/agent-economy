@@ -7,6 +7,7 @@ import {
   tenantApiPath,
 } from "../hostedRouting.js";
 import { Observatory } from "./Observatory";
+import { AgentConnectionsPanel } from "./AgentConnectionsPanel";
 import { Badge, Empty, Panel } from "./ui";
 
 function errorMessage(reason) {
@@ -92,7 +93,7 @@ function HostedAccess({ config, onAuthenticated }) {
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-slate-400">Sessions stay in secure HttpOnly cookies. Tenant and run selection remain in this browser tab only; credentials are never placed in browser storage.</p>
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-4"><div className="eyebrow">Isolation</div><p className="mt-2 text-xs text-slate-500">Tenant-scoped catalog, run, and artifact boundaries.</p></div>
-          <div className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-4"><div className="eyebrow">Roles</div><p className="mt-2 text-xs text-slate-500">Administrators operate; observers remain read-only.</p></div>
+          <div className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-4"><div className="eyebrow">Roles</div><p className="mt-2 text-xs text-slate-500">Agent owners manage their connectors; administrators operate runs.</p></div>
           <div className="rounded-xl border border-mint-300/10 bg-ink-950/45 p-4"><div className="eyebrow">Evidence</div><p className="mt-2 text-xs text-slate-500">Immutable snapshots at completed boundaries.</p></div>
         </div>
       </section>
@@ -211,7 +212,7 @@ function RunDirectory({ config, session, runs, members, busy, error, onRefresh, 
       {capabilities.administerTenant && <Panel title="Invite member" eyebrow="One-time credential">
         <form className="space-y-3 p-4" onSubmit={createInvite}>
           <label className="block text-xs text-slate-500">Email<input className="field mt-1" type="email" required value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} /></label>
-          <label className="block text-xs text-slate-500">Role<select className="field mt-1" value={inviteRole} onChange={event => setInviteRole(event.target.value)}><option value="observer">Observer</option><option value="admin">Administrator</option></select></label>
+          <label className="block text-xs text-slate-500">Role<select className="field mt-1" value={inviteRole} onChange={event => setInviteRole(event.target.value)}><option value="observer">Observer</option><option value="agent_owner">Agent owner</option><option value="admin">Administrator</option></select></label>
           <button className="button w-full" disabled={busy || actionBusy}>Create invite</button>
         </form>
         {oneTimeInvite && <div className="border-t border-mint-300/10 p-4"><div className="eyebrow">Copy now · shown once</div><code className="mt-2 block break-all rounded-lg bg-ink-950 p-3 text-xs text-mint-300">{oneTimeInvite.invite_token}</code><button className="button mt-2" disabled={actionBusy} onClick={revokeInvite}>Revoke invite</button></div>}
@@ -222,7 +223,7 @@ function RunDirectory({ config, session, runs, members, busy, error, onRefresh, 
       <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>User UUID</th><th>Role</th><th>Status</th><th /></tr></thead><tbody>{members.map(member => {
         const draft = memberDrafts[member.user_id] || member;
         const self = member.user_id === session.user_id;
-        return <tr key={member.user_id}><td><code className="text-[10px]">{member.user_id}</code>{self && <Badge tone="good">you</Badge>}</td><td><select className="field !w-auto !py-1.5" disabled={self} value={draft.role} onChange={event => setMemberDrafts(current => ({ ...current, [member.user_id]: { ...draft, role: event.target.value } }))}><option value="observer">Observer</option><option value="admin">Admin</option></select></td><td><select className="field !w-auto !py-1.5" disabled={self} value={draft.status} onChange={event => setMemberDrafts(current => ({ ...current, [member.user_id]: { ...draft, status: event.target.value } }))}><option value="active">Active</option><option value="revoked">Revoked</option></select></td><td><button className="button !min-h-8" disabled={self || busy || actionBusy} onClick={() => updateMember(member)}>Save</button></td></tr>;
+        return <tr key={member.user_id}><td><code className="text-[10px]">{member.user_id}</code>{self && <Badge tone="good">you</Badge>}</td><td><select className="field !w-auto !py-1.5" disabled={self} value={draft.role} onChange={event => setMemberDrafts(current => ({ ...current, [member.user_id]: { ...draft, role: event.target.value } }))}><option value="observer">Observer</option><option value="agent_owner">Agent owner</option><option value="admin">Admin</option></select></td><td><select className="field !w-auto !py-1.5" disabled={self} value={draft.status} onChange={event => setMemberDrafts(current => ({ ...current, [member.user_id]: { ...draft, status: event.target.value } }))}><option value="active">Active</option><option value="revoked">Revoked</option></select></td><td><button className="button !min-h-8" disabled={self || busy || actionBusy} onClick={() => updateMember(member)}>Save</button></td></tr>;
       })}</tbody></table></div>
     </Panel>}
   </main>;
@@ -297,6 +298,9 @@ export function HostedShell({ config }) {
     {directoryOpen || !selectedRun ? <RunDirectory config={config} session={session} runs={runs} members={members} busy={busy} error={error}
       onRefresh={() => refreshDirectory()} onSelect={run => { setSelectedRun(run); setDirectoryOpen(false); }}
       onCreated={created} onMembersChanged={() => refreshDirectory()} />
-      : <Observatory key={selectedRun.run_id} hostedSession={{ ...session, run: selectedRun }} />}
+      : <>
+        {(session.role === "agent_owner" || session.role === "admin") && <AgentConnectionsPanel session={session} run={selectedRun} />}
+        <Observatory key={selectedRun.run_id} hostedSession={{ ...session, run: selectedRun }} />
+      </>}
   </div>;
 }

@@ -22,10 +22,14 @@ python -m pip install --require-hashes -r requirements.lock
 
 On macOS or Linux, activate with `source .venv/bin/activate`.
 
-## First run: free and deterministic
+## First run: evolving live agents
 
 ```powershell
-python run.py --config runs/base.yaml
+Copy-Item .env.example .env
+# Populate DEEPSEEK_API_KEY, MINIMAX_API_KEY, and KIMI_API_KEY in .env.
+ollama pull qwen3.5:9b
+ollama create agent-economy-qwen3.5:9b-16k -f deploy/ollama/Modelfile.qwen3.5-9b-16k
+python run.py --preflight-live --serve --approve-live-inference
 ```
 
 That command is the compact core-engine smoke world. To exercise every
@@ -43,14 +47,17 @@ Open <http://127.0.0.1:8000/>. The world starts paused:
 - **Pause** preserves a resumable run.
 - **Stop + report** finishes the run and writes a standalone report.
 
-No API key or network call is required. A short headless smoke run is:
+A short live headless smoke run is:
 
 ```powershell
-python run.py --config runs/base.yaml --ticks 3
+python run.py --ticks 3 --preflight-live --approve-live-inference
 ```
 
 Generated state goes to `data/runs/`, checkpoints to `data/checkpoints/`, and
 reports to `reports/out/`. These locations are ignored by Git.
+
+`runs/base.yaml` remains available for provider-free schema, ledger, and engine
+mechanics work. It is not valid evidence for any test that invokes inference.
 
 ## Try the research workflow
 
@@ -73,22 +80,21 @@ python run.py --config runs/acceptance/rehearsal.yaml --acceptance-run `
 The rehearsal deliberately uses scripted providers. It verifies mechanics and
 evidence plumbing, not live-provider latency, cost, or emergent behavior.
 
-## Optional real models
+## Live-model configuration
 
 Copy the environment template and populate it locally:
 
 ```powershell
 Copy-Item .env.example .env
-python run.py --preflight
-python run.py --preflight-live --approve-live-inference
-python run.py --serve --approve-live-inference
+python run.py --config runs/evolving-live.yaml --preflight
+python run.py --config runs/evolving-live.yaml --preflight-live
 ```
 
 `--preflight` validates configuration without inference. `--preflight-live`
-contacts provider model-catalog endpoints but does not request chat completion.
-The default route uses MiniMax M3 for every model-eligible core/shared-service
-call in the 1,000-agent profile. The long-tail periphery remains deterministic
-and auditable rather than issuing 900 paid calls per simulated day.
+contacts provider model-catalog endpoints and requests one small real JSON
+completion from Ollama, DeepSeek, MiniMax, and Kimi. The evolving route uses
+citizen compute subscriptions and independent provider pools; see the
+[Semantics-11 guide](semantics11-cognition.md).
 
 Paid acceptance never starts implicitly. The bounded pilot and full run require
 the explicit `--approve-live-inference` flag; read the

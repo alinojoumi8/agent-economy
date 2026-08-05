@@ -1,0 +1,21 @@
+extends: base.yaml
+
+# Semantics 9 adds the external-agent gateway; Semantics 10 adds Agent Commons.
+engine_semantics_version: 10
+
+communications:
+  autonomous_scripted_enabled: true
+
+external_gateway:
+  enabled: true
+  audience: agent-economy
+  personal_token_days: 30
+  access_token_minutes: 15
+  refresh_token_days: 30
+  lease_seconds: 60
+  decision_seconds: 120
+  requests_per_minute: 240
+  scope_sets:
+    observer: [world.read]
+    commons: [commons.read, commons.write]
+    actor: [world.read, world.act, commons.read, commons.write]

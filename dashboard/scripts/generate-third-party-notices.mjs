@@ -85,7 +85,8 @@ if (checkOnly) {
   } catch {
     throw new Error("THIRD_PARTY_NOTICES.txt is missing; run `npm run licenses`");
   }
-  if (committed !== generated) {
+  const committedWithCanonicalNewlines = committed.replace(/\r\n?/g, "\n");
+  if (committedWithCanonicalNewlines !== generated) {
     throw new Error("THIRD_PARTY_NOTICES.txt is stale; run `npm run licenses`");
   }
 } else {

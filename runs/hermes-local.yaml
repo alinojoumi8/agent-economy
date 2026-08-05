@@ -1,0 +1,71 @@
+# Local-only sandbox for exercising a real Hermes citizen through OAuth/MCP.
+# It intentionally keeps the app-side population deterministic and free.
+extends: base.yaml
+
+engine_semantics_version: 11
+
+population:
+  size: 8
+  baseline_citizens_core: true
+
+firms:
+  count: 3
+  listed: 1
+  target_headcount: 2
+
+banks:
+  count: 1
+  names: ["Local Citizens Bank"]
+
+behavior:
+  act_every: 1
+  run_threshold: 0.35
+  event_wake_importance: 2.0
+  periphery_cadence_multiplier: 2
+
+communications:
+  autonomous_scripted_enabled: true
+
+cognition:
+  enabled: true
+  duration_ticks: 7
+  flash_cost_cents: 5000
+  premium_cost_cents: 25000
+  study_cost_cents: 5000
+  premium_cap_fraction: 0.20
+  initial_distribution: {local: 0.50, flash: 0.40, premium: 0.10}
+
+# No provider is configured here: native citizens use the deterministic scripted
+# adapter while Hermes supplies its own cognition outside the app.
+llm:
+  concurrency: 4
+  decision_max_tokens: 900
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+external_gateway:
+  enabled: true
+  audience: agent-economy
+  personal_token_days: 30
+  access_token_minutes: 15
+  refresh_token_days: 30
+  lease_seconds: 60
+  decision_seconds: 180
+  requests_per_minute: 600
+  scope_sets:
+    observer: [world.read]
+    commons: [commons.read, commons.write]
+    actor: [world.read, world.act, commons.read, commons.write]
+  public_join:
+    enabled: true
+    world_slug: local-sandbox
+    world_name: Agent Economy Hermes Sandbox
+    tenant_id: local:local-sandbox
+    seat_limit: 5
+    max_passports_per_owner: 3
+    local_claim_enabled: true
+    passport_db_path: data/control-plane/agent-passports.db
+    claim_hours: 24
+
+checkpoint_every: 0
+speed_delay_s: 0.0

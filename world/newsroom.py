@@ -16,7 +16,12 @@ from typing import Optional
 
 from engine.core import Economy
 from engine.store import load_json
-from llm.gateway import Gateway, LLMRequest, sanitize_provider_text
+from llm.gateway import (
+    Gateway,
+    LLMRequest,
+    ReplayReferenceError,
+    sanitize_provider_text,
+)
 from agents.memory import Memory
 from agents.policies import conversation_turn
 from world.event_visibility import (
@@ -84,45 +89,53 @@ class Newsroom:
         if not events:
             return []
         directives = self.shocks.active_slant_directives(tick) if self.shocks else {}
-        pending = []
-        for outlet in self.outlets:
-            if self.store.query_one(
-                    "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
-                    (tick, outlet["id"])):
-                continue
-            # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4 candidate
-            # stories from true events; the editor selects and frames per slant.
-            drafts = await self._report_stories(tick, outlet, events)
-            art = await self._write_story(tick, outlet, events, directives.get(outlet["id"]),
-                                          drafts=drafts)
-            art = self._ground_article(
-                outlet, art, events, directive=directives.get(outlet["id"]))
-            if art:
-                pending.append((outlet, art))
-        articles = []
-        with self.store.savepoint(f"newsroom_{tick}"):
-            for outlet, art in pending:
-                aid = self.store.insert(
-                    "news_articles", tick=tick, outlet_id=outlet["id"], outlet_name=outlet["name"],
-                    headline=art["headline"][:200], body=art.get("body", "")[:2000],
-                    slant_tags=json.dumps(art.get("slant_tags", [outlet["slant"]])),
-                    source_event_ids=json.dumps(art.get("source_event_ids", [])),
-                    tone=float(art.get("tone", 0.0)), truthful=1)
-                # Mirror the article into the v2 claim/exposure economy.  The
-                # article remains grounded in the same event ids; this adapter
-                # never fabricates a second source of truth.
-                self.e.information.register_news_article(
-                    tick, aid, int(outlet["id"]), art["headline"], art.get("body", ""),
-                    [int(item) for item in art.get("source_event_ids", [])],
-                    float(art.get("tone", 0.0)),
-                    author_agent_id=self._desk_agent("editor", int(outlet["id"])),
-                    slant=float(art.get("slant_score", 0.0)))
-                self.store.log_event(tick, "news_published", {
-                    "article_id": aid, "outlet_id": outlet["id"], "outlet": outlet["name"],
-                    "headline": art["headline"], "tone": art.get("tone", 0.0)},
-                    phase="NEWSROOM", importance=1.5)
-                articles.append(art)
-        return articles
+        # Drafts and the pending article batch are ephemeral. Replay therefore
+        # admits the complete newsroom phase atomically: a later desk failure
+        # must retry every source row used to rebuild the same pending batch.
+        with self.gw.replay_admission(f"newsroom_publish_{tick}"):
+            pending = []
+            for outlet in self.outlets:
+                if self.store.query_one(
+                        "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
+                        (tick, outlet["id"])):
+                    continue
+                # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4
+                # candidate stories; the editor selects and frames per slant.
+                drafts = await self._report_stories(tick, outlet, events)
+                art = await self._write_story(
+                    tick, outlet, events, directives.get(outlet["id"]),
+                    drafts=drafts)
+                if art:
+                    pending.append((outlet, art))
+            articles = []
+            with self.store.savepoint(f"newsroom_{tick}"):
+                for outlet, art in pending:
+                    aid = self.store.insert(
+                        "news_articles", tick=tick, outlet_id=outlet["id"],
+                        outlet_name=outlet["name"], headline=art["headline"][:200],
+                        body=art.get("body", "")[:2000],
+                        slant_tags=json.dumps(
+                            art.get("slant_tags", [outlet["slant"]])),
+                        source_event_ids=json.dumps(
+                            art.get("source_event_ids", [])),
+                        tone=float(art.get("tone", 0.0)), truthful=1)
+                    # Mirror the article into the v2 claim/exposure economy.
+                    # This adapter never fabricates a second source of truth.
+                    self.e.information.register_news_article(
+                        tick, aid, int(outlet["id"]), art["headline"],
+                        art.get("body", ""),
+                        [int(item) for item in art.get("source_event_ids", [])],
+                        float(art.get("tone", 0.0)),
+                        author_agent_id=self._desk_agent(
+                            "editor", int(outlet["id"])),
+                        slant=float(art.get("slant_score", 0.0)))
+                    self.store.log_event(tick, "news_published", {
+                        "article_id": aid, "outlet_id": outlet["id"],
+                        "outlet": outlet["name"], "headline": art["headline"],
+                        "tone": art.get("tone", 0.0)},
+                        phase="NEWSROOM", importance=1.5)
+                    articles.append(art)
+            return articles
 
     def _daily_events(self, tick: int) -> list[dict]:
         """Return true events for a low-salience daily brief.
@@ -158,14 +171,69 @@ class Newsroom:
             return source_event_id if any(
                 int(event["id"]) == source_event_id for event in events) else None
 
+        def replay_reference_error(reason: str):
+            raise ReplayReferenceError(
+                f"newsroom source event {source_event_id}: {reason}")
+
         source = replay_conn.execute(
             "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
             (source_event_id,)).fetchone()
         if source is None:
+            # Preserve the live contract: a model-invented citation was already
+            # invalid in the source run, so replay must take the same brief
+            # fallback instead of treating it as replay divergence.
             return None
+
+        # Use the event digest that was actually persisted with the recorded
+        # editor request.  Rebuilding it from the finalized source event table
+        # is unsafe because later same-tick events were not visible to the desk.
+        source_digests: dict[str, list[dict]] = {}
+        source_calls = replay_conn.execute(
+            "SELECT request_json FROM llm_calls WHERE tick=? AND purpose='newsroom' "
+            "ORDER BY id", (int(source["tick"]),)).fetchall()
+        for call in source_calls:
+            request = load_json(call["request_json"], {}) or {}
+            context = request.get("context", {}) if isinstance(request, dict) else {}
+            digest = context.get("salient_events", []) \
+                if isinstance(context, dict) else []
+            if not isinstance(digest, list) or not all(
+                    isinstance(event, dict) for event in digest):
+                continue
+            if not any(type(event.get("id")) is int
+                       and int(event["id"]) == source_event_id
+                       for event in digest):
+                continue
+            key = json.dumps(
+                digest, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False)
+            source_digests[key] = digest
+        if len(source_digests) != 1:
+            # Existing but out-of-prompt citations are also invalid model input,
+            # not evidence that a valid source occurrence disappeared locally.
+            return None
+
+        source_digest = next(iter(source_digests.values()))
         source_payload = public_event_payload(
             source["kind"], load_json(source["payload_json"], {}) or {})
-        candidates = []
+        source_candidates = []
+        for event in source_digest:
+            event_id = event.get("id")
+            try:
+                same_tick = (
+                    int(event.get("tick", source["tick"])) == int(source["tick"]))
+                same_importance = (
+                    float(event.get("importance")) == float(source["importance"]))
+            except (TypeError, ValueError):
+                continue
+            if (type(event_id) is int and same_tick and same_importance
+                    and str(event.get("kind")) == str(source["kind"])
+                    and event.get("payload") == source_payload):
+                source_candidates.append(int(event_id))
+        if (source_event_id not in source_candidates
+                or len(source_candidates) != len(set(source_candidates))):
+            return None
+
+        local_candidates = []
         for event in events:
             local = self.store.query_one(
                 "SELECT tick,kind,payload_json,importance FROM events WHERE id=?",
@@ -177,10 +245,17 @@ class Newsroom:
                         local["kind"], load_json(local["payload_json"], {}) or {}
                     ) == source_payload
                     and float(local["importance"]) == float(source["importance"])):
-                candidates.append(int(event["id"]))
-        if len(candidates) == 1:
-            return candidates[0]
-        return None
+                local_candidates.append(int(event["id"]))
+        if (len(source_candidates) != len(local_candidates)
+                or len(local_candidates) != len(set(local_candidates))):
+            replay_reference_error(
+                "logical occurrence cardinality mismatch "
+                f"(source={len(source_candidates)}, local={len(local_candidates)})")
+        occurrence = source_candidates.index(source_event_id)
+        if occurrence >= len(local_candidates):
+            replay_reference_error(
+                f"logical occurrence ordinal {occurrence} is unavailable locally")
+        return local_candidates[occurrence]
 
     def _ground_article(self, outlet: dict, article: Optional[dict],
                         events: list[dict], *,
@@ -273,6 +348,8 @@ class Newsroom:
         """Reporter stage: draft 2–4 candidate stories from the day's true events."""
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "rng_seed": tick * 37 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         system = ("You are a reporter in a simulated economy. From the given TRUE events draft "
                   "2-4 short candidate stories as JSON: {\"stories\": [{\"headline\":..., "
                   "\"body\":..., \"tone\": -1..1, \"kind\":..., \"source_event_ids\":[...]}]}. "
@@ -296,6 +373,8 @@ class Newsroom:
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "drafts": drafts or [], "directive": directive,
                    "rng_seed": tick * 31 + outlet["id"]}
+        if self.e.engine_semantics_version >= 7:
+            context["engine_semantics_version"] = self.e.engine_semantics_version
         user = json.dumps({"outlet": outlet, "drafts": drafts or [], "events": events,
                            "directive": directive})[:3000]
         system = ("You are the editor of a simulated-economy news outlet. Pick the ONE candidate "
@@ -307,7 +386,12 @@ class Newsroom:
                          context=context, agent_id=self._desk_agent("editor", outlet["id"]),
                          tick=tick, max_tokens=_output_budget(
                              self.config, "newsroom_max_tokens", 400, tick))
-        resp = await self.gw.complete(req)
+        resp = await self.gw.complete(
+            req,
+            parsed_transform=lambda parsed: self._ground_article(
+                outlet, parsed if isinstance(parsed, dict) else {}, events,
+                directive=directive),
+        )
         art = resp.parsed if isinstance(resp.parsed, dict) else {}
         return art
 
@@ -320,6 +404,8 @@ class Conversations:
         self.config = config
         self.mem = Memory(self.store)
         self.turns = int(config.get("conversations", {}).get("turns", 3))
+        self.coverage_first = bool(
+            config.get("conversations", {}).get("coverage_first", False))
         self._recent_limit = int(
             config.get("conversations", {}).get("recent_utterance_limit", 12))
         self._recent_per_source = max(2, self._recent_limit // 3)
@@ -347,11 +433,32 @@ class Conversations:
     def _sample_pairs(self, tick: int, k: int) -> list[tuple[int, int]]:
         if k <= 0:
             return []
-        ties = self.store.query(
-            "SELECT t.agent_a, t.agent_b, t.weight,x.retired AS a_retired,y.retired AS b_retired "
-            "FROM social_ties t "
-            "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
-            "WHERE x.alive=1 AND y.alive=1")
+        civic_presence = (
+            int(self.config.get("engine_semantics_version", 1)) >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        )
+        if civic_presence:
+            ties = self.store.query(
+                "SELECT t.agent_a,t.agent_b,t.weight,"
+                "x.retired AS a_retired,y.retired AS b_retired "
+                "FROM social_ties t "
+                "JOIN agents x ON x.id=t.agent_a "
+                "JOIN agents y ON y.id=t.agent_b "
+                "JOIN effective_presence px "
+                "ON px.agent_id=t.agent_a AND px.tick=? AND px.slot='evening' "
+                "JOIN effective_presence py "
+                "ON py.agent_id=t.agent_b AND py.tick=px.tick "
+                "AND py.slot=px.slot AND py.place_id=px.place_id "
+                "WHERE x.alive=1 AND y.alive=1",
+                (int(tick),),
+            )
+        else:
+            ties = self.store.query(
+                "SELECT t.agent_a, t.agent_b, t.weight,"
+                "x.retired AS a_retired,y.retired AS b_retired "
+                "FROM social_ties t "
+                "JOIN agents x ON x.id=t.agent_a JOIN agents y ON y.id=t.agent_b "
+                "WHERE x.alive=1 AND y.alive=1")
         if not ties:
             return []
         # Weight by tie strength + event salience (agents touched by big events talk).
@@ -367,16 +474,53 @@ class Conversations:
                 w *= max(1.0, float(self.config.get("conversations", {}).get(
                     "retiree_pair_weight", 1.75)))
             weighted.append((w, int(t["agent_a"]), int(t["agent_b"])))
+        participation: dict[int, int] = {}
+        if self.coverage_first:
+            for row in self.store.query(
+                    "SELECT participant_ids FROM conversations ORDER BY id"):
+                for agent_id in load_json(row["participant_ids"], []):
+                    aid = int(agent_id)
+                    participation[aid] = participation.get(aid, 0) + 1
         # Deterministic weighted sample without replacement via engine PRNG.
         chosen: list[tuple[int, int]] = []
         pool = weighted[:]
         used: set[int] = set()
         while pool and len(chosen) < k:
-            total = sum(w for w, _, _ in pool)
+            # Without coverage-first pairing the draw stays over the whole
+            # remaining pool, so stored runs keep their original PRNG stream.
+            candidates = pool
+            if self.coverage_first:
+                candidates = [
+                    item for item in pool
+                    if item[1] not in used and item[2] not in used
+                ]
+                if not candidates:
+                    break
+                least_covered = min(
+                    (
+                        min(participation.get(a, 0), participation.get(b, 0)),
+                        max(participation.get(a, 0), participation.get(b, 0)),
+                    )
+                    for _, a, b in candidates
+                )
+                candidates = [
+                    item for item in candidates
+                    if (
+                        min(
+                            participation.get(item[1], 0),
+                            participation.get(item[2], 0),
+                        ),
+                        max(
+                            participation.get(item[1], 0),
+                            participation.get(item[2], 0),
+                        ),
+                    ) == least_covered
+                ]
+            total = sum(w for w, _, _ in candidates)
             r = self.e.prng.random() * total
             acc = 0.0
-            pick = pool[-1]
-            for item in pool:
+            pick = candidates[-1]
+            for item in candidates:
                 acc += item[0]
                 if r <= acc:
                     pick = item
@@ -387,6 +531,9 @@ class Conversations:
                 continue
             used.add(a); used.add(b)
             chosen.append((a, b))
+            if self.coverage_first:
+                participation[a] = participation.get(a, 0) + 1
+                participation[b] = participation.get(b, 0) + 1
         return chosen
 
     async def _converse(self, tick: int, a_id: int, b_id: int,
@@ -458,9 +605,15 @@ class Conversations:
                 resp = await self.gw.complete(req, schema_hint=schema)
                 env = resp.parsed if isinstance(resp.parsed, dict) else {}
             text = str(env.get("text", "")).strip()[:300]
-            if not text:
-                continue
             avoid_texts = recent_utterances + conversation_so_far
+            if not text:
+                text = self._unique_fallback_line(
+                    tick=tick,
+                    speaker=speaker,
+                    partner_name=str(names[listener]),
+                    avoid_texts=avoid_texts,
+                )
+                env = {"text": text, "rumor_bank": None}
             repeats_question = (
                 "?" in text and bool(conversation_so_far)
                 and "?" in conversation_so_far[-1]
@@ -469,6 +622,7 @@ class Conversations:
                     or self._previously_said(text, avoid_texts)):
                 fallback_context = dict(context)
                 fallback_context["avoid_texts"] = list(avoid_texts)
+                rejected_candidates: list[str] = []
                 for attempt in range(1, 10):
                     fallback_context["rng_seed"] = (
                         int(context["rng_seed"]) + 104729 * attempt)
@@ -478,10 +632,16 @@ class Conversations:
                         text = candidate
                         env = fallback
                         break
+                    rejected_candidates.append(candidate)
                     fallback_context["avoid_texts"].append(candidate)
                 else:
-                    text = f"{candidate.rstrip()} This feels different on day {tick}."[:300]
-                    env = fallback
+                    text = self._unique_fallback_line(
+                        tick=tick,
+                        speaker=speaker,
+                        partner_name=str(names[listener]),
+                        avoid_texts=avoid_texts + rejected_candidates,
+                    )
+                    env = {"text": text, "rumor_bank": None}
             # The listener hears the line → observation (rumor propagation medium).
             ents = ["conversation", f"agent:{speaker}"]
             rumor_bank = env.get("rumor_bank")
@@ -554,16 +714,20 @@ class Conversations:
     def _line_key(text: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
-    @classmethod
-    def _too_similar(cls, text: str, prior_lines: list[str]) -> bool:
-        key = cls._line_key(text)
+    def _too_similar(self, text: str, prior_lines: list[str]) -> bool:
+        key = self._line_key(text)
         if not key:
             return False
+        conversation_config = self.config.get("conversations", {})
+        token_threshold = float(conversation_config.get(
+            "similarity_jaccard_threshold", 0.82))
+        shingle_threshold = float(conversation_config.get(
+            "similarity_shingle_threshold", 0.80))
         tokens = key.split()
         token_set = set(tokens)
         shingles = set(zip(tokens, tokens[1:], tokens[2:])) if len(tokens) >= 3 else set()
         for prior in prior_lines:
-            prior_key = cls._line_key(prior)
+            prior_key = self._line_key(prior)
             if key == prior_key:
                 return True
             prior_tokens = prior_key.split()
@@ -571,16 +735,71 @@ class Conversations:
             if token_set and prior_set:
                 intersection = len(token_set & prior_set)
                 union = len(token_set | prior_set)
-                if union and intersection / union >= 0.82:
+                if union and intersection / union >= token_threshold:
                     return True
             if shingles and len(prior_tokens) >= 3:
                 prior_shingles = set(zip(
                     prior_tokens, prior_tokens[1:], prior_tokens[2:]))
                 overlap = len(shingles & prior_shingles)
                 smaller = min(len(shingles), len(prior_shingles))
-                if smaller and overlap / smaller >= 0.80:
+                if smaller and overlap / smaller >= shingle_threshold:
                     return True
         return False
+
+    def _unique_fallback_line(
+            self, *, tick: int, speaker: int, partner_name: str,
+            avoid_texts: list[str]) -> str:
+        """Return a grounded line outside the bounded scripted phrase bank."""
+        openings = (
+            "one signal worth watching is",
+            "the clearest unresolved question is",
+            "a cautious reading should focus on",
+            "the next useful comparison is",
+            "the practical concern may be",
+            "the strongest uncertainty remains",
+            "a measured response would track",
+            "the part that still needs evidence is",
+            "the immediate test could be",
+            "the broader issue may be",
+        )
+        effects = (
+            "how household budgets respond",
+            "whether hiring plans change",
+            "whether prices move before wages",
+            "how confidence affects spending",
+            "whether smaller firms adjust output",
+            "how credit conditions react",
+            "whether job security weakens",
+            "how demand changes across firms",
+            "whether the headline persists",
+            "how market concentration develops",
+        )
+        endings = (
+            "before drawing a firm conclusion.",
+            "as the next figures arrive.",
+            "without assuming the headline tells the whole story.",
+            "while the evidence is still limited.",
+            "before anyone treats the shift as permanent.",
+            "because the current picture remains incomplete.",
+        )
+        total = len(openings) * len(effects) * len(endings)
+        start = (tick * 1009 + speaker * 13) % total
+        for offset in range(total):
+            index = (start + offset) % total
+            opening_index, remainder = divmod(
+                index, len(effects) * len(endings))
+            effect_index, ending_index = divmod(remainder, len(endings))
+            candidate = (
+                f"{partner_name}, {openings[opening_index]} "
+                f"{effects[effect_index]} {endings[ending_index]}"
+            )[:300]
+            if (not self._previously_said(candidate, avoid_texts)
+                    and not self._has_ungrounded_detail(candidate)):
+                return candidate
+        return (
+            f"{partner_name}, day {tick} still leaves jobs, prices, credit, "
+            f"and confidence open to different readings."
+        )[:300]
 
     @staticmethod
     def _has_ungrounded_detail(text: str) -> bool:

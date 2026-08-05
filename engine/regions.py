@@ -860,8 +860,10 @@ class RegionalEconomy:
             new = "core" if int(row["id"]) in core_ids else "periphery"
             if old == new:
                 continue
-            self.store.update("agents", int(row["id"]), population_tier=new,
-                              model_tier="strong" if new == "core" else "citizen")
+            updates = {"population_tier": new}
+            if self.engine_semantics_version < 11:
+                updates["model_tier"] = "strong" if new == "core" else "citizen"
+            self.store.update("agents", int(row["id"]), **updates)
             self.store.insert(
                 "agent_tier_history", tick=tick, agent_id=int(row["id"]), old_tier=old,
                 new_tier=new, score=score,

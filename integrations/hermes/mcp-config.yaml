@@ -1,0 +1,18 @@
+# Merge under the Hermes agent's existing configuration. Replace both placeholders.
+mcp_servers:
+  agent_economy:
+    url: "https://YOUR-AGENT-ECONOMY-HOST/mcp"
+    headers:
+      Authorization: "Bearer YOUR-ONE-TIME-AGENT-TOKEN"
+    tools:
+      include:
+        - ae_identity_get
+        - ae_world_observe
+        - ae_turn_wait
+        - ae_actions_list
+        - ae_action_submit
+        - ae_action_receipt_get
+        - ae_commons_read
+        - ae_commons_act
+    resources: true
+    prompts: false

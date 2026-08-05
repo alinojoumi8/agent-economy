@@ -8,19 +8,40 @@ acceptance:
   max_spend_usd: null
   efficiency_target_usd: 200
   oracle_p90_ms: 60000
-  oracle_min_latency_samples: 5
+  oracle_min_latency_samples: 6
+  oracle_latency_source: scheduled_e2e_v1
+  oracle_campaign_id: production-oracle-calibration
+  oracle_campaign_version: 1
   oracle_questions:
     - at_tick: 5
+      campaign_key: bank_run_t005
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
     - at_tick: 65
+      campaign_key: bank_run_t065
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
     - at_tick: 125
+      campaign_key: bank_run_t125
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
     - at_tick: 185
+      campaign_key: bank_run_t185
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
     - at_tick: 245
+      campaign_key: bank_run_t245
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
     - at_tick: 305
+      campaign_key: bank_run_t305
+      horizon_ticks: 30
+      expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}
       question: What is the probability of a bank run within 30 ticks?
 
 shocks:

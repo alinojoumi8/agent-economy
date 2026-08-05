@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, money, number, shortKind } from "../api";
+import { agentExecutionPresentation } from "../lib/agentExecution";
 import { appendParticipantHistory } from "../participant";
 import { Badge, Empty, Modal, Panel } from "./ui";
 
@@ -43,7 +44,6 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   const [directoryError, setDirectoryError] = useState("");
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
-
   useEffect(() => {
     let active = true;
     const timer = scheduleAgentDirectoryRefresh({
@@ -154,10 +154,13 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
     </div>}>
       <div className="scrollbar max-h-[520px] overflow-auto">
         {listed.length ? <table className="data-table">
-          <thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Role</th><th>Region</th><th>Tier</th><th>Age</th><th>Health</th><th>Status</th></tr></thead>
-          <tbody>{listed.map(agent => <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => handleAgentRowKeyDown(event, inspect, agent.id)}>
-            <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
-          </tr>)}</tbody>
+          <thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Execution</th><th>Role</th><th>Region</th><th>Tier</th><th>Age</th><th>Health</th><th>Status</th></tr></thead>
+          <tbody>{listed.map(agent => {
+            const execution = agentExecutionPresentation(agent.execution);
+            return <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => handleAgentRowKeyDown(event, inspect, agent.id)}>
+              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
+            </tr>;
+          })}</tbody>
         </table> : <Empty>{directoryLoading ? "Loading agents…" : "No agents match this search."}</Empty>}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-mint-300/10 px-4 py-3 text-xs text-slate-500" aria-live="polite">
@@ -180,6 +183,7 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
   const actions = detail.recent_actions || [];
   const selectable = participant?.enabled && agent.kind === "citizen" && Boolean(agent.alive);
   const controlledId = participant?.controlled_agent?.id;
+  const execution = agentExecutionPresentation(detail.execution);
   return <Modal title={`${agent.name} · agent ${agent.id}`} onClose={onClose} wide>
     {selectable && <div className="mb-4 flex items-center justify-between rounded-xl border border-mint-300/15 bg-mint-300/[.05] p-3">
       <div><div className="eyebrow">Participant Mode</div><p className="mt-1 text-xs text-slate-400">Control this citizen one validated day at a time.</p></div>
@@ -189,7 +193,7 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
     <div className="grid gap-4 lg:grid-cols-3">
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Identity</div>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><dt className="text-slate-500">Occupation</dt><dd>{agent.occupation || "—"}</dd><dt className="text-slate-500">Role</dt><dd>{agent.role || agent.kind}</dd><dt className="text-slate-500">Age</dt><dd>{agent.age}</dd><dt className="text-slate-500">Health</dt><dd>{agent.health}</dd><dt className="text-slate-500">Risk tolerance</dt><dd>{number(agent.risk_tolerance, 2)}</dd></dl>
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><dt className="text-slate-500">Execution</dt><dd title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge></dd><dt className="text-slate-500">Evidence</dt><dd className="break-all text-[10px] text-slate-400">{execution.proof}</dd><dt className="text-slate-500">Occupation</dt><dd>{agent.occupation || "—"}</dd><dt className="text-slate-500">Role</dt><dd>{agent.role || agent.kind}</dd><dt className="text-slate-500">Age</dt><dd>{agent.age}</dd><dt className="text-slate-500">Health</dt><dd>{agent.health}</dd><dt className="text-slate-500">Risk tolerance</dt><dd>{number(agent.risk_tolerance, 2)}</dd></dl>
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Balance sheet</div>
@@ -233,6 +237,30 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{actions.length ? actions.map(action => <details key={action.id} className="border-t border-mint-300/10 pt-2 first:border-0"><summary className="cursor-pointer text-xs text-slate-300">Day {action.tick} · {shortKind(action.action_type)} · <span className={action.validation_status === "accepted" ? "text-mint-300" : action.validation_status === "rejected" ? "text-red-300" : "text-amber-300"}>{shortKind(action.validation_status)}</span></summary><pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(action, null, 2)}</pre></details>) : <Empty>No action proposals recorded for this agent.</Empty>}</div>
         {detail.output_cursors?.action && <button className="button mt-3" disabled={historyLoading} onClick={() => onLoadOlderOutputs("action")}>{historyLoading ? "Loading..." : "Load older actions"}</button>}
       </section>
+      {detail.execution?.source === "external" && <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div><div className="eyebrow">Hermes wake evidence</div><p className="mt-1 text-xs text-slate-500">Durable decision windows and privacy-safe action receipts from the external gateway.</p></div>
+          <Badge tone={execution.tone}>{execution.label}</Badge>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="scrollbar max-h-72 space-y-2 overflow-y-auto">
+            <div className="text-[10px] uppercase tracking-wider text-slate-600">Turns</div>
+            {detail.external_activity?.turns?.length ? detail.external_activity.turns.map(turn =>
+              <details key={`${turn.target_tick}-${turn.projection_hash}`} className="rounded-lg border border-mint-300/10 bg-ink-950/50 p-3">
+                <summary className="cursor-pointer text-xs text-slate-300">Day {turn.target_tick} · <span className={turn.status === "submitted" ? "text-mint-300" : "text-amber-300"}>{shortKind(turn.status)}</span></summary>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(turn, null, 2)}</pre>
+              </details>) : <Empty>No Hermes turns recorded yet.</Empty>}
+          </div>
+          <div className="scrollbar max-h-72 space-y-2 overflow-y-auto">
+            <div className="text-[10px] uppercase tracking-wider text-slate-600">Action receipts</div>
+            {detail.external_activity?.receipts?.length ? detail.external_activity.receipts.map(receipt =>
+              <details key={receipt.id} className="rounded-lg border border-mint-300/10 bg-ink-950/50 p-3">
+                <summary className="cursor-pointer text-xs text-slate-300">Day {receipt.target_tick} · {shortKind(receipt.action_type || "action")} · <span className={receipt.status === "executed" ? "text-mint-300" : receipt.status === "rejected" ? "text-red-300" : "text-amber-300"}>{shortKind(receipt.status)}</span></summary>
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(receipt, null, 2)}</pre>
+              </details>) : <Empty>No Hermes action receipts recorded yet.</Empty>}
+          </div>
+        </div>
+      </section>}
       {detail.participantHistory && <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-3">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div><div className="eyebrow">Participant action history</div><p className="mt-1 text-xs text-slate-500">Durable operator inputs and validator results for this citizen.</p></div>

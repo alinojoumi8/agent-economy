@@ -1,0 +1,77 @@
+# Cloud-only desktop profile for machines that are unstable under sustained
+# local GPU inference. This is for new runs; persisted runs keep their original
+# provider routes so replay remains exact.
+extends: evolving-live.yaml
+
+llm:
+  # Bound remote request pressure as well as local orchestration overhead.
+  max_in_flight: 4
+  concurrency: 4
+  logical_deadline_s: 900
+
+  providers:
+    ollama_cloud:
+      concurrency: 2
+    minimax:
+      concurrency: 1
+    kimi:
+      concurrency: 2
+
+  # Every reachable target is remote. The inherited local Ollama adapter stays
+  # configured for compatibility, but it is absent from all route catalogs and
+  # therefore is neither preflighted nor selected.
+  default_route:
+    provider: ollama_cloud
+    model: "gemma4:cloud"
+    timeout_s: 120
+  routes: {}
+
+  citizen_model_cohorts:
+    - name: ollama-glm-5.1-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "glm-5.1:cloud", timeout_s: 120}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+    - name: ollama-gemma4-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+    - name: ollama-nemotron-3-super-cloud
+      count: 5
+      primary: {provider: ollama_cloud, model: "nemotron-3-super:cloud", timeout_s: 120}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+
+  tier_routes:
+    local:
+      primary: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+    flash:
+      primary: {provider: ollama_cloud, model: "glm-5.1:cloud", timeout_s: 120}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+    premium:
+      primary: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+      fallback: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
+
+  premium_routes:
+    founder:
+      primary: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+      fallback: {provider: ollama_cloud, model: "gemma4:cloud", timeout_s: 120}
+    vc_partner:
+      primary: {provider: minimax, model: MiniMax-M3, timeout_s: 90}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+    exchange:
+      primary: {provider: minimax, model: MiniMax-M3, timeout_s: 90}
+      fallback: {provider: kimi, model: kimi-for-coding, timeout_s: 90}
+
+acceptance:
+  min_peak_concurrency: 3
+
+resource_guard:
+  enabled: true
+  sample_interval_s: 2
+  max_cpu_percent: 80
+  max_memory_percent: 65
+  # Keep roughly one third of the currently installed 32 GB kit available.
+  # The percentage ceiling remains portable to larger-memory machines.
+  min_available_memory_gb: 12
+  max_swap_percent: 25
+  consecutive_breaches: 2

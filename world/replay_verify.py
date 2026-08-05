@@ -12,8 +12,25 @@ from typing import Any, Callable
 EXCLUDED_TABLES = {
     "run_meta", "checkpoints", "acceptance_checkpoints",
     "participant_control", "participant_actions",
+    # External authentication, rate limiting, leases, and security telemetry are
+    # wall-clock control-plane evidence. Executed submissions and their world
+    # effects remain included in the exact deterministic comparison.
+    "external_agent_credentials", "external_agent_turns",
+    "external_oauth_clients", "external_oauth_codes",
+    "external_rate_windows", "external_security_audit",
+    # Provider concurrency/failure timing and host wall-clock timing are
+    # operational evidence. Exact replay consumes llm_calls and intentionally
+    # does not recreate live attempt telemetry.
+    "llm_attempts", "runtime_tick_stats",
 }
-IGNORED_COLUMNS = {"created_at", "updated_at"}
+IGNORED_COLUMNS = {"created_at", "updated_at", "applied_at"}
+TABLE_IGNORED_COLUMNS = {
+    "external_action_submissions": {"completed_at", "source_submission_id"},
+    "external_agent_connections": {"last_seen_at", "lease_expires_at"},
+    # These are physical-order accelerators derived from source_id/target_id.
+    # Canonical replay compares the referenced logical records instead.
+    "causal_links": {"dedupe_key", "source_order_key", "target_order_key"},
+}
 LOGICAL_ROW_TABLES = {"beliefs", "llm_calls", "memories"}
 SURROGATE_ID_COLUMNS = {
     **{table: {"id"} for table in LOGICAL_ROW_TABLES},
@@ -23,9 +40,17 @@ SURROGATE_ID_COLUMNS = {
 }
 IGNORED_EVENT_KINDS = {
     "report_generated", "report_failed",
+    # Provider health events describe live control-plane interruptions. Exact
+    # offline replay consumes stored responses and therefore cannot reproduce
+    # them, while the resumed world's deterministic state remains unchanged.
+    "provider_failure", "provider_pause",
     "participant_control_acquired", "participant_control_released",
     "participant_action_queued", "participant_action_replaced",
     "participant_action_executed", "participant_action_rejected", "participant_idle",
+    # Non-terminal external receipts are wall-clock control-plane evidence.
+    # The deterministic comparison retains external_action_executed and the
+    # executed submission row that binds the action to its world effects.
+    "external_action_queued", "external_action_stale", "external_action_rejected",
 }
 OPERATIONAL_LLM_PURPOSES = {"report_narrative"}
 JSON_COLUMNS = {
@@ -39,18 +64,36 @@ LLM_REFERENCE_JSON_COLUMNS = {
 }
 EVENT_REFERENCE_JSON_COLUMNS = {
     ("news_articles", "source_event_ids"),
+    ("claims", "source_event_ids_json"),
+    ("information_items", "source_event_ids_json"),
     ("action_proposals", "evidence_event_ids_json"),
 }
 NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
     ("events", "payload_json"),
     ("action_proposals", "payload_json"),
     ("action_proposals", "result_json"),
+    ("causal_links", "provenance_json"),
 }
 EVENT_REFERENCE_COLUMNS = {
     ("liquidity_support_requests", "request_event_id"),
+    ("service_cases", "created_event_id"),
+    ("service_cases", "outcome_event_id"),
+    ("service_appointments", "scheduled_event_id"),
+    ("service_appointments", "outcome_event_id"),
+    ("institution_tasks", "assigned_event_id"),
+    ("institution_tasks", "outcome_event_id"),
+    ("civic_authorizations", "issued_event_id"),
+    ("civic_authorizations", "consumed_event_id"),
+    ("attention_context_items", "source_event_id"),
+    ("comm_messages", "created_event_id"),
+    ("comm_messages", "publication_event_id"),
+    ("comm_threads", "root_event_id"),
 }
-EVENT_REFERENCE_KEYS = {"request_event_id", "event_id"}
-EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids"}
+EVENT_REFERENCE_KEYS = {
+    "request_event_id", "event_id", "created_event_id",
+    "publication_event_id", "root_event_id",
+}
+EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids", "source_event_ids"}
 
 
 ReferenceExpectationResolver = Callable[
@@ -62,7 +105,7 @@ SPECIALIZED_ACTION_PURPOSE_ROLES = {
 INSTITUTIONAL_ACTION_PURPOSE_ROLES = {
     "exchange", "gov_official", "legislator_house", "legislator_senate",
     "regulator", "competition_regulator", "labor_regulator", "executive",
-    "lobbyist",
+    "lobbyist", "permit_clerk",
 }
 
 
@@ -188,12 +231,24 @@ def _row_llm_expectations(
         conn: sqlite3.Connection, table: str,
         row: sqlite3.Row) -> tuple[dict[str, Any], bool]:
     """Derive the actor, turn, and role a persisted model pointer must own."""
-    expectations: dict[str, Any] = {"tick": int(row["tick"])}
+    row_columns = set(row.keys())
+    tick_column = ("tick" if "tick" in row_columns
+                   else "created_tick" if "created_tick" in row_columns
+                   else None)
+    if tick_column is None:
+        return {}, False
+    expectations: dict[str, Any] = {"tick": int(row[tick_column])}
     owner_id: int | None = None
     context_valid = True
 
     if table == "action_proposals":
         owner_id = int(row["actor_id"])
+    elif table == "agent_decisions":
+        owner_id = int(row["agent_id"])
+    elif table == "comm_messages":
+        owner_id = int(row["sender_agent_id"])
+    elif table == "causal_links" and row["actor_agent_id"] is not None:
+        owner_id = int(row["actor_agent_id"])
     elif table == "legal_decisions":
         owner_id = int(row["decision_maker_id"])
         proposal, proposal_valid = _proposal_owner_for_result(
@@ -220,7 +275,7 @@ def _row_llm_expectations(
     if role is not None:
         expectations["role"] = role
         expectations["purpose"] = _action_purposes_for(
-            conn, owner_id, int(row["tick"]), role)
+            conn, owner_id, int(row[tick_column]), role)
     return expectations, context_valid
 
 
@@ -430,7 +485,8 @@ def _table_digest(
         llm_call_references: dict[int, Any],
         event_references: dict[int, Any]) -> tuple[int, str, bool]:
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
-    ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
+    ignored = (IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
+               | TABLE_IGNORED_COLUMNS.get(table, set()))
     columns = [column for column in all_columns if column not in ignored]
     where = ""
     params: tuple[Any, ...] = ()
@@ -442,6 +498,8 @@ def _table_digest(
         placeholders = ",".join("?" for _ in OPERATIONAL_LLM_PURPOSES)
         where = f" WHERE purpose NOT IN ({placeholders})"
         params = tuple(sorted(OPERATIONAL_LLM_PURPOSES))
+    elif table == "external_action_submissions":
+        where = " WHERE status='executed'"
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()
@@ -462,8 +520,22 @@ def _table_digest(
                 record[column] = resolved
                 references_valid = references_valid and valid
             elif (table, column) in EVENT_REFERENCE_COLUMNS:
+                if row[column] is None:
+                    resolved, valid = None, True
+                else:
+                    resolved, valid = _canonical_event_reference(
+                        row[column], event_references)
+                record[column] = resolved
+                references_valid = references_valid and valid
+            elif (table == "causal_links"
+                  and column in {"source_id", "target_id"}
+                  and row[f"{column.removesuffix('_id')}_kind"] == "event"):
+                try:
+                    event_id: Any = int(row[column])
+                except (TypeError, ValueError):
+                    event_id = row[column]
                 resolved, valid = _canonical_event_reference(
-                    row[column], event_references)
+                    event_id, event_references)
                 record[column] = resolved
                 references_valid = references_valid and valid
             else:

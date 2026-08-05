@@ -1,0 +1,66 @@
+# Bounded real-provider Semantics-12 founder/clerk profile.
+#
+# Routine civic administration remains deterministic. Only citizen choices and
+# durable borderline permit tasks enter the existing agent/provider gateway.
+extends: v2-live-behavioral.yaml
+
+engine_semantics_version: 12
+
+population:
+  target_total: 44
+
+behavioral_fixture:
+  enabled: false
+
+entrepreneurship:
+  enabled: true
+  new_arrivals_only: false
+  allow_employed_applicants: true
+  review_interval_ticks: 1
+  minimum_ticks_after_arrival: 1
+  minimum_age: 21
+  minimum_risk_tolerance: 0.0
+  minimum_opening_capital_cents: 100000
+  personal_reserve_cents: 100000
+  opening_capital_share_bps: 3500
+  maximum_active_competitors: 3
+  sales_lookback_ticks: 30
+  stockout_inventory_threshold: 2
+  eligible_sectors: [services, technology, manufacturing, logistics, healthcare, energy, agriculture]
+
+city:
+  enabled: true
+  residential_districts_per_region: 4
+  business_permits:
+    required: true
+    application_fee_cents: 2500
+    office_capacity: 1
+    appointment_lead_ticks: 1
+    decision_sla_ticks: 3
+    authorization_ttl_ticks: 30
+    max_no_shows: 3
+    discretionary_competitor_floor: 2
+    prohibited_sectors: []
+  attention:
+    lane_limit: 8
+
+participant_mode:
+  enabled: true
+
+external_gateway:
+  enabled: true
+  audience: agent-economy
+  personal_token_days: 30
+  access_token_minutes: 15
+  refresh_token_days: 30
+  lease_seconds: 60
+  decision_seconds: 120
+  requests_per_minute: 240
+  scope_sets:
+    observer: [world.read]
+    commons: [commons.read, commons.write]
+    actor: [world.read, world.act, commons.read, commons.write]
+
+llm:
+  routes:
+    permit_clerk: {provider: minimax, model: MiniMax-M3}

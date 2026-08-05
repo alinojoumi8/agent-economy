@@ -91,17 +91,24 @@ class RotationConnection(MigrationConnection):
 
 
 def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
-    migration = load_migrations()[0]
+    migrations = load_migrations()
+    migration = migrations[0]
+    external = migrations[1]
+    combined_sql = "\n".join(item.sql for item in migrations)
 
     assert migration.version == 1
     assert migration.name == "control_plane"
+    assert external.version == 2
+    assert external.name == "external_agents"
     assert len(migration.checksum_sha256) == 64
     for table in TENANT_TABLES:
-        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in migration.sql
-        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in migration.sql
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in combined_sql
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in combined_sql
     assert "current_setting('app.tenant_id', true)" in migration.sql
     assert "reject_audit_log_mutation" in migration.sql
-    assert "CHECK (role IN ('observer', 'admin'))" in migration.sql
+    assert "CHECK (role IN ('observer', 'agent_owner', 'admin'))" in external.sql
+    assert "CREATE TABLE external_oauth_clients" in external.sql
+    assert "redirect_uris text[]" in external.sql
     assert "SECURITY DEFINER" in migration.sql
     assert "hosted_active_session_tenant" in migration.sql
     assert "hosted_active_invitation_tenant" in migration.sql
@@ -113,6 +120,22 @@ def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
     assert "inviter_user.disabled_at IS NULL" in migration.sql
     assert "t.status = 'active'" in migration.sql
     assert "m.status = 'active'" in migration.sql
+
+
+def test_external_agent_migration_declares_tenant_scoped_run_key_before_fks():
+    external = load_migrations()[1]
+    compact = " ".join(external.sql.split())
+    unique_key = (
+        "ALTER TABLE runs ADD CONSTRAINT runs_tenant_id_id_key "
+        "UNIQUE (tenant_id, id)"
+    )
+    tenant_fk = (
+        "FOREIGN KEY (tenant_id, run_id) "
+        "REFERENCES runs(tenant_id, id)"
+    )
+
+    assert unique_key in compact
+    assert compact.index(unique_key) < compact.index(tenant_fk)
 
 
 def test_migration_identity_is_stable_across_lf_and_crlf_checkouts(tmp_path):
@@ -134,14 +157,14 @@ def test_migration_runner_is_ordered_atomic_and_idempotent():
     connection = MigrationConnection()
 
     first = migrate_connection(connection, runtime_role="agent_economy_app")
-    assert first.current_version == 1
-    assert first.applied_versions == (1,)
+    assert first.current_version == 2
+    assert first.applied_versions == (1, 2)
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert "pg_advisory_xact_lock" in connection.calls[0][0]
 
     second = migrate_connection(connection, runtime_role="agent_economy_app")
-    assert second.current_version == 1
+    assert second.current_version == 2
     assert second.applied_versions == ()
     migration_script_calls = [sql for sql, _ in connection.calls if "CREATE TABLE tenants" in sql]
     assert len(migration_script_calls) == 1
@@ -208,7 +231,7 @@ def test_migration_runner_rejects_runtime_roles_that_bypass_rls(role):
 
 def test_unknown_or_changed_database_history_fails_closed():
     migration = load_migrations()[0]
-    future = MigrationConnection(initial_history=[(2, "future", "0" * 64)])
+    future = MigrationConnection(initial_history=[(3, "future", "0" * 64)])
     with pytest.raises(MigrationError, match="unknown future"):
         migrate_connection(future, runtime_role="agent_economy_app")
 

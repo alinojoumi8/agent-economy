@@ -69,6 +69,8 @@ class Metrics:
             out["firm_exits"] = float(self.store.scalar(
                 "SELECT COUNT(*) FROM events WHERE tick=? AND kind IN ('bankruptcy','merger_closed')",
                 (tick,), default=0))
+        if "entrepreneurship" in self.e.config:
+            out.update(self._entrepreneurship_metrics(tick))
         if self.semantics_version >= 5:
             out["fx_volume"] = float(self.store.scalar(
                 "SELECT COALESCE(SUM(base_qty),0) FROM fx_trades WHERE tick=?", (tick,), default=0))
@@ -79,6 +81,43 @@ class Metrics:
                     "DELETE FROM metrics WHERE tick=? AND name=?", (tick, name))
             self.store.record_metric(tick, name, float(value))
         return out
+
+    def _entrepreneurship_metrics(self, tick: int) -> dict[str, float]:
+        idea_clause = "json_type(f.product_json,'$.business_idea')='object'"
+        founded = float(self.store.scalar(
+            f"SELECT COUNT(*) FROM firms f WHERE {idea_clause}", default=0) or 0)
+        active = float(self.store.scalar(
+            f"SELECT COUNT(*) FROM firms f WHERE {idea_clause} "
+            "AND f.status IN ('private','listed')", default=0) or 0)
+        employment = float(self.store.scalar(
+            "SELECT COUNT(*) FROM employments e JOIN firms f ON f.id=e.firm_id "
+            f"WHERE e.status='active' AND {idea_clause}", default=0) or 0)
+        revenue = float(self.store.scalar(
+            "SELECT COALESCE(SUM(json_extract(e.payload_json,'$.total_cents')),0) "
+            "FROM events e JOIN firms f "
+            "ON f.id=CAST(json_extract(e.payload_json,'$.firm_id') AS INTEGER) "
+            f"WHERE e.kind='goods_sale' AND e.tick BETWEEN ? AND ? AND {idea_clause}",
+            (max(0, tick - 29), tick), default=0) or 0)
+        debt = float(self.store.scalar(
+            "SELECT COALESCE(SUM(l.outstanding_cents),0) FROM loans l "
+            "JOIN firms f ON f.id=l.borrower_id WHERE l.borrower_type='firm' "
+            f"AND l.status='active' AND {idea_clause}", default=0) or 0)
+        cash = float(self.store.scalar(
+            "SELECT COALESCE(SUM(CASE WHEN a.balance_cents>0 THEN a.balance_cents ELSE 0 END),0) "
+            "FROM firms f JOIN accounts a ON a.id=f.account_id "
+            f"WHERE {idea_clause}", default=0) or 0)
+        bankruptcies = float(self.store.scalar(
+            f"SELECT COUNT(*) FROM firms f WHERE {idea_clause} AND f.status='bankrupt'",
+            default=0) or 0)
+        return {
+            "entrepreneurial_firms_founded": founded,
+            "entrepreneurial_firms_active": active,
+            "entrepreneurial_survival_rate": active / founded if founded else 0.0,
+            "entrepreneurial_employment": employment,
+            "entrepreneurial_revenue_30d": revenue / 100.0,
+            "entrepreneurial_leverage_ratio": debt / (cash + debt) if cash + debt > 0 else 0.0,
+            "entrepreneurial_bankruptcies": bankruptcies,
+        }
 
     def _market_hhi(self, tick: int) -> float:
         rows = self.store.query(
@@ -194,7 +233,6 @@ class Metrics:
         total = sum(wealth)
         if n == 0 or total == 0:
             return 0.0
-        cum = 0.0
         weighted = 0.0
         for i, w in enumerate(wealth, start=1):
             weighted += i * w

@@ -12,17 +12,35 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from engine.actions import VALID_TYPES
 from engine.store import Store, load_json
+from .citizen_actions import action_spec, citizen_world_action_types
 
 
-PARTICIPANT_TYPES = VALID_TYPES.difference({
-    "approve_loan", "deny_loan", "set_policy_rate", "fund_pitch", "decline_pitch",
-})
+PARTICIPANT_TYPES = citizen_world_action_types()
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _path_value(source: dict, path: list[str], default: Any = None) -> Any:
+    value: Any = source
+    for part in path:
+        if not isinstance(value, dict) or part not in value:
+            return default
+        value = value[part]
+    return value
+
+
+def _path_assign(target: dict, path: list[str], value: Any) -> None:
+    cursor = target
+    for part in path[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    cursor[path[-1]] = value
 
 
 class ParticipantError(RuntimeError):
@@ -319,6 +337,48 @@ class ParticipantService:
             return {"name": name, "label": label, "kind": "text", "required": required,
                     "default": default, "max_length": maximum}
 
+        def exact_action(action: dict, label: str, variant: str) -> dict:
+            """Expose a context-authorized action without letting clients retarget it."""
+            canonical = json.loads(json.dumps(action, sort_keys=True))
+            fields = [
+                {"name": key, "label": key.replace("_", " ").title(),
+                 "kind": "hidden", "default": value}
+                for key, value in canonical.items()
+                if key not in {"type", "variant"}
+            ]
+            template = {**canonical, "variant": variant}
+            return {
+                "type": str(canonical["type"]),
+                "variant": variant,
+                "label": label,
+                "fields": fields,
+                "action": template,
+            }
+
+        founding_action = ((ctx.get("entrepreneurship_opportunity") or {}).get("action") or {})
+        founding_idea = (founding_action.get("business_idea")
+                         if isinstance(founding_action.get("business_idea"), dict) else {})
+        founding_fields = [
+            text("name", "Company name", str(founding_action.get("name", "")), 60),
+            text("sector", "Sector", str(founding_action.get("sector", "services")), 40),
+            select("lawyer_agent_id", "Lawyer", [
+                {"value": l["id"], "label": l["name"]} for l in lawyers]),
+            number("opening_capital", "Opening capital (cents)",
+                   int(founding_action.get("opening_capital", 0)), 0),
+        ]
+        if founding_action.get("lawyer_agent_id") is not None:
+            founding_fields[2]["default"] = int(founding_action["lawyer_agent_id"])
+        if bool(self.config.get("entrepreneurship", {}).get("enabled", False)):
+            idea_fields = [
+                text("mission", "Mission", str(founding_idea.get("mission", "")), 240),
+                text("customer_problem", "Customer / problem",
+                     str(founding_idea.get("customer_problem", "")), 240),
+                text("offering", "Offering", str(founding_idea.get("offering", "")), 160),
+            ]
+            for field in idea_fields:
+                field["action_path"] = ["business_idea", field["name"]]
+            founding_fields.extend(idea_fields)
+
         items = [
             {"type": "do_nothing", "label": "Do nothing", "fields": []},
             {"type": "buy_goods", "label": "Buy goods", "fields": [
@@ -352,11 +412,33 @@ class ParticipantService:
                 text("text", "Statement", "", 500)]},
             {"type": "buy_insurance", "label": "Buy health insurance", "fields": []},
             {"type": "cancel_insurance", "label": "Cancel health insurance", "fields": []},
-            {"type": "found_company", "label": "Found a company", "fields": [
-                text("name", "Company name", "", 60), text("sector", "Sector", "services", 40),
-                select("lawyer_agent_id", "Lawyer", [{"value": l["id"], "label": l["name"]}
-                       for l in lawyers]), number("opening_capital", "Opening capital (cents)", 0, 0)]},
+            {"type": "found_company", "label": "Found a company", "fields": founding_fields},
         ]
+        if (
+            self.engine_semantics_version >= 12
+            and bool(self.config.get("city", {}).get("enabled", False))
+        ):
+            items = [item for item in items if item["type"] != "found_company"]
+            required_civic_action = ctx.get("civic_required_action")
+            if isinstance(required_civic_action, dict):
+                items.append(exact_action(
+                    required_civic_action,
+                    "Attend required permit appointment",
+                    "civic-appointment",
+                ))
+            if isinstance(founding_action, dict) and founding_action.get("type") in {
+                "apply_business_permit", "found_company",
+            }:
+                label = (
+                    "Apply for the authorized business permit"
+                    if founding_action["type"] == "apply_business_permit"
+                    else "Found the permit-authorized company"
+                )
+                items.append(exact_action(
+                    founding_action,
+                    label,
+                    f"civic-{founding_action['type']}",
+                ))
         if self.engine_semantics_version >= 7 and bool(agent["retired"]):
             # Retirees do not search for work. Their only liquidity action is a
             # bounded transfer between the two accounts declared on their row.
@@ -399,6 +481,143 @@ class ParticipantService:
                     number("qty", "Shares", 1, 1),
                     number("max_price", "Maximum price per share (cents)", 100, 1)]},
             ])
+        if self.engine_semantics_version >= 7:
+            for index, quote in enumerate(ctx.get("fx_quotes", [])):
+                for side in ("buy", "sell"):
+                    action = quote.get(f"{side}_action")
+                    if isinstance(action, dict):
+                        items.append(exact_action(
+                            action,
+                            f"{side.title()} FX {quote.get('pair', '')}".strip(),
+                            f"fx-{index}-{side}",
+                        ))
+            for index, order in enumerate(ctx.get("open_fx_orders", [])):
+                action = order.get("cancel_action")
+                if isinstance(action, dict):
+                    items.append(exact_action(
+                        action, "Cancel an open FX order", f"fx-cancel-{index}"))
+            for index, option in enumerate(ctx.get("migration_options", [])):
+                action = option.get("action")
+                if isinstance(action, dict):
+                    items.append(exact_action(
+                        action, "Request an authorized migration",
+                        f"migration-{index}"))
+            for index, opportunity in enumerate(ctx.get("trade_opportunities", [])):
+                action = opportunity.get("action")
+                if isinstance(action, dict):
+                    items.append(exact_action(
+                        action, "Create an authorized trade shipment",
+                        f"trade-{index}"))
+            startup = ctx.get("startup_work") or {}
+            for index, action in enumerate(startup.get("eligible_actions", [])):
+                if isinstance(action, dict) and action.get("type") in PARTICIPANT_TYPES:
+                    items.append(exact_action(
+                        action,
+                        f"Perform authorized {str(action['type']).replace('_', ' ')}",
+                        f"startup-{index}",
+                    ))
+        if self.engine_semantics_version >= 8:
+            directory = ctx.get("communication_directory", [])[:20]
+            for contact in directory:
+                recipient_id = int(contact["agent_id"])
+                variant = f"direct-{recipient_id}"
+                items.append({
+                    "type": "send_message",
+                    "variant": variant,
+                    "label": f"Message {contact.get('name') or f'agent {recipient_id}'}",
+                    "fields": [
+                        {"name": "audience", "kind": "hidden",
+                         "default": {"kind": "direct", "agent_ids": [recipient_id]}},
+                        text("subject", "Subject", "", 120),
+                        text("body", "Message", "", 2_000),
+                    ],
+                    "action": {
+                        "type": "send_message", "variant": variant,
+                        "audience": {"kind": "direct", "agent_ids": [recipient_id]},
+                        "subject": "", "body": "",
+                    },
+                })
+            items.append({
+                "type": "send_message",
+                "variant": "public",
+                "label": "Send a public message",
+                "fields": [
+                    {"name": "audience", "kind": "hidden",
+                     "default": {"kind": "public"}},
+                    text("subject", "Subject", "", 120),
+                    text("body", "Message", "", 2_000),
+                ],
+                "action": {
+                    "type": "send_message", "variant": "public",
+                    "audience": {"kind": "public"}, "subject": "", "body": "",
+                },
+            })
+            for item in ctx.get("authorized_inbox", [])[:20]:
+                message_id = int(item["message_id"])
+                if bool(item.get("can_reply")):
+                    items.append({
+                        "type": "reply_message",
+                        "variant": f"reply-{message_id}",
+                        "label": f"Reply to {item.get('sender_name') or message_id}",
+                        "fields": [
+                            {"name": "parent_message_id", "kind": "hidden",
+                             "default": message_id},
+                            text("body", "Reply", "", 2_000),
+                        ],
+                        "action": {
+                            "type": "reply_message",
+                            "variant": f"reply-{message_id}",
+                            "parent_message_id": message_id,
+                            "body": "",
+                        },
+                    })
+                items.append({
+                    "type": "forward_message",
+                    "variant": f"forward-public-{message_id}",
+                    "label": f"Forward message {message_id} publicly",
+                    "fields": [
+                        {"name": "source_message_id", "kind": "hidden",
+                         "default": message_id},
+                        {"name": "audience", "kind": "hidden",
+                         "default": {"kind": "public"}},
+                        text("note", "Forwarding note", "", 500, required=False),
+                    ],
+                    "action": {
+                        "type": "forward_message",
+                        "variant": f"forward-public-{message_id}",
+                        "source_message_id": message_id,
+                        "audience": {"kind": "public"},
+                        "note": "",
+                    },
+                })
+        if self.engine_semantics_version >= 11:
+            for offer in ctx.get("compute_plan_offers", []):
+                action = offer.get("action")
+                if isinstance(action, dict) and bool(offer.get("eligible")):
+                    items.append(exact_action(
+                        action,
+                        f"Buy {offer.get('tier')} compute plan "
+                        f"({offer.get('price_cents')}c)",
+                        f"compute-{offer.get('tier')}",
+                    ))
+            cancel = ctx.get("compute_plan_cancel_action")
+            if isinstance(cancel, dict):
+                items.append(exact_action(
+                    cancel, "Cancel compute plan", "compute-cancel"))
+            sponsorship = ctx.get("compute_sponsorship") or {}
+            for index, action in enumerate(sponsorship.get("actions", [])):
+                if isinstance(action, dict):
+                    items.append(exact_action(
+                        action, "Sponsor employee compute", f"sponsor-{index}"))
+            for option in ctx.get("study_skill_options", []):
+                action = option.get("action")
+                if isinstance(action, dict):
+                    items.append(exact_action(
+                        action,
+                        f"Study {option.get('skill_key')} "
+                        f"({option.get('price_cents')}c)",
+                        f"study-{option.get('skill_key')}",
+                    ))
         if firm:
             firm_id = int(firm["firm_id"])
             firm_items = [
@@ -472,6 +691,10 @@ class ParticipantService:
             items.extend(firm_items)
         for item in items:
             item.setdefault("variant", "default")
+            spec = action_spec(str(item["type"]))
+            if spec is not None:
+                item["category"] = spec["category"]
+                item["channel"] = spec["channel"]
             empty_required_select = any(
                 field.get("kind") == "select" and field.get("required", True)
                 and not field.get("options") for field in item.get("fields", []))
@@ -496,14 +719,18 @@ class ParticipantService:
             raise ParticipantError(409, descriptor.get("disabled_reason", "action is currently unavailable"))
         normalized: dict[str, Any] = {"type": action_type}
         allowed = {"type", "variant"}
+        nested_allowed: dict[str, set[str]] = {}
         for field in descriptor.get("fields", []):
             name = field["name"]
-            allowed.add(name)
+            path = list(field.get("action_path") or [name])
+            allowed.add(path[0])
+            if len(path) > 1:
+                nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
             # Hidden fields are server-owned capability data. A client may echo
             # them, but it cannot redirect an action to another firm or role.
-            value = field.get("default") if kind == "hidden" else action.get(
-                name, field.get("default"))
+            value = (field.get("default") if kind == "hidden" else
+                     _path_value(action, path, field.get("default")))
             if value is None or value == "":
                 if field.get("required", True):
                     raise ParticipantError(400, f"{name} is required")
@@ -528,11 +755,24 @@ class ParticipantService:
                 if field.get("required", True) and not value:
                     raise ParticipantError(400, f"{name} is required")
                 value = value[:int(field.get("max_length", 500))]
-            normalized[name] = value
+            _path_assign(normalized, path, value)
+        for root, names in nested_allowed.items():
+            supplied = action.get(root)
+            if supplied is not None and not isinstance(supplied, dict):
+                raise ParticipantError(400, f"{root} must be a JSON object")
+            if isinstance(supplied, dict):
+                nested_extras = set(supplied).difference(names)
+                if nested_extras:
+                    raise ParticipantError(
+                        400, f"unexpected {root} fields: {sorted(nested_extras)}")
         extras = set(action).difference(allowed)
         if extras:
             raise ParticipantError(400, f"unexpected action fields: {sorted(extras)}")
         return normalized
+
+    def normalize_action(self, agent_id: int, action: Any) -> dict:
+        """Validate an action against the shared, state-filtered participant catalog."""
+        return self._normalize_action(agent_id, action)
 
     def decision_for_tick(self, tick: int) -> Optional[dict]:
         row = self._replay_action(tick)

@@ -3,7 +3,9 @@
 extends: base.yaml
 
 population:
-  size: 87  # citizens + institutional staff/founders = approximately 100 agents
+  # Genesis adds engine-owned institutional and health-economy actors. 63 sampled
+  # citizens therefore yields exactly 100 living agents under maintained semantics 7.
+  size: 63
 
 # Production inference is throughput-limited by the provider plans. Spend is
 # still recorded, but the governor does not degrade or pause on a dollar limit.
