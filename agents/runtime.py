@@ -11,14 +11,18 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
 from engine.types import positive_integer_id
 from causal import CausalLinkService
-from world.recovery import assess_recovery, minimum_viable_price_cents
+from world.recovery import (
+    RecoveryAssessment,
+    assess_recovery,
+    minimum_viable_price_cents,
+)
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
@@ -49,6 +53,14 @@ from observability import get_logger, log_event as operational_log
 
 
 logger = get_logger("agents")
+
+
+class RecoveryHiringState(NamedTuple):
+    wage_floor_cents: int
+    assessment: RecoveryAssessment | None
+    max_hires: int
+    open_vacancies: int
+    error: str | None
 
 
 def _decision_output_budget(llm_config: dict, purpose: str) -> int:
@@ -148,6 +160,9 @@ class AgentRuntime:
         self.external = ExternalAgentService(economy, self.participant, config)
         self._recovery_hire_tick: int | None = None
         self._recovery_completed_hires: dict[int, int] = {}
+        self._recovery_approved_hires: dict[
+            tuple[int, int, str, str, int], int
+        ] = {}
         self.executor = ActionExecutor(
             economy,
             pre_action_hook=self._pre_recovery_employment_action,
@@ -935,7 +950,9 @@ class AgentRuntime:
         except (KeyError, IndexError, TypeError, ValueError):
             return None
 
-    def _recovery_hiring_state(self, tick: int, firm_id: int, wage_cents: int):
+    def _recovery_hiring_state(
+            self, tick: int, firm_id: int,
+            wage_cents: int) -> RecoveryHiringState | None:
         """Reassess live firm economics at the actual action wage."""
         firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
         if firm is None:
@@ -946,7 +963,8 @@ class AgentRuntime:
         settings = recovery.get("settings")
         inputs = recovery.get("inputs")
         if not isinstance(settings, dict) or not isinstance(inputs, dict):
-            return (0, None, 0, 1, "recovery pricing inputs are invalid")
+            return RecoveryHiringState(
+                0, None, 0, 1, "recovery pricing inputs are invalid")
         try:
             floor = int(settings["wage_floor_cents"])
             assessment = assess_recovery(
@@ -967,8 +985,29 @@ class AgentRuntime:
             max_hires = max(0, int(settings["max_hires_per_firm_per_period"]))
             open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
         except (KeyError, TypeError, ValueError):
-            return (0, None, 0, 1, "recovery pricing inputs are invalid")
-        return floor, assessment, max_hires, open_vacancies, None
+            return RecoveryHiringState(
+                0, None, 0, 1, "recovery pricing inputs are invalid")
+        return RecoveryHiringState(
+            floor, assessment, max_hires, open_vacancies, None)
+
+    @staticmethod
+    def _recovery_hire_approval_key(
+            tick: int, actor_id: int, action: dict,
+            phase: str) -> tuple[int, int, str, str, int] | None:
+        action_type = str(action.get("type") or "")
+        target_field = {
+            "hire": "application_id",
+            "accept_job_offer": "offer_id",
+        }.get(action_type)
+        if target_field is None:
+            return None
+        try:
+            target_id = int(action.get(target_field, 0))
+        except (TypeError, ValueError):
+            return None
+        if target_id <= 0:
+            return None
+        return int(tick), int(actor_id), str(phase), action_type, target_id
 
     def _recovery_pricing_target(
             self, actor_id: int, action: dict) -> tuple[int, int] | None:
@@ -1027,23 +1066,31 @@ class AgentRuntime:
     def _pre_recovery_employment_action(
             self, tick: int, actor_id: int, action: dict, phase: str) -> str | None:
         self._reset_recovery_hire_count(tick)
+        approval_key = self._recovery_hire_approval_key(
+            tick, actor_id, action, phase)
+        if approval_key is not None:
+            self._recovery_approved_hires.pop(approval_key, None)
         target = self._recovery_employment_target(actor_id, action, phase)
         if target is not None:
             firm_id, wage_cents, action_type = target
             state = self._recovery_hiring_state(tick, firm_id, wage_cents)
             if state is not None:
-                floor, assessment, max_hires, open_vacancies, state_error = state
-                if state_error is not None:
-                    return f"recovery policy rejects action: {state_error}"
-                if assessment is None or floor <= 0 or wage_cents < floor:
+                if state.error is not None:
+                    return f"recovery policy rejects action: {state.error}"
+                if (state.assessment is None
+                        or state.wage_floor_cents <= 0
+                        or wage_cents < state.wage_floor_cents):
                     return "recovery policy rejects a wage below the configured floor"
-                if assessment.allowed_new_hires < 1:
-                    return f"recovery policy rejects action: {assessment.reason}"
-                if action_type == "post_job" and open_vacancies > 0:
+                if state.assessment.allowed_new_hires < 1:
+                    return f"recovery policy rejects action: {state.assessment.reason}"
+                if action_type == "post_job" and state.open_vacancies > 0:
                     return "recovery policy rejects duplicate live vacancy"
                 if (action_type in {"hire", "accept_job_offer"}
-                        and self._recovery_completed_hires.get(firm_id, 0) >= max_hires):
+                        and self._recovery_completed_hires.get(firm_id, 0)
+                        >= state.max_hires):
                     return "recovery policy rejects hire cap for this period"
+                if approval_key is not None:
+                    self._recovery_approved_hires[approval_key] = firm_id
 
         pricing_target = self._recovery_pricing_target(actor_id, action)
         if pricing_target is None:
@@ -1061,7 +1108,13 @@ class AgentRuntime:
 
     def _post_recovery_employment_action(
             self, tick: int, actor_id: int, action: dict, phase: str, result: dict) -> None:
-        if not result.get("ok") or action.get("type") not in {"hire", "accept_job_offer"}:
+        approval_key = self._recovery_hire_approval_key(
+            tick, actor_id, action, phase)
+        approved_firm_id = (
+            self._recovery_approved_hires.pop(approval_key, None)
+            if approval_key is not None else None
+        )
+        if approved_firm_id is None or not result.get("ok"):
             return
         employment_id = int(result.get("employment_id") or 0)
         if employment_id <= 0:
@@ -1071,9 +1124,7 @@ class AgentRuntime:
         if employment is None:
             return
         firm_key = int(employment["firm_id"])
-        state = self._recovery_hiring_state(
-            tick, firm_key, int(employment["wage_cents"]))
-        if state is None or state[4] is not None:
+        if firm_key != approved_firm_id:
             return
         self._recovery_completed_hires[firm_key] = (
             self._recovery_completed_hires.get(firm_key, 0) + 1)
@@ -1082,8 +1133,11 @@ class AgentRuntime:
         if getattr(self, "_recovery_hire_tick", None) != int(tick):
             self._recovery_hire_tick = int(tick)
             self._recovery_completed_hires = {}
+            self._recovery_approved_hires = {}
         elif not hasattr(self, "_recovery_completed_hires"):
             self._recovery_completed_hires = {}
+        if not hasattr(self, "_recovery_approved_hires"):
+            self._recovery_approved_hires = {}
 
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:

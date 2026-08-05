@@ -252,6 +252,8 @@ def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):
         load_credential_file(link)
     with pytest.raises(ValueError, match="isolation_probe_path"):
         load_credential_file(target)
+    with pytest.raises(ValueError, match="FileNotFoundError"):
+        load_credential_file(tmp_path / "missing-credential.json")
 
 
 def test_credential_loader_reads_from_the_validated_descriptor(tmp_path, monkeypatch):
@@ -464,6 +466,42 @@ def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
     assert revocations[0][2]["form_body"] == {
         "token": "process-only-revocation-token",
     }
+
+
+def test_hosted_runner_warns_when_primary_flow_and_revocation_both_fail(
+        monkeypatch, capsys):
+    monkeypatch.setattr(
+        connector_runner,
+        "load_credential_file",
+        lambda _path: {
+            "access_token": "process-only-token",
+            "revocation_token": "process-only-revocation-token",
+            "isolation_probe_path": "/api/v2/tenants/other/run",
+        },
+    )
+
+    def fail_flow(*_args, **_kwargs):
+        raise RuntimeError("primary flow failed")
+
+    def fail_revocation(_self):
+        raise RuntimeError("revocation failed")
+
+    monkeypatch.setattr(connector_runner, "_run_authenticated_acceptance", fail_flow)
+    monkeypatch.setattr(connector_runner._CredentialRevoker, "revoke", fail_revocation)
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit=COMMIT,
+        tree=TREE,
+        credential_file="unused.json",
+    )
+
+    with pytest.raises(RuntimeError, match="primary flow failed"):
+        connector_runner.run_acceptance(args)
+
+    warning = capsys.readouterr().err
+    assert "credential revocation failed" in warning
+    assert "may still be active" in warning
 
 
 @pytest.mark.parametrize(

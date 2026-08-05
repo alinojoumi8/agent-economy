@@ -25,7 +25,7 @@ test("workspace API preserves HTTP status without exposing response internals", 
   const source = await readFile(new URL("../src/app/api.ts", import.meta.url), "utf8");
   assert.match(source, /export class WorkspaceApiError extends Error/);
   assert.match(source, /new WorkspaceApiError\(\s*response\.status/s);
-  assert.doesNotMatch(source, /JSON\.stringify\(payload\)/);
+  assert.doesNotMatch(source, /JSON\.stringify\s*\(\s*payload\b/);
 
   assert.equal(
     workspaceErrorMessage({ detail: "investigation version conflict" }, 409),

@@ -176,6 +176,53 @@ def test_collector_scans_ascii_secrets_inside_non_utf8_artifacts(tmp_path):
     }
 
 
+def test_collector_rejects_json_serialized_secret_keys_in_receipts(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(
+        item for item in payload["gates"]
+        if item["gate_id"] == "deployment_receipt")
+    receipt_path = repo / row["receipt"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["verifier"]["client_secret"] = "json-secret-canary"
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert ("deployment_receipt", "secret_detected") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
+
+
+def test_collector_rejects_json_serialized_secret_keys_in_artifacts(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(
+        item for item in payload["gates"]
+        if item["gate_id"] == "deployment_receipt")
+    receipt_path = repo / row["receipt"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    artifact_path = repo / receipt["artifacts"][0]["path"]
+    artifact_path.write_text(
+        json.dumps({"authorization": "Bearer json-secret-canary"}),
+        encoding="utf-8",
+    )
+    receipt["artifacts"][0]["sha256"] = _sha256(artifact_path)
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert ("deployment_receipt", "secret_detected") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
+
+
 def test_collector_rejects_non_finite_receipt_constants(tmp_path):
     repo, manifest = release_fixture(tmp_path)
     payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))

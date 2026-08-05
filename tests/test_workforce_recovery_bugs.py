@@ -9,7 +9,7 @@ import pytest
 
 import run as cli
 from agents.policies import workforce_recovery_actions
-from agents.runtime import AgentRuntime
+from agents.runtime import AgentRuntime, RecoveryHiringState
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import Store
@@ -274,6 +274,48 @@ def test_recovery_post_hook_ignores_success_without_an_employment_id(tmp_path):
     )
 
     assert world.runtime._recovery_completed_hires == {}
+    world.close()
+
+
+def test_recovery_hire_accounting_consumes_the_pre_hook_approval(
+        tmp_path, monkeypatch):
+    world = _world(
+        tmp_path, "preapproved-recovery-hire.db", engine_semantics_version=5)
+    firm = world.store.query_one(
+        "SELECT id,founder_agent_id FROM firms ORDER BY id LIMIT 1")
+    candidate = world.store.query_one(
+        "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+        "AND alive=1 AND retired=0 ORDER BY id LIMIT 1")
+    assert firm is not None and candidate is not None
+    firm_id = int(firm["id"])
+    founder_id = int(firm["founder_agent_id"])
+    job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
+    application_id = world.economy.labor.apply_job(
+        1, int(candidate["id"]), job_id)
+    assert application_id is not None
+    calls = 0
+
+    def hiring_state(*_args):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            return None
+        assessment = type(
+            "Assessment", (), {"allowed_new_hires": 1, "reason": "eligible"})()
+        return RecoveryHiringState(15_000, assessment, 1, 0, None)
+
+    monkeypatch.setattr(world.runtime, "_recovery_hiring_state", hiring_state)
+
+    result = world.runtime.executor.execute_action(
+        1,
+        founder_id,
+        {"type": "hire", "application_id": int(application_id)},
+        "EXECUTION",
+    )
+
+    assert result["ok"] is True, result
+    assert calls == 1
+    assert world.runtime._recovery_completed_hires == {firm_id: 1}
     world.close()
 
 

@@ -54,7 +54,8 @@ def load_credential_file(path: str | Path) -> dict[str, Any]:
             descriptor = os.open(source, flags)
         except OSError as exc:
             raise ValueError(
-                "credential path must be a regular file, not a symlink"
+                "credential path must be an existing regular file, not a symlink "
+                f"({type(exc).__name__})"
             ) from exc
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode):
@@ -449,9 +450,15 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         if not revoker.revoked:
             try:
                 revoker.revoke()
-            except BaseException:
+            except BaseException as revoke_exc:
                 if not flow_failed:
                     raise
+                print(
+                    "warning: credential revocation failed and the credential "
+                    "may still be active "
+                    f"({type(revoke_exc).__name__})",
+                    file=sys.stderr,
+                )
 
 
 def is_lowercase_hex(value: str, length: int) -> bool:

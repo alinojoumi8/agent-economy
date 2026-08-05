@@ -75,9 +75,13 @@ _JWT = re.compile(
 _SECRET_PATTERNS = (
     re.compile(r"AE_RELEASE_SECRET_CANARY_7b42", re.IGNORECASE),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE),
-    re.compile(r"\bauthorization\s*[:=]", re.IGNORECASE),
-    re.compile(r"\bcookie\s*[:=]", re.IGNORECASE),
-    re.compile(r"\b(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|oauth[_-]?code)\s*[:=]", re.IGNORECASE),
+    re.compile(r"\bauthorization[\"']?\s*[:=]", re.IGNORECASE),
+    re.compile(r"\bcookie[\"']?\s*[:=]", re.IGNORECASE),
+    re.compile(
+        r"\b(?:api[_-]?key|client[_-]?secret|access[_-]?token|"
+        r"refresh[_-]?token|oauth[_-]?code)[\"']?\s*[:=]",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:MINIMAX_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY)\b", re.IGNORECASE),
     re.compile(r"\b(?:sk|ak)-[A-Za-z0-9_-]{16,}\b"),
     _JWT,
@@ -118,10 +122,13 @@ def _parse_utc(value: Any) -> datetime | None:
 
 
 def _contains_secret(value: Any) -> bool:
-    try:
-        text = json.dumps(value, sort_keys=True, ensure_ascii=False)
-    except (TypeError, ValueError):
-        text = str(value)
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(value)
     return any(pattern.search(text) for pattern in _SECRET_PATTERNS)
 
 
