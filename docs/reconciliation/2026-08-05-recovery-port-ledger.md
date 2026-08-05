@@ -68,4 +68,4 @@ The source branch kept receipt orchestration, checkpoint validation, and evidenc
 - Checkpoint retention: 20 tests passed.
 - Recovery plus checkpoint combined gate: 60 tests passed.
 - Labor lifecycle: 13 tests passed before the final activation-gating additions; all newly added activation cases passed individually.
-- Receipt mutation suite was run green after each source hardening slice; a fresh full-suite result is required before merge.
+- Receipt mutation suite was run green after each source hardening slice. Final maintained-suite verification on 2026-08-05 at candidate `1768f96` passed all eight deterministic shards: 1,289 tests passed, seven environment-gated skips, and zero failures.
