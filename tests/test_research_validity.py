@@ -333,7 +333,9 @@ def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
     agent_id = int(world.store.scalar(
         "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"
     ))
-    world.runtime.mem.observe(agent_id, 1, "Demand changed without a measured figure.")
+    world.runtime.mem.observe(
+        agent_id, 1, "Demand changed without a measured figure.", importance=4.7,
+    )
 
     class SummaryGateway:
         async def complete(self, request, **_kwargs):
@@ -344,7 +346,10 @@ def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
                 )
             return SimpleNamespace(
                 parsed={
-                    "summary": f"The random seed was {request.context['rng_seed']}.",
+                    "summary": (
+                        "Observation importance was "
+                        f"{request.context['observations'][0]['importance']}."
+                    ),
                     "importance": 2,
                     "belief_updates": [],
                 },

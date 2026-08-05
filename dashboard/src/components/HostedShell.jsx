@@ -99,7 +99,7 @@ function HostedAccess({ config, onAuthenticated }) {
       </section>
 
       <section className="rounded-2xl border border-mint-300/15 bg-ink-850 p-6">
-        <div className="mb-5 flex gap-2" role="tablist" aria-label="Hosted access">
+        <div className="mb-5 flex gap-2" role="group" aria-label="Hosted access">
           <button className={`button ${view === "login" ? "button-primary" : ""}`} onClick={() => setView("login")}>Sign in</button>
           <button className={`button ${view === "register" ? "button-primary" : ""}`} onClick={() => setView("register")}>Use invite</button>
         </div>

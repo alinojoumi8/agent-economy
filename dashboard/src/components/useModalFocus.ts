@@ -53,8 +53,13 @@ export function useModalFocus({
       ? document.activeElement
       : null;
     // A caller-provided target may deliberately have tabIndex=-1 so focus can
-    // start on a heading without adding that heading to the Tab sequence.
-    (initialFocusRef?.current || tabbableElements(dialog)[0] || dialog).focus();
+    // start on a heading without adding that heading to the Tab sequence. It
+    // still has to be a live descendant of this dialog.
+    const initialTarget = initialFocusRef?.current;
+    const focusTarget = initialTarget?.isConnected && dialog.contains(initialTarget)
+      ? initialTarget
+      : (tabbableElements(dialog)[0] || dialog);
+    focusTarget.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {

@@ -932,7 +932,7 @@ class AgentRuntime:
             wage = (int(action.get("wage", -1))
                     if action_type == "counter_job_offer" else int(offer["wage_cents"]))
             return int(offer["firm_id"]), wage, action_type
-        except (TypeError, ValueError):
+        except (KeyError, IndexError, TypeError, ValueError):
             return None
 
     def _recovery_hiring_state(self, tick: int, firm_id: int, wage_cents: int):
@@ -1523,7 +1523,10 @@ class AgentRuntime:
                 raw_summary,
                 grounding_enabled=model_grounding_active(self.config, tick),
                 fallback="I reviewed today's recorded observations.",
-                sources=obs,
+                sources=[
+                    {"tick": tick, "text": str(item.get("text", item))}
+                    for item in obs
+                ],
             )
         else:
             summary = " | ".join(str(item.get("text", item)) for item in obs)[:1800]

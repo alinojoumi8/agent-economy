@@ -18,7 +18,7 @@ Allowed dispositions are `equivalent`, `superseded`, `portable`, `needs-design`,
 | `run.py` | `activate_numeric_grounding_for_run` and resume-only CLI | No equivalent helper; current `open_run` already has multiple guarded forward-only activations that must be preserved. | portable | Numeric grounding | Activation tests and compatibility replay. |
 | `runs/base.yaml` | Numeric grounding defaults | No current grounding config. Enabling from tick zero changes only new runs; persisted runs retain stored config. | portable | Numeric grounding | Profile validation and feature-off replay tests. |
 | `runs/native-entrepreneurship.yaml` | Formation cap, pre-seed, and merger policy settings | Existing profile has bounded native entry but lacks these lifecycle settings. | portable | Entrepreneurship lifecycle | Profile plus end-to-end lifecycle tests. |
-| `agents/numeric_grounding.py` | Pure numeric extraction, source comparison, and sanitization | No current module; engine projections remain authoritative. | portable | Numeric grounding | Pure decimal/currency/percent tests, including malformed and boundary cases. |
+| `agents/numeric_grounding.py` (untracked) | Pure numeric extraction, source comparison, and sanitization | No current module; engine projections remain authoritative. | portable | Numeric grounding | Pure decimal/currency/percent tests, including malformed and boundary cases. |
 | `agents/memory.py` | Step-bound LLM updates to existing reserved beliefs | Current main enforces finite/ranged values and provenance but not per-call model step limits. | portable | Numeric grounding | Reserved-belief baseline, feature-off, and provenance tests. |
 | `agents/prompts.py` | Grounding suffix, authoritative facts, unit-aware money, stale-memory labels | Current prompts have current structured facts and public projections but no explicit numeric hierarchy. Must integrate with semantics 12, recovery context, and current cent rendering. | portable | Numeric grounding | Prompt snapshot/behavior tests; no source-text assertions alone. |
 | `agents/runtime.py` | Sanitize public reasoning and condensed memories while retaining raw `llm_calls` | Current runtime persists raw governed calls and public rationale; no numeric sanitizer. Must integrate after current communication/civic/workforce paths. | portable | Numeric grounding | Real parsed-envelope and persisted-proposal tests. |
@@ -52,8 +52,8 @@ Allowed dispositions are `equivalent`, `superseded`, `portable`, `needs-design`,
 | `server/static/index.html` | Vite asset references | Generated from dirty dashboard source and stale against current dependency graph. | generated | Static rebuild | Byte-identity freshness check after accepted source ports. |
 | `server/static/assets/MacroOverview-DbuP8jkX.js` | Removed old generated chunk | Generated. | generated | Static rebuild | Vite build and static diff. |
 | `server/static/assets/index-1fE8mSIa.js` | Removed old generated chunk | Generated. | generated | Static rebuild | Vite build and static diff. |
-| `server/static/assets/MacroOverview-EGrWjdWA.js` | New untracked generated chunk | Hash-preserved in snapshot; never port directly. | generated | Static rebuild | Vite build output owns final name. |
-| `server/static/assets/index-C-RDqS0J.js` | New untracked generated chunk | Hash-preserved in snapshot; never port directly. | generated | Static rebuild | Vite build output owns final name. |
+| `server/static/assets/MacroOverview-EGrWjdWA.js` (untracked) | New untracked generated chunk | Hash-preserved in snapshot; never port directly. | generated | Static rebuild | Vite build output owns final name. |
+| `server/static/assets/index-C-RDqS0J.js` (untracked) | New untracked generated chunk | Hash-preserved in snapshot; never port directly. | generated | Static rebuild | Vite build output owns final name. |
 
 ## Closure rules
 

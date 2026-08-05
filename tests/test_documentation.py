@@ -220,6 +220,17 @@ def test_catalog_reference_validation_rejects_paths_outside_repository(tmp_path)
         "missing.py", root=tmp_path)
 
 
+def test_dirty_worktree_inventory_names_all_three_untracked_paths():
+    text = (ROOT / "docs" / "reconciliation" /
+            "2026-08-05-dirty-worktree-inventory.md").read_text(encoding="utf-8")
+    for path in (
+        "agents/numeric_grounding.py",
+        "server/static/assets/MacroOverview-EGrWjdWA.js",
+        "server/static/assets/index-C-RDqS0J.js",
+    ):
+        assert f"`{path}` (untracked)" in text
+
+
 def test_prd_traceable_test_catalog_structure_and_references():
     assert TEST_CASES_PATH.exists(), "docs/test-cases.md is required"
     text = TEST_CASES_PATH.read_text(encoding="utf-8")

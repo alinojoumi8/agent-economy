@@ -752,6 +752,36 @@ test("participant mutation failures render, recover controls, and reset across i
   expect(requests).toEqual(["/api/participant/action", "/api/participant/release"]);
 });
 
+test("modal initial focus ignores a detached caller target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container);
+  });
+  await expect(page.locator("#modal-focus-test-root")
+    .getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
+test("Oracle failures render an alert and restore the request control", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountOracleHarness } = await import("/tests/e2e/fixtures/oracleHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "oracle-test-root";
+    document.body.append(container);
+    mountOracleHarness(container);
+  });
+  const harness = page.locator("#oracle-test-root");
+  await harness.getByLabel("Question for the Oracle").fill("Will demand recover?");
+  const ask = harness.getByRole("button", { name: "Ask Oracle" });
+  await ask.click();
+  await expect(harness.getByRole("alert")).toContainText("oracle unavailable");
+  await expect(ask).toBeEnabled();
+});
+
 test("authorized entity search preserves fork and historical tick", async ({ page }) => {
   let searchUrl = "";
   await page.route("**/api/v2/search?*", async route => {

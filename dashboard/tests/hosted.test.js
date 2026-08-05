@@ -15,6 +15,10 @@ import {
   tenantApiPath,
 } from "../src/hostedRouting.js";
 
+const hostedShellSource = readFileSync(
+  new URL("../src/components/HostedShell.jsx", import.meta.url), "utf8",
+);
+
 const TENANT = "10000000-0000-4000-8000-000000000001";
 const OTHER_TENANT = "20000000-0000-4000-8000-000000000002";
 const RUN = "50000000-0000-4000-8000-000000000005";
@@ -27,6 +31,11 @@ function hosted(runId = RUN) {
     csrfHeaderName: "X-AE-CSRF",
   });
 }
+
+test("hosted access mode switch uses standard button-group semantics", () => {
+  assert.match(hostedShellSource, /role="group" aria-label="Hosted access"/);
+  assert.doesNotMatch(hostedShellSource, /role="tablist"/);
+});
 
 test("local API and WebSocket routes remain byte-for-byte compatible", () => {
   resetApiRouting();

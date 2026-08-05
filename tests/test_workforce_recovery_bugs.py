@@ -58,6 +58,25 @@ def _world(tmp_path: Path, name: str, **over) -> World:
     return world
 
 
+def test_recovery_employment_target_rejects_missing_row_aliases(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path, "missing-recovery-alias.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"))
+    monkeypatch.setattr(
+        world.runtime.executor,
+        "_job_offer_application",
+        lambda _application_id: {"agent_id": actor_id + 1},
+    )
+
+    assert world.runtime._recovery_employment_target(
+        actor_id,
+        {"type": "make_job_offer", "application_id": 1, "wage": 250_000},
+        "LABOR",
+    ) is None
+    world.close()
+
+
 def test_cli_supply_recovery_defaults_to_recovery_headcount_not_genesis(
         monkeypatch):
     """Genesis target_headcount must not silently become the recovery target."""
