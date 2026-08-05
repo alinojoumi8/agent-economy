@@ -975,6 +975,7 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--export-static": args.export_static,
         "--acceptance-report": args.acceptance_report,
         "--release-evidence-report": args.release_evidence_report,
+        "--supply-recovery-report": args.supply_recovery_report,
         "--acceptance-run": args.acceptance_run,
         "--replay": args.replay,
         "--fork": args.fork,
@@ -1063,6 +1064,25 @@ def _validate_release_evidence_cli_exclusivity(
             "--release-evidence-report is mutually exclusive with "
             + ", ".join(incompatible)
         )
+
+
+def _validate_supply_recovery_report_cli(
+        args, parser: argparse.ArgumentParser) -> None:
+    """Keep a persisted-evidence receipt command free of ignored run modifiers."""
+    if not args.supply_recovery_report:
+        return
+    allowed = {"--supply-recovery-report", "--output"}
+    incompatible = []
+    for token in sys.argv[1:]:
+        if not token.startswith("-"):
+            continue
+        option = token.split("=", 1)[0]
+        if option not in allowed:
+            incompatible.append(option)
+    if incompatible:
+        parser.error(
+            "--supply-recovery-report only accepts --output; incompatible options: "
+            + ", ".join(incompatible))
 
 
 def _initialize_claimed_oracle_genesis(
@@ -1215,7 +1235,6 @@ def _execute_oracle_campaign_run(config: dict, args) -> None:
 
 def main() -> None:
     load_dotenv()
-    configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: evolving live-agent desktop profile)")
@@ -1289,6 +1308,8 @@ def main() -> None:
                     help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
+    ap.add_argument("--supply-recovery-report", default=None,
+                    help="evaluate a supply-recovery run id or .db path from persisted evidence")
     ap.add_argument("--oracle-calibration-report", default=None,
                     help="evaluate an explicit Oracle campaign manifest and write receipts")
     ap.add_argument(
@@ -1335,16 +1356,41 @@ def main() -> None:
         ap.error("--activate-llm-output-budgets requires --resume or --fork")
     if args.activate_llm_output_budgets and args.replay:
         ap.error("--activate-llm-output-budgets cannot modify a replay")
+    _validate_supply_recovery_report_cli(args, ap)
     _validate_oracle_cli_exclusivity(args, ap)
     _validate_release_evidence_cli_exclusivity(args, ap)
-    if args.acceptance_report and args.oracle_calibration_report:
-        ap.error("--acceptance-report and --oracle-calibration-report are mutually exclusive")
+    report_modes = {
+        "--acceptance-report": args.acceptance_report,
+        "--supply-recovery-report": args.supply_recovery_report,
+        "--oracle-calibration-report": args.oracle_calibration_report,
+        "--release-evidence-report": args.release_evidence_report,
+    }
+    if sum(bool(value) for value in report_modes.values()) > 1:
+        ap.error("report evidence commands are mutually exclusive")
     if args.acceptance_run and args.oracle_campaign_run:
         ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
     if args.oracle_campaign_run and args.serve:
         ap.error("--oracle-campaign-run is a finalized headless evidence command")
     if args.oracle_campaign_run and (args.fork or args.replay):
         ap.error("--oracle-campaign-run cannot use fork or replay inputs")
+    # This command is a read-only persisted-evidence boundary. Dispatch it
+    # before logging setup so the default invocation produces no log or SQLite
+    # sidecar artifacts; explicit --output remains its only filesystem output.
+    if args.supply_recovery_report:
+        from reports.supply_recovery import (
+            resolve_supply_recovery_db,
+            write_supply_recovery_receipt,
+        )
+        receipt = write_supply_recovery_receipt(
+            resolve_supply_recovery_db(args.supply_recovery_report),
+            output=args.output,
+        )
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+        if not receipt["passed"]:
+            raise SystemExit(5)
+        return
+
+    configure_logging()
     mode = ("dataset_refresh" if args.refresh_datasets else
             "dataset_verify" if args.verify_datasets else
             "counterfactual" if args.counterfactual else

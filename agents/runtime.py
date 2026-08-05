@@ -18,6 +18,7 @@ from engine.core import Economy
 from engine.store import load_json
 from engine.types import positive_integer_id
 from causal import CausalLinkService
+from world.recovery import assess_recovery, minimum_viable_price_cents
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
@@ -136,7 +137,13 @@ class AgentRuntime:
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.participant = ParticipantService(self.store, self.ctx, config)
         self.external = ExternalAgentService(economy, self.participant, config)
-        self.executor = ActionExecutor(economy)
+        self._recovery_hire_tick: int | None = None
+        self._recovery_completed_hires: dict[int, int] = {}
+        self.executor = ActionExecutor(
+            economy,
+            pre_action_hook=self._pre_recovery_employment_action,
+            post_action_hook=self._post_recovery_employment_action,
+        )
         self.causal = CausalLinkService(self.store)
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
@@ -852,8 +859,219 @@ class AgentRuntime:
                 "attention_context_key": attention_context_key or None,
                 "attention_source_event_ids": attention_source_event_ids}
 
+    def _recovery_employment_target(
+            self, actor_id: int, action: dict, phase: str) -> tuple[int, int, str] | None:
+        """Return only a currently authorized, live recovery employment action."""
+        action_type = str(action.get("type") or "")
+        if action_type not in {
+                "post_job", "make_job_offer", "counter_job_offer",
+                "accept_job_offer", "hire"}:
+            return None
+        try:
+            if action_type == "post_job":
+                firm_id = int(action.get("firm_id", 0))
+                if firm_id <= 0:
+                    firm_id = self.executor._owned_firm(actor_id)
+                if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
+                    return None
+                return firm_id, int(action.get("wage", -1)), action_type
+            if action_type == "make_job_offer":
+                if self.executor.engine_semantics_version < 6:
+                    return None
+                application_id = int(action.get("application_id", 0))
+                application = self.executor._job_offer_application(application_id)
+                if application is None:
+                    return None
+                if not self.executor._controls_firm(actor_id, int(application["firm_id"])):
+                    return None
+                if int(application["agent_id"]) == actor_id:
+                    return None
+                if not self.executor._alive(int(application["agent_id"])):
+                    return None
+                wage_cents = int(action.get("wage", -1))
+                if wage_cents < 0 or not self.executor._job_currency_matches(application):
+                    return None
+                pending_offer = self.store.query_one(
+                    "SELECT 1 FROM job_offers WHERE application_id=? AND status='pending' LIMIT 1",
+                    (application_id,),
+                )
+                if pending_offer is not None:
+                    return None
+                return int(application["firm_id"]), wage_cents, action_type
+            if action_type == "hire":
+                if self.executor.engine_semantics_version >= 6 and phase != "FIXTURE":
+                    return None
+                application_id = int(action.get("application_id", 0))
+                application = self.store.query_one(
+                    "SELECT * FROM applications WHERE id=? AND state='pending'", (application_id,))
+                if application is None or not self.executor._alive(int(application["agent_id"])):
+                    return None
+                job = self.store.query_one(
+                    "SELECT firm_id,wage_cents FROM jobs WHERE id=? AND status='open'",
+                    (int(application["job_id"]),))
+                if job is None or not self.executor._controls_firm(actor_id, int(job["firm_id"])):
+                    return None
+                return int(job["firm_id"]), int(job["wage_cents"]), action_type
+            if self.executor.engine_semantics_version < 6:
+                return None
+            offer_id = int(action.get("offer_id", 0))
+            offer = self.executor._job_offer(offer_id)
+            if (self.executor._job_offer_counterparty_error(actor_id, offer)
+                    or not self.executor._alive(int(offer["agent_id"]))
+                    or not self.executor._job_currency_matches(offer)):
+                return None
+            wage = (int(action.get("wage", -1))
+                    if action_type == "counter_job_offer" else int(offer["wage_cents"]))
+            return int(offer["firm_id"]), wage, action_type
+        except (TypeError, ValueError):
+            return None
+
+    def _recovery_hiring_state(self, tick: int, firm_id: int, wage_cents: int):
+        """Reassess live firm economics at the actual action wage."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        inputs = recovery.get("inputs")
+        if not isinstance(settings, dict) or not isinstance(inputs, dict):
+            return (0, None, 0, 1)
+        try:
+            floor = int(settings["wage_floor_cents"])
+            assessment = assess_recovery(
+                enabled=True,
+                settings=settings,
+                price_cents=int(inputs["price_cents"]),
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=int(wage_cents),
+                cash_cents=int(inputs["cash_cents"]),
+                current_payroll_cents=int(inputs["current_payroll_cents"]),
+                current_headcount=int(inputs["current_headcount"]),
+                target_headcount=int(inputs["target_headcount"]),
+                recent_sales_units=int(inputs["recent_sales_units"]),
+                unmet_demand_units=int(inputs.get("unmet_demand_units", 0)),
+            )
+            max_hires = max(0, int(settings["max_hires_per_firm_per_period"]))
+            open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
+        except (KeyError, TypeError, ValueError):
+            return (0, None, 0, 1)
+        return floor, assessment, max_hires, open_vacancies
+
+    def _recovery_pricing_target(
+            self, actor_id: int, action: dict) -> tuple[int, int] | None:
+        """Return a controlled firm's requested price, if this is one."""
+        if str(action.get("type") or "") != "set_price":
+            return None
+        try:
+            firm_id = int(action.get("firm_id", 0))
+            if firm_id <= 0:
+                firm_id = int(self.executor._owned_firm(actor_id) or 0)
+            price_cents = int(action.get("price", 0))
+        except (TypeError, ValueError):
+            return None
+        if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
+            return None
+        return firm_id, price_cents
+
+    def _recovery_price_floor(
+            self, tick: int, firm_id: int) -> tuple[int | None, str | None] | None:
+        """Return the live recovery price floor or a fail-closed reason."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        inputs = recovery.get("inputs")
+        if not isinstance(settings, dict) or not isinstance(inputs, dict):
+            return None, "recovery pricing inputs are invalid"
+        try:
+            floor = int(settings["wage_floor_cents"])
+            minimum_prices = [minimum_viable_price_cents(
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=floor,
+                settings=settings,
+            )]
+            for employment in self.store.query(
+                    "SELECT wage_cents,pay_interval_ticks FROM employments "
+                    "WHERE firm_id=? AND status='active' ORDER BY id", (firm_id,)):
+                minimum_prices.append(minimum_viable_price_cents(
+                    input_cost_cents=int(inputs["input_cost_cents"]),
+                    output_per_worker=int(inputs["output_per_worker"]),
+                    pay_interval_ticks=int(employment["pay_interval_ticks"]),
+                    wage_cents=int(employment["wage_cents"]),
+                    settings=settings,
+                ))
+        except (KeyError, TypeError, ValueError):
+            return None, "recovery pricing inputs are invalid"
+        if any(value is None for value in minimum_prices):
+            return None, "nonpositive output cannot support a recovery wage"
+        return max(int(value) for value in minimum_prices), None
+
+    def _pre_recovery_employment_action(
+            self, tick: int, actor_id: int, action: dict, phase: str) -> str | None:
+        self._reset_recovery_hire_count(tick)
+        target = self._recovery_employment_target(actor_id, action, phase)
+        if target is not None:
+            firm_id, wage_cents, action_type = target
+            state = self._recovery_hiring_state(tick, firm_id, wage_cents)
+            if state is not None:
+                floor, assessment, max_hires, open_vacancies = state
+                if assessment is None or floor <= 0 or wage_cents < floor:
+                    return "recovery policy rejects a wage below the configured floor"
+                if assessment.allowed_new_hires < 1:
+                    return f"recovery policy rejects action: {assessment.reason}"
+                if action_type == "post_job" and open_vacancies > 0:
+                    return "recovery policy rejects duplicate live vacancy"
+                if (action_type in {"hire", "accept_job_offer"}
+                        and self._recovery_completed_hires.get(firm_id, 0) >= max_hires):
+                    return "recovery policy rejects hire cap for this period"
+
+        pricing_target = self._recovery_pricing_target(actor_id, action)
+        if pricing_target is None:
+            return None
+        firm_id, requested_price = pricing_target
+        constraint = self._recovery_price_floor(tick, firm_id)
+        if constraint is None:
+            return None
+        minimum_price, error = constraint
+        if error is not None:
+            return f"recovery policy rejects price: {error}"
+        if requested_price < int(minimum_price):
+            return "recovery policy rejects price below the recovery wage margin"
+        return None
+
+    def _post_recovery_employment_action(
+            self, tick: int, actor_id: int, action: dict, phase: str, result: dict) -> None:
+        if not result.get("ok") or action.get("type") not in {"hire", "accept_job_offer"}:
+            return
+        employment_id = int(result.get("employment_id", 0))
+        employment = self.store.query_one(
+            "SELECT firm_id,wage_cents FROM employments WHERE id=?", (employment_id,))
+        if employment is None:
+            return
+        firm_key = int(employment["firm_id"])
+        if self._recovery_hiring_state(
+                tick, firm_key, int(employment["wage_cents"])) is None:
+            return
+        self._recovery_completed_hires[firm_key] = (
+            self._recovery_completed_hires.get(firm_key, 0) + 1)
+
+    def _reset_recovery_hire_count(self, tick: int) -> None:
+        if self._recovery_hire_tick != int(tick):
+            self._recovery_hire_tick = int(tick)
+            self._recovery_completed_hires = {}
+
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
+        self._reset_recovery_hire_count(tick)
         for d in decisions:
             agent_id = d["agent_id"]
             if d.get("numeric_claims_redacted"):

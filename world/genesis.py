@@ -16,6 +16,7 @@ from engine.core import Economy
 from engine.ledger import SYS_EXTERNAL, SYS_INFLOW
 from agents.memory import Memory
 from agents.personas.library import Persona, sample_persona, sample_population
+from world.recovery import assess_recovery, recovery_settings
 
 if TYPE_CHECKING:
     from research.r21 import R21Calibration
@@ -279,6 +280,12 @@ class Genesis:
         calibrated = bool(self.calibration and self.calibration.enabled)
         firm_samples = (self.calibration.sample_firms(actual_count)
                         if calibrated else [])
+        recovery = recovery_settings(self.config)
+        recovery_at_genesis = (
+            recovery if bool(recovery["enabled"])
+            and 0 >= int(recovery["activation_tick"])
+            else None
+        )
         for i in range(actual_count):
             target_headcount = (
                 firm_samples[i].requested_employees
@@ -317,7 +324,9 @@ class Genesis:
             # Initial employees.
             realized_headcount = self._staff_firm(
                 firm_id, product["unit_price_cents"],
-                target_headcount=target_headcount)
+                target_headcount=target_headcount,
+                product=product,
+                recovery_settings_at_genesis=recovery_at_genesis)
             if calibrated:
                 self.calibration.record_realized_firm(
                     firm_samples[i], realized_headcount)
@@ -335,24 +344,55 @@ class Genesis:
                 phase="NIGHT_CLOSE", importance=3.0)
 
     def _staff_firm(self, firm_id: int, price: int, *,
-                    target_headcount: int | None = None) -> int:
+                    target_headcount: int | None = None,
+                    product: dict | None = None,
+                    recovery_settings_at_genesis: dict | None = None) -> int:
+        """Create legacy staff or one viable recovery seed hire at tick zero."""
         wage = max(250_000, price * 400)
         firm = self.e.firms.get(firm_id)
+        recovery_seed_hire = recovery_settings_at_genesis is not None
+        if recovery_seed_hire:
+            floor = int(recovery_settings_at_genesis["wage_floor_cents"])
+            seed_target = (1 if target_headcount is None
+                           else min(1, max(0, int(target_headcount))))
+            product = product or {}
+            assessment = assess_recovery(
+                enabled=True,
+                price_cents=int(product.get("unit_price_cents", price)),
+                input_cost_cents=int(product.get("base_input_cost_cents", 0)),
+                output_per_worker=int(product.get("output_per_worker", 0)),
+                pay_interval_ticks=int(self.config.get("firms", {}).get(
+                    "pay_interval_ticks", 30)),
+                wage_cents=floor,
+                cash_cents=self.e.ledger.balance(int(firm["account_id"])),
+                current_payroll_cents=0,
+                current_headcount=0,
+                target_headcount=seed_target,
+                recent_sales_units=0,
+                settings=recovery_settings_at_genesis,
+            )
+            # Tick zero has no demand history. Seed at most one job only when
+            # its own unit economics and payroll reserve are viable.
+            if (floor <= 0 or floor > assessment.safe_wage_ceiling_cents
+                    or assessment.cash_limited_headcount < 1 or seed_target < 1):
+                return 0
+            wage = floor
+
         if target_headcount is None:
-            pool = self.store.query(
-                "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
-                "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT 3",
-                (firm["region_id"], firm["region_id"]))
+            pool_limit = 1 if recovery_seed_hire else 3
         else:
-            pool = self.store.query(
-                "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
-                "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT ?",
-                (firm["region_id"], firm["region_id"], max(0, int(target_headcount))))
+            pool_limit = max(0, int(target_headcount))
+            if recovery_seed_hire:
+                pool_limit = min(1, pool_limit)
+        pool = self.store.query(
+            "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
+            "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT ?",
+            (firm["region_id"], firm["region_id"], pool_limit))
         pay_interval = int(self.config.get("firms", {}).get("pay_interval_ticks", 30))
         for r in pool:
             aid = int(r["id"])
             employee_wage = wage
-            if self.calibration and self.calibration.enabled:
+            if self.calibration and self.calibration.enabled and not recovery_seed_hire:
                 employee_wage = max(
                     self.calibration.minimum_wage_per_interval_cents,
                     min(self.calibration.maximum_wage_per_interval_cents,

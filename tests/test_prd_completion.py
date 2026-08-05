@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 import run as run_module
 from agents.memory import Memory
+from engine.actions import ActionExecutor
 from engine.ledger import ReconciliationError
 from engine.store import Store, load_json
 from llm.adapters import AdapterResult, OpenAICompatAdapter
@@ -23,6 +24,7 @@ from run import load_config, open_run, replay_headless
 from server.app import create_app
 from server.controller import RunController
 from world.loop import LEGACY_PHASES, PHASES, World
+from world.recovery import assess_recovery, recovery_settings
 from world.replay_verify import verify_replay
 from oracle.tools import OracleToolError
 
@@ -56,6 +58,20 @@ def _world(tmp_path: Path, name: str = "acceptance.db", **over) -> World:
     world = World(store, cfg)
     world.initialize()
     return world
+
+
+def _stale_pending_application(world: World) -> tuple[int, int]:
+    """Create one old, still-pending Semantics 7 application for market expiry."""
+    firm = world.store.query_one(
+        "SELECT id FROM firms WHERE status IN ('private','listed') ORDER BY id LIMIT 1")
+    candidate = world.store.query_one(
+        "SELECT id FROM agents WHERE kind='citizen' AND alive=1 "
+        "AND retired=0 ORDER BY id LIMIT 1")
+    assert firm is not None and candidate is not None
+    job_id = world.economy.labor.post_job(1, int(firm["id"]), "worker", 15_000)
+    application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+    assert application_id is not None
+    return job_id, int(application_id)
 
 
 def test_finalize_metrics_include_same_day_sales_and_are_idempotent(tmp_path):
@@ -140,6 +156,265 @@ def test_goods_context_excludes_zero_inventory(tmp_path):
     world.store.update("firms", firm_id, inventory=1)
     assert firm_id in {offer["firm_id"] for offer in world.runtime.ctx._goods_offers()}
     world.store.close()
+
+
+def test_recovery_genesis_uses_the_feasible_configured_wage_floor(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-genesis.db", supply_recovery=profile)
+    try:
+        rows = world.store.query(
+            "SELECT e.wage_cents,f.product_json FROM employments e JOIN firms f "
+            "ON f.id=e.firm_id WHERE e.status='active' "
+            "AND json_extract(f.product_json,'$.output_per_worker') IS NOT NULL "
+            "ORDER BY e.id"
+        )
+        settings = recovery_settings(world.config)
+
+        assert rows
+        assert {int(row["wage_cents"]) for row in rows} == {15_000}
+        for row in rows:
+            product = load_json(row["product_json"], {})
+            assessment = assess_recovery(
+                enabled=True,
+                price_cents=int(product["unit_price_cents"]),
+                input_cost_cents=int(product["base_input_cost_cents"]),
+                output_per_worker=int(product["output_per_worker"]),
+                pay_interval_ticks=int(world.config.get("firms", {}).get(
+                    "pay_interval_ticks", 30)),
+                wage_cents=int(row["wage_cents"]),
+                cash_cents=1_000_000,
+                current_payroll_cents=0,
+                current_headcount=0,
+                target_headcount=1,
+                recent_sales_units=0,
+                settings=settings,
+            )
+            assert int(row["wage_cents"]) <= assessment.safe_wage_ceiling_cents
+    finally:
+        world.store.close()
+
+
+def test_recovery_genesis_respects_the_activation_tick(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+        "activation_tick": 1,
+    }
+    world = _world(tmp_path, "recovery-preactivation-genesis.db", supply_recovery=profile)
+    try:
+        wages = [int(row["wage_cents"]) for row in world.store.query(
+            "SELECT e.wage_cents FROM employments e JOIN firms f ON f.id=e.firm_id "
+            "WHERE e.status='active' "
+            "AND json_extract(f.product_json,'$.output_per_worker') IS NOT NULL "
+            "ORDER BY e.id"
+        )]
+
+        assert wages and all(wage >= 250_000 for wage in wages)
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_blocks_an_unsustainable_employer_action(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "post_job", "firm_id": int(firm["id"]),
+                "title": "worker", "wage": 250_000,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 0
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_allows_a_feasible_floor_wage_action(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-floor.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "post_job", "firm_id": int(firm["id"]),
+                "title": "worker", "wage": 15_000,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        assert world.store.scalar(
+            "SELECT wage_cents FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 15_000
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_uses_persisted_active_pay_interval_for_price_margin(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-price-floor.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,product_json FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        product = load_json(firm["product_json"], {})
+        product.update({
+            "unit_price_cents": 300,
+            "base_input_cost_cents": 120,
+            "output_per_worker": 8,
+        })
+        world.store.update("firms", int(firm["id"]), product_json=json.dumps(product))
+        world.store.execute(
+            "UPDATE employments SET wage_cents=20000,pay_interval_ticks=5 "
+            "WHERE firm_id=? AND status='active'",
+            (int(firm["id"]),),
+        )
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "set_price", "firm_id": int(firm["id"]), "price": 225,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        proposal = world.store.query_one(
+            "SELECT validation_status,result_json FROM action_proposals WHERE actor_id=? "
+            "ORDER BY id DESC LIMIT 1", (int(firm["founder_agent_id"]),))
+        current = load_json(world.economy.firms.get(int(firm["id"]))["product_json"], {})
+
+        assert proposal["validation_status"] == "rejected"
+        assert "price below the recovery wage margin" in json.loads(proposal["result_json"])["reason"]
+        assert current["unit_price_cents"] == 300
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_rejects_price_for_nonproductive_recovery_work(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-nonproductive-price.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,product_json FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        product = load_json(firm["product_json"], {})
+        product["output_per_worker"] = 0
+        world.store.update("firms", int(firm["id"]), product_json=json.dumps(product))
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "set_price", "firm_id": int(firm["id"]), "price": 900,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        proposal = world.store.query_one(
+            "SELECT validation_status,result_json FROM action_proposals WHERE actor_id=? "
+            "ORDER BY id DESC LIMIT 1", (int(firm["founder_agent_id"]),))
+
+        assert proposal["validation_status"] == "rejected"
+        assert "nonpositive output" in json.loads(proposal["result_json"])["reason"]
+    finally:
+        world.store.close()
+
+
+def test_recovery_feature_off_keeps_legacy_runtime_job_posting(tmp_path):
+    world = _world(tmp_path, "recovery-feature-off-runtime.db")
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "post_job", "firm_id": int(firm["id"]),
+                "title": "worker", "wage": 250_000,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        assert world.store.scalar(
+            "SELECT wage_cents FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 250_000
+    finally:
+        world.store.close()
 
 
 def test_inventory_aware_shopping_is_explicit_in_context_and_prompt(tmp_path):
@@ -852,6 +1127,532 @@ def test_operational_recovery_leaves_malformed_offer_for_validation(tmp_path):
         "reason": "offer_id must be a positive integer",
     }
     world.store.close()
+@pytest.mark.parametrize(
+    ("profile", "expected_application_state"),
+    [
+        pytest.param(None, "pending", id="feature-off"),
+        pytest.param(
+            {"enabled": True, "activation_tick": 23},
+            "pending",
+            id="recovery-before-activation",
+        ),
+        pytest.param(
+            {"enabled": True, "activation_tick": 22},
+            "rejected",
+            id="active-recovery",
+        ),
+    ],
+)
+def test_semantics7_market_stale_application_follows_recovery_activation(
+        tmp_path, profile, expected_application_state):
+    """Only an active recovery profile may terminalize a stale pending application."""
+    options = {"engine_semantics_version": 7}
+    if profile is not None:
+        options["supply_recovery"] = profile
+    world = _world(tmp_path, "recovery-stale-application.db", **options)
+    try:
+        job_id, application_id = _stale_pending_application(world)
+
+        world._phase_market(22)
+
+        assert world.store.scalar(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == expected_application_state
+    finally:
+        world.store.close()
+
+
+def test_semantics7_recovery_activation_reconciles_preactivation_stale_application(tmp_path):
+    """Activation cleans the backlog a prior feature-inactive market close retained."""
+    world = _world(
+        tmp_path,
+        "recovery-late-stale-application.db",
+        engine_semantics_version=7,
+        supply_recovery={"enabled": True, "activation_tick": 23},
+    )
+    try:
+        job_id, application_id = _stale_pending_application(world)
+
+        world._phase_market(22)
+        assert world.store.scalar(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == "pending"
+
+        world._phase_market(23)
+
+        assert world.store.scalar(
+            "SELECT state FROM applications WHERE id=?", (application_id,)
+        ) == "rejected"
+    finally:
+        world.store.close()
+
+
+def test_default_action_executor_has_no_recovery_hook(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-default-executor.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        executor = ActionExecutor(world.economy)
+
+        result = executor.execute_action(1, int(firm["founder_agent_id"]), {
+            "type": "post_job", "firm_id": int(firm["id"]),
+            "title": "worker", "wage": 250_000,
+        })
+
+        assert result["ok"]
+        assert world.store.scalar(
+            "SELECT wage_cents FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 250_000
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_rejects_margin_valid_wage_that_fails_cash_reserve(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-actual-wage.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,account_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        world.store.update("accounts", int(firm["account_id"]), balance_cents=60_001)
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "post_job", "firm_id": int(firm["id"]),
+                "title": "worker", "wage": 15_001,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        proposal = world.store.query_one(
+            "SELECT validation_status,result_json FROM action_proposals "
+            "WHERE actor_id=? ORDER BY id DESC LIMIT 1", (int(firm["founder_agent_id"]),))
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 0
+        assert proposal["validation_status"] == "rejected"
+        assert "recovery" in json.loads(proposal["result_json"])["reason"]
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_reassesses_each_negotiated_action_wage(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(
+        tmp_path, "recovery-runtime-negotiated-wages.db",
+        engine_semantics_version=6, supply_recovery=profile,
+    )
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,account_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        candidates = world.store.query(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 3"
+        )
+        assert firm is not None and len(candidates) == 3
+        founder_id = int(firm["founder_agent_id"])
+        firm_id = int(firm["id"])
+        world.store.update("accounts", int(firm["account_id"]), balance_cents=60_001)
+        world.store.log_event(0, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+        applications = []
+        for candidate in candidates:
+            job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
+            application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+            assert application_id is not None
+            applications.append(int(application_id))
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": founder_id,
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "make_job_offer", "application_id": applications[0], "wage": 15_001,
+            }]},
+            "llm_call_id": None,
+        }])
+        initial_offer = world.economy.labor.make_offer(
+            1, applications[1], founder_id, 15_000)
+        assert initial_offer is not None
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(candidates[1]["id"]),
+            "purpose": "citizen",
+            "envelope": {"actions": [{
+                "type": "counter_job_offer", "offer_id": initial_offer, "wage": 15_001,
+            }]},
+            "llm_call_id": None,
+        }])
+        offer_to_counter = world.economy.labor.make_offer(
+            1, applications[2], founder_id, 15_000)
+        assert offer_to_counter is not None
+        high_counter = world.economy.labor.make_offer(
+            1, applications[2], int(candidates[2]["id"]), 15_001,
+            parent_offer_id=offer_to_counter,
+        )
+        assert high_counter is not None
+        world.runtime.execute_decisions(1, [{
+            "agent_id": founder_id,
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "accept_job_offer", "offer_id": high_counter,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        proposals = world.store.query(
+            "SELECT action_type,validation_status,result_json FROM action_proposals "
+            "WHERE action_type IN ('make_job_offer','counter_job_offer','accept_job_offer') "
+            "ORDER BY id"
+        )
+        assert [row["action_type"] for row in proposals] == [
+            "make_job_offer", "counter_job_offer", "accept_job_offer",
+        ]
+        for proposal in proposals:
+            assert proposal["validation_status"] == "rejected"
+            assert "recovery" in json.loads(proposal["result_json"])["reason"]
+        assert world.store.scalar("SELECT COUNT(*) FROM employments WHERE firm_id=?", (firm_id,)) == 1
+    finally:
+        world.store.close()
+
+
+def test_recovery_duplicate_offer_keeps_the_executor_stale_reason(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(
+        tmp_path, "recovery-runtime-duplicate-offer.db",
+        engine_semantics_version=6, supply_recovery=profile,
+    )
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,account_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        candidates = world.store.query(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 2"
+        )
+        assert firm is not None and len(candidates) == 2
+        founder_id = int(firm["founder_agent_id"])
+        firm_id = int(firm["id"])
+        world.store.update("accounts", int(firm["account_id"]), balance_cents=60_001)
+        world.store.log_event(0, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+        applications = []
+        for candidate in candidates:
+            job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
+            application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+            assert application_id is not None
+            applications.append(int(application_id))
+        pending_offer = world.economy.labor.make_offer(
+            1, applications[0], founder_id, 15_000)
+        assert pending_offer is not None
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": founder_id,
+            "purpose": "founder",
+            "envelope": {"actions": [
+                {"type": "make_job_offer", "application_id": applications[0], "wage": 15_001},
+                {"type": "make_job_offer", "application_id": applications[1], "wage": 15_001},
+            ]},
+            "llm_call_id": None,
+        }])
+
+        proposals = world.store.query(
+            "SELECT validation_status,result_json FROM action_proposals "
+            "WHERE action_type='make_job_offer' ORDER BY id")
+        assert [row["validation_status"] for row in proposals] == ["rejected", "rejected"]
+        assert json.loads(proposals[0]["result_json"])["reason"] == (
+            "application already has a pending offer")
+        assert "recovery" in json.loads(proposals[1]["result_json"])["reason"]
+        assert world.store.scalar("SELECT COUNT(*) FROM job_offers") == 1
+        assert world.store.scalar(
+            "SELECT status FROM job_offers WHERE id=?", (pending_offer,)) == "pending"
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_reassesses_the_direct_hire_posted_wage(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-direct-hire-wage.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id,account_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        candidate = world.store.query_one(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 1"
+        )
+        assert firm is not None and candidate is not None
+        firm_id = int(firm["id"])
+        world.store.update("accounts", int(firm["account_id"]), balance_cents=60_001)
+        world.store.log_event(0, "goods_sale", {"firm_id": firm_id, "qty": 1_000})
+        job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_001)
+        application_id = world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+        assert application_id is not None
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "hire", "application_id": int(application_id),
+            }]},
+            "llm_call_id": None,
+        }])
+
+        proposal = world.store.query_one(
+            "SELECT validation_status,result_json FROM action_proposals "
+            "WHERE action_type='hire' ORDER BY id DESC LIMIT 1")
+        assert proposal["validation_status"] == "rejected"
+        assert "recovery" in json.loads(proposal["result_json"])["reason"]
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM employments WHERE firm_id=?", (firm_id,)) == 1
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_leaves_unauthorized_rejection_and_runs_legitimate_action(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-authorization.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        outsider = int(world.store.scalar(
+            "SELECT id FROM agents WHERE id<>? AND alive=1 ORDER BY id LIMIT 1",
+            (int(firm["founder_agent_id"]),)))
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+        action = {
+            "type": "post_job", "firm_id": int(firm["id"]),
+            "title": "worker", "wage": 15_000,
+        }
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": outsider,
+            "purpose": "decision",
+            "envelope": {"actions": [action]},
+            "llm_call_id": None,
+        }, {
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [action]},
+            "llm_call_id": None,
+        }])
+
+        rejected = world.store.query_one(
+            "SELECT validation_status FROM action_proposals WHERE actor_id=? "
+            "ORDER BY id DESC LIMIT 1", (outsider,))
+        assert rejected["validation_status"] == "rejected"
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM jobs WHERE firm_id=?", (int(firm["id"]),)) == 1
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_allows_two_completed_hires_when_profile_cap_is_two(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 2,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-two-hires.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        candidate_rows = world.store.query(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 2"
+        )
+        assert len(candidate_rows) == 2
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 10_000,
+        })
+        jobs = [world.economy.labor.post_job(1, int(firm["id"]), "worker", 15_000)
+                for _ in candidate_rows]
+        applications = [world.economy.labor.apply_job(1, int(candidate["id"]), job_id)
+                        for candidate, job_id in zip(candidate_rows, jobs)]
+        assert all(application_id is not None for application_id in applications)
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [
+                {"type": "hire", "application_id": int(applications[0])},
+                {"type": "hire", "application_id": int(applications[1])},
+            ]},
+            "llm_call_id": None,
+        }])
+
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM employments WHERE firm_id=? AND status='active'",
+            (int(firm["id"]),)) == 3
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_rejects_duplicate_live_vacancy(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-vacancy.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        assert firm is not None
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+        world.economy.labor.post_job(1, int(firm["id"]), "worker", 15_000)
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [{
+                "type": "post_job", "firm_id": int(firm["id"]),
+                "title": "worker", "wage": 15_000,
+            }]},
+            "llm_call_id": None,
+        }])
+
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM jobs WHERE firm_id=? AND status='open'",
+            (int(firm["id"]),)) == 1
+    finally:
+        world.store.close()
+
+
+def test_recovery_runtime_keeps_a_stale_rejection_and_runs_the_next_action(tmp_path):
+    profile = {
+        "enabled": True,
+        "wage_floor_cents": 15_000,
+        "gross_margin_coverage_bps": 12_500,
+        "cash_payroll_coverage_periods": 2,
+        "max_hires_per_firm_per_period": 1,
+        "demand_buffer_ticks": 5,
+        "sales_observation_ticks": 30,
+    }
+    world = _world(tmp_path, "recovery-runtime-stale.db", supply_recovery=profile)
+    try:
+        firm = world.store.query_one(
+            "SELECT id,founder_agent_id FROM firms WHERE "
+            "json_extract(product_json,'$.output_per_worker') IS NOT NULL ORDER BY id LIMIT 1"
+        )
+        candidate = world.store.query_one(
+            "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+            "AND alive=1 ORDER BY id LIMIT 1"
+        )
+        assert firm is not None and candidate is not None
+        world.store.log_event(0, "goods_sale", {
+            "firm_id": int(firm["id"]), "qty": 1_000,
+        })
+        stale_job = world.economy.labor.post_job(
+            1, int(firm["id"]), "worker", 15_000)
+        stale_application = world.economy.labor.apply_job(
+            1, int(candidate["id"]), stale_job)
+        assert stale_application is not None
+        world.store.update("jobs", stale_job, status="closed")
+
+        world.runtime.execute_decisions(1, [{
+            "agent_id": int(firm["founder_agent_id"]),
+            "purpose": "founder",
+            "envelope": {"actions": [
+                {"type": "hire", "application_id": int(stale_application)},
+                {"type": "post_job", "firm_id": int(firm["id"]),
+                 "title": "worker", "wage": 15_000},
+            ]},
+            "llm_call_id": None,
+        }])
+
+        proposals = world.store.query(
+            "SELECT action_type,validation_status,result_json FROM action_proposals "
+            "WHERE actor_id=? ORDER BY id", (int(firm["founder_agent_id"]),))
+        assert [row["action_type"] for row in proposals[-2:]] == ["hire", "post_job"]
+        assert proposals[-2]["validation_status"] == "rejected"
+        assert "recovery" not in json.loads(proposals[-2]["result_json"])["reason"]
+        assert proposals[-1]["validation_status"] == "accepted"
+        assert world.store.scalar(
+            "SELECT COUNT(*) FROM jobs WHERE firm_id=? AND status='open'",
+            (int(firm["id"]),)) == 1
+    finally:
+        world.store.close()
 
 
 def test_citizen_goods_context_only_exposes_same_currency_sellers(tmp_path):
