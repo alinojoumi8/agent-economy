@@ -124,9 +124,9 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Observatory panels render
 - **then**: Macro, agents, and event surfaces remain usable
 - **oracle**: Dashboard unit and e2e smoke
-- **test**: dashboard/tests/e2e/world-os.spec.ts
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
 - **tier**: full-offline
-- **status**: existing-coverage
+- **status**: newly-automated
 
 ### AE-R09-001
 
@@ -553,7 +553,7 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Conflict resolution is requested in the browser
 - **then**: Stale writes stop at HTTP 409 and offer Reload, Continue editing, or Save-as-new without automatic overwrite
 - **oracle**: Two isolated Chromium contexts preserve both titles, the winning version, focus, and original evidence ownership
-- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts — `two analyst contexts resolve stale titles and download redacted evidence`
+- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
 
@@ -566,6 +566,86 @@ Stable catalog of automated evidence for PRD requirements R1–R32 and extension
 - **when**: Export UI is used
 - **then**: JSON and Markdown downloads use safe filenames and only backend-redacted bytes
 - **oracle**: Chromium download events, parsed schema and manifest, evidence text, and private-canary absence across browser storage and downloaded bytes
-- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts — `two analyst contexts resolve stale titles and download redacted evidence`
+- **test**: dashboard/tests/e2e/world-os-investigations.spec.ts
 - **tier**: full-offline
 - **status**: newly-automated
+
+### AE-EXT-WORLD-WORKSPACE-001
+
+- **requirement**: EXT-WORLD-WORKSPACE
+- **risk**: high
+- **preconditions**: Canonical world workspace projection
+- **given**: Live and historical region, place, agent, organization, presence, and flow rows
+- **when**: World renders, selects a region/place, and follows a related workspace link
+- **then**: Invalid coordinates and unknown/duplicate flows are rejected; run/fork/tick and public lineage are preserved
+- **oracle**: Pure-model tests, projection tests, and Chromium route flow
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+### AE-EXT-ORGANIZATIONS-WORKSPACE-001
+
+- **requirement**: EXT-ORGANIZATIONS-WORKSPACE
+- **risk**: high
+- **preconditions**: Canonical organizations workspace projection
+- **given**: Public firms, banks, agencies, contracts, disclosures, and lifecycle history
+- **when**: Directory filters, keyboard selection, and a validated deep link are used
+- **then**: Currency units and as-of lifecycle remain explicit; owner, tenant, and private fields are absent
+- **oracle**: Pure-model tests, typed build, and Chromium desktop/mobile flow
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+### AE-EXT-MARKETS-WORKSPACE-001
+
+- **requirement**: EXT-MARKETS-WORKSPACE
+- **risk**: high
+- **preconditions**: Canonical markets workspace projection
+- **given**: Orders, executions, FX records, currencies, and circuit-breaker events
+- **when**: Market tabs and filters render at live and empty historical ticks
+- **then**: Books and executions remain separate, units/direction are explicit, and empty evidence is not reported as measured zero activity
+- **oracle**: Pure-model tests and Chromium empty/live route flows
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+### AE-EXT-POLITICS-LAW-WORKSPACE-001
+
+- **requirement**: EXT-POLITICS-LAW-WORKSPACE
+- **risk**: high
+- **preconditions**: Canonical politics-law workspace projection
+- **given**: Bills, votes, rules, lobbying, contracts, obligations, matters, mergers, and reviews
+- **when**: Institutional sections render at enabled and configured-disabled ticks
+- **then**: Record families stay distinct and retained rows from disabled institutions remain hidden
+- **oracle**: Pure-model tests and Chromium disabled-state canary flow
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+### AE-EXT-EXPERIMENTS-WORKSPACE-001
+
+- **requirement**: EXT-EXPERIMENTS-WORKSPACE
+- **risk**: high
+- **preconditions**: Canonical experiments workspace projection
+- **given**: Checkpoints, shocks, predictions, acceptance records, campaign artifacts, datasets, and scenarios
+- **when**: Evidence is classified and live/historical detail routes render
+- **then**: Mechanics, partial, blocked, failed, live, and eligible evidence fail closed; observer routes start no provider spend or mutation
+- **oracle**: Classification unit matrix and Chromium current-only/deep-link flows
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+### AE-EXT-WORLD-OS-ROUTE-COMPATIBILITY-001
+
+- **requirement**: EXT-WORLD-OS-ROUTE-COMPATIBILITY
+- **risk**: high
+- **preconditions**: All five former placeholder routes implemented
+- **given**: Desktop, 390px mobile, reduced-motion, historical, stale-safe, privacy-canary, and command-navigation contexts
+- **when**: Chromium traverses every canonical route and validated detail link
+- **then**: No page-level horizontal overflow, private/future canary, console error, page error, or non-navigation request failure occurs
+- **oracle**: Combined route, state, and privacy Playwright suites
+- **test**: dashboard/tests/e2e/world-os-routes.spec.ts
+- **tier**: full-offline
+- **status**: newly-automated
+
+These cases close the canonical placeholder-route contract. Deeper later product redesigns remain outside this scope.

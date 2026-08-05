@@ -52,7 +52,8 @@ async function mockCommonApis(page: Page, options: {
   }));
 
   await page.route("**/api/v2/**", async route => {
-    const path = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const path = requestUrl.pathname;
     if (path === "/api/v2/snapshot") {
       return route.fulfill({ json: {
         ...baseEnvelope, projection: "world.snapshot", data: {
@@ -98,6 +99,14 @@ async function mockCommonApis(page: Page, options: {
       return route.fulfill({ json: {
         ...baseEnvelope, projection: "civic.summary", data: {
           enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+        },
+      } });
+    }
+    if (path === "/api/v2/workspaces/world") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, tick: requestUrl.searchParams.get("tick") === "4" ? 4 : 6,
+        projection: "workspace.world", data: {
+          enabled: true, regions: [], agents: mapAgents, organizations: [], places: [], presence: [], flows: [],
         },
       } });
     }
