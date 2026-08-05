@@ -102,6 +102,26 @@ test("investigation title editor submits the authoritative expected version", as
   });
 });
 
+test("investigation title editor announces an in-progress save", async () => {
+  const vite = await createServer({
+    appType: "custom", logLevel: "silent", server: { middlewareMode: true },
+  });
+  try {
+    const { InvestigationTitleEditor } = await vite.ssrLoadModule(
+      "/src/components/InvestigationTitleEditor.tsx",
+    );
+    const markup = renderToStaticMarkup(React.createElement(InvestigationTitleEditor, {
+      title: "Local title", serverTitle: "Original", version: 2,
+      pending: true, blocked: false, error: "",
+      onChange: () => {}, onSave: () => {}, onCancel: () => {},
+    }));
+    assert.match(markup, /Saving/);
+    assert.doesNotMatch(markup, /Saved as version 2/);
+  } finally {
+    await vite.close();
+  }
+});
+
 test("version conflict renders explicit recovery without a hidden retry", async () => {
   const vite = await createServer({
     appType: "custom", logLevel: "silent", server: { middlewareMode: true },

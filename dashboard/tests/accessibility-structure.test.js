@@ -32,11 +32,12 @@ test("city instrumentation keeps supporting copy inside each definition", () => 
   )?.[0];
 
   assert.ok(instruments, "city instrumentation definition list is present");
-  assert.doesNotMatch(instruments, /<\/dd><small>/);
-  assert.match(
-    instruments,
-    /<dd><span className="civic-city__instrument-value">[\s\S]*?<small>[\s\S]*?<\/small><\/dd>/,
-  );
+  const definitions = [...instruments.matchAll(/<dd(?:\s[^>]*)?>([\s\S]*?)<\/dd>/g)];
+  assert.equal(definitions.length, 8);
+  for (const [, content] of definitions) {
+    assert.match(content, /<span className="civic-city__instrument-value">[\s\S]*?<small>[\s\S]*?<\/small>/);
+  }
+  assert.doesNotMatch(instruments, /<\/dd>\s*<small>/);
 });
 
 test("decorative metric sparklines do not duplicate accessible labels and values", () => {

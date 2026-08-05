@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   buildProductNavigation,
   isProductNavigationActive,
 } from "../src/lib/productNavigation.js";
+
+const observatorySource = readFileSync(
+  new URL("../src/components/Observatory.jsx", import.meta.url), "utf8",
+);
 
 test("product navigation keeps app and citizenship surfaces on canonical paths", () => {
   const items = buildProductNavigation({
@@ -40,4 +45,11 @@ test("product navigation distinguishes Commons and citizen onboarding", () => {
   );
   assert.equal(isProductNavigationActive("join", "/oauth/authorize"), true);
   assert.equal(isProductNavigationActive("my_agents", "/my-agents"), true);
+});
+
+test("hosted observatory does not advertise the unsupported World OS route", () => {
+  assert.match(
+    observatorySource,
+    /\{!hosted && <a[^>]+href=\{`\/runs\/\$\{encodeURIComponent\(status\.run_id\)\}\/overview`\}>Open World OS<\/a>\}/,
+  );
 });

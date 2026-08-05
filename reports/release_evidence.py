@@ -201,10 +201,7 @@ def _validate_artifacts(
         if actual != expected:
             errors.append(_error(gate_id, "artifact_hash_mismatch", f"artifact {index} hash differs"))
             continue
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = ""
+        text = raw.decode("utf-8", errors="ignore")
         if text and _contains_secret(text):
             errors.append(_error(gate_id, "secret_detected", f"artifact {index} contains sensitive text"))
         collected.append({"path": str(path_value), "sha256": actual})

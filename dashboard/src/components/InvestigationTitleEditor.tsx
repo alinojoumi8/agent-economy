@@ -40,7 +40,9 @@ export function InvestigationTitleEditor({
     <div id="investigation-title-guidance" className={validation || error ? "world-os-form-error" : "world-os-form-guidance"} role={error ? "alert" : undefined}>
       {error || validation || (blocked
         ? "Resolve the server version conflict before saving this draft."
-        : `Saved as version ${version}. Titles are limited to 160 characters.`)}
+        : pending
+          ? "Saving…"
+          : `Saved as version ${version}. Titles are limited to 160 characters.`)}
     </div>
   </form>;
 }
