@@ -1502,6 +1502,40 @@ def test_relative_checkpoint_config_is_db_relative_and_receipts_do_not_leak_abso
     assert str(tmp_path.resolve()) not in rendered
 
 
+def test_relative_checkpoint_config_reconstructs_runtime_repo_layout(tmp_path: Path):
+    run_directory = tmp_path / "data" / "runs"
+    run_directory.mkdir(parents=True)
+    store = _seed_healthy_store(
+        run_directory,
+        checkpoint_dir="data/checkpoints",
+    )
+    runtime_checkpoint_directory = tmp_path / "data" / "checkpoints"
+    runtime_checkpoint_directory.mkdir(parents=True)
+    try:
+        for row in store.query("SELECT id,tick,path FROM checkpoints ORDER BY tick,id"):
+            source = Path(row["path"])
+            source_manifest = checkpoint_manifest_path(source)
+            target = runtime_checkpoint_directory / source.name
+            target_manifest = checkpoint_manifest_path(target)
+            source.replace(target)
+            source_manifest.unlink()
+            write_checkpoint_manifest(target)
+            assert target_manifest.is_file()
+            store.execute(
+                "UPDATE checkpoints SET path=? WHERE id=?",
+                (str(target), int(row["id"])),
+            )
+        store.commit()
+
+        report = evaluate_supply_recovery(store)
+    finally:
+        _close(store)
+
+    assert report["passed"] is True
+    assert report["checks"]["checkpoint_retention"] is True
+    assert report["evidence"]["checkpoints"]["current_row_count"] == 2
+
+
 def test_relative_checkpoint_rows_cannot_redirect_validation_outside_database_directory(
         tmp_path: Path):
     store = _seed_healthy_store(tmp_path, checkpoint_dir="relative-checkpoints")

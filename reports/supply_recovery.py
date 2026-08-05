@@ -1572,9 +1572,7 @@ def _checkpoint_directory_from_rows(
 
     if database_parent is None:
         return None
-    try:
-        expected = (database_parent / configured).resolve()
-    except (OSError, RuntimeError, ValueError):
+    if not configured.parts or any(part == ".." for part in configured.parts):
         return None
 
     candidates: set[Path] = set()
@@ -1593,7 +1591,26 @@ def _checkpoint_directory_from_rows(
         if str(database) != str(resolved):
             continue
         candidates.add(resolved.parent)
-    return expected if candidates == {expected} else None
+    if len(candidates) != 1:
+        return None
+
+    # Runtime configuration is resolved from the launch directory, which can
+    # be the repository root while the run database lives under data/runs.
+    # Reconstruct that location without consulting the evaluator's current
+    # working directory: the one persisted canonical parent must equal the
+    # configured safe relative path beneath the database directory or one of
+    # its non-root ancestors.
+    candidate = next(iter(candidates))
+    for base in (database_parent, *database_parent.parents):
+        if base.parent == base:
+            continue
+        try:
+            expected = (base / configured).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if expected == candidate:
+            return candidate
+    return None
 
 
 def _validate_checkpoint_artifact(
