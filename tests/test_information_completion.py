@@ -235,6 +235,38 @@ def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
     legacy.close()
 
 
+def test_news_projection_retains_safe_field_when_other_numeric_field_is_redacted(
+        tmp_path):
+    world = _world(
+        tmp_path,
+        "numeric-news-partial.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    world.store.commit()
+
+    projected = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Output surged 987654321%",
+        "body": "A cautious production update remains available.",
+        "source_event_ids": [event_id],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+
+    assert projected["headline"] == ""
+    assert projected["body"] == "A cautious production update remains available."
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    world.close()
+
+
 def test_news_grounding_falls_back_on_malformed_article_fields(tmp_path):
     world = _world(tmp_path, "malformed-article.db")
     event_id = world.store.log_event(

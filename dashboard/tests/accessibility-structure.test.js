@@ -14,6 +14,10 @@ const macroSource = readFileSync(
   new URL("../src/components/MacroOverview.jsx", import.meta.url),
   "utf8",
 );
+const workspaceSharedSource = readFileSync(
+  new URL("../src/workspaces/workspaceShared.tsx", import.meta.url),
+  "utf8",
+);
 
 test("labeled World OS summary groups expose a valid semantic role", () => {
   assert.match(
@@ -23,6 +27,13 @@ test("labeled World OS summary groups expose a valid semantic role", () => {
   assert.match(
     overviewSource,
     /className="world-os-metrics" role="group" aria-label="World summary"/,
+  );
+});
+
+test("workspace projection loading state is announced as status", () => {
+  assert.match(
+    workspaceSharedSource,
+    /className="world-os-loading" role="status" aria-label="Loading workspace projection"/,
   );
 });
 

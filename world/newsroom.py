@@ -384,17 +384,29 @@ class Newsroom:
                     event["kind"], load_json(event["payload_json"], {}) or {}),
                 "importance": float(event["importance"]),
             })
-        original = f"{row.get('headline', '')} {row.get('body', '')}"
+        original_headline = str(row.get("headline") or "").strip()
+        original_body = str(row.get("body") or "").strip()
         grounding_enabled = model_grounding_active(
             self.config, int(enforcement_tick))
-        sanitized = sanitize_model_numeric_narrative(
-            original,
+        sanitized_headline = sanitize_model_numeric_narrative(
+            original_headline,
             grounding_enabled=grounding_enabled,
             fallback="",
             sources=events,
         )
-        redacted = bool(original.strip() and sanitized == "")
-        if redacted:
+        sanitized_body = sanitize_model_numeric_narrative(
+            original_body,
+            grounding_enabled=grounding_enabled,
+            fallback="",
+            sources=events,
+        )
+        row["headline"] = sanitized_headline
+        row["body"] = sanitized_body
+        redacted = (
+            sanitized_headline != original_headline
+            or sanitized_body != original_body
+        )
+        if not sanitized_headline and not sanitized_body:
             readable = (
                 str(events[0]["kind"]).replace("_", " ")
                 if events else "recorded event"
@@ -721,7 +733,10 @@ class Conversations:
                         "shared_topic": context["shared_topic"],
                     },
                 )
-                if text and not sanitized_text:
+                if sanitized_text:
+                    text = str(sanitized_text).strip()[:300]
+                    env["text"] = text
+                elif text:
                     env = conversation_turn(context)
                     text = str(env.get("text", "")).strip()[:300]
             avoid_texts = recent_utterances + conversation_so_far

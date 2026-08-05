@@ -86,6 +86,7 @@ test("investigation draft transitions validate, cancel, save, and switch records
 
   assert.equal(investigationTitleError("   "), "Title is required.");
   assert.equal(investigationTitleError("x".repeat(160)), "");
+  assert.equal(investigationTitleError(`  ${"x".repeat(160)}  `), "");
   assert.equal(investigationTitleError("x".repeat(161)), "Title must be 160 characters or fewer.");
   assert.equal(cancelInvestigationEdit(state).titleDraft, "Original");
   state = editInvestigationTitle(createInvestigationDraft(first), "  Original  ");

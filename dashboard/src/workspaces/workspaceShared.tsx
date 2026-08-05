@@ -38,7 +38,7 @@ export function useWorkspaceProjection<T>(projection: string, path: string) {
 export function WorkspaceState({
   loading, error, children,
 }: { loading: boolean; error: Error | null; children: ReactNode }) {
-  if (loading) return <div className="world-os-loading" aria-label="Loading workspace projection" />;
+  if (loading) return <div className="world-os-loading" role="status" aria-label="Loading workspace projection" />;
   if (error) return <div className="world-os-error" role="alert">{error.message}</div>;
   return <>{children}</>;
 }

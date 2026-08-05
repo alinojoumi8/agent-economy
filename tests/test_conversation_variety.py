@@ -188,6 +188,34 @@ def test_conversation_rng_and_prior_lines_are_not_numeric_grounding_sources(tmp_
     world.close()
 
 
+def test_conversation_persists_nonempty_sanitized_provider_text(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path)
+    world.config["beliefs"] = {"model_grounding_from_tick": 1}
+    world.conversations.config = world.config
+    world.conversations.turns = 1
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    raw_line = "Provider text with an unsupported 987654321% claim."
+    sanitized_line = "Conditions may change after the unsupported claim is removed."
+
+    async def completion(request, **kwargs):
+        return SimpleNamespace(parsed={"text": raw_line, "rumor_bank": None})
+
+    monkeypatch.setattr(
+        "world.newsroom.sanitize_model_numeric_narrative",
+        lambda *args, **kwargs: sanitized_line,
+    )
+    world.conversations.gw.complete = completion
+
+    asyncio.run(world.conversations._converse(
+        1, agent_ids[0], agent_ids[1]))
+
+    assert world.store.scalar(
+        "SELECT text FROM messages ORDER BY seq LIMIT 1") == sanitized_line
+    world.close()
+
+
 def test_conversation_uses_the_configured_output_budget(tmp_path):
     world = _world(tmp_path)
     world.conversations.config["llm"]["conversation_max_tokens"] = 800

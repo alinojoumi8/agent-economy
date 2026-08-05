@@ -3,8 +3,8 @@ export function normalizedInvestigationTitle(title) {
 }
 
 export function investigationTitleError(title) {
-  const value = String(title ?? "");
-  if (!value.trim()) return "Title is required.";
+  const value = normalizedInvestigationTitle(title);
+  if (!value) return "Title is required.";
   if (value.length > 160) return "Title must be 160 characters or fewer.";
   return "";
 }
