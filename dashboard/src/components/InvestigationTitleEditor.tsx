@@ -37,7 +37,7 @@ export function InvestigationTitleEditor({
       <button className="button" type="button" disabled={unchanged || pending}
         onClick={onCancel}>Cancel</button>
     </div>
-    <div id="investigation-title-guidance" className={validation || error ? "world-os-form-error" : "world-os-form-guidance"} role={error ? "alert" : undefined}>
+    <div id="investigation-title-guidance" className={validation || error ? "world-os-form-error" : "world-os-form-guidance"} role={validation || error ? "alert" : undefined}>
       {error || validation || (blocked
         ? "Resolve the server version conflict before saving this draft."
         : pending

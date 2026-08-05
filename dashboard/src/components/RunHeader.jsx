@@ -6,8 +6,16 @@ import worldOsEmblem from "../assets/world-os-emblem.png";
 import { Badge } from "./ui";
 import { CitizenMenu } from "./CitizenMenu";
 
+const CONTROLLABLE_RUN_STATUSES = new Set(["created", "paused", "running", "active"]);
+
+export function isTerminalRunStatus(value) {
+  const status = String(value ?? "").trim().toLowerCase();
+  return Boolean(status) && !CONTROLLABLE_RUN_STATUSES.has(status);
+}
+
 export function runControlState(status, busy = "") {
-  const running = Boolean(
+  const terminal = isTerminalRunStatus(status?.status);
+  const running = !terminal && Boolean(
     status?.running || status?.status === "running" || busy === "start" || busy === "step"
   );
   const interruptibleBusy = busy === "start" || busy === "step";
@@ -15,7 +23,7 @@ export function runControlState(status, busy = "") {
     running,
     displayStatus: running ? "running" : status?.status || "loading",
     pauseDisabled: !running || Boolean(busy && !interruptibleBusy),
-    stopDisabled: status?.status === "halted" || Boolean(busy && !interruptibleBusy),
+    stopDisabled: terminal || Boolean(busy && !interruptibleBusy),
   };
 }
 
@@ -23,7 +31,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
   hosted = false, canControl = true }) {
   const [busy, setBusy] = useState("");
   const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(status, busy);
-  const terminal = status?.status === "halted";
+  const terminal = isTerminalRunStatus(status?.status);
   const participantActive = Boolean(participant?.active);
   const participantReady = Boolean(participant?.queued_action);
   const limitReached = status?.remaining_ticks === 0;

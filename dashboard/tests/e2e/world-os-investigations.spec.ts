@@ -230,16 +230,22 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.keyboard.press("Escape");
   await expect(conflict).toBeHidden();
   await expect(titleB).toBeFocused();
-  await pageB.getByRole("button", { name: "Review version conflict" }).click();
-  await conflict.getByRole("button", { name: "Reload server version" }).click();
-  await expect(titleB).toHaveValue("Remote title");
+  await expect(titleB).toHaveValue("Local draft");
+  await expect(pageB.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await pageB.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(pageB.getByText("Saved as version 3.")).toBeVisible();
+  expect(state.patchRequests).toBe(3);
 
   await titleA.fill("Remote second");
   await pageA.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(pageA.getByText("Saved as version 3.")).toBeVisible();
+  const conflictA = pageA.getByRole("dialog", { name: "Investigation changed on the server" });
+  await expect(conflictA).toContainText("Server version 3: Local draft");
+  await conflictA.getByRole("button", { name: "Continue editing" }).click();
+  await pageA.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(pageA.getByText("Saved as version 4.")).toBeVisible();
   await titleB.fill("Local copy");
   await pageB.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(conflict).toContainText("Server version 3: Remote second");
+  await expect(conflict).toContainText("Server version 4: Remote second");
   state.delayNextListMs = 2_000;
   await conflict.getByRole("button", { name: "Save draft as new investigation" }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-2\?/);
@@ -247,7 +253,7 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await expect(titleB).toHaveValue("Local copy", { timeout: 500 });
   expect(state.createRequests).toBe(1);
   expect(state.records.get("inv-1")?.title).toBe("Remote second");
-  expect(state.records.get("inv-1")?.version).toBe(3);
+  expect(state.records.get("inv-1")?.version).toBe(4);
   expect(state.records.get("inv-2")?.items).toEqual([]);
   expect(state.records.get("inv-2")?.hypotheses).toEqual([]);
 

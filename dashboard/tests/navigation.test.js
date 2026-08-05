@@ -52,4 +52,5 @@ test("hosted observatory does not advertise the unsupported World OS route", () 
     observatorySource,
     /\{!hosted && <a[^>]+href=\{`\/runs\/\$\{encodeURIComponent\(status\.run_id\)\}\/overview`\}>Open World OS<\/a>\}/,
   );
+  assert.match(observatorySource, /runId=\{hosted \? "" : status\?\.run_id\}/);
 });

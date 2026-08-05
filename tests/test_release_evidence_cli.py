@@ -37,7 +37,9 @@ def test_release_evidence_cli_is_offline_and_writes_failed_package(
         run.main()
 
     assert exc.value.code == 5
-    payload = json.loads((tmp_path / "release-evidence.json").read_text())
+    payload = json.loads(
+        (tmp_path / "release-evidence.json").read_text(encoding="utf-8")
+    )
     assert payload["overall_status"] == "failed"
     assert {gate["gate_id"] for gate in payload["gates"]} == {
         "dependency_license_secret_audit",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,16 @@ import {
   initialParticipantValues,
   participantActionKey,
 } from "../src/participant.js";
+
+const participantPanelSource = readFileSync(
+  new URL("../src/components/ParticipantPanel.jsx", import.meta.url), "utf8",
+);
+
+test("participant mutations catch failures and expose an inline alert", () => {
+  assert.equal((participantPanelSource.match(/catch \(reason\)/g) || []).length, 2);
+  assert.match(participantPanelSource, /role="alert"/);
+  assert.match(participantPanelSource, /Participant action failed/);
+});
 
 test("participant form preserves typed select values and variants", () => {
   const descriptor = {

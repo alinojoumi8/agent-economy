@@ -70,7 +70,15 @@ export function investigationUpdatePayload(state) {
 
 export function continueInvestigationConflict(state) {
   if (!state.conflict) return state;
-  return { ...state, conflict: { ...state.conflict, open: false } };
+  const server = state.conflict.server;
+  return {
+    ...state,
+    server,
+    dirty: normalizedInvestigationTitle(state.titleDraft)
+      !== normalizedInvestigationTitle(server.title),
+    conflict: null,
+    error: "",
+  };
 }
 
 export function reopenInvestigationConflict(state) {

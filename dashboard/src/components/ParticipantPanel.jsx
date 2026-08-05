@@ -19,6 +19,7 @@ export function ParticipantPanel({ participant, act }) {
   const [values, setValues] = useState({});
   const [reasoning, setReasoning] = useState("");
   const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
 
   const descriptor = useMemo(
     () => catalog.find(item => participantActionKey(item) === selected) || firstEnabled,
@@ -37,25 +38,32 @@ export function ParticipantPanel({ participant, act }) {
     if (!descriptor) return;
     const action = buildParticipantAction(descriptor, values);
     setBusy("queue");
+    setError("");
     try {
       await act("/api/participant/action", {
         expected_tick: participant.completed_tick,
         action,
         reasoning,
       });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(""); }
   }
 
   async function release() {
     setBusy("release");
+    setError("");
     try {
       await act("/api/participant/release", { expected_tick: participant.completed_tick });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(""); }
   }
 
   return <Panel title="Participant Mode" eyebrow="Sandbox - one citizen - one action per day"
     className="col-span-full"
     action={<Badge tone={active ? "good" : "neutral"}>{active ? "Control active" : "Waiting for citizen"}</Badge>}>
+    {error && <div role="alert" className="m-4 rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Participant action failed: {error}</div>}
     {!active ? <Empty>Open a living citizen below and choose <strong>Take control</strong>.</Empty> :
       <div className="grid gap-4 xl:grid-cols-[.8fr_1.5fr_.9fr]">
         <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">

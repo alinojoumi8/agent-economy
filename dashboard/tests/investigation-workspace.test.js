@@ -10,6 +10,7 @@ import { downloadText } from "../src/lib/downloadText.js";
 import {
   acceptSavedInvestigation,
   cancelInvestigationEdit,
+  continueInvestigationConflict,
   createInvestigationDraft,
   editInvestigationTitle,
   investigationTitleError,
@@ -56,6 +57,25 @@ test("investigation title drafts preserve local work across a conflict", () => {
   assert.equal(state.server.version, 2);
   assert.equal(state.dirty, false);
   assert.equal(state.conflict, null);
+});
+
+test("continuing after a conflict rebases the draft without discarding it", () => {
+  const serverV1 = { id: "inv-1", title: "Original", version: 1 };
+  let state = editInvestigationTitle(createInvestigationDraft(serverV1), "Local draft");
+  state = openInvestigationConflict(state, {
+    ...serverV1, title: "Remote title", version: 2,
+  });
+
+  state = continueInvestigationConflict(state);
+
+  assert.equal(state.titleDraft, "Local draft");
+  assert.equal(state.server.version, 2);
+  assert.equal(state.conflict, null);
+  assert.equal(state.dirty, true);
+  assert.deepEqual(investigationUpdatePayload(state), {
+    expected_version: 2,
+    title: "Local draft",
+  });
 });
 
 test("investigation draft transitions validate, cancel, save, and switch records", () => {
@@ -117,6 +137,14 @@ test("investigation title editor announces an in-progress save", async () => {
     }));
     assert.match(markup, /Saving/);
     assert.doesNotMatch(markup, /Saved as version 2/);
+
+    const invalidMarkup = renderToStaticMarkup(React.createElement(InvestigationTitleEditor, {
+      title: " ", serverTitle: "Original", version: 2,
+      pending: false, blocked: false, error: "",
+      onChange: () => {}, onSave: () => {}, onCancel: () => {},
+    }));
+    assert.match(invalidMarkup, /role="alert"/);
+    assert.match(invalidMarkup, /Title is required/);
   } finally {
     await vite.close();
   }

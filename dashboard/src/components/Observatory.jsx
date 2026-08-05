@@ -5,7 +5,7 @@ import { AcceptancePanel } from "./AcceptancePanel";
 import { ConversationsPanel, EventsPanel, NewsPanel } from "./InformationPanels";
 import { CalibrationPanel, CostPanel, OraclePanel } from "./OracleAndCost";
 import { ReplayModal } from "./ReplayModal";
-import { RunHeader } from "./RunHeader";
+import { isTerminalRunStatus, RunHeader } from "./RunHeader";
 import { ParticipantPanel } from "./ParticipantPanel";
 import { ShockModal } from "./ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
@@ -24,7 +24,8 @@ export function Observatory({ hostedSession = null }) {
   const [replayOpen, setReplayOpen] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(false);
   const status = data.status;
-  const dayZero = status?.tick === 0 && !status?.running && !introDismissed;
+  const terminal = isTerminalRunStatus(status?.status);
+  const dayZero = status?.tick === 0 && !status?.running && !introDismissed && !terminal;
   const participant = hosted
     ? { enabled: false, active: false, action_catalog: [] }
     : data.participant;
@@ -61,7 +62,7 @@ export function Observatory({ hostedSession = null }) {
         firms={data.firms}
         events={data.events}
         map={data.v2?.map}
-        runId={status?.run_id}
+        runId={hosted ? "" : status?.run_id}
         tick={status?.tick ?? "live"}
         phase={status?.phase}
         status={status?.status}
