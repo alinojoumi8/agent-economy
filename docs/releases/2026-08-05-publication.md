@@ -38,10 +38,18 @@
 
 ## Remote publication
 
-- Status: `not_run`
-- Remote head after publication: `not_run`
+- Status: `passed_fast_forward`
+- Remote head observed immediately after publication: `362d3973a34a03579304837f1be1189b7a9476cc`
+- Verification: a fresh `git fetch origin main` returned the same commit as local `HEAD`, and `git merge-base --is-ancestor HEAD origin/main` exited `0`.
+- Mutation: `git push origin HEAD:main`; no force, rebase, tag, release, or deployment action was used.
 
 ## Branch disposition
 
 | Branch | Relationship to published head | Action |
 |---|---|---|
+| `codex/integrate-origin-20260805` | Fully contained; published head has 6 additional commits. | Retain as a safety reference. |
+| `codex/pre-pull-20260805` | Fully contained; published head has 57 additional commits. | Retain as a historical safety point. |
+| `codex/reconcile-release` | Diverged: published head has 44 unique commits; branch has 26 unique commits. | Preserve its linked worktree and reconcile selectively under the recovery plan. |
+| `feature/living-economy-map` | Diverged: published head has 51 unique commits; branch has 21 unique commits. | Preserve the dirty linked worktree and execute the salvage plan; never merge wholesale. |
+| PR 39 Recharts 3.10.1 | Open dependency branch; failing historical dashboard CI is not contained. | Rebase/apply independently on the published head and rerun its full gate. |
+| PR 40 React Query 5.101.4 | Open dependency branch; failing historical dashboard CI is not contained. | Rebase/apply independently on the published head and rerun its full gate. |
