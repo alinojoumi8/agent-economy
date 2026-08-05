@@ -9,7 +9,7 @@ from typing import Any
 
 _NUMBER = re.compile(
     r"(?<![\w,.])(?P<currency>\$)?(?P<sign>[+-])?"
-    r"(?P<number>\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"(?P<number>\d+(?:,\d{3})*(?:\.\d+)?(?:[eE][+-]?\d+)?)"
     r"(?P<percent>%?)(?![\w])"
 )
 

@@ -29,10 +29,12 @@ def _seed_workspace_history(economy) -> None:
     )
     store.execute(
         "INSERT INTO regions (id,region_key,name,currency_code,population_target,"
-        "specialization_json,x,y,legal_ruleset) VALUES (1,'north','North','USD',10,'{}',.2,.3,'rules')")
+        "specialization_json,x,y,legal_ruleset) VALUES "
+        "(1,'north','North','USD',10,'{}',.2,.3,'rules'),"
+        "(2,'south','South','CAD',10,'{}',.8,.7,'rules')")
     store.execute(
         "INSERT INTO currencies (code,name,minor_unit,numeraire_rate_ppm,issuer_region_id) "
-        "VALUES ('USD','Dollar',2,1000000,1)")
+        "VALUES ('USD','Dollar',2,1000000,1),('CAD','Canadian Dollar',2,750000,2)")
     store.execute(
         "INSERT INTO agents (id,name,kind,occupation,age,alive,arrived_tick,region_id,population_tier) "
         "VALUES (1,'Public Agent','citizen','worker',30,1,0,1,'core')")
@@ -52,6 +54,24 @@ def _seed_workspace_history(economy) -> None:
     store.execute(
         "INSERT INTO ledger_entries (id,tick,txn_id,account_id,delta_cents) "
         "VALUES (900,3,900,900,125)")
+    store.execute(
+        "INSERT INTO accounts (id,owner_type,owner_id,kind,label,balance_cents,currency_code) "
+        "VALUES (901,'bank',1,'reserve','south reserve',500,'CAD'),"
+        "(902,'bank',1,'equity','south equity',-25,'CAD')")
+    store.execute(
+        "INSERT INTO transactions (id,tick,kind,memo,currency_code) "
+        "VALUES (901,3,'seed','workspace bank','CAD')")
+    store.execute(
+        "INSERT INTO ledger_entries (id,tick,txn_id,account_id,delta_cents) "
+        "VALUES (901,3,901,901,500),(902,3,901,902,-25)")
+    store.execute(
+        "INSERT INTO banks (id,name,reserve_account_id,equity_account_id,status,failed_tick,"
+        "region_id,currency_code) VALUES "
+        "(1,'South Bank',901,902,'failed',9,2,'CAD'),"
+        "(2,'Accountless Bank',NULL,NULL,'open',NULL,1,'USD')")
+    store.execute(
+        "INSERT INTO agencies (id,name,mandate,capacity,leader_agent_id) "
+        "VALUES (1,'Genesis Agency','markets',1.0,1)")
     store.execute(
         "INSERT INTO orders (id,tick,agent_id,firm_id,side,qty,qty_remaining,seq,status) "
         "VALUES (1,4,1,1,'buy',3,3,1,'filled'),(2,9,1,2,'sell',7,7,2,'open')")
@@ -154,10 +174,23 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
     assert [item["tick"] for item in markets["trades"]] == [4]
     assert [item["tick"] for item in markets["fx_orders"]] == [4]
     assert [item["tick"] for item in markets["fx_trades"]] == [4]
-    assert payloads["organizations"]["organizations"][0]["status"] == "private"
-    assert payloads["organizations"]["organizations"][0]["active"] is True
-    assert payloads["organizations"]["organizations"][0]["listed_tick"] is None
-    assert payloads["organizations"]["organizations"][0]["bankrupt_tick"] is None
+    past_firm = next(
+        item for item in payloads["organizations"]["organizations"]
+        if item["type"] == "firm" and item["id"] == 1)
+    assert past_firm["status"] == "private"
+    assert past_firm["active"] is True
+    assert past_firm["listed_tick"] is None
+    assert past_firm["bankrupt_tick"] is None
+    south_bank = next(item for item in payloads["organizations"]["banks"] if item["id"] == 1)
+    assert south_bank["status"] == "open"
+    assert south_bank["currency_code"] == "CAD"
+    assert south_bank["region_name"] == "South"
+    assert south_bank["reserve_cents"] == 500
+    assert south_bank["equity_cents"] == -25
+    accountless = next(item for item in payloads["organizations"]["banks"] if item["id"] == 2)
+    assert accountless["reserve_cents"] is None
+    assert accountless["equity_cents"] is None
+    assert payloads["organizations"]["institutions"]["agencies"][0]["name"] == "Genesis Agency"
     assert payloads["world"]["agents"][0]["died_tick"] is None
     assert payloads["world"]["places"][0]["closed_tick"] is None
     migration = next(item for item in payloads["world"]["flows"] if item["kind"] == "migration")
@@ -196,7 +229,10 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
         assert politics["mergers"][0][field] is None
 
     at_ten = build_organizations_workspace(economy.store, as_of_tick=10)
-    assert next(item for item in at_ten["organizations"] if item["id"] == 1)["status"] == "bankrupt"
+    assert next(
+        item for item in at_ten["organizations"]
+        if item["type"] == "firm" and item["id"] == 1
+    )["status"] == "bankrupt"
 
 
 def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(economy, tmp_path):

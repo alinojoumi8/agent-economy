@@ -58,7 +58,10 @@ def test_numeric_claims_canonicalize_money_percent_commas_and_signs():
     assert numeric_claims(
         "Revenue was $3,000.00, up 7.50% from -2; +4 was unchanged."
     ) == {"$3000", "7.5%", "-2", "4"}
-    assert numeric_claims("Malformed 12,34 and scientific 1e9 are not claims") == set()
+    assert numeric_claims("Malformed 12,34 is not a claim") == set()
+    assert numeric_claims(
+        "Scientific 1e-05, +2.5E+3, and $4e2 are complete claims."
+    ) == {"0.00001", "2500", "$400"}
 
 
 def test_public_narrative_accepts_only_exact_supplied_numeric_tokens():
@@ -70,6 +73,10 @@ def test_public_narrative_accepts_only_exact_supplied_numeric_tokens():
     }
 
     assert narrative_numbers_are_grounded("Revenue was $3000.", sources)
+    assert narrative_numbers_are_grounded(
+        "Threshold was 1e-05.", {"threshold": 1e-5})
+    assert not narrative_numbers_are_grounded(
+        "Threshold was 1e-06.", {"threshold": 1e-5})
     assert not narrative_numbers_are_grounded("Output rose 75%.", sources)
     assert not narrative_numbers_are_grounded("There were 1 flags.", {"flag": True})
     assert sanitize_model_numeric_narrative(

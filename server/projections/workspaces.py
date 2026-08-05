@@ -84,9 +84,12 @@ def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
 
 
 def _banks_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
+    # Banks are genesis institutions; the schema has no creation tick to filter.
     rows = _dicts(store.query(
-        "SELECT id,name,reserve_account_id,equity_account_id,reserve_requirement_bps,"
-        "failed_tick FROM banks ORDER BY id"))
+        "SELECT b.id,b.name,b.reserve_account_id,b.equity_account_id,"
+        "b.reserve_requirement_bps,b.failed_tick,b.region_id,r.name AS region_name,"
+        "b.currency_code FROM banks b LEFT JOIN regions r ON r.id=b.region_id "
+        "ORDER BY b.id"))
     balances = _balances_as_of(
         store,
         (account_id for row in rows
@@ -97,9 +100,12 @@ def _banks_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
         failed = row.pop("failed_tick", None)
         row["status"] = "failed" if failed is not None and int(failed) <= as_of_tick else "open"
         row["active"] = row["status"] == "open"
-        row["reserve_cents"] = balances.get(int(row.pop("reserve_account_id")), 0)
-        row["equity_cents"] = balances.get(int(row.pop("equity_account_id")), 0)
-        row["currency_code"] = "USD"
+        reserve_id = row.pop("reserve_account_id")
+        equity_id = row.pop("equity_account_id")
+        row["reserve_cents"] = (
+            balances.get(int(reserve_id), 0) if reserve_id is not None else None)
+        row["equity_cents"] = (
+            balances.get(int(equity_id), 0) if equity_id is not None else None)
     return rows
 
 
@@ -205,6 +211,7 @@ def build_organizations_workspace(store, *, as_of_tick: int) -> dict:
     config = _config(store)
     firms = _firms_as_of(store, tick)
     banks = _banks_as_of(store, tick)
+    # Agencies are also created only at genesis and have no creation-tick column.
     agencies = _dicts(store.query(
         "SELECT a.id,a.name,a.mandate,a.capacity,a.leader_agent_id FROM agencies a ORDER BY a.id"))
     for row in agencies:
