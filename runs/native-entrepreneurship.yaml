@@ -13,6 +13,14 @@ entrepreneurship:
   personal_reserve_cents: 100000
   opening_capital_share_bps: 3500
   maximum_active_competitors: 3
+  maximum_formations_per_tick: 2
   sales_lookback_ticks: 30
   stockout_inventory_threshold: 2
   eligible_sectors: [services, technology, manufacturing, logistics, healthcare, energy, agriculture]
+  autonomous_preseed: true
+  preseed_pitch_delay_ticks: 1
+  preseed_raise_cents: 250000
+  autonomous_mergers: true
+  minimum_merger_age_ticks: 30
+  maximum_merger_cash_share_bps: 4000
+  merger_premium_bps: 1000

@@ -75,6 +75,24 @@ class ActionExecutor:
         self.communications = CommunicationService(self.store, economy.config)
         self.causal = CausalLinkService(self.store)
 
+    def _startup_authorization_error(
+        self, tick: int, actor_id: int, action: dict,
+    ) -> dict | None:
+        settings = self.e.config.get("entrepreneurship", {})
+        if not (
+            bool(settings.get("enabled", False))
+            and tick >= max(0, int(settings.get("activation_tick", 0)))
+        ):
+            return None
+        supplied = getattr(
+            self.e, "_startup_action_authorizations", {}).get((tick, actor_id), [])
+        if not any(action == expected for expected in supplied):
+            return {
+                "ok": False,
+                "reason": "startup action must copy a current supplied action exactly",
+            }
+        return None
+
     # ── public entry ─────────────────────────────────────────────────────────
     def execute_actions(self, tick: int, actor_id: int, actions: list[dict], phase: str = "EXECUTION") -> list[dict]:
         if self.engine_semantics_version >= 12:
@@ -642,6 +660,26 @@ class ActionExecutor:
         )
 
     def _do_found_company(self, tick, actor_id, action, phase) -> dict:
+        entrepreneurship = self.e.config.get("entrepreneurship", {})
+        activation_tick = max(0, int(
+            entrepreneurship.get("activation_tick", 0)))
+        entrepreneurship_active = (
+            bool(entrepreneurship.get("enabled", False))
+            and tick >= activation_tick
+        )
+        if entrepreneurship_active and "business_idea" in action:
+            daily_limit = max(1, int(
+                entrepreneurship.get("maximum_formations_per_tick", 2)))
+            formed_today = int(self.store.scalar(
+                "SELECT COUNT(*) FROM events WHERE tick=? "
+                "AND kind='company_founded' "
+                "AND json_type(payload_json,'$.business_idea')='object'",
+                (tick,), default=0))
+            if formed_today >= daily_limit:
+                return {
+                    "ok": False,
+                    "reason": "daily entrepreneurship capacity reached",
+                }
         lawyer_id = int(action.get("lawyer_agent_id", 0))
         lawyer = self._agent(lawyer_id) if lawyer_id else None
         if not lawyer or not lawyer["alive"] or (lawyer["occupation"] or "").lower() != "lawyer":
@@ -655,7 +693,7 @@ class ActionExecutor:
             and self.e.city.enabled
             and self.e.city.permits_required
         )
-        if bool(self.e.config.get("entrepreneurship", {}).get("enabled", False)):
+        if entrepreneurship_active:
             existing = self.store.query_one(
                 "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
                 (actor_id,))
@@ -886,6 +924,10 @@ class ActionExecutor:
 
     # ── VC track: pitch → evaluation → term sheet → equity (P1 R13) ─────────
     def _do_pitch_vc(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         firm_id = int(action.get("firm_id", 0)) or self._owned_firm(actor_id)
         if not firm_id or not self._controls_firm(actor_id, firm_id):
             return {"ok": False, "reason": "actor does not control a firm to pitch"}
@@ -994,18 +1036,66 @@ class ActionExecutor:
         return self.e.legal.issue_decision(tick, actor_id, action)
 
     def _do_propose_term_sheet(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.propose_term_sheet(tick, actor_id, action)
 
     def _do_accept_term_sheet(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.accept_term_sheet(tick, actor_id, int(action.get("term_sheet_id", 0)))
 
     def _do_run_due_diligence(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.run_due_diligence(tick, actor_id, int(action.get("term_sheet_id", 0)))
 
     def _do_close_funding_round(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.close_funding_round(tick, actor_id, int(action.get("term_sheet_id", 0)))
 
     def _do_register_ip(self, tick, actor_id, action, phase) -> dict:
+        entrepreneurship = self.e.config.get("entrepreneurship", {})
+        activation_tick = max(0, int(
+            entrepreneurship.get("activation_tick", 0)))
+        firm_id = int(action.get("firm_id", 0))
+        firm = self.store.query_one(
+            "SELECT founded_tick,product_json FROM firms WHERE id=?", (firm_id,))
+        product = {}
+        if firm is not None:
+            try:
+                product = json.loads(firm["product_json"] or "{}")
+            except (TypeError, ValueError):
+                product = {}
+        native_startup = (
+            bool(entrepreneurship.get("enabled", False))
+            and tick >= activation_tick
+            and firm is not None
+            and int(firm["founded_tick"] or 0) >= activation_tick
+            and isinstance(product.get("business_idea"), dict)
+        )
+        if native_startup and not self.store.query_one(
+            "SELECT 1 FROM funding_rounds WHERE firm_id=? "
+            "AND status='closed' LIMIT 1",
+            (firm_id,),
+        ):
+            return {
+                "ok": False,
+                "reason": "native startup IP requires a closed funding round",
+            }
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.register_ip(tick, actor_id, action)
 
     def _do_license_ip(self, tick, actor_id, action, phase) -> dict:
@@ -1017,9 +1107,17 @@ class ActionExecutor:
             str(action.get("disclosure_type", "earnings")), int(action.get("lookback_ticks", 30)))
 
     def _do_propose_merger(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.propose_merger(tick, actor_id, action)
 
     def _do_approve_merger(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.approve_merger(tick, actor_id, int(action.get("merger_id", 0)))
 
     def _do_review_merger(self, tick, actor_id, action, phase) -> dict:
@@ -1027,6 +1125,10 @@ class ActionExecutor:
             tick, actor_id, int(action.get("merger_id", 0)), dict(action.get("remedy", {})))
 
     def _do_close_merger(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         return self.e.startups.close_merger(tick, actor_id, int(action.get("merger_id", 0)))
 
     def _do_create_claim(self, tick, actor_id, action, phase) -> dict:

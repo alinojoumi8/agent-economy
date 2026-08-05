@@ -69,7 +69,14 @@ class Metrics:
             out["firm_exits"] = float(self.store.scalar(
                 "SELECT COUNT(*) FROM events WHERE tick=? AND kind IN ('bankruptcy','merger_closed')",
                 (tick,), default=0))
-        if "entrepreneurship" in self.e.config:
+        entrepreneurship = self.e.config.get("entrepreneurship")
+        activation_tick = (
+            max(0, int(entrepreneurship.get("activation_tick", 0)))
+            if isinstance(entrepreneurship, dict) else 0
+        )
+        if (isinstance(entrepreneurship, dict)
+                and ("activation_tick" not in entrepreneurship
+                     or tick >= activation_tick)):
             out.update(self._entrepreneurship_metrics(tick))
         if self.semantics_version >= 5:
             out["fx_volume"] = float(self.store.scalar(

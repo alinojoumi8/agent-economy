@@ -35,8 +35,8 @@ Allowed dispositions are `equivalent`, `superseded`, `portable`, `needs-design`,
 | `agents/prompts.py` | Entrepreneurship activation and staggered review schedule | Current opportunity is enabled immediately and arrival-relative. Staggering is needed for an established population. | portable | Entrepreneurship activation | Six-agent review distribution and pre-boundary absence tests. |
 | `engine/actions.py` | Per-tick native formation cap | Current executor validates authorization/ownership but does not cap same-tick native formations. | portable | Entrepreneurship activation | Two-authorized-founder atomic capacity test. |
 | `agents/prompts.py` | Autonomous pre-seed pitch | Current startup work exists, but model-free progression from native formation is absent. | portable | Entrepreneurship lifecycle | Engine-owned action exposure and stale/duplicate rejection tests. |
-| `agents/prompts.py` | IP registration after any financing work | Dirty code permits IP after a pending pitch; the approved invariant requires completed financing. | needs-design | Entrepreneurship lifecycle | Add a failing test that IP is absent until a funding round is closed. |
-| `agents/prompts.py` | State-derived autonomous merger proposal/approve/close | Current merger engine owns validation and pricing surfaces. Dirty deterministic candidate logic is useful but must not bypass civic/competition authorization or current semantics 12 contexts. | needs-design | Entrepreneurship lifecycle | Engine-derived terms, capacity, stale marker, regulator review, and exact replay tests. |
+| `agents/prompts.py` | IP registration after any financing work | The dirty pending-pitch rule was rejected. The port now requires a closed `funding_rounds` row in both context generation and action execution. | portable | Entrepreneurship lifecycle | Pending-pitch rejection, closed-round exposure, and end-to-end lifecycle tests. |
+| `agents/prompts.py` | State-derived autonomous merger proposal/approve/close | The port derives target, price, currency, premium, and cash capacity from engine state and binds every startup action to the current actor/tick authorization. Existing competition review and controller checks remain authoritative in semantics 7 and 12. | portable | Entrepreneurship lifecycle | Mutated-price rejection plus regulator-reviewed end-to-end lifecycle tests under semantics 7 and 12. |
 | `tests/test_native_entrepreneurship.py` | Activation, cap, and historical pre-boundary formation | Unique compatible contracts. | portable | Entrepreneurship activation | Focused native entrepreneurship suite. |
 | `tests/test_native_entrepreneurship.py` | Lifecycle test expects IP while financing is merely open | Contradicts the approved completed-financing invariant. | superseded | Entrepreneurship lifecycle | Replace with a test that requires a closed round. |
 | `dashboard/src/api.js` | Unit-aware metric deltas, bank trust precision, belief formatting | Current helpers format generic numbers and can mislabel unemployment deltas as raw values. | portable | Public UI | Helper unit tests and component rendering. |
@@ -61,3 +61,10 @@ Allowed dispositions are `equivalent`, `superseded`, `portable`, `needs-design`,
 - The obsolete feature branch will not be merged.
 - Generated assets are rebuilt only from accepted source and verified byte-for-byte against a second build.
 - Historical runs remain feature-off before their persisted activation ticks.
+
+## Implemented closure evidence
+
+- Entrepreneurship activation persists only on a paused, original run and uses the next untouched `MORNING` boundary when one exists. Repeated activation is idempotent; replay/fork metadata is rejected.
+- Pre-activation execution and metrics retain their historical behavior. Established citizens are staggered over the configured review interval, and native formations are capped per tick.
+- Native pre-seed, term-sheet, diligence, closed-round, IP, competition-review, and merger-close transitions complete through engine-owned actions. Pending financing cannot unlock IP, and a model-mutated merger price is rejected atomically.
+- Focused verification on 2026-08-05: 87 tests passed across native entrepreneurship, startup kernel, behavioral gates, semantics 11/12, compatibility, and recorded replay; the lifecycle itself also passed under both semantics 7 and 12.

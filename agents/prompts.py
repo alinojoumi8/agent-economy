@@ -353,6 +353,22 @@ class ContextBuilder:
                 int(agent_row["id"]), tick)
             if required_action is not None:
                 ctx["civic_required_action"] = required_action
+        entrepreneurship = self.config.get("entrepreneurship", {})
+        if (
+            bool(entrepreneurship.get("enabled", False))
+            and tick >= max(0, int(entrepreneurship.get("activation_tick", 0)))
+            and ctx.get("startup_work", {}).get("eligible_actions")
+        ):
+            authorizations = getattr(
+                self.e, "_startup_action_authorizations", None)
+            if authorizations is None:
+                authorizations = {}
+                self.e._startup_action_authorizations = authorizations
+            authorizations[(tick, int(agent_row["id"]))] = json.loads(
+                json.dumps(
+                    ctx["startup_work"]["eligible_actions"], sort_keys=True
+                )
+            )
         return ctx
 
     def _goal_driven_communication_action(
@@ -720,6 +736,9 @@ class ContextBuilder:
         settings = self.config.get("entrepreneurship", {})
         if not bool(settings.get("enabled", False)):
             return None
+        activation_tick = max(0, int(settings.get("activation_tick", 0)))
+        if tick < activation_tick:
+            return None
         if (not bool(agent_row["alive"]) or str(agent_row["health"]) != "healthy"
                 or bool(agent_row["retired"])):
             return None
@@ -761,10 +780,19 @@ class ContextBuilder:
         # Unemployed citizens are guaranteed a scheduler wake on their ID
         # parity. Align the first review to that parity so a 30-tick review
         # cadence cannot permanently miss every actual decision turn.
-        first_review_tick = arrived_tick + minimum_wait
-        first_review_tick += (int(agent_row["id"]) - first_review_tick) % 2
-        elapsed = tick - first_review_tick
         review_interval = max(1, int(settings.get("review_interval_ticks", 30)))
+        if activation_tick:
+            # Spread an established population across the full review interval
+            # instead of waking one large parity cohort on the activation day.
+            first_review_tick = max(arrived_tick, activation_tick) + minimum_wait
+            first_review_tick += (
+                int(agent_row["id"]) - first_review_tick
+            ) % review_interval
+        else:
+            # Preserve legacy scheduling for genesis and historical configs.
+            first_review_tick = arrived_tick + minimum_wait
+            first_review_tick += (int(agent_row["id"]) - first_review_tick) % 2
+        elapsed = tick - first_review_tick
         if elapsed < 0 or elapsed % review_interval != 0:
             return None
 
@@ -1553,6 +1581,13 @@ class ContextBuilder:
         actor_id = int(a["id"])
         role = a["role"] or ""
         eligible: list[dict] = []
+        entrepreneurship = self.config.get("entrepreneurship", {})
+        activation_tick = max(0, int(
+            entrepreneurship.get("activation_tick", 0)))
+        entrepreneurship_active = (
+            bool(entrepreneurship.get("enabled", False))
+            and tick >= activation_tick
+        )
 
         if role == "vc_partner":
             closeable = self.store.query_one(
@@ -1570,7 +1605,8 @@ class ContextBuilder:
                 for pitch in pending_pitches or []:
                     ask = int(pitch.get("ask_cents", 0))
                     traction = (int(pitch.get("revenue_30", 0)) > 0
-                                or int(pitch.get("employees", 0)) > 0)
+                                or int(pitch.get("employees", 0)) > 0
+                                or bool(pitch.get("native_startup")))
                     affordable = ask > 0 and ask <= int(fund_cash * 0.4) and fund_cash >= ask
                     if not traction or not affordable:
                         continue
@@ -1613,13 +1649,34 @@ class ContextBuilder:
                 eligible.append({"type": "accept_term_sheet",
                                  "term_sheet_id": int(offered["id"])})
             else:
-                has_financing_work = bool(self.store.query_one(
+                target_deal = self.store.query_one(
+                    "SELECT id FROM mergers WHERE target_firm_id=? "
+                    "AND status='proposed' ORDER BY id LIMIT 1", (firm_id,))
+                closeable_deal = self.store.query_one(
+                    "SELECT id FROM mergers WHERE acquirer_firm_id=? "
+                    "AND status IN ('approved','approved_with_remedy') "
+                    "ORDER BY id LIMIT 1", (firm_id,))
+                has_closed_financing = bool(self.store.query_one(
+                    "SELECT 1 FROM funding_rounds WHERE firm_id=? "
+                    "AND status='closed' LIMIT 1", (firm_id,)))
+                has_open_financing = bool(self.store.query_one(
                     "SELECT 1 FROM pitches WHERE firm_id=? "
-                    "AND status IN ('pending','term_sheeted','funded') LIMIT 1", (firm_id,)))
+                    "AND status IN ('pending','term_sheeted') LIMIT 1", (firm_id,)))
                 has_ip = bool(self.store.query_one(
                     "SELECT 1 FROM ip_assets WHERE firm_id=? AND status='registered' LIMIT 1",
                     (firm_id,)))
-                if str(firm["sector"]).lower() in {"tech", "technology"} and has_financing_work and not has_ip:
+                if entrepreneurship_active and target_deal:
+                    eligible.append({
+                        "type": "approve_merger",
+                        "merger_id": int(target_deal["id"]),
+                    })
+                elif entrepreneurship_active and closeable_deal:
+                    eligible.append({
+                        "type": "close_merger",
+                        "merger_id": int(closeable_deal["id"]),
+                    })
+                elif (str(firm["sector"]).lower() in {"tech", "technology"}
+                        and has_closed_financing and not has_ip):
                     product = load_json(firm["product_json"], {}) or {}
                     product_name = str(product.get("product") or firm["name"]).replace("_", " ").strip()
                     eligible.append({
@@ -1630,9 +1687,104 @@ class ContextBuilder:
                         "valuation_cents": 0,
                         "metadata": {"source": "declared_firm_product"},
                     })
+                elif (entrepreneurship_active
+                        and bool(entrepreneurship.get(
+                            "autonomous_preseed", True))):
+                    product = load_json(firm["product_json"], {}) or {}
+                    business_idea = product.get("business_idea")
+                    prior_pitch = self.store.query_one(
+                        "SELECT 1 FROM pitches WHERE firm_id=? LIMIT 1", (firm_id,))
+                    delay = max(0, int(entrepreneurship.get(
+                        "preseed_pitch_delay_ticks", 1)))
+                    if (
+                        int(firm["founded_tick"] or 0) >= activation_tick
+                        and tick >= int(firm["founded_tick"] or 0) + delay
+                        and isinstance(business_idea, dict)
+                        and not prior_pitch
+                    ):
+                        eligible.append({
+                            "type": "pitch_vc",
+                            "firm_id": firm_id,
+                            "ask": max(1, int(entrepreneurship.get(
+                                "preseed_raise_cents", 250_000))),
+                            "summary": str(
+                                business_idea.get("mission")
+                                or f"Pre-seed capital for {firm['name']}"
+                            )[:300],
+                        })
+                if (
+                    not eligible
+                    and not has_open_financing
+                    and entrepreneurship_active
+                    and bool(entrepreneurship.get("autonomous_mergers", True))
+                ):
+                    merger_action = self._autonomous_merger_action(
+                        firm, tick, entrepreneurship)
+                    if merger_action is not None:
+                        eligible.append(merger_action)
 
         return {"eligible_actions": eligible,
                 "rule": "copy at most one supplied action exactly"}
+
+    def _autonomous_merger_action(
+        self, firm, tick: int, settings: dict,
+    ) -> Optional[dict]:
+        """Return one cash-funded acquisition whose terms come from engine state."""
+        firm_id = int(firm["id"])
+        minimum_age = max(0, int(settings.get("minimum_merger_age_ticks", 30)))
+        if tick - int(firm["founded_tick"] or 0) < minimum_age:
+            return None
+        if self.store.query_one(
+            "SELECT 1 FROM mergers WHERE status NOT IN ('closed','challenged') "
+            "AND (acquirer_firm_id=? OR target_firm_id=?) LIMIT 1",
+            (firm_id, firm_id),
+        ):
+            return None
+        leader = self.store.query_one(
+            "SELECT f.id,a.balance_cents FROM firms f "
+            "JOIN accounts a ON a.id=f.account_id "
+            "WHERE lower(f.sector)=lower(?) "
+            "AND f.status IN ('private','listed') "
+            "ORDER BY a.balance_cents DESC,f.id LIMIT 1",
+            (str(firm["sector"]),),
+        )
+        if leader is None or int(leader["id"]) != firm_id:
+            return None
+        acquirer_cash = int(leader["balance_cents"] or 0)
+        maximum_share_bps = max(1, min(10_000, int(
+            settings.get("maximum_merger_cash_share_bps", 4_000))))
+        target = self.store.query_one(
+            "SELECT f.id,a.balance_cents,f.currency_code FROM firms f "
+            "JOIN accounts a ON a.id=f.account_id "
+            "JOIN agents founder ON founder.id=f.founder_agent_id "
+            "AND founder.alive=1 "
+            "WHERE f.id<>? AND lower(f.sector)=lower(?) "
+            "AND f.status IN ('private','listed') AND f.currency_code=? "
+            "AND NOT EXISTS (SELECT 1 FROM mergers m "
+            "WHERE m.status NOT IN ('closed','challenged') "
+            "AND (m.acquirer_firm_id=f.id OR m.target_firm_id=f.id)) "
+            "ORDER BY a.balance_cents,f.id LIMIT 1",
+            (
+                firm_id,
+                str(firm["sector"]),
+                str(firm["currency_code"] or "USD"),
+            ),
+        )
+        if target is None:
+            return None
+        premium_bps = max(0, int(settings.get("merger_premium_bps", 1_000)))
+        target_cash = max(1, int(target["balance_cents"] or 0))
+        price = max(1, (target_cash * (10_000 + premium_bps)) // 10_000)
+        if price > (acquirer_cash * maximum_share_bps) // 10_000:
+            return None
+        return {
+            "type": "propose_merger",
+            "acquirer_firm_id": firm_id,
+            "target_firm_id": int(target["id"]),
+            "price_cents": price,
+            "currency_code": str(target["currency_code"] or "USD"),
+            "metadata": {"source": "state_derived_operating_consolidation"},
+        }
 
     def _vc_partner_context(self, a, tick: int) -> dict:
         agent_id = int(a["id"])
@@ -1642,7 +1794,8 @@ class ContextBuilder:
             "SELECT currency_code FROM accounts WHERE id=?", (acct,), default="USD")
         pending = []
         for p in self.store.query(
-                "SELECT p.*, f.name AS firm_name, f.sector AS sector, f.account_id AS firm_acct, "
+                "SELECT p.*, f.name AS firm_name, f.sector AS sector, "
+                "f.account_id AS firm_acct, f.product_json AS product_json, "
                 "f.founded_tick AS founded_tick, fa.currency_code AS firm_currency "
                 "FROM pitches p JOIN firms f ON f.id=p.firm_id "
                 "JOIN accounts fa ON fa.id=f.account_id "
@@ -1663,7 +1816,16 @@ class ContextBuilder:
                 "currency": p["firm_currency"],
                 "firm_cash": self.e.ledger.balance(int(p["firm_acct"])) if p["firm_acct"] else 0,
                 "revenue_30": revenue_30, "employees": employees,
-                "firm_age_ticks": tick - int(p["founded_tick"] or 0)})
+                "firm_age_ticks": tick - int(p["founded_tick"] or 0),
+                "native_startup": bool(
+                    self.config.get("entrepreneurship", {}).get("enabled", False)
+                    and int(p["founded_tick"] or 0) >= max(0, int(
+                        self.config.get("entrepreneurship", {}).get(
+                            "activation_tick", 0)))
+                    and isinstance((load_json(
+                        p["product_json"], {}) or {}).get("business_idea"), dict)
+                ),
+            })
         ctx = {"tick": tick, "purpose": "vc_partner", "rng_seed": _seed(agent_id, tick),
                "agent": {"id": agent_id, "name": a["name"], "role": "vc_partner"},
                "fund_cash": fund_cash, "fund_currency": fund_currency,

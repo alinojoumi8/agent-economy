@@ -48,6 +48,73 @@ REPLAY_INPUT_TABLES = (
     "scenario_packs",
 )
 
+LIVE_ENTREPRENEURSHIP_DEFAULTS = {
+    "enabled": True,
+    "new_arrivals_only": False,
+    "review_interval_ticks": 6,
+    "minimum_ticks_after_arrival": 1,
+    "minimum_age": 21,
+    "minimum_risk_tolerance": 0.65,
+    "minimum_opening_capital_cents": 100_000,
+    "personal_reserve_cents": 100_000,
+    "opening_capital_share_bps": 3_500,
+    "maximum_active_competitors": 3,
+    "maximum_formations_per_tick": 2,
+    "sales_lookback_ticks": 30,
+    "stockout_inventory_threshold": 2,
+    "eligible_sectors": [
+        "services", "technology", "manufacturing", "logistics",
+        "healthcare", "energy", "agriculture",
+    ],
+    "autonomous_preseed": True,
+    "preseed_pitch_delay_ticks": 1,
+    "preseed_raise_cents": 250_000,
+    "autonomous_mergers": True,
+    "minimum_merger_age_ticks": 30,
+    "maximum_merger_cash_share_bps": 4_000,
+    "merger_premium_bps": 1_000,
+}
+
+
+def activate_entrepreneurship_for_run(store: Store) -> dict:
+    """Persist bounded startup entry at the next untouched decision boundary."""
+    meta = store.get_meta()
+    if str(meta["status"] or "") != "paused":
+        raise RuntimeError("entrepreneurship activation requires a paused run")
+    if meta["parent_run_id"] is not None or meta["fork_tick"] is not None:
+        raise RuntimeError(
+            "entrepreneurship activation requires an original run, not a replay or fork"
+        )
+
+    config = json.loads(meta["config_json"])
+    existing = config.get("entrepreneurship")
+    if isinstance(existing, dict) and bool(existing.get("enabled", False)):
+        return dict(existing)
+
+    completed_tick = int(meta["tick"])
+    active_tick = (
+        int(meta["active_tick"])
+        if meta["active_tick"] is not None
+        else completed_tick + 1
+    )
+    untouched_morning = (
+        active_tick > completed_tick
+        and str(meta["next_phase"] or "") == "MORNING"
+    )
+    activation_tick = (
+        active_tick
+        if untouched_morning
+        else max(completed_tick, active_tick) + 1
+    )
+    settings = {
+        **LIVE_ENTREPRENEURSHIP_DEFAULTS,
+        "activation_tick": activation_tick,
+    }
+    config["entrepreneurship"] = settings
+    store.set_meta(config_json=json.dumps(config, sort_keys=True))
+    store.commit()
+    return settings
+
 
 async def provider_preflight(config: dict, *, live: bool = False) -> dict:
     report = validate_llm_config(config, raise_on_error=False)
@@ -480,7 +547,8 @@ def _adopt_resume_local_citizenship(
 
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR,
-             new_run_id_override: str | None = None) -> tuple[Store, World, str]:
+             new_run_id_override: str | None = None,
+             activate_entrepreneurship: bool = False) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     if resume:
         run_id = resume
@@ -489,6 +557,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         try:
+            if activate_entrepreneurship:
+                activate_entrepreneurship_for_run(store)
             meta = store.get_meta()
             stored_cfg = json.loads(meta["config_json"])
             # Markerless databases predate completed-day finalization and must keep
@@ -846,6 +916,7 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--phenomena-evidence": args.phenomena_evidence,
         "--scenario-ticks": args.scenario_ticks,
         "--upgrade-semantics": args.upgrade_semantics,
+        "--activate-entrepreneurship": args.activate_entrepreneurship,
     }
     if args.oracle_campaign_run:
         incompatible = [name for name, value in {
@@ -1027,6 +1098,14 @@ def main() -> None:
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
     ap.add_argument(
+        "--activate-entrepreneurship",
+        action="store_true",
+        help=(
+            "only with --resume: enable bounded startup entry from the next "
+            "untouched decision boundary"
+        ),
+    )
+    ap.add_argument(
         "--activate-supply-recovery",
         action="store_true",
         help=(
@@ -1098,6 +1177,12 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
+    if args.activate_entrepreneurship and (
+            not args.resume or args.replay or args.fork):
+        ap.error(
+            "--activate-entrepreneurship requires --resume and cannot use "
+            "--replay/--fork"
+        )
     if args.activate_supply_recovery and not (args.resume or args.fork):
         ap.error("--activate-supply-recovery requires --resume or --fork")
     if args.activate_supply_recovery and args.replay:
@@ -1247,7 +1332,11 @@ def main() -> None:
         _execute_oracle_campaign_run(config, args)
         return
     store, world, run_id = open_run(
-        config, args.resume, args.replay)
+        config,
+        args.resume,
+        args.replay,
+        activate_entrepreneurship=args.activate_entrepreneurship,
+    )
     if args.activate_supply_recovery:
         try:
             firms_cfg = world.config.get("firms", {}) or {}
