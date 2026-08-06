@@ -236,6 +236,31 @@ export function humanize(value, fallback = "Not reported") {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+export function filterCityAgents(agents = [], {
+  layer = "all", q = "", activeOnly = false,
+} = {}) {
+  const needle = String(q || "").trim().toLowerCase();
+  return agents.filter(agent => {
+    const layerMatch = layer === "all" || agent.layer === layer || agent.eventLayer === layer;
+    const activityMatch = !activeOnly || Boolean(agent.event);
+    const textMatch = !needle || [
+      agent.name, agent.role, agent.occupation, agent.kind, agent.district,
+      agent.event?.kind,
+    ].some(value => String(value || "").toLowerCase().includes(needle));
+    return layerMatch && activityMatch && textMatch;
+  });
+}
+
+export function resolveCityFilterPatch(agents, current, update) {
+  const next = { ...current, ...update };
+  const visible = filterCityAgents(agents, next);
+  const selected = visible.find(agent => String(agent.id) === String(next.agent))
+    || visible.find(agent => agent.event)
+    || visible[0]
+    || null;
+  return { ...update, agent: selected?.id ?? null };
+}
+
 export function deriveCityModel({
   agents = [], firms = [], events = [], map = null, civic = null,
 } = {}) {

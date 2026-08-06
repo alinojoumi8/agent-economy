@@ -5,6 +5,7 @@ import {
   classifyEventLayer,
   deriveCityModel,
   eventActorIds,
+  resolveCityFilterPatch,
   semanticReceiptForEvent,
 } from "../src/lib/civicCity.js";
 
@@ -120,6 +121,21 @@ test("empty and failed city inputs invent no agents", () => {
     map: { core_agents: null, firms: null },
   });
   assert.equal(failed.agents.length, 0);
+});
+
+test("city filter transitions select the matching mark atomically", () => {
+  const agents = [
+    { id: 1, name: "Supplier Officer", layer: "markets", eventLayer: "markets", event: { id: 9 } },
+    { id: 2, name: "Editor Northstar", layer: "communications", eventLayer: null, event: null },
+    { id: 3, name: "Dr. Amara Osei", layer: "health", eventLayer: null, event: null },
+  ];
+
+  assert.deepEqual(resolveCityFilterPatch(agents, {
+    layer: "all", q: "", activeOnly: false, agent: 3,
+  }, { q: "Supplier Officer" }), {
+    q: "Supplier Officer",
+    agent: 1,
+  });
 });
 
 test("mixed coordinate provenance is reported when projected and derived coexist", () => {

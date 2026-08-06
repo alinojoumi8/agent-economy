@@ -11,7 +11,9 @@ import {
   CITY_DISTRICTS,
   CITY_LAYERS,
   deriveCityModel,
+  filterCityAgents,
   humanize,
+  resolveCityFilterPatch,
   semanticReceiptForEvent,
 } from "../lib/civicCity.js";
 
@@ -95,15 +97,10 @@ export function CivicCity(props) {
     () => deriveCityModel({ agents, firms, events, map, civic }),
     [agents, firms, events, map, civic],
   );
-  const needle = query.trim().toLowerCase();
-  const visibleAgents = model.agents.filter(agent => {
-    const layerMatch = activeLayer === "all" || agent.layer === activeLayer || agent.eventLayer === activeLayer;
-    const activityMatch = !activeOnly || Boolean(agent.event);
-    const textMatch = !needle || [
-      agent.name, agent.role, agent.occupation, agent.kind, agent.district,
-      agent.event?.kind,
-    ].some(value => String(value || "").toLowerCase().includes(needle));
-    return layerMatch && activityMatch && textMatch;
+  const visibleAgents = filterCityAgents(model.agents, {
+    layer: activeLayer,
+    q: query,
+    activeOnly,
   });
   const selected = visibleAgents.find(agent => String(agent.id) === String(selectedId))
     || visibleAgents.find(agent => agent.event)
@@ -157,16 +154,24 @@ export function CivicCity(props) {
     if (onObserverStateChange) onObserverStateChange({ agent: nextId });
     else setLocalSelectedId(nextId);
   };
+  const changeObserverFilter = (update, options) => {
+    onObserverStateChange(resolveCityFilterPatch(model.agents, {
+      layer: activeLayer,
+      q: query,
+      activeOnly,
+      agent: selectedId,
+    }, update), options);
+  };
   const changeLayer = value => {
-    if (onObserverStateChange) onObserverStateChange({ layer: value });
+    if (onObserverStateChange) changeObserverFilter({ layer: value });
     else setLocalActiveLayer(value);
   };
   const changeQuery = value => {
-    if (onObserverStateChange) onObserverStateChange({ q: value }, { replace: true });
+    if (onObserverStateChange) changeObserverFilter({ q: value }, { replace: true });
     else setLocalQuery(value);
   };
   const changeActiveOnly = value => {
-    if (onObserverStateChange) onObserverStateChange({ activeOnly: value });
+    if (onObserverStateChange) changeObserverFilter({ activeOnly: value });
     else setLocalActiveOnly(value);
   };
   const changeSelection = value => {

@@ -473,8 +473,11 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
 
   await page.getByRole("button", { name: /All/ }).click();
   await page.getByLabel("Find an agent").fill("Supplier Officer");
+  await expect(page).toHaveURL(/q=Supplier\+Officer/);
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
-  await page.locator(".civic-city__agent").click();
+  await page.getByRole("button", { name: /^Supplier Officer,/ }).click();
+  await expect(page).toHaveURL(/agent=1/);
+  await expect(page.locator(".civic-city__agent")).toHaveCount(1);
   await expect(page.locator(".civic-city__activity strong")).toHaveText("Goods Sale");
   await expect(page.getByRole("link", { name: "Trace this event" })).toHaveAttribute("href", "/runs/run-demo/investigations?event=9");
 });
