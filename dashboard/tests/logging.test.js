@@ -90,6 +90,23 @@ test("api logs malformed JSON instead of swallowing it silently", async () => {
 });
 
 
+test("api preserves structured HTTP error messages", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  console.error = () => {};
+  globalThis.fetch = async () => ({
+    ok: false, status: 422, statusText: "Unprocessable Content",
+    json: async () => ({ detail: { message: "Investigation title is invalid." } }),
+  });
+  try {
+    await assert.rejects(api("/api/structured-error"), /Investigation title is invalid\./);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
+});
+
+
 test("budgetState distinguishes an uncapped run from the default cap", () => {
   assert.deepEqual(budgetState({ total_spend_usd: 321.5, cap_usd: null }), {
     spend: 321.5, cap: null, capped: false, fraction: 0,

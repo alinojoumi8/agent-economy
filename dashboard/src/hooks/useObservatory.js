@@ -24,10 +24,22 @@ const INITIAL = {
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
+const TICK_REFRESH_DEBOUNCE_MS = 750;
+const TICK_REFRESH_MAX_WAIT_MS = 3_000;
+const REFRESH_TIMEOUT_MS = 15_000;
 
 export function observatoryReconnectDelay(attempt) {
   const safeAttempt = Math.max(0, Math.min(Number(attempt) || 0, 30));
   return Math.min(RECONNECT_BASE_MS * (2 ** safeAttempt), RECONNECT_MAX_MS);
+}
+
+export function observatoryRefreshDeadline(timeoutMs = REFRESH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: () => globalThis.clearTimeout(timer),
+  };
 }
 
 export async function settleObservatoryRequests(requests) {
@@ -66,31 +78,33 @@ export function useObservatory({ hosted = false } = {}) {
     do {
       refreshing.current = true;
       refreshPending.current = false;
+      const deadline = observatoryRefreshDeadline();
+      const get = path => api(path, { signal: deadline.signal });
       if (!nextQuiet) setLoading(true);
       try {
         const { values, errors } = await settleObservatoryRequests({
-          status: api("/api/run/status"),
-          acceptance: api("/api/acceptance/status"),
-          participant: api("/api/participant"),
-          metrics: api("/api/metrics"),
-          banks: api("/api/banks"),
-          firms: api("/api/firms"),
-          institutions: api("/api/institutions"),
-          news: api("/api/news?limit=24"),
-          conversations: api("/api/conversations?limit=16"),
-          events: api("/api/events?limit=80&min_importance=0.5"),
-          cost: api("/api/cost"),
-          oracle: api("/api/oracle/predictions"),
-          shocks: api("/api/shocks"),
-          calibrationRun: hosted ? Promise.resolve(null) : api("/api/oracle/calibration?scope=run"),
-          calibrationAll: hosted ? Promise.resolve(null) : api("/api/oracle/calibration?scope=all"),
-          map: api("/api/v2/map"),
-          legal: api("/api/v2/legal"),
-          politics: api("/api/v2/politics"),
-          information: api("/api/v2/information"),
-          startups: api("/api/v2/startups"),
-          markets: api("/api/v2/markets"),
-          datasets: api("/api/v2/datasets"),
+          status: get("/api/run/status"),
+          acceptance: get("/api/acceptance/status"),
+          participant: get("/api/participant"),
+          metrics: get("/api/metrics"),
+          banks: get("/api/banks"),
+          firms: get("/api/firms"),
+          institutions: get("/api/institutions"),
+          news: get("/api/news?limit=24"),
+          conversations: get("/api/conversations?limit=16"),
+          events: get("/api/events?limit=80&min_importance=0.5"),
+          cost: get("/api/cost"),
+          oracle: get("/api/oracle/predictions"),
+          shocks: get("/api/shocks"),
+          calibrationRun: hosted ? Promise.resolve(null) : get("/api/oracle/calibration?scope=run"),
+          calibrationAll: hosted ? Promise.resolve(null) : get("/api/oracle/calibration?scope=all"),
+          map: get("/api/v2/map"),
+          legal: get("/api/v2/legal"),
+          politics: get("/api/v2/politics"),
+          information: get("/api/v2/information"),
+          startups: get("/api/v2/startups"),
+          markets: get("/api/v2/markets"),
+          datasets: get("/api/v2/datasets"),
         });
         const calibrationErrors = errors
           .filter(item => item.key === "calibrationRun" || item.key === "calibrationAll")
@@ -142,6 +156,7 @@ export function useObservatory({ hosted = false } = {}) {
           quiet: nextQuiet, error_type: reason?.constructor?.name || typeof reason, error: message,
         }, "error");
       } finally {
+        deadline.cancel();
         refreshing.current = false;
         setLoading(false);
       }
@@ -172,6 +187,22 @@ export function useObservatory({ hosted = false } = {}) {
     let socket = null;
     let reconnectTimer = null;
     let reconnectAttempt = 0;
+    let tickRefreshTimer = null;
+    let tickRefreshMaxTimer = null;
+    const flushTickRefresh = () => {
+      if (tickRefreshTimer !== null) window.clearTimeout(tickRefreshTimer);
+      if (tickRefreshMaxTimer !== null) window.clearTimeout(tickRefreshMaxTimer);
+      tickRefreshTimer = null;
+      tickRefreshMaxTimer = null;
+      void refresh({ quiet: true });
+    };
+    const scheduleTickRefresh = () => {
+      if (tickRefreshTimer !== null) window.clearTimeout(tickRefreshTimer);
+      tickRefreshTimer = window.setTimeout(flushTickRefresh, TICK_REFRESH_DEBOUNCE_MS);
+      if (tickRefreshMaxTimer === null) {
+        tickRefreshMaxTimer = window.setTimeout(flushTickRefresh, TICK_REFRESH_MAX_WAIT_MS);
+      }
+    };
     const scheduleReconnect = () => {
       if (disposed || reconnectTimer !== null) return;
       const delay = observatoryReconnectDelay(reconnectAttempt);
@@ -230,7 +261,7 @@ export function useObservatory({ hosted = false } = {}) {
               ...current,
               status: mergeRunPayload(current.status, payload),
             }));
-            if (payload.type === "tick") refresh({ quiet: true });
+            if (payload.type === "tick") scheduleTickRefresh();
           }
         } catch (reason) {
           clientLog("dashboard.websocket.invalid_message", {
@@ -249,6 +280,8 @@ export function useObservatory({ hosted = false } = {}) {
       window.clearInterval(timer);
       window.clearInterval(keepalive);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (tickRefreshTimer !== null) window.clearTimeout(tickRefreshTimer);
+      if (tickRefreshMaxTimer !== null) window.clearTimeout(tickRefreshMaxTimer);
       socket?.close();
     };
   }, [refresh]);

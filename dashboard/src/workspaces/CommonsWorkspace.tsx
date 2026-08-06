@@ -1,4 +1,5 @@
 import { Link, useSearchParams } from "react-router";
+import { causalTracePath } from "../app/commandNavigation";
 import { useWorkspaceProjection } from "./workspaceShared";
 
 type CommonsEntry = {
@@ -69,7 +70,10 @@ export function CommonsWorkspace() {
             {entry.moderation_label && <p className="mt-2 text-xs text-gold-300">Label: {entry.moderation_label}</p>}
             <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
               <span>{entry.reaction_count} reactions</span><span>{entry.reply_count} replies</span>
-              <Link to={`/runs/${encodeURIComponent(runId)}/investigations?kind=${encodeURIComponent(entry.causal_observatory.source_kind)}&id=${entry.causal_observatory.source_id}`}>Open causal trace</Link>
+              <Link to={causalTracePath(runId, {
+                kind: entry.causal_observatory.source_kind,
+                id: entry.causal_observatory.source_id,
+              }, search)}>Open causal trace</Link>
             </div>
           </li>)}
           {!data.feed.entries.length && <li className="muted p-5">No public Commons entries yet.</li>}

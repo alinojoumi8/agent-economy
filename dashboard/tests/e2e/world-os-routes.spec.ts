@@ -293,6 +293,10 @@ test("Commons uses the selected run fork and historical tick without polling", a
   const baseline = requests.length;
   await page.waitForTimeout(3_200);
   expect(requests).toHaveLength(baseline);
+  await page.getByRole("link", { name: "Open causal trace" }).click();
+  await expect(page).toHaveURL(
+    /\/runs\/run-demo\/investigations\?fork=fork-1&tick=3&kind=commons_entry&id=1$/,
+  );
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });

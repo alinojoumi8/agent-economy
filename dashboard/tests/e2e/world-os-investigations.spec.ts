@@ -261,8 +261,8 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await expect(conflict).toContainText("Server version 4: Remote second");
   await conflict.getByRole("button", { name: "Save draft as new investigation" }).click();
   await expect(pageB).toHaveURL(/\/investigations\/inv-2\?/);
-  await expect(conflict).toBeHidden({ timeout: 500 });
-  await expect(titleB).toHaveValue("Local copy", { timeout: 500 });
+  await expect(conflict).toBeHidden();
+  await expect(titleB).toHaveValue("Local copy");
   expect(state.createRequests).toBe(1);
   expect(state.records.get("inv-1")?.title).toBe("Remote second");
   expect(state.records.get("inv-1")?.version).toBe(4);

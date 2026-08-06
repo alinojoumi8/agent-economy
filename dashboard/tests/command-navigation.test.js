@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { searchResultPath, workspacePath } from "../src/app/commandNavigation.ts";
+import {
+  causalTracePath, searchResultPath, workspacePath,
+} from "../src/app/commandNavigation.ts";
 
 const source = new URLSearchParams(
   "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9",
@@ -27,4 +29,11 @@ test("entity kinds map to their established route destinations", () => {
   assert.equal(searchResultPath("run-1", {
     kind: "communication_thread", id: 6, label: "Bulletin", sublabel: "Thread",
   }, source), "/runs/run-1/news-communications/6?fork=fork-a&tick=4&event=7");
+});
+
+test("causal traces retain the selected observer fork and tick", () => {
+  assert.equal(
+    causalTracePath("run/id", { kind: "commons_entry", id: 9 }, source),
+    "/runs/run%2Fid/investigations?fork=fork-a&tick=4&event=7&kind=commons_entry&id=9",
+  );
 });

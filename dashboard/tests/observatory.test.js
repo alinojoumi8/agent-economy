@@ -38,3 +38,16 @@ test("observatory reconnect delay is exponential and bounded", async () => {
     assert.equal(observatoryReconnectDelay(-3), 500);
   });
 });
+
+test("observatory refresh deadlines abort and can be cancelled", async () => {
+  await withObservatoryModule(async ({ observatoryRefreshDeadline }) => {
+    const expiring = observatoryRefreshDeadline(1);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(expiring.signal.aborted, true);
+
+    const cancelled = observatoryRefreshDeadline(1);
+    cancelled.cancel();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(cancelled.signal.aborted, false);
+  });
+});

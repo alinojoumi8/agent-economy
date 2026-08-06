@@ -74,6 +74,18 @@ test("overlapping refreshes coalesce once and reconnect keeps one timer", async 
   await page.waitForTimeout(100);
   expect(statusRequests).toBe(2);
 
+  await page.evaluate(() => {
+    const socket = (window as any).__observatorySockets[0];
+    for (const tick of [7, 8, 9]) {
+      socket.dispatchEvent(new MessageEvent("message", {
+        data: JSON.stringify({ type: "tick", tick, status: "running", running: true }),
+      }));
+    }
+  });
+  await expect.poll(() => statusRequests, { timeout: 2_000 }).toBe(3);
+  await page.waitForTimeout(100);
+  expect(statusRequests).toBe(3);
+
   await expect.poll(() => page.evaluate(
     () => (window as any).__observatorySockets.length,
   )).toBe(1);

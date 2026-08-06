@@ -11,6 +11,14 @@ export function requestLogPath(path) {
   return boundary < 0 ? value : value.slice(0, boundary);
 }
 
+export function responseErrorMessage(body, status, statusText) {
+  const detail = body?.detail;
+  const detailMessage = detail && typeof detail === "object"
+    ? detail.code || detail.message
+    : detail;
+  return String(detailMessage || body?.error || `${status} ${statusText}`);
+}
+
 export async function api(path, options = {}) {
   const method = options.method || "GET";
   const resolved = resolveApiRequest(
@@ -51,8 +59,7 @@ export async function api(path, options = {}) {
     }
   }
   if (!response.ok) {
-    const detail = typeof body.detail === "object" ? body.detail?.code : body.detail;
-    const message = body.error || detail || `${response.status} ${response.statusText}`;
+    const message = responseErrorMessage(body, response.status, response.statusText);
     clientLog("dashboard.api.http_failed", {
       path: logPath, method, status_code: response.status, error: message,
     }, "error");
