@@ -1132,35 +1132,35 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v11.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v12.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v11_commitment_and_minimax_contract_are_pinned():
+def test_checked_in_v12_commitment_and_minimax_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7401: "b509ee3833c1e4a275308649d58d9a63f5177ba4c1c8f0e36e76d16f2053eed8",
-        7402: "8d4a4f03a74ffa0eb1d8dbccc152ee8fd34c05bb4a7ec1c13a4eeae52001f99f",
-        7403: "f2824c0bc866984c814eef70e6063eab04cf9b88fc75920817915930c3ee0a74",
-        7404: "dce85f9a1665d4b5c4434f3c3364d53d4fc0e9fb63135399e43947afa4662575",
-        7405: "7597df891065e87a0a4a833f5c902ad9e89fc8fb110fe63834abe09e24cbeed7",
-        7406: "9aee989e52bbf7f592573196b4625f04b20e8c07e55ec1181f7b990bc18e9674",
-        7407: "b5b83afb2e296c27dc4b10e15b34f987751743df61a4afe0764f6c801aa0b6a1",
-        7408: "5eb5bfeee5ed905715b6aeec6c76bcf36c71684403690f45bf0e301b6424505b",
-        7409: "98da7a26dbd19b6e2bd63b45200304b49965d362452ec01aee34500d99df6afd",
-        7410: "f8367db876699c401e4b4e393de6f86a67a1c0570574e9793a67a9c5422ba97b",
-        7411: "25ff15889f2716c3ea23ee5881d7d86099aea729623b15b1deef79e6e88d10da",
-        7412: "f12ed907c472101d19bb95f4be661e30e944c240bd0efbd6fdaf697040397787",
-        7413: "74fb6964c0791c7ad25b654ca1c854427b9872b675d59c9c9bb2dcdbe569cfb2",
-        7414: "c3e574514211d42cdde48efcdad5ff207a09cb415d122efa58331829e2525719",
-        7415: "d14b9ce3b16bdddc5416c275ee445f13fc161c39b3baffd6fb01ea23b02a2b1c",
-        7416: "06195fe255fa60b05871341bf15014e2141c578b843598e2c36dc2c04d655164",
+        7417: "b9758a394e9e10709019c11536d05b57ce2c0e4a62670d28f1364b27805761b8",
+        7418: "9cf5cdcd0034ba64d29ee72f2af14f58958fc64f17e434c9745e4fa2e370f386",
+        7419: "b74439d2dc52f8c94ce8b9a1ffca9c713300a78f9d2140f68267594808294b3f",
+        7420: "63e620819663ea9868813c83c23ac2ad8e3e52232021db43e463ee59385e38de",
+        7421: "3e544bde5823e3114e59cab7977b5212622d5fc3bc8b71b26f9b456e193e7451",
+        7422: "952612bcb841f1f45a2e9f9b0dac8ad313ff5f6d8e015c1f1c5fa14bef0a8d86",
+        7423: "3ed58d8f36fbade139331b759b90a13e5eed0f3152397223a1b8a7df4a17c9c0",
+        7424: "4bc4db34ce8a54714f456a5f947ca46bd1e98e0e0c87c6e1c5508c520fbc8b98",
+        7425: "a08fb9a3841b049fc9ea1826c6a3aa49804496f56061a9c712716d5e3bec79d3",
+        7426: "eceb01f24ba5b27fec9c635f1437c83b1495244f7e7f50cc396dd6efd32b6410",
+        7427: "34da4619234b1d3964331738e08fbccbe9ecfb4097ac4c10d07c422eba7601ff",
+        7428: "fd829eefdb4ff791317a1a02c5cd7e5ec4de13f666a6dedc038bbade558d8d3b",
+        7429: "9aecc984a4e82d4adecc88c1931dc1790a9afb225c1c5c05210d53bd5422a0cb",
+        7430: "a0ad7c01b340e57d1f702de4ccb76c121426e8dcd7dca104da44d0da3ae798a7",
+        7431: "68216dd44eee1074f4ad16d50aecab0d374fbe6501c7a6c047a52ced1e75624e",
+        7432: "50a3daf9c2ecdb9045b29defcad67b502057cb312190087e26e19ddd396105bc",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v11"
-    assert RELEASE_CAMPAIGN_VERSION == 11
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v12"
+    assert RELEASE_CAMPAIGN_VERSION == 12
     assert RELEASE_ORACLE_PROVIDER == "minimax"
     assert RELEASE_ORACLE_MODEL == "MiniMax-M3"
     assert RELEASE_ORACLE_ADAPTER == {
@@ -1180,9 +1180,9 @@ def test_checked_in_v11_commitment_and_minimax_contract_are_pinned():
         "in": 0.30, "out": 1.20, "cache": 0.06,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "e696c14abe25c22eb11977d90a35daa248a707fb92ee197101b3f0ec35625c7c")
+        "4de717a1d9601eeccb60728e6efc66133dffdbe1b9b03c29aafef688a8eded3f")
 
-    commitment_path = root / "commitment-v11.yaml"
+    commitment_path = root / "commitment-v12.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1579,16 +1579,16 @@ def test_v8_campaign_has_no_v7_profile_or_evidence_ancestry():
                 committed["effective_config_sha256"])
 
 
-def test_v11_campaign_has_no_prior_profile_or_evidence_ancestry():
+def test_v12_campaign_has_no_prior_profile_or_evidence_ancestry():
     root = Path("runs/oracle")
     base = yaml.safe_load(
-        (root / "calibration-base-v11.yaml").read_text(encoding="utf-8"))
+        (root / "calibration-base-v12.yaml").read_text(encoding="utf-8"))
     assert base["extends"] == "../acceptance/rehearsal.yaml"
 
     for seed in RELEASE_SEEDS:
         profile = yaml.safe_load(
             (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
-        assert profile["extends"] == "calibration-base-v11.yaml"
+        assert profile["extends"] == "calibration-base-v12.yaml"
 
     # Every prior campaign, not just the immediate predecessor: an initialized
     # seed can never be redrawn, so reusing any earlier seed would be
@@ -1596,7 +1596,7 @@ def test_v11_campaign_has_no_prior_profile_or_evidence_ancestry():
     prior_rows: dict[int, dict] = {}
     prior_files = sorted(
         path for path in root.glob("commitment-v*.yaml")
-        if path.name != "commitment-v11.yaml")
+        if path.name != "commitment-v12.yaml")
     assert len(prior_files) >= 10, "prior commitments missing from the tree"
     for path in prior_files:
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -1604,9 +1604,9 @@ def test_v11_campaign_has_no_prior_profile_or_evidence_ancestry():
             prior_rows[int(entry["seed"])] = entry
 
     new_commitment = yaml.safe_load(
-        (root / "commitment-v11.yaml").read_text(encoding="utf-8"))
+        (root / "commitment-v12.yaml").read_text(encoding="utf-8"))
     new_manifest = yaml.safe_load(
-        (root / "manifest-v11.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v12.template.yaml").read_text(encoding="utf-8"))
     new_commitment_rows = {
         int(entry["seed"]): entry for entry in new_commitment["runs"]}
     new_manifest_rows = {
