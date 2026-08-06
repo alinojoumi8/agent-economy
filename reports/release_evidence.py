@@ -574,7 +574,11 @@ def write_release_evidence_package(
     temporary = Path(temporary_name)
     temporary.unlink()
     try:
-        os.symlink(f".release-evidence-packages/{digest}", temporary)
+        os.symlink(
+            f".release-evidence-packages/{digest}",
+            temporary,
+            target_is_directory=True,
+        )
         os.replace(temporary, current)
         if os.name != "nt":
             directory = os.open(target, os.O_RDONLY)

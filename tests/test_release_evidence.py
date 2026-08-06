@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -384,8 +385,9 @@ def test_package_writer_is_byte_identical_across_repeated_output(tmp_path):
 
     assert first_bytes == (second_json.read_bytes(), second_markdown.read_bytes())
     assert not list(output.glob(".*.tmp"))
-    assert stat.S_IMODE(second_json.stat().st_mode) == 0o644
-    assert stat.S_IMODE(second_markdown.stat().st_mode) == 0o644
+    represented_mode = 0o666 if os.name == "nt" else 0o644
+    assert stat.S_IMODE(second_json.stat().st_mode) == represented_mode
+    assert stat.S_IMODE(second_markdown.stat().st_mode) == represented_mode
 
 
 def test_package_writer_never_publishes_half_of_a_failed_pair(tmp_path, monkeypatch):
