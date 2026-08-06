@@ -5,6 +5,12 @@ import {
   resolveApiRequest,
 } from "./hostedRouting.js";
 
+export function requestLogPath(path) {
+  const value = String(path ?? "");
+  const boundary = value.search(/[?#]/);
+  return boundary < 0 ? value : value.slice(0, boundary);
+}
+
 export async function api(path, options = {}) {
   const method = options.method || "GET";
   const resolved = resolveApiRequest(
@@ -18,6 +24,7 @@ export async function api(path, options = {}) {
   const fetchOptions = hostedFetchOptions(
     { ...requestOptions, path: resolved.path }, options.cookieString,
   );
+  const logPath = requestLogPath(resolved.path);
   delete fetchOptions.cookieString;
   let response;
   try {
@@ -25,7 +32,7 @@ export async function api(path, options = {}) {
   } catch (reason) {
     if (reason?.name !== "AbortError") {
       clientLog("dashboard.api.network_failed", {
-        path: resolved.path, method, error_type: reason?.constructor?.name || typeof reason,
+        path: logPath, method, error_type: reason?.constructor?.name || typeof reason,
         error: reason instanceof Error ? reason.message : String(reason),
       }, "error");
     }
@@ -37,7 +44,7 @@ export async function api(path, options = {}) {
       body = await response.json();
     } catch (reason) {
       clientLog("dashboard.api.invalid_json", {
-        path: resolved.path, method, status_code: response.status,
+        path: logPath, method, status_code: response.status,
         error_type: reason?.constructor?.name || typeof reason,
         error: reason instanceof Error ? reason.message : String(reason),
       }, "warn");
@@ -47,7 +54,7 @@ export async function api(path, options = {}) {
     const detail = typeof body.detail === "object" ? body.detail?.code : body.detail;
     const message = body.error || detail || `${response.status} ${response.statusText}`;
     clientLog("dashboard.api.http_failed", {
-      path: resolved.path, method, status_code: response.status, error: message,
+      path: logPath, method, status_code: response.status, error: message,
     }, "error");
     throw new Error(message);
   }

@@ -43,7 +43,10 @@ test("api logs network and HTTP failures with request context", async () => {
   console.error = message => messages.push(JSON.parse(message));
   try {
     globalThis.fetch = async () => { throw new TypeError("network offline"); };
-    await assert.rejects(api("/api/network"), /network offline/);
+    await assert.rejects(
+      api("/api/network?q=private-user-entry#private-fragment"),
+      /network offline/,
+    );
 
     globalThis.fetch = async () => ({
       ok: false, status: 503, statusText: "Unavailable",

@@ -277,6 +277,9 @@ export function InvestigationsWorkspace() {
         <div className="world-os-investigation-actions">
           {!currentInvestigation && <button className="button" disabled={!canMutate || !rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
           {currentInvestigation && <button className="button" disabled={!canMutate || !selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+          {pinEvidence.error && <p className="world-os-error" role="alert">
+            {pinEvidence.error instanceof Error ? pinEvidence.error.message : "Evidence pin failed."}
+          </p>}
         </div>
       </div>
     </div>
@@ -334,6 +337,9 @@ export function InvestigationsWorkspace() {
       <form onSubmit={event => { event.preventDefault(); if (hypothesis.trim()) addHypothesis.mutate(); }}>
         <label htmlFor="hypothesis">New hypothesis</label><textarea id="hypothesis" value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} />
         <button className="button" disabled={!canMutate || !hypothesis.trim() || addHypothesis.isPending}>Add hypothesis</button>
+        {addHypothesis.error && <p className="world-os-error" role="alert">
+          {addHypothesis.error instanceof Error ? addHypothesis.error.message : "Hypothesis save failed."}
+        </p>}
       </form>
     </article>}
     {draft?.conflict?.open && <InvestigationConflictDialog

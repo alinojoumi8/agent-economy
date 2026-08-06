@@ -18,6 +18,9 @@ export function runControlState(status, busy = "") {
   const running = !terminal && Boolean(
     status?.running || status?.status === "running" || busy === "start" || busy === "step"
   );
+  // Pause and Stop are deliberate interrupts for in-flight Run/Step requests.
+  // The controller signals them immediately and serializes final state changes
+  // behind its control lock; every other control remains disabled while busy.
   const interruptibleBusy = busy === "start" || busy === "step";
   return {
     running,

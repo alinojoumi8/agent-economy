@@ -166,6 +166,12 @@ async function installApi(context: BrowserContext, state: ReturnType<typeof init
         markdown: `# ${record.title}\n\nRun: \`${record.run_id}\`\n\n## Hypotheses\n\n- [open] Delivery changed demand\n\n## Evidence\n\n- \`{\"id\":9,\"kind\":\"event\"}\` Committed evidence\n`,
       } });
     }
+    if (/^\/api\/v2\/operator\/investigations\/[^/]+\/items$/.test(path)) {
+      return route.fulfill({ status: 503, json: { detail: "Evidence pin failed." } });
+    }
+    if (/^\/api\/v2\/operator\/investigations\/[^/]+\/hypotheses$/.test(path)) {
+      return route.fulfill({ status: 503, json: { detail: "Hypothesis save failed." } });
+    }
     if (path === "/api/agents") return route.fulfill({ json: [] });
     if (path === "/api/firms") return route.fulfill({ json: [] });
     if (path === "/api/llm/runtime") return route.fulfill({ json: {
@@ -337,4 +343,24 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   expect(errors).toEqual([]);
   await contextA.close();
   await contextB.close();
+});
+
+test("evidence and hypothesis mutation failures are visible beside their controls", async ({ browser }) => {
+  const context = await browser.newContext();
+  const state = initialState();
+  await installSocket(context);
+  await installApi(context, state);
+  const page = await context.newPage();
+  await page.goto("/runs/run-demo/investigations/inv-1?event=9");
+
+  await page.getByRole("button", { name: "Pin selected evidence" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Evidence pin failed." })).toBeVisible();
+
+  await page.getByLabel("New hypothesis").fill("A failed hypothesis should remain editable.");
+  await page.getByRole("button", { name: "Add hypothesis" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Hypothesis save failed." })).toBeVisible();
+  await expect(page.getByLabel("New hypothesis")).toHaveValue(
+    "A failed hypothesis should remain editable.",
+  );
+  await context.close();
 });

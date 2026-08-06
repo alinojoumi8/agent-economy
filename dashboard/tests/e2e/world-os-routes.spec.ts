@@ -32,13 +32,13 @@ async function installSocket(page: Page) {
   });
 }
 
-function envelope(path: string, url: URL, data: unknown) {
+function envelope(path: string, url: URL, data: unknown, projection = `workspace.${path}`) {
   const historical = url.searchParams.get("tick") === "3";
   return {
     ...baseEnvelope,
     tick: historical ? 3 : 6,
     fork_id: url.searchParams.get("fork_id"),
-    projection: `workspace.${path}`,
+    projection,
     snapshot_version: `s12-p1-t${historical ? 3 : 6}-workspaces`,
     data,
   };
@@ -136,19 +136,24 @@ async function mockWorkspaceApis(
         current_only_artifacts_omitted: historical,
       });
     } else if (path === "/api/v2/snapshot") {
-      body = { ...baseEnvelope, projection: "world.snapshot", data: {
+      body = envelope("snapshot", url, {
         summary: { status: "paused", phase: "FINALIZE", active_tick: null, agents_alive: 1, active_firms: 1, ledger_balance: 0 },
         communications: { total: 0, published: 0, private_total: 0 }, alerts: [], events: { items: [] },
-      } };
+      }, "world.snapshot");
     } else if (path === "/api/v2/world-map") {
-      body = { ...baseEnvelope, projection: "world.map", data: { regions: [], agents: [], organizations: [], places: [], presence: [] } };
+      body = envelope("map", url, {
+        regions: [], agents: [], organizations: [], places: [], presence: [],
+      }, "world.map");
     } else if (path === "/api/v2/civic/summary") {
-      body = { ...baseEnvelope, projection: "civic.summary", data: { enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [] } };
+      body = envelope("civic", url, {
+        enabled: false, tick: historical ? 3 : 6,
+        queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+      }, "civic.summary");
     } else if (path === "/api/v2/search") {
-      body = { ...baseEnvelope, projection: "search.results", data: { groups: [
+      body = envelope("search", url, { groups: [
         { kind: "agent", items: [], truncated: false }, { kind: "firm", items: [], truncated: false },
         { kind: "event", items: [], truncated: false }, { kind: "communication_thread", items: [], truncated: false },
-      ] } };
+      ] }, "search.results");
     } else {
       return route.fulfill({ status: 404, json: { detail: "not mocked" } });
     }
@@ -209,11 +214,15 @@ test("all canonical workspace routes navigate with observer context and validate
   await expect(page).toHaveURL(/experiments\/1\?fork=fork-1&view=campaigns/);
 
   expect(diagnostics.historicalBodies.length).toBeGreaterThan(0);
-  expect(diagnostics.bodies.join("\n")).toContain(PRIVATE_CANARY);
-  expect(diagnostics.bodies.join("\n")).toContain(FUTURE_CANARY);
+  const experimentBodies = diagnostics.bodies.filter(
+    body => body.includes('"projection":"workspace.experiments"'),
+  );
+  expect(experimentBodies.join("\n")).toContain(PRIVATE_CANARY);
+  expect(experimentBodies.join("\n")).toContain(FUTURE_CANARY);
   expect(diagnostics.historicalBodies.join("\n")).not.toContain(PRIVATE_CANARY);
   expect(diagnostics.historicalBodies.join("\n")).not.toContain(FUTURE_CANARY);
   await expect(page.locator("body")).not.toContainText(PRIVATE_CANARY);
+  await expect(page.locator("body")).not.toContainText(FUTURE_CANARY);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });
@@ -240,6 +249,28 @@ test("world selection removes unresolved region and place URL parameters", async
     expect(current.searchParams.get("fork")).toBe("fork-1");
     expect(current.searchParams.get("tick")).toBe("3");
   }
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("shared support projections honor a requested historical tick", async ({ page }) => {
+  const diagnostics = await setup(page);
+  await page.goto("/runs/run-demo/world?tick=3");
+  const payloads = await page.evaluate(async () => Promise.all([
+    "/api/v2/snapshot?tick=3",
+    "/api/v2/world-map?tick=3",
+    "/api/v2/civic/summary?tick=3",
+    "/api/v2/search?q=North&tick=3",
+  ].map(async path => (await fetch(path)).json())));
+
+  expect(payloads.map(payload => payload.projection)).toEqual([
+    "world.snapshot", "world.map", "civic.summary", "search.results",
+  ]);
+  for (const payload of payloads) {
+    expect(payload.tick).toBe(3);
+    expect(payload.snapshot_version).toContain("-t3-");
+  }
+  expect(payloads[2].data.tick).toBe(3);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });
@@ -281,6 +312,12 @@ test("historical, empty, disabled, and current-only states are explicit", async 
   await expect(page.getByText(/Current-only campaign artifacts are intentionally omitted/)).toBeVisible();
   await expect(page.getByText(/Actions are unavailable in historical views/)).toBeVisible();
   await expect(page.locator("body")).not.toContainText(PRIVATE_CANARY);
+  const historicalExperimentBodies = diagnostics.historicalBodies.filter(
+    body => body.includes('"projection":"workspace.experiments"'),
+  );
+  expect(historicalExperimentBodies.length).toBeGreaterThan(0);
+  expect(historicalExperimentBodies.join("\n")).not.toContain(PRIVATE_CANARY);
+  expect(historicalExperimentBodies.join("\n")).not.toContain(FUTURE_CANARY);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });
@@ -310,8 +347,21 @@ test("command navigation reaches canonical routes and unknown paths redirect onc
   await command.getByPlaceholder("Search routes, people, firms, events…").fill("Politics");
   await command.getByRole("option", { name: /Politics & Law/ }).click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/politics-law$/);
+  const redirectNavigations: string[] = [];
+  const historyBeforeRedirect = await page.evaluate(() => history.length);
+  page.on("framenavigated", frame => {
+    if (frame === page.mainFrame()) redirectNavigations.push(new URL(frame.url()).pathname);
+  });
   await page.goto("/runs/run-demo/not-a-workspace");
   await expect(page).toHaveURL(/\/runs\/run-demo\/overview$/);
+  const distinctNavigations = redirectNavigations.filter(
+    (path, index) => index === 0 || path !== redirectNavigations[index - 1],
+  );
+  expect(distinctNavigations).toEqual([
+    "/runs/run-demo/not-a-workspace",
+    "/runs/run-demo/overview",
+  ]);
+  expect(await page.evaluate(() => history.length)).toBe(historyBeforeRedirect + 1);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });
