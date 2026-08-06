@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      full_suite_matrix:
+        description: Optional JSON matrix override for focused full-suite reruns
+        required: false
+        default: '{"os":["ubuntu-latest","windows-latest"],"python-version":["3.11","3.12"],"shard":[0,1,2,3,4,5,6,7]}'
+        type: string
       integration:
         description: Run dashboard and hosted integration jobs
         required: false
@@ -115,10 +120,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+      matrix: ${{ fromJSON(inputs.full_suite_matrix) }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

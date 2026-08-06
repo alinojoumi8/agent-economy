@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -237,8 +239,34 @@ def test_credential_loader_requires_private_regular_json_file(tmp_path):
 
     assert loaded["access_token"] == "process-only-token"
     path.chmod(0o640)
-    with pytest.raises(PermissionError, match="mode 600"):
-        load_credential_file(path)
+    if os.name == "nt":
+        # Windows' stat mode does not represent the file's ACL. The loader
+        # instead rejects reparse points and verifies the opened file identity.
+        assert load_credential_file(path)["access_token"] == "process-only-token"
+    else:
+        with pytest.raises(PermissionError, match="mode 600"):
+            load_credential_file(path)
+
+
+def test_credential_metadata_rejects_windows_reparse_points():
+    regular = SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o666,
+        st_file_attributes=0,
+    )
+    connector_runner._validate_credential_metadata(
+        regular,
+        platform_name="nt",
+    )
+
+    reparse = SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o666,
+        st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400),
+    )
+    with pytest.raises(ValueError, match="regular file"):
+        connector_runner._validate_credential_metadata(
+            reparse,
+            platform_name="nt",
+        )
 
 
 def test_credential_loader_rejects_symlink_and_missing_probe(tmp_path):

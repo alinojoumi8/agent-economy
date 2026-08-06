@@ -44,12 +44,38 @@ def _hash(value: Any) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
+def _validate_credential_metadata(
+    info: os.stat_result | Any,
+    *,
+    platform_name: str,
+) -> None:
+    """Reject non-files and Windows reparse points before credentials are read."""
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    file_attributes = getattr(info, "st_file_attributes", 0)
+    if not stat.S_ISREG(info.st_mode) or file_attributes & reparse_flag:
+        raise ValueError("credential path must be a regular file, not a symlink")
+    # Windows' st_mode contains only a lossy projection of ACL permissions, so
+    # a Unix 0600 comparison rejects normal private Windows files. Reparse-point
+    # rejection plus the lstat/fstat identity check below provides the relevant
+    # path-swap boundary there; POSIX retains its exact private-mode contract.
+    if platform_name != "nt" and stat.S_IMODE(info.st_mode) != 0o600:
+        raise PermissionError("credential file must have mode 600")
+
+
 def load_credential_file(path: str | Path) -> dict[str, Any]:
-    """Read a process-only credential file after strict ownership-mode checks."""
+    """Read a process-only credential after platform-specific path checks."""
     source = Path(path)
     descriptor: int | None = None
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
+        try:
+            source_info = os.lstat(source)
+        except OSError as exc:
+            raise ValueError(
+                "credential path must be an existing regular file, not a symlink "
+                f"({type(exc).__name__})"
+            ) from exc
+        _validate_credential_metadata(source_info, platform_name=os.name)
         try:
             descriptor = os.open(source, flags)
         except OSError as exc:
@@ -58,11 +84,9 @@ def load_credential_file(path: str | Path) -> dict[str, Any]:
                 f"({type(exc).__name__})"
             ) from exc
         info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
+        _validate_credential_metadata(info, platform_name=os.name)
+        if not os.path.samestat(source_info, info):
             raise ValueError("credential path must be a regular file, not a symlink")
-        mode = stat.S_IMODE(info.st_mode)
-        if mode != 0o600:
-            raise PermissionError("credential file must have mode 600")
         if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
             raise PermissionError("credential file must be owned by the current user")
         try:

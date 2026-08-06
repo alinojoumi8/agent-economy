@@ -643,9 +643,13 @@ line does not authorize any other line:
 - [ ] Independent TypeScript client submit/read flow.
 
 Put the process-only access credential and a cross-tenant isolation probe path
-in an ignored JSON file with mode `600`. The runner verifies the mode, refuses
-symlinks and loopback/private targets, revokes the credential after the test,
-and writes only public hashes and sanitized identifiers:
+in an ignored JSON file. On POSIX, give the file mode `600`; the runner verifies
+that mode and current-user ownership. On Windows, restrict the file ACL to the
+current user before invoking the runner; Python's `st_mode` cannot represent or
+verify that ACL. On both platforms the runner refuses symlinks/reparse points,
+verifies that the opened file is the one it inspected, refuses loopback/private
+targets, revokes the credential after the test, and writes only public hashes
+and sanitized identifiers:
 
 ```bash
 python scripts/run_external_connector_acceptance.py \
