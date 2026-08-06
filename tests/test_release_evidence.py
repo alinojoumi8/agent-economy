@@ -412,3 +412,24 @@ def test_package_writer_never_publishes_half_of_a_failed_pair(tmp_path, monkeypa
         write_release_evidence_package(manifest, output, repo_root=repo)
 
     assert (json_path.read_bytes(), markdown_path.read_bytes()) == original_pair
+
+
+def test_package_writer_selects_complete_package_before_public_links(
+        tmp_path, monkeypatch):
+    repo, manifest = release_fixture(tmp_path)
+    output = tmp_path / "out"
+    destinations = []
+    original_replace = release_evidence.os.replace
+
+    def record_replace(source, destination):
+        if Path(destination).parent == output:
+            destinations.append(Path(destination).name)
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(release_evidence.os, "replace", record_replace)
+    write_release_evidence_package(manifest, output, repo_root=repo)
+
+    assert destinations.index(".release-evidence-current") < destinations.index(
+        "release-evidence.json")
+    assert destinations.index(".release-evidence-current") < destinations.index(
+        "release-evidence.md")

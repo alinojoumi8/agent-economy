@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
-import { configureHostedRouting, HOSTED_MODE_PATH, resetApiRouting } from "../hostedRouting.js";
+import {
+  configureHostedRouting,
+  HOSTED_MODE_PATH,
+  isSafeCsrfCookieName,
+  resetApiRouting,
+} from "../hostedRouting.js";
 
 function validModeConfig(value) {
   return Boolean(
     value && value.hosted === true && value.mode === "hosted"
     && value.api_base === "/api/v2"
-    && typeof value.csrf_cookie_name === "string"
+    && isSafeCsrfCookieName(value.csrf_cookie_name)
     && typeof value.csrf_header_name === "string"
     && Array.isArray(value.profiles),
   );

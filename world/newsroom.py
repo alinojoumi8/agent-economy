@@ -106,17 +106,19 @@ def _public_article_projection(
         sanitized_headline != original_headline
         or sanitized_body != original_body
     )
-    if not sanitized_headline and not sanitized_body:
+    if not sanitized_headline or not sanitized_body:
         readable = (
             str(events[0]["kind"]).replace("_", " ")
             if events else "recorded event"
         )
         outlet_name = str(row.get("outlet_name") or "News")
-        row["headline"] = f"{outlet_name} archived brief: {readable}"
-        row["body"] = (
-            f"The public event spine recorded {readable}. "
-            "Unsupported numeric narrative was removed."
-        )
+        if not sanitized_headline:
+            row["headline"] = f"{outlet_name} archived brief: {readable}"
+        if not sanitized_body:
+            row["body"] = (
+                f"The public event spine recorded {readable}. "
+                "Unsupported numeric narrative was removed."
+            )
     row["source_event_ids"] = source_ids
     raw_tags = row.get("slant_tags", [])
     row["slant_tags"] = (
@@ -410,7 +412,8 @@ class Newsroom:
         # A compact engine-written brief preserves the daily promise without
         # manufacturing facts or hiding the provider contract failure.
         citation_invalid = not source_ids or not all_sources_valid
-        numeric_redacted = bool(contract_valid and not numeric_claims_valid)
+        numeric_redacted = bool(
+            contract_valid and (citation_invalid or not numeric_claims_valid))
         if (not contract_valid or not source_ids or not all_sources_valid
                 or not numeric_claims_valid):
             event = events[0]

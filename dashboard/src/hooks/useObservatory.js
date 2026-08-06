@@ -81,7 +81,7 @@ export function useObservatory({ hosted = false } = {}) {
       refreshPending.current = false;
       const deadline = observatoryRefreshDeadline();
       const get = path => api(path, { signal: deadline.signal });
-      setStatusFresh(false);
+      if (!nextQuiet) setStatusFresh(false);
       if (!nextQuiet) setLoading(true);
       try {
         const { values, errors } = await settleObservatoryRequests({

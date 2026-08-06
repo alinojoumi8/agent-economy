@@ -8,6 +8,7 @@ exact re-execution mode from stored LLM responses, TECH-SPEC §13.)
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections import OrderedDict
@@ -134,10 +135,12 @@ class ReplayReader:
                 "SELECT * FROM news_articles WHERE tick=? ORDER BY id", (tick,)):
             sources = []
             for event_id in _load_json(article["source_event_ids"], []) or []:
+                if type(event_id) is not int or event_id <= 0:
+                    continue
                 source = conn.execute(
                     "SELECT id,tick,kind,payload_json,importance "
                     "FROM events WHERE id=?",
-                    (int(event_id),),
+                    (event_id,),
                 ).fetchone()
                 if source is None:
                     continue
@@ -164,14 +167,22 @@ class ReplayReader:
                     str(sources[0]["kind"]).replace("_", " ")
                     if sources else "recorded event"
                 )
-                headline = f"{article['outlet_name']} archived brief: {readable}"
+                outlet_name = str(article["outlet_name"] or "News")
+                headline = f"{outlet_name} archived brief: {readable}"
+            try:
+                tone = float(article["tone"])
+            except (TypeError, ValueError):
+                tone = 0.0
+            if not math.isfinite(tone):
+                tone = 0.0
+            tone = max(-1.0, min(1.0, tone))
             # The body is intentionally excluded from the public replay view.
             # Sanitize it independently before adding it to this payload in the
             # future so hidden text cannot affect a grounded headline.
             news.append({
                 "headline": headline,
                 "outlet": article["outlet_name"],
-                "tone": float(article["tone"]),
+                "tone": tone,
                 "numeric_claims_redacted": redacted,
                 "numeric_claims_redaction_reason": (
                     "ungrounded_numeric_claim" if redacted else None),

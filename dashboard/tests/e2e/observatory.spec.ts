@@ -54,10 +54,13 @@ test("overlapping refreshes coalesce once and reconnect keeps one timer", async 
   let statusRequests = 0;
   let releaseFirstStatus: () => void = () => {};
   const firstStatusGate = new Promise<void>(resolve => { releaseFirstStatus = resolve; });
+  let activeStatusGate: Promise<void> | null = firstStatusGate;
   await page.route("**/api/**", async route => {
     if (new URL(route.request().url()).pathname === "/api/run/status") {
       statusRequests += 1;
-      if (statusRequests === 1) await firstStatusGate;
+      const gate = activeStatusGate;
+      activeStatusGate = null;
+      if (gate) await gate;
     }
     await route.fulfill({ contentType: "application/json", body: "{}" });
   });
@@ -73,6 +76,31 @@ test("overlapping refreshes coalesce once and reconnect keeps one timer", async 
   await expect.poll(() => statusRequests).toBe(2);
   await page.waitForTimeout(100);
   expect(statusRequests).toBe(2);
+  await expect(page.getByLabel("Observatory loading")).toHaveText("ready");
+  await expect(page.getByLabel("Observatory freshness")).toHaveText("fresh");
+
+  let releaseQuietStatus: () => void = () => {};
+  activeStatusGate = new Promise<void>(resolve => { releaseQuietStatus = resolve; });
+  await page.evaluate(() => {
+    void (window as any).__observatoryHarness.refresh({ quiet: true });
+  });
+  await expect.poll(() => statusRequests).toBe(3);
+  await expect(page.getByLabel("Observatory loading")).toHaveText("ready");
+  await expect(page.getByLabel("Observatory freshness")).toHaveText("fresh");
+  releaseQuietStatus();
+  await expect(page.getByLabel("Observatory freshness")).toHaveText("fresh");
+
+  let releaseLoudStatus: () => void = () => {};
+  activeStatusGate = new Promise<void>(resolve => { releaseLoudStatus = resolve; });
+  await page.evaluate(() => {
+    void (window as any).__observatoryHarness.refresh();
+  });
+  await expect.poll(() => statusRequests).toBe(4);
+  await expect(page.getByLabel("Observatory loading")).toHaveText("loading");
+  await expect(page.getByLabel("Observatory freshness")).toHaveText("stale");
+  releaseLoudStatus();
+  await expect(page.getByLabel("Observatory loading")).toHaveText("ready");
+  await expect(page.getByLabel("Observatory freshness")).toHaveText("fresh");
 
   await page.evaluate(() => {
     const socket = (window as any).__observatorySockets[0];
@@ -82,9 +110,9 @@ test("overlapping refreshes coalesce once and reconnect keeps one timer", async 
       }));
     }
   });
-  await expect.poll(() => statusRequests, { timeout: 2_000 }).toBe(3);
+  await expect.poll(() => statusRequests, { timeout: 2_000 }).toBe(5);
   await page.waitForTimeout(100);
-  expect(statusRequests).toBe(3);
+  expect(statusRequests).toBe(5);
 
   await expect.poll(() => page.evaluate(
     () => (window as any).__observatorySockets.length,

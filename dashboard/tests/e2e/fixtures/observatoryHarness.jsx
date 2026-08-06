@@ -11,6 +11,7 @@ function ObservatoryHarness() {
   return <main>
     <output aria-label="Observatory connection">{observatory.connected ? "connected" : "disconnected"}</output>
     <output aria-label="Observatory loading">{observatory.loading ? "loading" : "ready"}</output>
+    <output aria-label="Observatory freshness">{observatory.statusFresh ? "fresh" : "stale"}</output>
   </main>;
 }
 

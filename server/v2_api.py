@@ -25,6 +25,7 @@ from server.projections import (
     build_organizations_workspace,
     build_politics_law_workspace,
     build_world_workspace,
+    build_world_map_organizations,
     resolve_tick,
     SEARCH_KINDS,
 )
@@ -340,8 +341,8 @@ def install_v2_routes(app, world, controller) -> None:
                 "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
                 (as_of_tick,))]
         if "organizations" in selected:
-            data["organizations"] = build_world_workspace(
-                store, as_of_tick=as_of_tick)["organizations"]
+            data["organizations"] = build_world_map_organizations(
+                store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
         if "presence" in selected:

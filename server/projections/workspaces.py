@@ -87,6 +87,41 @@ def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     return result
 
 
+def build_world_map_organizations(store, *, as_of_tick: int) -> list[dict[str, Any]]:
+    """Project active firms with one bounded historical map location query."""
+    tick = int(as_of_tick)
+    rows = _dicts(store.query(
+        "SELECT f.id,f.name,f.sector,f.founded_tick,f.listed_tick,f.bankrupt_tick,"
+        "f.region_id,r.x AS region_x,r.y AS region_y,p.id AS place_id,"
+        "p.name AS place_name,p.x AS place_x,p.y AS place_y "
+        "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
+        "LEFT JOIN places p ON p.id=(SELECT p2.id FROM places p2 "
+        "WHERE p2.owner_type='firm' AND p2.owner_id=f.id "
+        "AND p2.kind IN ('firm_workplace','workplace') "
+        "AND p2.created_tick<=? AND (p2.closed_tick IS NULL OR p2.closed_tick>?) "
+        "ORDER BY p2.created_tick DESC,p2.id DESC LIMIT 1) "
+        "WHERE f.founded_tick<=? ORDER BY f.id",
+        (tick, tick, tick),
+    ))
+    organizations = []
+    for row in rows:
+        status = _firm_status(row, tick)
+        if status == "bankrupt":
+            continue
+        organizations.append({
+            "id": int(row["id"]),
+            "name": row["name"],
+            "sector": row["sector"],
+            "status": status,
+            "region_id": row["region_id"],
+            "place_id": row["place_id"],
+            "place_name": row["place_name"],
+            "x": row["place_x"] if row["place_x"] is not None else row["region_x"],
+            "y": row["place_y"] if row["place_y"] is not None else row["region_y"],
+        })
+    return organizations
+
+
 def _banks_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     # Banks are genesis institutions; the schema has no creation tick to filter.
     rows = _dicts(store.query(

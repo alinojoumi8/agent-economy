@@ -216,6 +216,7 @@ def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
     assert "987654321" not in projected["headline"] + projected["body"]
     active.close()
 
+
     legacy = _world(tmp_path, "numeric-news-legacy.db")
     legacy_event = legacy.store.log_event(
         2,
@@ -233,6 +234,36 @@ def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
     )
     assert legacy_article["headline"] == unsupported["headline"]
     legacy.close()
+
+
+def test_news_records_missing_citation_without_a_numeric_claim(tmp_path):
+    world = _world(
+        tmp_path, "missing-citation-text.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0,
+    )
+    world.store.commit()
+
+    article = world.newsroom._ground_article(
+        world.newsroom.outlets[0],
+        {
+            "headline": "Production update",
+            "body": "The editor omitted its source citation.",
+            "source_event_ids": [],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        },
+        world.newsroom._daily_events(1),
+        grounding_tick=1,
+    )
+
+    assert article["source_event_ids"] == [event_id]
+    assert article["numeric_claims_redacted"] is True
+    assert article["numeric_claims_redaction_reason"] == "missing_source_citation"
+    world.close()
 
 
 def test_news_projection_retains_safe_field_when_other_numeric_field_is_redacted(
@@ -259,7 +290,7 @@ def test_news_projection_retains_safe_field_when_other_numeric_field_is_redacted
         "slant_tags": [],
     }, enforcement_tick=1)
 
-    assert projected["headline"] == ""
+    assert projected["headline"] == "The Ledger archived brief: production"
     assert projected["body"] == "A cautious production update remains available."
     assert projected["numeric_claims_redacted"] is True
     assert projected["numeric_claims_redaction_reason"] == (

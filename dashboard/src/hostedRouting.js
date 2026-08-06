@@ -12,6 +12,10 @@ let routing = LOCAL;
 
 export const HOSTED_MODE_PATH = "/api/v2/mode";
 
+export function isSafeCsrfCookieName(value) {
+  return typeof value === "string" && Boolean(value) && !/[;=\s]/.test(value);
+}
+
 export function isUuid(value) {
   return UUID_RE.test(String(value || ""));
 }
@@ -24,7 +28,9 @@ export function resetApiRouting() {
 export function configureHostedRouting({ tenantId = null, runId = null, csrfCookieName, csrfHeaderName }) {
   if (tenantId !== null && !isUuid(tenantId)) throw new Error("invalid hosted tenant id");
   if (runId !== null && !isUuid(runId)) throw new Error("invalid hosted run id");
-  if (!csrfCookieName || /[;=\s]/.test(csrfCookieName)) throw new Error("invalid hosted CSRF cookie name");
+  if (!isSafeCsrfCookieName(csrfCookieName)) {
+    throw new Error("invalid hosted CSRF cookie name");
+  }
   routing = Object.freeze({
     hosted: true,
     tenantId: tenantId ? String(tenantId).toLowerCase() : null,

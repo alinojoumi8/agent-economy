@@ -86,6 +86,11 @@ export function reopenInvestigationConflict(state) {
   return { ...state, conflict: { ...state.conflict, open: true } };
 }
 
+export function shouldShowNavigationGuard(state, pendingInvestigationId, blockerState) {
+  const navigationPending = Boolean(pendingInvestigationId) || blockerState === "blocked";
+  return navigationPending && !state?.conflict?.open;
+}
+
 export function saveInvestigationAsNewPayload(state) {
   if (!state.conflict) throw new Error("No investigation conflict is available.");
   const validation = investigationTitleError(state.titleDraft);

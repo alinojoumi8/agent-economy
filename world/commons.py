@@ -370,25 +370,26 @@ class CommonsService:
         if not clean_reason:
             raise CommonsError(400, "moderation reason is required")
         status_by_action = {"hide": "hidden", "remove": "removed", "restore": "published"}
-        if action in status_by_action:
-            self.store.execute("UPDATE commons_entries SET status=? WHERE id=?",
-                               (status_by_action[action], entry_id))
-        if action == "label":
-            self.store.execute("UPDATE commons_entries SET moderation_label=? WHERE id=?",
-                               (clean_reason, entry_id))
-        if action == "limit_author":
-            self.ensure_profile(int(entry["author_agent_id"]))
-            self.store.execute("UPDATE commons_profiles SET status='limited',updated_tick=? WHERE agent_id=?",
-                               (self.store.tick, int(entry["author_agent_id"])))
-        event_id = self.store.log_event(
-            self.store.tick, "commons_moderation_applied",
-            {"entry_id": entry_id, "moderator_agent_id": moderator_agent_id,
-             "action": action, "reason": clean_reason}, phase="COMMONS",
-            subject_type="agent", subject_id=moderator_agent_id, importance=1.0)
-        moderation_id = self.store.insert(
-            "commons_moderation_actions", entry_id=entry_id,
-            moderator_agent_id=moderator_agent_id, action=action, reason=clean_reason,
-            created_tick=self.store.tick, created_event_id=event_id, status="effective")
+        with self.store.savepoint("commons_moderation"):
+            if action in status_by_action:
+                self.store.execute("UPDATE commons_entries SET status=? WHERE id=?",
+                                   (status_by_action[action], entry_id))
+            if action == "label":
+                self.store.execute("UPDATE commons_entries SET moderation_label=? WHERE id=?",
+                                   (clean_reason, entry_id))
+            if action == "limit_author":
+                self.ensure_profile(int(entry["author_agent_id"]))
+                self.store.execute("UPDATE commons_profiles SET status='limited',updated_tick=? WHERE agent_id=?",
+                                   (self.store.tick, int(entry["author_agent_id"])))
+            event_id = self.store.log_event(
+                self.store.tick, "commons_moderation_applied",
+                {"entry_id": entry_id, "moderator_agent_id": moderator_agent_id,
+                 "action": action, "reason": clean_reason}, phase="COMMONS",
+                subject_type="agent", subject_id=moderator_agent_id, importance=1.0)
+            moderation_id = self.store.insert(
+                "commons_moderation_actions", entry_id=entry_id,
+                moderator_agent_id=moderator_agent_id, action=action, reason=clean_reason,
+                created_tick=self.store.tick, created_event_id=event_id, status="effective")
         self.store.commit()
         return {"ok": True, "moderation_action_id": moderation_id, "event_id": event_id}
 

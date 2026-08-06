@@ -548,23 +548,10 @@ def write_release_evidence_package(
         if public_path.is_symlink():
             if os.readlink(public_path) != link_target:
                 raise RuntimeError(f"unexpected release evidence link: {public_path}")
-            continue
-        if public_path.exists():
+        elif public_path.exists():
             raise RuntimeError(
                 f"legacy release evidence output must be moved before atomic publication: {public_path}"
             )
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{public_path.name}.", dir=target
-        )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
-        temporary.unlink()
-        try:
-            os.symlink(link_target, temporary)
-            os.replace(temporary, public_path)
-        finally:
-            if temporary.exists() or temporary.is_symlink():
-                temporary.unlink()
 
     current = target / ".release-evidence-current"
     descriptor, temporary_name = tempfile.mkstemp(
@@ -589,6 +576,22 @@ def write_release_evidence_package(
     finally:
         if temporary.exists() or temporary.is_symlink():
             temporary.unlink()
+
+    for public_path, link_target in public_links.items():
+        if public_path.is_symlink():
+            continue
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{public_path.name}.", dir=target
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        temporary.unlink()
+        try:
+            os.symlink(link_target, temporary)
+            os.replace(temporary, public_path)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
 
     json_path = target / "release-evidence.json"
     markdown_path = target / "release-evidence.md"

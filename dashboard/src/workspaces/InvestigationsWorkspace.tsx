@@ -23,6 +23,7 @@ import {
   reopenInvestigationConflict,
   requestInvestigationSaveAsNew,
   saveInvestigationAsNewPayload,
+  shouldShowNavigationGuard,
 } from "./investigationState";
 
 type EventPage = { items: Array<{ id: number; tick: number; kind: string; phase: string }> };
@@ -76,8 +77,11 @@ export function InvestigationsWorkspace() {
     if (blocker.state === "blocked") blocker.reset();
     setPendingInvestigationId(null);
   };
+  const showNavigationGuard = shouldShowNavigationGuard(
+    draft, pendingInvestigationId, blocker.state,
+  );
   const navigationDialogRef = useModalFocus({
-    active: Boolean(pendingInvestigationId) || blocker.state === "blocked",
+    active: showNavigationGuard,
     initialFocusRef: navigationDialogHeading,
     onEscape: resetNavigationGuard,
   });
@@ -358,7 +362,7 @@ export function InvestigationsWorkspace() {
         (error: string) => setDraft((current: any) => current ? { ...current, error } : current),
       )}
       onContinue={() => setDraft((current: any) => continueInvestigationConflict(current))} />}
-    {(pendingInvestigationId || blocker.state === "blocked") && <div className="world-os-dialog-backdrop">
+    {showNavigationGuard && <div className="world-os-dialog-backdrop">
       <section ref={navigationDialogRef} className="world-os-dialog" role="dialog"
         aria-modal="true" aria-labelledby="discard-draft-title" tabIndex={-1}>
         <h3 id="discard-draft-title" ref={navigationDialogHeading} tabIndex={-1}>Discard unsaved title draft?</h3>

@@ -19,6 +19,7 @@ import {
   reloadInvestigationConflict,
   requestInvestigationSaveAsNew,
   saveInvestigationAsNewPayload,
+  shouldShowNavigationGuard,
 } from "../src/workspaces/investigationState.js";
 
 test("workspace API preserves HTTP status without exposing response internals", async () => {
@@ -195,6 +196,22 @@ test("version conflict renders explicit recovery without a hidden retry", async 
   assert.match(workspaceSource, /reason instanceof WorkspaceApiError/);
   assert.match(workspaceSource, /reason\.status === 409/);
   assert.equal((workspaceSource.match(/method:\s*"PATCH"/g) || []).length, 1);
+});
+
+test("navigation guard waits until the version-conflict modal closes", () => {
+  const draft = openInvestigationConflict(
+    editInvestigationTitle(
+      createInvestigationDraft({ id: "inv-1", title: "Original", version: 1 }),
+      "Local draft",
+    ),
+    { id: "inv-1", title: "Remote", version: 2 },
+  );
+
+  assert.equal(shouldShowNavigationGuard(draft, "inv-2", "blocked"), false);
+  assert.equal(
+    shouldShowNavigationGuard(continueInvestigationConflict(draft), "inv-2", "blocked"),
+    true,
+  );
 });
 
 test("save-as-new copies context but never evidence or hypotheses", () => {

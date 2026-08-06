@@ -120,6 +120,38 @@ def test_feed_policy_hash_scores_positions_and_public_projection_are_determinist
         item["id"] for item in public_a["feed"]["entries"]}
 
 
+def test_moderation_rolls_back_entry_event_and_action_together(
+    commons_world: World, monkeypatch,
+):
+    moderator, author = _agents(commons_world)
+    community = commons_world.commons.create_community(
+        moderator, name="Atomic Moderation")
+    entry = commons_world.commons.publish(
+        author, body="Moderation transaction test", community_id=community["id"])
+    events_before = int(commons_world.store.scalar(
+        "SELECT COUNT(*) FROM events", default=0))
+    original_insert = commons_world.store.insert
+
+    def fail_action(table, **columns):
+        if table == "commons_moderation_actions":
+            raise RuntimeError("simulated moderation action failure")
+        return original_insert(table, **columns)
+
+    monkeypatch.setattr(commons_world.store, "insert", fail_action)
+    with pytest.raises(RuntimeError, match="moderation action failure"):
+        commons_world.commons.moderate(
+            moderator, entry["id"], action="hide", reason="test rollback")
+
+    assert commons_world.store.scalar(
+        "SELECT status FROM commons_entries WHERE id=?", (entry["id"],)) == "published"
+    assert commons_world.store.scalar(
+        "SELECT COUNT(*) FROM commons_moderation_actions WHERE entry_id=?",
+        (entry["id"],), default=0,
+    ) == 0
+    assert commons_world.store.scalar(
+        "SELECT COUNT(*) FROM events", default=0) == events_before
+
+
 def test_live_public_projection_uses_active_policy_and_authoritative_profile(
     commons_world: World,
 ):

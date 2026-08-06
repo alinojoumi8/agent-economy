@@ -270,6 +270,24 @@ def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(econo
         assert client.get("/api/v2/workspaces/markets", params={"tick": 11}).status_code == 409
         assert client.get(
             "/api/v2/workspaces/markets", params={"fork_id": "wrong"}).status_code == 409
+        map_response = client.get(
+            "/api/v2/world-map",
+            params={"tick": 4, "layers": "organizations"},
+        )
+        assert map_response.status_code == 200
+        map_organizations = map_response.json()["data"]["organizations"]
+        assert [row["id"] for row in map_organizations] == [1]
+        assert map_organizations[0] == {
+            "id": 1,
+            "name": "Past Firm",
+            "sector": "food",
+            "status": "private",
+            "region_id": 1,
+            "place_id": None,
+            "place_name": None,
+            "x": 0.2,
+            "y": 0.3,
+        }
     app.state.operator_workspace.close()
 
 

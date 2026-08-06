@@ -62,6 +62,21 @@ VALID_TYPES = {
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
+_ACTION_PROVENANCE_FIELDS = {
+    "evidence_event_ids", "model_call_id", "rationale_summary",
+}
+
+
+def _authorization_payload(action: dict) -> str | None:
+    submitted = {
+        key: value for key, value in action.items()
+        if key not in _ACTION_PROVENANCE_FIELDS
+    }
+    try:
+        return json.dumps(
+            submitted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
 
 
 class ActionExecutor:
@@ -90,7 +105,11 @@ class ActionExecutor:
             return None
         supplied = getattr(
             self.e, "_startup_action_authorizations", {}).get((tick, actor_id), [])
-        if not any(action == expected for expected in supplied):
+        submitted = _authorization_payload(action)
+        if not isinstance(supplied, list) or submitted is None or not any(
+            submitted == _authorization_payload(expected)
+            for expected in supplied if isinstance(expected, dict)
+        ):
             return {
                 "ok": False,
                 "reason": "startup action must copy a current supplied action exactly",
@@ -763,23 +782,9 @@ class ActionExecutor:
                         "ok": False,
                         "reason": "found_company is available only from a supplied entrepreneurship opportunity",
                     }
-                provenance_fields = {
-                    "evidence_event_ids", "model_call_id", "rationale_summary",
-                }
-                submitted = {
-                    key: value for key, value in action.items()
-                    if key not in provenance_fields
-                }
-                try:
-                    exact_match = json.dumps(
-                        submitted, sort_keys=True, separators=(",", ":"),
-                        ensure_ascii=False,
-                    ) == json.dumps(
-                        expected, sort_keys=True, separators=(",", ":"),
-                        ensure_ascii=False,
-                    )
-                except (TypeError, ValueError):
-                    exact_match = False
+                exact_match = (
+                    _authorization_payload(action) == _authorization_payload(expected)
+                )
                 if not exact_match:
                     return {
                         "ok": False,
@@ -1136,6 +1141,10 @@ class ActionExecutor:
         return self.e.startups.close_funding_round(tick, actor_id, int(action.get("term_sheet_id", 0)))
 
     def _do_register_ip(self, tick, actor_id, action, phase) -> dict:
+        authorization_error = self._startup_authorization_error(
+            tick, actor_id, action)
+        if authorization_error is not None:
+            return authorization_error
         entrepreneurship = self.e.config.get("entrepreneurship", {})
         activation_tick = max(0, int(
             entrepreneurship.get("activation_tick", 0)))
@@ -1164,10 +1173,6 @@ class ActionExecutor:
                 "ok": False,
                 "reason": "native startup IP requires a closed funding round",
             }
-        authorization_error = self._startup_authorization_error(
-            tick, actor_id, action)
-        if authorization_error is not None:
-            return authorization_error
         return self.e.startups.register_ip(tick, actor_id, action)
 
     def _do_license_ip(self, tick, actor_id, action, phase) -> dict:

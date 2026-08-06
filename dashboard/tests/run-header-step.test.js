@@ -30,6 +30,69 @@ test("an in-flight Step is shown as running while Pause and Stop remain availabl
   }
 });
 
+test("an interrupt disables controls until every overlapping request settles", async () => {
+  const vite = await createServer({
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+  });
+  try {
+    const { runControlState } = await vite.ssrLoadModule("/src/components/RunHeader.jsx");
+
+    assert.deepEqual(runControlState?.(
+      { status: "paused", running: false }, ["step", "stop"],
+    ), {
+      running: true,
+      displayStatus: "running",
+      pauseDisabled: true,
+      stopDisabled: true,
+    });
+    assert.deepEqual(runControlState?.(
+      { status: "paused", running: false },
+      { pending: ["step"], interruptLatched: true },
+    ), {
+      running: true,
+      displayStatus: "running",
+      pauseDisabled: true,
+      stopDisabled: true,
+    });
+    assert.deepEqual(runControlState?.(
+      { status: "paused", running: false },
+      { pending: [], interruptLatched: false },
+    ), {
+      running: false,
+      displayStatus: "paused",
+      pauseDisabled: true,
+      stopDisabled: false,
+    });
+  } finally {
+    await vite.close();
+  }
+});
+
+test("Pause and Stop can interrupt speed or report work exactly once", async () => {
+  const vite = await createServer({
+    appType: "custom",
+    logLevel: "silent",
+    server: { middlewareMode: true },
+  });
+  try {
+    const { runControlState } = await vite.ssrLoadModule("/src/components/RunHeader.jsx");
+    for (const pending of ["speed", "report"]) {
+      assert.deepEqual(runControlState?.(
+        { status: "running", running: true }, [pending],
+      ), {
+        running: true,
+        displayStatus: "running",
+        pauseDisabled: false,
+        stopDisabled: false,
+      });
+    }
+  } finally {
+    await vite.close();
+  }
+});
+
 test("all terminal and unknown run states fail closed across controls", async () => {
   const vite = await createServer({
     appType: "custom",

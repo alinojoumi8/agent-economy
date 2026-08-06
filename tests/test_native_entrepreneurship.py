@@ -484,7 +484,7 @@ def test_native_startup_ip_requires_a_closed_funding_round(store):
         action["type"] == "register_ip"
         for action in pending.get("startup_work", {}).get("eligible_actions", [])
     )
-    premature = ActionExecutor(economy).execute_action(2, founder_id, {
+    premature_action = {
         "type": "register_ip",
         "firm_id": firm_id,
         "creator_agent_id": founder_id,
@@ -493,7 +493,12 @@ def test_native_startup_ip_requires_a_closed_funding_round(store):
         "scope": "Financed product",
         "valuation_cents": 0,
         "metadata": {"source": "declared_firm_product"},
-    })
+    }
+    economy._startup_action_authorizations = {
+        (2, founder_id): [premature_action],
+    }
+    premature = ActionExecutor(economy).execute_action(
+        2, founder_id, premature_action)
     assert premature == {
         "ok": False,
         "reason": "native startup IP requires a closed funding round",
@@ -692,7 +697,20 @@ def test_native_startup_advances_through_funding_ip_and_engine_priced_merger(
             "Build dependable technology capacity for customers in the local market."
         ),
     }
-    assert executor.execute_action(pitch_tick, founder_id, pitch)["ok"]
+    unauthorized_ip = executor.execute_action(pitch_tick, target_founder_id, {
+        "type": "register_ip",
+        "firm_id": startup_id,
+        "asset_type": "patent_like",
+        "title": "Private funding-state probe",
+    })
+    assert unauthorized_ip == {
+        "ok": False,
+        "reason": "startup action must copy a current supplied action exactly",
+    }
+    assert executor.execute_action(pitch_tick, founder_id, {
+        **pitch,
+        "rationale_summary": "Copied action with gateway provenance",
+    })["ok"]
     assert "startup_work" not in builder.build(founder, pitch_tick + 1)
 
     vc = store.query_one("SELECT * FROM agents WHERE id=?", (vc_id,))

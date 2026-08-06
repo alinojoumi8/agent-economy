@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { api } from "../src/api.js";
+import { validModeConfig } from "../src/hooks/useHostedMode.js";
 import {
   configureHostedRouting,
   hostedCapabilities,
@@ -31,6 +32,23 @@ function hosted(runId = RUN) {
     csrfHeaderName: "X-AE-CSRF",
   });
 }
+
+test("hosted mode rejects unsafe CSRF cookie names before routing setup", () => {
+  const config = {
+    hosted: true,
+    mode: "hosted",
+    api_base: "/api/v2",
+    csrf_cookie_name: "__Host-ae_csrf",
+    csrf_header_name: "X-AE-CSRF",
+    profiles: [],
+  };
+  assert.equal(validModeConfig(config), true);
+  for (const csrfCookieName of ["", "bad name", "bad;name", "bad=name"]) {
+    assert.equal(validModeConfig({
+      ...config, csrf_cookie_name: csrfCookieName,
+    }), false, csrfCookieName);
+  }
+});
 
 test("hosted access mode switch uses standard button-group semantics", () => {
   assert.match(hostedShellSource, /role="group" aria-label="Hosted access"/);

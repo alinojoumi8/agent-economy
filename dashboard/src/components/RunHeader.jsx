@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { inferenceMode } from "../lib/inferenceMode.js";
@@ -14,26 +14,46 @@ export function isTerminalRunStatus(value) {
 }
 
 export function runControlState(status, busy = "") {
+  const pendingValues = Array.isArray(busy)
+    ? busy
+    : busy && typeof busy === "object"
+      ? busy.pending || []
+      : busy ? [busy] : [];
+  const pending = new Set(pendingValues);
+  const interruptLatched = Boolean(
+    busy && typeof busy === "object" && busy.interruptLatched,
+  );
   const terminal = isTerminalRunStatus(status?.status);
   const running = !terminal && Boolean(
-    status?.running || status?.status === "running" || busy === "start" || busy === "step"
+    status?.running || status?.status === "running"
+      || pending.has("start") || pending.has("step")
   );
-  // Pause and Stop are deliberate interrupts for in-flight Run/Step requests.
-  // The controller signals them immediately and serializes final state changes
-  // behind its control lock; every other control remains disabled while busy.
-  const interruptibleBusy = busy === "start" || busy === "step";
+  // Pause and Stop are deliberate interrupts for other in-flight work. The
+  // controller signals them immediately and serializes final state changes;
+  // once either interrupt is pending, every further control stays disabled.
+  const interruptIssued = interruptLatched || pending.has("pause") || pending.has("stop");
   return {
     running,
     displayStatus: running ? "running" : status?.status || "loading",
-    pauseDisabled: !running || Boolean(busy && !interruptibleBusy),
-    stopDisabled: terminal || Boolean(busy && !interruptibleBusy),
+    pauseDisabled: !running || interruptIssued,
+    stopDisabled: terminal || interruptIssued,
   };
 }
 
 export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
   hosted = false, canControl = true, statusFresh = Boolean(status) }) {
-  const [busy, setBusy] = useState("");
-  const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(status, busy);
+  const [controlRequests, setControlRequests] = useState({
+    pending: [], interruptedRequestIds: [],
+  });
+  const nextActionId = useRef(0);
+  const pendingActions = controlRequests.pending;
+  const busy = pendingActions.length > 0;
+  const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(
+    status, {
+      pending: pendingActions.map(item => item.name),
+      interruptLatched: controlRequests.interruptedRequestIds.length > 0,
+    },
+  );
   const terminal = isTerminalRunStatus(status?.status);
   const participantActive = Boolean(participant?.active);
   const participantReady = Boolean(participant?.queued_action);
@@ -43,7 +63,17 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
   const controlsUnavailable = loading || !status || !statusFresh;
 
   async function action(name, path, body) {
-    setBusy(name);
+    nextActionId.current += 1;
+    const requestId = nextActionId.current;
+    setControlRequests(current => ({
+      pending: [...current.pending, { id: requestId, name }],
+      interruptedRequestIds: name === "pause" || name === "stop"
+        ? [...new Set([
+          ...current.interruptedRequestIds,
+          ...current.pending.map(item => item.id),
+        ])]
+        : current.interruptedRequestIds,
+    }));
     try {
       await act(path, body);
     } catch (reason) {
@@ -52,7 +82,18 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         error_type: reason?.constructor?.name || typeof reason,
         error: reason instanceof Error ? reason.message : String(reason),
       }, "error");
-    } finally { setBusy(""); }
+    } finally {
+      setControlRequests(current => {
+        const pending = current.pending.filter(item => item.id !== requestId);
+        const pendingIds = new Set(pending.map(item => item.id));
+        return {
+          pending,
+          interruptedRequestIds: current.interruptedRequestIds.filter(
+            interruptedId => pendingIds.has(interruptedId),
+          ),
+        };
+      });
+    }
   }
 
   return (

@@ -12,6 +12,7 @@ from .workspaces import (
     build_organizations_workspace,
     build_politics_law_workspace,
     build_world_workspace,
+    build_world_map_organizations,
 )
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "build_snapshot",
     "build_threads",
     "build_world_workspace",
+    "build_world_map_organizations",
     "build_organizations_workspace",
     "build_markets_workspace",
     "build_politics_law_workspace",
