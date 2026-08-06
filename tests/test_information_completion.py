@@ -126,6 +126,250 @@ def test_news_grounding_rejects_a_mixed_valid_and_dangling_source_list(tmp_path)
     world.store.close()
 
 
+def test_news_grounding_labels_an_empty_citation_failure(tmp_path):
+    world = _world(
+        tmp_path, "missing-citation.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0,
+    )
+    world.store.commit()
+
+    article = world.newsroom._ground_article(
+        world.newsroom.outlets[0],
+        {
+            "headline": "Production reached 4 units",
+            "body": "The recorded total was 4.",
+            "source_event_ids": [],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        },
+        world.newsroom._daily_events(1),
+        grounding_tick=1,
+    )
+
+    assert article["source_event_ids"] == [event_id]
+    assert article["numeric_claims_redacted"] is True
+    assert article["numeric_claims_redaction_reason"] == "missing_source_citation"
+    world.close()
+
+
+def test_news_rejects_editor_arithmetic_and_api_projects_stored_rows_safely(
+        tmp_path):
+    active = _world(
+        tmp_path,
+        "numeric-news-active.db",
+        beliefs={"model_grounding_from_tick": 2},
+    )
+    event_id = active.store.log_event(
+        2,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    active.store.commit()
+    events = active.newsroom._daily_events(2)
+    unsupported = {
+        "headline": "Firm 1 reports a 987654321% output lead",
+        "body": "The company says its lead reached 987654321%.",
+        "source_event_ids": [event_id],
+        "slant_tags": ["market"],
+        "tone": 0.2,
+    }
+
+    rejected = active.newsroom._ground_article(
+        active.newsroom.outlets[0], unsupported, events, grounding_tick=2)
+    supported = active.newsroom._ground_article(
+        active.newsroom.outlets[0], {
+            **unsupported,
+            "headline": "Firm 1 produced 4 units",
+            "body": "The recorded production event lists 4 units.",
+        }, events, grounding_tick=2)
+
+    assert rejected["headline"] == "The Ledger daily brief: production"
+    assert "987654321" not in rejected["headline"] + rejected["body"]
+    assert supported["headline"] == "Firm 1 produced 4 units"
+
+    active.store.insert(
+        "news_articles",
+        tick=2,
+        outlet_id=1,
+        outlet_name="The Ledger",
+        headline=unsupported["headline"],
+        body=unsupported["body"],
+        source_event_ids=json.dumps([event_id]),
+        slant_tags=json.dumps(["market"]),
+        tone=0.2,
+        truthful=1,
+    )
+    active.store.set_meta(
+        status="paused", tick=1, active_tick=2, next_phase="MORNING")
+    active.store.commit()
+    with TestClient(create_app(active)) as client:
+        projected = client.get("/api/news").json()[0]
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    assert "987654321" not in projected["headline"] + projected["body"]
+    active.close()
+
+
+    legacy = _world(tmp_path, "numeric-news-legacy.db")
+    legacy_event = legacy.store.log_event(
+        2,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    legacy.store.commit()
+    legacy_article = legacy.newsroom._ground_article(
+        legacy.newsroom.outlets[0],
+        {**unsupported, "source_event_ids": [legacy_event]},
+        legacy.newsroom._daily_events(2),
+        grounding_tick=2,
+    )
+    assert legacy_article["headline"] == unsupported["headline"]
+    legacy.close()
+
+
+def test_news_records_missing_citation_without_a_numeric_claim(tmp_path):
+    world = _world(
+        tmp_path, "missing-citation-text.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0,
+    )
+    world.store.commit()
+
+    article = world.newsroom._ground_article(
+        world.newsroom.outlets[0],
+        {
+            "headline": "Production update",
+            "body": "The editor omitted its source citation.",
+            "source_event_ids": [],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        },
+        world.newsroom._daily_events(1),
+        grounding_tick=1,
+    )
+
+    assert article["source_event_ids"] == [event_id]
+    assert article["numeric_claims_redacted"] is True
+    assert article["numeric_claims_redaction_reason"] == "missing_source_citation"
+    world.close()
+
+
+def test_news_projection_retains_safe_field_when_other_numeric_field_is_redacted(
+        tmp_path):
+    world = _world(
+        tmp_path,
+        "numeric-news-partial.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    world.store.commit()
+
+    projected = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Output surged 987654321%",
+        "body": "A cautious production update remains available.",
+        "source_event_ids": [event_id],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+
+    assert projected["headline"] == "The Ledger archived brief: production"
+    assert projected["body"] == "A cautious production update remains available."
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    world.close()
+
+
+def test_news_projection_canonicalizes_only_resolved_positive_integer_sources(
+        tmp_path):
+    world = _world(tmp_path, "canonical-news-sources.db")
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0)
+    world.store.commit()
+
+    projected = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Production update",
+        "body": "A recorded production update.",
+        "source_event_ids": [
+            True, event_id, float(event_id), event_id, 0, -1, 999_999, "1"],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+
+    assert projected["source_event_ids"] == [event_id]
+
+    float_only = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Production update",
+        "body": "A recorded production update.",
+        "source_event_ids": [float(event_id)],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+    assert float_only["source_event_ids"] == []
+    world.close()
+
+
+def test_published_numeric_redaction_provenance_survives_projection(
+        tmp_path, monkeypatch):
+    world = _world(
+        tmp_path,
+        "persisted-news-redaction.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0)
+    world.store.commit()
+    grounded = world.newsroom._ground_article(
+        world.newsroom.outlets[0], {
+            "headline": "Production surged 987654321%",
+            "body": "The unsupported increase was 987654321%.",
+            "source_event_ids": [event_id],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        }, world.newsroom._daily_events(1), grounding_tick=1)
+    world.newsroom.outlets = [world.newsroom.outlets[0]]
+
+    async def no_drafts(*_args, **_kwargs):
+        return []
+
+    async def redacted_story(*_args, **_kwargs):
+        return grounded
+
+    monkeypatch.setattr(world.newsroom, "_report_stories", no_drafts)
+    monkeypatch.setattr(world.newsroom, "_write_story", redacted_story)
+    asyncio.run(world.newsroom.publish(1))
+
+    row = world.store.query_one(
+        "SELECT * FROM news_articles WHERE tick=1 ORDER BY id LIMIT 1")
+    assert int(row["numeric_claims_redacted"]) == 1
+    assert row["numeric_claims_redaction_reason"] == "ungrounded_numeric_claim"
+    projected = world.newsroom.public_article_projection(row, enforcement_tick=1)
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    world.close()
+
+
 def test_news_grounding_falls_back_on_malformed_article_fields(tmp_path):
     world = _world(tmp_path, "malformed-article.db")
     event_id = world.store.log_event(

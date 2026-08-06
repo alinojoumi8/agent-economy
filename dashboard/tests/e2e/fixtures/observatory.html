@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><title>Observatory hook harness</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { mountObservatoryHarness } from "/tests/e2e/fixtures/observatoryHarness.jsx";
+      mountObservatoryHarness(document.getElementById("root"));
+    </script>
+  </body>
+</html>

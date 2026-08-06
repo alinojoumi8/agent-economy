@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { api } from "../src/api.js";
+import { validModeConfig } from "../src/hooks/useHostedMode.js";
 import {
   configureHostedRouting,
   hostedCapabilities,
@@ -14,6 +15,10 @@ import {
   resolveApiRequest,
   tenantApiPath,
 } from "../src/hostedRouting.js";
+
+const hostedShellSource = readFileSync(
+  new URL("../src/components/HostedShell.jsx", import.meta.url), "utf8",
+);
 
 const TENANT = "10000000-0000-4000-8000-000000000001";
 const OTHER_TENANT = "20000000-0000-4000-8000-000000000002";
@@ -27,6 +32,30 @@ function hosted(runId = RUN) {
     csrfHeaderName: "X-AE-CSRF",
   });
 }
+
+test("hosted mode rejects unsafe CSRF cookie names before routing setup", () => {
+  const config = {
+    hosted: true,
+    mode: "hosted",
+    api_base: "/api/v2",
+    csrf_cookie_name: "__Host-ae_csrf",
+    csrf_header_name: "X-AE-CSRF",
+    profiles: [],
+  };
+  assert.equal(validModeConfig(config), true);
+  for (const csrfCookieName of ["", "bad name", "bad;name", "bad=name"]) {
+    assert.equal(validModeConfig({
+      ...config, csrf_cookie_name: csrfCookieName,
+    }), false, csrfCookieName);
+  }
+});
+
+test("hosted access mode switch uses standard button-group semantics", () => {
+  assert.match(hostedShellSource, /role="group" aria-label="Hosted access"/);
+  assert.doesNotMatch(hostedShellSource, /role="tablist"/);
+  assert.match(hostedShellSource, /aria-pressed=\{view === "login"\}/);
+  assert.match(hostedShellSource, /aria-pressed=\{view === "register"\}/);
+});
 
 test("local API and WebSocket routes remain byte-for-byte compatible", () => {
   resetApiRouting();

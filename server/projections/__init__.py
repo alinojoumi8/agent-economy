@@ -6,6 +6,14 @@ from .envelope import build_envelope, current_cursor, resolve_tick
 from .events import build_events
 from .search import SEARCH_KINDS, build_search
 from .snapshot import build_snapshot
+from .workspaces import (
+    build_experiments_workspace,
+    build_markets_workspace,
+    build_organizations_workspace,
+    build_politics_law_workspace,
+    build_world_workspace,
+    build_world_map_organizations,
+)
 
 __all__ = [
     "build_causal_projection",
@@ -15,6 +23,12 @@ __all__ = [
     "build_search",
     "build_snapshot",
     "build_threads",
+    "build_world_workspace",
+    "build_world_map_organizations",
+    "build_organizations_workspace",
+    "build_markets_workspace",
+    "build_politics_law_workspace",
+    "build_experiments_workspace",
     "current_cursor",
     "resolve_tick",
     "SEARCH_KINDS",

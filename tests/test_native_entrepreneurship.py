@@ -13,9 +13,10 @@ from agents.prompts import ContextBuilder
 from .conftest import make_agent, make_bank
 from engine.actions import ActionExecutor
 from engine.core import Economy
-from engine.store import load_json
+from engine.store import Store, load_json
 from research.counterfactual import _arm_config
 from research.scenarios import load_scenario
+from run import activate_entrepreneurship_for_run
 from world.metrics import Metrics
 
 
@@ -271,6 +272,529 @@ def test_eligibility_and_participant_payload_are_bounded(store):
     store.update("agents", lawyer_id, alive=0)
     no_lawyer = store.query_one("SELECT * FROM agents WHERE id=?", (eligible_id,))
     assert "entrepreneurship_opportunity" not in builder.build(no_lawyer, 11)
+
+
+def test_mid_run_activation_is_forward_only_and_spreads_established_reviews(store):
+    economy, config, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=20,
+        review_interval_ticks=6,
+    )
+    citizens = [
+        _citizen(
+            economy,
+            bank_id,
+            name=f"Established Founder {index}",
+            arrived_tick=0,
+        )[0]
+        for index in range(6)
+    ]
+    make_agent(
+        economy,
+        bank_id,
+        name="Activation Counsel",
+        occupation="lawyer",
+        role="lawyer",
+        health="healthy",
+    )
+    builder = ContextBuilder(economy, Memory(store, config), config)
+
+    review_ticks = []
+    for agent_id in citizens:
+        agent = store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+        assert "entrepreneurship_opportunity" not in builder.build(agent, 19)
+        due = [
+            tick
+            for tick in range(20, 27)
+            if "entrepreneurship_opportunity" in builder.build(agent, tick)
+        ]
+        assert len(due) == 1
+        review_ticks.append(due[0])
+
+    assert len(set(review_ticks)) >= 3
+
+
+def test_odd_entrepreneurship_review_interval_stays_on_agent_wake_parity(store):
+    economy, config, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=20,
+        review_interval_ticks=3,
+    )
+    agent_id, _ = _citizen(
+        economy, bank_id, name="Parity Founder", arrived_tick=0,
+    )
+    make_agent(
+        economy, bank_id, name="Parity Counsel", occupation="lawyer",
+        role="lawyer", health="healthy",
+    )
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    agent = store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
+
+    due_on_wakes = [
+        tick for tick in range(20, 41)
+        if tick % 2 == agent_id % 2
+        and "entrepreneurship_opportunity" in builder.build(agent, tick)
+    ]
+
+    assert len(due_on_wakes) >= 3
+    assert {right - left for left, right in zip(due_on_wakes, due_on_wakes[1:])} == {4}
+
+
+def test_native_company_formation_is_capped_per_tick_after_activation(store):
+    economy, _, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=20,
+        maximum_formations_per_tick=1,
+    )
+    first_id, _ = _citizen(economy, bank_id, name="First Founder", arrived_tick=0)
+    second_id, _ = _citizen(economy, bank_id, name="Second Founder", arrived_tick=0)
+    lawyer_id, _ = make_agent(
+        economy,
+        bank_id,
+        name="Capacity Counsel",
+        occupation="lawyer",
+        role="lawyer",
+        health="healthy",
+    )
+    actions = {
+        first_id: {
+            "type": "found_company",
+            "name": "First Native Startup",
+            "sector": "technology",
+            "lawyer_agent_id": lawyer_id,
+            "opening_capital": 100_000,
+            "business_idea": {
+                "mission": "Serve the first market",
+                "customer_problem": "Capacity is scarce",
+                "offering": "A bounded first service",
+            },
+        },
+        second_id: {
+            "type": "found_company",
+            "name": "Second Native Startup",
+            "sector": "technology",
+            "lawyer_agent_id": lawyer_id,
+            "opening_capital": 100_000,
+            "business_idea": {
+                "mission": "Serve the second market",
+                "customer_problem": "Capacity remains scarce",
+                "offering": "A bounded second service",
+            },
+        },
+    }
+    economy._entrepreneurship_authorizations = {
+        (20, founder_id): json.loads(json.dumps(action, sort_keys=True))
+        for founder_id, action in actions.items()
+    }
+    executor = ActionExecutor(economy)
+
+    unauthorized = executor.execute_action(20, first_id, {
+        **actions[first_id],
+        "unexpected_handler_field": "must not bypass the authorization",
+    })
+    first = executor.execute_action(20, first_id, {
+        **actions[first_id],
+        "rationale_summary": "authoritative gateway provenance",
+    })
+    second = executor.execute_action(20, second_id, actions[second_id])
+
+    assert unauthorized == {
+        "ok": False,
+        "reason": "found_company must copy the supplied entrepreneurship action exactly",
+    }
+    assert first["ok"], first
+    assert second == {
+        "ok": False,
+        "reason": "daily entrepreneurship capacity reached",
+    }
+    assert int(store.scalar("SELECT COUNT(*) FROM firms", default=0)) == 1
+
+
+def test_pre_activation_native_formation_keeps_historical_execution_shape(store):
+    economy, _, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=20,
+    )
+    founder_id, _ = _citizen(economy, bank_id, arrived_tick=0)
+    lawyer_id, _ = make_agent(
+        economy,
+        bank_id,
+        name="Replay Counsel",
+        occupation="lawyer",
+        role="lawyer",
+        health="healthy",
+    )
+
+    result = ActionExecutor(economy).execute_action(19, founder_id, {
+        "type": "found_company",
+        "name": "Historical Startup",
+        "sector": "technology",
+        "lawyer_agent_id": lawyer_id,
+        "opening_capital": 100_000,
+        "business_idea": {
+            "mission": "Preserve history",
+            "customer_problem": "Replays must remain exact",
+            "offering": "Stable activation boundaries",
+        },
+    })
+
+    assert result["ok"], result
+    assert store.query_one(
+        "SELECT 1 FROM events WHERE tick=19 AND kind='company_founded'"
+    )
+
+
+def test_native_startup_ip_requires_a_closed_funding_round(store):
+    economy, config, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=1,
+    )
+    founder_id, _ = _citizen(economy, bank_id, arrived_tick=0)
+    firm_id = economy.firms.found_firm(
+        1,
+        founder_id,
+        "Funded Inventions",
+        "technology",
+        product={
+            "product": "Bounded invention",
+            "business_idea": {
+                "mission": "Build grounded inventions",
+                "customer_problem": "Ideas need accountable capital",
+                "offering": "A financed invention",
+            },
+        },
+        opening_capital_cents=100_000,
+        business_idea={
+            "mission": "Build grounded inventions",
+            "customer_problem": "Ideas need accountable capital",
+            "offering": "A financed invention",
+        },
+    )
+    economy.vc.pitch(2, founder_id, firm_id, 250_000, "pre-seed")
+    founder = store.query_one("SELECT * FROM agents WHERE id=?", (founder_id,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+
+    pending = builder.build(founder, 2)
+    assert not any(
+        action["type"] == "register_ip"
+        for action in pending.get("startup_work", {}).get("eligible_actions", [])
+    )
+    premature_action = {
+        "type": "register_ip",
+        "firm_id": firm_id,
+        "creator_agent_id": founder_id,
+        "asset_type": "trade_secret",
+        "title": "Bounded invention",
+        "scope": "Financed product",
+        "valuation_cents": 0,
+        "metadata": {"source": "declared_firm_product"},
+    }
+    economy._startup_action_authorizations = {
+        (2, founder_id): [premature_action],
+    }
+    premature = ActionExecutor(economy).execute_action(
+        2, founder_id, premature_action)
+    assert premature == {
+        "ok": False,
+        "reason": "native startup IP requires a closed funding round",
+    }
+
+    store.insert(
+        "funding_rounds",
+        tick=3,
+        firm_id=firm_id,
+        term_sheet_id=1,
+        investor_agent_id=founder_id,
+        round_type="preferred_equity",
+        amount_cents=250_000,
+        currency_code="USD",
+        shares_issued=1,
+        pre_money_cents=1_000_000,
+        post_money_cents=1_250_000,
+        transaction_id=1,
+        status="closed",
+    )
+    funded = builder.build(founder, 3)
+    assert funded["startup_work"]["eligible_actions"][0]["type"] == "register_ip"
+
+
+def test_entrepreneurship_metrics_start_at_the_activation_boundary(store):
+    economy, _, _ = _economy(store, activation_tick=20)
+
+    before = Metrics(economy, semantics_version=7).snapshot(19)
+    active = Metrics(economy, semantics_version=7).snapshot(20)
+
+    assert "entrepreneurial_firms_founded" not in before
+    assert active["entrepreneurial_firms_founded"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("active_tick", "next_phase", "expected_activation"),
+    [
+        (None, "MORNING", 358),
+        (358, "MORNING", 358),
+        (358, "EXECUTION", 359),
+    ],
+)
+def test_paused_run_activation_uses_the_next_untouched_decision_boundary(
+    tmp_path, active_tick, next_phase, expected_activation,
+):
+    path = tmp_path / "existing.db"
+    store = Store(str(path))
+    store.init_run_meta(
+        "existing",
+        42,
+        {"engine_semantics_version": 7, "firms": {"count": 12}},
+    )
+    store.set_meta(
+        status="paused",
+        tick=357,
+        active_tick=active_tick,
+        next_phase=next_phase,
+    )
+    store.commit()
+
+    settings = activate_entrepreneurship_for_run(store)
+    persisted = json.loads(store.get_meta()["config_json"])
+
+    assert settings == persisted["entrepreneurship"]
+    assert settings["enabled"] is True
+    assert settings["activation_tick"] == expected_activation
+    assert settings["new_arrivals_only"] is False
+    assert settings["maximum_formations_per_tick"] == 2
+    assert persisted["firms"] == {"count": 12}
+    assert not store.query_one("SELECT 1 FROM events")
+    assert activate_entrepreneurship_for_run(store) == settings
+    store.close()
+
+
+def test_entrepreneurship_activation_rejects_running_and_derived_runs(tmp_path):
+    running = Store(str(tmp_path / "running.db"))
+    running.init_run_meta("running", 42, {"engine_semantics_version": 7})
+    running.set_meta(status="running", tick=3)
+    running.commit()
+    with pytest.raises(RuntimeError, match="paused run"):
+        activate_entrepreneurship_for_run(running)
+    running.close()
+
+    forked = Store(str(tmp_path / "forked.db"))
+    forked.init_run_meta(
+        "forked",
+        42,
+        {"engine_semantics_version": 7},
+        parent_run_id="source",
+        fork_tick=3,
+    )
+    forked.set_meta(status="paused", tick=3)
+    forked.commit()
+    with pytest.raises(RuntimeError, match="original run"):
+        activate_entrepreneurship_for_run(forked)
+    forked.close()
+
+
+@pytest.mark.parametrize("semantics_version", [7, 12])
+def test_native_startup_advances_through_funding_ip_and_engine_priced_merger(
+    store, semantics_version,
+):
+    economy, config, bank_id = _economy(
+        store,
+        new_arrivals_only=False,
+        activation_tick=1,
+        review_interval_ticks=2,
+        eligible_sectors=["technology"],
+        autonomous_preseed=True,
+        preseed_pitch_delay_ticks=1,
+        preseed_raise_cents=250_000,
+        autonomous_mergers=True,
+        minimum_merger_age_ticks=0,
+        maximum_merger_cash_share_bps=4_000,
+        merger_premium_bps=1_000,
+    )
+    config["engine_semantics_version"] = semantics_version
+    economy.config["engine_semantics_version"] = semantics_version
+    config["llm"] = {"institutional_role_purposes": True}
+    economy.config["llm"] = config["llm"]
+    founder_id, _ = _citizen(
+        economy,
+        bank_id,
+        name="Nova Founder",
+        arrived_tick=0,
+        cash=800_000,
+    )
+    target_founder_id, _ = _citizen(
+        economy,
+        bank_id,
+        name="Target Founder",
+        arrived_tick=0,
+        cash=300_000,
+    )
+    lawyer_id, _ = make_agent(
+        economy,
+        bank_id,
+        name="Startup Counsel",
+        occupation="lawyer",
+        role="lawyer",
+        health="healthy",
+        cash=100_000,
+    )
+    vc_id, _ = make_agent(
+        economy,
+        bank_id,
+        name="Seed Partner",
+        kind="staff",
+        occupation="venture capitalist",
+        role="vc_partner",
+        cash=2_000_000,
+    )
+    regulator_id, _ = make_agent(
+        economy,
+        bank_id,
+        name="Competition Reviewer",
+        kind="staff",
+        occupation="regulator",
+        role="competition_regulator",
+        cash=100_000,
+    )
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    executor = ActionExecutor(economy)
+    founder = store.query_one("SELECT * FROM agents WHERE id=?", (founder_id,))
+
+    founding_context = next(
+        context
+        for tick in range(1, 4)
+        if "entrepreneurship_opportunity" in (
+            context := builder.build(founder, tick)
+        )
+    )
+    founding_tick = int(founding_context["tick"])
+    founded = executor.execute_action(
+        founding_tick,
+        founder_id,
+        founding_context["entrepreneurship_opportunity"]["action"],
+    )
+    assert founded["ok"], founded
+    startup_id = int(founded["firm_id"])
+    target_id = economy.firms.found_firm(
+        founding_tick,
+        target_founder_id,
+        "Target Technology",
+        "technology",
+        opening_capital_cents=100_000,
+    )
+
+    pitch_tick = founding_tick + 1
+    pitch = builder.build(founder, pitch_tick)["startup_work"]["eligible_actions"][0]
+    assert pitch == {
+        "type": "pitch_vc",
+        "firm_id": startup_id,
+        "ask": 250_000,
+        "summary": (
+            "Build dependable technology capacity for customers in the local market."
+        ),
+    }
+    unauthorized_ip = executor.execute_action(pitch_tick, target_founder_id, {
+        "type": "register_ip",
+        "firm_id": startup_id,
+        "asset_type": "patent_like",
+        "title": "Private funding-state probe",
+    })
+    assert unauthorized_ip == {
+        "ok": False,
+        "reason": "startup action must copy a current supplied action exactly",
+    }
+    assert executor.execute_action(pitch_tick, founder_id, {
+        **pitch,
+        "rationale_summary": "Copied action with gateway provenance",
+    })["ok"]
+    assert "startup_work" not in builder.build(founder, pitch_tick + 1)
+
+    vc = store.query_one("SELECT * FROM agents WHERE id=?", (vc_id,))
+    term_sheet_tick = pitch_tick + 1
+    term_sheet = builder.build(
+        vc, term_sheet_tick)["startup_work"]["eligible_actions"][0]
+    assert term_sheet["type"] == "propose_term_sheet"
+    proposed = executor.execute_action(term_sheet_tick, vc_id, term_sheet)
+    assert proposed["ok"], proposed
+
+    accept_tick = term_sheet_tick + 1
+    accept = builder.build(founder, accept_tick)["startup_work"]["eligible_actions"][0]
+    assert accept["type"] == "accept_term_sheet"
+    assert executor.execute_action(accept_tick, founder_id, accept)["ok"]
+
+    lawyer = store.query_one("SELECT * FROM agents WHERE id=?", (lawyer_id,))
+    diligence_tick = accept_tick + 1
+    diligence = builder.build(
+        lawyer, diligence_tick)["startup_work"]["eligible_actions"][0]
+    assert diligence["type"] == "run_due_diligence"
+    assert executor.execute_action(diligence_tick, lawyer_id, diligence)["ok"]
+
+    close_tick = diligence_tick + 1
+    close_round = builder.build(
+        vc, close_tick)["startup_work"]["eligible_actions"][0]
+    assert close_round["type"] == "close_funding_round"
+    assert executor.execute_action(close_tick, vc_id, close_round)["ok"]
+
+    ip_tick = close_tick + 1
+    register_ip = builder.build(
+        founder, ip_tick)["startup_work"]["eligible_actions"][0]
+    assert register_ip["type"] == "register_ip"
+    assert executor.execute_action(ip_tick, founder_id, register_ip)["ok"]
+
+    merger_tick = ip_tick + 1
+    propose_merger = builder.build(
+        founder, merger_tick)["startup_work"]["eligible_actions"][0]
+    assert propose_merger["type"] == "propose_merger"
+    assert propose_merger["target_firm_id"] == target_id
+    mutated = executor.execute_action(merger_tick, founder_id, {
+        **propose_merger,
+        "price_cents": propose_merger["price_cents"] + 1,
+    })
+    assert mutated == {
+        "ok": False,
+        "reason": "startup action must copy a current supplied action exactly",
+    }
+    merger = executor.execute_action(
+        merger_tick, founder_id, propose_merger)
+    assert merger["ok"], merger
+
+    target_founder = store.query_one(
+        "SELECT * FROM agents WHERE id=?", (target_founder_id,))
+    approve_tick = merger_tick + 1
+    approve = builder.build(
+        target_founder, approve_tick)["startup_work"]["eligible_actions"][0]
+    assert approve["type"] == "approve_merger"
+    assert executor.execute_action(
+        approve_tick, target_founder_id, approve)["ok"]
+
+    regulator = store.query_one(
+        "SELECT * FROM agents WHERE id=?", (regulator_id,))
+    review_tick = approve_tick + 1
+    review = builder.build(
+        regulator, review_tick)["institutional_work"]["eligible_actions"][0]
+    assert review["type"] == "review_merger"
+    reviewed = executor.execute_action(review_tick, regulator_id, review)
+    assert reviewed["ok"], reviewed
+    assert reviewed["outcome"] in {"approved", "approved_with_remedy"}
+
+    merger_close_tick = review_tick + 1
+    close_merger = builder.build(
+        founder, merger_close_tick)["startup_work"]["eligible_actions"][0]
+    assert close_merger["type"] == "close_merger"
+    assert executor.execute_action(
+        merger_close_tick, founder_id, close_merger)["ok"]
+
+    assert int(store.scalar("SELECT COUNT(*) FROM term_sheets", default=0)) == 1
+    assert int(store.scalar("SELECT COUNT(*) FROM funding_rounds", default=0)) == 1
+    assert int(store.scalar("SELECT COUNT(*) FROM ip_assets", default=0)) == 1
+    assert int(store.scalar("SELECT COUNT(*) FROM mergers", default=0)) == 1
+    assert store.scalar(
+        "SELECT status FROM firms WHERE id=?", (target_id,)) == "acquired"
+    assert economy.ledger.reconcile()[0]
 
 
 def test_counterfactual_arms_apply_only_declared_entrepreneurship_overrides():

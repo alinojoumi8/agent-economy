@@ -1,5 +1,6 @@
 """P1 tooling: experiment harness (R14), Oracle calibration (R15), replay reader (R16)."""
 import asyncio
+import json
 import logging
 import sqlite3
 
@@ -132,6 +133,144 @@ def test_replay_reader_lists_and_pages_ticks(tmp_path):
     # Unknown/invalid run ids are refused, not crashed.
     assert reader.tick_view("nope", 1) is None
     assert reader.tick_view("../etc/passwd", 1) is None
+
+
+def test_replay_reader_projects_public_event_payloads(tmp_path):
+    store = Store(str(tmp_path / "public-events.db"))
+    store.init_run_meta("public-events", 1, {})
+    store.log_event(
+        1,
+        "production",
+        {
+            "firm_id": 4,
+            "units": 7,
+            "agent_id": 99,
+            "private_reasoning": "replay-private-payload-canary",
+        },
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    store.set_meta(status="paused", tick=1)
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    event = reader.tick_view("public-events", 1)["events"][0]
+
+    assert event["payload"] == {"firm_id": 4, "units": 7}
+    assert "replay-private-payload-canary" not in json.dumps(event)
+    reader.close()
+
+
+def test_replay_reader_uses_requested_tick_for_grounding_activation(tmp_path):
+    config = {
+        "seed": 1,
+        "beliefs": {
+            "model_grounding_from_tick": 2,
+            "model_max_reserved_step": 0.05,
+        },
+    }
+    store = Store(str(tmp_path / "numeric-news.db"))
+    store.init_run_meta("numeric-news", 1, config)
+    event_id = store.log_event(
+        1,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    store.insert(
+        "news_articles",
+        tick=1,
+        outlet_id=1,
+        outlet_name="The Ledger",
+        headline="Firm 1 reports a 987654321% output lead",
+        body="The company says its lead reached 987654321%.",
+        slant_tags='["market"]',
+        source_event_ids=f"[{event_id}]",
+        tone=0.2,
+        truthful=1,
+    )
+    store.set_meta(
+        status="paused", tick=1, active_tick=2, next_phase="MORNING")
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    article = reader.tick_view("numeric-news", 1)["news"][0]
+
+    assert article["numeric_claims_redacted"] is False
+    assert article["numeric_claims_redaction_reason"] is None
+    assert "987654321" in article["headline"]
+    reader.close()
+
+
+def test_replay_reader_sanitizes_headline_independently_from_hidden_body(tmp_path):
+    config = {
+        "seed": 1,
+        "beliefs": {"model_grounding_from_tick": 1},
+    }
+    store = Store(str(tmp_path / "separate-news-fields.db"))
+    store.init_run_meta("separate-news-fields", 1, config)
+    event_id = store.log_event(
+        1,
+        "production",
+        {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE",
+        importance=1.0,
+    )
+    store.insert(
+        "news_articles",
+        tick=1,
+        outlet_id=1,
+        outlet_name="The Ledger",
+        headline="Firm 1 reports 4 units",
+        body="A hidden body invents 987654321 percent.",
+        slant_tags='["market"]',
+        source_event_ids=f"[{event_id}]",
+        tone=0.2,
+        truthful=1,
+    )
+    store.set_meta(status="paused", tick=1)
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    article = reader.tick_view("separate-news-fields", 1)["news"][0]
+
+    assert article["headline"] == "Firm 1 reports 4 units"
+    assert article["numeric_claims_redacted"] is False
+    assert "body" not in article
+    reader.close()
+
+
+def test_replay_reader_bounds_malformed_legacy_news_values(tmp_path):
+    config = {"seed": 1, "beliefs": {"model_grounding_from_tick": 1}}
+    store = Store(str(tmp_path / "legacy-news.db"))
+    store.init_run_meta("legacy-news", 1, config)
+    event_id = store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0,
+    )
+    article_id = store.insert(
+        "news_articles", tick=1, outlet_id=1, outlet_name="Legacy",
+        headline="Output rose 987654321 percent", body="legacy body",
+        slant_tags="[]",
+        source_event_ids=json.dumps([True, None, 1.5, {}, event_id]),
+        tone="loud", truthful=1,
+    )
+    store.execute(
+        "UPDATE news_articles SET outlet_name=NULL WHERE id=?", (article_id,))
+    store.set_meta(status="paused", tick=1)
+    store.commit()
+    store.close()
+
+    reader = ReplayReader(runs_dir=str(tmp_path))
+    article = reader.tick_view("legacy-news", 1)["news"][0]
+
+    assert article["headline"].startswith("News archived brief:")
+    assert article["tone"] == 0.0
+    reader.close()
 
 
 def test_replay_reader_bounds_and_closes_cached_connections(tmp_path):

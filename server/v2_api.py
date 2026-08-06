@@ -20,6 +20,12 @@ from server.projections import (
     build_search,
     build_snapshot,
     build_threads,
+    build_experiments_workspace,
+    build_markets_workspace,
+    build_organizations_workspace,
+    build_politics_law_workspace,
+    build_world_workspace,
+    build_world_map_organizations,
     resolve_tick,
     SEARCH_KINDS,
 )
@@ -335,14 +341,8 @@ def install_v2_routes(app, world, controller) -> None:
                 "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
                 (as_of_tick,))]
         if "organizations" in selected:
-            data["organizations"] = [dict(row) for row in store.query(
-                "SELECT f.id,f.name,f.sector,f.status,f.region_id,p.id AS place_id,"
-                "p.name AS place_name,COALESCE(p.x,r.x) AS x,"
-                "COALESCE(p.y,r.y) AS y "
-                "FROM firms f LEFT JOIN regions r ON r.id=f.region_id "
-                "LEFT JOIN places p ON p.owner_type='firm' AND p.owner_id=f.id "
-                "AND p.kind='workplace' AND p.active=1 "
-                "WHERE f.status<>'bankrupt' ORDER BY f.id")]
+            data["organizations"] = build_world_map_organizations(
+                store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
         if "presence" in selected:
@@ -350,6 +350,64 @@ def install_v2_routes(app, world, controller) -> None:
                 as_of_tick, public=True)
         return build_envelope(
             store, principal, "world.map", data, as_of_tick=as_of_tick)
+
+    def workspace_envelope(slug: str, data: dict[str, Any], as_of_tick: int):
+        return build_envelope(
+            store, Principal("ordinary-dashboard"), f"workspace.{slug}", data,
+            as_of_tick=as_of_tick)
+
+    @router.get("/workspaces/world")
+    async def world_workspace(tick: str = Query("live"), fork_id: str | None = None):
+        as_of_tick = projection_tick(tick, fork_id)
+        return workspace_envelope(
+            "world", build_world_workspace(store, as_of_tick=as_of_tick), as_of_tick)
+
+    @router.get("/workspaces/commons")
+    async def commons_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+        kind: str = Query("chronological"), limit: int = Query(50, ge=1, le=100),
+    ):
+        from world.commons import CommonsError
+        as_of_tick = projection_tick(tick, fork_id)
+        try:
+            data = world.commons.public_overview(
+                kind=kind, limit=limit, as_of_tick=as_of_tick)
+        except CommonsError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return workspace_envelope("commons", data, as_of_tick)
+
+    @router.get("/workspaces/organizations")
+    async def organizations_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        return workspace_envelope(
+            "organizations", build_organizations_workspace(store, as_of_tick=as_of_tick),
+            as_of_tick)
+
+    @router.get("/workspaces/markets")
+    async def markets_workspace(tick: str = Query("live"), fork_id: str | None = None):
+        as_of_tick = projection_tick(tick, fork_id)
+        return workspace_envelope(
+            "markets", build_markets_workspace(store, as_of_tick=as_of_tick), as_of_tick)
+
+    @router.get("/workspaces/politics-law")
+    async def politics_law_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        return workspace_envelope(
+            "politics_law", build_politics_law_workspace(store, as_of_tick=as_of_tick),
+            as_of_tick)
+
+    @router.get("/workspaces/experiments")
+    async def experiments_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        return workspace_envelope(
+            "experiments", build_experiments_workspace(store, as_of_tick=as_of_tick),
+            as_of_tick)
 
     @router.get("/civic/summary")
     async def civic_summary(

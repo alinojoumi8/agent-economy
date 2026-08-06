@@ -121,12 +121,50 @@ async function mockPrivacyApis(page: Page) {
         },
       } });
     }
+    if (path === "/api/v2/workspaces/world") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.world", data: {
+        enabled: false, regions: [], agents: [], organizations: [], places: [], presence: [], flows: [],
+      },
+    } });
+    if (path === "/api/v2/workspaces/organizations") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.organizations", data: {
+        organizations: [], firms: [], banks: [], institutions: { legal_enabled: false, politics_enabled: false, agencies: [] }, contracts: [], disclosures: [],
+      },
+    } });
+    if (path === "/api/v2/workspaces/markets") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.markets", data: {
+        orders: [], trades: [], fx_orders: [], fx_trades: [], circuit_breakers: [], currencies: [],
+      },
+    } });
+    if (path === "/api/v2/workspaces/politics-law") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.politics-law", data: {
+        politics: { enabled: false, institutional_actions_enabled: false }, legal: { enabled: false },
+      },
+    } });
+    if (path === "/api/v2/workspaces/experiments") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.experiments", data: {
+        run: { run_id: "run-demo", status: "paused" }, checkpoints: [], shocks: [], predictions: [],
+        acceptance: [], datasets: [], scenarios: [], experiments: [], results: [], current_only_artifacts_omitted: false,
+      },
+    } });
     if (path === "/api/v2/mode") return route.fulfill({ status: 404, json: {} });
     if (path === "/api/v2/operator/session") {
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
     }
     if (path === "/api/v2/operator/investigations") {
       return route.fulfill({ json: { items: [] } });
+    }
+    if (path === "/api/v2/operator/investigations/inv-safe/export") {
+      return route.fulfill({ json: {
+        json: {
+          format: "world-os-investigation-v1",
+          investigation: { id: "inv-safe", title: "Public evidence", items: [] },
+          redaction_manifest: {
+            private_message_bodies: "not_copied", operator_audit: "not_included",
+          },
+        },
+        markdown: "# Public evidence\n\nNo private bodies copied.\n",
+      } });
     }
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
@@ -145,10 +183,31 @@ async function mockPrivacyApis(page: Page) {
 async function assertNoCanaryLeak(page: Page) {
   await expect(page.locator("body")).not.toContainText(CANARY);
   expect(page.url()).not.toContain(CANARY);
-  const storage = await page.evaluate(() => ({
-    local: { ...localStorage },
-    session: { ...sessionStorage },
-  }));
+  const storage = await page.evaluate(async () => {
+    const databases = "databases" in indexedDB ? await indexedDB.databases() : [];
+    const indexed = [];
+    for (const info of databases) {
+      if (!info.name) continue;
+      const values = await new Promise(resolve => {
+        const request = indexedDB.open(info.name!);
+        request.onerror = () => resolve([]);
+        request.onsuccess = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.length) { db.close(); resolve([]); return; }
+          const transaction = db.transaction([...db.objectStoreNames], "readonly");
+          const collected: unknown[] = [];
+          for (const name of db.objectStoreNames) {
+            const all = transaction.objectStore(name).getAll();
+            all.onsuccess = () => collected.push(...all.result);
+          }
+          transaction.oncomplete = () => { db.close(); resolve(collected); };
+          transaction.onerror = () => { db.close(); resolve([]); };
+        };
+      });
+      indexed.push({ name: info.name, values });
+    }
+    return { local: { ...localStorage }, session: { ...sessionStorage }, indexed };
+  });
   expect(JSON.stringify(storage)).not.toContain(CANARY);
 }
 
@@ -165,12 +224,25 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   });
   expect(unauthorized.status).toBe(404);
   expect(unauthorized.body).not.toContain(CANARY);
+  const exported = await page.evaluate(async () => {
+    const response = await fetch("/api/v2/operator/investigations/inv-safe/export");
+    return { status: response.status, body: await response.text() };
+  });
+  expect(exported.status).toBe(200);
+  expect(exported.body).toContain("world-os-investigation-v1");
+  expect(exported.body).not.toContain(CANARY);
   await assertNoCanaryLeak(page);
 
   await page.goto("/runs/run-demo/overview?tick=3");
   await assertNoCanaryLeak(page);
   await page.goto("/runs/run-demo/news-communications");
   await assertNoCanaryLeak(page);
+
+  for (const route of ["world", "organizations", "markets", "politics-law", "experiments"]) {
+    await page.goto(`/runs/run-demo/${route}?tick=3`);
+    await expect(page.locator("main")).toBeVisible();
+    await assertNoCanaryLeak(page);
+  }
 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();

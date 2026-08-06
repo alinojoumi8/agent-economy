@@ -16,6 +16,10 @@ from pathlib import Path
 
 from engine.store import Store, load_json
 from llm.gateway import LLMRequest, sanitize_provider_text
+from agents.numeric_grounding import (
+    model_grounding_active,
+    narrative_numbers_are_grounded,
+)
 from world.event_visibility import PUBLIC_REPORTABLE_EVENT_KINDS
 
 CHART_METRICS = [("gdp_proxy", "Final-goods sales / day ($)"),
@@ -249,10 +253,12 @@ async def _resolve_narrative(store: Store, world=None) -> tuple[str, dict]:
     report_config = config.get("reports", {}) if isinstance(config, dict) else {}
     if not isinstance(report_config, dict):
         report_config = {}
-    max_tokens = max(128, min(1200, int(report_config.get("narrative_max_tokens", 600))))
+    max_tokens = max(128, min(4096, int(report_config.get("narrative_max_tokens", 600))))
     timeout_s = max(0.1, min(120.0, float(
         report_config.get("narrative_timeout_s", 45.0))))
     summary, summary_json = _bounded_summary(store)
+    grounding_enabled = model_grounding_active(
+        config, int(store.get_meta()["tick"]))
     request = LLMRequest(
         role="reporter",
         purpose="report_narrative",
@@ -264,7 +270,12 @@ async def _resolve_narrative(store: Store, world=None) -> tuple[str, dict]:
             "Use only the supplied aggregate facts. Do not identify private individuals, "
             "invent causes, expose hidden reasoning, or include chain-of-thought. Return "
             "exactly one JSON object with a narrative string containing 2-5 short factual "
-            "paragraphs."),
+            "paragraphs."
+            + (
+                " Do not calculate or estimate a number; copy it exactly from "
+                "the supplied summary or use number-free language."
+                if grounding_enabled else ""
+            )),
         user=(
             "Summarize the most important economic changes, shocks, institutional outcomes, "
             "and uncertainty in this bounded run summary:\n" + summary_json),
@@ -286,6 +297,9 @@ async def _resolve_narrative(store: Store, world=None) -> tuple[str, dict]:
     candidate = sanitize_provider_text(candidate).strip()[:NARRATIVE_MAX_CHARS]
     if not candidate:
         return fallback, _fallback_provenance("empty_provider_narrative")
+    if (grounding_enabled
+            and not narrative_numbers_are_grounded(candidate, summary)):
+        return fallback, _fallback_provenance("ungrounded_numeric_claim")
     if response.call_id is None or store.query_one(
             "SELECT id FROM llm_calls WHERE id=?", (int(response.call_id),)) is None:
         return fallback, _fallback_provenance("missing_local_provenance")

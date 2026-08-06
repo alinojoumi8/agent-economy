@@ -23,6 +23,29 @@ def _modern_economy(store):
     return economy, config, ActionExecutor(economy)
 
 
+def _semantics7_economy(store, *, supply_recovery=None):
+    config = {
+        "engine_semantics_version": 7,
+        "central_bank": {"max_step_bps": 50, "min_rate_bps": 0, "max_rate_bps": 2000},
+        "participant_mode": {"enabled": True},
+    }
+    if supply_recovery is not None:
+        config["supply_recovery"] = supply_recovery
+    economy = Economy(store, config, random.Random(15), random.Random(16))
+    economy.ensure_system_accounts()
+    return economy, config, ActionExecutor(economy)
+
+
+def _legacy_economy(store):
+    config = {
+        "engine_semantics_version": 5,
+        "central_bank": {"max_step_bps": 50, "min_rate_bps": 0, "max_rate_bps": 2000},
+    }
+    economy = Economy(store, config, random.Random(13), random.Random(14))
+    economy.ensure_system_accounts()
+    return economy, config
+
+
 def _firm(economy, founder_id, *, capital=200_000):
     return economy.firms.found_firm(
         0, founder_id, "Negotiated Industries", "services",
@@ -216,6 +239,128 @@ def test_negotiated_hire_rejects_cross_currency_at_every_transition(store):
     economy.firms.process_payroll(30)
     assert economy.ledger.balance(worker_account) == opening_worker_cash
     assert store.scalar("SELECT COUNT(*) FROM transactions WHERE kind='payroll'") == 0
+
+
+def test_expiring_stale_job_terminalizes_every_actionable_application_when_opted_in(store):
+    """Recovery may clean up applications that legacy expiry deliberately retains."""
+    economy, _, _ = _semantics7_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Expiry Founder", cash=1_000_000)
+    pending_worker, _ = make_agent(economy, bank_id, name="Pending Worker", cash=50_000)
+    negotiating_worker, _ = make_agent(
+        economy, bank_id, name="Negotiating Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    pending_application = economy.labor.apply_job(1, pending_worker, job_id)
+    negotiating_application = economy.labor.apply_job(1, negotiating_worker, job_id)
+    offer_id = economy.labor.make_offer(
+        1, negotiating_application, founder, 200_00)
+
+    assert pending_application is not None
+    assert negotiating_application is not None
+    assert offer_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    economy.labor.expire_stale_jobs(22, terminalize_stale_applications=True)
+
+    assert store.scalar("SELECT status FROM jobs WHERE id=?", (job_id,)) == "closed"
+    assert store.scalar(
+        "SELECT state FROM applications WHERE id=?", (pending_application,)) == "rejected"
+    assert store.scalar(
+        "SELECT state FROM applications WHERE id=?", (negotiating_application,)) == "rejected"
+    assert store.scalar("SELECT status FROM job_offers WHERE id=?", (offer_id,)) == "expired"
+
+
+def test_active_recovery_hides_closed_job_application_from_semantics7_context(store):
+    """Active recovery suppresses a closed vacancy from its founder's action surface."""
+    economy, config, _ = _semantics7_economy(
+        store, supply_recovery={"enabled": True, "activation_tick": 0})
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    context = builder.build(founder_row, 2)
+
+    assert context["firm_applications"] == []
+
+
+def test_feature_off_semantics7_context_keeps_closed_job_application(store):
+    """Feature-off Semantics 7 retains the historical closed-vacancy context."""
+    economy, config, _ = _semantics7_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Feature-off Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Feature-off Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    context = builder.build(founder_row, 2)
+
+    assert [row["application_id"] for row in context["firm_applications"]] == [application_id]
+    assert [row["application_id"] for row in builder._firm_applications(firm_id)] == [
+        application_id]
+
+
+def test_feature_off_legacy_context_keeps_closed_job_application(store):
+    """The pre-negotiation context keeps its legacy closed-vacancy rows too."""
+    economy, config = _legacy_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Legacy Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Legacy Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    context = builder.build(founder_row, 2)
+
+    assert [row["application_id"] for row in context["firm_applications"]] == [application_id]
+    assert [row["application_id"] for row in builder._firm_applications(
+        firm_id, include_posted_wage=True)] == [application_id]
+
+
+def test_recovery_context_hides_closed_job_counteroffer_only_after_activation(store):
+    """Context filtering starts at recovery activation, not merely profile presence."""
+    economy, config, _ = _semantics7_economy(
+        store, supply_recovery={"enabled": True, "activation_tick": 5})
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Counter Context Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Counter Context Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+    application_id = economy.labor.apply_job(1, worker, job_id)
+    assert application_id is not None
+    opening_offer = economy.labor.make_offer(1, application_id, founder, 200_00)
+    counteroffer = economy.labor.make_offer(
+        2, application_id, worker, 210_00, parent_offer_id=opening_offer)
+    assert counteroffer is not None
+    store.update("jobs", job_id, status="closed")
+
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    builder = ContextBuilder(economy, Memory(store, config), config)
+    before_activation = builder.build(founder_row, 4)
+    after_activation = builder.build(founder_row, 5)
+
+    assert [row["application_id"] for row in before_activation["firm_applications"]] == [
+        application_id]
+    assert [row["offer_id"] for row in before_activation["firm_job_offers"]] == [
+        counteroffer]
+    assert after_activation["firm_applications"] == []
+    assert after_activation["firm_job_offers"] == []
 
 
 def test_ipo_requires_qualification_and_agent_bids_drive_price_cash_and_cap_table(store):

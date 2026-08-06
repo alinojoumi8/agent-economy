@@ -167,7 +167,8 @@ def test_current_release_status_has_one_authoritative_ledger():
 
 def test_full_suite_ci_uses_deterministic_cross_platform_shards():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "shard: [0, 1, 2, 3, 4, 5, 6, 7]" in workflow
+    assert '"shard":[0,1,2,3,4,5,6,7]' in workflow
+    assert "matrix: ${{ fromJSON(inputs.full_suite_matrix) }}" in workflow
     assert "python -m pytest tests/ -q" in workflow
     assert "-p scripts.pytest_shard" in workflow
     assert "--ci-shard-index ${{ matrix.shard }}" in workflow
@@ -185,6 +186,50 @@ def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
         fields = {key: value.strip() for key, value in FIELD.findall(body)}
         entries[entry_id] = fields
     return entries
+
+
+def _catalog_reference_problem(reference: str, *, root: Path = ROOT) -> str | None:
+    if not reference:
+        return "missing test reference "
+    resolved_root = root.resolve()
+    candidate = (resolved_root / reference).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        return f"test reference is outside repository {reference}"
+    if not candidate.exists():
+        return f"missing test reference {reference}"
+    return None
+
+
+def test_catalog_reference_validation_rejects_paths_outside_repository(tmp_path):
+    inside = tmp_path / "inside.py"
+    inside.write_text("pass\n", encoding="utf-8")
+    outside = tmp_path.parent / "outside.py"
+    outside.write_text("pass\n", encoding="utf-8")
+    escaped_link = tmp_path / "escaped.py"
+    escaped_link.symlink_to(outside)
+
+    assert _catalog_reference_problem("inside.py", root=tmp_path) is None
+    assert "outside repository" in _catalog_reference_problem(
+        "../outside.py", root=tmp_path)
+    assert "outside repository" in _catalog_reference_problem(
+        str(outside.resolve()), root=tmp_path)
+    assert "outside repository" in _catalog_reference_problem(
+        "escaped.py", root=tmp_path)
+    assert "missing test reference" in _catalog_reference_problem(
+        "missing.py", root=tmp_path)
+
+
+def test_dirty_worktree_inventory_names_all_three_untracked_paths():
+    text = (ROOT / "docs" / "reconciliation" /
+            "2026-08-05-dirty-worktree-inventory.md").read_text(encoding="utf-8")
+    for path in (
+        "agents/numeric_grounding.py",
+        "server/static/assets/MacroOverview-EGrWjdWA.js",
+        "server/static/assets/index-C-RDqS0J.js",
+    ):
+        assert f"`{path}` (untracked)" in text
 
 
 def test_prd_traceable_test_catalog_structure_and_references():
@@ -232,8 +277,8 @@ def test_prd_traceable_test_catalog_structure_and_references():
         test_ref = fields.get("test", "").strip()
         if status == "contractual-gap" or test_ref in {"", "none", "-"}:
             continue
-        # Catalog may reference a file or a directory-like path relative to repo root.
-        candidate = ROOT / test_ref
-        if not candidate.exists():
-            problems.append(f"{entry_id}: missing test reference {test_ref}")
+        # A catalog row may name a semicolon-separated verification matrix.
+        for reference in (item.strip() for item in test_ref.split(";")):
+            if problem := _catalog_reference_problem(reference):
+                problems.append(f"{entry_id}: {problem}")
     assert not problems, "catalog structural issues:\n" + "\n".join(problems)

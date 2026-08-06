@@ -1154,6 +1154,10 @@ body::before {
 
 .civic-city__instruments dd {
   margin: .24rem 0 .05rem;
+}
+
+.civic-city__instrument-value {
+  display: block;
   color: var(--civic-chartreuse);
   font: 700 1.25rem var(--civic-font-display);
   letter-spacing: -.015em;
@@ -1330,13 +1334,13 @@ body::before {
   color: var(--civic-cobalt);
 }
 
-.world-os-topbar .citizen-menu-dropdown__panel {
+.world-os-topbar .citizen-menu--panel {
   border-color: var(--civic-navy);
   border-radius: 6px;
   background: var(--civic-white);
 }
 
-.world-os-topbar .citizen-menu-dropdown__panel a {
+.world-os-topbar .citizen-menu--panel a {
   color: var(--civic-ink);
 }
 

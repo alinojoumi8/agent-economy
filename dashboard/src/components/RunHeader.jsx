@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { budgetState, number } from "../api";
 import { clientLog } from "../logging.js";
 import { inferenceMode } from "../lib/inferenceMode.js";
@@ -6,32 +6,74 @@ import worldOsEmblem from "../assets/world-os-emblem.png";
 import { Badge } from "./ui";
 import { CitizenMenu } from "./CitizenMenu";
 
+const CONTROLLABLE_RUN_STATUSES = new Set(["created", "paused", "running", "active"]);
+
+export function isTerminalRunStatus(value) {
+  const status = String(value ?? "").trim().toLowerCase();
+  return Boolean(status) && !CONTROLLABLE_RUN_STATUSES.has(status);
+}
+
 export function runControlState(status, busy = "") {
-  const running = Boolean(
-    status?.running || status?.status === "running" || busy === "start" || busy === "step"
+  const pendingValues = Array.isArray(busy)
+    ? busy
+    : busy && typeof busy === "object"
+      ? busy.pending || []
+      : busy ? [busy] : [];
+  const pending = new Set(pendingValues);
+  const interruptLatched = Boolean(
+    busy && typeof busy === "object" && busy.interruptLatched,
   );
-  const interruptibleBusy = busy === "start" || busy === "step";
+  const terminal = isTerminalRunStatus(status?.status);
+  const running = !terminal && Boolean(
+    status?.running || status?.status === "running"
+      || pending.has("start") || pending.has("step")
+  );
+  // Pause and Stop are deliberate interrupts for other in-flight work. The
+  // controller signals them immediately and serializes final state changes;
+  // once either interrupt is pending, every further control stays disabled.
+  const interruptIssued = interruptLatched || pending.has("pause") || pending.has("stop");
   return {
     running,
     displayStatus: running ? "running" : status?.status || "loading",
-    pauseDisabled: !running || Boolean(busy && !interruptibleBusy),
-    stopDisabled: status?.status === "halted" || Boolean(busy && !interruptibleBusy),
+    pauseDisabled: !running || interruptIssued,
+    stopDisabled: terminal || interruptIssued,
   };
 }
 
 export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
-  hosted = false, canControl = true }) {
-  const [busy, setBusy] = useState("");
-  const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(status, busy);
-  const terminal = status?.status === "halted";
+  hosted = false, canControl = true, statusFresh = Boolean(status) }) {
+  const [controlRequests, setControlRequests] = useState({
+    pending: [], interruptedRequestIds: [],
+  });
+  const nextActionId = useRef(0);
+  const pendingActions = controlRequests.pending;
+  const busy = pendingActions.length > 0;
+  const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(
+    status, {
+      pending: pendingActions.map(item => item.name),
+      interruptLatched: controlRequests.interruptedRequestIds.length > 0,
+    },
+  );
+  const terminal = isTerminalRunStatus(status?.status);
   const participantActive = Boolean(participant?.active);
   const participantReady = Boolean(participant?.queued_action);
   const limitReached = status?.remaining_ticks === 0;
   const { spend, cap, capped, fraction } = budgetState(status?.governor);
   const inference = inferenceMode(status?.provider_readiness);
+  const controlsUnavailable = loading || !status || !statusFresh;
 
   async function action(name, path, body) {
-    setBusy(name);
+    nextActionId.current += 1;
+    const requestId = nextActionId.current;
+    setControlRequests(current => ({
+      pending: [...current.pending, { id: requestId, name }],
+      interruptedRequestIds: name === "pause" || name === "stop"
+        ? [...new Set([
+          ...current.interruptedRequestIds,
+          ...current.pending.map(item => item.id),
+        ])]
+        : current.interruptedRequestIds,
+    }));
     try {
       await act(path, body);
     } catch (reason) {
@@ -40,7 +82,18 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         error_type: reason?.constructor?.name || typeof reason,
         error: reason instanceof Error ? reason.message : String(reason),
       }, "error");
-    } finally { setBusy(""); }
+    } finally {
+      setControlRequests(current => {
+        const pending = current.pending.filter(item => item.id !== requestId);
+        const pendingIds = new Set(pending.map(item => item.id));
+        return {
+          pending,
+          interruptedRequestIds: current.interruptedRequestIds.filter(
+            interruptedId => pendingIds.has(interruptedId),
+          ),
+        };
+      });
+    }
   }
 
   return (
@@ -62,6 +115,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
           <strong className="tabular text-lg text-mint-300">{status?.tick ?? "—"}</strong>
           <Badge tone={running ? "good" : status?.status === "halted" ? "bad" : "warn"}>{displayStatus}</Badge>
           <span title={inference.title}><Badge tone={inference.tone}>{inference.label}</Badge></span>
+          {status?.active_tick != null && Number(status.active_tick) > Number(status?.tick ?? -1) && <Badge tone="warn">partial day {status.active_tick} · {status?.phase || status?.next_phase || "in progress"}</Badge>}
           {participantActive && <Badge tone="good">playing {participant?.controlled_agent?.name}</Badge>}
           {status?.acceptance_orchestration?.authorized && <Badge tone="warn">acceptance orchestrated</Badge>}
           {status?.target_tick != null && <Badge tone={limitReached ? "good" : "warn"}>{limitReached ? `target t${status.target_tick} reached` : `${status.remaining_ticks} days to t${status.target_tick}`}</Badge>}
@@ -70,12 +124,12 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={!canControl || loading || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={!canControl || loading || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
-          <button className="button" disabled={!canControl || loading || pauseDisabled} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={!canControl || loading || stopDisabled} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
+          <button className="button button-primary" disabled={!canControl || controlsUnavailable || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={!canControl || controlsUnavailable || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button" disabled={!canControl || controlsUnavailable || pauseDisabled} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
+          <button className="button button-danger" disabled={!canControl || controlsUnavailable || stopDisabled} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
-          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || controlsUnavailable || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
             <option value="0.25">0.25 s/day</option>
             <option value="1">1 s/day</option>

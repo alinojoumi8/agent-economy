@@ -52,7 +52,8 @@ async function mockCommonApis(page: Page, options: {
   }));
 
   await page.route("**/api/v2/**", async route => {
-    const path = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const path = requestUrl.pathname;
     if (path === "/api/v2/snapshot") {
       return route.fulfill({ json: {
         ...baseEnvelope, projection: "world.snapshot", data: {
@@ -101,6 +102,14 @@ async function mockCommonApis(page: Page, options: {
         },
       } });
     }
+    if (path === "/api/v2/workspaces/world") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, tick: requestUrl.searchParams.get("tick") === "4" ? 4 : 6,
+        projection: "workspace.world", data: {
+          enabled: true, regions: [], agents: mapAgents, organizations: [], places: [], presence: [], flows: [],
+        },
+      } });
+    }
     if (path === "/api/v2/mode") return route.fulfill({ status: 404, json: {} });
     if (path === "/api/v2/operator/session") {
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
@@ -135,7 +144,7 @@ test("live city paused status is truthful and does not invent agents", async ({ 
   await expect(page.getByText("Run paused", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Current");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Current");
 });
 
 test("live city failed status is truthful", async ({ page }) => {
@@ -145,7 +154,7 @@ test("live city failed status is truthful", async ({ page }) => {
   await expect(page.getByText("Run failed", { exact: true })).toBeVisible();
   await expect(page.getByText("Final inference fabric", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Current");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Current");
 });
 
 test("historical tick preserves run identity and label", async ({ page }) => {
@@ -191,7 +200,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await expect(page.getByText("Mixed projected + derived layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(1);
-  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator("dd")).toHaveText("Live");
+  await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Live");
 
   await page.getByLabel("Find an agent").fill("zzz-no-match");
   await expect(page.locator(".civic-city__agent")).toHaveCount(0);

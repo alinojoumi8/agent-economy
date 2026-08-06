@@ -1,9 +1,32 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
+
+import {
+  formatBeliefValue,
+  formatMetricDelta,
+  formatMetricValue,
+  formatTrust,
+} from "../src/api.js";
+
+
+test("engine metrics, cents, and trust retain their units and precision", () => {
+  assert.equal(formatMetricValue("unemployment", 0.9699421965), "97.0%");
+  assert.equal(formatMetricValue("policy_rate", 525), "525 bps");
+  assert.equal(formatMetricValue("cpi", 69.5534138), "69.553");
+  assert.equal(formatMetricDelta("unemployment", -0.002312), "−0.2 pp");
+  assert.equal(formatMetricDelta("policy_rate", 25), "+25 bps");
+  assert.equal(formatTrust(0.702131), "0.7021 (70.21%)");
+  assert.equal(
+    formatBeliefValue("trust:bank:1", 0.702131),
+    "0.7021 (70.21%)",
+  );
+  assert.equal(formatBeliefValue("checking_balance_cents", 300000), "$3,000.00");
+});
 
 
 test("Empty renders text-prop guidance and gives children precedence", async () => {
@@ -111,7 +134,76 @@ test("agent audit reflects deterministic actions without claiming missing decisi
     assert.match(markup, /Actions<\/dt><dd[^>]*>126<\/dd>/);
     assert.match(markup, /No model calls recorded; inspect the deterministic action audit\./);
     assert.match(markup, /buy goods/);
+    assert.match(markup, /Historical agent recollections; numeric claims may be stale/);
+    assert.match(markup, /Raw model I\/O for provenance; numeric claims are unverified/);
     assert.doesNotMatch(markup, /No decisions yet/);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("agent modal disables take-control when that citizen is already controlled", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { AgentModal } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    const markup = renderToStaticMarkup(React.createElement(AgentModal, {
+      detail: {
+        agent: { id: 23, name: "Iris Mensah", kind: "citizen", alive: 1 },
+        accounts: [], loans: [], beliefs: {}, belief_history: [], memories: [],
+        recent_decisions: [], recent_actions: [], output_counts: {}, output_cursors: {},
+      },
+      participant: { enabled: true, controlled_agent: { id: 23 } },
+      running: false, historyLoading: false,
+      onLoadOlder: () => {}, onLoadOlderOutputs: () => {},
+      onTakeControl: () => {}, onClose: () => {},
+    }));
+    assert.match(markup, /disabled=""[^>]*>Currently controlled<\/button>/);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("public panels expose metric units, partial days, and numeric redaction", async () => {
+  const vite = await createServer({
+    appType: "custom", logLevel: "silent", server: { middlewareMode: true },
+  });
+  try {
+    const { MacroOverview } = await vite.ssrLoadModule("/src/components/MacroOverview.jsx");
+    const { BanksPanel } = await vite.ssrLoadModule("/src/components/WorldPanels.jsx");
+    const { NewsPanel } = await vite.ssrLoadModule("/src/components/InformationPanels.jsx");
+    const { RunHeader } = await vite.ssrLoadModule("/src/components/RunHeader.jsx");
+    const macro = renderToStaticMarkup(React.createElement(MacroOverview, {
+      metrics: { unemployment: [{ tick: 368, value: 0.9699421965 }] },
+    }));
+    const banks = renderToStaticMarkup(React.createElement(BanksPanel, { banks: [{
+      id: 1, name: "Northstar Bank", deposits_cents: 100, reserves_cents: 50,
+      reserve_ratio: 0.5, avg_trust: 0.702131, status: "open",
+    }] }));
+    const news = renderToStaticMarkup(React.createElement(NewsPanel, { news: [{
+      id: 3, tick: 7, outlet_name: "Ledger", headline: "Grounded headline",
+      body: "Grounded body", numeric_claims_redacted: true,
+    }] }));
+    const header = renderToStaticMarkup(React.createElement(RunHeader, {
+      status: {
+        tick: 368, status: "paused", running: false,
+        active_tick: 369, next_phase: "MORNING", governor: {},
+      },
+      participant: {}, connected: true, loading: false,
+      act: async () => {}, onShock: () => {}, onReplay: () => {},
+    }));
+
+    assert.match(macro, /97\.0%/);
+    assert.match(
+      macro,
+      /Living, non-retired working-age citizens without active employment or an operating firm/,
+    );
+    assert.match(banks, /0\.7021 \(70\.21%\)/);
+    assert.match(news, /unsupported number removed/);
+    assert.match(header, /partial day 369/);
+    assert.match(header, /MORNING/);
+    assert.match(header, />368</);
   } finally {
     await vite.close();
   }
@@ -148,6 +240,66 @@ test("agent directory renders a bounded population page and encodes server filte
   } finally {
     await vite.close();
   }
+});
+
+
+test("agent detail failures clear stale data and render an alert", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const {
+      AgentModal,
+      applyAgentDetailFailure,
+    } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    const updates = [];
+    const message = applyAgentDetailFailure(
+      new Error("detail unavailable"),
+      value => updates.push(["detail", value]),
+      value => updates.push(["error", value]),
+      { clearDetail: true },
+    );
+    assert.equal(message, "detail unavailable");
+    assert.deepEqual(updates, [
+      ["detail", null],
+      ["error", "detail unavailable"],
+    ]);
+
+    const markup = renderToStaticMarkup(React.createElement(AgentModal, {
+      detail: {
+        agent: { id: 1, name: "Ada", kind: "citizen", alive: 1 },
+        accounts: [], loans: [], beliefs: {}, belief_history: [], memories: [],
+        recent_decisions: [], recent_actions: [], output_counts: {}, output_cursors: {},
+      },
+      error: "Older actions could not be loaded.",
+      participant: { enabled: false }, running: false, historyLoading: false,
+      onLoadOlder: () => {}, onLoadOlderOutputs: () => {},
+      onTakeControl: () => {}, onClose: () => {},
+    }));
+    assert.match(markup, /role="alert"/);
+    assert.match(markup, /Older actions could not be loaded\./);
+
+    const source = await readFile(
+      new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8",
+    );
+    assert.ok((source.match(/catch \(reason\)/g) || []).length >= 3);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("agent modal requests ignore stale agent and cursor responses", async () => {
+  const source = await readFile(
+    new URL("../src/components/AgentsPanel.jsx", import.meta.url), "utf8",
+  );
+  assert.match(source, /const detailRequest = useRef\(0\)/);
+  assert.match(source, /requestId !== detailRequest\.current/);
+  assert.match(source, /current\?\.agent\?\.id !== agentId/);
+  assert.match(source, /current\?\.participantHistory\?\.next_before_id !== cursor/);
+  assert.match(source, /current\?\.output_cursors\?\.\[kind\] !== cursor/);
+  assert.match(source, /onKeyDown=\{event => event\.stopPropagation\(\)\}/);
+  assert.match(source, /setDetail\(\{ \.\.\.agentDetail, participantHistory: null \}\)/);
+  assert.match(source, /clearDetail: false/);
+  assert.match(source, /async function takeControl\(agentId\) \{\s*const requestId = \+\+detailRequest\.current/);
+  assert.match(source, /if \(requestId !== detailRequest\.current\) return;\s*setDetail\(null\)/);
 });
 
 

@@ -14,17 +14,22 @@ export function OraclePanel({ oracle, act, readOnly = false }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
   const [asking, setAsking] = useState(false);
+  const [error, setError] = useState("");
   const score = oracle?.scorecard || {};
 
   async function ask(event) {
     event.preventDefault();
     if (!question.trim()) return;
     setAsking(true);
+    setAnswer(null);
+    setError("");
     try { setAnswer(await act("/api/oracle/ask", { question: question.trim() })); }
     catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message || "Oracle request failed.");
       clientLog("dashboard.oracle.failed", {
         error_type: reason?.constructor?.name || typeof reason,
-        error: reason instanceof Error ? reason.message : String(reason),
+        error: message,
       }, "error");
     }
     finally { setAsking(false); }
@@ -46,6 +51,7 @@ export function OraclePanel({ oracle, act, readOnly = false }) {
             <input id="oracle-question" className="field flex-1" value={question} onChange={event => setQuestion(event.target.value)} placeholder="Probability of a bank run within 30 ticks?" />
             <button className="button button-primary" disabled={asking || !question.trim()}>{asking ? "Analyzing…" : "Ask Oracle"}</button>
           </form>
+          {error && <p role="alert" className="mt-2 rounded-lg border border-coral-300/20 bg-coral-300/[.05] p-3 text-xs text-coral-300">Oracle request failed: {error}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5">{SUGGESTIONS.map(suggestion => <button key={suggestion} className="rounded-full border border-mint-300/10 px-2.5 py-1 text-[10px] text-slate-500 hover:border-mint-300/30 hover:text-mint-300" onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div></>}
         </div>
         <div className="scrollbar max-h-[380px] overflow-y-auto p-4">

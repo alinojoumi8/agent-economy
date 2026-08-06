@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, money, number, shortKind } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, formatBeliefValue, money, number, shortKind } from "../api";
 import { agentExecutionPresentation } from "../lib/agentExecution";
 import { appendParticipantHistory } from "../participant";
 import { Badge, Empty, Modal, Panel } from "./ui";
@@ -30,6 +30,15 @@ export function handleAgentRowKeyDown(event, inspect, agentId) {
   inspect(agentId);
 }
 
+export function applyAgentDetailFailure(
+  reason, setDetail, setError, { clearDetail = false } = {},
+) {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  if (clearDetail) setDetail(null);
+  setError(message || "Agent details could not be loaded.");
+  return message || "Agent details could not be loaded.";
+}
+
 export function AgentsPanel({ agents = null, initialDirectory = null, participant, status, act }) {
   const [filter, setFilter] = useState("");
   const [tier, setTier] = useState("");
@@ -43,7 +52,9 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState("");
   const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState("");
   const [loading, setLoading] = useState(false);
+  const detailRequest = useRef(0);
   useEffect(() => {
     let active = true;
     const timer = scheduleAgentDirectoryRefresh({
@@ -87,40 +98,79 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
   }
 
   async function inspect(id) {
+    const requestId = ++detailRequest.current;
     setLoading(true);
+    setDetail(null);
+    setDetailError("");
     try {
       const agentDetail = await api(`/api/agents/${id}`);
-      let participantHistory = null;
+      if (requestId !== detailRequest.current) return;
+      setDetail({ ...agentDetail, participantHistory: null });
       if (participant?.enabled && agentDetail.agent?.kind === "citizen") {
-        participantHistory = await api(`/api/participant/history?agent_id=${id}&limit=50`);
+        try {
+          const participantHistory = await api(
+            `/api/participant/history?agent_id=${id}&limit=50`);
+          if (requestId !== detailRequest.current) return;
+          setDetail({ ...agentDetail, participantHistory });
+        } catch (reason) {
+          if (requestId !== detailRequest.current) return;
+          applyAgentDetailFailure(
+            reason, setDetail, setDetailError, { clearDetail: false },
+          );
+        }
       }
-      setDetail({ ...agentDetail, participantHistory });
-    } finally { setLoading(false); }
+    } catch (reason) {
+      if (requestId !== detailRequest.current) return;
+      applyAgentDetailFailure(
+        reason, setDetail, setDetailError, { clearDetail: true },
+      );
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function loadOlderParticipantActions() {
     const cursor = detail?.participantHistory?.next_before_id;
     if (!detail?.agent?.id || !cursor) return;
+    const agentId = detail.agent.id;
+    const requestId = detailRequest.current;
     setLoading(true);
+    setDetailError("");
     try {
       const page = await api(
-        `/api/participant/history?agent_id=${detail.agent.id}&limit=50&before_id=${cursor}`);
-      setDetail(current => ({
-        ...current,
-        participantHistory: appendParticipantHistory(current?.participantHistory, page),
-      }));
-    } finally { setLoading(false); }
+        `/api/participant/history?agent_id=${agentId}&limit=50&before_id=${cursor}`);
+      setDetail(current => {
+        if (requestId !== detailRequest.current
+            || current?.agent?.id !== agentId
+            || current?.participantHistory?.next_before_id !== cursor) return current;
+        return {
+          ...current,
+          participantHistory: appendParticipantHistory(current.participantHistory, page),
+        };
+      });
+    } catch (reason) {
+      if (requestId !== detailRequest.current) return;
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function loadOlderAgentOutputs(kind) {
     const cursor = detail?.output_cursors?.[kind];
     if (!detail?.agent?.id || !cursor) return;
+    const agentId = detail.agent.id;
+    const requestId = detailRequest.current;
     setLoading(true);
+    setDetailError("");
     try {
       const page = await api(
-        `/api/agents/${detail.agent.id}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
+        `/api/agents/${agentId}/outputs?kind=${kind}&limit=20&before_id=${cursor}`);
       const field = kind === "model" ? "recent_decisions" : "recent_actions";
       setDetail(current => {
+        if (requestId !== detailRequest.current
+            || current?.agent?.id !== agentId
+            || current?.output_cursors?.[kind] !== cursor) return current;
         const known = new Set((current?.[field] || []).map(item => item.id));
         return {
           ...current,
@@ -128,18 +178,31 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
           output_cursors: { ...current?.output_cursors, [kind]: page.next_before_id },
         };
       });
-    } finally { setLoading(false); }
+    } catch (reason) {
+      if (requestId !== detailRequest.current) return;
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   async function takeControl(agentId) {
+    const requestId = ++detailRequest.current;
     setLoading(true);
+    setDetailError("");
     try {
       await act("/api/participant/control", {
         agent_id: agentId,
         expected_tick: status?.tick ?? 0,
       });
+      if (requestId !== detailRequest.current) return;
       setDetail(null);
-    } finally { setLoading(false); }
+    } catch (reason) {
+      if (requestId !== detailRequest.current) return;
+      applyAgentDetailFailure(reason, setDetail, setDetailError);
+    } finally {
+      if (requestId === detailRequest.current) setLoading(false);
+    }
   }
 
   const listed = directory.items || [];
@@ -158,7 +221,7 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
           <tbody>{listed.map(agent => {
             const execution = agentExecutionPresentation(agent.execution);
             return <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => handleAgentRowKeyDown(event, inspect, agent.id)}>
-              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
+              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
             </tr>;
           })}</tbody>
         </table> : <Empty>{directoryLoading ? "Loading agents…" : "No agents match this search."}</Empty>}
@@ -168,15 +231,22 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
         <div className="flex gap-2"><button className="button !min-h-8" disabled={pageIndex === 0 || directoryLoading} onClick={() => setPageIndex(current => Math.max(0, current - 1))}>Previous</button><button className="button !min-h-8" disabled={!directory.next_after_id || directoryLoading} onClick={nextPage}>Next</button></div>
       </div>
     </Panel>
+    {detailError && !detail && <div role="alert" className="col-span-full rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Agent details unavailable: {detailError}</div>}
     {loading && <div className="fixed bottom-4 right-4 z-50 rounded-lg bg-mint-300 px-3 py-2 text-xs font-semibold text-ink-950">Loading agent…</div>}
     {detail && <AgentModal detail={detail} participant={participant} running={status?.running}
+      error={detailError}
       historyLoading={loading} onLoadOlder={loadOlderParticipantActions}
       onLoadOlderOutputs={loadOlderAgentOutputs}
-      onTakeControl={takeControl} onClose={() => setDetail(null)} />}
+      onTakeControl={takeControl} onClose={() => {
+        detailRequest.current += 1;
+        setDetail(null);
+        setDetailError("");
+        setLoading(false);
+      }} />}
   </>;
 }
 
-export function AgentModal({ detail, participant, running, historyLoading, onLoadOlder, onLoadOlderOutputs, onTakeControl, onClose }) {
+export function AgentModal({ detail, error = "", participant, running, historyLoading, onLoadOlder, onLoadOlderOutputs, onTakeControl, onClose }) {
   const agent = detail.agent;
   const counts = detail.output_counts || {};
   const modelOutputs = detail.recent_decisions || [];
@@ -185,9 +255,10 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
   const controlledId = participant?.controlled_agent?.id;
   const execution = agentExecutionPresentation(detail.execution);
   return <Modal title={`${agent.name} · agent ${agent.id}`} onClose={onClose} wide>
+    {error && <div role="alert" className="mb-4 rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Agent detail request failed: {error}</div>}
     {selectable && <div className="mb-4 flex items-center justify-between rounded-xl border border-mint-300/15 bg-mint-300/[.05] p-3">
       <div><div className="eyebrow">Participant Mode</div><p className="mt-1 text-xs text-slate-400">Control this citizen one validated day at a time.</p></div>
-      <button className="button button-primary" disabled={running || (controlledId && controlledId !== agent.id)}
+      <button className="button button-primary" disabled={running || Boolean(controlledId)}
         onClick={() => onTakeControl(agent.id)}>{controlledId === agent.id ? "Currently controlled" : "Take control"}</button>
     </div>}
     <div className="grid gap-4 lg:grid-cols-3">
@@ -202,10 +273,10 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Beliefs</div>
-        <div className="space-y-2">{Object.entries(detail.beliefs).slice(0, 12).map(([key, value]) => <div key={key} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-500">{shortKind(key)}</span><span className="tabular">{number(value, 3)}</span></div>)}</div>
+        <div className="space-y-2">{Object.entries(detail.beliefs).slice(0, 12).map(([key, value]) => <div key={key} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-500">{shortKind(key)}</span><span className="tabular">{formatBeliefValue(key, value)}</span></div>)}</div>
         {detail.belief_history?.length > 0 && <details className="mt-4 border-t border-mint-300/10 pt-3">
           <summary className="cursor-pointer text-xs text-mint-300">Belief provenance · {detail.belief_history.length} events</summary>
-          <div className="scrollbar mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">{detail.belief_history.slice(0, 30).map(update => <div key={update.event_id} className="text-[10px] text-slate-500"><span className="text-slate-300">Day {update.tick} · {shortKind(update.key || update.kind)}</span><br />{number(update.old_value, 3)} → {number(update.new_value, 3)} · {update.source || shortKind(update.kind)}</div>)}</div>
+          <div className="scrollbar mt-2 max-h-44 space-y-2 overflow-y-auto pr-1">{detail.belief_history.slice(0, 30).map(update => <div key={update.event_id} className="text-[10px] text-slate-500"><span className="text-slate-300">Day {update.tick} · {shortKind(update.key || update.kind)}</span><br />{formatBeliefValue(update.key || update.kind, update.old_value)} → {formatBeliefValue(update.key || update.kind, update.new_value)} · {update.source || shortKind(update.kind)}</div>)}</div>
         </details>}
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4 lg:col-span-3">
@@ -225,10 +296,12 @@ export function AgentModal({ detail, participant, running, historyLoading, onLoa
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Memory</div>
+        <p className="mb-3 text-[10px] leading-relaxed text-amber-300">Historical agent recollections; numeric claims may be stale.</p>
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{detail.memories.length ? detail.memories.map((memory, index) => <article key={`${memory.tick}-${index}`} className="border-t border-mint-300/10 pt-2 first:border-0"><div className="mb-1 text-[10px] uppercase tracking-wider text-slate-600">Day {memory.tick} · {shortKind(memory.kind)} · importance {number(memory.importance, 1)}</div><p className="text-xs leading-relaxed text-slate-400">{memory.text}</p></article>) : <Empty>No memories yet.</Empty>}</div>
       </section>
       <section className="rounded-xl border border-mint-300/10 bg-ink-950/40 p-4">
         <div className="eyebrow mb-3">Model output audit</div>
+        <p className="mb-3 text-[10px] leading-relaxed text-amber-300">Raw model I/O for provenance; numeric claims are unverified.</p>
         <div className="scrollbar max-h-72 space-y-3 overflow-y-auto pr-2">{modelOutputs.length ? modelOutputs.map(output => <details key={output.id} className="border-t border-mint-300/10 pt-2 first:border-0"><summary className="cursor-pointer text-xs text-slate-300">Day {output.tick} · {shortKind(output.purpose || output.role || "model output")} · {output.model || "model"}</summary><pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[10px] text-slate-500">{JSON.stringify(output, null, 2)}</pre></details>) : <Empty>{Number(counts.actions || 0) > 0 ? "No model calls recorded; inspect the deterministic action audit." : "No model outputs recorded for this agent."}</Empty>}</div>
         {detail.output_cursors?.model && <button className="button mt-3" disabled={historyLoading} onClick={() => onLoadOlderOutputs("model")}>{historyLoading ? "Loading..." : "Load older model outputs"}</button>}
       </section>

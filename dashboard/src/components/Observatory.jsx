@@ -5,7 +5,7 @@ import { AcceptancePanel } from "./AcceptancePanel";
 import { ConversationsPanel, EventsPanel, NewsPanel } from "./InformationPanels";
 import { CalibrationPanel, CostPanel, OraclePanel } from "./OracleAndCost";
 import { ReplayModal } from "./ReplayModal";
-import { RunHeader } from "./RunHeader";
+import { isTerminalRunStatus, RunHeader } from "./RunHeader";
 import { ParticipantPanel } from "./ParticipantPanel";
 import { ShockModal } from "./ShockModal";
 import { BanksPanel, FirmsPanel, InstitutionsPanel } from "./WorldPanels";
@@ -19,18 +19,20 @@ const MacroOverview = lazy(() => import("./MacroOverview"));
 export function Observatory({ hostedSession = null }) {
   const hosted = Boolean(hostedSession);
   const canControl = !hosted || hostedSession.role === "admin";
-  const { data, connected, loading, error, act, refresh } = useObservatory({ hosted });
+  const { data, connected, loading, error, statusFresh, act, refresh } = useObservatory({ hosted });
   const [shockOpen, setShockOpen] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(false);
   const status = data.status;
-  const dayZero = status?.tick === 0 && !status?.running && !introDismissed;
+  const terminal = isTerminalRunStatus(status?.status);
+  const dayZero = status?.tick === 0 && !status?.running && !introDismissed && !terminal;
   const participant = hosted
     ? { enabled: false, active: false, action_catalog: [] }
     : data.participant;
 
   return <div className="civic-observatory min-h-screen">
-    <RunHeader status={status} participant={participant} connected={connected} loading={loading} act={act}
+    <RunHeader status={status} participant={participant} connected={connected} loading={loading}
+      statusFresh={statusFresh} act={act}
       hosted={hosted} canControl={canControl}
       onShock={hosted ? null : () => setShockOpen(true)}
       onReplay={hosted ? null : () => setReplayOpen(true)} />
@@ -51,7 +53,7 @@ export function Observatory({ hostedSession = null }) {
     {status?.pause_reason && <aside className="mx-auto mt-3 max-w-[1760px] rounded-xl border border-gold-300/20 bg-gold-300/[.05] px-4 py-3 text-xs text-gold-300"><strong>Run paused safely.</strong> {status.pause_reason.detail || status.pause_reason.reason}</aside>}
     {status?.run_id && <aside className="mx-auto mt-3 flex max-w-[1760px] items-center justify-between gap-3 rounded-xl border border-mint-300/20 bg-mint-300/[.04] px-4 py-3 text-xs">
       <span><strong className="text-mint-300">{workspaceSemanticsLabel(status)}</strong> Trace goal-driven communications through beliefs, decisions, events, and ledger effects.</span>
-      <a className="button" href={`/runs/${encodeURIComponent(status.run_id)}/overview`}>Open World OS</a>
+      {!hosted && <a className="button" href={`/runs/${encodeURIComponent(status.run_id)}/overview`}>Open World OS</a>}
     </aside>}
 
     <main id="main-content" className="mx-auto grid max-w-[1800px] grid-cols-12 gap-3 px-3 pb-16 pt-3 sm:px-5">
@@ -61,7 +63,7 @@ export function Observatory({ hostedSession = null }) {
         firms={data.firms}
         events={data.events}
         map={data.v2?.map}
-        runId={status?.run_id}
+        runId={hosted ? "" : status?.run_id}
         tick={status?.tick ?? "live"}
         phase={status?.phase}
         status={status?.status}

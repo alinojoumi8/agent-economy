@@ -11,17 +11,26 @@ import asyncio
 import hashlib
 import json
 import logging
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import load_json
 from engine.types import positive_integer_id
 from causal import CausalLinkService
+from world.recovery import (
+    RecoveryAssessment,
+    assess_recovery,
+    minimum_viable_price_cents,
+)
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
 from .memory import Memory
+from .numeric_grounding import (
+    model_grounding_active,
+    sanitize_model_numeric_narrative,
+)
 from .personas.library import (
     PERSONA_SCHEMA_HINT,
     configured_outlet_ids,
@@ -46,12 +55,29 @@ from observability import get_logger, log_event as operational_log
 logger = get_logger("agents")
 
 
+class RecoveryHiringState(NamedTuple):
+    wage_floor_cents: int
+    assessment: RecoveryAssessment | None
+    max_hires: int
+    open_vacancies: int
+    error: str | None
+
+
 def _decision_output_budget(llm_config: dict, purpose: str) -> int:
     """Return a purpose override without shrinking ordinary decision bounds."""
     return int(llm_config.get(
         f"{purpose}_max_tokens",
         llm_config.get("decision_max_tokens", 900),
     ))
+
+
+def _decision_numeric_sources(context: dict) -> dict:
+    """Expose only the current authoritative sections named by the prompt contract."""
+    return {
+        key: context[key]
+        for key in ("state", "metrics", "banks", "prices", "jobs", "my_firm")
+        if key in context
+    }
 
 
 async def _gather_fail_fast(coroutines):
@@ -132,7 +158,16 @@ class AgentRuntime:
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.participant = ParticipantService(self.store, self.ctx, config)
         self.external = ExternalAgentService(economy, self.participant, config)
-        self.executor = ActionExecutor(economy)
+        self._recovery_hire_tick: int | None = None
+        self._recovery_completed_hires: dict[int, int] = {}
+        self._recovery_approved_hires: dict[
+            tuple[int, int, str, str, int], int
+        ] = {}
+        self.executor = ActionExecutor(
+            economy,
+            pre_action_hook=self._pre_recovery_employment_action,
+            post_action_hook=self._post_recovery_employment_action,
+        )
         self.causal = CausalLinkService(self.store)
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
@@ -826,9 +861,21 @@ class AgentRuntime:
                          max_tokens=_decision_output_budget(
                              llm_config, str(purpose)))
         resp = await self.gw.complete(req)
-        env = resp.parsed if isinstance(resp.parsed, dict) else {}
+        env = dict(resp.parsed) if isinstance(resp.parsed, dict) else {}
+        raw_reasoning = str(env.get("reasoning", "")).strip()
+        public_reasoning = sanitize_model_numeric_narrative(
+            raw_reasoning,
+            grounding_enabled=model_grounding_active(self.config, tick),
+            fallback=(
+                "I used the current structured engine facts to choose this action."
+            ),
+            sources=_decision_numeric_sources(context),
+        )
+        if raw_reasoning or public_reasoning:
+            env["reasoning"] = public_reasoning
         return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                "reasoning": env.get("reasoning", ""),
+                "reasoning": public_reasoning,
+                "numeric_claims_redacted": public_reasoning != raw_reasoning,
                 "llm_call_id": getattr(resp, "call_id", None),
                 "communication_sources": context.get("communication_sources", []),
                 "communication_read_context_key": context.get(
@@ -836,10 +883,282 @@ class AgentRuntime:
                 "attention_context_key": attention_context_key or None,
                 "attention_source_event_ids": attention_source_event_ids}
 
+    def _recovery_employment_target(
+            self, actor_id: int, action: dict, phase: str) -> tuple[int, int, str] | None:
+        """Return only a currently authorized, live recovery employment action."""
+        action_type = str(action.get("type") or "")
+        if action_type not in {
+                "post_job", "make_job_offer", "counter_job_offer",
+                "accept_job_offer", "hire"}:
+            return None
+        try:
+            if action_type == "post_job":
+                firm_id = int(action.get("firm_id", 0))
+                if firm_id <= 0:
+                    firm_id = int(self.executor._owned_firm(actor_id) or 0)
+                if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
+                    return None
+                return firm_id, int(action.get("wage", -1)), action_type
+            if action_type == "make_job_offer":
+                if self.executor.engine_semantics_version < 6:
+                    return None
+                application_id = int(action.get("application_id", 0))
+                application = self.executor._job_offer_application(application_id)
+                if application is None:
+                    return None
+                if not self.executor._controls_firm(actor_id, int(application["firm_id"])):
+                    return None
+                if int(application["agent_id"]) == actor_id:
+                    return None
+                if not self.executor._alive(int(application["agent_id"])):
+                    return None
+                wage_cents = int(action.get("wage", -1))
+                if wage_cents < 0 or not self.executor._job_currency_matches(application):
+                    return None
+                pending_offer = self.store.query_one(
+                    "SELECT 1 FROM job_offers WHERE application_id=? AND status='pending' LIMIT 1",
+                    (application_id,),
+                )
+                if pending_offer is not None:
+                    return None
+                return int(application["firm_id"]), wage_cents, action_type
+            if action_type == "hire":
+                if self.executor.engine_semantics_version >= 6 and phase != "FIXTURE":
+                    return None
+                application_id = int(action.get("application_id", 0))
+                application = self.store.query_one(
+                    "SELECT * FROM applications WHERE id=? AND state='pending'", (application_id,))
+                if application is None or not self.executor._alive(int(application["agent_id"])):
+                    return None
+                job = self.store.query_one(
+                    "SELECT firm_id,wage_cents FROM jobs WHERE id=? AND status='open'",
+                    (int(application["job_id"]),))
+                if job is None or not self.executor._controls_firm(actor_id, int(job["firm_id"])):
+                    return None
+                return int(job["firm_id"]), int(job["wage_cents"]), action_type
+            if self.executor.engine_semantics_version < 6:
+                return None
+            offer_id = int(action.get("offer_id", 0))
+            offer = self.executor._job_offer(offer_id)
+            if (self.executor._job_offer_counterparty_error(actor_id, offer)
+                    or not self.executor._alive(int(offer["agent_id"]))
+                    or not self.executor._job_currency_matches(offer)):
+                return None
+            wage = (int(action.get("wage", -1))
+                    if action_type == "counter_job_offer" else int(offer["wage_cents"]))
+            return int(offer["firm_id"]), wage, action_type
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+
+    def _recovery_hiring_state(
+            self, tick: int, firm_id: int,
+            wage_cents: int) -> RecoveryHiringState | None:
+        """Reassess live firm economics at the actual action wage."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        inputs = recovery.get("inputs")
+        if not isinstance(settings, dict) or not isinstance(inputs, dict):
+            return RecoveryHiringState(
+                0, None, 0, 1, "recovery pricing inputs are invalid")
+        try:
+            floor = int(settings["wage_floor_cents"])
+            assessment = assess_recovery(
+                enabled=True,
+                settings=settings,
+                price_cents=int(inputs["price_cents"]),
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=int(wage_cents),
+                cash_cents=int(inputs["cash_cents"]),
+                current_payroll_cents=int(inputs["current_payroll_cents"]),
+                current_headcount=int(inputs["current_headcount"]),
+                target_headcount=int(inputs["target_headcount"]),
+                recent_sales_units=int(inputs["recent_sales_units"]),
+                unmet_demand_units=int(inputs.get("unmet_demand_units", 0)),
+            )
+            max_hires = max(0, int(settings["max_hires_per_firm_per_period"]))
+            open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
+        except (KeyError, TypeError, ValueError):
+            return RecoveryHiringState(
+                0, None, 0, 1, "recovery pricing inputs are invalid")
+        return RecoveryHiringState(
+            floor, assessment, max_hires, open_vacancies, None)
+
+    @staticmethod
+    def _recovery_hire_approval_key(
+            tick: int, actor_id: int, action: dict,
+            phase: str) -> tuple[int, int, str, str, int] | None:
+        action_type = str(action.get("type") or "")
+        target_field = {
+            "hire": "application_id",
+            "accept_job_offer": "offer_id",
+        }.get(action_type)
+        if target_field is None:
+            return None
+        try:
+            target_id = int(action.get(target_field, 0))
+        except (TypeError, ValueError):
+            return None
+        if target_id <= 0:
+            return None
+        return int(tick), int(actor_id), str(phase), action_type, target_id
+
+    def _recovery_pricing_target(
+            self, actor_id: int, action: dict) -> tuple[int, int] | None:
+        """Return a controlled firm's requested price, if this is one."""
+        if str(action.get("type") or "") != "set_price":
+            return None
+        try:
+            firm_id = int(action.get("firm_id", 0))
+            if firm_id <= 0:
+                firm_id = int(self.executor._owned_firm(actor_id) or 0)
+            price_cents = int(action.get("price", 0))
+        except (TypeError, ValueError):
+            return None
+        if firm_id <= 0 or not self.executor._controls_firm(actor_id, firm_id):
+            return None
+        return firm_id, price_cents
+
+    def _recovery_price_floor(
+            self, tick: int, firm_id: int) -> tuple[int | None, str | None] | None:
+        """Return the live recovery price floor or a fail-closed reason."""
+        firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
+        if firm is None:
+            return None
+        recovery = self.ctx._firm_view(firm, tick).get("recovery")
+        if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+            return None
+        settings = recovery.get("settings")
+        inputs = recovery.get("inputs")
+        if not isinstance(settings, dict) or not isinstance(inputs, dict):
+            return None, "recovery pricing inputs are invalid"
+        try:
+            floor = int(settings["wage_floor_cents"])
+            minimum_prices = [minimum_viable_price_cents(
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=floor,
+                settings=settings,
+            )]
+            for employment in self.store.query(
+                    "SELECT wage_cents,pay_interval_ticks FROM employments "
+                    "WHERE firm_id=? AND status='active' ORDER BY id", (firm_id,)):
+                minimum_prices.append(minimum_viable_price_cents(
+                    input_cost_cents=int(inputs["input_cost_cents"]),
+                    output_per_worker=int(inputs["output_per_worker"]),
+                    pay_interval_ticks=int(employment["pay_interval_ticks"]),
+                    wage_cents=int(employment["wage_cents"]),
+                    settings=settings,
+                ))
+        except (KeyError, TypeError, ValueError):
+            return None, "recovery pricing inputs are invalid"
+        if any(value is None for value in minimum_prices):
+            return None, "nonpositive output cannot support a recovery wage"
+        return max(int(value) for value in minimum_prices), None
+
+    def _pre_recovery_employment_action(
+            self, tick: int, actor_id: int, action: dict, phase: str) -> str | None:
+        self._reset_recovery_hire_count(tick)
+        approval_key = self._recovery_hire_approval_key(
+            tick, actor_id, action, phase)
+        if approval_key is not None:
+            self._recovery_approved_hires.pop(approval_key, None)
+        target = self._recovery_employment_target(actor_id, action, phase)
+        if target is not None:
+            firm_id, wage_cents, action_type = target
+            state = self._recovery_hiring_state(tick, firm_id, wage_cents)
+            if state is not None:
+                if state.error is not None:
+                    return f"recovery policy rejects action: {state.error}"
+                if (state.assessment is None
+                        or state.wage_floor_cents <= 0
+                        or wage_cents < state.wage_floor_cents):
+                    return "recovery policy rejects a wage below the configured floor"
+                if state.assessment.allowed_new_hires < 1:
+                    return f"recovery policy rejects action: {state.assessment.reason}"
+                if action_type == "post_job" and state.open_vacancies > 0:
+                    return "recovery policy rejects duplicate live vacancy"
+                if (action_type in {"hire", "accept_job_offer"}
+                        and self._recovery_completed_hires.get(firm_id, 0)
+                        >= state.max_hires):
+                    return "recovery policy rejects hire cap for this period"
+                if approval_key is not None:
+                    self._recovery_approved_hires[approval_key] = firm_id
+
+        pricing_target = self._recovery_pricing_target(actor_id, action)
+        if pricing_target is None:
+            return None
+        firm_id, requested_price = pricing_target
+        constraint = self._recovery_price_floor(tick, firm_id)
+        if constraint is None:
+            return None
+        minimum_price, error = constraint
+        if error is not None:
+            return f"recovery policy rejects price: {error}"
+        if requested_price < int(minimum_price):
+            return "recovery policy rejects price below the recovery wage margin"
+        return None
+
+    def _post_recovery_employment_action(
+            self, tick: int, actor_id: int, action: dict, phase: str, result: dict) -> None:
+        approval_key = self._recovery_hire_approval_key(
+            tick, actor_id, action, phase)
+        approved_firm_id = (
+            self._recovery_approved_hires.pop(approval_key, None)
+            if approval_key is not None else None
+        )
+        if approved_firm_id is None or not result.get("ok"):
+            return
+        employment_id = int(result.get("employment_id") or 0)
+        if employment_id <= 0:
+            return
+        employment = self.store.query_one(
+            "SELECT firm_id,wage_cents FROM employments WHERE id=?", (employment_id,))
+        if employment is None:
+            return
+        firm_key = int(employment["firm_id"])
+        if firm_key != approved_firm_id:
+            return
+        self._recovery_completed_hires[firm_key] = (
+            self._recovery_completed_hires.get(firm_key, 0) + 1)
+
+    def _reset_recovery_hire_count(self, tick: int) -> None:
+        if getattr(self, "_recovery_hire_tick", None) != int(tick):
+            self._recovery_hire_tick = int(tick)
+            self._recovery_completed_hires = {}
+            self._recovery_approved_hires = {}
+        elif not hasattr(self, "_recovery_completed_hires"):
+            self._recovery_completed_hires = {}
+        if not hasattr(self, "_recovery_approved_hires"):
+            self._recovery_approved_hires = {}
+
     # ── EXECUTION: apply (deterministic order) ───────────────────────────────
     def execute_decisions(self, tick: int, decisions: list[dict]) -> None:
+        self._reset_recovery_hire_count(tick)
         for d in decisions:
             agent_id = d["agent_id"]
+            if d.get("numeric_claims_redacted"):
+                self.store.log_event(
+                    tick,
+                    "model_numeric_narrative_redacted",
+                    {
+                        "agent_id": int(agent_id),
+                        "model_call_id": d.get("llm_call_id"),
+                        "purpose": str(d.get("purpose") or "decision"),
+                        "reason": "ungrounded_numeric_claim",
+                    },
+                    phase="EXECUTION",
+                    subject_type="agent",
+                    subject_id=int(agent_id),
+                    importance=1.0,
+                )
             operational_overrides = d.get("operational_overrides") or []
             if operational_overrides:
                 self.store.log_event(
@@ -1070,7 +1389,8 @@ class AgentRuntime:
         events = self.store.query(
             "SELECT * FROM events WHERE tick=? AND kind NOT IN "
             "('action_rejected','metrics_snapshot','arrival_scheduled',"
-            "'belief_updated','belief_update_normalized','belief_update_rejected') "
+            "'belief_updated','belief_update_normalized','belief_update_rejected',"
+            "'model_numeric_narrative_redacted') "
             "ORDER BY id", (tick,))
         for ev in events:
             payload = load_json(ev["payload_json"], {}) or {}
@@ -1252,8 +1572,18 @@ class AgentRuntime:
             agent_id=agent_id, tick=tick, max_tokens=200)
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
-        summary = str(env.get("summary", "")).strip()
-        if not summary:
+        raw_summary = str(env.get("summary", "")).strip()
+        if raw_summary:
+            summary = sanitize_model_numeric_narrative(
+                raw_summary,
+                grounding_enabled=model_grounding_active(self.config, tick),
+                fallback="I reviewed today's recorded observations.",
+                sources=[
+                    {"tick": tick, "text": str(item.get("text", item))}
+                    for item in obs
+                ],
+            )
+        else:
             summary = " | ".join(str(item.get("text", item)) for item in obs)[:1800]
         try:
             importance = float(env.get("importance", 1.0))
@@ -1275,6 +1605,14 @@ class AgentRuntime:
             return None
         daily = [{"tick": int(r["tick"]), "text": r["text"],
                   "importance": float(r["importance"])} for r in rows]
+        observations = [
+            {"tick": int(row["tick"]), "text": row["text"]}
+            for row in self.store.query(
+                "SELECT tick,text FROM memories WHERE agent_id=? "
+                "AND kind='observation' AND tick BETWEEN ? AND ? ORDER BY tick,id",
+                (agent_id, start, tick),
+            )
+        ]
         context = {"weekly_summaries": daily, "tick": tick,
                    "rng_seed": agent_id * 701 + tick}
         schema = '{"summary":"concise weekly memory","importance":1.0}'
@@ -1286,8 +1624,18 @@ class AgentRuntime:
             agent_id=agent_id, tick=tick, max_tokens=240)
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
-        summary = str(env.get("summary", "")).strip()
-        if not summary:
+        raw_summary = str(env.get("summary", "")).strip()
+        if raw_summary:
+            summary = sanitize_model_numeric_narrative(
+                raw_summary,
+                grounding_enabled=model_grounding_active(self.config, tick),
+                fallback="I reviewed the recorded weekly summaries.",
+                sources=observations + [
+                    {"tick": item["tick"], "text": item["text"]}
+                    for item in daily
+                ],
+            )
+        else:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]
         importance = float(env.get("importance", max(r["importance"] for r in daily)))
         return summary, importance

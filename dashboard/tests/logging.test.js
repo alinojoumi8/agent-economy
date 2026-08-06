@@ -43,7 +43,10 @@ test("api logs network and HTTP failures with request context", async () => {
   console.error = message => messages.push(JSON.parse(message));
   try {
     globalThis.fetch = async () => { throw new TypeError("network offline"); };
-    await assert.rejects(api("/api/network"), /network offline/);
+    await assert.rejects(
+      api("/api/network?q=private-user-entry#private-fragment"),
+      /network offline/,
+    );
 
     globalThis.fetch = async () => ({
       ok: false, status: 503, statusText: "Unavailable",
@@ -84,6 +87,23 @@ test("api logs malformed JSON instead of swallowing it silently", async () => {
   assert.equal(messages[0].event, "dashboard.api.invalid_json");
   assert.equal(messages[0].path, "/api/malformed");
   assert.equal(messages[0].status_code, 200);
+});
+
+
+test("api preserves structured HTTP error messages", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  console.error = () => {};
+  globalThis.fetch = async () => ({
+    ok: false, status: 422, statusText: "Unprocessable Content",
+    json: async () => ({ detail: { message: "Investigation title is invalid." } }),
+  });
+  try {
+    await assert.rejects(api("/api/structured-error"), /Investigation title is invalid\./);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  }
 });
 
 

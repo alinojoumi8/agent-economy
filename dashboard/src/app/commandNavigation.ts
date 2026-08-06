@@ -9,6 +9,11 @@ export type SearchResultItem = {
   sublabel: string;
 };
 
+export type CausalTraceRef = {
+  kind: string;
+  id: string | number;
+};
+
 function withSearch(path: string, params: URLSearchParams): string {
   const query = params.toString();
   return query ? `${path}?${query}` : path;
@@ -22,6 +27,20 @@ export function workspacePath(
   return withSearch(
     `/runs/${encodeURIComponent(runId)}/${workspace}`,
     commonObserverSearchParams(currentSearch),
+  );
+}
+
+export function causalTracePath(
+  runId: string,
+  ref: CausalTraceRef,
+  currentSearch: URLSearchParams,
+): string {
+  const common = commonObserverSearchParams(currentSearch);
+  common.set("kind", ref.kind);
+  common.set("id", String(ref.id));
+  return withSearch(
+    `/runs/${encodeURIComponent(runId)}/investigations`,
+    common,
   );
 }
 

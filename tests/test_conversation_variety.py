@@ -165,6 +165,58 @@ def test_conversation_replaces_ungrounded_provider_output(tmp_path):
     assert len(set(lines)) == len(lines)
 
 
+def test_conversation_rng_and_prior_lines_are_not_numeric_grounding_sources(tmp_path):
+    world = _world(tmp_path)
+    world.config["beliefs"] = {"model_grounding_from_tick": 1}
+    world.conversations.config = world.config
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    raw_lines = []
+
+    async def seeded_completion(request, **kwargs):
+        raw = f"Conditions may shift around {request.context['rng_seed']}."
+        raw_lines.append(raw)
+        return SimpleNamespace(parsed={"text": raw, "rumor_bank": None})
+
+    world.conversations.gw.complete = seeded_completion
+    asyncio.run(world.conversations._converse(1, agent_ids[0], agent_ids[1]))
+
+    stored = [str(row["text"]) for row in world.store.query(
+        "SELECT text FROM messages ORDER BY seq")]
+    assert raw_lines
+    assert stored
+    assert not set(raw_lines) & set(stored)
+    world.close()
+
+
+def test_conversation_persists_nonempty_sanitized_provider_text(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path)
+    world.config["beliefs"] = {"model_grounding_from_tick": 1}
+    world.conversations.config = world.config
+    world.conversations.turns = 1
+    agent_ids = [int(row["id"]) for row in world.store.query(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 2")]
+    raw_line = "Provider text with an unsupported 987654321% claim."
+    sanitized_line = "Conditions may change after the unsupported claim is removed."
+
+    async def completion(request, **kwargs):
+        return SimpleNamespace(parsed={"text": raw_line, "rumor_bank": None})
+
+    monkeypatch.setattr(
+        "world.newsroom.sanitize_model_numeric_narrative",
+        lambda *args, **kwargs: sanitized_line,
+    )
+    world.conversations.gw.complete = completion
+
+    asyncio.run(world.conversations._converse(
+        1, agent_ids[0], agent_ids[1]))
+
+    assert world.store.scalar(
+        "SELECT text FROM messages ORDER BY seq LIMIT 1") == sanitized_line
+    world.close()
+
+
 def test_conversation_uses_the_configured_output_budget(tmp_path):
     world = _world(tmp_path)
     world.conversations.config["llm"]["conversation_max_tokens"] = 800
@@ -323,6 +375,30 @@ def test_shared_topics_rotate_across_conversation_pairs(tmp_path):
     assert topics[:4] == ["Sales climb", "Bank expands", "Prices ease", "Jobs rise"]
     assert len(set(topics)) == 8
     assert "household budgets and the price of essentials" in topics
+
+
+def test_shared_topic_uses_the_publicly_grounded_article_projection(tmp_path):
+    world = _world(tmp_path)
+    try:
+        world.config["beliefs"] = {"model_grounding_from_tick": 1}
+        world.conversations.config["beliefs"] = {
+            "model_grounding_from_tick": 1}
+        event_id = world.store.log_event(
+            1, "production", {"firm_id": 1, "units": 4},
+            phase="NIGHT_CLOSE", importance=1.0)
+        world.store.insert(
+            "news_articles", tick=1, outlet_id=1, outlet_name="A",
+            headline="Output jumped 987654321%",
+            body="The unsupported increase was 987654321%.",
+            source_event_ids=json.dumps([event_id]), slant_tags="[]", tone=0.0)
+        world.store.commit()
+
+        topic = world.conversations._shared_topic(1)
+
+        assert "987654321" not in topic
+        assert topic == "A archived brief: production"
+    finally:
+        world.close()
 
 
 def test_theme_rotation_advances_by_daily_pair_count(tmp_path):

@@ -30,6 +30,9 @@ export function useProjectionSocket(historical: boolean) {
       socket = new WebSocket(socketUrl());
       socket.addEventListener("open", () => {
         retry = 0;
+        // During lineage recovery the server's mandatory first frame is the
+        // authoritative hello. Wait for it before requesting backfill so an
+        // old-lineage cursor is never sent against the new run or fork.
         if (!lineageRecovery.current) {
           socket?.send(JSON.stringify({ type: "hello", event_cursor: cursor.current }));
         }
@@ -123,6 +126,8 @@ export function useProjectionSocket(historical: boolean) {
           );
           dispatch({ message, historical });
         }
+        // Reconnect even while preserving lineage_mismatch in the UI. The new
+        // socket clears lineageRecovery when its server-first hello arrives.
         retry += 1;
         timer = window.setTimeout(connect, Math.min(10_000, 250 * (2 ** retry)));
       });

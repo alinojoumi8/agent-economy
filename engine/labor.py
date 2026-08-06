@@ -256,6 +256,7 @@ class Labor:
 
     def expire_stale_jobs(
             self, tick: int, max_age: int = 20, *,
+            terminalize_stale_applications: bool = False,
             phase: str = "NIGHT_CLOSE") -> None:
         # Only negotiations use job_offers, so this remains a no-op for legacy
         # semantics while making modern capabilities explicitly non-dangling.
@@ -268,5 +269,21 @@ class Labor:
         self.store.execute(
             "UPDATE applications SET state='rejected' WHERE state='negotiating' "
             "AND id IN (SELECT application_id FROM job_offers WHERE status='expired')")
+        if terminalize_stale_applications:
+            # The opt-in recovery profile closes out applicants that never
+            # reached negotiation, including vacancies closed before a later
+            # activation.
+            self.store.execute(
+                "UPDATE job_offers SET status='expired', decided_tick=? "
+                "WHERE status='pending' AND application_id IN "
+                "(SELECT ap.id FROM applications ap JOIN jobs j ON j.id=ap.job_id "
+                "WHERE j.status IN ('open','closed') AND j.tick < ?)",
+                (tick, tick - max_age),
+            )
+            self.store.execute(
+                "UPDATE applications SET state='rejected' "
+                "WHERE state IN ('pending','negotiating') AND job_id IN "
+                "(SELECT id FROM jobs WHERE status IN ('open','closed') AND tick < ?)",
+                (tick - max_age,))
         self.store.execute(
             "UPDATE jobs SET status='closed' WHERE status='open' AND tick < ?", (tick - max_age,))

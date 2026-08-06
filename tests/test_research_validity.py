@@ -2,13 +2,20 @@ import asyncio
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agents.memory import Memory
+from agents.numeric_grounding import (
+    model_grounding_active,
+    narrative_numbers_are_grounded,
+    numeric_claims,
+    sanitize_model_numeric_narrative,
+)
 from engine.store import Store
-from run import open_run
+from run import activate_numeric_grounding_for_run, open_run
 from server.app import create_app
 from world.loop import World
 from world.metrics import Metrics
@@ -45,6 +52,342 @@ def _world(tmp_path, name="research.db", **kwargs):
     world = World(store, config)
     world.initialize()
     return world
+
+
+def test_numeric_claims_canonicalize_money_percent_commas_and_signs():
+    assert numeric_claims(
+        "Revenue was $3,000.00, up 7.50% from -2; +4 was unchanged."
+    ) == {"$3000", "7.5%", "-2", "4"}
+    assert numeric_claims("Malformed 12,34 is not a claim") == set()
+    assert numeric_claims(
+        "Scientific 1e-05, +2.5E+3, and $4e2 are complete claims."
+    ) == {"0.00001", "2500", "$400"}
+
+
+def test_numeric_redaction_governance_events_do_not_become_agent_memories(tmp_path):
+    world = _world(tmp_path, "redaction-observation.db")
+    try:
+        agent_id = int(world.store.scalar(
+            "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+        world.store.log_event(
+            0, "model_numeric_narrative_redacted", {"reason": "ungrounded number"},
+            subject_type="agent", subject_id=agent_id, importance=1.0,
+        )
+        world.store.log_event(
+            0, "goods_sale", {"quantity": 1}, subject_type="agent",
+            subject_id=agent_id, importance=1.0,
+        )
+        world.runtime.capture_event_observations(0)
+        memories = [str(row["text"]) for row in world.store.query(
+            "SELECT text FROM memories WHERE agent_id=? AND tick=0 ORDER BY id",
+            (agent_id,),
+        )]
+        assert memories == ["I bought goods."]
+    finally:
+        world.close()
+
+
+def test_public_narrative_accepts_only_exact_supplied_numeric_tokens():
+    sources = {
+        "headline_fact": "$3,000.00",
+        "output": 30,
+        "baseline": 20,
+        "flags": [True, False],
+    }
+
+    assert narrative_numbers_are_grounded("Revenue was $3000.", sources)
+    assert narrative_numbers_are_grounded(
+        "Threshold was 1e-05.", {"threshold": 1e-5})
+    assert not narrative_numbers_are_grounded(
+        "Threshold was 1e-06.", {"threshold": 1e-5})
+    assert not narrative_numbers_are_grounded("Output rose 75%.", sources)
+    assert not narrative_numbers_are_grounded("There were 1 flags.", {"flag": True})
+    assert sanitize_model_numeric_narrative(
+        "Revenue was $3000.",
+        grounding_enabled=True,
+        fallback="Current engine facts are authoritative.",
+        sources=sources,
+    ) == "Revenue was $3000."
+    assert sanitize_model_numeric_narrative(
+        "Output rose 75%.",
+        grounding_enabled=True,
+        fallback="Current engine facts are authoritative.",
+        sources=sources,
+    ) == "Current engine facts are authoritative."
+    assert sanitize_model_numeric_narrative(
+        "Historical text remains unchanged at 75%.",
+        grounding_enabled=False,
+        fallback="fallback",
+    ) == "Historical text remains unchanged at 75%."
+
+
+@pytest.mark.parametrize(
+    ("active_tick", "next_phase", "expected_activation"),
+    [
+        (None, "MORNING", 358),
+        (358, "MORNING", 358),
+        (358, "EXECUTION", 359),
+    ],
+)
+def test_numeric_grounding_activation_uses_next_untouched_boundary(
+        tmp_path, active_tick, next_phase, expected_activation):
+    store = Store(str(tmp_path / f"numeric-{next_phase}-{active_tick}.db"))
+    store.init_run_meta(
+        "numeric",
+        42,
+        {"engine_semantics_version": 7, "beliefs": {"audit_history": True}},
+    )
+    store.set_meta(
+        status="paused",
+        tick=357,
+        active_tick=active_tick,
+        next_phase=next_phase,
+    )
+    store.commit()
+
+    first = activate_numeric_grounding_for_run(store)
+    second = activate_numeric_grounding_for_run(store)
+    persisted = json.loads(store.get_meta()["config_json"])["beliefs"]
+
+    assert first == second == {
+        "model_grounding_from_tick": expected_activation,
+        "model_max_reserved_step": 0.05,
+    }
+    assert persisted["audit_history"] is True
+    assert model_grounding_active({"beliefs": persisted}, expected_activation)
+    assert not model_grounding_active(
+        {"beliefs": persisted}, expected_activation - 1)
+    store.close()
+
+
+def test_existing_numeric_grounding_boundary_is_normalized_and_persisted(tmp_path):
+    store = Store(str(tmp_path / "existing-numeric-boundary.db"))
+    store.init_run_meta(
+        "existing-numeric-boundary",
+        42,
+        {"beliefs": {
+            "audit_history": True,
+            "model_grounding_from_tick": "-2",
+            "model_max_reserved_step": "0.125",
+        }},
+    )
+    store.set_meta(status="paused", tick=8, active_tick=None, next_phase="MORNING")
+    store.commit()
+
+    settings = activate_numeric_grounding_for_run(store)
+    persisted = json.loads(store.get_meta()["config_json"])["beliefs"]
+
+    assert settings == {
+        "model_grounding_from_tick": 0,
+        "model_max_reserved_step": 0.125,
+    }
+    assert persisted == {
+        "audit_history": True,
+        "model_grounding_from_tick": 0,
+        "model_max_reserved_step": 0.125,
+    }
+    store.close()
+
+
+def test_grounded_model_reserved_beliefs_require_baseline_and_bounded_step(tmp_path):
+    store = Store(str(tmp_path / "grounded-beliefs.db"))
+    config = {
+        "beliefs": {
+            "audit_history": True,
+            "enforce_reserved_ranges": True,
+            "model_grounding_from_tick": 5,
+            "model_max_reserved_step": 0.05,
+        },
+    }
+    store.init_run_meta("grounded-beliefs", 42, config)
+    memory = Memory(store, config)
+    memory.set_belief(1, "sentiment", 0.10, 4, source="direct")
+
+    assert memory.set_belief(
+        1,
+        "sentiment",
+        0.14,
+        5,
+        source="decision",
+        source_llm_call_id=99,
+    ) == pytest.approx(0.14)
+    with pytest.raises(ValueError, match="step"):
+        memory.set_belief(
+            1,
+            "sentiment",
+            0.30,
+            6,
+            source="decision",
+            source_llm_call_id=100,
+        )
+    with pytest.raises(ValueError, match="baseline"):
+        memory.set_belief(
+            1,
+            "inflation_expectation",
+            0.02,
+            6,
+            source="memory",
+            source_llm_call_id=101,
+        )
+
+    assert memory.get_beliefs(1) == {"sentiment": pytest.approx(0.14)}
+    reasons = {
+        json.loads(row["payload_json"])["reason"]
+        for row in store.query(
+            "SELECT payload_json FROM events "
+            "WHERE kind='belief_update_rejected' ORDER BY id"
+        )
+    }
+    assert reasons == {"missing_model_baseline", "model_reserved_step_limit"}
+    assert memory.set_belief(
+        1, "sentiment", -0.8, 7, source="scripted_policy"
+    ) == -0.8
+    store.close()
+
+
+@pytest.mark.parametrize("enforce_ranges", [True, False])
+def test_grounded_model_belief_step_uses_raw_value_even_without_range_clamping(
+        tmp_path, enforce_ranges):
+    store = Store(str(tmp_path / f"raw-step-{enforce_ranges}.db"))
+    config = {
+        "beliefs": {
+            "audit_history": True,
+            "enforce_reserved_ranges": enforce_ranges,
+            "model_grounding_from_tick": 1,
+            "model_max_reserved_step": 0.05,
+        },
+    }
+    store.init_run_meta("raw-step", 42, config)
+    memory = Memory(store, config)
+    memory.set_belief(1, "sentiment", 0.98, 0, source="direct")
+
+    with pytest.raises(ValueError, match="step"):
+        memory.set_belief(
+            1, "sentiment", 2.0, 1, source="decision",
+            source_llm_call_id=99,
+        )
+
+    assert memory.get_beliefs(1)["sentiment"] == pytest.approx(0.98)
+    store.close()
+
+
+def test_grounded_prompt_labels_authoritative_facts_and_stale_memories(tmp_path):
+    world = _world(tmp_path, "grounded-prompt.db")
+    world.config["beliefs"].update({
+        "model_grounding_from_tick": 1,
+        "model_max_reserved_step": 0.125,
+    })
+    world.runtime.mem.model_max_reserved_step = 0.125
+    world.runtime.ctx.config = world.config
+    citizen = world.store.query_one(
+        "SELECT * FROM agents WHERE kind='citizen' AND role IS NULL ORDER BY id LIMIT 1"
+    )
+    world.runtime.mem.observe(
+        int(citizen["id"]), 0, "A historical number was 987654321.")
+
+    context = world.runtime.ctx.build(citizen, 1)
+    system, prompt = world.runtime.ctx.render_prompt(context)
+
+    assert "CURRENT ENGINE FACTS ARE AUTHORITATIVE" in system
+    assert "model_max_reserved_step=0.125" in system
+    assert "MEMORIES - HISTORICAL; NUMERIC VALUES MAY BE STALE" in prompt
+    assert "cents (= " in prompt
+    world.close()
+
+
+def test_model_reasoning_is_grounded_publicly_while_raw_call_remains_auditable(
+        tmp_path):
+    world = _world(tmp_path, "grounded-reasoning.db")
+    world.config["beliefs"].update({
+        "model_grounding_from_tick": 1,
+        "model_max_reserved_step": 0.05,
+    })
+    world.runtime.config = world.config
+    world.runtime.ctx.config = world.config
+    citizen = world.store.query_one(
+        "SELECT * FROM agents WHERE kind='citizen' AND role IS NULL ORDER BY id LIMIT 1"
+    )
+    world.runtime.mem.observe(
+        int(citizen["id"]), 0, "A stale memory claimed output rose 987654321%.",
+    )
+    raw = {
+        "reasoning": "Output rose 987654321%.",
+        "actions": [{"type": "do_nothing"}],
+        "belief_updates": [],
+    }
+    call_id = world.store.insert(
+        "llm_calls",
+        tick=1,
+        agent_id=int(citizen["id"]),
+        role="citizen",
+        provider="minimax",
+        model="MiniMax-M3",
+        purpose="decision",
+        response_json=json.dumps(raw, sort_keys=True),
+    )
+
+    class GroundingGateway:
+        async def complete(self, *_args, **_kwargs):
+            return SimpleNamespace(parsed=dict(raw), call_id=call_id)
+
+    world.runtime.gw = GroundingGateway()
+    decision = asyncio.run(world.runtime._decide_one(1, citizen))
+
+    assert decision["reasoning"] == (
+        "I used the current structured engine facts to choose this action."
+    )
+    assert decision["envelope"]["reasoning"] == decision["reasoning"]
+    assert "987654321%" in world.store.scalar(
+        "SELECT response_json FROM llm_calls WHERE id=?", (call_id,))
+
+    world.runtime.execute_decisions(1, [decision])
+    proposal = world.store.query_one(
+        "SELECT rationale_summary FROM action_proposals ORDER BY id DESC LIMIT 1"
+    )
+    assert proposal["rationale_summary"] == decision["reasoning"]
+    assert not world.store.query_one(
+        "SELECT 1 FROM memories WHERE text='Output rose 987654321%.'"
+    )
+    world.close()
+
+
+def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
+    world = _world(tmp_path, "summary-grounding.db")
+    world.config["beliefs"].update({"model_grounding_from_tick": 1})
+    world.runtime.config = world.config
+    agent_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"
+    ))
+    world.runtime.mem.observe(
+        agent_id, 1, "Demand changed without a measured figure.", importance=4.7,
+    )
+
+    class SummaryGateway:
+        async def complete(self, request, **_kwargs):
+            if request.user.startswith("["):
+                return SimpleNamespace(
+                    parsed={"summary": "The prior model summary said 777.", "importance": 2},
+                    call_id=2,
+                )
+            return SimpleNamespace(
+                parsed={
+                    "summary": (
+                        "Observation importance was "
+                        f"{request.context['observations'][0]['importance']}."
+                    ),
+                    "importance": 2,
+                    "belief_updates": [],
+                },
+                call_id=1,
+            )
+
+    world.runtime.gw = SummaryGateway()
+    daily = asyncio.run(world.runtime._compress_one(1, agent_id))
+    assert daily[0] == "I reviewed today's recorded observations."
+    world.runtime.mem.write_summary(agent_id, 1, "A prior model summary said 777.", 2)
+    weekly = asyncio.run(world.runtime._rollup_week(1, agent_id, 1))
+    assert weekly[0] == "The prior model summary said 777."
+    world.close()
 
 
 def test_bank_information_is_role_scoped_and_legacy_default_is_full(tmp_path):

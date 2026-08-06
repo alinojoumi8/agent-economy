@@ -1,27 +1,30 @@
-import { Navigate, Route, Routes, useParams } from "react-router";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
 import { OverviewWorkspace } from "../workspaces/OverviewWorkspace";
 import { CommonsWorkspace } from "../workspaces/CommonsWorkspace";
 import { PeopleWorkspace } from "../workspaces/PeopleWorkspace";
+import { WorldWorkspace } from "../workspaces/WorldWorkspace";
+import { OrganizationsWorkspace } from "../workspaces/OrganizationsWorkspace";
+import { MarketsWorkspace } from "../workspaces/MarketsWorkspace";
+import { PoliticsLawWorkspace } from "../workspaces/PoliticsLawWorkspace";
+import { ExperimentsWorkspace } from "../workspaces/ExperimentsWorkspace";
 import { workspaceFallbackPath } from "../lib/routes";
+import { worldOSIndexWorkspace } from "./worldOSRouting.js";
 
 function WorkspaceFallback() {
   const { runId } = useParams<{ runId?: string }>();
   return <Navigate to={workspaceFallbackPath(runId)} replace />;
 }
 
-function LegacyWorkspace({ title }: { title: string }) {
-  return <section className="world-os-empty">
-    <p className="world-os-kicker">Canonical route established</p>
-    <h2>{title}</h2>
-    <p>This semantic lake preserves the current Observatory panel while deeper cross-domain projections follow the communications and causal gate.</p>
-    <a className="button" href="/">Open the current panel</a>
-  </section>;
-}
-
 export function WorldOSApp() {
+  const location = useLocation();
+  if (worldOSIndexWorkspace(location.pathname) === "commons") {
+    return <Routes><Route element={<WorkspaceShell />}>
+      <Route path="*" element={<CommonsWorkspace />} />
+    </Route></Routes>;
+  }
   return <Routes>
     <Route element={<WorkspaceShell />}>
       <Route index element={<Navigate to="overview" replace />} />
@@ -31,15 +34,15 @@ export function WorldOSApp() {
       <Route path="investigations" element={<InvestigationsWorkspace />} />
       <Route path="investigations/:investigationId" element={<InvestigationsWorkspace />} />
       <Route path="commons" element={<CommonsWorkspace />} />
-      <Route path="world" element={<LegacyWorkspace title="World" />} />
+      <Route path="world" element={<WorldWorkspace />} />
       <Route path="people" element={<PeopleWorkspace />} />
       <Route path="people/:agentId" element={<PeopleWorkspace />} />
-      <Route path="organizations" element={<LegacyWorkspace title="Organizations" />} />
-      <Route path="organizations/:organizationId" element={<LegacyWorkspace title="Organizations" />} />
-      <Route path="markets" element={<LegacyWorkspace title="Markets" />} />
-      <Route path="politics-law" element={<LegacyWorkspace title="Politics & Law" />} />
-      <Route path="experiments" element={<LegacyWorkspace title="Experiments" />} />
-      <Route path="experiments/:experimentId" element={<LegacyWorkspace title="Experiments" />} />
+      <Route path="organizations" element={<OrganizationsWorkspace />} />
+      <Route path="organizations/:organizationId" element={<OrganizationsWorkspace />} />
+      <Route path="markets" element={<MarketsWorkspace />} />
+      <Route path="politics-law" element={<PoliticsLawWorkspace />} />
+      <Route path="experiments" element={<ExperimentsWorkspace />} />
+      <Route path="experiments/:experimentId" element={<ExperimentsWorkspace />} />
       <Route path="*" element={<WorkspaceFallback />} />
     </Route>
   </Routes>;

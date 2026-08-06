@@ -54,6 +54,7 @@ from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .commons import CommonsService
+from .recovery import recovery_settings
 from .shocks import Shocks
 from .phases import (
     LEGACY_PHASE_SPECS,
@@ -840,7 +841,15 @@ class World:
         self.economy.exchange.expire_session(tick)
         if self.engine_semantics_version >= 5:
             self.economy.regions.match_fx(tick)
-        self.economy.labor.expire_stale_jobs(tick, phase="MARKET")
+        recovery = recovery_settings(self.config)
+        recovery_active = (
+            bool(recovery["enabled"])
+            and int(tick) >= int(recovery["activation_tick"])
+        )
+        self.economy.labor.expire_stale_jobs(
+            tick,
+            terminalize_stale_applications=recovery_active,
+            phase="MARKET")
         # Expire stale pending loan applications (older than a week).
         self.store.execute(
             "UPDATE loan_applications SET status='expired' WHERE status='pending' AND tick < ?",
@@ -965,7 +974,8 @@ class World:
             # SQLite backup only sees committed pages from its separate source
             # connection. Commit status/events/PRNG before taking the snapshot.
             self.store.commit()
-            ckpt_dir = Path(self.config.get("checkpoint_dir", "data/checkpoints"))
+            ckpt_dir = Path(
+                self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             run_id = self.store.get_meta()["run_id"]
             dest = ckpt_dir / f"{run_id}_t{tick}.db"
@@ -994,6 +1004,27 @@ class World:
                     (created_at, int(existing["id"])),
                 )
             self.store.commit()
+            keep_last = self.config.get("checkpoint_keep_last")
+            if type(keep_last) is int and keep_last > 0:
+                try:
+                    self._prune_checkpoints(run_id, keep_last)
+                except Exception as exc:
+                    # Retention is maintenance after the snapshot, manifest,
+                    # and catalog row have already committed. Preserve that
+                    # successful checkpoint while making pruning observable.
+                    self.store.log_event(
+                        tick,
+                        "checkpoint_prune_failed",
+                        {"error": type(exc).__name__,
+                         "error_type": type(exc).__name__},
+                        importance=2.0,
+                    )
+                    self.store.commit()
+                    operational_log(
+                        logger, logging.WARNING, "world.checkpoint.prune_failed",
+                        run_id=run_id, tick=tick, reason=reason,
+                        error_type=type(exc).__name__,
+                    )
             operational_log(logger, logging.INFO, "world.checkpoint.created",
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)
@@ -1003,6 +1034,84 @@ class World:
                             run_id=self.gateway.run_id, tick=tick, reason=reason,
                             error_type=type(exc).__name__, error=str(exc))
             return None
+
+    def _prune_checkpoints(self, run_id: str, keep_last: int) -> None:
+        """Retain only the newest safe, current-run checkpoint rows and artifacts."""
+        if keep_last <= 0:
+            return
+        checkpoint_dir = Path(
+            self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
+        candidates = []
+        for row in self.store.query("SELECT id,tick,path FROM checkpoints"):
+            try:
+                tick = int(row["tick"])
+                database = checkpoint_dir / f"{run_id}_t{tick}.db"
+                if not isinstance(row["path"], str) or row["path"] != str(database):
+                    continue
+                if database.parent != checkpoint_dir:
+                    continue
+                manifest = Path(f"{database}.manifest.json")
+                if database.is_symlink() or manifest.is_symlink():
+                    continue
+                resolved_database = database.resolve()
+            except (OSError, OverflowError, RuntimeError, TypeError, ValueError):
+                continue
+            if (resolved_database != database
+                    or not resolved_database.is_relative_to(checkpoint_dir)):
+                continue
+            candidates.append((row, database))
+        candidates.sort(
+            key=lambda item: (int(item[0]["tick"]), int(item[0]["id"])),
+            reverse=True)
+        retained_paths = set()
+        stale_rows = []
+        for row, database in candidates:
+            manifest = Path(f"{database}.manifest.json")
+            try:
+                complete = database.is_file() and manifest.is_file()
+            except OSError:
+                complete = False
+            if not complete:
+                stale_rows.append((row, database))
+            elif database not in retained_paths and len(retained_paths) < keep_last:
+                retained_paths.add(database)
+            else:
+                stale_rows.append((row, database))
+        for row, database in stale_rows:
+            if database not in retained_paths:
+                deletion_failed = False
+                manifest = Path(f"{database}.manifest.json")
+                try:
+                    if database.is_symlink() or manifest.is_symlink():
+                        continue
+                except OSError:
+                    continue
+                for artifact in (manifest, database):
+                    try:
+                        artifact.unlink()
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        self.store.log_event(
+                            self.store.tick,
+                            "checkpoint_prune_failed",
+                            {
+                                "checkpoint_id": int(row["id"]),
+                                "checkpoint_tick": int(row["tick"]),
+                                "path": artifact.name,
+                                "error": type(exc).__name__,
+                                "error_type": type(exc).__name__,
+                            },
+                            importance=2.0,
+                        )
+                        self.store.commit()
+                        deletion_failed = True
+                        break
+                if deletion_failed:
+                    continue
+            self.store.execute(
+                "DELETE FROM checkpoints WHERE id=?", (int(row["id"]),))
+            self.store.commit()
 
     def _save_prng_state(self) -> None:
         engine_state = _prng_state(self.engine_prng)

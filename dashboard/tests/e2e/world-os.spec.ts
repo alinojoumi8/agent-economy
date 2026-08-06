@@ -473,8 +473,11 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
 
   await page.getByRole("button", { name: /All/ }).click();
   await page.getByLabel("Find an agent").fill("Supplier Officer");
+  await expect(page).toHaveURL(/q=Supplier\+Officer/);
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
-  await page.locator(".civic-city__agent").click();
+  await page.getByRole("button", { name: /^Supplier Officer,/ }).click();
+  await expect(page).toHaveURL(/agent=1/);
+  await expect(page.locator(".civic-city__agent")).toHaveCount(1);
   await expect(page.locator(".civic-city__activity strong")).toHaveText("Goods Sale");
   await expect(page.getByRole("link", { name: "Trace this event" })).toHaveAttribute("href", "/runs/run-demo/investigations?event=9");
 });
@@ -596,7 +599,65 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
 
   const trigger = page.getByRole("button", { name: "Open command menu" });
   await trigger.click();
-  await expect(page.getByRole("dialog", { name: "Navigate and inspect" })).toBeVisible();
+  const reopenedCommand = page.getByRole("dialog", { name: "Navigate and inspect" });
+  await expect(reopenedCommand).toBeVisible();
+  const reopenedSearch = reopenedCommand.getByPlaceholder("Search routes, people, firms, events…");
+  const commandClose = reopenedCommand.locator('button[aria-label="Close command menu"]');
+  await expect(reopenedSearch).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(commandClose).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(reopenedSearch).toBeFocused();
+  await commandClose.evaluate(button => { button.tabIndex = -2; });
+  await page.keyboard.press("Tab");
+  await expect(reopenedSearch).toBeFocused();
+  await commandClose.evaluate(button => { button.tabIndex = 0; });
+  await reopenedCommand.evaluate(dialog => {
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    editor.setAttribute("aria-label", "Inline command note");
+    editor.textContent = "Editable note";
+    dialog.append(editor);
+  });
+  await reopenedCommand.getByLabel("Inline command note").focus();
+  await page.keyboard.press("Tab");
+  await expect(commandClose).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(reopenedCommand.getByLabel("Inline command note")).toBeFocused();
+  await reopenedCommand.evaluate(dialog => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-label", "Embedded evidence");
+    iframe.style.width = "40px";
+    iframe.style.height = "20px";
+    const details = document.createElement("details");
+    details.open = true;
+    const summary = document.createElement("summary");
+    summary.setAttribute("aria-label", "Evidence summary");
+    summary.textContent = "Evidence summary";
+    details.append(summary);
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.setAttribute("aria-label", "Audio evidence");
+    const video = document.createElement("video");
+    video.controls = true;
+    video.setAttribute("aria-label", "Video evidence");
+    video.style.width = "80px";
+    video.style.height = "40px";
+    dialog.append(iframe, details, audio, video);
+  });
+  await reopenedCommand.getByLabel("Inline command note").focus();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Embedded evidence")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Evidence summary")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Audio evidence")).toBeFocused();
+  await reopenedCommand.getByLabel("Audio evidence").evaluate(element => {
+    element.tabIndex = -1;
+  });
+  await reopenedCommand.getByLabel("Evidence summary").focus();
+  await page.keyboard.press("Tab");
+  await expect(reopenedCommand.getByLabel("Video evidence")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 
@@ -604,6 +665,197 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
   await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+test("modal focus predicate excludes hidden and fieldset-disabled controls", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+
+  const focusability = await page.evaluate(async () => {
+    const focusModule = await import("/src/components/useModalFocus.ts") as unknown as {
+      isTabbableElement(element: HTMLElement): boolean;
+    };
+    const visible = document.createElement("button");
+    visible.textContent = "Visible";
+    document.body.append(visible);
+    const displayNone = visible.cloneNode(true) as HTMLButtonElement;
+    displayNone.style.display = "none";
+    document.body.append(displayNone);
+    const visibilityHidden = visible.cloneNode(true) as HTMLButtonElement;
+    visibilityHidden.style.visibility = "hidden";
+    document.body.append(visibilityHidden);
+    const fieldset = document.createElement("fieldset");
+    fieldset.disabled = true;
+    const disabledDescendant = visible.cloneNode(true) as HTMLButtonElement;
+    fieldset.append(disabledDescendant);
+    document.body.append(fieldset);
+    const contentEditable = document.createElement("div");
+    contentEditable.contentEditable = "true";
+    contentEditable.textContent = "Editable";
+    document.body.append(contentEditable);
+    return {
+      visible: focusModule.isTabbableElement(visible),
+      displayNone: focusModule.isTabbableElement(displayNone),
+      visibilityHidden: focusModule.isTabbableElement(visibilityHidden),
+      disabledDescendant: focusModule.isTabbableElement(disabledDescendant),
+      contentEditable: focusModule.isTabbableElement(contentEditable),
+    };
+  });
+
+  expect(focusability).toEqual({
+    visible: true,
+    displayNone: false,
+    visibilityHidden: false,
+    disabledDescendant: false,
+    contentEditable: true,
+  });
+});
+
+test("participant mutation failures render, recover controls, and reset across identity changes", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountParticipantHarness } = await import("/tests/e2e/fixtures/participantHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "participant-test-root";
+    document.body.append(container);
+    (window as any).__participantHarness = mountParticipantHarness(container, {
+      enabled: true,
+      active: true,
+      running: false,
+      completed_tick: 6,
+      next_tick: 7,
+      controlled_agent: {
+        id: 1, name: "Ada Tester", occupation: "engineer", health: "healthy",
+      },
+      action_catalog: [{ type: "rest", label: "Rest", enabled: true, fields: [] }],
+    });
+  });
+  const harness = page.locator("#participant-test-root");
+  const queue = harness.getByRole("button", { name: "Queue action for next day" });
+  await queue.click();
+  await expect(harness.getByRole("alert")).toContainText("queue rejected");
+  await expect(queue).toBeEnabled();
+
+  await page.evaluate(() => (window as any).__participantHarness.update({
+    controlled_agent: {
+      id: 2, name: "Grace Tester", occupation: "analyst", health: "healthy",
+    },
+  }));
+  await expect(harness.getByRole("alert")).toBeHidden();
+  await expect(harness.getByText("Grace Tester")).toBeVisible();
+
+  const release = harness.getByRole("button", { name: "Release citizen" });
+  await release.click();
+  await expect(harness.getByRole("alert")).toContainText("release rejected");
+  await expect(release).toBeEnabled();
+  await page.evaluate(() => (window as any).__participantHarness.update({ active: false }));
+  await expect(harness.getByRole("alert")).toBeHidden();
+  await expect(harness.getByText(/Take control/)).toBeVisible();
+
+  const requests = await page.evaluate(() => (window as any).__participantHarness.requests);
+  expect(requests).toEqual(["/api/participant/action", "/api/participant/release"]);
+});
+
+test("modal initial focus ignores a detached caller target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container);
+  });
+  await expect(page.locator("#modal-focus-test-root")
+    .getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
+test("modal focus trap treats a named radio group as one tab stop", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-radio-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container);
+  });
+  const harness = page.locator("#modal-radio-focus-test-root");
+  await harness.getByRole("radio", { name: "Primary choice" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(harness.getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
+test("modal focus trap wraps from a connected non-tabbable initial target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-heading-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container, { connectedInitial: true });
+  });
+  const harness = page.locator("#modal-heading-focus-test-root");
+  await expect(harness.getByRole("heading", { name: "Initial heading" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(harness.getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
+test("modal cleanup falls back to the connected previous focus target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const previous = document.createElement("button");
+    previous.id = "modal-previous-focus";
+    previous.textContent = "Previous focus";
+    document.body.append(previous);
+    previous.focus();
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-return-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container, { disconnectedReturn: true });
+  });
+  await expect(page.locator("#modal-return-focus-test-root")
+    .getByRole("button", { name: "Fallback action" })).toBeFocused();
+  await page.evaluate(async () => {
+    const { unmountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    unmountModalFocusHarness(document.querySelector("#modal-return-focus-test-root"));
+  });
+  await expect(page.getByRole("button", { name: "Previous focus" })).toBeFocused();
+});
+
+test("Oracle failures render an alert and restore the request control", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountOracleHarness } = await import("/tests/e2e/fixtures/oracleHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "oracle-test-root";
+    document.body.append(container);
+    mountOracleHarness(container);
+  });
+  const harness = page.locator("#oracle-test-root");
+  await harness.getByLabel("Question for the Oracle").fill("Will demand recover?");
+  const ask = harness.getByRole("button", { name: "Ask Oracle" });
+  await ask.click();
+  await expect(harness.getByRole("alert")).toContainText("oracle unavailable");
+  await expect(ask).toBeEnabled();
+});
+
+test("Oracle failures clear a forecast from the previous request", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountOracleHarness } = await import("/tests/e2e/fixtures/oracleHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "oracle-stale-test-root";
+    document.body.append(container);
+    mountOracleHarness(container);
+  });
+  const harness = page.locator("#oracle-stale-test-root");
+  const question = harness.getByLabel("Question for the Oracle");
+  await question.fill("First forecast");
+  await harness.getByRole("button", { name: "Ask Oracle" }).click();
+  await expect(harness.getByText("60%")).toBeVisible();
+  await question.fill("Second forecast fails");
+  await harness.getByRole("button", { name: "Ask Oracle" }).click();
+  await expect(harness.getByRole("alert")).toContainText("oracle unavailable");
+  await expect(harness.getByText("60%")).toBeHidden();
 });
 
 test("authorized entity search preserves fork and historical tick", async ({ page }) => {

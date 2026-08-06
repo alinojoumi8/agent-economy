@@ -1,0 +1,32 @@
+# Deterministic, provider-free supply-recovery acceptance profile.
+extends: ../base.yaml
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+checkpoint_every: 100
+checkpoint_keep_last: 2
+
+supply_recovery:
+  enabled: true
+  policy_version: supply-recovery-v1
+  activation_tick: 0
+  wage_floor_cents: 15000
+  gross_margin_coverage_bps: 12500
+  cash_payroll_coverage_periods: 2
+  max_hires_per_firm_per_period: 1
+  max_headcount_per_firm: 7
+  demand_buffer_ticks: 5
+  sales_observation_ticks: 30
+
+acceptance:
+  min_ticks: 1000
+  supply_recovery:
+    warmup_ticks: 60
+    trailing_window_ticks: 60
+    max_buy_goods_rejection_rate: 0.05
+    max_unemployment_rebound: 0.10
+    max_pending_applications: 20
+    max_pending_job_offers: 20
+    max_open_jobs: 20

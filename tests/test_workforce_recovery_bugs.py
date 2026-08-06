@@ -9,7 +9,8 @@ import pytest
 
 import run as cli
 from agents.policies import workforce_recovery_actions
-from agents.runtime import AgentRuntime
+from agents.runtime import AgentRuntime, RecoveryHiringState
+from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.store import Store
 from world.loop import World
@@ -55,6 +56,65 @@ def _world(tmp_path: Path, name: str, **over) -> World:
     world = World(store, cfg)
     world.initialize()
     return world
+
+
+def test_genesis_does_not_hire_any_selected_founder_as_initial_staff(tmp_path):
+    world = _world(tmp_path, "founders-are-not-staff.db")
+    try:
+        assert world.store.query(
+            "SELECT e.id FROM employments e JOIN firms f "
+            "ON f.founder_agent_id=e.agent_id WHERE e.status='active'") == []
+    finally:
+        world.close()
+
+
+def test_semantics_six_genesis_ignores_supply_recovery_profile(tmp_path):
+    disabled = _world(
+        tmp_path,
+        "legacy-recovery-disabled.db",
+        engine_semantics_version=6,
+        supply_recovery={"enabled": False},
+    )
+    enabled = _world(
+        tmp_path,
+        "legacy-recovery-enabled.db",
+        engine_semantics_version=6,
+        supply_recovery={
+            "enabled": True,
+            "activation_tick": 0,
+            "wage_floor_cents": 100_000,
+        },
+    )
+    try:
+        query = (
+            "SELECT firm_id,agent_id,wage_cents,start_tick,status,pay_interval_ticks,"
+            "next_pay_tick FROM employments ORDER BY id"
+        )
+        assert [tuple(row) for row in enabled.store.query(query)] == [
+            tuple(row) for row in disabled.store.query(query)
+        ]
+    finally:
+        enabled.close()
+        disabled.close()
+
+
+def test_recovery_employment_target_rejects_missing_row_aliases(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path, "missing-recovery-alias.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"))
+    monkeypatch.setattr(
+        world.runtime.executor,
+        "_job_offer_application",
+        lambda _application_id: {"agent_id": actor_id + 1},
+    )
+
+    assert world.runtime._recovery_employment_target(
+        actor_id,
+        {"type": "make_job_offer", "application_id": 1, "wage": 250_000},
+        "LABOR",
+    ) is None
+    world.close()
 
 
 def test_cli_supply_recovery_defaults_to_recovery_headcount_not_genesis(
@@ -218,6 +278,132 @@ def test_workforce_recovery_skips_employed_counter_offers():
     actions = workforce_recovery_actions(context)
 
     assert all(action.get("type") != "accept_job_offer" for action in actions)
+
+
+def test_invalid_recovery_hiring_inputs_keep_their_fail_closed_reason(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path, "invalid-recovery-inputs.db")
+    firm = world.store.query_one("SELECT * FROM firms ORDER BY id LIMIT 1")
+    founder_id = int(firm["founder_agent_id"])
+    firm_id = int(firm["id"])
+    monkeypatch.setattr(
+        world.runtime.ctx,
+        "_firm_view",
+        lambda _firm, _tick: {
+            "recovery": {"active": True, "settings": {}, "inputs": {}},
+        },
+    )
+
+    reason = world.runtime._pre_recovery_employment_action(
+        1,
+        founder_id,
+        {"type": "post_job", "firm_id": firm_id, "title": "worker", "wage": 100},
+        "EXECUTION",
+    )
+
+    assert reason == "recovery policy rejects action: recovery pricing inputs are invalid"
+    world.close()
+
+
+def test_recovery_post_hook_ignores_success_without_an_employment_id(tmp_path):
+    world = _world(tmp_path, "missing-employment-id.db")
+
+    world.runtime._post_recovery_employment_action(
+        1, 1, {"type": "hire"}, "EXECUTION",
+        {"ok": True, "employment_id": None},
+    )
+
+    assert world.runtime._recovery_completed_hires == {}
+    world.close()
+
+
+def test_recovery_hire_accounting_consumes_the_pre_hook_approval(
+        tmp_path, monkeypatch):
+    world = _world(
+        tmp_path, "preapproved-recovery-hire.db", engine_semantics_version=5)
+    firm = world.store.query_one(
+        "SELECT id,founder_agent_id FROM firms ORDER BY id LIMIT 1")
+    candidate = world.store.query_one(
+        "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+        "AND alive=1 AND retired=0 ORDER BY id LIMIT 1")
+    assert firm is not None and candidate is not None
+    firm_id = int(firm["id"])
+    founder_id = int(firm["founder_agent_id"])
+    job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
+    application_id = world.economy.labor.apply_job(
+        1, int(candidate["id"]), job_id)
+    assert application_id is not None
+    calls = 0
+
+    def hiring_state(*_args):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            return None
+        assessment = type(
+            "Assessment", (), {"allowed_new_hires": 1, "reason": "eligible"})()
+        return RecoveryHiringState(15_000, assessment, 1, 0, None)
+
+    monkeypatch.setattr(world.runtime, "_recovery_hiring_state", hiring_state)
+
+    result = world.runtime.executor.execute_action(
+        1,
+        founder_id,
+        {"type": "hire", "application_id": int(application_id)},
+        "EXECUTION",
+    )
+
+    assert result["ok"] is True, result
+    assert calls == 1
+    assert world.runtime._recovery_completed_hires == {firm_id: 1}
+    world.close()
+
+
+def test_pre_action_hook_failure_is_persisted_as_a_rejection(tmp_path):
+    world = _world(tmp_path, "pre-hook-failure.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+
+    def fail_pre_hook(*_args):
+        raise RuntimeError("pre-hook-canary")
+
+    executor = ActionExecutor(world.economy, pre_action_hook=fail_pre_hook)
+    result = executor.execute_action(
+        1, actor_id, {"type": "do_nothing"}, "EXECUTION")
+
+    assert result == {"ok": False, "reason": "pre-action hook error: pre-hook-canary"}
+    proposal = world.store.query_one(
+        "SELECT validation_status,result_json FROM action_proposals ORDER BY id DESC LIMIT 1")
+    assert proposal["validation_status"] == "rejected"
+    assert "pre-action hook error: pre-hook-canary" in proposal["result_json"]
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='action_rejected'", default=0) == 1
+    world.close()
+
+
+def test_post_action_hook_failure_does_not_undo_or_escape_committed_action(tmp_path):
+    world = _world(tmp_path, "post-hook-failure.db")
+    actor_id = int(world.store.scalar(
+        "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+
+    def fail_post_hook(*_args):
+        raise RuntimeError("post-hook-canary")
+
+    executor = ActionExecutor(world.economy, post_action_hook=fail_post_hook)
+    result = executor.execute_action(
+        1,
+        actor_id,
+        {"type": "say_public", "text": "Committed before the hook."},
+        "EXECUTION",
+    )
+
+    assert result == {"ok": True}
+    proposal = world.store.query_one(
+        "SELECT validation_status,result_json FROM action_proposals ORDER BY id DESC LIMIT 1")
+    assert proposal["validation_status"] == "accepted"
+    assert world.store.scalar(
+        "SELECT COUNT(*) FROM events WHERE kind='public_statement'", default=0) == 1
+    world.close()
 
 
 def test_joint_firm_and_candidate_accepts_respect_remaining_headcount(

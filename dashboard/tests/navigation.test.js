@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   buildProductNavigation,
   isProductNavigationActive,
 } from "../src/lib/productNavigation.js";
+
+const observatorySource = readFileSync(
+  new URL("../src/components/Observatory.jsx", import.meta.url), "utf8",
+);
+const citizenMenuSource = readFileSync(
+  new URL("../src/components/CitizenMenu.jsx", import.meta.url), "utf8",
+);
+const civicStyles = readFileSync(
+  new URL("../src/civic-weather-room.css", import.meta.url), "utf8",
+);
 
 test("product navigation keeps app and citizenship surfaces on canonical paths", () => {
   const items = buildProductNavigation({
@@ -40,4 +51,19 @@ test("product navigation distinguishes Commons and citizen onboarding", () => {
   );
   assert.equal(isProductNavigationActive("join", "/oauth/authorize"), true);
   assert.equal(isProductNavigationActive("my_agents", "/my-agents"), true);
+});
+
+test("civic shell styles the citizen menu panel class used by markup", () => {
+  assert.match(citizenMenuSource, /className="citizen-menu citizen-menu--panel"/);
+  assert.match(civicStyles, /\.world-os-topbar \.citizen-menu--panel \{/);
+  assert.match(civicStyles, /\.world-os-topbar \.citizen-menu--panel a \{/);
+  assert.doesNotMatch(civicStyles, /citizen-menu-dropdown__panel/);
+});
+
+test("hosted observatory does not advertise the unsupported World OS route", () => {
+  assert.match(
+    observatorySource,
+    /\{!hosted && <a[^>]+href=\{`\/runs\/\$\{encodeURIComponent\(status\.run_id\)\}\/overview`\}>Open World OS<\/a>\}/,
+  );
+  assert.match(observatorySource, /runId=\{hosted \? "" : status\?\.run_id\}/);
 });

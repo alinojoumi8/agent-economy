@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from engine.store import Store
 from run_config import load_config
+from server.app import create_app
 from world.commons import CommonsError
 from world.loop import World
 
@@ -116,6 +118,128 @@ def test_feed_policy_hash_scores_positions_and_public_projection_are_determinist
         "SELECT COUNT(*) FROM commons_feed_impressions", default=0) == impressions_before
     assert {first["id"], second["id"]} <= {
         item["id"] for item in public_a["feed"]["entries"]}
+
+
+def test_moderation_rolls_back_entry_event_and_action_together(
+    commons_world: World, monkeypatch,
+):
+    moderator, author = _agents(commons_world)
+    community = commons_world.commons.create_community(
+        moderator, name="Atomic Moderation")
+    entry = commons_world.commons.publish(
+        author, body="Moderation transaction test", community_id=community["id"])
+    events_before = int(commons_world.store.scalar(
+        "SELECT COUNT(*) FROM events", default=0))
+    original_insert = commons_world.store.insert
+
+    def fail_action(table, **columns):
+        if table == "commons_moderation_actions":
+            raise RuntimeError("simulated moderation action failure")
+        return original_insert(table, **columns)
+
+    monkeypatch.setattr(commons_world.store, "insert", fail_action)
+    with pytest.raises(RuntimeError, match="moderation action failure"):
+        commons_world.commons.moderate(
+            moderator, entry["id"], action="hide", reason="test rollback")
+
+    assert commons_world.store.scalar(
+        "SELECT status FROM commons_entries WHERE id=?", (entry["id"],)) == "published"
+    assert commons_world.store.scalar(
+        "SELECT COUNT(*) FROM commons_moderation_actions WHERE entry_id=?",
+        (entry["id"],), default=0,
+    ) == 0
+    assert commons_world.store.scalar(
+        "SELECT COUNT(*) FROM events", default=0) == events_before
+
+
+def test_live_public_projection_uses_active_policy_and_authoritative_profile(
+    commons_world: World,
+):
+    author, reader = _agents(commons_world)
+    entry = commons_world.commons.publish(author, body="Current projection source")
+    commons_world.commons.react(reader, entry["id"], "insightful")
+    commons_world.store.set_meta(tick=2)
+    commons_world.store.insert(
+        "commons_feed_policies",
+        policy_key="inactive-review-hot",
+        version=99,
+        algorithm="hot",
+        weights_json="{}",
+        created_tick=2,
+        active=0,
+    )
+    commons_world.store.execute(
+        "UPDATE commons_profiles SET reputation=77,status='suspended',updated_tick=2 "
+        "WHERE agent_id=?",
+        (author,),
+    )
+    commons_world.store.commit()
+
+    delivered = commons_world.commons.feed(reader, kind="hot")
+    current = commons_world.commons.public_overview(kind="hot")
+    profile = next(item for item in current["profiles"]
+                   if item["agent_id"] == author)
+
+    assert current["feed"]["policy"] == delivered["policy"]
+    assert current["feed"]["candidate_set_hash"] == delivered["candidate_set_hash"]
+    assert profile["reputation"] == 77
+    assert profile["status"] == "suspended"
+    assert profile["alive"] is True
+
+    historical = commons_world.commons.public_overview(kind="hot", as_of_tick=0)
+    assert historical["feed"]["policy"] == delivered["policy"]
+    assert historical["profiles"][0]["reputation"] == 2
+    assert historical["profiles"][0]["status"] == "active"
+
+
+def test_public_workspace_projection_is_scoped_to_requested_tick(commons_world: World):
+    owner, author = _agents(commons_world)
+    community = commons_world.commons.create_community(owner, name="Historical Commons")
+    first = commons_world.commons.publish(
+        author, body="Visible at the historical tick", community_id=community["id"])
+    commons_world.store.set_meta(tick=2)
+    commons_world.store.commit()
+    commons_world.commons.react(owner, first["id"], "like")
+    commons_world.commons.moderate(
+        owner, first["id"], action="hide", reason="Future moderation canary")
+    future = commons_world.commons.publish(
+        author, body="Future projection canary", community_id=community["id"])
+
+    historical = commons_world.commons.public_overview(as_of_tick=0)
+    assert historical["tick"] == 0
+    assert [item["id"] for item in historical["feed"]["entries"]] == [first["id"]]
+    assert historical["feed"]["entries"][0]["reaction_count"] == 0
+    assert historical["feed"]["entries"][0]["moderation_label"] is None
+    assert historical["profiles"][0]["reputation"] == 0
+    assert future["id"] not in {item["id"] for item in historical["feed"]["entries"]}
+
+    with TestClient(create_app(commons_world)) as client:
+        response = client.get(
+            "/api/v2/workspaces/commons",
+            params={"tick": 0, "kind": "chronological", "limit": 60},
+        )
+        bad_fork = client.get(
+            "/api/v2/workspaces/commons", params={"fork_id": "wrong"},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection"] == "workspace.commons"
+    assert payload["tick"] == 0
+    assert payload["data"] == historical
+    assert bad_fork.status_code == 409
+
+    with pytest.raises(CommonsError) as invalid_tick:
+        commons_world.commons.public_overview(as_of_tick="not-a-tick")  # type: ignore[arg-type]
+    assert invalid_tick.value.status_code == 400
+    assert str(invalid_tick.value) == "commons projection tick must be an integer"
+
+    for invalid_value in (1.5, True, False):
+        with pytest.raises(CommonsError) as fractional_tick:
+            commons_world.commons.public_overview(  # type: ignore[arg-type]
+                as_of_tick=invalid_value)
+        assert fractional_tick.value.status_code == 400
+        assert str(fractional_tick.value) == (
+            "commons projection tick must be an integer")
 
 
 def test_moderation_requires_separate_scope_and_in_world_role(commons_world: World):

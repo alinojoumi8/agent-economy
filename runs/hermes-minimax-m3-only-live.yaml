@@ -18,6 +18,11 @@ budget:
   report_reserve_usd: 0.25
   conversation_pairs: 1
 
+reports:
+  # MiniMax-M3 spends completion tokens on reasoning before emitting JSON.
+  # Preserve enough room for the bounded public narrative contract.
+  narrative_max_tokens: 1600
+
 llm:
   live_only: true
   require_preflight_live: true

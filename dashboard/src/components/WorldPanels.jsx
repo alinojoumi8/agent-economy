@@ -1,4 +1,4 @@
-import { money, number, percent } from "../api";
+import { formatTrust, money, number, percent } from "../api";
 import { Badge, Empty, Panel } from "./ui";
 
 export function BanksPanel({ banks }) {
@@ -11,7 +11,7 @@ export function BanksPanel({ banks }) {
             <td className="font-semibold text-slate-200">{bank.name}</td>
             <td className="tabular">{money(bank.deposits_cents)}</td>
             <td><div className="tabular">{money(bank.reserves_cents)}</div><div className="text-[10px] text-slate-500">{percent(bank.reserve_ratio)}</div></td>
-            <td><div className="mb-1 flex justify-between gap-2 tabular"><span>{number(bank.avg_trust, 3)}</span></div><div className="h-1 w-16 overflow-hidden rounded bg-ink-700"><div className="h-full bg-mint-300" style={{ width: `${Math.max(0, Math.min(100, Number(bank.avg_trust || 0) * 100))}%` }} /></div></td>
+            <td><div className="mb-1 flex justify-between gap-2 tabular"><span>{formatTrust(bank.avg_trust)}</span></div><div className="h-1 w-16 overflow-hidden rounded bg-ink-700"><div className="h-full bg-mint-300" style={{ width: `${Math.max(0, Math.min(100, Number(bank.avg_trust || 0) * 100))}%` }} /></div></td>
             <td><Badge tone={bank.status === "open" ? "good" : "bad"}>{bank.status}</Badge></td>
           </tr>)}</tbody>
         </table> : <Empty>Banks appear after genesis.</Empty>}

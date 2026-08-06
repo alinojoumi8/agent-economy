@@ -12,6 +12,7 @@
   python run.py --experiment runs/experiments/x.yaml    # multi-seed experiment + comparison report
   python run.py --acceptance-report RUNID               # evaluate persisted production evidence
   python run.py --oracle-calibration-report MANIFEST    # curated Oracle campaign evidence
+  python run.py --release-evidence-report MANIFEST --output reports/out/release-v1
   python run.py --config runs/oracle/v4-seed-7331-control.yaml --oracle-campaign-run --approve-live-inference
   python run.py --config runs/acceptance/production.yaml --acceptance-run  # paid; approval required
 
@@ -23,6 +24,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -47,6 +49,145 @@ REPLAY_INPUT_TABLES = (
     "calibration_targets",
     "scenario_packs",
 )
+
+LIVE_ENTREPRENEURSHIP_DEFAULTS = {
+    "enabled": True,
+    "new_arrivals_only": False,
+    "review_interval_ticks": 6,
+    "minimum_ticks_after_arrival": 1,
+    "minimum_age": 21,
+    "minimum_risk_tolerance": 0.65,
+    "minimum_opening_capital_cents": 100_000,
+    "personal_reserve_cents": 100_000,
+    "opening_capital_share_bps": 3_500,
+    "maximum_active_competitors": 3,
+    "maximum_formations_per_tick": 2,
+    "sales_lookback_ticks": 30,
+    "stockout_inventory_threshold": 2,
+    "eligible_sectors": [
+        "services", "technology", "manufacturing", "logistics",
+        "healthcare", "energy", "agriculture",
+    ],
+    "autonomous_preseed": True,
+    "preseed_pitch_delay_ticks": 1,
+    "preseed_raise_cents": 250_000,
+    "autonomous_mergers": True,
+    "minimum_merger_age_ticks": 30,
+    "maximum_merger_cash_share_bps": 4_000,
+    "merger_premium_bps": 1_000,
+}
+LIVE_NUMERIC_GROUNDING_DEFAULTS = {
+    "model_max_reserved_step": 0.05,
+}
+
+
+def activate_entrepreneurship_for_run(store: Store) -> dict:
+    """Persist bounded startup entry at the next untouched decision boundary."""
+    meta = store.get_meta()
+    if str(meta["status"] or "") != "paused":
+        raise RuntimeError("entrepreneurship activation requires a paused run")
+    if meta["parent_run_id"] is not None or meta["fork_tick"] is not None:
+        raise RuntimeError(
+            "entrepreneurship activation requires an original run, not a replay or fork"
+        )
+
+    config = json.loads(meta["config_json"])
+    existing = config.get("entrepreneurship")
+    if isinstance(existing, dict) and bool(existing.get("enabled", False)):
+        return dict(existing)
+
+    completed_tick = int(meta["tick"])
+    active_tick = (
+        int(meta["active_tick"])
+        if meta["active_tick"] is not None
+        else completed_tick + 1
+    )
+    untouched_morning = (
+        active_tick > completed_tick
+        and str(meta["next_phase"] or "") == "MORNING"
+    )
+    activation_tick = (
+        active_tick
+        if untouched_morning
+        else max(completed_tick, active_tick) + 1
+    )
+    settings = {
+        **LIVE_ENTREPRENEURSHIP_DEFAULTS,
+        "activation_tick": activation_tick,
+    }
+    config["entrepreneurship"] = settings
+    store.set_meta(config_json=json.dumps(config, sort_keys=True))
+    store.commit()
+    return settings
+
+
+def activate_numeric_grounding_for_run(store: Store) -> dict:
+    """Persist numeric grounding at the next untouched decision boundary."""
+    meta = store.get_meta()
+    if str(meta["status"] or "") != "paused":
+        raise RuntimeError("numeric grounding activation requires a paused run")
+    if meta["parent_run_id"] is not None or meta["fork_tick"] is not None:
+        raise RuntimeError(
+            "numeric grounding activation requires an original run, not a replay or fork"
+        )
+    config = json.loads(meta["config_json"])
+    beliefs = dict(config.get("beliefs") or {})
+    try:
+        maximum_step = float(beliefs.get(
+            "model_max_reserved_step",
+            LIVE_NUMERIC_GROUNDING_DEFAULTS["model_max_reserved_step"],
+        ))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "beliefs.model_max_reserved_step must be finite and nonnegative"
+        ) from exc
+    if not math.isfinite(maximum_step) or maximum_step < 0:
+        raise ValueError(
+            "beliefs.model_max_reserved_step must be finite and nonnegative"
+        )
+
+    existing_boundary = beliefs.get("model_grounding_from_tick")
+    if existing_boundary is not None:
+        try:
+            boundary = max(0, int(existing_boundary))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                "beliefs.model_grounding_from_tick must be a nonnegative integer"
+            ) from exc
+        settings = {
+            "model_grounding_from_tick": boundary,
+            "model_max_reserved_step": maximum_step,
+        }
+        beliefs.update(settings)
+        config["beliefs"] = beliefs
+        store.set_meta(config_json=json.dumps(config, sort_keys=True))
+        store.commit()
+        return settings
+
+    completed_tick = int(meta["tick"])
+    active_tick = (
+        int(meta["active_tick"])
+        if meta["active_tick"] is not None
+        else completed_tick + 1
+    )
+    untouched_morning = (
+        active_tick > completed_tick
+        and str(meta["next_phase"] or "") == "MORNING"
+    )
+    activation_tick = (
+        active_tick
+        if untouched_morning
+        else max(completed_tick, active_tick) + 1
+    )
+    settings = {
+        "model_grounding_from_tick": activation_tick,
+        "model_max_reserved_step": maximum_step,
+    }
+    beliefs.update(settings)
+    config["beliefs"] = beliefs
+    store.set_meta(config_json=json.dumps(config, sort_keys=True))
+    store.commit()
+    return settings
 
 
 async def provider_preflight(config: dict, *, live: bool = False) -> dict:
@@ -480,7 +621,9 @@ def _adopt_resume_local_citizenship(
 
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR,
-             new_run_id_override: str | None = None) -> tuple[Store, World, str]:
+             new_run_id_override: str | None = None,
+             activate_entrepreneurship: bool = False,
+             activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     if resume:
         run_id = resume
@@ -489,6 +632,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             sys.exit(f"run database not found: {db}")
         store = Store(str(db))
         try:
+            if activate_entrepreneurship:
+                activate_entrepreneurship_for_run(store)
+            if activate_numeric_grounding:
+                activate_numeric_grounding_for_run(store)
             meta = store.get_meta()
             stored_cfg = json.loads(meta["config_json"])
             # Markerless databases predate completed-day finalization and must keep
@@ -832,6 +979,8 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--report": args.report,
         "--export-static": args.export_static,
         "--acceptance-report": args.acceptance_report,
+        "--release-evidence-report": args.release_evidence_report,
+        "--supply-recovery-report": args.supply_recovery_report,
         "--acceptance-run": args.acceptance_run,
         "--replay": args.replay,
         "--fork": args.fork,
@@ -846,6 +995,8 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
         "--phenomena-evidence": args.phenomena_evidence,
         "--scenario-ticks": args.scenario_ticks,
         "--upgrade-semantics": args.upgrade_semantics,
+        "--activate-entrepreneurship": args.activate_entrepreneurship,
+        "--activate-numeric-grounding": args.activate_numeric_grounding,
     }
     if args.oracle_campaign_run:
         incompatible = [name for name, value in {
@@ -867,6 +1018,75 @@ def _validate_oracle_cli_exclusivity(args, parser: argparse.ArgumentParser) -> N
             parser.error(
                 "--oracle-calibration-report is mutually exclusive with "
                 + ", ".join(incompatible))
+
+
+def _validate_release_evidence_cli_exclusivity(
+    args, parser: argparse.ArgumentParser
+) -> None:
+    """Keep offline evidence rendering separate from every runtime boundary."""
+    if not args.release_evidence_report:
+        return
+    if not args.output:
+        parser.error("--release-evidence-report requires --output")
+    incompatible = [
+        name
+        for name, active in {
+            "--ticks": args.ticks is not None,
+            "--resume": bool(args.resume),
+            "--activate-entrepreneurship": args.activate_entrepreneurship,
+            "--activate-numeric-grounding": args.activate_numeric_grounding,
+            "--activate-supply-recovery": args.activate_supply_recovery,
+            "--supply-recovery-target-headcount": (
+                args.supply_recovery_target_headcount is not None
+            ),
+            "--activate-llm-output-budgets": args.activate_llm_output_budgets,
+            "--replay": bool(args.replay),
+            "--fork": bool(args.fork),
+            "--upgrade-semantics": args.upgrade_semantics is not None,
+            "--report": bool(args.report),
+            "--export-static": bool(args.export_static),
+            "--experiment": bool(args.experiment),
+            "--counterfactual": bool(args.counterfactual),
+            "--scenario-ticks": args.scenario_ticks is not None,
+            "--refresh-datasets": bool(args.refresh_datasets),
+            "--refresh-dataset-key": bool(args.refresh_dataset_key),
+            "--verify-datasets": bool(args.verify_datasets),
+            "--acceptance-report": bool(args.acceptance_report),
+            "--oracle-calibration-report": bool(args.oracle_calibration_report),
+            "--oracle-campaign-run": args.oracle_campaign_run,
+            "--acceptance-run": args.acceptance_run,
+            "--approve-live-inference": args.approve_live_inference,
+            "--experiment-evidence": bool(args.experiment_evidence),
+            "--phenomena-evidence": bool(args.phenomena_evidence),
+            "--serve": args.serve,
+            "--preflight": args.preflight,
+            "--preflight-live": args.preflight_live,
+        }.items()
+        if active
+    ]
+    if incompatible:
+        parser.error(
+            "--release-evidence-report is mutually exclusive with "
+            + ", ".join(incompatible)
+        )
+
+
+def _validate_supply_recovery_report_cli(
+        args, parser: argparse.ArgumentParser) -> None:
+    """Keep a persisted-evidence receipt command free of ignored run modifiers."""
+    if not args.supply_recovery_report:
+        return
+    allowed_destinations = {"supply_recovery_report", "output"}
+    incompatible = [
+        "--" + destination.replace("_", "-")
+        for destination, value in vars(args).items()
+        if destination not in allowed_destinations
+        and value != parser.get_default(destination)
+    ]
+    if incompatible:
+        parser.error(
+            "--supply-recovery-report only accepts --output; incompatible options: "
+            + ", ".join(incompatible))
 
 
 def _initialize_claimed_oracle_genesis(
@@ -1019,13 +1239,35 @@ def _execute_oracle_campaign_run(config: dict, args) -> None:
 
 def main() -> None:
     load_dotenv()
-    configure_logging()
+    read_only_supply_report = any(
+        argument == "--supply-recovery-report"
+        or argument.startswith("--supply-recovery-report=")
+        for argument in sys.argv[1:]
+    )
+    if not read_only_supply_report:
+        configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: evolving live-agent desktop profile)")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
+    ap.add_argument(
+        "--activate-entrepreneurship",
+        action="store_true",
+        help=(
+            "only with --resume: enable bounded startup entry from the next "
+            "untouched decision boundary"
+        ),
+    )
+    ap.add_argument(
+        "--activate-numeric-grounding",
+        action="store_true",
+        help=(
+            "only with --resume: ground model-authored numeric claims from "
+            "the next untouched decision boundary"
+        ),
+    )
     ap.add_argument(
         "--activate-supply-recovery",
         action="store_true",
@@ -1077,8 +1319,15 @@ def main() -> None:
                     help="verify pinned checksums and vintages without network access")
     ap.add_argument("--acceptance-report", default=None,
                     help="evaluate a run id or .db path and write JSON/Markdown acceptance evidence")
+    ap.add_argument("--supply-recovery-report", default=None,
+                    help="evaluate a supply-recovery run id or .db path from persisted evidence")
     ap.add_argument("--oracle-calibration-report", default=None,
                     help="evaluate an explicit Oracle campaign manifest and write receipts")
+    ap.add_argument(
+        "--release-evidence-report",
+        default=None,
+        help="offline validation of a content-addressed release manifest",
+    )
     ap.add_argument("--oracle-campaign-run", action="store_true",
                     help="run one predeclared live-Oracle campaign arm and exact replay")
     ap.add_argument("--acceptance-run", action="store_true",
@@ -1098,6 +1347,18 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
+    if args.activate_entrepreneurship and (
+            not args.resume or args.replay or args.fork):
+        ap.error(
+            "--activate-entrepreneurship requires --resume and cannot use "
+            "--replay/--fork"
+        )
+    if args.activate_numeric_grounding and (
+            not args.resume or args.replay or args.fork):
+        ap.error(
+            "--activate-numeric-grounding requires --resume and cannot use "
+            "--replay/--fork"
+        )
     if args.activate_supply_recovery and not (args.resume or args.fork):
         ap.error("--activate-supply-recovery requires --resume or --fork")
     if args.activate_supply_recovery and args.replay:
@@ -1106,20 +1367,46 @@ def main() -> None:
         ap.error("--activate-llm-output-budgets requires --resume or --fork")
     if args.activate_llm_output_budgets and args.replay:
         ap.error("--activate-llm-output-budgets cannot modify a replay")
+    _validate_supply_recovery_report_cli(args, ap)
     _validate_oracle_cli_exclusivity(args, ap)
-    if args.acceptance_report and args.oracle_calibration_report:
-        ap.error("--acceptance-report and --oracle-calibration-report are mutually exclusive")
+    _validate_release_evidence_cli_exclusivity(args, ap)
+    report_modes = {
+        "--acceptance-report": args.acceptance_report,
+        "--supply-recovery-report": args.supply_recovery_report,
+        "--oracle-calibration-report": args.oracle_calibration_report,
+        "--release-evidence-report": args.release_evidence_report,
+    }
+    if sum(bool(value) for value in report_modes.values()) > 1:
+        ap.error("report evidence commands are mutually exclusive")
     if args.acceptance_run and args.oracle_campaign_run:
         ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
     if args.oracle_campaign_run and args.serve:
         ap.error("--oracle-campaign-run is a finalized headless evidence command")
     if args.oracle_campaign_run and (args.fork or args.replay):
         ap.error("--oracle-campaign-run cannot use fork or replay inputs")
+    # This command is a read-only persisted-evidence boundary. Dispatch it
+    # before logging setup so the default invocation produces no log or SQLite
+    # sidecar artifacts; explicit --output remains its only filesystem output.
+    if args.supply_recovery_report:
+        from reports.supply_recovery import (
+            resolve_supply_recovery_db,
+            write_supply_recovery_receipt,
+        )
+        receipt = write_supply_recovery_receipt(
+            resolve_supply_recovery_db(args.supply_recovery_report),
+            output=args.output,
+        )
+        print(json.dumps(receipt, indent=2, sort_keys=True))
+        if not receipt["passed"]:
+            raise SystemExit(5)
+        return
+
     mode = ("dataset_refresh" if args.refresh_datasets else
             "dataset_verify" if args.verify_datasets else
             "counterfactual" if args.counterfactual else
             "static_export" if args.export_static else "experiment" if args.experiment else
             "oracle_calibration_report" if args.oracle_calibration_report else
+            "release_evidence_report" if args.release_evidence_report else
             "acceptance_report" if args.acceptance_report else
             "oracle_campaign_run" if args.oracle_campaign_run else
             "acceptance_run" if args.acceptance_run else "report" if args.report else
@@ -1127,6 +1414,24 @@ def main() -> None:
             "fork" if args.fork else "replay" if args.replay else
             "resume" if args.resume else "run")
     operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
+
+    if args.release_evidence_report:
+        from reports.release_evidence import write_release_evidence_package
+
+        json_path, markdown_path = write_release_evidence_package(
+            args.release_evidence_report,
+            args.output,
+            repo_root=Path(__file__).resolve().parent,
+        )
+        result = json.loads(json_path.read_text(encoding="utf-8"))
+        print(json.dumps({
+            "overall_status": result["overall_status"],
+            "json": str(json_path),
+            "markdown": str(markdown_path),
+        }, indent=2))
+        if result["overall_status"] != "passed":
+            raise SystemExit(5)
+        return
 
     if args.refresh_datasets:
         from research.datasets import refresh_datasets
@@ -1247,7 +1552,12 @@ def main() -> None:
         _execute_oracle_campaign_run(config, args)
         return
     store, world, run_id = open_run(
-        config, args.resume, args.replay)
+        config,
+        args.resume,
+        args.replay,
+        activate_entrepreneurship=args.activate_entrepreneurship,
+        activate_numeric_grounding=args.activate_numeric_grounding,
+    )
     if args.activate_supply_recovery:
         try:
             firms_cfg = world.config.get("firms", {}) or {}

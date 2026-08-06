@@ -5,6 +5,20 @@ import {
   resolveApiRequest,
 } from "./hostedRouting.js";
 
+export function requestLogPath(path) {
+  const value = String(path ?? "");
+  const boundary = value.search(/[?#]/);
+  return boundary < 0 ? value : value.slice(0, boundary);
+}
+
+export function responseErrorMessage(body, status, statusText) {
+  const detail = body?.detail;
+  const detailMessage = detail && typeof detail === "object"
+    ? detail.code || detail.message
+    : detail;
+  return String(detailMessage || body?.error || `${status} ${statusText}`);
+}
+
 export async function api(path, options = {}) {
   const method = options.method || "GET";
   const resolved = resolveApiRequest(
@@ -18,15 +32,18 @@ export async function api(path, options = {}) {
   const fetchOptions = hostedFetchOptions(
     { ...requestOptions, path: resolved.path }, options.cookieString,
   );
+  const logPath = requestLogPath(resolved.path);
   delete fetchOptions.cookieString;
   let response;
   try {
     response = await fetch(resolved.path, fetchOptions);
   } catch (reason) {
-    clientLog("dashboard.api.network_failed", {
-      path: resolved.path, method, error_type: reason?.constructor?.name || typeof reason,
-      error: reason instanceof Error ? reason.message : String(reason),
-    }, "error");
+    if (reason?.name !== "AbortError") {
+      clientLog("dashboard.api.network_failed", {
+        path: logPath, method, error_type: reason?.constructor?.name || typeof reason,
+        error: reason instanceof Error ? reason.message : String(reason),
+      }, "error");
+    }
     throw reason;
   }
   let body = {};
@@ -35,17 +52,16 @@ export async function api(path, options = {}) {
       body = await response.json();
     } catch (reason) {
       clientLog("dashboard.api.invalid_json", {
-        path: resolved.path, method, status_code: response.status,
+        path: logPath, method, status_code: response.status,
         error_type: reason?.constructor?.name || typeof reason,
         error: reason instanceof Error ? reason.message : String(reason),
       }, "warn");
     }
   }
   if (!response.ok) {
-    const detail = typeof body.detail === "object" ? body.detail?.code : body.detail;
-    const message = body.error || detail || `${response.status} ${response.statusText}`;
+    const message = responseErrorMessage(body, response.status, response.statusText);
     clientLog("dashboard.api.http_failed", {
-      path: resolved.path, method, status_code: response.status, error: message,
+      path: logPath, method, status_code: response.status, error: message,
     }, "error");
     throw new Error(message);
   }
@@ -97,6 +113,56 @@ export const number = (value, digits = 2) => {
 export const percent = (value, digits = 1) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
   return `${(Number(value) * 100).toFixed(digits)}%`;
+};
+
+const signed = (value, formatted) => {
+  const numeric = Number(value);
+  if (numeric > 0) return `+${formatted}`;
+  if (numeric < 0) return `−${formatted.replace(/^-/, "")}`;
+  return formatted;
+};
+
+const compactNumber = value => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact", maximumFractionDigits: 1,
+  }).format(Number(value));
+};
+
+export const formatMetricValue = (key, value) => {
+  if (key === "unemployment") return percent(value, 1);
+  if (key === "policy_rate") return `${number(value, 0)} bps`;
+  if (["money_supply", "gdp_proxy", "gdp_proxy_30d", "labor_income"].includes(key)) {
+    return compactNumber(value);
+  }
+  return number(value, ["cpi", "gini", "sentiment"].includes(key) ? 3 : 2);
+};
+
+export const formatMetricDelta = (key, value) => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  if (key === "unemployment") {
+    const points = Number(value) * 100;
+    return signed(points, `${Math.abs(points).toFixed(1)} pp`);
+  }
+  if (key === "policy_rate") {
+    return signed(value, `${number(Math.abs(Number(value)), 0)} bps`);
+  }
+  if (["money_supply", "gdp_proxy", "gdp_proxy_30d", "labor_income"].includes(key)) {
+    return signed(value, compactNumber(Math.abs(Number(value))));
+  }
+  return signed(value, number(Math.abs(Number(value)), 3));
+};
+
+export const formatTrust = value => {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(4)} (${percent(value, 2)})`;
+};
+
+export const formatBeliefValue = (key, value) => {
+  const normalized = String(key || "").toLowerCase();
+  if (normalized.startsWith("trust")) return formatTrust(value);
+  if (normalized.endsWith("_cents")) return money(value, false);
+  return number(value, 3);
 };
 
 export const budgetState = (governor = {}) => {

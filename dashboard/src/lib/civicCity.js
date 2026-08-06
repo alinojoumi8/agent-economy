@@ -7,6 +7,15 @@ export const CITY_LAYERS = [
   { id: "health", label: "Health & care", shortLabel: "Health" },
 ];
 
+export function semanticReceiptForEvent(event, receipts = []) {
+  if (!event || event.id === null || event.id === undefined) return null;
+  const embedded = event.payload?.semantic_receipt;
+  if (embedded && typeof embedded === "object") {
+    return { ...embedded, eventId: event.id, tick: event.tick };
+  }
+  return receipts.find(receipt => String(receipt?.eventId) === String(event.id)) || null;
+}
+
 export const CITY_DISTRICTS = {
   institutions: {
     id: "institutions",
@@ -225,6 +234,31 @@ export function humanize(value, fallback = "Not reported") {
   return String(value)
     .replaceAll("_", " ")
     .replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+export function filterCityAgents(agents = [], {
+  layer = "all", q = "", activeOnly = false,
+} = {}) {
+  const needle = String(q || "").trim().toLowerCase();
+  return agents.filter(agent => {
+    const layerMatch = layer === "all" || agent.layer === layer || agent.eventLayer === layer;
+    const activityMatch = !activeOnly || Boolean(agent.event);
+    const textMatch = !needle || [
+      agent.name, agent.role, agent.occupation, agent.kind, agent.district,
+      agent.event?.kind,
+    ].some(value => String(value || "").toLowerCase().includes(needle));
+    return layerMatch && activityMatch && textMatch;
+  });
+}
+
+export function resolveCityFilterPatch(agents, current, update) {
+  const next = { ...current, ...update };
+  const visible = filterCityAgents(agents, next);
+  const selected = visible.find(agent => String(agent.id) === String(next.agent))
+    || visible.find(agent => agent.event)
+    || visible[0]
+    || null;
+  return { ...update, agent: selected?.id ?? null };
 }
 
 export function deriveCityModel({

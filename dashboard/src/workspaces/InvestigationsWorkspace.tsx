@@ -1,11 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
-import { projectionApi, workspaceApi } from "../app/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useBeforeUnload, useBlocker, useLocation, useNavigate, useParams, useSearchParams,
+} from "react-router";
+import { projectionApi, workspaceApi, WorkspaceApiError } from "../app/api";
 import { parseObserverViewState, projectionScopeParams } from "../app/observerViewState";
 import { FreshnessBadge, useWorkspaceOutletContext } from "../components/FreshnessBadge";
+import { InvestigationTitleEditor } from "../components/InvestigationTitleEditor";
+import { InvestigationConflictDialog } from "../components/InvestigationConflictDialog";
+import { useModalFocus } from "../components/useModalFocus";
+import { InvestigationExportActions } from "../components/InvestigationExportActions";
 import type { CausalEdge, CausalNode, StableReference } from "../generated/worldOs";
 import { CausalGraph } from "../visualizations/CausalGraph";
+import {
+  acceptSavedInvestigation,
+  cancelInvestigationEdit,
+  continueInvestigationConflict,
+  createInvestigationDraft,
+  editInvestigationTitle,
+  openInvestigationConflict,
+  reloadInvestigationConflict,
+  reopenInvestigationConflict,
+  requestInvestigationSaveAsNew,
+  saveInvestigationAsNewPayload,
+  shouldShowNavigationGuard,
+} from "./investigationState";
 
 type EventPage = { items: Array<{ id: number; tick: number; kind: string; phase: string }> };
 type CausalData = {
@@ -18,6 +37,8 @@ type CausalData = {
 type Investigation = {
   id: string; title: string; version: number; items: Array<Record<string, any>>;
   hypotheses: Array<{ id: string; statement: string; status: string }>;
+  run_id?: string; fork_id?: string | null; pinned_tick?: number | null;
+  query?: Record<string, any>; layout?: Record<string, any> | null;
 };
 
 function refKey(ref: StableReference | null): string | null {
@@ -36,6 +57,34 @@ export function InvestigationsWorkspace() {
   const authority = search.get("authority") || "";
   const [selected, setSelected] = useState<StableReference | null>(null);
   const [hypothesis, setHypothesis] = useState("");
+  const [draft, setDraft] = useState<any>(null);
+  const [pendingInvestigationId, setPendingInvestigationId] = useState<string | null>(null);
+  const location = useLocation();
+  const allowNavigation = useRef(false);
+  const blocker = useBlocker(useCallback(
+    () => Boolean(draft?.dirty) && !allowNavigation.current,
+    [draft?.dirty],
+  ));
+  useBeforeUnload(useCallback(event => {
+    if (!draft?.dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }, [draft?.dirty]));
+  useEffect(() => { allowNavigation.current = false; }, [location.key]);
+  const navigationDialogHeading = useRef<HTMLHeadingElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const resetNavigationGuard = () => {
+    if (blocker.state === "blocked") blocker.reset();
+    setPendingInvestigationId(null);
+  };
+  const showNavigationGuard = shouldShowNavigationGuard(
+    draft, pendingInvestigationId, blocker.state,
+  );
+  const navigationDialogRef = useModalFocus({
+    active: showNavigationGuard,
+    initialFocusRef: navigationDialogHeading,
+    onEscape: resetNavigationGuard,
+  });
 
   const events = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "investigation-events", tick],
@@ -75,23 +124,66 @@ export function InvestigationsWorkspace() {
     queryKey: ["world-os", "operator-session"],
     queryFn: () => workspaceApi<{ owner_id: string; csrf_token: string }>("/api/v2/operator/session"),
   });
+  const canMutate = Boolean(session.data?.csrf_token);
+  const requireCsrfToken = () => {
+    if (!session.data?.csrf_token) {
+      throw new Error("Operator authorization is not ready.");
+    }
+    return session.data.csrf_token;
+  };
   const investigations = useQuery({
     queryKey: ["world-os", runId, "investigations"],
     queryFn: () => workspaceApi<{ items: Investigation[] }>("/api/v2/operator/investigations"),
   });
-  const currentInvestigation = investigations.data?.items.find(item => item.id === investigationId);
+  const currentInvestigation = investigations.data?.items.find(
+    item => String(item.id) === String(investigationId),
+  );
+  useEffect(() => {
+    if (!currentInvestigation) {
+      if (!investigationId) setDraft(null);
+      return;
+    }
+    setDraft((current: any) => {
+      if (!current || current.server.id !== currentInvestigation.id) {
+        return createInvestigationDraft(currentInvestigation);
+      }
+      if (!current.dirty && !current.conflict
+          && current.server.version !== currentInvestigation.version) {
+        return createInvestigationDraft(currentInvestigation);
+      }
+      return current;
+    });
+  }, [currentInvestigation, investigationId]);
   const refreshWorkspace = () => queryClient.invalidateQueries({ queryKey: ["world-os", runId, "investigations"] });
+  const replaceCachedInvestigation = (record: Investigation) => queryClient.setQueryData<{ items: Investigation[] }>(
+    ["world-os", runId, "investigations"],
+    current => current ? {
+      ...current,
+      items: current.items.map(item => item.id === record.id ? record : item),
+    } : current,
+  );
+  const insertCachedInvestigation = (record: Investigation) => queryClient.setQueryData<{ items: Investigation[] }>(
+    ["world-os", runId, "investigations"],
+    current => ({
+      ...current,
+      items: [
+        ...(current?.items.filter(item => item.id !== record.id) || []),
+        record,
+      ],
+    }),
+  );
+  const investigationPath = (id: string) => `/runs/${encodeURIComponent(runId)}/investigations/${encodeURIComponent(id)}?${search}`;
   const createInvestigation = useMutation({
     mutationFn: () => workspaceApi<Investigation>("/api/v2/operator/investigations", {
-      method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+      method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
       body: JSON.stringify({ title: `Investigation at ${rootKind}:${rootId}`, pinned_tick: causal.data?.tick }),
     }),
-    onSuccess: record => { refreshWorkspace(); navigate(`/runs/${runId}/investigations/${record.id}?${search}`); },
+    onSuccess: record => { refreshWorkspace(); navigate(investigationPath(record.id)); },
   });
   const pinEvidence = useMutation({
     mutationFn: () => workspaceApi(
       `/api/v2/operator/investigations/${investigationId}/items`, {
-        method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify({
           item_kind: selected?.kind || causal.data?.data.root.kind,
           stable_ref: selected || causal.data?.data.root,
@@ -103,11 +195,78 @@ export function InvestigationsWorkspace() {
   const addHypothesis = useMutation({
     mutationFn: () => workspaceApi(
       `/api/v2/operator/investigations/${investigationId}/hypotheses`, {
-        method: "POST", headers: { "X-CSRF-Token": session.data?.csrf_token || "" },
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
         body: JSON.stringify({ statement: hypothesis, status: "open" }),
       }),
     onSuccess: () => { setHypothesis(""); refreshWorkspace(); },
   });
+  const updateInvestigation = useMutation({
+    mutationFn: (activeDraft: any) => workspaceApi<Investigation>(
+      `/api/v2/operator/investigations/${activeDraft.server.id}`, {
+        method: "PATCH", headers: { "X-CSRF-Token": requireCsrfToken() },
+        body: JSON.stringify({
+          expected_version: activeDraft.server.version,
+          title: activeDraft.titleDraft.trim(),
+        }),
+      },
+    ),
+    onSuccess: record => {
+      setDraft((current: any) => acceptSavedInvestigation(current, record));
+      replaceCachedInvestigation(record);
+      refreshWorkspace();
+    },
+    onError: async (reason, submittedDraft) => {
+      if (reason instanceof WorkspaceApiError && reason.status === 409) {
+        try {
+          const serverRecord = await workspaceApi<Investigation>(
+            `/api/v2/operator/investigations/${submittedDraft.server.id}`,
+          );
+          setDraft((current: any) => current
+            ? openInvestigationConflict(current, serverRecord) : current);
+          return;
+        } catch (refreshReason) {
+          setDraft((current: any) => current ? {
+            ...current,
+            error: refreshReason instanceof Error
+              ? refreshReason.message : "Current server version could not be loaded.",
+          } : current);
+          return;
+        }
+      }
+      setDraft((current: any) => current ? {
+        ...current,
+        error: reason instanceof Error ? reason.message : "Workspace request failed",
+      } : current);
+    },
+  });
+  const saveInvestigationAsNew = useMutation({
+    mutationFn: (activeDraft: any) => workspaceApi<Investigation>(
+      "/api/v2/operator/investigations", {
+        method: "POST", headers: { "X-CSRF-Token": requireCsrfToken() },
+        body: JSON.stringify(saveInvestigationAsNewPayload(activeDraft)),
+      },
+    ),
+    onSuccess: record => {
+      setDraft(createInvestigationDraft(record));
+      insertCachedInvestigation(record);
+      refreshWorkspace();
+      allowNavigation.current = true;
+      navigate(investigationPath(record.id));
+    },
+    onError: reason => setDraft((current: any) => current ? {
+      ...current,
+      error: reason instanceof Error ? reason.message : "Workspace request failed",
+    } : current),
+  });
+
+  const chooseInvestigation = (id: string) => {
+    if (id === investigationId) return;
+    if (draft?.dirty) {
+      setPendingInvestigationId(id);
+      return;
+    }
+    navigate(investigationPath(id));
+  };
 
   const setFilter = (key: string, value: string) => {
     const next = new URLSearchParams(search);
@@ -120,8 +279,11 @@ export function InvestigationsWorkspace() {
       <div className="world-os-heading-actions">
         <FreshnessBadge transport={transport} tick={tick} envelope={causal.data || events.data} sourceLabel="Causal evidence projection" />
         <div className="world-os-investigation-actions">
-          {!currentInvestigation && <button className="button" disabled={!rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
-          {currentInvestigation && <button className="button" disabled={!selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+          {!currentInvestigation && <button className="button" disabled={!canMutate || !rootId || createInvestigation.isPending} onClick={() => createInvestigation.mutate()}>Create investigation</button>}
+          {currentInvestigation && <button className="button" disabled={!canMutate || !selectedKey || pinEvidence.isPending} onClick={() => pinEvidence.mutate()}>Pin selected evidence</button>}
+          {pinEvidence.error && <p className="world-os-error" role="alert">
+            {pinEvidence.error instanceof Error ? pinEvidence.error.message : "Evidence pin failed."}
+          </p>}
         </div>
       </div>
     </div>
@@ -132,6 +294,11 @@ export function InvestigationsWorkspace() {
         const next = new URLSearchParams(search); next.set("event", event.target.value.replace(/\D/g, "")); setSearch(next);
       }} /></label>
     </div>
+    {investigations.data?.items.length ? <nav className="world-os-investigation-list" aria-label="Saved investigations">
+      {investigations.data.items.map(item => <button type="button" key={item.id}
+        className={String(item.id) === String(investigationId) ? "selected" : ""}
+        onClick={() => chooseInvestigation(item.id)}>{item.title}<small>v{item.version}</small></button>)}
+    </nav> : null}
     {!rootId && !events.isLoading && <div className="world-os-empty"><h3>No causal root yet</h3><p>Run the world or enter an event ID to begin a bounded trace.</p></div>}
     {causal.isLoading && <div className="world-os-loading" aria-label="Loading causal graph" />}
     {causal.error && <div className="world-os-error" role="alert">{causal.error.message}</div>}
@@ -157,12 +324,64 @@ export function InvestigationsWorkspace() {
       </aside>
     </div>}
     {currentInvestigation && <article className="world-os-panel world-os-hypotheses">
-      <header><div><p className="world-os-kicker">Observer-owned workspace</p><h3>{currentInvestigation.title}</h3></div><span>v{currentInvestigation.version}</span></header>
+      <header><div><p className="world-os-kicker">Observer-owned workspace</p><h3>{currentInvestigation.title}</h3></div><div className="world-os-investigation-record-actions"><span>v{currentInvestigation.version}</span><InvestigationExportActions investigationId={currentInvestigation.id} /></div></header>
+      {draft && <InvestigationTitleEditor title={draft.titleDraft}
+        serverTitle={draft.server.title} version={draft.server.version}
+        pending={updateInvestigation.isPending} mutationReady={canMutate}
+        blocked={Boolean(draft.conflict)}
+        error={draft.error} inputRef={titleInputRef}
+        onChange={title => setDraft((current: any) => editInvestigationTitle(current, title))}
+        onSave={() => updateInvestigation.mutate(draft)}
+        onCancel={() => setDraft((current: any) => cancelInvestigationEdit(current))} />}
+      {draft?.conflict && !draft.conflict.open && <div className="world-os-conflict-reminder" role="status">
+        This draft is based on stale server version {draft.conflict.submittedVersion}.
+        <button className="button" type="button" onClick={() => setDraft((current: any) => reopenInvestigationConflict(current))}>Review version conflict</button>
+      </div>}
       <ul>{currentInvestigation.hypotheses.map(item => <li key={item.id}><span>{item.status}</span>{item.statement}</li>)}</ul>
       <form onSubmit={event => { event.preventDefault(); if (hypothesis.trim()) addHypothesis.mutate(); }}>
         <label htmlFor="hypothesis">New hypothesis</label><textarea id="hypothesis" value={hypothesis} onChange={event => setHypothesis(event.target.value)} maxLength={2000} />
-        <button className="button" disabled={!hypothesis.trim() || addHypothesis.isPending}>Add hypothesis</button>
+        <button className="button" disabled={!canMutate || !hypothesis.trim() || addHypothesis.isPending}>Add hypothesis</button>
+        {addHypothesis.error && <p className="world-os-error" role="alert">
+          {addHypothesis.error instanceof Error ? addHypothesis.error.message : "Hypothesis save failed."}
+        </p>}
       </form>
     </article>}
+    {draft?.conflict?.open && <InvestigationConflictDialog
+      draftTitle={draft.titleDraft} serverTitle={draft.conflict.server.title}
+      serverVersion={draft.conflict.server.version}
+      pending={saveInvestigationAsNew.isPending} canSaveAsNew={canMutate}
+      returnFocusRef={titleInputRef}
+      onReload={() => {
+        replaceCachedInvestigation(draft.conflict.server);
+        setDraft((current: any) => reloadInvestigationConflict(current));
+        refreshWorkspace();
+      }}
+      onSaveAsNew={() => requestInvestigationSaveAsNew(
+        draft,
+        (activeDraft: any) => saveInvestigationAsNew.mutate(activeDraft),
+        (error: string) => setDraft((current: any) => current ? { ...current, error } : current),
+      )}
+      onContinue={() => setDraft((current: any) => continueInvestigationConflict(current))} />}
+    {showNavigationGuard && <div className="world-os-dialog-backdrop">
+      <section ref={navigationDialogRef} className="world-os-dialog" role="dialog"
+        aria-modal="true" aria-labelledby="discard-draft-title" tabIndex={-1}>
+        <h3 id="discard-draft-title" ref={navigationDialogHeading} tabIndex={-1}>Discard unsaved title draft?</h3>
+        <p>Your title edit has not been saved. Stay here or discard it before opening another investigation.</p>
+        <div className="world-os-dialog-actions">
+          <button className="button button-primary" type="button" onClick={resetNavigationGuard}>Stay</button>
+          <button className="button" type="button" onClick={() => {
+            const nextId = pendingInvestigationId;
+            setPendingInvestigationId(null);
+            setDraft((current: any) => cancelInvestigationEdit(current));
+            if (blocker.state === "blocked") {
+              blocker.proceed();
+            } else if (nextId) {
+              allowNavigation.current = true;
+              navigate(investigationPath(nextId));
+            }
+          }}>Discard draft and continue</button>
+        </div>
+      </section>
+    </div>}
   </section>;
 }

@@ -1,0 +1,70 @@
+schema: agent-economy-release-manifest-v1
+generated_at: '1970-01-01T00:00:00Z'
+candidate:
+  commit: ''
+  tree: ''
+gates:
+  - gate_id: dependency_license_secret_audit
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: deployment_receipt
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: hermes_connector
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: hosted_backup_restore
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: independent_mcp
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: openclaw_connector
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: oracle_v9
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: production_acceptance
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: provenance_audit
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: python_connector
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: rumor_pilot
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: semantics10_experiment
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: semantics10_hosted_ops
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: semantics10_hosted_ui
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: tenant_isolation_load
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: typescript_connector
+    status: not_run
+    receipt: ''
+    sha256: ''

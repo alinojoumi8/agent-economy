@@ -313,6 +313,17 @@ def _event_llm_expectations(
         # their retained local provenance still has a deterministic role.
         expectations["agent_id"] = None
         role, purpose = "reporter", "report_narrative"
+    elif (key == "model_call_id"
+          and str(event_row["kind"]) == "model_numeric_narrative_redacted"
+          and "agent_id" in root):
+        try:
+            owner_id = int(root["agent_id"])
+        except (TypeError, ValueError):
+            valid = False
+        if owner_id is not None:
+            role, role_valid = _agent_role(conn, owner_id)
+            valid = valid and role_valid
+        purpose = str(root.get("purpose") or "") or None
     else:
         valid = False
 

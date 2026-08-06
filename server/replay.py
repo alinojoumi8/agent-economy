@@ -8,11 +8,18 @@ exact re-execution mode from stored LLM responses, TECH-SPEC §13.)
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
+
+from agents.numeric_grounding import (
+    model_grounding_active,
+    sanitize_model_numeric_narrative,
+)
+from world.event_visibility import public_event_payload
 
 HEADLINE_METRICS = ("gdp_proxy", "cpi", "unemployment", "index", "policy_rate",
                     "money_supply", "gini", "sentiment", "gov_balance", "insured_count",
@@ -115,14 +122,71 @@ class ReplayReader:
             return None
         events = [{"id": int(r["id"]), "tick": int(r["tick"]), "kind": r["kind"],
                    "phase": r["phase"], "importance": float(r["importance"]),
-                   "payload": _load_json(r["payload_json"], {})}
+                   "payload": public_event_payload(
+                       r["kind"], _load_json(r["payload_json"], {}) or {})}
                   for r in conn.execute(
                       "SELECT * FROM events WHERE tick=? AND kind NOT IN "
                       "('metrics_snapshot','action_rejected') ORDER BY id LIMIT 80", (tick,))]
-        news = [{"headline": r["headline"], "outlet": r["outlet_name"],
-                 "tone": float(r["tone"])}
-                for r in conn.execute(
-                    "SELECT * FROM news_articles WHERE tick=? ORDER BY id", (tick,))]
+        meta = conn.execute("SELECT * FROM run_meta WHERE id=1").fetchone()
+        config = _load_json(meta["config_json"], {}) or {}
+        grounding_enabled = model_grounding_active(config, int(tick))
+        news = []
+        for article in conn.execute(
+                "SELECT * FROM news_articles WHERE tick=? ORDER BY id", (tick,)):
+            sources = []
+            for event_id in _load_json(article["source_event_ids"], []) or []:
+                if type(event_id) is not int or event_id <= 0:
+                    continue
+                source = conn.execute(
+                    "SELECT id,tick,kind,payload_json,importance "
+                    "FROM events WHERE id=?",
+                    (event_id,),
+                ).fetchone()
+                if source is None:
+                    continue
+                sources.append({
+                    "id": int(source["id"]),
+                    "tick": int(source["tick"]),
+                    "kind": source["kind"],
+                    "payload": public_event_payload(
+                        source["kind"],
+                        _load_json(source["payload_json"], {}) or {},
+                    ),
+                    "importance": float(source["importance"]),
+                })
+            original_headline = str(article["headline"] or "")
+            headline = sanitize_model_numeric_narrative(
+                original_headline,
+                grounding_enabled=grounding_enabled,
+                fallback="",
+                sources=sources,
+            )
+            redacted = bool(original_headline.strip() and not headline.strip())
+            if redacted:
+                readable = (
+                    str(sources[0]["kind"]).replace("_", " ")
+                    if sources else "recorded event"
+                )
+                outlet_name = str(article["outlet_name"] or "News")
+                headline = f"{outlet_name} archived brief: {readable}"
+            try:
+                tone = float(article["tone"])
+            except (TypeError, ValueError):
+                tone = 0.0
+            if not math.isfinite(tone):
+                tone = 0.0
+            tone = max(-1.0, min(1.0, tone))
+            # The body is intentionally excluded from the public replay view.
+            # Sanitize it independently before adding it to this payload in the
+            # future so hidden text cannot affect a grounded headline.
+            news.append({
+                "headline": headline,
+                "outlet": article["outlet_name"],
+                "tone": tone,
+                "numeric_claims_redacted": redacted,
+                "numeric_claims_redaction_reason": (
+                    "ungrounded_numeric_claim" if redacted else None),
+            })
         convs = []
         for c in conn.execute(
                 "SELECT * FROM conversations WHERE tick=? ORDER BY id LIMIT 6", (tick,)):

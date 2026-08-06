@@ -77,6 +77,41 @@ def test_resume_converts_stale_running_marker_to_paused(tmp_path):
         world.close()
 
 
+def test_resume_activation_loads_persisted_entrepreneurship_without_mutating_profile(
+        tmp_path):
+    run_id = "entrepreneurship-upgrade"
+    _stored_run(
+        tmp_path / f"{run_id}.db",
+        run_id,
+        CURRENT_ENGINE_SEMANTICS_VERSION,
+    )
+    persisted = Store(str(tmp_path / f"{run_id}.db"))
+    persisted.set_meta(
+        status="paused",
+        tick=12,
+        active_tick=13,
+        next_phase="MORNING",
+    )
+    persisted.commit()
+    persisted.close()
+    selected_profile = {"speed_delay_s": 0.25}
+
+    store, world, _ = open_run(
+        selected_profile,
+        run_id,
+        None,
+        data_dir=tmp_path,
+        activate_entrepreneurship=True,
+    )
+    try:
+        stored_config = json.loads(store.get_meta()["config_json"])
+        assert world.config["entrepreneurship"] == stored_config["entrepreneurship"]
+        assert stored_config["entrepreneurship"]["activation_tick"] == 13
+        assert selected_profile == {"speed_delay_s": 0.25}
+    finally:
+        world.close()
+
+
 @pytest.mark.parametrize(
     ("persisted_status", "expected_status"),
     [("paused", "paused"), ("running", "paused")],

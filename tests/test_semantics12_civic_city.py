@@ -90,7 +90,10 @@ def _allow_direct_applications(world: World) -> None:
 def test_schema_17_migrates_v16_atomically(monkeypatch, tmp_path) -> None:
     path = tmp_path / "v16-to-v17.db"
     original = migration_registry._MIGRATIONS
-    monkeypatch.setattr(migration_registry, "_MIGRATIONS", original[:-1])
+    before_v17 = tuple(migration for migration in original if migration.version < 17)
+    v17 = next(migration for migration in original if migration.version == 17)
+    after_v17 = tuple(migration for migration in original if migration.version > 17)
+    monkeypatch.setattr(migration_registry, "_MIGRATIONS", before_v17)
     Store(str(path)).close()
 
     raw = sqlite3.connect(path)
@@ -106,9 +109,9 @@ def test_schema_17_migrates_v16_atomically(monkeypatch, tmp_path) -> None:
     def fail_verify(_conn) -> None:
         raise RuntimeError("forced v17 verification failure")
 
-    failing = replace(original[-1], verify=fail_verify)
+    failing = replace(v17, verify=fail_verify)
     monkeypatch.setattr(
-        migration_registry, "_MIGRATIONS", (*original[:-1], failing))
+        migration_registry, "_MIGRATIONS", (*before_v17, failing, *after_v17))
     with pytest.raises(MigrationError, match="failed applying migration v17"):
         Store(str(path))
 

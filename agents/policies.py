@@ -19,6 +19,7 @@ import re
 from typing import Any, Callable
 
 from engine.types import positive_integer_id
+from world.recovery import assess_recovery, minimum_viable_price_cents
 
 
 SUPPLIER_WARNING_POLICY_ID = "supplier-warning-policy-v1"
@@ -330,28 +331,9 @@ def citizen_decision(context: dict) -> dict:
                                 "wage": int(offer["posted_wage"])})
                 reasons.append("countering below-posted wage")
         else:
-            jobs = list(context.get("jobs", []))
-            if jobs:
-                if context.get("job_application_aware_enabled"):
-                    max_wage = max(1, max(int(job.get("wage", 0)) for job in jobs))
-                    weights = [
-                        max(1, (1_000 * int(job.get("wage", 0))) // max_wage)
-                        / (1 + max(0, int(job.get("application_count", 0))))
-                        for job in jobs
-                    ]
-                    selected_job = rng.choices(jobs, weights=weights, k=1)[0]
-                else:
-                    selected_job = min(
-                        jobs,
-                        key=lambda job: (
-                            -int(job.get("wage", 0)),
-                            int(job.get("job_id", 0)),
-                        ),
-                    )
-                actions.append({
-                    "type": "apply_job",
-                    "job_id": selected_job["job_id"],
-                })
+            selected_job = _select_open_job(context, rng)
+            if selected_job:
+                actions.append({"type": "apply_job", "job_id": selected_job["job_id"]})
                 reasons.append("seeking work")
 
     # 7) Portfolio: act on sentiment occasionally (weekly-ish cadence gate upstream).
@@ -444,6 +426,15 @@ def citizen_decision(context: dict) -> dict:
     return _env(None, actions, belief_updates, "; ".join(reasons) or "quiet day")
 
 
+def _recovery_active(context: dict) -> bool:
+    recovery = context.get("supply_recovery")
+    if isinstance(recovery, dict) and bool(recovery.get("active")):
+        return True
+    firm = context.get("my_firm")
+    recovery = firm.get("recovery") if isinstance(firm, dict) else None
+    return isinstance(recovery, dict) and bool(recovery.get("active"))
+
+
 def _select_stocked_firm(context: dict, rng: random.Random):
     firms = [
         firm for firm in context.get("prices", [])
@@ -451,7 +442,7 @@ def _select_stocked_firm(context: dict, rng: random.Random):
     ]
     if not firms:
         return None
-    if not context.get("inventory_aware_shopping_enabled"):
+    if not context.get("inventory_aware_shopping_enabled") and not _recovery_active(context):
         return min(firms, key=lambda firm: firm["price"])
 
     # Every household decides from the same morning snapshot. A universal
@@ -470,6 +461,27 @@ def _select_stocked_firm(context: dict, rng: random.Random):
     return rng.choices(firms, weights=weights, k=1)[0]
 
 
+def _select_open_job(context: dict, rng: random.Random):
+    jobs = list(context.get("jobs", []))
+    if not jobs:
+        return None
+    if not context.get("job_application_aware_enabled") and not _recovery_active(context):
+        return min(
+            jobs,
+            key=lambda job: (
+                -int(job.get("wage", 0)),
+                int(job.get("job_id", 0)),
+            ),
+        )
+    max_wage = max(1, max(int(job.get("wage", 0)) for job in jobs))
+    weights = [
+        max(1, (1_000 * int(job.get("wage", 0))) // max_wage)
+        / (1 + max(0, int(job.get("application_count", 0))))
+        for job in jobs
+    ]
+    return rng.choices(jobs, weights=weights, k=1)[0]
+
+
 def _safest_other_bank(context: dict, my_bank: int):
     banks = [b for b in context.get("banks", []) if b.get("status") == "open" and b["id"] != my_bank]
     if not banks:
@@ -483,6 +495,62 @@ def _safest_other_bank(context: dict, my_bank: int):
 def _first_startup_action(context: dict):
     eligible = list((context.get("startup_work") or {}).get("eligible_actions") or [])
     return dict(eligible[0]) if eligible else None
+
+
+def _recovery_hiring_profile(firm: dict):
+    """Read active recovery inputs; malformed active profiles fail closed."""
+    recovery = firm.get("recovery")
+    if not isinstance(recovery, dict) or not bool(recovery.get("active")):
+        return None
+    settings = recovery.get("settings")
+    inputs = recovery.get("inputs")
+    if not isinstance(settings, dict) or not isinstance(inputs, dict):
+        return (0, None, None, 1)
+    try:
+        floor = int(settings["wage_floor_cents"])
+        open_vacancies = max(0, int(recovery.get("open_vacancies", 1)))
+    except (KeyError, TypeError, ValueError):
+        return (0, None, None, 1)
+    return (floor, settings, inputs, open_vacancies)
+
+
+def _recovery_hiring_state(firm: dict, wage_cents: int):
+    """Reassess the supplied, actual wage against the live recovery inputs."""
+    profile = _recovery_hiring_profile(firm)
+    if profile is None:
+        return None
+    floor, settings, inputs, open_vacancies = profile
+    if settings is None or inputs is None:
+        return (floor, None, open_vacancies)
+    try:
+        wage = int(wage_cents)
+        assessment = assess_recovery(
+            enabled=True,
+            settings=settings,
+            price_cents=int(inputs["price_cents"]),
+            input_cost_cents=int(inputs["input_cost_cents"]),
+            output_per_worker=int(inputs["output_per_worker"]),
+            pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+            wage_cents=wage,
+            cash_cents=int(inputs["cash_cents"]),
+            current_payroll_cents=int(inputs["current_payroll_cents"]),
+            current_headcount=int(inputs["current_headcount"]),
+            target_headcount=int(inputs["target_headcount"]),
+            recent_sales_units=int(inputs["recent_sales_units"]),
+            unmet_demand_units=int(inputs.get("unmet_demand_units", 0)),
+        )
+    except (KeyError, TypeError, ValueError):
+        return (floor, None, open_vacancies)
+    return (floor, assessment, open_vacancies)
+
+
+def _recovery_wage_can_hire(firm: dict, wage_cents: int) -> bool:
+    state = _recovery_hiring_state(firm, wage_cents)
+    if state is None:
+        return False
+    floor, assessment, _ = state
+    return (assessment is not None and int(wage_cents) >= floor > 0
+            and assessment.allowed_new_hires > 0)
 
 
 def workforce_recovery_actions(
@@ -625,6 +693,7 @@ def founder_decision(context: dict) -> dict:
     cash = int(firm.get("cash", 0))
     employees = int(firm.get("employees", 0))
     recent_sales = int(firm.get("recent_sales", 0))
+    recovery_profile = _recovery_hiring_profile(firm)
 
     # Price toward a healthy markup, nudged by inventory pressure.
     target = int(cost * 1.6)
@@ -633,6 +702,33 @@ def founder_decision(context: dict) -> dict:
     elif inv < 8:
         target = int(price * 1.05)              # scarce → raise
     target = max(int(cost * 1.2) + 1, target)   # never below a living margin
+    if recovery_profile is not None:
+        floor, settings, inputs, _ = recovery_profile
+        try:
+            minimum_prices = [minimum_viable_price_cents(
+                input_cost_cents=int(inputs["input_cost_cents"]),
+                output_per_worker=int(inputs["output_per_worker"]),
+                pay_interval_ticks=int(inputs["pay_interval_ticks"]),
+                wage_cents=floor,
+                settings=settings,
+            )]
+            for row in firm.get("employee_roster", []):
+                if not isinstance(row, dict):
+                    raise ValueError("employee roster entry is invalid")
+                minimum_prices.append(minimum_viable_price_cents(
+                    input_cost_cents=int(inputs["input_cost_cents"]),
+                    output_per_worker=int(inputs["output_per_worker"]),
+                    pay_interval_ticks=int(row["pay_interval_ticks"]),
+                    wage_cents=int(row["wage"]),
+                    settings=settings,
+                ))
+            minimum_price = (
+                None if any(value is None for value in minimum_prices)
+                else max(int(value) for value in minimum_prices)
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            minimum_price = None
+        target = price if minimum_price is None else max(target, minimum_price)
     if abs(target - price) > 2:
         actions.append({"type": "set_price", "firm_id": firm["firm_id"], "price": target})
         reasons.append(f"reprice {price}->{target}")
@@ -643,7 +739,43 @@ def founder_decision(context: dict) -> dict:
     applicants = context.get("firm_applications", [])
     payroll = int(firm.get("payroll", 0))
     counters = context.get("firm_job_offers", [])
-    if counters and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
+    if recovery_profile is not None:
+        floor, _, _, open_vacancies = recovery_profile
+        if floor > 0:
+            eligible_counter = next((
+                counter for counter in counters
+                if _recovery_wage_can_hire(
+                    firm, int(counter.get("requested_wage", 0)))
+            ), None)
+            if eligible_counter is not None:
+                actions.append({
+                    "type": "accept_job_offer",
+                    "offer_id": eligible_counter["offer_id"],
+                })
+                reasons.append("accepting a sustainable candidate wage counteroffer")
+            elif context.get("labor_negotiation_enabled") and applicants:
+                candidate = next(
+                    (row for row in applicants if row.get("current_offer_id") is None), None)
+                if candidate and _recovery_wage_can_hire(firm, floor):
+                    actions.append({
+                        "type": "make_job_offer",
+                        "application_id": candidate["application_id"],
+                        "wage": floor,
+                    })
+                    reasons.append("opening a sustainable wage negotiation")
+            elif applicants:
+                candidate = applicants[0]
+                posted = int(candidate.get("posted_wage", 0))
+                if _recovery_wage_can_hire(firm, posted):
+                    actions.append({"type": "hire", "application_id": candidate["application_id"]})
+                    reasons.append("hiring at a sustainable posted wage")
+            elif open_vacancies == 0 and _recovery_wage_can_hire(firm, floor):
+                actions.append({
+                    "type": "post_job", "firm_id": firm["firm_id"],
+                    "title": "worker", "wage": floor,
+                })
+                reasons.append("posting a sustainable job")
+    elif counters and cash > payroll + 300_00 and employees < int(firm.get("target_headcount", 3)):
         actions.append({"type": "accept_job_offer", "offer_id": counters[0]["offer_id"]})
         reasons.append("accepting a candidate wage counteroffer")
     elif (context.get("labor_negotiation_enabled") and applicants

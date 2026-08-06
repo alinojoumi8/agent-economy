@@ -11,7 +11,10 @@ import {
   CITY_DISTRICTS,
   CITY_LAYERS,
   deriveCityModel,
+  filterCityAgents,
   humanize,
+  resolveCityFilterPatch,
+  semanticReceiptForEvent,
 } from "../lib/civicCity.js";
 
 const DISTRICT_PATHS = {
@@ -94,15 +97,10 @@ export function CivicCity(props) {
     () => deriveCityModel({ agents, firms, events, map, civic }),
     [agents, firms, events, map, civic],
   );
-  const needle = query.trim().toLowerCase();
-  const visibleAgents = model.agents.filter(agent => {
-    const layerMatch = activeLayer === "all" || agent.layer === activeLayer || agent.eventLayer === activeLayer;
-    const activityMatch = !activeOnly || Boolean(agent.event);
-    const textMatch = !needle || [
-      agent.name, agent.role, agent.occupation, agent.kind, agent.district,
-      agent.event?.kind,
-    ].some(value => String(value || "").toLowerCase().includes(needle));
-    return layerMatch && activityMatch && textMatch;
+  const visibleAgents = filterCityAgents(model.agents, {
+    layer: activeLayer,
+    q: query,
+    activeOnly,
   });
   const selected = visibleAgents.find(agent => String(agent.id) === String(selectedId))
     || visibleAgents.find(agent => agent.event)
@@ -122,9 +120,7 @@ export function CivicCity(props) {
     ? null
     : model.firms.find(firm => String(firm.id) === String(selected.employer_id));
   const eventFacts = payloadFacts(selected?.event?.payload);
-  const semanticReceipt = selected?.event?.payload?.semantic_receipt
-    || model.receipts[0]
-    || null;
+  const semanticReceipt = semanticReceiptForEvent(selected?.event, model.receipts);
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const commonParams = new URLSearchParams();
@@ -158,16 +154,24 @@ export function CivicCity(props) {
     if (onObserverStateChange) onObserverStateChange({ agent: nextId });
     else setLocalSelectedId(nextId);
   };
+  const changeObserverFilter = (update, options) => {
+    onObserverStateChange(resolveCityFilterPatch(model.agents, {
+      layer: activeLayer,
+      q: query,
+      activeOnly,
+      agent: selectedId,
+    }, update), options);
+  };
   const changeLayer = value => {
-    if (onObserverStateChange) onObserverStateChange({ layer: value });
+    if (onObserverStateChange) changeObserverFilter({ layer: value });
     else setLocalActiveLayer(value);
   };
   const changeQuery = value => {
-    if (onObserverStateChange) onObserverStateChange({ q: value }, { replace: true });
+    if (onObserverStateChange) changeObserverFilter({ q: value }, { replace: true });
     else setLocalQuery(value);
   };
   const changeActiveOnly = value => {
-    if (onObserverStateChange) onObserverStateChange({ activeOnly: value });
+    if (onObserverStateChange) changeObserverFilter({ activeOnly: value });
     else setLocalActiveOnly(value);
   };
   const changeSelection = value => {
@@ -343,7 +347,7 @@ export function CivicCity(props) {
           <span>Agent and event marks will appear from canonical APIs.</span>
         </div>}
 
-        <div className="civic-city__legend" aria-label="City map legend">
+        <div className="civic-city__legend" role="group" aria-label="City map legend">
           <span><i className="has-event" />Committed event</span>
           <span><i />Assigned or resident</span>
           <span><b />Firm footprint</span>
@@ -428,14 +432,14 @@ export function CivicCity(props) {
     </div>
 
     <dl className="civic-city__instruments" aria-label="City instrumentation">
-      <div><dt>Actor-linked marks</dt><dd>{model.counts.active}</dd><small>agents in latest event sample</small></div>
-      <div><dt>Operating firms</dt><dd>{model.counts.firms}</dd><small>canonical firm endpoint</small></div>
-      <div><dt>Real places</dt><dd>{model.counts.places}</dd><small>stable city coordinates</small></div>
-      <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></div>
-      <div><dt>Office load</dt><dd>{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</dd><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></div>
-      <div><dt>AI inference</dt><dd>{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</dd><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></div>
-      <div><dt>World time</dt><dd>{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</dd><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></div>
-      <div><dt>Layout proof</dt><dd>{humanize(model.coordinateMode)}</dd><small>{model.counts.assigned} role assignments</small></div>
+      <div><dt>Actor-linked marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>agents in latest event sample</small></dd></div>
+      <div><dt>Operating firms</dt><dd><span className="civic-city__instrument-value">{model.counts.firms}</span><small>canonical firm endpoint</small></dd></div>
+      <div><dt>Real places</dt><dd><span className="civic-city__instrument-value">{model.counts.places}</span><small>stable city coordinates</small></dd></div>
+      <div><dt>Permit queue</dt><dd><span className="civic-city__instrument-value">{model.civic?.enabled ? model.counts.queue : "—"}</span><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></dd></div>
+      <div><dt>Office load</dt><dd><span className="civic-city__instrument-value">{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</span><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></dd></div>
+      <div><dt>AI inference</dt><dd><span className="civic-city__instrument-value">{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</span><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></dd></div>
+      <div><dt>World time</dt><dd><span className="civic-city__instrument-value">{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</span><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></dd></div>
+      <div><dt>Layout proof</dt><dd><span className="civic-city__instrument-value">{humanize(model.coordinateMode)}</span><small>{model.counts.assigned} role assignments</small></dd></div>
     </dl>
   </section>;
 }

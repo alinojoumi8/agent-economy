@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router";
-import { api } from "../api.js";
+import { Link, useSearchParams } from "react-router";
+import { causalTracePath } from "../app/commandNavigation";
+import { useWorkspaceProjection } from "./workspaceShared";
 
 type CommonsEntry = {
   id: number; body: string; author_agent_id: number; author_name: string | null;
@@ -23,17 +23,21 @@ type CommonsProjection = {
 };
 
 export function CommonsWorkspace() {
-  const { runId = "run" } = useParams();
   const [search, setSearch] = useSearchParams();
   const kind = search.get("feed") === "hot" ? "hot" : "chronological";
-  const query = useQuery({
-    queryKey: ["world-os", runId, "commons", kind],
-    queryFn: () => api(`/api/commons?kind=${kind}&limit=60`) as Promise<CommonsProjection>,
-    refetchInterval: 5_000,
-  });
-  if (query.isLoading) return <div className="world-os-loading" aria-label="Loading Agent Commons" />;
-  if (query.error) return <div className="world-os-error" role="alert">{query.error.message}</div>;
-  const data = query.data!;
+  const projection = useWorkspaceProjection<CommonsProjection>(
+    "workspace.commons",
+    `/api/v2/workspaces/commons?kind=${kind}&limit=60`,
+  );
+  if (projection.loading) return <div className="world-os-loading" aria-label="Loading Agent Commons" />;
+  if (projection.error) return <div className="world-os-error" role="alert">{projection.error.message}</div>;
+  const data = projection.data!;
+  const runId = projection.runId;
+  const setFeed = (feed: "chronological" | "hot") => {
+    const next = new URLSearchParams(search);
+    next.set("feed", feed);
+    setSearch(next);
+  };
   return <section>
     <div className="world-os-heading">
       <div><p className="world-os-kicker">Public information economy</p><h2>Agent Commons</h2></div>
@@ -46,9 +50,9 @@ export function CommonsWorkspace() {
     </div>
     <div className="world-os-filters" aria-label="Commons feed policy">
       <button className={`button ${kind === "chronological" ? "button-primary" : ""}`}
-        onClick={() => setSearch({ feed: "chronological" })}>Chronological</button>
+        onClick={() => setFeed("chronological")}>Chronological</button>
       <button className={`button ${kind === "hot" ? "button-primary" : ""}`}
-        onClick={() => setSearch({ feed: "hot" })}>Hot</button>
+        onClick={() => setFeed("hot")}>Hot</button>
       <span className="text-xs text-slate-500">Candidate set {data.feed.candidate_set_hash.slice(0, 12)}…</span>
     </div>
     <div className="world-os-columns">
@@ -66,7 +70,10 @@ export function CommonsWorkspace() {
             {entry.moderation_label && <p className="mt-2 text-xs text-gold-300">Label: {entry.moderation_label}</p>}
             <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
               <span>{entry.reaction_count} reactions</span><span>{entry.reply_count} replies</span>
-              <Link to={`/runs/${encodeURIComponent(runId)}/investigations?kind=${encodeURIComponent(entry.causal_observatory.source_kind)}&id=${entry.causal_observatory.source_id}`}>Open causal trace</Link>
+              <Link to={causalTracePath(runId, {
+                kind: entry.causal_observatory.source_kind,
+                id: entry.causal_observatory.source_id,
+              }, search)}>Open causal trace</Link>
             </div>
           </li>)}
           {!data.feed.entries.length && <li className="muted p-5">No public Commons entries yet.</li>}
