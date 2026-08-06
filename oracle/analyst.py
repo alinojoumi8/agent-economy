@@ -22,6 +22,7 @@ from .rules import ResolutionRuleError, validate_resolution_rule
 from .tools import (
     MAX_PROMPT_EVIDENCE_CHARS,
     ORACLE_PREFLIGHT_CONTRACT,
+    ORACLE_PREFLIGHT_CONTRACTS,
     OracleToolError,
     OracleTools,
     bound_oracle_evidence,
@@ -149,7 +150,9 @@ class Oracle:
         evidence = []
         if not legacy_replay:
             planning_catalog = (
-                oracle_tool_definitions(self.store, tick=tick)
+                oracle_tool_definitions(
+                    self.store, tick=tick,
+                    preflight_contract=state_bound_preflight)
                 if state_bound_preflight else self.tools.definitions)
             base_planning_context = {
                 "question": question, "tick": tick,
@@ -162,7 +165,7 @@ class Oracle:
             }
             if state_bound_preflight:
                 base_planning_context["preflight_contract"] = (
-                    ORACLE_PREFLIGHT_CONTRACT)
+                    state_bound_preflight)
             if governed_contract is not None:
                 base_planning_context["governed_forecast_contract"] = governed_contract
             validation_error = None
@@ -496,12 +499,17 @@ class Oracle:
         # Missing evidence fails closed through the gateway lookup path.
         return False
 
-    def _state_bound_preflight_at(self, tick: int, question: str) -> bool:
-        """Preserve recorded semantics-7 calls made before state-bound v1."""
+    def _state_bound_preflight_at(self, tick: int, question: str) -> str | None:
+        """Return the preflight contract this call is planned under, if any.
+
+        Markerless and pre-state-bound semantics-7 calls return ``None``. A
+        recorded call keeps the contract it was planned under so its catalog,
+        preflight errors, and evidence stay byte-identical on replay.
+        """
         if self.engine_semantics_version < 7:
-            return False
+            return None
         if not self.gw.replay or self.gw.replay_conn is None:
-            return True
+            return ORACLE_PREFLIGHT_CONTRACT
         rows = self.gw.replay_conn.execute(
             "SELECT request_json FROM llm_calls WHERE tick=? AND role='oracle' "
             "AND purpose='oracle_plan' ORDER BY id", (tick,)).fetchall()
@@ -511,10 +519,11 @@ class Oracle:
             if (isinstance(context, dict)
                     and context.get("question") == question
                     and context.get("tick") == tick):
-                return context.get("preflight_contract") == (
-                    ORACLE_PREFLIGHT_CONTRACT)
+                recorded = context.get("preflight_contract")
+                return (recorded if recorded in ORACLE_PREFLIGHT_CONTRACTS
+                        else None)
         # Missing recorded plan evidence fails closed through gateway lookup.
-        return False
+        return None
 
     # ── world digest (read-only tools rolled into one) ───────────────────────
     def _world_digest(self, tick: int) -> dict:

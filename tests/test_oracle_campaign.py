@@ -50,9 +50,12 @@ from oracle.analyst import (
     _answer_user_json, _bound_prompt_evidence,
 )
 from oracle.tools import (
+    MAX_CATALOG_METRIC_NAMES,
     MAX_PROMPT_EVIDENCE_CHARS, ORACLE_PREFLIGHT_CONTRACT,
+    ORACLE_PREFLIGHT_CONTRACT_V1, ORACLE_PREFLIGHT_CONTRACT_V2,
     OracleToolError, bound_oracle_evidence,
     canonical_oracle_json, oracle_tool_definitions,
+    unknown_metric_names_error,
     validate_bounded_oracle_evidence, validate_oracle_plan,
     validate_oracle_tool_args,
 )
@@ -3089,6 +3092,230 @@ def test_semantics7_unknown_entity_retry_is_shared_preflight(tmp_path):
     assert len(rejections) == 1
     assert json.loads(rejections[0]["payload_json"])["error"] == (
         "entity ledger accounts not found")
+    store.close()
+
+
+def test_scheduled_tick_catalog_advertises_the_metric_namespace(tmp_path):
+    """Metric names are state-derived, so the catalog must carry them."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-namespace.db"))
+    store.init_run_meta("metric-namespace", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    store.record_metric(9, "later_only_metric", 1.0)
+
+    at_zero = next(
+        item for item in oracle_tool_definitions(store, tick=0)
+        if item["name"] == "query_metrics")
+    at_nine = next(
+        item for item in oracle_tool_definitions(store, tick=9)
+        if item["name"] == "query_metrics")
+    advertised = at_zero["available_metric_names"]
+
+    # The real colon-suffixed names the resolver itself reads.
+    assert {"bank_deposits:1", "gdp_proxy", "cpi"} <= set(advertised)
+    assert advertised == sorted(set(advertised))
+    assert len(advertised) <= MAX_CATALOG_METRIC_NAMES
+    # Historically reproducible: a later metric is invisible at an earlier tick.
+    assert "later_only_metric" not in advertised
+    assert "later_only_metric" in at_nine["available_metric_names"]
+    # Every advertised name is executable, which is the point of advertising it.
+    series = world.oracle.tools.query_metrics(
+        ["bank_deposits:1"], from_tick=0, to_tick=0)
+    assert series["bank_deposits:1"]
+
+    legacy = oracle_tool_definitions(store)
+    v1 = oracle_tool_definitions(
+        store, tick=0, preflight_contract=ORACLE_PREFLIGHT_CONTRACT_V1)
+    assert "available_metric_names" not in legacy[0]
+    assert "available_metric_names" not in v1[0]
+    with pytest.raises(OracleToolError, match="unknown Oracle preflight contract"):
+        oracle_tool_definitions(store, tick=0, preflight_contract="state_bound_v0")
+
+    # An overflowing namespace advertises nothing rather than a truncated list,
+    # so preflight can never reject a metric that actually exists.
+    for index in range(MAX_CATALOG_METRIC_NAMES + 1):
+        store.record_metric(0, f"overflow_metric_{index:04d}", 1.0)
+    overflowed = oracle_tool_definitions(store, tick=0)[0]
+    assert "available_metric_names" not in overflowed
+    assert validate_oracle_plan(
+        {"queries": [{"tool": "query_metrics", "args": {
+            "names": ["bank1_deposits"]}}]},
+        current_tick=0, tool_catalog=oracle_tool_definitions(store, tick=0))
+    store.close()
+
+
+def test_preflight_rejects_guessed_metric_names_with_real_alternatives(tmp_path):
+    """The V10/V11 guesses matched zero names and returned empty arrays."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-guesses.db"))
+    store.init_run_meta("metric-guesses", config["seed"], config)
+    World(store, config).initialize()
+    catalog = oracle_tool_definitions(store, tick=0)
+    v1_catalog = oracle_tool_definitions(
+        store, tick=0, preflight_contract=ORACLE_PREFLIGHT_CONTRACT_V1)
+
+    def plan(*names):
+        return {"queries": [
+            {"tool": "query_metrics", "args": {"names": list(names)}}]}
+
+    for guess, real in (
+            ("bank1_deposits", "bank_deposits:1"),
+            ("B1_deposits", "bank_deposits:1"),
+            ("bank1_reserves", "bank_reserve_ratio:1"),
+            ("GDP", "gdp_proxy"),
+    ):
+        with pytest.raises(OracleToolError) as excinfo:
+            validate_oracle_plan(
+                plan(guess), current_tick=0, tool_catalog=catalog)
+        message = str(excinfo.value)
+        assert message.startswith(f"unknown metric names: {guess} ")
+        assert real in message
+        # The v1 catalog carries no namespace, so recorded plans keep passing.
+        assert validate_oracle_plan(
+            plan(guess), current_tick=0, tool_catalog=v1_catalog)
+
+    assert validate_oracle_plan(
+        plan("bank_deposits:1", "gdp_proxy"), current_tick=0,
+        tool_catalog=catalog)
+    # A partial miss must keep its real series. Metrics such as `index` are not
+    # recorded until later ticks, and rejecting the whole plan would cost the
+    # forecast the evidence it could have had.
+    assert validate_oracle_plan(
+        plan("gdp_proxy", "index"), current_tick=0, tool_catalog=catalog)
+    assert validate_oracle_plan(
+        plan("GDP", "bank_deposits:1"), current_tick=0, tool_catalog=catalog)
+
+    # Every miss in a wholly unresolvable plan is answered.
+    with pytest.raises(OracleToolError) as excinfo:
+        validate_oracle_plan(
+            plan("GDP", "bank1_deposits", "bank1_reserves"),
+            current_tick=0, tool_catalog=catalog)
+    combined = str(excinfo.value)
+    assert combined.startswith(
+        "unknown metric names: GDP, bank1_deposits, bank1_reserves (")
+    for real in ("gdp_proxy", "bank_deposits:", "bank_reserve_ratio:"):
+        assert real in combined
+    assert unknown_metric_names_error(["zz_none"], ["cpi"]) == (
+        "unknown metric names: zz_none (see available_metric_names)")
+    store.close()
+
+
+def test_semantics7_unknown_metric_retry_recovers_real_history(tmp_path):
+    """A guessed name must self-correct into executed history, not empty arrays."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-retry.db"))
+    store.init_run_meta("metric-retry", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    class MetricRetryGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, request, **_kwargs):
+            self.requests.append(request)
+            plans = [item for item in self.requests
+                     if item.purpose == "oracle_plan"]
+            if request.purpose == "oracle_plan" and len(plans) == 1:
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["bank1_deposits"]},
+                }]})
+            if request.purpose == "oracle_plan":
+                error = request.context["previous_plan_error"]
+                assert error.startswith("unknown metric names: bank1_deposits")
+                assert "bank_deposits:1" in error
+                assert request.context["planner_attempt"] == 2
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["bank_deposits:1"]},
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.2, "drivers": ["deposit trend"],
+                "confidence": "med", "resolution_rule": {
+                    "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+                "deadline_tick": store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = MetricRetryGateway()
+    world.oracle.gw = gateway
+    contract = {
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
+        "campaign_key": "bank_run_t000", "scheduled_tick": store.tick,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+        "deadline_tick": store.tick + 30,
+    }
+
+    result = asyncio.run(world.oracle.ask(
+        "What is the probability of a bank run within 30 ticks?",
+        governed_contract=contract))
+
+    assert [request.purpose for request in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle"]
+    # The forecast now rests on a nonempty series instead of an empty array.
+    assert result["evidence"][0]["result"]["bank_deposits:1"]
+    plan_catalog = next(
+        item for item in gateway.requests[0].context["available_tools"]
+        if item["name"] == "query_metrics")
+    assert "bank_deposits:1" in plan_catalog["available_metric_names"]
+    assert gateway.requests[0].context["preflight_contract"] == (
+        ORACLE_PREFLIGHT_CONTRACT_V2)
+    rejections = store.query(
+        "SELECT payload_json FROM events "
+        "WHERE kind='oracle_tool_plan_rejected' ORDER BY id")
+    assert len(rejections) == 1
+    assert json.loads(rejections[0]["payload_json"])["error"].startswith(
+        "unknown metric names: bank1_deposits")
+    store.close()
+
+
+def test_recorded_preflight_contract_is_preserved_on_replay(tmp_path):
+    """A v1 source must keep planning under v1 so its evidence stays exact."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "preflight-contract.db"))
+    store.init_run_meta("preflight-contract", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    question = "What is the probability of a bank run within 30 ticks?"
+
+    replay_conn = sqlite3.connect(":memory:")
+    replay_conn.row_factory = sqlite3.Row
+    replay_conn.execute(
+        "CREATE TABLE llm_calls (id INTEGER PRIMARY KEY, tick INTEGER, "
+        "role TEXT, purpose TEXT, request_json TEXT)")
+    for tick, contract in (
+            (1, ORACLE_PREFLIGHT_CONTRACT_V1),
+            (2, ORACLE_PREFLIGHT_CONTRACT_V2),
+            (3, "state_bound_v0"),
+            (4, None)):
+        context = {"question": question, "tick": tick}
+        if contract is not None:
+            context["preflight_contract"] = contract
+        replay_conn.execute(
+            "INSERT INTO llm_calls (tick, role, purpose, request_json) "
+            "VALUES (?,'oracle','oracle_plan',?)",
+            (tick, json.dumps({"context": context})))
+
+    oracle = world.oracle
+    assert oracle._state_bound_preflight_at(0, question) == (
+        ORACLE_PREFLIGHT_CONTRACT)
+    oracle.gw = SimpleNamespace(replay=True, replay_conn=replay_conn)
+    assert oracle._state_bound_preflight_at(1, question) == (
+        ORACLE_PREFLIGHT_CONTRACT_V1)
+    assert oracle._state_bound_preflight_at(2, question) == (
+        ORACLE_PREFLIGHT_CONTRACT_V2)
+    # An unrecognized or absent marker falls back off the state-bound path.
+    assert oracle._state_bound_preflight_at(3, question) is None
+    assert oracle._state_bound_preflight_at(4, question) is None
+    assert oracle._state_bound_preflight_at(5, question) is None
+    replay_conn.close()
     store.close()
 
 
