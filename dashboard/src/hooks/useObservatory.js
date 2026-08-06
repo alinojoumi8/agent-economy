@@ -66,6 +66,7 @@ export function useObservatory({ hosted = false } = {}) {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [statusFresh, setStatusFresh] = useState(false);
   const refreshing = useRef(false);
   const refreshPending = useRef(false);
 
@@ -80,6 +81,7 @@ export function useObservatory({ hosted = false } = {}) {
       refreshPending.current = false;
       const deadline = observatoryRefreshDeadline();
       const get = path => api(path, { signal: deadline.signal });
+      setStatusFresh(false);
       if (!nextQuiet) setLoading(true);
       try {
         const { values, errors } = await settleObservatoryRequests({
@@ -113,6 +115,7 @@ export function useObservatory({ hosted = false } = {}) {
           item => item.key !== "calibrationRun" && item.key !== "calibrationAll",
         );
         const has = key => Object.prototype.hasOwnProperty.call(values, key);
+        setStatusFresh(has("status") && requestErrors.length === 0);
         setData(current => ({
           status: has("status") ? values.status : current.status,
           acceptance: has("acceptance") ? values.acceptance : current.acceptance,
@@ -150,6 +153,7 @@ export function useObservatory({ hosted = false } = {}) {
           }, "warn");
         }
       } catch (reason) {
+        setStatusFresh(false);
         const message = reason instanceof Error ? reason.message : String(reason);
         setError(message);
         clientLog("dashboard.refresh.failed", {
@@ -286,5 +290,5 @@ export function useObservatory({ hosted = false } = {}) {
     };
   }, [refresh]);
 
-  return { data, connected, loading, error, refresh, act };
+  return { data, connected, loading, error, statusFresh, refresh, act };
 }

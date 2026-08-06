@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,9 +98,7 @@ def _reject_non_finite(value: str) -> None:
 
 
 def _published_artifact_mode() -> int:
-    current_umask = os.umask(0)
-    os.umask(current_umask)
-    return 0o666 & ~current_umask
+    return 0o644
 
 
 def _valid_candidate(value: Any) -> bool:
@@ -286,9 +285,7 @@ def _validate_receipt(
         "started_at": receipt.get("started_at", ""),
         "ended_at": receipt.get("ended_at", ""),
         "configuration_sha256": config_hash if isinstance(config_hash, str) else "",
-        "summary": receipt.get("summary", "") if isinstance(receipt.get("summary"), str) else "",
         "artifacts": artifacts,
-        "verifier": receipt.get("verifier", {}),
     }
     return result, errors
 
@@ -500,11 +497,95 @@ def write_release_evidence_package(
     *,
     repo_root: str | Path,
 ) -> tuple[Path, Path]:
-    """Collect and atomically publish canonical JSON and Markdown offline."""
+    """Collect and publish one atomically selected JSON/Markdown package."""
     result = collect_release_evidence(manifest_path, repo_root=repo_root)
     target = Path(output_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    json_content = canonical_release_json(result)
+    markdown_content = render_release_markdown(result)
+    digest = hashlib.sha256(
+        json_content.encode("utf-8") + b"\0" + markdown_content.encode("utf-8")
+    ).hexdigest()
+    packages = target / ".release-evidence-packages"
+    if packages.is_symlink() or (packages.exists() and not packages.is_dir()):
+        raise RuntimeError(f"unsafe release evidence package root: {packages}")
+    packages.mkdir(exist_ok=True)
+    package = packages / digest
+    if not package.exists() and not package.is_symlink():
+        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=packages))
+        try:
+            _atomic_write(staging / "release-evidence.json", json_content)
+            _atomic_write(staging / "release-evidence.md", markdown_content)
+            try:
+                os.replace(staging, package)
+            except OSError:
+                if not package.exists() or package.is_symlink():
+                    raise
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+    if package.is_symlink() or not package.is_dir():
+        raise RuntimeError(f"unsafe release evidence package: {package}")
+    try:
+        package_json = (package / "release-evidence.json").read_text(encoding="utf-8")
+        package_markdown = (package / "release-evidence.md").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"incomplete release evidence package: {package}") from exc
+    if package_json != json_content or package_markdown != markdown_content:
+        raise RuntimeError(f"release evidence package content mismatch: {package}")
+    if os.name != "nt":
+        directory = os.open(packages, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    public_links = {
+        target / "release-evidence.json": ".release-evidence-current/release-evidence.json",
+        target / "release-evidence.md": ".release-evidence-current/release-evidence.md",
+    }
+    for public_path, link_target in public_links.items():
+        if public_path.is_symlink():
+            if os.readlink(public_path) != link_target:
+                raise RuntimeError(f"unexpected release evidence link: {public_path}")
+            continue
+        if public_path.exists():
+            raise RuntimeError(
+                f"legacy release evidence output must be moved before atomic publication: {public_path}"
+            )
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{public_path.name}.", dir=target
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        temporary.unlink()
+        try:
+            os.symlink(link_target, temporary)
+            os.replace(temporary, public_path)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
+
+    current = target / ".release-evidence-current"
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".release-evidence-current.", dir=target
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    temporary.unlink()
+    try:
+        os.symlink(f".release-evidence-packages/{digest}", temporary)
+        os.replace(temporary, current)
+        if os.name != "nt":
+            directory = os.open(target, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
     json_path = target / "release-evidence.json"
     markdown_path = target / "release-evidence.md"
-    _atomic_write(json_path, canonical_release_json(result))
-    _atomic_write(markdown_path, render_release_markdown(result))
     return json_path, markdown_path

@@ -331,8 +331,10 @@ test("narrow workspace tables stay contained and keyboard selection opens valida
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/runs/run-demo/organizations");
-  const row = page.locator(".world-os-workspace-table tbody tr").first();
-  await row.focus();
+  const selection = page.getByRole("button", {
+    name: "Select Organization directory row 1",
+  });
+  await selection.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/organizations\/1$/);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

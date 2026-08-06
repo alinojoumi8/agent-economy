@@ -19,7 +19,7 @@ const MacroOverview = lazy(() => import("./MacroOverview"));
 export function Observatory({ hostedSession = null }) {
   const hosted = Boolean(hostedSession);
   const canControl = !hosted || hostedSession.role === "admin";
-  const { data, connected, loading, error, act, refresh } = useObservatory({ hosted });
+  const { data, connected, loading, error, statusFresh, act, refresh } = useObservatory({ hosted });
   const [shockOpen, setShockOpen] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(false);
@@ -31,7 +31,8 @@ export function Observatory({ hostedSession = null }) {
     : data.participant;
 
   return <div className="civic-observatory min-h-screen">
-    <RunHeader status={status} participant={participant} connected={connected} loading={loading} act={act}
+    <RunHeader status={status} participant={participant} connected={connected} loading={loading}
+      statusFresh={statusFresh} act={act}
       hosted={hosted} canControl={canControl}
       onShock={hosted ? null : () => setShockOpen(true)}
       onReplay={hosted ? null : () => setReplayOpen(true)} />

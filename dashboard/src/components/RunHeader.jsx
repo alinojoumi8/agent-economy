@@ -31,7 +31,7 @@ export function runControlState(status, busy = "") {
 }
 
 export function RunHeader({ status, participant, connected, loading, act, onShock, onReplay,
-  hosted = false, canControl = true }) {
+  hosted = false, canControl = true, statusFresh = Boolean(status) }) {
   const [busy, setBusy] = useState("");
   const { running, displayStatus, pauseDisabled, stopDisabled } = runControlState(status, busy);
   const terminal = isTerminalRunStatus(status?.status);
@@ -40,6 +40,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
   const limitReached = status?.remaining_ticks === 0;
   const { spend, cap, capped, fraction } = budgetState(status?.governor);
   const inference = inferenceMode(status?.provider_readiness);
+  const controlsUnavailable = loading || !status || !statusFresh;
 
   async function action(name, path, body) {
     setBusy(name);
@@ -82,12 +83,12 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         </div>
 
         <nav className="flex flex-wrap items-center gap-1.5" aria-label="Simulation controls">
-          <button className="button button-primary" disabled={!canControl || loading || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
-          <button className="button" disabled={!canControl || loading || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
-          <button className="button" disabled={!canControl || loading || pauseDisabled} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
-          <button className="button button-danger" disabled={!canControl || loading || stopDisabled} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
+          <button className="button button-primary" disabled={!canControl || controlsUnavailable || running || terminal || limitReached || busy || participantActive} onClick={() => action("start", "/api/run/start")}>▶ Run</button>
+          <button className="button" disabled={!canControl || controlsUnavailable || running || terminal || limitReached || busy || (participantActive && !participantReady)} onClick={() => action("step", "/api/run/step")}>Step</button>
+          <button className="button" disabled={!canControl || controlsUnavailable || pauseDisabled} onClick={() => action("pause", "/api/run/pause")}>Pause</button>
+          <button className="button button-danger" disabled={!canControl || controlsUnavailable || stopDisabled} onClick={() => action("stop", "/api/run/stop")}>{hosted ? "Stop" : "Stop + report"}</button>
           <label className="sr-only" htmlFor="run-speed">Simulation speed</label>
-          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || loading || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
+          <select id="run-speed" className="field !w-auto !py-2" value={String(status?.speed_delay_s ?? 0)} disabled={!canControl || controlsUnavailable || terminal || busy} onChange={event => action("speed", "/api/run/speed", { delay_s: Number(event.target.value) })}>
             <option value="0">Max speed</option>
             <option value="0.25">0.25 s/day</option>
             <option value="1">1 s/day</option>

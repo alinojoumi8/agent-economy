@@ -391,9 +391,20 @@ def test_native_company_formation_is_capped_per_tick_after_activation(store):
     }
     executor = ActionExecutor(economy)
 
-    first = executor.execute_action(20, first_id, actions[first_id])
+    unauthorized = executor.execute_action(20, first_id, {
+        **actions[first_id],
+        "unexpected_handler_field": "must not bypass the authorization",
+    })
+    first = executor.execute_action(20, first_id, {
+        **actions[first_id],
+        "rationale_summary": "authoritative gateway provenance",
+    })
     second = executor.execute_action(20, second_id, actions[second_id])
 
+    assert unauthorized == {
+        "ok": False,
+        "reason": "found_company must copy the supplied entrepreneurship action exactly",
+    }
     assert first["ok"], first
     assert second == {
         "ok": False,

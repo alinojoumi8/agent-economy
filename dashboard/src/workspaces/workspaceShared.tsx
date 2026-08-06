@@ -79,25 +79,26 @@ export function WorkspaceTable<T extends { id?: string | number }>({
   caption: string; columns: WorkspaceColumn<T>[]; rows: T[]; empty?: string;
   selectedId?: string | number | null; onSelect?(row: T): void;
 }) {
+  const selectable = Boolean(onSelect);
   return <div className="world-os-workspace-table-wrap">
     <table className="world-os-workspace-table">
       <caption className="sr-only">{caption}</caption>
-      <thead><tr>{columns.map(column => <th key={column.key} scope="col">{column.label}</th>)}</tr></thead>
+      <thead><tr>
+        {selectable && <th scope="col" className="sr-only">Select row</th>}
+        {columns.map(column => <th key={column.key} scope="col">{column.label}</th>)}
+      </tr></thead>
       <tbody>{rows.length ? rows.map((row, index) => {
         const key = row.id ?? index;
-        const selectable = Boolean(onSelect);
-        return <tr key={key} className={selectedId != null && String(row.id) === String(selectedId) ? "selected" : ""}
-          tabIndex={selectable ? 0 : undefined} aria-selected={selectable ? String(row.id) === String(selectedId) : undefined}
-          onClick={selectable ? () => onSelect?.(row) : undefined}
-          onKeyDown={selectable ? event => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onSelect?.(row);
-            }
-          } : undefined}>
+        const selected = selectedId != null && String(row.id) === String(selectedId);
+        return <tr key={key} className={selected ? "selected" : ""}>
+          {selectable && <td className="world-os-workspace-table-select">
+            <button type="button" className="button" aria-pressed={selected}
+              aria-label={`Select ${caption} row ${row.id ?? index + 1}`}
+              onClick={() => onSelect?.(row)}>Select</button>
+          </td>}
           {columns.map(column => <td key={column.key}>{column.render(row)}</td>)}
         </tr>;
-      }) : <tr><td colSpan={columns.length} className="world-os-workspace-table-empty">{empty}</td></tr>}</tbody>
+      }) : <tr><td colSpan={columns.length + (selectable ? 1 : 0)} className="world-os-workspace-table-empty">{empty}</td></tr>}</tbody>
     </table>
   </div>;
 }

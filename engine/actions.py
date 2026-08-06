@@ -763,8 +763,24 @@ class ActionExecutor:
                         "ok": False,
                         "reason": "found_company is available only from a supplied entrepreneurship opportunity",
                     }
-                submitted = {key: action.get(key) for key in expected}
-                if submitted != expected:
+                provenance_fields = {
+                    "evidence_event_ids", "model_call_id", "rationale_summary",
+                }
+                submitted = {
+                    key: value for key, value in action.items()
+                    if key not in provenance_fields
+                }
+                try:
+                    exact_match = json.dumps(
+                        submitted, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=False,
+                    ) == json.dumps(
+                        expected, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=False,
+                    )
+                except (TypeError, ValueError):
+                    exact_match = False
+                if not exact_match:
                     return {
                         "ok": False,
                         "reason": "found_company must copy the supplied entrepreneurship action exactly",

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 from pathlib import Path
 
+import pytest
 import yaml
+import reports.release_evidence as release_evidence
 
 from reports.release_evidence import (
     REQUIRED_GATES,
@@ -126,6 +127,26 @@ def test_complete_manifest_passes_only_for_exact_candidate(tmp_path):
     assert result["candidate"] == {"commit": COMMIT, "tree": TREE}
     assert len(result["gates"]) == len(V1_REQUIRED_GATES)
     assert result["errors"] == []
+
+
+def test_published_gate_omits_unbounded_receipt_narrative(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(item for item in payload["gates"] if item["gate_id"] == "oracle_v9")
+    receipt_path = repo / row["receipt"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["summary"] = "password=example-secret"
+    receipt["verifier"] = {"name": "fixture", "detail": "password=example-secret"}
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+    gate = next(item for item in result["gates"] if item["gate_id"] == "oracle_v9")
+
+    assert "summary" not in gate
+    assert "verifier" not in gate
+    assert "example-secret" not in canonical_release_json(result)
 
 
 def test_production_required_gates_match_independent_v1_contract():
@@ -363,8 +384,29 @@ def test_package_writer_is_byte_identical_across_repeated_output(tmp_path):
 
     assert first_bytes == (second_json.read_bytes(), second_markdown.read_bytes())
     assert not list(output.glob(".*.tmp"))
-    current_umask = os.umask(0)
-    os.umask(current_umask)
-    expected_mode = 0o666 & ~current_umask
-    assert stat.S_IMODE(second_json.stat().st_mode) == expected_mode
-    assert stat.S_IMODE(second_markdown.stat().st_mode) == expected_mode
+    assert stat.S_IMODE(second_json.stat().st_mode) == 0o644
+    assert stat.S_IMODE(second_markdown.stat().st_mode) == 0o644
+
+
+def test_package_writer_never_publishes_half_of_a_failed_pair(tmp_path, monkeypatch):
+    repo, manifest = release_fixture(tmp_path)
+    output = tmp_path / "out"
+    json_path, markdown_path = write_release_evidence_package(
+        manifest, output, repo_root=repo
+    )
+    original_pair = (json_path.read_bytes(), markdown_path.read_bytes())
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["generated_at"] = "2026-08-05T12:03:00Z"
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    original_write = release_evidence._atomic_write
+
+    def fail_markdown(path, content):
+        if path.name == "release-evidence.md":
+            raise OSError("simulated second artifact failure")
+        original_write(path, content)
+
+    monkeypatch.setattr(release_evidence, "_atomic_write", fail_markdown)
+    with pytest.raises(OSError, match="second artifact"):
+        write_release_evidence_package(manifest, output, repo_root=repo)
+
+    assert (json_path.read_bytes(), markdown_path.read_bytes()) == original_pair
