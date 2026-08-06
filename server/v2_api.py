@@ -361,6 +361,20 @@ def install_v2_routes(app, world, controller) -> None:
         return workspace_envelope(
             "world", build_world_workspace(store, as_of_tick=as_of_tick), as_of_tick)
 
+    @router.get("/workspaces/commons")
+    async def commons_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+        kind: str = Query("chronological"), limit: int = Query(50, ge=1, le=100),
+    ):
+        from world.commons import CommonsError
+        as_of_tick = projection_tick(tick, fork_id)
+        try:
+            data = world.commons.public_overview(
+                kind=kind, limit=limit, as_of_tick=as_of_tick)
+        except CommonsError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return workspace_envelope("commons", data, as_of_tick)
+
     @router.get("/workspaces/organizations")
     async def organizations_workspace(
         tick: str = Query("live"), fork_id: str | None = None,

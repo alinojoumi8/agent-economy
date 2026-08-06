@@ -22,57 +22,131 @@ const INITIAL = {
   v2: { map: null, legal: null, politics: null, information: null, startups: null, markets: null, datasets: null },
 };
 
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10_000;
+
+export function observatoryReconnectDelay(attempt) {
+  const safeAttempt = Math.max(0, Math.min(Number(attempt) || 0, 30));
+  return Math.min(RECONNECT_BASE_MS * (2 ** safeAttempt), RECONNECT_MAX_MS);
+}
+
+export async function settleObservatoryRequests(requests) {
+  const entries = Object.entries(requests);
+  const settled = await Promise.allSettled(entries.map(([, request]) => request));
+  const values = {};
+  const errors = [];
+  settled.forEach((result, index) => {
+    const key = entries[index][0];
+    if (result.status === "fulfilled") {
+      values[key] = result.value;
+      return;
+    }
+    errors.push({
+      key,
+      message: result.reason instanceof Error ? result.reason.message : String(result.reason),
+    });
+  });
+  return { values, errors };
+}
+
 export function useObservatory({ hosted = false } = {}) {
   const [data, setData] = useState(INITIAL);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const refreshing = useRef(false);
+  const refreshPending = useRef(false);
 
   const refresh = useCallback(async ({ quiet = false } = {}) => {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    if (!quiet) setLoading(true);
-    try {
-      const calibrationErrors = [];
-      const safeCalibration = async (path, scope) => {
-        try { return await api(path); }
-        catch (reason) {
-          calibrationErrors.push(`${scope}: ${reason instanceof Error ? reason.message : String(reason)}`);
-          return null;
-        }
-      };
-      const [status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
-        events, cost, oracle, shocks, calibrationRun, calibrationAll,
-        map, legal, politics, information, startups, markets, datasets] = await Promise.all([
-        api("/api/run/status"), api("/api/acceptance/status"),
-        api("/api/participant"),
-        api("/api/metrics"), api("/api/banks"),
-        api("/api/firms"), api("/api/institutions"), api("/api/news?limit=24"),
-        api("/api/conversations?limit=16"), api("/api/events?limit=80&min_importance=0.5"),
-        api("/api/cost"), api("/api/oracle/predictions"),
-        api("/api/shocks"),
-        hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=run", "run"),
-        hosted ? Promise.resolve(null) : safeCalibration("/api/oracle/calibration?scope=all", "all"),
-        api("/api/v2/map"), api("/api/v2/legal"), api("/api/v2/politics"),
-        api("/api/v2/information"), api("/api/v2/startups"), api("/api/v2/markets"),
-        api("/api/v2/datasets"),
-      ]);
-      setData({ status, acceptance, participant, metrics, banks, firms, institutions, news, conversations,
-        events, cost, oracle, shocks,
-        calibration: { run: calibrationRun, all: calibrationAll, errors: calibrationErrors },
-        v2: { map, legal, politics, information, startups, markets, datasets } });
-      setError("");
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason);
-      setError(message);
-      clientLog("dashboard.refresh.failed", {
-        quiet, error_type: reason?.constructor?.name || typeof reason, error: message,
-      }, "error");
-    } finally {
-      refreshing.current = false;
-      setLoading(false);
+    if (refreshing.current) {
+      refreshPending.current = true;
+      return;
     }
+    let nextQuiet = quiet;
+    do {
+      refreshing.current = true;
+      refreshPending.current = false;
+      if (!nextQuiet) setLoading(true);
+      try {
+        const { values, errors } = await settleObservatoryRequests({
+          status: api("/api/run/status"),
+          acceptance: api("/api/acceptance/status"),
+          participant: api("/api/participant"),
+          metrics: api("/api/metrics"),
+          banks: api("/api/banks"),
+          firms: api("/api/firms"),
+          institutions: api("/api/institutions"),
+          news: api("/api/news?limit=24"),
+          conversations: api("/api/conversations?limit=16"),
+          events: api("/api/events?limit=80&min_importance=0.5"),
+          cost: api("/api/cost"),
+          oracle: api("/api/oracle/predictions"),
+          shocks: api("/api/shocks"),
+          calibrationRun: hosted ? Promise.resolve(null) : api("/api/oracle/calibration?scope=run"),
+          calibrationAll: hosted ? Promise.resolve(null) : api("/api/oracle/calibration?scope=all"),
+          map: api("/api/v2/map"),
+          legal: api("/api/v2/legal"),
+          politics: api("/api/v2/politics"),
+          information: api("/api/v2/information"),
+          startups: api("/api/v2/startups"),
+          markets: api("/api/v2/markets"),
+          datasets: api("/api/v2/datasets"),
+        });
+        const calibrationErrors = errors
+          .filter(item => item.key === "calibrationRun" || item.key === "calibrationAll")
+          .map(item => `${item.key === "calibrationRun" ? "run" : "all"}: ${item.message}`);
+        const requestErrors = errors.filter(
+          item => item.key !== "calibrationRun" && item.key !== "calibrationAll",
+        );
+        const has = key => Object.prototype.hasOwnProperty.call(values, key);
+        setData(current => ({
+          status: has("status") ? values.status : current.status,
+          acceptance: has("acceptance") ? values.acceptance : current.acceptance,
+          participant: has("participant") ? values.participant : current.participant,
+          metrics: has("metrics") ? values.metrics : current.metrics,
+          banks: has("banks") ? values.banks : current.banks,
+          firms: has("firms") ? values.firms : current.firms,
+          institutions: has("institutions") ? values.institutions : current.institutions,
+          news: has("news") ? values.news : current.news,
+          conversations: has("conversations") ? values.conversations : current.conversations,
+          events: has("events") ? values.events : current.events,
+          cost: has("cost") ? values.cost : current.cost,
+          oracle: has("oracle") ? values.oracle : current.oracle,
+          shocks: has("shocks") ? values.shocks : current.shocks,
+          calibration: {
+            run: has("calibrationRun") ? values.calibrationRun : current.calibration.run,
+            all: has("calibrationAll") ? values.calibrationAll : current.calibration.all,
+            errors: calibrationErrors,
+          },
+          v2: {
+            map: has("map") ? values.map : current.v2.map,
+            legal: has("legal") ? values.legal : current.v2.legal,
+            politics: has("politics") ? values.politics : current.v2.politics,
+            information: has("information") ? values.information : current.v2.information,
+            startups: has("startups") ? values.startups : current.v2.startups,
+            markets: has("markets") ? values.markets : current.v2.markets,
+            datasets: has("datasets") ? values.datasets : current.v2.datasets,
+          },
+        }));
+        const message = requestErrors.map(item => `${item.key}: ${item.message}`).join("; ");
+        setError(message);
+        if (message) {
+          clientLog("dashboard.refresh.partial_failure", {
+            quiet: nextQuiet, failed_requests: requestErrors.map(item => item.key), error: message,
+          }, "warn");
+        }
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : String(reason);
+        setError(message);
+        clientLog("dashboard.refresh.failed", {
+          quiet: nextQuiet, error_type: reason?.constructor?.name || typeof reason, error: message,
+        }, "error");
+      } finally {
+        refreshing.current = false;
+        setLoading(false);
+      }
+      nextQuiet = true;
+    } while (refreshPending.current);
   }, [hosted]);
 
   const act = useCallback(async (path, body) => {
@@ -94,45 +168,88 @@ export function useObservatory({ hosted = false } = {}) {
   useEffect(() => {
     refresh();
     const timer = window.setInterval(() => refresh({ quiet: true }), 10_000);
-    const socket = new WebSocket(observatoryWebSocketUrl(window.location));
-    socket.addEventListener("open", () => {
-      setConnected(true);
-      clientLog("dashboard.websocket.connected");
-    });
-    socket.addEventListener("close", event => {
-      setConnected(false);
-      clientLog("dashboard.websocket.disconnected", {
-        code: event.code, clean: event.wasClean, reason: event.reason,
-      }, event.wasClean ? "info" : "warn");
-    });
-    socket.addEventListener("error", () => {
-      setConnected(false);
-      clientLog("dashboard.websocket.failed", {}, "error");
-    });
-    socket.addEventListener("message", (event) => {
+    let disposed = false;
+    let socket = null;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimer !== null) return;
+      const delay = observatoryReconnectDelay(reconnectAttempt);
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+    const connect = () => {
+      if (disposed) return;
+      let nextSocket;
       try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === "tick" || payload.type === "run_status") {
-          setData(current => ({
-            ...current,
-            status: mergeRunPayload(current.status, payload),
-          }));
-          if (payload.type === "tick") refresh({ quiet: true });
-        }
+        nextSocket = new WebSocket(observatoryWebSocketUrl(window.location));
       } catch (reason) {
-        clientLog("dashboard.websocket.invalid_message", {
+        setConnected(false);
+        clientLog("dashboard.websocket.failed", {
           error_type: reason?.constructor?.name || typeof reason,
           error: reason instanceof Error ? reason.message : String(reason),
-        }, "warn");
+        }, "error");
+        scheduleReconnect();
+        return;
       }
-    });
+      socket = nextSocket;
+      nextSocket.addEventListener("open", () => {
+        if (disposed || socket !== nextSocket) return;
+        reconnectAttempt = 0;
+        if (reconnectTimer !== null) {
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        setConnected(true);
+        clientLog("dashboard.websocket.connected");
+      });
+      nextSocket.addEventListener("close", event => {
+        if (disposed || socket !== nextSocket) return;
+        setConnected(false);
+        clientLog("dashboard.websocket.disconnected", {
+          code: event.code, clean: event.wasClean, reason: event.reason,
+        }, event.wasClean ? "info" : "warn");
+        scheduleReconnect();
+      });
+      nextSocket.addEventListener("error", () => {
+        if (disposed || socket !== nextSocket) return;
+        setConnected(false);
+        clientLog("dashboard.websocket.failed", {}, "error");
+        scheduleReconnect();
+        try { nextSocket.close(); } catch { /* reconnect timer remains authoritative */ }
+      });
+      nextSocket.addEventListener("message", (event) => {
+        if (disposed || socket !== nextSocket) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "tick" || payload.type === "run_status") {
+            setData(current => ({
+              ...current,
+              status: mergeRunPayload(current.status, payload),
+            }));
+            if (payload.type === "tick") refresh({ quiet: true });
+          }
+        } catch (reason) {
+          clientLog("dashboard.websocket.invalid_message", {
+            error_type: reason?.constructor?.name || typeof reason,
+            error: reason instanceof Error ? reason.message : String(reason),
+          }, "warn");
+        }
+      });
+    };
+    connect();
     const keepalive = window.setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) socket.send("ping");
+      if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
     }, 20_000);
     return () => {
+      disposed = true;
       window.clearInterval(timer);
       window.clearInterval(keepalive);
-      socket.close();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      socket?.close();
     };
   }, [refresh]);
 

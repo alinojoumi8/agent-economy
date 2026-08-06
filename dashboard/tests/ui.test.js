@@ -143,6 +143,28 @@ test("agent audit reflects deterministic actions without claiming missing decisi
 });
 
 
+test("agent modal disables take-control when that citizen is already controlled", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { AgentModal } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
+    const markup = renderToStaticMarkup(React.createElement(AgentModal, {
+      detail: {
+        agent: { id: 23, name: "Iris Mensah", kind: "citizen", alive: 1 },
+        accounts: [], loans: [], beliefs: {}, belief_history: [], memories: [],
+        recent_decisions: [], recent_actions: [], output_counts: {}, output_cursors: {},
+      },
+      participant: { enabled: true, controlled_agent: { id: 23 } },
+      running: false, historyLoading: false,
+      onLoadOlder: () => {}, onLoadOlderOutputs: () => {},
+      onTakeControl: () => {}, onClose: () => {},
+    }));
+    assert.match(markup, /disabled=""[^>]*>Currently controlled<\/button>/);
+  } finally {
+    await vite.close();
+  }
+});
+
+
 test("public panels expose metric units, partial days, and numeric redaction", async () => {
   const vite = await createServer({
     appType: "custom", logLevel: "silent", server: { middlewareMode: true },

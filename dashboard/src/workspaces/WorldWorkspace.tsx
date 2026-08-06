@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CivicCity } from "../components/CivicCity";
 import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
@@ -52,6 +53,13 @@ export function WorldWorkspace() {
   const selectedPlaceId = validatedSelectedId(searchParams.get("place"));
   const selectedRegion = model.regions.find(region => Number(region.id) === selectedRegionId) || null;
   const selectedPlace = model.places.find(place => Number(place.id) === selectedPlaceId) || null;
+
+  useEffect(() => {
+    if (selectedRegionId == null || selectedPlaceId == null) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("region");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, selectedPlaceId, selectedRegionId, setSearchParams]);
 
   const select = (key: "region" | "place", rawValue: string) => {
     const next = new URLSearchParams(searchParams);

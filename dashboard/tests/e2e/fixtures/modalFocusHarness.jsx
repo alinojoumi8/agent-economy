@@ -11,6 +11,8 @@ function ModalFocusHarness() {
   });
   return <section ref={dialogRef} role="dialog" aria-label="Focus harness">
     <button type="button">Fallback action</button>
+    <label><input type="radio" name="focus-choice" defaultChecked /> Primary choice</label>
+    <label><input type="radio" name="focus-choice" /> Alternate choice</label>
   </section>;
 }
 

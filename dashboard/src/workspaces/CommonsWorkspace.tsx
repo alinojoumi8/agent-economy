@@ -1,6 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router";
-import { api } from "../api.js";
+import { Link, useSearchParams } from "react-router";
+import { useWorkspaceProjection } from "./workspaceShared";
 
 type CommonsEntry = {
   id: number; body: string; author_agent_id: number; author_name: string | null;
@@ -23,17 +22,16 @@ type CommonsProjection = {
 };
 
 export function CommonsWorkspace() {
-  const { runId = "run" } = useParams();
   const [search, setSearch] = useSearchParams();
   const kind = search.get("feed") === "hot" ? "hot" : "chronological";
-  const query = useQuery({
-    queryKey: ["world-os", runId, "commons", kind],
-    queryFn: () => api(`/api/commons?kind=${kind}&limit=60`) as Promise<CommonsProjection>,
-    refetchInterval: 5_000,
-  });
-  if (query.isLoading) return <div className="world-os-loading" aria-label="Loading Agent Commons" />;
-  if (query.error) return <div className="world-os-error" role="alert">{query.error.message}</div>;
-  const data = query.data!;
+  const projection = useWorkspaceProjection<CommonsProjection>(
+    "workspace.commons",
+    `/api/v2/workspaces/commons?kind=${kind}&limit=60`,
+  );
+  if (projection.loading) return <div className="world-os-loading" aria-label="Loading Agent Commons" />;
+  if (projection.error) return <div className="world-os-error" role="alert">{projection.error.message}</div>;
+  const data = projection.data!;
+  const runId = projection.runId;
   const setFeed = (feed: "chronological" | "hot") => {
     const next = new URLSearchParams(search);
     next.set("feed", feed);

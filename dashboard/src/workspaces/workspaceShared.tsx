@@ -15,10 +15,10 @@ export function useWorkspaceProjection<T>(projection: string, path: string) {
   const [observerState, setObserverState] = useObserverViewState();
   const { transport } = useWorkspaceOutletContext();
   const query = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, projection, observerState.tick],
+    queryKey: ["world-os", runId, observerState.fork, projection, path, observerState.tick],
     queryFn: ({ signal }) => {
       const params = projectionScopeParams(observerState);
-      return projectionApi<T>(`${path}?${params}`, signal);
+      return projectionApi<T>(`${path}${path.includes("?") ? "&" : "?"}${params}`, signal);
     },
     retry: false,
     refetchInterval: queryState => (

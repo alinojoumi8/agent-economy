@@ -64,6 +64,29 @@ def test_numeric_claims_canonicalize_money_percent_commas_and_signs():
     ) == {"0.00001", "2500", "$400"}
 
 
+def test_numeric_redaction_governance_events_do_not_become_agent_memories(tmp_path):
+    world = _world(tmp_path, "redaction-observation.db")
+    try:
+        agent_id = int(world.store.scalar(
+            "SELECT id FROM agents WHERE alive=1 ORDER BY id LIMIT 1"))
+        world.store.log_event(
+            0, "model_numeric_narrative_redacted", {"reason": "ungrounded number"},
+            subject_type="agent", subject_id=agent_id, importance=1.0,
+        )
+        world.store.log_event(
+            0, "goods_sale", {"quantity": 1}, subject_type="agent",
+            subject_id=agent_id, importance=1.0,
+        )
+        world.runtime.capture_event_observations(0)
+        memories = [str(row["text"]) for row in world.store.query(
+            "SELECT text FROM memories WHERE agent_id=? AND tick=0 ORDER BY id",
+            (agent_id,),
+        )]
+        assert memories == ["I bought goods."]
+    finally:
+        world.close()
+
+
 def test_public_narrative_accepts_only_exact_supplied_numeric_tokens():
     sources = {
         "headline_fact": "$3,000.00",

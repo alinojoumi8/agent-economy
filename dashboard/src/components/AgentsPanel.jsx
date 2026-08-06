@@ -258,7 +258,7 @@ export function AgentModal({ detail, error = "", participant, running, historyLo
     {error && <div role="alert" className="mb-4 rounded-lg border border-coral-300/25 bg-coral-300/[.06] p-3 text-xs text-coral-300">Agent detail request failed: {error}</div>}
     {selectable && <div className="mb-4 flex items-center justify-between rounded-xl border border-mint-300/15 bg-mint-300/[.05] p-3">
       <div><div className="eyebrow">Participant Mode</div><p className="mt-1 text-xs text-slate-400">Control this citizen one validated day at a time.</p></div>
-      <button className="button button-primary" disabled={running || (controlledId && controlledId !== agent.id)}
+      <button className="button button-primary" disabled={running || Boolean(controlledId)}
         onClick={() => onTakeControl(agent.id)}>{controlledId === agent.id ? "Currently controlled" : "Take control"}</button>
     </div>}
     <div className="grid gap-4 lg:grid-cols-3">

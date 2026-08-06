@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from engine.store import Store
 from run_config import load_config
+from server.app import create_app
 from world.commons import CommonsError
 from world.loop import World
 
@@ -116,6 +118,48 @@ def test_feed_policy_hash_scores_positions_and_public_projection_are_determinist
         "SELECT COUNT(*) FROM commons_feed_impressions", default=0) == impressions_before
     assert {first["id"], second["id"]} <= {
         item["id"] for item in public_a["feed"]["entries"]}
+
+
+def test_public_workspace_projection_is_scoped_to_requested_tick(commons_world: World):
+    owner, author = _agents(commons_world)
+    community = commons_world.commons.create_community(owner, name="Historical Commons")
+    first = commons_world.commons.publish(
+        author, body="Visible at the historical tick", community_id=community["id"])
+    commons_world.store.set_meta(tick=2)
+    commons_world.store.commit()
+    commons_world.commons.react(owner, first["id"], "like")
+    commons_world.commons.moderate(
+        owner, first["id"], action="hide", reason="Future moderation canary")
+    future = commons_world.commons.publish(
+        author, body="Future projection canary", community_id=community["id"])
+
+    historical = commons_world.commons.public_overview(as_of_tick=0)
+    assert historical["tick"] == 0
+    assert [item["id"] for item in historical["feed"]["entries"]] == [first["id"]]
+    assert historical["feed"]["entries"][0]["reaction_count"] == 0
+    assert historical["feed"]["entries"][0]["moderation_label"] is None
+    assert historical["profiles"][0]["reputation"] == 0
+    assert future["id"] not in {item["id"] for item in historical["feed"]["entries"]}
+
+    with TestClient(create_app(commons_world)) as client:
+        response = client.get(
+            "/api/v2/workspaces/commons",
+            params={"tick": 0, "kind": "chronological", "limit": 60},
+        )
+        bad_fork = client.get(
+            "/api/v2/workspaces/commons", params={"fork_id": "wrong"},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection"] == "workspace.commons"
+    assert payload["tick"] == 0
+    assert payload["data"] == historical
+    assert bad_fork.status_code == 409
+
+    with pytest.raises(CommonsError) as invalid_tick:
+        commons_world.commons.public_overview(as_of_tick="not-a-tick")  # type: ignore[arg-type]
+    assert invalid_tick.value.status_code == 400
+    assert str(invalid_tick.value) == "commons projection tick must be an integer"
 
 
 def test_moderation_requires_separate_scope_and_in_world_role(commons_world: World):

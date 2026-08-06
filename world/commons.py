@@ -437,7 +437,8 @@ class CommonsService:
                 "feed": self.feed(viewer_agent_id, kind=kind, limit=limit)}
 
     def public_overview(self, *, limit: int = 50,
-                        kind: str = "chronological") -> dict[str, Any]:
+                        kind: str = "chronological",
+                        as_of_tick: int | None = None) -> dict[str, Any]:
         """Return the sanitized human Observatory projection without an exposure.
 
         Human dashboard rendering is not a simulated-agent feed delivery, so it
@@ -445,27 +446,58 @@ class CommonsService:
         """
         if kind not in {"chronological", "hot"}:
             raise CommonsError(400, "invalid public feed kind")
+        if as_of_tick is None:
+            projection_tick = self.store.tick
+        else:
+            try:
+                projection_tick = int(as_of_tick)
+            except (TypeError, ValueError) as exc:
+                raise CommonsError(
+                    400, "commons projection tick must be an integer") from exc
+        if projection_tick < 0 or projection_tick > self.store.tick:
+            raise CommonsError(409, "commons projection tick is outside the recorded run")
         policy = self.store.query_one(
-            "SELECT * FROM commons_feed_policies WHERE algorithm=? AND active=1 "
-            "ORDER BY version DESC,id DESC LIMIT 1", (kind,))
+            "SELECT * FROM commons_feed_policies WHERE algorithm=? AND created_tick<=? "
+            "ORDER BY created_tick DESC,version DESC,id DESC LIMIT 1",
+            (kind, projection_tick))
         if policy is None:
             raise CommonsError(503, "feed policy unavailable")
         rows = self.store.query(
             "SELECT e.*,a.name AS author_name,a.occupation,a.alive,"
             "c.slug AS community_slug,c.name AS community_name,"
             "x.status AS connection_status,"
+            "(SELECT m.reason FROM commons_moderation_actions m WHERE m.entry_id=e.id "
+            "AND m.action='label' AND m.created_tick<=? "
+            "ORDER BY m.created_tick DESC,m.id DESC LIMIT 1) AS historical_moderation_label,"
             "(SELECT COUNT(*) FROM commons_reactions r WHERE r.entry_id=e.id "
-            "AND r.status='active') AS reaction_count,"
+            "AND r.created_tick<=? AND COALESCE((SELECT json_extract(ev.payload_json,'$.status') "
+            "FROM events ev WHERE ev.kind='commons_reaction_changed' AND ev.tick<=? "
+            "AND CAST(json_extract(ev.payload_json,'$.entry_id') AS INTEGER)=r.entry_id "
+            "AND CAST(json_extract(ev.payload_json,'$.agent_id') AS INTEGER)=r.agent_id "
+            "AND json_extract(ev.payload_json,'$.reaction')=r.reaction "
+            "ORDER BY ev.tick DESC,ev.id DESC LIMIT 1),'active')='active') AS reaction_count,"
             "(SELECT COUNT(*) FROM commons_entries q WHERE q.parent_entry_id=e.id "
-            "AND q.status='published') AS reply_count "
+            "AND q.created_tick<=? AND COALESCE((SELECT qm.action "
+            "FROM commons_moderation_actions qm WHERE qm.entry_id=q.id "
+            "AND qm.action IN ('hide','remove','restore') AND qm.created_tick<=? "
+            "ORDER BY qm.created_tick DESC,qm.id DESC LIMIT 1),'restore')='restore') AS reply_count "
             "FROM commons_entries e JOIN agents a ON a.id=e.author_agent_id "
             "LEFT JOIN commons_communities c ON c.id=e.community_id "
             "LEFT JOIN external_agent_connections x ON x.actor_id=e.author_agent_id "
-            "WHERE e.status='published' AND a.alive=1 "
-            "AND (e.community_id IS NULL OR c.visibility='public') ORDER BY e.id")
+            "AND x.created_tick<=? "
+            "WHERE e.created_tick<=? "
+            "AND (a.died_tick IS NULL OR a.died_tick>?) "
+            "AND (e.community_id IS NULL OR (c.visibility='public' AND c.created_tick<=?)) "
+            "AND COALESCE((SELECT m.action FROM commons_moderation_actions m "
+            "WHERE m.entry_id=e.id AND m.action IN ('hide','remove','restore') "
+            "AND m.created_tick<=? ORDER BY m.created_tick DESC,m.id DESC LIMIT 1),"
+            "'restore')='restore' ORDER BY e.id",
+            (projection_tick, projection_tick, projection_tick, projection_tick,
+             projection_tick, projection_tick, projection_tick, projection_tick,
+             projection_tick, projection_tick))
         ranked: list[tuple[tuple[int, int], Any, dict[str, int]]] = []
         for row in rows:
-            age = max(0, self.store.tick - int(row["created_tick"]))
+            age = max(0, projection_tick - int(row["created_tick"]))
             components = {"reactions": int(row["reaction_count"]),
                           "replies": int(row["reply_count"]), "age_ticks": age}
             hot_score = components["reactions"] * 1000 + components["replies"] * 500 - age
@@ -482,11 +514,17 @@ class CommonsService:
                 ranked[:max(1, min(int(limit), 100))], 1):
             author_id = int(row["author_agent_id"])
             author_ids.add(author_id)
+            entry_document = self._entry_document(row)
+            entry_document["status"] = "published"
+            entry_document["moderation_label"] = row["historical_moderation_label"]
             entries.append({
-                **self._entry_document(row),
+                **entry_document,
                 "position": position,
                 "score_components": components,
-                "author_connected_status": row["connection_status"],
+                "author_connected_status": (
+                    row["connection_status"]
+                    if projection_tick == self.store.tick else None
+                ),
                 "causal_observatory": {
                     "source_kind": "commons_entry", "source_id": int(row["id"]),
                 },
@@ -495,24 +533,51 @@ class CommonsService:
         if author_ids:
             placeholders = ",".join("?" for _ in author_ids)
             profile_rows = self.store.query(
-                "SELECT p.*,a.occupation,a.alive,x.status AS connection_status "
+                "SELECT p.*,a.occupation,1 AS alive,x.status AS connection_status,"
+                "COALESCE((SELECT SUM((CASE json_extract(ev.payload_json,'$.reaction') "
+                "WHEN 'insightful' THEN 2 WHEN 'like' THEN 1 WHEN 'agree' THEN 1 ELSE 0 END) "
+                "* (CASE json_extract(ev.payload_json,'$.status') WHEN 'active' THEN 1 ELSE -1 END)) "
+                "FROM events ev JOIN commons_entries ce ON ce.id="
+                "CAST(json_extract(ev.payload_json,'$.entry_id') AS INTEGER) "
+                "WHERE ev.kind='commons_reaction_changed' AND ev.tick<=? "
+                "AND ce.author_agent_id=p.agent_id),0) AS historical_reputation,"
+                "CASE WHEN EXISTS(SELECT 1 FROM commons_moderation_actions lm "
+                "JOIN commons_entries le ON le.id=lm.entry_id "
+                "WHERE le.author_agent_id=p.agent_id AND lm.action='limit_author' "
+                "AND lm.created_tick<=?) THEN 'limited' ELSE 'active' END "
+                "AS historical_profile_status "
                 "FROM commons_profiles p JOIN agents a ON a.id=p.agent_id "
                 "LEFT JOIN external_agent_connections x ON x.actor_id=p.agent_id "
-                f"WHERE p.agent_id IN ({placeholders}) ORDER BY p.reputation DESC,p.agent_id",
-                tuple(sorted(author_ids)))
-            profiles = [self._profile_document(row) for row in profile_rows]
+                "AND x.created_tick<=? "
+                f"WHERE p.agent_id IN ({placeholders}) "
+                "AND (a.died_tick IS NULL OR a.died_tick>?) "
+                "ORDER BY historical_reputation DESC,p.agent_id",
+                (projection_tick, projection_tick, projection_tick,
+                 *sorted(author_ids), projection_tick))
+            profiles = []
+            for row in profile_rows:
+                document = self._profile_document(row)
+                document["reputation"] = int(row["historical_reputation"] or 0)
+                document["status"] = str(row["historical_profile_status"])
+                if projection_tick != self.store.tick:
+                    document["connected_agent_status"] = None
+                profiles.append(document)
         communities = [dict(row) for row in self.store.query(
             "SELECT c.id,c.slug,c.name,c.description,c.visibility,c.created_tick,"
-            "COUNT(CASE WHEN m.status='active' THEN 1 END) AS member_count "
+            "COUNT(CASE WHEN m.joined_tick<=? AND (m.updated_tick>? OR m.status='active') "
+            "THEN 1 END) AS member_count "
             "FROM commons_communities c LEFT JOIN commons_memberships m "
             "ON m.community_id=c.id WHERE c.status='active' AND c.visibility='public' "
-            "GROUP BY c.id ORDER BY c.id")]
+            "AND c.created_tick<=? GROUP BY c.id ORDER BY c.id",
+            (projection_tick, projection_tick, projection_tick))]
         moderation = self.store.query_one(
             "SELECT COUNT(*) AS action_count,"
-            "(SELECT COUNT(*) FROM commons_appeals WHERE status='open') AS open_appeals "
-            "FROM commons_moderation_actions")
+            "(SELECT COUNT(*) FROM commons_appeals WHERE created_tick<=? "
+            "AND (resolved_tick IS NULL OR resolved_tick>?)) AS open_appeals "
+            "FROM commons_moderation_actions WHERE created_tick<=?",
+            (projection_tick, projection_tick, projection_tick))
         return {
-            "version": "ae.commons.public.v1", "tick": self.store.tick,
+            "version": "ae.commons.public.v1", "tick": projection_tick,
             "feed": {"feed_kind": kind, "candidate_set_hash": candidate_hash,
                      "policy": {"id": int(policy["id"]),
                                 "key": str(policy["policy_key"]),

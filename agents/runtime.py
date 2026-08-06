@@ -1389,7 +1389,8 @@ class AgentRuntime:
         events = self.store.query(
             "SELECT * FROM events WHERE tick=? AND kind NOT IN "
             "('action_rejected','metrics_snapshot','arrival_scheduled',"
-            "'belief_updated','belief_update_normalized','belief_update_rejected') "
+            "'belief_updated','belief_update_normalized','belief_update_rejected',"
+            "'model_numeric_narrative_redacted') "
             "ORDER BY id", (tick,))
         for ev in events:
             payload = load_json(ev["payload_json"], {}) or {}

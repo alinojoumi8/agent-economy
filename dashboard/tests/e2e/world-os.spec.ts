@@ -765,6 +765,21 @@ test("modal initial focus ignores a detached caller target", async ({ page }) =>
     .getByRole("button", { name: "Fallback action" })).toBeFocused();
 });
 
+test("modal focus trap treats a named radio group as one tab stop", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-radio-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container);
+  });
+  const harness = page.locator("#modal-radio-focus-test-root");
+  await harness.getByRole("radio", { name: "Primary choice" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(harness.getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
 test("Oracle failures render an alert and restore the request control", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
   await page.evaluate(async () => {

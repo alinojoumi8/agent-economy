@@ -82,6 +82,18 @@ test("Commons feed changes preserve the complete observer query state", () => {
   assert.match(source, /next\.set\("feed", feed\)/);
   assert.match(source, /setSearch\(next\)/);
   assert.doesNotMatch(source, /setSearch\(\{ feed:/);
+  assert.match(source, /useWorkspaceProjection<CommonsProjection>/);
+  assert.match(source, /\/api\/v2\/workspaces\/commons\?kind=/);
+  assert.doesNotMatch(source, /\/api\/commons/);
+  assert.doesNotMatch(source, /useQuery/);
+});
+
+test("workspace projection keys and requests include path-specific parameters", () => {
+  const source = readFileSync(
+    new URL("../src/workspaces/workspaceShared.tsx", import.meta.url), "utf8",
+  );
+  assert.match(source, /projection, path, observerState\.tick/);
+  assert.match(source, /path\.includes\("\?"\) \? "&" : "\?"/);
 });
 
 test("world workspace normalizes public map data without inventing coordinates", () => {

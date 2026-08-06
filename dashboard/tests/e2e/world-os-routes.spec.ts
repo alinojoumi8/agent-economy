@@ -52,6 +52,23 @@ async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = 
     let body: unknown;
     if (path === "/api/v2/mode") {
       body = { hosted: false, mode: "local" };
+    } else if (path === "/api/v2/workspaces/commons") {
+      body = envelope("commons", url, {
+        version: "ae.commons.public.v1", tick: historical ? 3 : 6,
+        feed: {
+          feed_kind: url.searchParams.get("kind") || "chronological",
+          candidate_set_hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          policy: { id: 1, key: "public-hot", version: 1, algorithm: "hot" },
+          entries: [{
+            id: 1, body: "Bounded historical commons post", author_agent_id: 1,
+            author_name: "Supplier Officer", author_connected_status: null,
+            community_name: null, created_tick: 3, reaction_count: 0, reply_count: 0,
+            moderation_label: null, position: 1,
+            causal_observatory: { source_kind: "commons_entry", source_id: 1 },
+          }],
+        },
+        communities: [], profiles: [], moderation: { action_count: 0, open_appeals: 0 },
+      });
     } else if (path === "/api/v2/workspaces/world") {
       body = envelope("world", url, {
         enabled: true,
@@ -183,6 +200,40 @@ test("all canonical workspace routes navigate with observer context and validate
 
   expect(diagnostics.historicalBodies.length).toBeGreaterThan(0);
   expect(diagnostics.historicalBodies.join("\n")).not.toContain(FUTURE_CANARY);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("world selection URL gives a validated place precedence over region", async ({ page }) => {
+  const diagnostics = await setup(page);
+  await page.goto("/runs/run-demo/world?region=2&place=1&fork=fork-1&tick=3");
+  await expect(page.getByLabel("Region")).toHaveValue("");
+  await expect(page.getByLabel("Place")).toHaveValue("1");
+  await expect(page.locator(".world-os-world-inspector").getByRole("heading", { name: "Place" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.has("region")).toBe(false);
+  expect(new URL(page.url()).searchParams.get("place")).toBe("1");
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("Commons uses the selected run fork and historical tick without polling", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests: string[] = [];
+  await page.route("**/api/v2/workspaces/commons?*", async route => {
+    requests.push(route.request().url());
+    await route.fallback();
+  });
+  await page.goto("/runs/run-demo/commons?fork=fork-1&tick=3&feed=hot");
+  await expect(page.getByRole("heading", { name: "Agent Commons" })).toBeVisible();
+  await expect(page.getByText("Bounded historical commons post")).toBeVisible();
+  await expect.poll(() => requests.length).toBeGreaterThan(0);
+  const first = new URL(requests[0]);
+  expect(first.searchParams.get("fork_id")).toBe("fork-1");
+  expect(first.searchParams.get("tick")).toBe("3");
+  expect(first.searchParams.get("kind")).toBe("hot");
+  const baseline = requests.length;
+  await page.waitForTimeout(3_200);
+  expect(requests).toHaveLength(baseline);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });

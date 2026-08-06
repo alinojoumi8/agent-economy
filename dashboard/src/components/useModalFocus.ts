@@ -26,8 +26,20 @@ export function isTabbableElement(element: HTMLElement): boolean {
 }
 
 function tabbableElements(dialog: HTMLElement): HTMLElement[] {
-  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)]
+  const candidates = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)]
     .filter(isTabbableElement);
+  const radios = candidates.filter((element): element is HTMLInputElement => (
+    element instanceof HTMLInputElement && element.type === "radio" && Boolean(element.name)
+  ));
+  return candidates.filter(element => {
+    if (!(element instanceof HTMLInputElement)
+      || element.type !== "radio"
+      || !element.name) return true;
+    const group = radios.filter(candidate => (
+      candidate.name === element.name && candidate.form === element.form
+    ));
+    return element === (group.find(candidate => candidate.checked) || group[0]);
+  });
 }
 
 type ModalFocusOptions = {
