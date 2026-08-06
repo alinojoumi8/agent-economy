@@ -68,6 +68,36 @@ def test_genesis_does_not_hire_any_selected_founder_as_initial_staff(tmp_path):
         world.close()
 
 
+def test_semantics_six_genesis_ignores_supply_recovery_profile(tmp_path):
+    disabled = _world(
+        tmp_path,
+        "legacy-recovery-disabled.db",
+        engine_semantics_version=6,
+        supply_recovery={"enabled": False},
+    )
+    enabled = _world(
+        tmp_path,
+        "legacy-recovery-enabled.db",
+        engine_semantics_version=6,
+        supply_recovery={
+            "enabled": True,
+            "activation_tick": 0,
+            "wage_floor_cents": 100_000,
+        },
+    )
+    try:
+        query = (
+            "SELECT firm_id,agent_id,wage_cents,start_tick,status,pay_interval_ticks,"
+            "next_pay_tick FROM employments ORDER BY id"
+        )
+        assert [tuple(row) for row in enabled.store.query(query)] == [
+            tuple(row) for row in disabled.store.query(query)
+        ]
+    finally:
+        enabled.close()
+        disabled.close()
+
+
 def test_recovery_employment_target_rejects_missing_row_aliases(
         tmp_path, monkeypatch):
     world = _world(tmp_path, "missing-recovery-alias.db")

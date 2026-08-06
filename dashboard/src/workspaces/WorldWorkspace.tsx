@@ -55,11 +55,23 @@ export function WorldWorkspace() {
   const selectedPlace = model.places.find(place => Number(place.id) === selectedPlaceId) || null;
 
   useEffect(() => {
-    if (selectedRegionId == null || selectedPlaceId == null) return;
+    if (projection.loading) return;
     const next = new URLSearchParams(searchParams);
-    next.delete("region");
-    setSearchParams(next, { replace: true });
-  }, [searchParams, selectedPlaceId, selectedRegionId, setSearchParams]);
+    if (selectedPlace) next.delete("region");
+    else if (selectedPlaceId != null) next.delete("place");
+    if (selectedRegionId != null && !selectedRegion) next.delete("region");
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [
+    projection.loading,
+    searchParams,
+    selectedPlace,
+    selectedPlaceId,
+    selectedRegion,
+    selectedRegionId,
+    setSearchParams,
+  ]);
 
   const select = (key: "region" | "place", rawValue: string) => {
     const next = new URLSearchParams(searchParams);

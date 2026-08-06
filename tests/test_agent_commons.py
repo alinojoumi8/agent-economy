@@ -120,6 +120,46 @@ def test_feed_policy_hash_scores_positions_and_public_projection_are_determinist
         item["id"] for item in public_a["feed"]["entries"]}
 
 
+def test_live_public_projection_uses_active_policy_and_authoritative_profile(
+    commons_world: World,
+):
+    author, reader = _agents(commons_world)
+    entry = commons_world.commons.publish(author, body="Current projection source")
+    commons_world.commons.react(reader, entry["id"], "insightful")
+    commons_world.store.set_meta(tick=2)
+    commons_world.store.insert(
+        "commons_feed_policies",
+        policy_key="inactive-review-hot",
+        version=99,
+        algorithm="hot",
+        weights_json="{}",
+        created_tick=2,
+        active=0,
+    )
+    commons_world.store.execute(
+        "UPDATE commons_profiles SET reputation=77,status='suspended',updated_tick=2 "
+        "WHERE agent_id=?",
+        (author,),
+    )
+    commons_world.store.commit()
+
+    delivered = commons_world.commons.feed(reader, kind="hot")
+    current = commons_world.commons.public_overview(kind="hot")
+    profile = next(item for item in current["profiles"]
+                   if item["agent_id"] == author)
+
+    assert current["feed"]["policy"] == delivered["policy"]
+    assert current["feed"]["candidate_set_hash"] == delivered["candidate_set_hash"]
+    assert profile["reputation"] == 77
+    assert profile["status"] == "suspended"
+    assert profile["alive"] is True
+
+    historical = commons_world.commons.public_overview(kind="hot", as_of_tick=0)
+    assert historical["feed"]["policy"] == delivered["policy"]
+    assert historical["profiles"][0]["reputation"] == 2
+    assert historical["profiles"][0]["status"] == "active"
+
+
 def test_public_workspace_projection_is_scoped_to_requested_tick(commons_world: World):
     owner, author = _agents(commons_world)
     community = commons_world.commons.create_community(owner, name="Historical Commons")

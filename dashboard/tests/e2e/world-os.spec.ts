@@ -783,6 +783,44 @@ test("modal focus trap treats a named radio group as one tab stop", async ({ pag
   await expect(harness.getByRole("button", { name: "Fallback action" })).toBeFocused();
 });
 
+test("modal focus trap wraps from a connected non-tabbable initial target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-heading-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container, { connectedInitial: true });
+  });
+  const harness = page.locator("#modal-heading-focus-test-root");
+  await expect(harness.getByRole("heading", { name: "Initial heading" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(harness.getByRole("button", { name: "Fallback action" })).toBeFocused();
+});
+
+test("modal cleanup falls back to the connected previous focus target", async ({ page }) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const previous = document.createElement("button");
+    previous.id = "modal-previous-focus";
+    previous.textContent = "Previous focus";
+    document.body.append(previous);
+    previous.focus();
+    const { mountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "modal-return-focus-test-root";
+    document.body.append(container);
+    mountModalFocusHarness(container, { disconnectedReturn: true });
+  });
+  await expect(page.locator("#modal-return-focus-test-root")
+    .getByRole("button", { name: "Fallback action" })).toBeFocused();
+  await page.evaluate(async () => {
+    const { unmountModalFocusHarness } = await import("/tests/e2e/fixtures/modalFocusHarness.jsx");
+    unmountModalFocusHarness(document.querySelector("#modal-return-focus-test-root"));
+  });
+  await expect(page.getByRole("button", { name: "Previous focus" })).toBeFocused();
+});
+
 test("Oracle failures render an alert and restore the request control", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
   await page.evaluate(async () => {

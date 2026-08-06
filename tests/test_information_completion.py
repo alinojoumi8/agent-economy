@@ -285,6 +285,15 @@ def test_news_projection_canonicalizes_only_resolved_positive_integer_sources(
     }, enforcement_tick=1)
 
     assert projected["source_event_ids"] == [event_id]
+
+    float_only = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Production update",
+        "body": "A recorded production update.",
+        "source_event_ids": [float(event_id)],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+    assert float_only["source_event_ids"] == []
     world.close()
 
 

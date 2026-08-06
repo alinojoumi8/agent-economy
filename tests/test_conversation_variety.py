@@ -184,6 +184,7 @@ def test_conversation_rng_and_prior_lines_are_not_numeric_grounding_sources(tmp_
     stored = [str(row["text"]) for row in world.store.query(
         "SELECT text FROM messages ORDER BY seq")]
     assert raw_lines
+    assert stored
     assert not set(raw_lines) & set(stored)
     world.close()
 

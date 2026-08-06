@@ -168,7 +168,10 @@ def test_recovery_genesis_uses_the_feasible_configured_wage_floor(tmp_path):
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-genesis.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-genesis.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         rows = world.store.query(
             "SELECT e.wage_cents,f.product_json FROM employments e JOIN firms f "
@@ -213,7 +216,10 @@ def test_recovery_genesis_respects_the_activation_tick(tmp_path):
         "sales_observation_ticks": 30,
         "activation_tick": 1,
     }
-    world = _world(tmp_path, "recovery-preactivation-genesis.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-preactivation-genesis.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         wages = [int(row["wage_cents"]) for row in world.store.query(
             "SELECT e.wage_cents FROM employments e JOIN firms f ON f.id=e.firm_id "
@@ -237,7 +243,10 @@ def test_recovery_runtime_blocks_an_unsustainable_employer_action(tmp_path):
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -274,7 +283,10 @@ def test_recovery_runtime_allows_a_feasible_floor_wage_action(tmp_path):
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-floor.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-floor.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -311,7 +323,10 @@ def test_recovery_runtime_uses_persisted_active_pay_interval_for_price_margin(tm
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-price-floor.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-price-floor.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id,product_json FROM firms WHERE "
@@ -362,7 +377,10 @@ def test_recovery_runtime_rejects_price_for_nonproductive_recovery_work(tmp_path
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-nonproductive-price.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-nonproductive-price.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id,product_json FROM firms WHERE "
@@ -1201,7 +1219,10 @@ def test_default_action_executor_has_no_recovery_hook(tmp_path):
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-default-executor.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-default-executor.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -1232,7 +1253,10 @@ def test_recovery_runtime_rejects_margin_valid_wage_that_fails_cash_reserve(tmp_
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-actual-wage.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-actual-wage.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id,account_id FROM firms WHERE "
@@ -1272,12 +1296,15 @@ def test_recovery_runtime_reassesses_each_negotiated_action_wage(tmp_path):
         "gross_margin_coverage_bps": 12_500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 1,
+        "max_headcount_per_firm": 3,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
     world = _world(
         tmp_path, "recovery-runtime-negotiated-wages.db",
-        engine_semantics_version=6, supply_recovery=profile,
+        engine_semantics_version=6,
+        firms={"count": 3, "listed": 1, "target_headcount": 1},
+        supply_recovery=profile,
     )
     try:
         firm = world.store.query_one(
@@ -1359,12 +1386,15 @@ def test_recovery_duplicate_offer_keeps_the_executor_stale_reason(tmp_path):
         "gross_margin_coverage_bps": 12_500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 1,
+        "max_headcount_per_firm": 3,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
     world = _world(
         tmp_path, "recovery-runtime-duplicate-offer.db",
-        engine_semantics_version=6, supply_recovery=profile,
+        engine_semantics_version=6,
+        firms={"count": 3, "listed": 1, "target_headcount": 1},
+        supply_recovery=profile,
     )
     try:
         firm = world.store.query_one(
@@ -1421,10 +1451,16 @@ def test_recovery_runtime_reassesses_the_direct_hire_posted_wage(tmp_path):
         "gross_margin_coverage_bps": 12_500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 1,
+        "max_headcount_per_firm": 3,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-direct-hire-wage.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-direct-hire-wage.db",
+        engine_semantics_version=2,
+        firms={"count": 3, "listed": 1, "target_headcount": 1},
+        supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id,account_id FROM firms WHERE "
@@ -1472,7 +1508,10 @@ def test_recovery_runtime_leaves_unauthorized_rejection_and_runs_legitimate_acti
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-authorization.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-authorization.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -1519,10 +1558,16 @@ def test_recovery_runtime_allows_two_completed_hires_when_profile_cap_is_two(tmp
         "gross_margin_coverage_bps": 12_500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 2,
+        "max_headcount_per_firm": 3,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-two-hires.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-two-hires.db",
+        engine_semantics_version=2,
+        firms={"count": 3, "listed": 1, "target_headcount": 1},
+        supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -1570,7 +1615,10 @@ def test_recovery_runtime_rejects_duplicate_live_vacancy(tmp_path):
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-vacancy.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-vacancy.db",
+        engine_semantics_version=7, supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "
@@ -1606,10 +1654,16 @@ def test_recovery_runtime_keeps_a_stale_rejection_and_runs_the_next_action(tmp_p
         "gross_margin_coverage_bps": 12_500,
         "cash_payroll_coverage_periods": 2,
         "max_hires_per_firm_per_period": 1,
+        "max_headcount_per_firm": 3,
         "demand_buffer_ticks": 5,
         "sales_observation_ticks": 30,
     }
-    world = _world(tmp_path, "recovery-runtime-stale.db", supply_recovery=profile)
+    world = _world(
+        tmp_path, "recovery-runtime-stale.db",
+        engine_semantics_version=2,
+        firms={"count": 3, "listed": 1, "target_headcount": 1},
+        supply_recovery=profile,
+    )
     try:
         firm = world.store.query_one(
             "SELECT id,founder_agent_id FROM firms WHERE "

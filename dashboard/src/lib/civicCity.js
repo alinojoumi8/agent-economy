@@ -11,7 +11,7 @@ export function semanticReceiptForEvent(event, receipts = []) {
   if (!event || event.id === null || event.id === undefined) return null;
   const embedded = event.payload?.semantic_receipt;
   if (embedded && typeof embedded === "object") {
-    return { eventId: event.id, tick: event.tick, ...embedded };
+    return { ...embedded, eventId: event.id, tick: event.tick };
   }
   return receipts.find(receipt => String(receipt?.eventId) === String(event.id)) || null;
 }

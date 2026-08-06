@@ -89,10 +89,13 @@ export function useModalFocus({
       }
       const first = focusable[0];
       const last = focusable.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      const activeElement = document.activeElement;
+      const activeIsTabbable = activeElement instanceof HTMLElement
+        && focusable.includes(activeElement);
+      if (event.shiftKey && (activeElement === first || !activeIsTabbable)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (activeElement === last || !activeIsTabbable)) {
         event.preventDefault();
         first.focus();
       }
@@ -101,7 +104,11 @@ export function useModalFocus({
     return () => {
       dialog.removeEventListener("keydown", onKeyDown);
       if (!hadTabIndex) dialog.removeAttribute("tabindex");
-      (returnFocusRef?.current || previous)?.focus();
+      const requestedReturn = returnFocusRef?.current;
+      const returnTarget = requestedReturn?.isConnected
+        ? requestedReturn
+        : (previous?.isConnected ? previous : null);
+      returnTarget?.focus();
     };
   }, [active, initialFocusRef, returnFocusRef]);
 

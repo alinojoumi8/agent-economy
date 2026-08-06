@@ -44,7 +44,11 @@ function envelope(path: string, url: URL, data: unknown) {
   };
 }
 
-async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = []) {
+async function mockWorkspaceApis(
+  page: Page,
+  servedBodies: string[] = [],
+  servedHistoricalBodies: string[] = [],
+) {
   await page.route("**/api/v2/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -77,7 +81,11 @@ async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = 
           { id: 2, name: "South", currency_code: "USD", population_target: 1, x: 0.7, y: 0.6, legal_ruleset: "south-rules" },
         ],
         agents: [{ id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", region_id: 1 }],
-        organizations: [{ id: 1, name: "Northstar Foods", sector: "food", status: "listed", active: true, region_id: 1 }],
+        organizations: [{
+          id: 1, name: "Northstar Foods", sector: "food", status: "listed",
+          active: true, region_id: 1,
+          ...(historical ? {} : { owner_id: PRIVATE_CANARY }),
+        }],
         places: [{ id: 1, name: "North Exchange", kind: "market", region_id: 1, region_name: "North", x: 0.3, y: 0.4, capacity: 20 }],
         presence: [{ id: 1, tick: historical ? 3 : 6, agent_id: 1, place_id: 1 }],
         flows: [{ id: 1, kind: "trade", origin_region_id: 1, destination_region_id: 2, tick: 3 }],
@@ -85,7 +93,7 @@ async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = 
     } else if (path === "/api/v2/workspaces/organizations") {
       body = envelope("organizations", url, {
         organizations: [
-          { id: 1, type: "firm", name: "Northstar Foods", sector: "food", region_id: 1, region_name: "North", status: "listed", active: true, employees: 2, balance_cents: 1200, currency_code: "CAD", founded_tick: 1 },
+          { id: 1, type: "firm", name: "Northstar Foods", sector: "food", region_id: 1, region_name: "North", status: "listed", active: true, employees: 2, balance_cents: 1200, currency_code: "CAD", founded_tick: 1, ...(historical ? {} : { owner_id: PRIVATE_CANARY }) },
           { id: 2, type: "bank", name: "Civic Bank", status: "open", active: true, reserve_cents: 900, equity_cents: 300, currency_code: "USD" },
         ],
         institutions: { legal_enabled: !historical, politics_enabled: !historical, agencies: [] },
@@ -117,7 +125,9 @@ async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = 
     } else if (path === "/api/v2/workspaces/experiments") {
       body = envelope("experiments", url, {
         run: { run_id: "run-demo", parent_run_id: null, fork_tick: null, status: "paused" },
-        checkpoints: [{ id: 1, tick: 3, created_at: "2026-08-05" }], shocks: [], predictions: [],
+        checkpoints: [{ id: 1, tick: 3, created_at: "2026-08-05", ...(historical ? {} : { path: PRIVATE_CANARY }) }],
+        shocks: historical ? [] : [{ id: 1, kind: "test", params: { private: PRIVATE_CANARY, future: FUTURE_CANARY } }],
+        predictions: [],
         acceptance: [{ id: 1, scheduled_tick: 3, question: "Replay integrity", status: "passed", detail: "Exact replay receipt stored" }],
         datasets: [{ id: 1, dataset_key: "macro-public", vintage_date: "2026-07", status: "ready" }],
         scenarios: [{ id: 1, scenario_key: "baseline", version: "1", title: "Baseline" }],
@@ -143,9 +153,8 @@ async function mockWorkspaceApis(page: Page, servedHistoricalBodies: string[] = 
       return route.fulfill({ status: 404, json: { detail: "not mocked" } });
     }
     const serialized = JSON.stringify(body);
-    expect(serialized).not.toContain(PRIVATE_CANARY);
+    servedBodies.push(serialized);
     if (historical) {
-      expect(serialized).not.toContain(FUTURE_CANARY);
       servedHistoricalBodies.push(serialized);
     }
     return route.fulfill({ contentType: "application/json", body: serialized });
@@ -169,9 +178,10 @@ async function setup(page: Page) {
     }
   });
   await installSocket(page);
+  const bodies: string[] = [];
   const historicalBodies: string[] = [];
-  await mockWorkspaceApis(page, historicalBodies);
-  return { consoleErrors, requestFailures, historicalBodies };
+  await mockWorkspaceApis(page, bodies, historicalBodies);
+  return { consoleErrors, requestFailures, bodies, historicalBodies };
 }
 
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
@@ -199,7 +209,11 @@ test("all canonical workspace routes navigate with observer context and validate
   await expect(page).toHaveURL(/experiments\/1\?fork=fork-1&view=campaigns/);
 
   expect(diagnostics.historicalBodies.length).toBeGreaterThan(0);
+  expect(diagnostics.bodies.join("\n")).toContain(PRIVATE_CANARY);
+  expect(diagnostics.bodies.join("\n")).toContain(FUTURE_CANARY);
+  expect(diagnostics.historicalBodies.join("\n")).not.toContain(PRIVATE_CANARY);
   expect(diagnostics.historicalBodies.join("\n")).not.toContain(FUTURE_CANARY);
+  await expect(page.locator("body")).not.toContainText(PRIVATE_CANARY);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });
@@ -212,6 +226,20 @@ test("world selection URL gives a validated place precedence over region", async
   await expect(page.locator(".world-os-world-inspector").getByRole("heading", { name: "Place" })).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.has("region")).toBe(false);
   expect(new URL(page.url()).searchParams.get("place")).toBe("1");
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("world selection removes unresolved region and place URL parameters", async ({ page }) => {
+  const diagnostics = await setup(page);
+  for (const parameter of ["region", "place"]) {
+    await page.goto(`/runs/run-demo/world?${parameter}=999&fork=fork-1&tick=3`);
+    await expect(page.getByRole("heading", { name: "World", exact: true }).last()).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.has(parameter)).toBe(false);
+    const current = new URL(page.url());
+    expect(current.searchParams.get("fork")).toBe("fork-1");
+    expect(current.searchParams.get("tick")).toBe("3");
+  }
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });

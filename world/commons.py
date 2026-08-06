@@ -455,10 +455,16 @@ class CommonsService:
             projection_tick = as_of_tick
         if projection_tick < 0 or projection_tick > self.store.tick:
             raise CommonsError(409, "commons projection tick is outside the recorded run")
-        policy = self.store.query_one(
-            "SELECT * FROM commons_feed_policies WHERE algorithm=? AND created_tick<=? "
-            "ORDER BY created_tick DESC,version DESC,id DESC LIMIT 1",
-            (kind, projection_tick))
+        live_projection = projection_tick == self.store.tick
+        if live_projection:
+            policy = self.store.query_one(
+                "SELECT * FROM commons_feed_policies WHERE algorithm=? AND active=1 "
+                "ORDER BY version DESC,id DESC LIMIT 1", (kind,))
+        else:
+            policy = self.store.query_one(
+                "SELECT * FROM commons_feed_policies WHERE algorithm=? AND created_tick<=? "
+                "ORDER BY created_tick DESC,version DESC,id DESC LIMIT 1",
+                (kind, projection_tick))
         if policy is None:
             raise CommonsError(503, "feed policy unavailable")
         rows = self.store.query(
@@ -531,8 +537,10 @@ class CommonsService:
         profiles = []
         if author_ids:
             placeholders = ",".join("?" for _ in author_ids)
+            reputation_order = (
+                "p.reputation" if live_projection else "historical_reputation")
             profile_rows = self.store.query(
-                "SELECT p.*,a.occupation,1 AS alive,x.status AS connection_status,"
+                "SELECT p.*,a.occupation,a.died_tick,x.status AS connection_status,"
                 "COALESCE((SELECT SUM((CASE json_extract(ev.payload_json,'$.reaction') "
                 "WHEN 'insightful' THEN 2 WHEN 'like' THEN 1 WHEN 'agree' THEN 1 ELSE 0 END) "
                 "* (CASE json_extract(ev.payload_json,'$.status') WHEN 'active' THEN 1 ELSE -1 END)) "
@@ -550,15 +558,23 @@ class CommonsService:
                 "AND x.created_tick<=? "
                 f"WHERE p.agent_id IN ({placeholders}) "
                 "AND (a.died_tick IS NULL OR a.died_tick>?) "
-                "ORDER BY historical_reputation DESC,p.agent_id",
+                f"ORDER BY {reputation_order} DESC,p.agent_id",
                 (projection_tick, projection_tick, projection_tick,
                  *sorted(author_ids), projection_tick))
             profiles = []
             for row in profile_rows:
                 document = self._profile_document(row)
-                document["reputation"] = int(row["historical_reputation"] or 0)
-                document["status"] = str(row["historical_profile_status"])
-                if projection_tick != self.store.tick:
+                document["alive"] = (
+                    row["died_tick"] is None
+                    or int(row["died_tick"]) > projection_tick
+                )
+                if live_projection:
+                    document["reputation"] = int(row["reputation"])
+                    document["status"] = str(row["status"])
+                else:
+                    document["reputation"] = int(
+                        row["historical_reputation"] or 0)
+                    document["status"] = str(row["historical_profile_status"])
                     document["connected_agent_status"] = None
                 profiles.append(document)
         communities = [dict(row) for row in self.store.query(

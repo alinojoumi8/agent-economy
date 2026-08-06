@@ -280,9 +280,11 @@ class Genesis:
         # Maintained semantics reserve every chosen founder before any opening
         # payroll is built. Stored semantics 1-6 keep their recorded staffing
         # stream for exact replay compatibility.
+        maintained_semantics = int(
+            self.config.get("engine_semantics_version", 2)) >= 7
         selected_founders = (
             tuple(founders[:actual_count])
-            if int(self.config.get("engine_semantics_version", 2)) >= 7
+            if maintained_semantics
             else ()
         )
         calibrated = bool(self.calibration and self.calibration.enabled)
@@ -291,6 +293,7 @@ class Genesis:
         recovery = recovery_settings(self.config)
         recovery_at_genesis = (
             recovery if bool(recovery["enabled"])
+            and maintained_semantics
             and 0 >= int(recovery["activation_tick"])
             else None
         )

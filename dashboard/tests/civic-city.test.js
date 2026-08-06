@@ -48,7 +48,11 @@ test("semantic receipts never fall back to a different selected event", () => {
   );
   assert.deepEqual(
     semanticReceiptForEvent({
-      id: 13, tick: 5, payload: { semantic_receipt: { semantic: "embedded" } },
+      id: 13,
+      tick: 5,
+      payload: {
+        semantic_receipt: { eventId: 999, tick: 999, semantic: "embedded" },
+      },
     }, receipts),
     { eventId: 13, tick: 5, semantic: "embedded" },
   );
