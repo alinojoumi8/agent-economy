@@ -1066,7 +1066,14 @@ class World:
         retained_paths = set()
         stale_rows = []
         for row, database in candidates:
-            if database not in retained_paths and len(retained_paths) < keep_last:
+            manifest = Path(f"{database}.manifest.json")
+            try:
+                complete = database.is_file() and manifest.is_file()
+            except OSError:
+                complete = False
+            if not complete:
+                stale_rows.append((row, database))
+            elif database not in retained_paths and len(retained_paths) < keep_last:
                 retained_paths.add(database)
             else:
                 stale_rows.append((row, database))

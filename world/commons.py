@@ -449,11 +449,10 @@ class CommonsService:
         if as_of_tick is None:
             projection_tick = self.store.tick
         else:
-            try:
-                projection_tick = int(as_of_tick)
-            except (TypeError, ValueError) as exc:
+            if isinstance(as_of_tick, bool) or not isinstance(as_of_tick, int):
                 raise CommonsError(
-                    400, "commons projection tick must be an integer") from exc
+                    400, "commons projection tick must be an integer")
+            projection_tick = as_of_tick
         if projection_tick < 0 or projection_tick > self.store.tick:
             raise CommonsError(409, "commons projection tick is outside the recorded run")
         policy = self.store.query_one(

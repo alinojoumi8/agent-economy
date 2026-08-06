@@ -161,6 +161,14 @@ def test_public_workspace_projection_is_scoped_to_requested_tick(commons_world: 
     assert invalid_tick.value.status_code == 400
     assert str(invalid_tick.value) == "commons projection tick must be an integer"
 
+    for invalid_value in (1.5, True, False):
+        with pytest.raises(CommonsError) as fractional_tick:
+            commons_world.commons.public_overview(  # type: ignore[arg-type]
+                as_of_tick=invalid_value)
+        assert fractional_tick.value.status_code == 400
+        assert str(fractional_tick.value) == (
+            "commons projection tick must be an integer")
+
 
 def test_moderation_requires_separate_scope_and_in_world_role(commons_world: World):
     owner, outsider = _agents(commons_world)

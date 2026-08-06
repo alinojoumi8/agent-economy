@@ -140,7 +140,7 @@ def minimum_viable_price_cents(*, input_cost_cents: int, output_per_worker: int,
         max(0, int(wage_cents)) * normalized["gross_margin_coverage_bps"]
         + denominator - 1
     ) // denominator
-    return max(1, int(input_cost_cents)) + required_margin
+    return max(1, int(input_cost_cents) + required_margin)
 
 
 def _normalized_settings(settings: Mapping[str, Any]) -> dict[str, int]:

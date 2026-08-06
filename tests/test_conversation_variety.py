@@ -376,6 +376,30 @@ def test_shared_topics_rotate_across_conversation_pairs(tmp_path):
     assert "household budgets and the price of essentials" in topics
 
 
+def test_shared_topic_uses_the_publicly_grounded_article_projection(tmp_path):
+    world = _world(tmp_path)
+    try:
+        world.config["beliefs"] = {"model_grounding_from_tick": 1}
+        world.conversations.config["beliefs"] = {
+            "model_grounding_from_tick": 1}
+        event_id = world.store.log_event(
+            1, "production", {"firm_id": 1, "units": 4},
+            phase="NIGHT_CLOSE", importance=1.0)
+        world.store.insert(
+            "news_articles", tick=1, outlet_id=1, outlet_name="A",
+            headline="Output jumped 987654321%",
+            body="The unsupported increase was 987654321%.",
+            source_event_ids=json.dumps([event_id]), slant_tags="[]", tone=0.0)
+        world.store.commit()
+
+        topic = world.conversations._shared_topic(1)
+
+        assert "987654321" not in topic
+        assert topic == "A archived brief: production"
+    finally:
+        world.close()
+
+
 def test_theme_rotation_advances_by_daily_pair_count(tmp_path):
     world = _world(tmp_path)
     world.conversations.config["budget"]["conversation_pairs"] = 4

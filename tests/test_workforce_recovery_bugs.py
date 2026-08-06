@@ -58,6 +58,16 @@ def _world(tmp_path: Path, name: str, **over) -> World:
     return world
 
 
+def test_genesis_does_not_hire_any_selected_founder_as_initial_staff(tmp_path):
+    world = _world(tmp_path, "founders-are-not-staff.db")
+    try:
+        assert world.store.query(
+            "SELECT e.id FROM employments e JOIN firms f "
+            "ON f.founder_agent_id=e.agent_id WHERE e.status='active'") == []
+    finally:
+        world.close()
+
+
 def test_recovery_employment_target_rejects_missing_row_aliases(
         tmp_path, monkeypatch):
     world = _world(tmp_path, "missing-recovery-alias.db")

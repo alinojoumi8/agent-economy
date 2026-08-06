@@ -55,6 +55,93 @@ def _output_budget(config: dict, key: str, historical_default: int, tick: int) -
     return int(llm.get(key, historical_default))
 
 
+def _public_article_projection(
+        store, config: dict, article, *, enforcement_tick: int) -> dict:
+    """Project one article from canonical public sources and redaction state."""
+    row = dict(article)
+    raw_source_ids = row.get("source_event_ids", [])
+    candidate_ids = (
+        raw_source_ids
+        if isinstance(raw_source_ids, list)
+        else load_json(raw_source_ids, []) or []
+    )
+    source_ids: list[int] = []
+    events = []
+    for event_id in candidate_ids:
+        if type(event_id) is not int or event_id <= 0 or event_id in source_ids:
+            continue
+        event = store.query_one(
+            "SELECT id,tick,kind,payload_json,importance FROM events WHERE id=?",
+            (event_id,),
+        )
+        if event is None:
+            continue
+        source_ids.append(event_id)
+        events.append({
+            "id": int(event["id"]),
+            "tick": int(event["tick"]),
+            "kind": event["kind"],
+            "payload": public_event_payload(
+                event["kind"], load_json(event["payload_json"], {}) or {}),
+            "importance": float(event["importance"]),
+        })
+    original_headline = str(row.get("headline") or "").strip()
+    original_body = str(row.get("body") or "").strip()
+    grounding_enabled = model_grounding_active(config, int(enforcement_tick))
+    sanitized_headline = sanitize_model_numeric_narrative(
+        original_headline,
+        grounding_enabled=grounding_enabled,
+        fallback="",
+        sources=events,
+    )
+    sanitized_body = sanitize_model_numeric_narrative(
+        original_body,
+        grounding_enabled=grounding_enabled,
+        fallback="",
+        sources=events,
+    )
+    row["headline"] = sanitized_headline
+    row["body"] = sanitized_body
+    projection_redacted = (
+        sanitized_headline != original_headline
+        or sanitized_body != original_body
+    )
+    if not sanitized_headline and not sanitized_body:
+        readable = (
+            str(events[0]["kind"]).replace("_", " ")
+            if events else "recorded event"
+        )
+        outlet_name = str(row.get("outlet_name") or "News")
+        row["headline"] = f"{outlet_name} archived brief: {readable}"
+        row["body"] = (
+            f"The public event spine recorded {readable}. "
+            "Unsupported numeric narrative was removed."
+        )
+    row["source_event_ids"] = source_ids
+    raw_tags = row.get("slant_tags", [])
+    row["slant_tags"] = (
+        raw_tags if isinstance(raw_tags, list)
+        else load_json(raw_tags, []) or []
+    )
+    raw_persisted_redaction = row.get("numeric_claims_redacted", 0)
+    persisted_redacted = (
+        raw_persisted_redaction is True
+        or (type(raw_persisted_redaction) is int
+            and raw_persisted_redaction == 1)
+    )
+    persisted_reason = row.get("numeric_claims_redaction_reason")
+    if not persisted_redacted or persisted_reason not in {
+            "missing_source_citation", "ungrounded_numeric_claim"}:
+        persisted_reason = None
+    row["numeric_claims_redacted"] = bool(
+        persisted_redacted or projection_redacted)
+    row["numeric_claims_redaction_reason"] = (
+        persisted_reason or "ungrounded_numeric_claim"
+        if row["numeric_claims_redacted"] else None
+    )
+    return row
+
+
 class Newsroom:
     def __init__(self, economy: Economy, gateway: Gateway, config: dict, shocks):
         self.e = economy
@@ -123,7 +210,13 @@ class Newsroom:
                             art.get("slant_tags", [outlet["slant"]])),
                         source_event_ids=json.dumps(
                             art.get("source_event_ids", [])),
-                        tone=float(art.get("tone", 0.0)), truthful=1)
+                        tone=float(art.get("tone", 0.0)), truthful=1,
+                        numeric_claims_redacted=int(bool(
+                            art.get("numeric_claims_redacted", False))),
+                        numeric_claims_redaction_reason=(
+                            art.get("numeric_claims_redaction_reason")
+                            if art.get("numeric_claims_redacted", False)
+                            else None))
                     # Mirror the article into the v2 claim/exposure economy.
                     # This adapter never fabricates a second source of truth.
                     self.e.information.register_news_article(
@@ -357,76 +450,9 @@ class Newsroom:
         self, article, *, enforcement_tick: int,
     ) -> dict:
         """Return a public article without promoting unsupported stored math."""
-        row = dict(article)
-        raw_source_ids = row.get("source_event_ids", [])
-        source_ids = (
-            raw_source_ids
-            if isinstance(raw_source_ids, list)
-            else load_json(raw_source_ids, []) or []
-        )
-        events = []
-        for event_id in source_ids:
-            try:
-                source_id = int(event_id)
-            except (TypeError, ValueError):
-                continue
-            event = self.store.query_one(
-                "SELECT id,tick,kind,payload_json,importance FROM events WHERE id=?",
-                (source_id,),
-            )
-            if event is None:
-                continue
-            events.append({
-                "id": int(event["id"]),
-                "tick": int(event["tick"]),
-                "kind": event["kind"],
-                "payload": public_event_payload(
-                    event["kind"], load_json(event["payload_json"], {}) or {}),
-                "importance": float(event["importance"]),
-            })
-        original_headline = str(row.get("headline") or "").strip()
-        original_body = str(row.get("body") or "").strip()
-        grounding_enabled = model_grounding_active(
-            self.config, int(enforcement_tick))
-        sanitized_headline = sanitize_model_numeric_narrative(
-            original_headline,
-            grounding_enabled=grounding_enabled,
-            fallback="",
-            sources=events,
-        )
-        sanitized_body = sanitize_model_numeric_narrative(
-            original_body,
-            grounding_enabled=grounding_enabled,
-            fallback="",
-            sources=events,
-        )
-        row["headline"] = sanitized_headline
-        row["body"] = sanitized_body
-        redacted = (
-            sanitized_headline != original_headline
-            or sanitized_body != original_body
-        )
-        if not sanitized_headline and not sanitized_body:
-            readable = (
-                str(events[0]["kind"]).replace("_", " ")
-                if events else "recorded event"
-            )
-            outlet_name = str(row.get("outlet_name") or "News")
-            row["headline"] = f"{outlet_name} archived brief: {readable}"
-            row["body"] = (
-                f"The public event spine recorded {readable}. "
-                "Unsupported numeric narrative was removed."
-            )
-        row["source_event_ids"] = source_ids
-        raw_tags = row.get("slant_tags", [])
-        row["slant_tags"] = (
-            raw_tags if isinstance(raw_tags, list)
-            else load_json(raw_tags, []) or []
-        )
-        row["numeric_claims_redacted"] = redacted
-        row["numeric_claims_redaction_reason"] = (
-            "ungrounded_numeric_claim" if redacted else None)
-        return row
+        return _public_article_projection(
+            self.store, self.config, article,
+            enforcement_tick=enforcement_tick)
 
     def _salient_events(self, tick: int) -> list[dict]:
         kinds = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS - {"quiet_day"}))
@@ -974,17 +1000,18 @@ class Conversations:
         lookback = max(1, int(cfg.get("topic_lookback_ticks", 3)))
         limit = max(2, int(cfg.get("topic_pool_size", 12)))
         rows = self.store.query(
-            "SELECT headline, source_event_ids FROM news_articles WHERE tick>=? "
+            "SELECT * FROM news_articles WHERE tick>=? "
             "ORDER BY tick DESC, id DESC LIMIT ?",
             (tick - lookback + 1, limit))
         topics: list[str] = []
         seen: set[str] = set()
         seen_sources: set[tuple[int, ...]] = set()
         for row in rows:
-            topic = str(row["headline"] or "").strip()
+            public_article = _public_article_projection(
+                self.store, self.config, row, enforcement_tick=tick)
+            topic = str(public_article["headline"] or "").strip()
             key = topic.lower()
-            sources = load_json(row["source_event_ids"], []) or []
-            source_key = tuple(sorted(int(source) for source in sources))
+            source_key = tuple(sorted(public_article["source_event_ids"]))
             if source_key and source_key in seen_sources:
                 continue
             if topic and key not in seen:

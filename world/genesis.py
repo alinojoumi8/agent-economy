@@ -277,6 +277,14 @@ class Genesis:
         self.prng.shuffle(founders)
         n_listed = int(firm_cfg.get("listed", 3))
         actual_count = min(count, len(founders))
+        # Maintained semantics reserve every chosen founder before any opening
+        # payroll is built. Stored semantics 1-6 keep their recorded staffing
+        # stream for exact replay compatibility.
+        selected_founders = (
+            tuple(founders[:actual_count])
+            if int(self.config.get("engine_semantics_version", 2)) >= 7
+            else ()
+        )
         calibrated = bool(self.calibration and self.calibration.enabled)
         firm_samples = (self.calibration.sample_firms(actual_count)
                         if calibrated else [])
@@ -326,7 +334,8 @@ class Genesis:
                 firm_id, product["unit_price_cents"],
                 target_headcount=target_headcount,
                 product=product,
-                recovery_settings_at_genesis=recovery_at_genesis)
+                recovery_settings_at_genesis=recovery_at_genesis,
+                excluded_agent_ids=selected_founders)
             if calibrated:
                 self.calibration.record_realized_firm(
                     firm_samples[i], realized_headcount)
@@ -346,7 +355,8 @@ class Genesis:
     def _staff_firm(self, firm_id: int, price: int, *,
                     target_headcount: int | None = None,
                     product: dict | None = None,
-                    recovery_settings_at_genesis: dict | None = None) -> int:
+                    recovery_settings_at_genesis: dict | None = None,
+                    excluded_agent_ids: tuple[int, ...] = ()) -> int:
         """Create legacy staff or one viable recovery seed hire at tick zero."""
         wage = max(250_000, price * 400)
         firm = self.e.firms.get(firm_id)
@@ -384,10 +394,18 @@ class Genesis:
             pool_limit = max(0, int(target_headcount))
             if recovery_seed_hire:
                 pool_limit = min(1, pool_limit)
+        excluded = tuple(dict.fromkeys(
+            int(agent_id) for agent_id in excluded_agent_ids))
+        exclusion_sql = (
+            f"AND id NOT IN ({','.join('?' for _ in excluded)}) "
+            if excluded else ""
+        )
         pool = self.store.query(
-            "SELECT id FROM agents WHERE kind='citizen' AND retired=0 AND employer_id IS NULL "
-            "AND age BETWEEN 20 AND 64 AND (? IS NULL OR region_id=?) ORDER BY id LIMIT ?",
-            (firm["region_id"], firm["region_id"], pool_limit))
+            "SELECT id FROM agents WHERE kind='citizen' AND retired=0 "
+            "AND employer_id IS NULL AND age BETWEEN 20 AND 64 "
+            "AND (? IS NULL OR region_id=?) "
+            f"{exclusion_sql}ORDER BY id LIMIT ?",
+            (firm["region_id"], firm["region_id"], *excluded, pool_limit))
         pay_interval = int(self.config.get("firms", {}).get("pay_interval_ticks", 30))
         for r in pool:
             aid = int(r["id"])

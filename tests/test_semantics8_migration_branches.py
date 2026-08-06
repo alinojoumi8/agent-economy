@@ -97,12 +97,13 @@ def test_application_failure_without_active_transaction_is_wrapped():
 
 def test_noop_migration_covers_optional_verify_paths(tmp_path, monkeypatch):
     store = Store(str(tmp_path / "optional-verify.db"))
-    migration = Migration.create(18, "optional_verify", "CREATE TABLE optional_verify(id INTEGER);")
+    migration = Migration.create(
+        19, "optional_verify", "CREATE TABLE optional_verify(id INTEGER);")
     monkeypatch.setattr(
         registry, "_MIGRATIONS", (*registry.registered_migrations(), migration))
     try:
         assert registry.apply_migrations(
-            store.conn, source_schema=17, target_schema=18) == (18,)
+            store.conn, source_schema=18, target_schema=19) == (19,)
         assert store.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE name='optional_verify'") == 1
     finally:

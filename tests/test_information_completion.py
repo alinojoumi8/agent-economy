@@ -267,6 +267,69 @@ def test_news_projection_retains_safe_field_when_other_numeric_field_is_redacted
     world.close()
 
 
+def test_news_projection_canonicalizes_only_resolved_positive_integer_sources(
+        tmp_path):
+    world = _world(tmp_path, "canonical-news-sources.db")
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0)
+    world.store.commit()
+
+    projected = world.newsroom.public_article_projection({
+        "outlet_name": "The Ledger",
+        "headline": "Production update",
+        "body": "A recorded production update.",
+        "source_event_ids": [
+            True, event_id, float(event_id), event_id, 0, -1, 999_999, "1"],
+        "slant_tags": [],
+    }, enforcement_tick=1)
+
+    assert projected["source_event_ids"] == [event_id]
+    world.close()
+
+
+def test_published_numeric_redaction_provenance_survives_projection(
+        tmp_path, monkeypatch):
+    world = _world(
+        tmp_path,
+        "persisted-news-redaction.db",
+        beliefs={"model_grounding_from_tick": 1},
+    )
+    event_id = world.store.log_event(
+        1, "production", {"firm_id": 1, "units": 4},
+        phase="NIGHT_CLOSE", importance=1.0)
+    world.store.commit()
+    grounded = world.newsroom._ground_article(
+        world.newsroom.outlets[0], {
+            "headline": "Production surged 987654321%",
+            "body": "The unsupported increase was 987654321%.",
+            "source_event_ids": [event_id],
+            "slant_tags": ["market"],
+            "tone": 0.0,
+        }, world.newsroom._daily_events(1), grounding_tick=1)
+    world.newsroom.outlets = [world.newsroom.outlets[0]]
+
+    async def no_drafts(*_args, **_kwargs):
+        return []
+
+    async def redacted_story(*_args, **_kwargs):
+        return grounded
+
+    monkeypatch.setattr(world.newsroom, "_report_stories", no_drafts)
+    monkeypatch.setattr(world.newsroom, "_write_story", redacted_story)
+    asyncio.run(world.newsroom.publish(1))
+
+    row = world.store.query_one(
+        "SELECT * FROM news_articles WHERE tick=1 ORDER BY id LIMIT 1")
+    assert int(row["numeric_claims_redacted"]) == 1
+    assert row["numeric_claims_redaction_reason"] == "ungrounded_numeric_claim"
+    projected = world.newsroom.public_article_projection(row, enforcement_tick=1)
+    assert projected["numeric_claims_redacted"] is True
+    assert projected["numeric_claims_redaction_reason"] == (
+        "ungrounded_numeric_claim")
+    world.close()
+
+
 def test_news_grounding_falls_back_on_malformed_article_fields(tmp_path):
     world = _world(tmp_path, "malformed-article.db")
     event_id = world.store.log_event(

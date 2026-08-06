@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from agents.citizen_actions import citizen_action_registry
 from agents.participant import PARTICIPANT_TYPES
 from engine.actions import VALID_TYPES
+from engine.schema import SCHEMA_VERSION
 from engine.store import Store
 from run_config import load_config
 from server.app import create_app
@@ -103,7 +104,7 @@ def test_migration_join_documents_and_security_headers(citizen_client):
         for row in world.store.query("PRAGMA table_info(external_agent_connections)")
     }
     assert "passport_id" in columns
-    assert int(world.store.get_meta()["schema_version"]) == 17
+    assert int(world.store.get_meta()["schema_version"]) == SCHEMA_VERSION
 
     join = client.get("/join/local-sandbox")
     assert join.status_code == 200

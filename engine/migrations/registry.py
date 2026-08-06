@@ -12,6 +12,7 @@ from . import (
     v015_cognition,
     v016_passport_bindings,
     v017_civic_city,
+    v018_news_redaction_provenance,
 )
 
 
@@ -59,6 +60,10 @@ _MIGRATIONS = (
     Migration.create(
         17, v017_civic_city.NAME, v017_civic_city.SQL,
         verify=v017_civic_city.verify),
+    Migration.create(
+        18, v018_news_redaction_provenance.NAME,
+        v018_news_redaction_provenance.SQL,
+        verify=v018_news_redaction_provenance.verify),
 )
 
 

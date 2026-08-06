@@ -1,8 +1,8 @@
 {
   "id": "hash-contract-v2",
-  "schema_version": 17,
+  "schema_version": 18,
   "extends_contract": "hash-contract-v1",
-  "schema_inventory_sha256": "495657150cd398601e4dab9532e09275e5ec054b90834e85a8525021afad7865",
+  "schema_inventory_sha256": "1c67660e71d06adca32d2b040d760180ac554897f74a5d0bf0ac356503594ae0",
   "extension_tables": [
     "external_agent_connections", "external_agent_credentials", "external_oauth_codes",
     "external_oauth_clients",
@@ -18,7 +18,10 @@
   ],
   "extension_columns": {
     "run_meta": ["external_agent_influenced"],
-    "agent_decisions": ["attention_context_key"]
+    "agent_decisions": ["attention_context_key"],
+    "news_articles": [
+      "numeric_claims_redacted", "numeric_claims_redaction_reason"
+    ]
   },
   "authoritative_tables": [
     "acceptance_checkpoints", "accounts", "action_proposals", "agencies",

@@ -248,6 +248,29 @@ def test_retention_removes_a_stale_row_when_its_artifacts_are_missing(tmp_path):
         world.close()
 
 
+@pytest.mark.parametrize("missing_artifact", ["database", "manifest"])
+def test_incomplete_newest_checkpoint_does_not_consume_a_retention_slot(
+        tmp_path, missing_artifact):
+    world = _world(tmp_path, keep_last=2)
+    try:
+        oldest = _checkpoint(world, 100)
+        incomplete = _checkpoint(world, 200)
+        orphan = incomplete if missing_artifact == "manifest" else _manifest(incomplete)
+        missing = _manifest(incomplete) if missing_artifact == "manifest" else incomplete
+        missing.unlink()
+
+        newest = _checkpoint(world, 300)
+
+        assert [int(row["tick"]) for row in _checkpoint_rows(world)] == [100, 300]
+        assert oldest.exists() and _manifest(oldest).exists()
+        assert newest.exists() and _manifest(newest).exists()
+        assert not incomplete.exists()
+        assert not _manifest(incomplete).exists()
+        assert not orphan.exists()
+    finally:
+        world.close()
+
+
 def test_retention_logs_unlink_failure_and_keeps_the_stale_row(tmp_path, monkeypatch):
     world = _world(tmp_path, keep_last=1)
     try:

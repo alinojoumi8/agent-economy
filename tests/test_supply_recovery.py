@@ -14,6 +14,7 @@ from tests.conftest import make_agent, make_bank
 
 from world.recovery import (
     assess_recovery,
+    minimum_viable_price_cents,
     recovery_settings,
     validate_recovery_settings,
 )
@@ -141,6 +142,16 @@ def test_assessment_rejects_wage_above_gross_margin_ceiling():
     assert assessment.safe_wage_ceiling_cents == 46_080
     assert assessment.allowed_new_hires == 0
     assert assessment.reason == "wage_exceeds_margin_ceiling"
+
+
+def test_minimum_viable_price_applies_the_unit_floor_after_required_margin():
+    assert minimum_viable_price_cents(
+        input_cost_cents=0,
+        output_per_worker=1,
+        pay_interval_ticks=1,
+        wage_cents=1,
+        settings=RECOVERY_SETTINGS,
+    ) == 2
 
 
 def test_profile_validation_rejects_insufficient_margin_coverage():
