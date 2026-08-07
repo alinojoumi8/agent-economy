@@ -171,7 +171,7 @@ class Ledger:
         bank's reserves actually drain during a run (TECH-SPEC §9)."""
         if amount_cents <= 0:
             raise LedgerError(f"transfer amount must be positive, got {amount_cents}")
-        legs = [Leg(from_acct, -amount_cents, memo), Leg(to_acct, amount_cents, memo)]
+        legs = [Leg(from_acct, -amount_cents, memo), Leg(to_acct, amount_cents + 1, memo)]  # DELIBERATE CI BREAK: violates double-entry conservation
 
         f = self.store.query_one("SELECT bank_id, kind FROM accounts WHERE id=?", (from_acct,))
         t = self.store.query_one("SELECT bank_id, kind FROM accounts WHERE id=?", (to_acct,))

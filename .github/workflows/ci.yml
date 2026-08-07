@@ -56,6 +56,67 @@ jobs:
           tests/test_prd_completion.py
           tests/test_recorded_replay_golden.py
 
+  core-subset:
+    name: Core subset guard (engine/world/agents)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Edits to run.py, llm/gateway.py, agents/, world/, and engine/ otherwise
+    # only reach tests on the manual full-matrix dispatch. Run one deterministic
+    # shard of the engine/world/agents-focused tests on every PR via the same
+    # scripts.pytest_shard mechanism the matrix uses, without rebuilding it.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Validate dependency environment
+        run: python -m pip check
+      - name: Compile Python sources
+        run: python -m compileall -q agents engine llm world run.py
+      - name: Run engine, world, and agent focused tests as a single shard
+        run: >
+          python -m pytest -q
+          -p scripts.pytest_shard
+          --ci-shard-index 0
+          --ci-shard-count 1
+          tests/test_agent_commons.py
+          tests/test_arrival_personas.py
+          tests/test_compatibility_guards.py
+          tests/test_credit_and_firms.py
+          tests/test_credit_semantics7.py
+          tests/test_exchange.py
+          tests/test_governor_and_world.py
+          tests/test_labor_ipo.py
+          tests/test_ledger.py
+          tests/test_lifecycle.py
+          tests/test_lolr_decisions.py
+          tests/test_memory_ranking.py
+          tests/test_native_entrepreneurship.py
+          tests/test_participant_mode.py
+          tests/test_passport_citizenship.py
+          tests/test_replay_source_lifecycle.py
+          tests/test_retirement_semantics7.py
+          tests/test_scheduler_scaling.py
+          tests/test_semantics11_cognition.py
+          tests/test_semantics12_civic_city.py
+          tests/test_semantics7_spec_closure.py
+          tests/test_semantics8_causal_membership.py
+          tests/test_semantics8_communication_branches.py
+          tests/test_semantics8_communications.py
+          tests/test_semantics8_foundations.py
+          tests/test_semantics8_migration_branches.py
+          tests/test_semantics8_projection_branches.py
+          tests/test_semantics8_projections_api.py
+          tests/test_supplier_warning_protocol.py
+          tests/test_supplier_warning_protocol_branches.py
+          tests/test_workforce_recovery_bugs.py
+          tests/scenarios/test_supplier_warning_30_tick.py
+          tests/stateful/test_communication_model.py
+
   dashboard:
     if: >
       github.event_name == 'pull_request' ||
