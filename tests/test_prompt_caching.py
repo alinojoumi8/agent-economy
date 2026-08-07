@@ -117,6 +117,43 @@ def test_openai_cache_modes_control_wire_key_and_preserve_usage(monkeypatch):
     assert "prompt_cache_key" not in bodies[-1]
 
 
+def test_openai_adapter_preserves_deepseek_cache_hit_usage(monkeypatch):
+    import httpx
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, endpoint, *, headers, json):
+            return _Response({
+                "choices": [{"message": {"content": "{}"}}],
+                "usage": {
+                    "prompt_tokens": 700,
+                    "prompt_cache_hit_tokens": 512,
+                    "prompt_cache_miss_tokens": 188,
+                    "completion_tokens": 2,
+                },
+            })
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    adapter = OpenAICompatAdapter({
+        "base_url": "https://api.deepseek.com",
+        "prompt_cache_mode": "provider_automatic",
+    })
+
+    result = asyncio.run(adapter.complete(
+        "deepseek-v4-flash", [{"role": "user", "content": "JSON"}]))
+
+    assert result.in_tokens == 700
+    assert result.cached_in_tokens == 512
+
+
 def test_openai_call_token_limit_overrides_provider_request_default(monkeypatch):
     import httpx
 

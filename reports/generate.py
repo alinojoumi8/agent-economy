@@ -491,6 +491,9 @@ async def generate_report_async(store: Store, world=None,
     """Generate a report without nesting an event loop for its optional LLM call."""
     _require_completed_boundary(store)
     narrative, provenance = await _resolve_narrative(store, world)
+    gateway = getattr(world, "gateway", None) if world is not None else None
+    if gateway is not None:
+        store.set_meta(governor_json=json.dumps(gateway.governor.status()))
     return _render_report(store, narrative, provenance, out_dir)
 
 

@@ -12,6 +12,7 @@ in `run_meta`, so a database remains self-describing.
 | `runs/base.yaml` | Default offline development world | None |
 | `runs/v2-live-minimax.yaml` | Default 1,000-agent MiniMax M3 runtime | Live core/shared services, deterministic periphery, $150 cap |
 | `runs/production.yaml` | Approx. 100-agent MiniMax M3 runtime | Live inference |
+| `runs/live-smoke-deepseek.yaml` | Bounded 14-citizen / 51-agent DeepSeek V4 Flash runtime | Live inference, same mechanics and $2 cap as `live-smoke.yaml` |
 | `runs/acceptance/rehearsal.yaml` | Free 365-tick acceptance rehearsal | None |
 | `runs/acceptance/pilot.yaml` | Bounded 30-tick rumor pilot | Live, capped at $25 |
 | `runs/acceptance/production.yaml` | Full 365-tick acceptance | Live, uncapped policy plus $200 efficiency gate |
@@ -31,7 +32,7 @@ Secrets belong in the ignored `.env` file or process environment.
 
 | Variable | Purpose |
 |---|---|
-| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash route in the evolving-live profile |
+| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash route in the evolving-live and DeepSeek smoke profiles |
 | `MINIMAX_API_KEY` | MiniMax Token Plan route in production profiles |
 | `KIMI_API_KEY` | Optional Kimi Code membership route for custom profiles |
 | `ANTHROPIC_API_KEY` | Optional custom Anthropic route |

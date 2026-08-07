@@ -12,12 +12,20 @@ population:
 budget:
   cap_usd: null
 
+reports:
+  # MiniMax-M3 completion usage includes private reasoning before the public
+  # JSON narrative, so leave enough room for the bounded report contract.
+  narrative_max_tokens: 1600
+
 llm:
   # Safe for the Token Plan's documented 3-4 concurrent-agent entry tier.
   concurrency: 3
   provider_retries: 1
   decision_max_tokens: 2400
   founder_max_tokens: 4096
+  reporter_max_tokens: 1600
+  newsroom_max_tokens: 1200
+  conversation_max_tokens: 800
   providers:
     minimax:
       kind: openai_compat
