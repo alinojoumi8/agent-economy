@@ -1,0 +1,34 @@
+# Small, paid, bounded DeepSeek V4 Flash profile for the same acceptance
+# mechanics as live-smoke.yaml. Every model-eligible call is fail-closed to the
+# official DeepSeek endpoint and exact model identifier.
+extends: live-smoke.yaml
+
+llm:
+  providers:
+    deepseek:
+      kind: openai_compat
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      concurrency: 6
+      prompt_cache_mode: provider_automatic
+      timeout_s: 60
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      request_defaults:
+        stream: false
+        # Non-thinking mode avoids multi-turn reasoning-content replay while
+        # preserving the JSON action contract used by the simulation.
+        thinking: {type: disabled}
+  route_contract: {provider: deepseek, model: deepseek-v4-flash}
+  default_route: {provider: deepseek, model: deepseek-v4-flash}
+  routes:
+    citizen:        {provider: deepseek, model: deepseek-v4-flash}
+    founder:        {provider: deepseek, model: deepseek-v4-flash}
+    central_banker: {provider: deepseek, model: deepseek-v4-flash}
+    credit_officer: {provider: deepseek, model: deepseek-v4-flash}
+    reporter:       {provider: deepseek, model: deepseek-v4-flash}
+    editor:         {provider: deepseek, model: deepseek-v4-flash}
+    vc_partner:     {provider: deepseek, model: deepseek-v4-flash}
+    oracle:         {provider: deepseek, model: deepseek-v4-flash}
+  pricing:
+    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}

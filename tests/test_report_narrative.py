@@ -109,6 +109,10 @@ def test_llm_report_narrative_is_public_bounded_metered_and_provenanced(tmp_path
     assert "private report scratch work" not in json.dumps(persisted_response)
     assert "private raw reasoning" not in json.dumps(persisted_response)
     assert float(call["cost_usd"]) > 0
+    persisted_governor = load_json(
+        world.store.get_meta()["governor_json"], {})
+    assert persisted_governor == world.gateway.governor.status()
+    assert persisted_governor["total_spend_usd"] > 0
     assert provenance == {
         "source": "llm",
         "fallback": False,

@@ -228,6 +228,7 @@ baseline and fails closed when history is missing.
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/v2-live-minimax.yaml` | Default 1,000-agent live world | MiniMax M3 for the 100-agent core/shared services; deterministic periphery; $150 cap |
 | `runs/production.yaml` | Approx. 100-agent live world | MiniMax M3 for every model-eligible call |
+| `runs/live-smoke-deepseek.yaml` | Bounded 14-citizen / 51-agent DeepSeek acceptance world | DeepSeek V4 Flash for every model-eligible call; same mechanics and $2 cap as `live-smoke.yaml` |
 | `runs/v2-spec-closure-rehearsal.yaml` | Five-tick semantics-7 closure fixture | Scripted, free, deterministic |
 | `runs/v2-spec-closure-live.yaml` | Five-tick bounded semantics-7 pilot | MiniMax persona/strategic roles; scripted background; $1 cap |
 | `runs/r21-real-us.yaml` | SCF/SUSB calibrated fictional genesis | Scripted, free, deterministic |
@@ -254,6 +255,12 @@ ollama create agent-economy-qwen3.5:9b-16k -f deploy/ollama/Modelfile.qwen3.5-9b
 python run.py --config runs/evolving-live.yaml --preflight
 python run.py --config runs/evolving-live.yaml --preflight-live
 python run.py --config runs/evolving-live.yaml --serve --approve-live-inference
+
+# Paired paid-provider smoke profiles for comparable acceptance runs.
+python run.py --config runs/live-smoke.yaml --preflight-live --approve-live-inference
+python run.py --config runs/live-smoke-deepseek.yaml --preflight-live --approve-live-inference
+python run.py --config runs/live-smoke.yaml --ticks 1 --approve-live-inference
+python run.py --config runs/live-smoke-deepseek.yaml --ticks 1 --approve-live-inference
 ```
 
 Static preflight validates configuration. Live preflight also sends one small
