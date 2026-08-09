@@ -1,6 +1,7 @@
 """Bounded read-only tools available to the Oracle analyst."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -14,7 +15,16 @@ class OracleToolError(ValueError):
 
 
 MAX_PROMPT_EVIDENCE_CHARS = 8_000
-ORACLE_PREFLIGHT_CONTRACT = "state_bound_v1"
+ORACLE_PREFLIGHT_CONTRACT_V1 = "state_bound_v1"
+ORACLE_PREFLIGHT_CONTRACT_V2 = "state_bound_v2"
+# v2 advertises the scheduled-tick metric namespace and rejects unknown metric
+# names before any read executes. A recorded run keeps the contract it was
+# planned under, so v1 sources replay and audit byte-identically.
+ORACLE_PREFLIGHT_CONTRACT = ORACLE_PREFLIGHT_CONTRACT_V2
+ORACLE_PREFLIGHT_CONTRACTS = (
+    ORACLE_PREFLIGHT_CONTRACT_V1, ORACLE_PREFLIGHT_CONTRACT_V2)
+MAX_CATALOG_METRIC_NAMES = 200
+MAX_METRIC_NAME_SUGGESTIONS = 5
 MAX_PROMPT_RESULT_CHARS = 700
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -196,6 +206,44 @@ def validate_oracle_tool_args(name: str, args: dict[str, Any]) -> None:
             _plain_int(args["depth"], "depth", minimum=1, maximum=20)
 
 
+def unknown_metric_names_error(
+        unknown: list[str], available: list[str]) -> str:
+    """Name the misses and the closest real metrics, deterministically.
+
+    The planner guesses names such as ``bank1_deposits`` or ``GDP`` for the
+    real ``bank_deposits:1`` and ``gdp_proxy``. An exact-match miss returns an
+    empty series with no explanation, so a guess is never corrected; naming the
+    nearest advertised metric lets the existing retry loop repair the plan.
+    """
+    by_folded: dict[str, str] = {}
+    for name in available:
+        by_folded.setdefault(name.casefold(), name)
+    ranked: list[list[str]] = []
+    for name in unknown:
+        folded = name.casefold()
+        matches = difflib.get_close_matches(
+            folded, by_folded, n=MAX_METRIC_NAME_SUGGESTIONS, cutoff=0.6)
+        scored = set(matches)
+        # An abbreviation such as "GDP" for "gdp_proxy" scores below the ratio
+        # cutoff yet is an unambiguous prefix of the real name.
+        matches.extend(
+            candidate for candidate in by_folded
+            if candidate not in scored
+            and (candidate.startswith(folded) or folded.startswith(candidate)))
+        ranked.append([by_folded[candidate] for candidate in matches])
+    # Round-robin so every miss in the plan is answered before any one miss
+    # spends the whole bound.
+    suggestions: list[str] = []
+    for rank in range(max((len(item) for item in ranked), default=0)):
+        for item in ranked:
+            if rank < len(item) and item[rank] not in suggestions:
+                suggestions.append(item[rank])
+    detail = (
+        f"closest available: {', '.join(suggestions[:MAX_METRIC_NAME_SUGGESTIONS])}"
+        if suggestions else "see available_metric_names")
+    return f"unknown metric names: {', '.join(unknown)} ({detail})"
+
+
 def validate_oracle_plan(
         plan: Any, *, max_queries: int = 8,
         current_tick: int | None = None,
@@ -267,7 +315,22 @@ def validate_oracle_plan(
         if not isinstance(catalog, dict):
             raise OracleToolError(
                 f"unknown or non-read-only Oracle tool: {name!r}")
-        if name in {"sample_conversations", "inspect_agent"}:
+        if name == "query_metrics":
+            # Absent only on the v1 catalog, whose recorded plans must keep
+            # validating exactly as they did when they were planned.
+            available = catalog.get("available_metric_names")
+            if isinstance(available, list):
+                known = set(available)
+                requested = {item for item in args.get("names", [])}
+                unknown = sorted(requested - known)
+                # Reject only a plan that resolves nothing, which is the
+                # observed failure: every guessed name missed. A metric not yet
+                # recorded this early alongside real ones must still return the
+                # real series rather than cost the plan all of its evidence.
+                if unknown and len(unknown) == len(requested):
+                    raise OracleToolError(
+                        unknown_metric_names_error(unknown, available))
+        elif name in {"sample_conversations", "inspect_agent"}:
             agent_id = args.get("agent_id")
             if (agent_id is not None and agent_id not in
                     catalog.get("available_agent_ids", [])):
@@ -290,7 +353,9 @@ def validate_oracle_plan(
     return queries
 
 
-def oracle_tool_definitions(store, *, tick: int | None = None) -> list[dict]:
+def oracle_tool_definitions(
+        store, *, tick: int | None = None,
+        preflight_contract: str = ORACLE_PREFLIGHT_CONTRACT) -> list[dict]:
     """Canonical governed tool catalog shared by runtime and evidence audit."""
     bank_ids = [int(row["id"]) for row in store.query(
         "SELECT id FROM banks ORDER BY id LIMIT 20")]
@@ -318,6 +383,9 @@ def oracle_tool_definitions(store, *, tick: int | None = None) -> list[dict]:
     # richer, historically reproducible catalog used by release receipts.
     if tick is None:
         return legacy
+    if preflight_contract not in ORACLE_PREFLIGHT_CONTRACTS:
+        raise OracleToolError(
+            f"unknown Oracle preflight contract: {preflight_contract!r}")
 
     catalog_tick = int(tick)
     max_ids = 100
@@ -351,10 +419,26 @@ def oracle_tool_definitions(store, *, tick: int | None = None) -> list[dict]:
                 "SELECT 1 FROM accounts WHERE owner_type=? LIMIT 1",
                 (entity_type,)):
             available_entity_types.append(entity_type)
-    return [
-        {"name": "query_metrics", "args": {
+    query_metrics: dict[str, Any] = {
+        "name": "query_metrics", "args": {
             "names": "list[str]", "from_tick": "int|null",
-            "to_tick": "int|null", "limit": "1..200"}},
+            "to_tick": "int|null", "limit": "1..200"}}
+    if preflight_contract != ORACLE_PREFLIGHT_CONTRACT_V1:
+        # Metric names are dynamic (bank_deposits:1, stock:7, fx:USD_EUR), so
+        # the namespace is read from state at the scheduled tick rather than
+        # enumerated in code, and stays historically reproducible.
+        metric_names = [
+            str(row["name"]) for row in store.query(
+                "SELECT DISTINCT name FROM metrics WHERE tick<=? "
+                "ORDER BY name LIMIT ?",
+                (catalog_tick, MAX_CATALOG_METRIC_NAMES + 1))]
+        # A release arm advertises ~46 of the 200 slots. Should a run ever
+        # overflow them, advertise nothing rather than a truncated list:
+        # preflight must never reject a metric that actually exists.
+        if len(metric_names) <= MAX_CATALOG_METRIC_NAMES:
+            query_metrics["available_metric_names"] = metric_names
+    return [
+        query_metrics,
         {"name": "read_news", "args": {
             "from_tick": "int|null", "to_tick": "int|null", "limit": "1..20"}},
         {"name": "sample_conversations", "args": {

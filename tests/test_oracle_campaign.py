@@ -50,9 +50,12 @@ from oracle.analyst import (
     _answer_user_json, _bound_prompt_evidence,
 )
 from oracle.tools import (
+    MAX_CATALOG_METRIC_NAMES,
     MAX_PROMPT_EVIDENCE_CHARS, ORACLE_PREFLIGHT_CONTRACT,
+    ORACLE_PREFLIGHT_CONTRACT_V1, ORACLE_PREFLIGHT_CONTRACT_V2,
     OracleToolError, bound_oracle_evidence,
     canonical_oracle_json, oracle_tool_definitions,
+    unknown_metric_names_error,
     validate_bounded_oracle_evidence, validate_oracle_plan,
     validate_oracle_tool_args,
 )
@@ -242,7 +245,11 @@ def _write_run(
                 metric_tick, f"bank_deposits:{bank_index}", deposits)
     store.log_event(0, "genesis", {"banks": 2, "agents": 100, "firms": 14})
     checkpoint_ticks = sorted({
-        *range(10, 335, 10), *question_ticks, 335,
+        *range(oracle_campaign.RELEASE_CHECKPOINT_EVERY,
+               oracle_campaign.RELEASE_HORIZON_TICKS,
+               oracle_campaign.RELEASE_CHECKPOINT_EVERY),
+        *question_ticks,
+        oracle_campaign.RELEASE_HORIZON_TICKS,
     })
     for tick in checkpoint_ticks:
         checkpoint_path = (
@@ -630,7 +637,7 @@ def _manifest(
                 planner_rejection_state if index == 0 else "valid"),
             planner_rejection_attempt=(
                 planner_rejection_attempt if index == 0 else 1))
-        for index in range(10)
+        for index in range(len(RELEASE_SEEDS))
     ]
     path = tmp_path / "oracle-campaign.yaml"
     path.write_text(yaml.safe_dump({
@@ -638,8 +645,9 @@ def _manifest(
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
-        "minimum_runs": 10,
-        "minimum_forecasts": 60,
+        "minimum_runs": len(RELEASE_SEEDS),
+        "minimum_forecasts": (
+            len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS)),
         "p90_limit_ms": 60_000,
         "naive_brier": 0.25,
         "runs": runs,
@@ -677,7 +685,8 @@ def test_curated_oracle_campaign_passes_and_is_read_only_deterministic(tmp_path)
     assert first == second
     assert first["passed"] is True
     assert first["excluded_runs"] == []
-    assert first["calibration"]["n"] == 60
+    assert first["calibration"]["n"] == (
+        len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS))
     assert first["calibration"]["brier"] == pytest.approx(0.01)
     assert {check["id"]: check["passed"] for check in first["checks"]} == {
         "complete_manifest": True,
@@ -707,7 +716,9 @@ def test_curated_oracle_campaign_excludes_non_live_run_with_reasons(tmp_path):
     receipt = evaluate_oracle_campaign(manifest)
 
     assert receipt["passed"] is False
-    assert receipt["calibration"]["n"] == 54
+    # One arm is excluded for a non-live provider, so every other arm counts.
+    assert receipt["calibration"]["n"] == (
+        (len(RELEASE_SEEDS) - 1) * len(oracle_campaign.RELEASE_QUESTION_TICKS))
     assert receipt["excluded_runs"][0]["run_id"] == _FIRST_RUN_ID
     excluded = next(run for run in receipt["runs"] if not run["eligible"])
     assert any(
@@ -732,7 +743,10 @@ def test_oracle_campaign_manifest_cannot_weaken_release_sample_floor(tmp_path):
         "runs": [],
     }), encoding="utf-8")
 
-    with pytest.raises(OracleCampaignError, match="minimum_runs must be"):
+    with pytest.raises(
+            OracleCampaignError,
+            match=(r"minimum_runs must be the fixed release floor "
+                   rf"{oracle_campaign.DEFAULT_MINIMUM_RUNS}")):
         evaluate_oracle_campaign(manifest)
 
 
@@ -743,8 +757,9 @@ def test_oracle_campaign_manifest_cannot_weaken_latency_gate(tmp_path):
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": RELEASE_COMMITMENT_SHA256,
-        "minimum_runs": 10,
-        "minimum_forecasts": 60,
+        "minimum_runs": len(RELEASE_SEEDS),
+        "minimum_forecasts": (
+            len(RELEASE_SEEDS) * len(oracle_campaign.RELEASE_QUESTION_TICKS)),
         "p90_limit_ms": 999_999,
         "runs": [],
     }), encoding="utf-8")
@@ -1074,7 +1089,7 @@ def test_oracle_campaign_requires_predeclared_treatment_to_fire(tmp_path):
 def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     root = Path("runs/oracle")
     profiles = [root / RELEASE_PROFILES[seed] for seed in RELEASE_SEEDS]
-    assert len(profiles) == 10
+    assert len(profiles) == len(RELEASE_SEEDS)
     configs = [load_config(path) for path in profiles]
     assert {config["seed"] for config in configs} == set(RELEASE_SEEDS)
     for config in configs:
@@ -1083,7 +1098,8 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
         assert acceptance["oracle_campaign_id"] == RELEASE_CAMPAIGN_ID
         assert acceptance["oracle_campaign_version"] == RELEASE_CAMPAIGN_VERSION
         assert acceptance["oracle_latency_source"] == "scheduled_e2e_v1"
-        assert len(acceptance["oracle_questions"]) == 6
+        assert len(acceptance["oracle_questions"]) == len(
+            oracle_campaign.RELEASE_QUESTION_TICKS)
         assert config["llm"]["routes"]["oracle"] == {
             "provider": RELEASE_ORACLE_PROVIDER, "model": RELEASE_ORACLE_MODEL,
         }
@@ -1096,12 +1112,17 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
         if config["seed"] % 2:
             assert shocks == []
         else:
-            assert len(shocks) == 12
+            assert len(shocks) == 2 * len(
+                oracle_campaign.RELEASE_QUESTION_TICKS)
             assert [shock["trigger_params"]["tick"] for shock in shocks] == [
-                4, 6, 64, 66, 124, 126, 184, 186, 244, 246, 304, 306,
+                tick + offset
+                for tick in oracle_campaign.RELEASE_QUESTION_TICKS
+                for offset in (-1, 1)
             ]
             assert [shock["params"]["n_agents"] for shock in shocks] == [
-                1, 40, 1, 40, 1, 40, 1, 40, 1, 40, 1, 40,
+                count
+                for _ in oracle_campaign.RELEASE_QUESTION_TICKS
+                for count in (1, 40)
             ]
         validate_oracle_campaign_profile(config)
 
@@ -1114,29 +1135,35 @@ def test_checked_in_oracle_campaign_profiles_are_predeclared_and_bounded():
     assert treatment_rehearsal["shocks"]
     assert control_rehearsal["shocks"] == []
     manifest = yaml.safe_load(
-        (root / "manifest-v9.template.yaml").read_text(encoding="utf-8"))
+        (root / "manifest-v12.template.yaml").read_text(encoding="utf-8"))
     assert [entry["seed"] for entry in manifest["runs"]] == list(RELEASE_SEEDS)
     assert {entry["profile"] for entry in manifest["runs"]} == {
         path.name for path in profiles
     }
 
 
-def test_checked_in_v9_commitment_and_minimax_contract_are_pinned():
+def test_checked_in_v12_commitment_and_minimax_contract_are_pinned():
     root = Path("runs/oracle")
     expected_hashes = {
-        7381: "9bc602916a0b687570d115e00968b26ba29bdc6c787e100db72a864d29763559",
-        7382: "d8f2e6cc8b4e8036776c9cd6b9d71c1da816c2bdfca6467b911b42dace981207",
-        7383: "be8b3d81040483fe2e174f75a10072edc8475606db963c8e7859c072ae4b6b36",
-        7384: "2bd23f5767a389f4771a6ae99750cf546e0ae3bb4b392d9f6125020c5a2a815a",
-        7385: "b701004b5e0768e50024ba0346b721735b356761e82cf51cfe4a3650d484e09a",
-        7386: "2548082efc81184eff8386311ad7bb932886d4f257fb01a42af92b2ea3d452b0",
-        7387: "50ab7f092ba07da4d9ab53bd625743f40626b37b75edbb82393879662cbd5aab",
-        7388: "29ce8812646452ead9d222059e24c9a62a6f239956cb3704b055018b57371aa3",
-        7389: "869e7e8958b66941f7d57d324edc752c18966315f96cdf6a9ff0559e801e8360",
-        7390: "b64642599ad61bc546e6deb25b94eeedaeef20a28781228f0826f95f3519a9a0",
+        7417: "b9758a394e9e10709019c11536d05b57ce2c0e4a62670d28f1364b27805761b8",
+        7418: "9cf5cdcd0034ba64d29ee72f2af14f58958fc64f17e434c9745e4fa2e370f386",
+        7419: "b74439d2dc52f8c94ce8b9a1ffca9c713300a78f9d2140f68267594808294b3f",
+        7420: "63e620819663ea9868813c83c23ac2ad8e3e52232021db43e463ee59385e38de",
+        7421: "3e544bde5823e3114e59cab7977b5212622d5fc3bc8b71b26f9b456e193e7451",
+        7422: "952612bcb841f1f45a2e9f9b0dac8ad313ff5f6d8e015c1f1c5fa14bef0a8d86",
+        7423: "3ed58d8f36fbade139331b759b90a13e5eed0f3152397223a1b8a7df4a17c9c0",
+        7424: "4bc4db34ce8a54714f456a5f947ca46bd1e98e0e0c87c6e1c5508c520fbc8b98",
+        7425: "a08fb9a3841b049fc9ea1826c6a3aa49804496f56061a9c712716d5e3bec79d3",
+        7426: "eceb01f24ba5b27fec9c635f1437c83b1495244f7e7f50cc396dd6efd32b6410",
+        7427: "34da4619234b1d3964331738e08fbccbe9ecfb4097ac4c10d07c422eba7601ff",
+        7428: "fd829eefdb4ff791317a1a02c5cd7e5ec4de13f666a6dedc038bbade558d8d3b",
+        7429: "9aecc984a4e82d4adecc88c1931dc1790a9afb225c1c5c05210d53bd5422a0cb",
+        7430: "a0ad7c01b340e57d1f702de4ccb76c121426e8dcd7dca104da44d0da3ae798a7",
+        7431: "68216dd44eee1074f4ad16d50aecab0d374fbe6501c7a6c047a52ced1e75624e",
+        7432: "50a3daf9c2ecdb9045b29defcad67b502057cb312190087e26e19ddd396105bc",
     }
-    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v9"
-    assert RELEASE_CAMPAIGN_VERSION == 9
+    assert RELEASE_CAMPAIGN_ID == "oracle-calibration-v12"
+    assert RELEASE_CAMPAIGN_VERSION == 12
     assert RELEASE_ORACLE_PROVIDER == "minimax"
     assert RELEASE_ORACLE_MODEL == "MiniMax-M3"
     assert RELEASE_ORACLE_ADAPTER == {
@@ -1156,9 +1183,9 @@ def test_checked_in_v9_commitment_and_minimax_contract_are_pinned():
         "in": 0.30, "out": 1.20, "cache": 0.06,
     }
     assert RELEASE_COMMITMENT_SHA256 == (
-        "8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e")
+        "4de717a1d9601eeccb60728e6efc66133dffdbe1b9b03c29aafef688a8eded3f")
 
-    commitment_path = root / "commitment-v9.yaml"
+    commitment_path = root / "commitment-v12.yaml"
     commitment = yaml.safe_load(commitment_path.read_text(encoding="utf-8"))
     assert oracle_campaign._canonical_value_sha256(
         commitment) == RELEASE_COMMITMENT_SHA256
@@ -1555,48 +1582,58 @@ def test_v8_campaign_has_no_v7_profile_or_evidence_ancestry():
                 committed["effective_config_sha256"])
 
 
-def test_v9_campaign_has_no_v8_profile_or_evidence_ancestry():
+def test_v12_campaign_has_no_prior_profile_or_evidence_ancestry():
     root = Path("runs/oracle")
     base = yaml.safe_load(
-        (root / "calibration-base-v9.yaml").read_text(encoding="utf-8"))
+        (root / "calibration-base-v12.yaml").read_text(encoding="utf-8"))
     assert base["extends"] == "../acceptance/rehearsal.yaml"
 
     for seed in RELEASE_SEEDS:
         profile = yaml.safe_load(
             (root / RELEASE_PROFILES[seed]).read_text(encoding="utf-8"))
-        assert profile["extends"] == "calibration-base-v9.yaml"
+        assert profile["extends"] == "calibration-base-v12.yaml"
 
-    v8_commitment = yaml.safe_load(
-        (root / "commitment-v8.yaml").read_text(encoding="utf-8"))
-    v9_commitment = yaml.safe_load(
-        (root / "commitment-v9.yaml").read_text(encoding="utf-8"))
-    v9_manifest = yaml.safe_load(
-        (root / "manifest-v9.template.yaml").read_text(encoding="utf-8"))
-    v8_rows = {int(entry["seed"]): entry for entry in v8_commitment["runs"]}
-    v9_commitment_rows = {
-        int(entry["seed"]): entry for entry in v9_commitment["runs"]}
-    v9_manifest_rows = {
-        int(entry["seed"]): entry for entry in v9_manifest["runs"]}
-    v8_config_hashes = {
-        row["effective_config_sha256"] for row in v8_rows.values()}
-    v9_config_hashes = {
+    # Every prior campaign, not just the immediate predecessor: an initialized
+    # seed can never be redrawn, so reusing any earlier seed would be
+    # unrunnable as well as dishonest.
+    prior_rows: dict[int, dict] = {}
+    prior_files = sorted(
+        path for path in root.glob("commitment-v*.yaml")
+        if path.name != "commitment-v12.yaml")
+    assert len(prior_files) >= 10, "prior commitments missing from the tree"
+    for path in prior_files:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for entry in payload["runs"]:
+            prior_rows[int(entry["seed"])] = entry
+
+    new_commitment = yaml.safe_load(
+        (root / "commitment-v12.yaml").read_text(encoding="utf-8"))
+    new_manifest = yaml.safe_load(
+        (root / "manifest-v12.template.yaml").read_text(encoding="utf-8"))
+    new_commitment_rows = {
+        int(entry["seed"]): entry for entry in new_commitment["runs"]}
+    new_manifest_rows = {
+        int(entry["seed"]): entry for entry in new_manifest["runs"]}
+    prior_config_hashes = {
+        row["effective_config_sha256"] for row in prior_rows.values()}
+    new_config_hashes = {
         row["effective_config_sha256"]
-        for row in v9_commitment_rows.values()}
+        for row in new_commitment_rows.values()}
 
-    assert set(RELEASE_SEEDS).isdisjoint(v8_rows)
-    assert v9_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
-    assert v9_config_hashes.isdisjoint(v8_config_hashes)
-    for payload in (v9_commitment, v9_manifest):
+    assert set(RELEASE_SEEDS).isdisjoint(prior_rows)
+    assert new_manifest["commitment_sha256"] == RELEASE_COMMITMENT_SHA256
+    assert new_config_hashes.isdisjoint(prior_config_hashes)
+    for payload in (new_commitment, new_manifest):
         assert payload["campaign_id"] == RELEASE_CAMPAIGN_ID
         assert payload["campaign_version"] == RELEASE_CAMPAIGN_VERSION
         assert [int(entry["seed"]) for entry in payload["runs"]] == list(
             RELEASE_SEEDS)
 
-    assert set(v9_commitment_rows) == set(v9_manifest_rows) == set(
+    assert set(new_commitment_rows) == set(new_manifest_rows) == set(
         RELEASE_SEEDS)
     for seed in RELEASE_SEEDS:
-        committed = v9_commitment_rows[seed]
-        manifest = v9_manifest_rows[seed]
+        committed = new_commitment_rows[seed]
+        manifest = new_manifest_rows[seed]
         for key in ("seed", "run_id", "profile", "effective_config_sha256"):
             assert manifest[key] == committed[key]
         assert committed["run_id"] == f"{RELEASE_CAMPAIGN_ID}-s{seed}"
@@ -1881,13 +1918,19 @@ def test_source_receipt_accepts_retained_death_and_linked_replacement(tmp_path):
     checkpoints = {
         item["tick"]: item for item in evidence["checkpoints"]["files"]
     }
+    # The fixture kills agent 1 at tick 207 and lands its replacement at 221,
+    # so pick the checkpoints either side of that window rather than naming
+    # ticks that only exist under one checkpoint interval.
+    death_tick, arrival_tick = 207, 221
+    mourning = min(t for t in checkpoints if death_tick < t < arrival_tick)
+    replaced = min(t for t in checkpoints if t > arrival_tick)
     assert checkpoints[5]["population"] == {
         "total": 100, "living": 100, "deceased": 0, "invalid": 0,
     }
-    assert checkpoints[210]["population"] == {
+    assert checkpoints[mourning]["population"] == {
         "total": 100, "living": 99, "deceased": 1, "invalid": 0,
     }
-    assert checkpoints[230]["population"] == {
+    assert checkpoints[replaced]["population"] == {
         "total": 101, "living": 100, "deceased": 1, "invalid": 0,
     }
     assert all(
@@ -2172,8 +2215,15 @@ def test_every_checkpoint_hash_schema_and_prng_state_is_receipt_bound(tmp_path):
     replay_receipt = json.loads(
         replay_receipt_path.read_text(encoding="utf-8"))
     checkpoint_manifest = replay_receipt["checkpoint_manifest"]
-    assert checkpoint_manifest["validated_files"] == 40
-    assert len(checkpoint_manifest["files"]) == 40
+    expected_checkpoints = len({
+        *range(oracle_campaign.RELEASE_CHECKPOINT_EVERY,
+               oracle_campaign.RELEASE_HORIZON_TICKS,
+               oracle_campaign.RELEASE_CHECKPOINT_EVERY),
+        *oracle_campaign.RELEASE_QUESTION_TICKS,
+        oracle_campaign.RELEASE_HORIZON_TICKS,
+    })
+    assert checkpoint_manifest["validated_files"] == expected_checkpoints
+    assert len(checkpoint_manifest["files"]) == expected_checkpoints
     assert entry["checkpoint_manifest_sha256"] == (
         checkpoint_manifest["manifest_sha256"])
     assert all(len(item["sha256"]) == 64 for item in checkpoint_manifest["files"])
@@ -2227,8 +2277,9 @@ def test_global_llm_audit_allows_local_background_but_no_other_live_calls(
         provider="scripted", model="scripted", cache_key="local")
     evidence, reasons = oracle_campaign._llm_call_integrity(store)
     assert reasons == []
-    assert evidence["persisted_calls"] == 13
-    assert evidence["live_calls"] == 12
+    assert evidence["persisted_calls"] == (
+        2 * len(oracle_campaign.RELEASE_QUESTION_TICKS) + 1)
+    assert evidence["live_calls"] == 2 * len(oracle_campaign.RELEASE_QUESTION_TICKS)
 
     store.insert(
         "llm_calls", tick=5, role="citizen", purpose="decide",
@@ -3044,6 +3095,230 @@ def test_semantics7_unknown_entity_retry_is_shared_preflight(tmp_path):
     assert len(rejections) == 1
     assert json.loads(rejections[0]["payload_json"])["error"] == (
         "entity ledger accounts not found")
+    store.close()
+
+
+def test_scheduled_tick_catalog_advertises_the_metric_namespace(tmp_path):
+    """Metric names are state-derived, so the catalog must carry them."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-namespace.db"))
+    store.init_run_meta("metric-namespace", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    store.record_metric(9, "later_only_metric", 1.0)
+
+    at_zero = next(
+        item for item in oracle_tool_definitions(store, tick=0)
+        if item["name"] == "query_metrics")
+    at_nine = next(
+        item for item in oracle_tool_definitions(store, tick=9)
+        if item["name"] == "query_metrics")
+    advertised = at_zero["available_metric_names"]
+
+    # The real colon-suffixed names the resolver itself reads.
+    assert {"bank_deposits:1", "gdp_proxy", "cpi"} <= set(advertised)
+    assert advertised == sorted(set(advertised))
+    assert len(advertised) <= MAX_CATALOG_METRIC_NAMES
+    # Historically reproducible: a later metric is invisible at an earlier tick.
+    assert "later_only_metric" not in advertised
+    assert "later_only_metric" in at_nine["available_metric_names"]
+    # Every advertised name is executable, which is the point of advertising it.
+    series = world.oracle.tools.query_metrics(
+        ["bank_deposits:1"], from_tick=0, to_tick=0)
+    assert series["bank_deposits:1"]
+
+    legacy = oracle_tool_definitions(store)
+    v1 = oracle_tool_definitions(
+        store, tick=0, preflight_contract=ORACLE_PREFLIGHT_CONTRACT_V1)
+    assert "available_metric_names" not in legacy[0]
+    assert "available_metric_names" not in v1[0]
+    with pytest.raises(OracleToolError, match="unknown Oracle preflight contract"):
+        oracle_tool_definitions(store, tick=0, preflight_contract="state_bound_v0")
+
+    # An overflowing namespace advertises nothing rather than a truncated list,
+    # so preflight can never reject a metric that actually exists.
+    for index in range(MAX_CATALOG_METRIC_NAMES + 1):
+        store.record_metric(0, f"overflow_metric_{index:04d}", 1.0)
+    overflowed = oracle_tool_definitions(store, tick=0)[0]
+    assert "available_metric_names" not in overflowed
+    assert validate_oracle_plan(
+        {"queries": [{"tool": "query_metrics", "args": {
+            "names": ["bank1_deposits"]}}]},
+        current_tick=0, tool_catalog=oracle_tool_definitions(store, tick=0))
+    store.close()
+
+
+def test_preflight_rejects_guessed_metric_names_with_real_alternatives(tmp_path):
+    """The V10/V11 guesses matched zero names and returned empty arrays."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-guesses.db"))
+    store.init_run_meta("metric-guesses", config["seed"], config)
+    World(store, config).initialize()
+    catalog = oracle_tool_definitions(store, tick=0)
+    v1_catalog = oracle_tool_definitions(
+        store, tick=0, preflight_contract=ORACLE_PREFLIGHT_CONTRACT_V1)
+
+    def plan(*names):
+        return {"queries": [
+            {"tool": "query_metrics", "args": {"names": list(names)}}]}
+
+    for guess, real in (
+            ("bank1_deposits", "bank_deposits:1"),
+            ("B1_deposits", "bank_deposits:1"),
+            ("bank1_reserves", "bank_reserve_ratio:1"),
+            ("GDP", "gdp_proxy"),
+    ):
+        with pytest.raises(OracleToolError) as excinfo:
+            validate_oracle_plan(
+                plan(guess), current_tick=0, tool_catalog=catalog)
+        message = str(excinfo.value)
+        assert message.startswith(f"unknown metric names: {guess} ")
+        assert real in message
+        # The v1 catalog carries no namespace, so recorded plans keep passing.
+        assert validate_oracle_plan(
+            plan(guess), current_tick=0, tool_catalog=v1_catalog)
+
+    assert validate_oracle_plan(
+        plan("bank_deposits:1", "gdp_proxy"), current_tick=0,
+        tool_catalog=catalog)
+    # A partial miss must keep its real series. Metrics such as `index` are not
+    # recorded until later ticks, and rejecting the whole plan would cost the
+    # forecast the evidence it could have had.
+    assert validate_oracle_plan(
+        plan("gdp_proxy", "index"), current_tick=0, tool_catalog=catalog)
+    assert validate_oracle_plan(
+        plan("GDP", "bank_deposits:1"), current_tick=0, tool_catalog=catalog)
+
+    # Every miss in a wholly unresolvable plan is answered.
+    with pytest.raises(OracleToolError) as excinfo:
+        validate_oracle_plan(
+            plan("GDP", "bank1_deposits", "bank1_reserves"),
+            current_tick=0, tool_catalog=catalog)
+    combined = str(excinfo.value)
+    assert combined.startswith(
+        "unknown metric names: GDP, bank1_deposits, bank1_reserves (")
+    for real in ("gdp_proxy", "bank_deposits:", "bank_reserve_ratio:"):
+        assert real in combined
+    assert unknown_metric_names_error(["zz_none"], ["cpi"]) == (
+        "unknown metric names: zz_none (see available_metric_names)")
+    store.close()
+
+
+def test_semantics7_unknown_metric_retry_recovers_real_history(tmp_path):
+    """A guessed name must self-correct into executed history, not empty arrays."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "metric-retry.db"))
+    store.init_run_meta("metric-retry", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+
+    class MetricRetryGateway:
+        replay = False
+        replay_conn = None
+
+        def __init__(self):
+            self.requests = []
+
+        async def complete(self, request, **_kwargs):
+            self.requests.append(request)
+            plans = [item for item in self.requests
+                     if item.purpose == "oracle_plan"]
+            if request.purpose == "oracle_plan" and len(plans) == 1:
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["bank1_deposits"]},
+                }]})
+            if request.purpose == "oracle_plan":
+                error = request.context["previous_plan_error"]
+                assert error.startswith("unknown metric names: bank1_deposits")
+                assert "bank_deposits:1" in error
+                assert request.context["planner_attempt"] == 2
+                return SimpleNamespace(parsed={"queries": [{
+                    "tool": "query_metrics",
+                    "args": {"names": ["bank_deposits:1"]},
+                }]})
+            return SimpleNamespace(parsed={
+                "p": 0.2, "drivers": ["deposit trend"],
+                "confidence": "med", "resolution_rule": {
+                    "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+                "deadline_tick": store.tick + 30,
+                "reasoning": "bounded evidence",
+            })
+
+    gateway = MetricRetryGateway()
+    world.oracle.gw = gateway
+    contract = {
+        "campaign_id": RELEASE_CAMPAIGN_ID,
+        "campaign_version": RELEASE_CAMPAIGN_VERSION,
+        "campaign_key": "bank_run_t000", "scheduled_tick": store.tick,
+        "resolution_rule": {
+            "type": "bank_run", "window": 5, "deposit_drop": 0.30},
+        "deadline_tick": store.tick + 30,
+    }
+
+    result = asyncio.run(world.oracle.ask(
+        "What is the probability of a bank run within 30 ticks?",
+        governed_contract=contract))
+
+    assert [request.purpose for request in gateway.requests] == [
+        "oracle_plan", "oracle_plan", "oracle"]
+    # The forecast now rests on a nonempty series instead of an empty array.
+    assert result["evidence"][0]["result"]["bank_deposits:1"]
+    plan_catalog = next(
+        item for item in gateway.requests[0].context["available_tools"]
+        if item["name"] == "query_metrics")
+    assert "bank_deposits:1" in plan_catalog["available_metric_names"]
+    assert gateway.requests[0].context["preflight_contract"] == (
+        ORACLE_PREFLIGHT_CONTRACT_V2)
+    rejections = store.query(
+        "SELECT payload_json FROM events "
+        "WHERE kind='oracle_tool_plan_rejected' ORDER BY id")
+    assert len(rejections) == 1
+    assert json.loads(rejections[0]["payload_json"])["error"].startswith(
+        "unknown metric names: bank1_deposits")
+    store.close()
+
+
+def test_recorded_preflight_contract_is_preserved_on_replay(tmp_path):
+    """A v1 source must keep planning under v1 so its evidence stays exact."""
+    config = load_config("runs/oracle/calibration-control-rehearsal.yaml")
+    store = Store(str(tmp_path / "preflight-contract.db"))
+    store.init_run_meta("preflight-contract", config["seed"], config)
+    world = World(store, config)
+    world.initialize()
+    question = "What is the probability of a bank run within 30 ticks?"
+
+    replay_conn = sqlite3.connect(":memory:")
+    replay_conn.row_factory = sqlite3.Row
+    replay_conn.execute(
+        "CREATE TABLE llm_calls (id INTEGER PRIMARY KEY, tick INTEGER, "
+        "role TEXT, purpose TEXT, request_json TEXT)")
+    for tick, contract in (
+            (1, ORACLE_PREFLIGHT_CONTRACT_V1),
+            (2, ORACLE_PREFLIGHT_CONTRACT_V2),
+            (3, "state_bound_v0"),
+            (4, None)):
+        context = {"question": question, "tick": tick}
+        if contract is not None:
+            context["preflight_contract"] = contract
+        replay_conn.execute(
+            "INSERT INTO llm_calls (tick, role, purpose, request_json) "
+            "VALUES (?,'oracle','oracle_plan',?)",
+            (tick, json.dumps({"context": context})))
+
+    oracle = world.oracle
+    assert oracle._state_bound_preflight_at(0, question) == (
+        ORACLE_PREFLIGHT_CONTRACT)
+    oracle.gw = SimpleNamespace(replay=True, replay_conn=replay_conn)
+    assert oracle._state_bound_preflight_at(1, question) == (
+        ORACLE_PREFLIGHT_CONTRACT_V1)
+    assert oracle._state_bound_preflight_at(2, question) == (
+        ORACLE_PREFLIGHT_CONTRACT_V2)
+    # An unrecognized or absent marker falls back off the state-bound path.
+    assert oracle._state_bound_preflight_at(3, question) is None
+    assert oracle._state_bound_preflight_at(4, question) is None
+    assert oracle._state_bound_preflight_at(5, question) is None
+    replay_conn.close()
     store.close()
 
 

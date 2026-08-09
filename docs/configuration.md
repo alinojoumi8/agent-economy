@@ -340,7 +340,18 @@ one-time due-schedule consumption, and profile-locked 5–20-tick delay checks. 
 also shares a scheduled-tick, catalog-aware plan preflight between runtime and
 receipt audit. That preflight validates historical tick ranges and advertised
 entity IDs before any read executes; government ledger reads map to the
-system-owned `sys:gov` treasury. Post-preflight failures are execution failures,
+system-owned `sys:gov` treasury. Under preflight contract `state_bound_v2` the
+catalog additionally advertises `available_metric_names` — the distinct metric
+names recorded at or before the scheduled tick, such as `bank_deposits:1` and
+`gdp_proxy` — and rejects a `query_metrics` query whose names all miss, quoting
+the closest advertised names so the existing retry repairs it. Exact-match
+misses previously returned an empty array with no error or hint, so a guessed
+name such as `bank1_deposits` silently denied the Oracle its historical anchor.
+A query that resolves at least one name still executes, so a metric not yet
+recorded at an early tick never costs the plan the series it could have read.
+Sources recorded under `state_bound_v1` keep planning under
+v1, so their catalogs, preflight errors, and evidence replay unchanged.
+Post-preflight failures are execution failures,
 not retryable planner rejections. Full independently reproduced errors,
 matching rejection events, and monotonic attempt ordinals make legitimate retry
 requests unique, while only the final accepted plan is validated as executed

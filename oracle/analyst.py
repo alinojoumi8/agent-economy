@@ -22,6 +22,7 @@ from .rules import ResolutionRuleError, validate_resolution_rule
 from .tools import (
     MAX_PROMPT_EVIDENCE_CHARS,
     ORACLE_PREFLIGHT_CONTRACT,
+    ORACLE_PREFLIGHT_CONTRACTS,
     OracleToolError,
     OracleTools,
     bound_oracle_evidence,
@@ -35,7 +36,11 @@ Choose only from the supplied tool definitions. Return JSON:
 {"queries":[{"tool":"tool_name","args":{...}}]}.
 Use at most 8 queries, request only evidence relevant to the question, and never
 request SQL, writes, mutations, shell access, secrets, or unlisted tools.
-Every from_tick/to_tick must stay inside the supplied inclusive tick_range."""
+Every from_tick/to_tick must stay inside the supplied inclusive tick_range.
+The analyst must judge how often the asked-about event class has already
+occurred, so spend part of the budget on history rather than only on the latest
+tick: request the metrics underlying the resolution_rule across the widest
+allowed earlier range, so their past movements can be counted."""
 
 ANSWER_SYSTEM = """You are the Oracle: a rigorous, read-only economic analyst embedded in a simulated
 economy. You are given a digest of true world state. Answer the operator's question as JSON:
@@ -53,7 +58,20 @@ Valid resolution_rule types (machine-checkable):
 If the question cannot be given a checkable rule from world state, reply
 {"insufficient_data": true, "reason": "..."} instead. Never fabricate.
 When governed_forecast_contract is supplied, use its resolution_rule and
-deadline_tick exactly; it defines the scheduled question being measured."""
+deadline_tick exactly; it defines the scheduled question being measured.
+How to choose p. It is scored by the Brier rule against the realized 0/1
+outcome, so it must be your honest frequency, not a hedge: reporting a small
+number for an event that keeps happening is penalized exactly as hard as
+reporting a large one for an event that never does. Work in two steps. First,
+from the supplied evidence, count how often this resolution_rule would already
+have fired over the earlier ticks it covers, and take that historical frequency
+as your starting point; if the evidence does not let you count it, say so in
+reasoning and do not treat an uncounted anchor as evidence that the event is
+rare.
+Second, move up or down from that anchor only by what current conditions
+justify. Do not compress every answer into the low range: when the anchor is
+high, p must be high, and values above 0.5 are expected whenever the event has
+been common."""
 
 MAX_ANSWER_USER_CHARS = 12_000
 MAX_PROMPT_WORLD_CHARS = 2_500
@@ -132,7 +150,9 @@ class Oracle:
         evidence = []
         if not legacy_replay:
             planning_catalog = (
-                oracle_tool_definitions(self.store, tick=tick)
+                oracle_tool_definitions(
+                    self.store, tick=tick,
+                    preflight_contract=state_bound_preflight)
                 if state_bound_preflight else self.tools.definitions)
             base_planning_context = {
                 "question": question, "tick": tick,
@@ -145,7 +165,7 @@ class Oracle:
             }
             if state_bound_preflight:
                 base_planning_context["preflight_contract"] = (
-                    ORACLE_PREFLIGHT_CONTRACT)
+                    state_bound_preflight)
             if governed_contract is not None:
                 base_planning_context["governed_forecast_contract"] = governed_contract
             validation_error = None
@@ -479,12 +499,17 @@ class Oracle:
         # Missing evidence fails closed through the gateway lookup path.
         return False
 
-    def _state_bound_preflight_at(self, tick: int, question: str) -> bool:
-        """Preserve recorded semantics-7 calls made before state-bound v1."""
+    def _state_bound_preflight_at(self, tick: int, question: str) -> str | None:
+        """Return the preflight contract this call is planned under, if any.
+
+        Markerless and pre-state-bound semantics-7 calls return ``None``. A
+        recorded call keeps the contract it was planned under so its catalog,
+        preflight errors, and evidence stay byte-identical on replay.
+        """
         if self.engine_semantics_version < 7:
-            return False
+            return None
         if not self.gw.replay or self.gw.replay_conn is None:
-            return True
+            return ORACLE_PREFLIGHT_CONTRACT
         rows = self.gw.replay_conn.execute(
             "SELECT request_json FROM llm_calls WHERE tick=? AND role='oracle' "
             "AND purpose='oracle_plan' ORDER BY id", (tick,)).fetchall()
@@ -494,10 +519,11 @@ class Oracle:
             if (isinstance(context, dict)
                     and context.get("question") == question
                     and context.get("tick") == tick):
-                return context.get("preflight_contract") == (
-                    ORACLE_PREFLIGHT_CONTRACT)
+                recorded = context.get("preflight_contract")
+                return (recorded if recorded in ORACLE_PREFLIGHT_CONTRACTS
+                        else None)
         # Missing recorded plan evidence fails closed through gateway lookup.
-        return False
+        return None
 
     # ── world digest (read-only tools rolled into one) ───────────────────────
     def _world_digest(self, tick: int) -> dict:

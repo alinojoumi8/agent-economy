@@ -55,19 +55,20 @@ from world.replay_verify import verify_replay
 
 SCHEMA_VERSION = 1
 LATENCY_KIND = "scheduled_e2e_v1"
-DEFAULT_MINIMUM_RUNS = 10
-DEFAULT_MINIMUM_FORECASTS = 60
+# The run is the independence unit, so power comes from arms. V11 buys sixteen
+# of them with the disk V10 spent on repeated checkpoints per arm.
+DEFAULT_MINIMUM_RUNS = 16
 DEFAULT_P90_LIMIT_MS = 60_000
 NAIVE_BRIER = 0.25
 _GATEWAY_CANONICAL_NOOP = {
     "actions": [{"type": "do_nothing"}],
     "reasoning": "unparseable output; no-op",
 }
-RELEASE_CAMPAIGN_ID = "oracle-calibration-v9"
-RELEASE_CAMPAIGN_VERSION = 9
-RELEASE_SEEDS = tuple(range(7381, 7391))
+RELEASE_CAMPAIGN_ID = "oracle-calibration-v12"
+RELEASE_CAMPAIGN_VERSION = 12
+RELEASE_SEEDS = tuple(range(7417, 7433))
 RELEASE_PROFILES = {
-    seed: f"v9-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
+    seed: f"v12-seed-{seed}-{'rumor' if seed % 2 == 0 else 'control'}.yaml"
     for seed in RELEASE_SEEDS
 }
 RELEASE_ORACLE_PROVIDER = "minimax"
@@ -89,7 +90,7 @@ RELEASE_ORACLE_PRICING = {"in": 0.30, "out": 1.20, "cache": 0.06}
 RELEASE_MAX_STANDARD_PROMPT_TOKENS = 512_000
 RELEASE_COMMITMENT_FILE = (
     Path(__file__).resolve().parents[1] / "runs" / "oracle"
-    / "commitment-v9.yaml"
+    / "commitment-v12.yaml"
 )
 RELEASE_DATA_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "runs"
@@ -98,7 +99,7 @@ RELEASE_CHECKPOINT_DIR = (
     Path(__file__).resolve().parents[1] / "data" / "checkpoints"
 ).resolve()
 RELEASE_COMMITMENT_SHA256 = (
-    "8a1845ebe9e916b8618a1c17170dc8a2b439c929ea1e1118670e21683c341a8e"
+    "4de717a1d9601eeccb60728e6efc66133dffdbe1b9b03c29aafef688a8eded3f"
 )
 RELEASE_HORIZON_TICKS = 335
 RELEASE_MIN_LIVING_AGENTS = 95
@@ -106,8 +107,22 @@ RELEASE_MAX_LIVING_AGENTS = 105
 RELEASE_ARRIVAL_DELAY_MIN = 5
 RELEASE_ARRIVAL_DELAY_MAX = 20
 RELEASE_QUESTION = "What is the probability of a bank run within 30 ticks?"
+# V11 returns to 6 checkpoints at 60-tick spacing against a 30-tick horizon, so
+# no two resolution windows overlap. V10 went to 11 on the argument that the
+# extra forecasts cut the standard error from ~0.044 to ~0.032; that assumed
+# forecasts were independent. They are not — the scenario fixes the outcome, so
+# every forecast in a run reads one already-settled event. Measured over V10's
+# seven arms the pooled error was 0.0351 against an honest between-run 0.1165.
+# Power lives in DEFAULT_MINIMUM_RUNS, not here.
 RELEASE_QUESTION_TICKS = (5, 65, 125, 185, 245, 305)
+# Interval checkpoints serve replay granularity, not the calibration measurement.
+# Every 20 ticks yields 23 per run (16 interval + 6 question + the horizon), so
+# sixteen arms cost ~171 GB where V10's every-10 schedule cost ~21 GB per arm.
+RELEASE_CHECKPOINT_EVERY = 20
 RELEASE_RULE = {"type": "bank_run", "window": 5, "deposit_drop": 0.30}
+# Every run must resolve one forecast per scheduled checkpoint, so the release
+# floor is fixed by the corpus shape rather than restated as a literal.
+DEFAULT_MINIMUM_FORECASTS = DEFAULT_MINIMUM_RUNS * len(RELEASE_QUESTION_TICKS)
 
 
 def _release_rumor_shocks() -> list[dict[str, Any]]:
@@ -416,15 +431,17 @@ def validate_oracle_campaign_profile(
         raise OracleCampaignError("Oracle profile must use scheduled E2E latency")
     if int(acceptance.get("min_ticks", 0)) != RELEASE_HORIZON_TICKS:
         raise OracleCampaignError("Oracle profile must use the fixed 335-tick horizon")
-    if int(acceptance.get("oracle_min_latency_samples", 0)) != 6:
-        raise OracleCampaignError("Oracle profile must require all six latency samples")
+    if int(acceptance.get("oracle_min_latency_samples", 0)) != len(RELEASE_QUESTION_TICKS):
+        raise OracleCampaignError(
+            "Oracle profile must require every scheduled latency sample")
     if int(acceptance.get("oracle_p90_ms", 0)) != DEFAULT_P90_LIMIT_MS:
         raise OracleCampaignError("Oracle profile must use the fixed 60000 ms p90 gate")
     questions = acceptance.get("oracle_questions")
     if not isinstance(questions, list) or [
             item.get("at_tick") for item in questions if isinstance(item, dict)
     ] != list(RELEASE_QUESTION_TICKS):
-        raise OracleCampaignError("Oracle profile must contain the six fixed checkpoints")
+        raise OracleCampaignError(
+            "Oracle profile must contain exactly the fixed checkpoints")
     if any(
         item.get("campaign_key") != f"bank_run_t{int(item['at_tick']):03d}"
         or item.get("question") != RELEASE_QUESTION
@@ -472,7 +489,7 @@ def validate_oracle_campaign_profile(
             "release campaign must opt baseline citizens into the active core")
     if (config.get("population", {}).get("size") != 63
             or config.get("banks", {}).get("count") != 2
-            or config.get("checkpoint_every") != 10
+            or config.get("checkpoint_every") != RELEASE_CHECKPOINT_EVERY
             or config.get("checkpoint_dir") != "data/checkpoints"):
         raise OracleCampaignError(
             "release campaign changed its fixed population/bank/checkpoint design")
@@ -1461,15 +1478,20 @@ def _source_population_evidence(
 def _checkpoint_integrity(
         store: Store, *, run_id: str, seed: int) -> tuple[dict, list[str]]:
     reasons: list[str] = []
+    # Interval writes, plus the pause each governed question forces, plus the
+    # final tick. Derived so the schedule and the count can never drift apart.
     expected_ticks = sorted({
-        *range(10, RELEASE_HORIZON_TICKS, 10),
+        *range(RELEASE_CHECKPOINT_EVERY, RELEASE_HORIZON_TICKS,
+               RELEASE_CHECKPOINT_EVERY),
         *RELEASE_QUESTION_TICKS,
         RELEASE_HORIZON_TICKS,
     })
     rows = store.query("SELECT tick,path FROM checkpoints ORDER BY tick,id")
     ticks = [int(row["tick"]) for row in rows]
     if ticks != expected_ticks:
-        reasons.append("source checkpoint ticks differ from the exact 40-tick schedule")
+        reasons.append(
+            "source checkpoint ticks differ from the exact "
+            f"{len(expected_ticks)}-tick schedule")
     source_meta = store.get_meta()
     source_schema = sqlite_schema_evidence(store.conn)
     source_config = load_json(source_meta["config_json"], None)
@@ -1749,9 +1771,9 @@ def _llm_call_integrity(store: Store) -> tuple[dict, list[str]]:
         or not 1 <= counts.get("oracle_plan", 0) <= 3
         or set(counts) - {"oracle_plan", "oracle"}
     ]
-    if invalid_sessions or len(sessions) != 6:
+    if invalid_sessions or len(sessions) != len(RELEASE_QUESTION_TICKS):
         reasons.append(
-            "source does not contain six governed scheduled Oracle call sessions")
+            "source does not contain every governed scheduled Oracle call session")
     if len(live_rows) != len(governed_rows):
         reasons.append(
             "source live-call corpus is not identical to governed Oracle calls")
@@ -1846,22 +1868,30 @@ def _source_integrity(store: Store, config: dict, min_ticks: int) -> tuple[dict,
             "SELECT COUNT(*) FROM llm_calls "
             "WHERE role='oracle' AND purpose='oracle_plan'", default=0)),
     }
-    if any(exact_counts[key] != 6 for key in (
+    if any(exact_counts[key] != len(RELEASE_QUESTION_TICKS) for key in (
             "predictions", "resolved_predictions", "acceptance_checkpoints",
             "completed_acceptance_checkpoints", "oracle_predictions",
             "prediction_resolutions", "checkpoint_completions", "oracle_answers")):
-        reasons.append("source does not contain exactly six complete forecast lifecycles")
+        reasons.append(
+            "source does not contain exactly one complete forecast lifecycle "
+            "per scheduled checkpoint")
+    # One planner call per checkpoint, and at most three attempts each.
     if (exact_counts["checkpoint_misses"] != 0
             or exact_counts["insufficient_predictions"] != 0
-            or not 6 <= exact_counts["oracle_plans"] <= 18):
+            or not (len(RELEASE_QUESTION_TICKS)
+                    <= exact_counts["oracle_plans"]
+                    <= 3 * len(RELEASE_QUESTION_TICKS))):
         reasons.append("source has missed/insufficient or invalid planner outcomes")
+    # Built from the pinned int schedule, so the literals cannot drift from it.
+    scheduled_ticks = ",".join(str(int(tick)) for tick in RELEASE_QUESTION_TICKS)
     off_schedule_calls = int(store.scalar(
         "SELECT COUNT(*) FROM llm_calls WHERE role='oracle' "
-        "AND purpose IN ('oracle_plan','oracle') AND tick NOT IN (5,65,125,185,245,305)",
+        "AND purpose IN ('oracle_plan','oracle') "
+        f"AND tick NOT IN ({scheduled_ticks})",
         default=0))
     off_schedule_predictions = int(store.scalar(
         "SELECT COUNT(*) FROM predictions "
-        "WHERE asked_tick NOT IN (5,65,125,185,245,305)", default=0))
+        f"WHERE asked_tick NOT IN ({scheduled_ticks})", default=0))
     if off_schedule_calls or off_schedule_predictions:
         reasons.append("source contains off-schedule Oracle calls or predictions")
     spend = float(store.scalar(
@@ -2889,9 +2919,13 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
         payload.get("minimum_forecasts", DEFAULT_MINIMUM_FORECASTS),
         "minimum_forecasts")
     if minimum_runs != DEFAULT_MINIMUM_RUNS:
-        raise OracleCampaignError("minimum_runs must be the fixed release floor 10")
+        raise OracleCampaignError(
+            "minimum_runs must be the fixed release floor "
+            f"{DEFAULT_MINIMUM_RUNS}")
     if minimum_forecasts != DEFAULT_MINIMUM_FORECASTS:
-        raise OracleCampaignError("minimum_forecasts must be the fixed release floor 60")
+        raise OracleCampaignError(
+            "minimum_forecasts must be the fixed release floor "
+            f"{DEFAULT_MINIMUM_FORECASTS}")
     p90_limit_ms = _positive_int(
         payload.get("p90_limit_ms", DEFAULT_P90_LIMIT_MS), "p90_limit_ms")
     if p90_limit_ms > DEFAULT_P90_LIMIT_MS:
@@ -2957,6 +2991,10 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
 
     run_receipts: list[dict] = []
     pairs: list[tuple[float, int]] = []
+    # One run is one independence unit: its checkpoints all forecast the same
+    # question and the scenario fixes the outcome, so the spread that matters
+    # is between runs. Pooling forecasts would report a ~3x too narrow interval.
+    clusters: list[str] = []
     latencies: list[int] = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -2977,10 +3015,11 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
             run_pairs, run_latencies = [], []
         run_receipts.append(receipt)
         pairs.extend(run_pairs)
+        clusters.extend([str(entry.get("run_id", ""))] * len(run_pairs))
         latencies.extend(run_latencies)
     run_receipts.sort(key=lambda item: (item.get("seed", -1), item.get("run_id", "")))
 
-    calibration = calibration_from_pairs(pairs)
+    calibration = calibration_from_pairs(pairs, clusters)
     raw_brier = (
         math.fsum((probability - outcome) ** 2
                   for probability, outcome in pairs) / len(pairs)
@@ -3135,7 +3174,8 @@ def load_existing_oracle_source_receipt(
             or payload.get("passed") is not True
             or persisted_run != comparable_run
             or not run.get("eligible")
-            or len(pairs) != 6 or len(latencies) != 6
+            or len(pairs) != len(RELEASE_QUESTION_TICKS)
+            or len(latencies) != len(RELEASE_QUESTION_TICKS)
             or entry.get("run_id") != run_id
             or Path(str(entry.get("database", ""))).resolve() != source
             or Path(str(entry.get("profile", ""))).resolve() != profile):
@@ -3358,7 +3398,9 @@ def write_oracle_source_receipt(
         "campaign_id": RELEASE_CAMPAIGN_ID,
         "campaign_version": RELEASE_CAMPAIGN_VERSION,
         "commitment_sha256": commitment["sha256"],
-        "passed": bool(run["eligible"] and len(pairs) == 6 and len(latencies) == 6),
+        "passed": bool(run["eligible"]
+                       and len(pairs) == len(RELEASE_QUESTION_TICKS)
+                       and len(latencies) == len(RELEASE_QUESTION_TICKS)),
         "manifest_entry": entry,
         "run": run,
     }

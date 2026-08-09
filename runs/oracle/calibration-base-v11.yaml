@@ -1,0 +1,63 @@
+# Fresh release corpus after v10 was voided. V10 executed seven clean arms but
+# its eighth seed became unrecoverable when the host disk filled and the arm's
+# source database was removed; an initialized seed may be resumed but never
+# redrawn, so v10 can no longer reach ten runs with zero exclusions. V10 remains
+# diagnostic and excluded. No prior response, claim, checkpoint, replay, receipt,
+# profile ancestry, manifest entry, run identity, artifact, or seed is reused.
+#
+# Two substantive changes, both driven by measurement on the v10 arms:
+#
+# 1. Sixteen arms, six checkpoints — the inverse of v10's shape. Every forecast
+#    inside a run answers the same question, and the scenario config fixes the
+#    outcome (a rumor arm always runs, a control arm never does), so the eleven
+#    forecasts v10 collected per run were eleven readings of one already-settled
+#    event. v10's claim that they cut the standard error from ~0.044 to ~0.032
+#    assumed an independence that does not hold: measured over its seven arms
+#    the pooled error was 0.0351 while the honest between-run error was 0.1165,
+#    3.3x wider. Power comes from independent arms, so this campaign buys arms
+#    instead of checkpoints.
+#
+# 2. Checkpoints every 20 ticks rather than every 10. Interval checkpoints exist
+#    for replay granularity, not for the calibration measurement, and at v10's
+#    density ten arms cost ~210 GB. Sixteen arms at this density cost ~171 GB.
+#
+# Question spacing is 60 ticks against a 30-tick horizon, so no two resolution
+# windows overlap.
+extends: ../acceptance/rehearsal.yaml
+seed: 7401
+checkpoint_every: 20
+acceptance:
+  min_ticks: 335
+  max_spend_usd: 25
+  efficiency_target_usd: 25
+  oracle_campaign_id: oracle-calibration-v11
+  oracle_campaign_version: 11
+  oracle_min_latency_samples: 6
+  required_shocks: []
+  require_oracle_scoring: true
+  require_experiment: false
+  require_phenomena: false
+  oracle_questions:
+    - {at_tick: 5, campaign_key: bank_run_t005, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 65, campaign_key: bank_run_t065, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 125, campaign_key: bank_run_t125, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 185, campaign_key: bank_run_t185, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 245, campaign_key: bank_run_t245, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+    - {at_tick: 305, campaign_key: bank_run_t305, horizon_ticks: 30, expected_rule: {type: bank_run, window: 5, deposit_drop: 0.30}, question: "What is the probability of a bank run within 30 ticks?"}
+budget:
+  cap_usd: 25
+  oracle_reserve_usd: 25
+  conversation_pairs: 0
+llm:
+  concurrency: 1
+  # MiniMax's standard <=512k PAYG tier publishes $0.30/M input,
+  # $1.20/M output, and $0.06/M automatic prompt-cache reads.
+  pricing:
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
+  routes:
+    oracle: {provider: minimax, model: MiniMax-M3}
+lifecycle:
+  population_mode: stable
+  arrival_delay_min: 5
+  arrival_delay_max: 20
+shocks: []
