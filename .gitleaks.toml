@@ -1,63 +1,80 @@
 [extend]
 useDefault = true
 
-# Keep the default generic-api-key rule, but remove a small set of known,
-# structurally exact false positives. Every exception requires both the named
-# path and the expected benign line; no file or rule is ignored wholesale.
+# Redefine the default generic-api-key rule in full. gitleaks 8.16 REPLACES a
+# default rule when a redeclared rule shares its id (no partial merging), so
+# the detection regex/entropy/keywords must be repeated verbatim here; the
+# allowlist below then rides along with them. Keep this block in sync with the
+# upstream default rule when upgrading gitleaks. Every exception requires both
+# the named path and the expected benign line; no file or rule is ignored
+# wholesale.
 [[rules]]
+description = "Generic API Key"
 id = "generic-api-key"
+regex = '''(?i)(?:key|api|token|secret|client|passwd|password|auth|access)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:=|\|\|:|<=|=>|:)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = [
+    "key","api","token","secret","client","passwd","password","auth","access",
+]
 
-  [[rules.allowlists]]
-  description = "Blank Kimi API-key placeholder in the checked-in env template"
-  condition = "AND"
-  regexTarget = "match"
-  paths = ['''^\.env\.example$''']
-  regexes = ['''^KIMI_API_KEY=\r?\nANTHROPIC_API_KEY=\r?\n?$''']
-
-  [[rules.allowlists]]
-  description = "Public BLS dataset identifier in the research manifest"
-  condition = "AND"
-  regexTarget = "line"
-  paths = ['''^config/data-manifest\.yaml$''']
-  regexes = ['''^[[:space:]]*-[[:space:]]+key:[[:space:]]+bls-unemployment-2020[[:space:]]*$''']
-
-  [[rules.allowlists]]
-  description = "Public BLS dataset and target identifiers in the pinned snapshot"
-  condition = "AND"
-  regexTarget = "line"
-  paths = ['''^research/data/bls-unemployment-2020\.json$''']
-  regexes = [
-    '''^[[:space:]]*"dataset_key":[[:space:]]*"bls-unemployment-2020",[[:space:]]*$''',
-    '''^[[:space:]]*\{"key": "unemployment\.2020-01", "value": 3\.6, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
-    '''^[[:space:]]*\{"key": "unemployment\.2020-04", "value": 14\.8, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
-    '''^[[:space:]]*\{"key": "unemployment\.2020-12", "value": 6\.7, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\}[[:space:]]*$''',
-  ]
-
-  [[rules.allowlists]]
-  description = "Public FRED target identifiers in the pinned snapshot"
-  condition = "AND"
-  regexTarget = "line"
-  paths = ['''^research/data/fred-fedfunds-2020\.json$''']
-  regexes = [
-    '''^[[:space:]]*\{"key": "policy_rate\.2020-01", "value": 1\.55, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
-    '''^[[:space:]]*\{"key": "policy_rate\.2020-04", "value": 0\.05, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
-    '''^[[:space:]]*\{"key": "policy_rate\.2020-12", "value": 0\.09, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\}[[:space:]]*$''',
-  ]
-
-  [[rules.allowlists]]
-  description = "Expected FRED target identifiers in the snapshot regression assertion"
-  condition = "AND"
-  regexTarget = "line"
-  paths = ['''^tests/test_v2_research_observatory\.py$''']
-  regexes = [
-    '''^[[:space:]]*"key": "policy_rate\.2020-01", "unit": "percent", "value": 1\.55\},[[:space:]]*$''',
-    '''^[[:space:]]*"key": "policy_rate\.2020-04", "unit": "percent", "value": 0\.05\},[[:space:]]*$''',
-    '''^[[:space:]]*"key": "policy_rate\.2020-12", "unit": "percent", "value": 0\.09\},[[:space:]]*$''',
-  ]
-
-  [[rules.allowlists]]
-  description = "Private-data redaction sentinel used only by the news privacy test"
-  condition = "AND"
-  regexTarget = "line"
-  paths = ['''^tests/test_information_completion\.py$''']
-  regexes = ['''^[[:space:]]*secret = "private-liquidity-belief-9f8a"[[:space:]]*$''']
+[rules.allowlist]
+description = "Narrow path+line allowlists for known benign lines"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^\.env\.example$''',
+  '''^config/data-manifest\.yaml$''',
+  '''^research/data/bls-unemployment-2020\.json$''',
+  '''^research/data/fred-fedfunds-2020\.json$''',
+  '''^tests/test_v2_research_observatory\.py$''',
+  '''^tests/test_information_completion\.py$''',
+  '''^benchmarks/receipts/world-os-v8-standard\.json$''',
+  '''^tests/test_hosted_app\.py$''',
+  '''^tests/test_hosted_catalog\.py$''',
+  '''^tests/test_prd_completion\.py$''',
+  '''^tests/test_semantics12_civic_city\.py$''',
+  '''^dashboard/tests/ui\.test\.js$''',
+  '''^reports/oracle_campaign\.py$''',
+  '''^runs/v2-live-behavioral\.yaml$''',
+  '''^runs/v2-spec-closure-rehearsal\.yaml$''',
+]
+regexes = [
+  # Blank API-key placeholders in the checked-in env template.
+  '''^KIMI_API_KEY=[[:space:]]*$''',
+  '''^ANTHROPIC_API_KEY=[[:space:]]*$''',
+  # Public BLS dataset identifier in the research manifest.
+  '''^[[:space:]]*-[[:space:]]+key:[[:space:]]+bls-unemployment-2020[[:space:]]*$''',
+  # Public BLS dataset and target identifiers in the pinned snapshot.
+  '''^[[:space:]]*"dataset_key":[[:space:]]*"bls-unemployment-2020",[[:space:]]*$''',
+  '''^[[:space:]]*\{"key": "unemployment\.2020-01", "value": 3\.6, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
+  '''^[[:space:]]*\{"key": "unemployment\.2020-04", "value": 14\.8, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
+  '''^[[:space:]]*\{"key": "unemployment\.2020-12", "value": 6\.7, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\}[[:space:]]*$''',
+  # Public FRED target identifiers in the pinned snapshot.
+  '''^[[:space:]]*\{"key": "policy_rate\.2020-01", "value": 1\.55, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
+  '''^[[:space:]]*\{"key": "policy_rate\.2020-04", "value": 0\.05, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
+  '''^[[:space:]]*\{"key": "policy_rate\.2020-12", "value": 0\.09, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\}[[:space:]]*$''',
+  # Expected FRED target identifiers in the snapshot regression assertion.
+  '''^[[:space:]]*"key": "policy_rate\.2020-01", "unit": "percent", "value": 1\.55\},[[:space:]]*$''',
+  '''^[[:space:]]*"key": "policy_rate\.2020-04", "unit": "percent", "value": 0\.05\},[[:space:]]*$''',
+  '''^[[:space:]]*"key": "policy_rate\.2020-12", "unit": "percent", "value": 0\.09\},[[:space:]]*$''',
+  # Private-data redaction sentinel used only by the news privacy test.
+  '''^[[:space:]]*secret = "private-liquidity-belief-9f8a"[[:space:]]*$''',
+  # Pinned canonical receipt hash in the benchmark standard (checked-in fixture).
+  '''^[[:space:]]*"authoritative_sha256": "d4360069c631be7b5e59f7837d550f750c6afe7da72da8743e1ca530dba42a30",[[:space:]]*$''',
+  # Fixed OAuth test client identifiers.
+  '''^[[:space:]]*client_id = "ae_client_hosted_test_123456"[[:space:]]*$''',
+  '''^[[:space:]]*client_id = "ae_client_1234567890abcdef"[[:space:]]*$''',
+  # Offline replay dataset key in the PRD completion fixture.
+  '''^[[:space:]]*"key": "offline-replay-v1",[[:space:]]*$''',
+  # Idempotency key in the civic-city gateway test fixture.
+  '''^[[:space:]]*"idempotency_key": "civic-permit-gateway-1",[[:space:]]*$''',
+  # Ruleset key in the dashboard UI test fixture.
+  '''^.*ruleset_key: "northstar-us-inspired-1\.0" \}\],[[:space:]]*$''',
+  # Receipt hash column names in the oracle campaign report generator.
+  '''^[[:space:]]*hash_key="replay_execution_receipt_sha256",[[:space:]]*$''',
+  '''^[[:space:]]*hash_key="source_receipt_sha256", label="source receipt"\)[[:space:]]*$''',
+  # Scenario seed keys in run configs.
+  '''^[[:space:]]*key: seeded-startup-behavior-v1[[:space:]]*$''',
+  '''^[[:space:]]*key: semantics-7-spec-closure-v1[[:space:]]*$''',
+]

@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+# Legacy credential file location; values live in the ignored .env now.
+/env
 
 __pycache__/
 *.pyc
@@ -13,6 +15,8 @@ data/runs/*.db-shm
 data/runs/oracle-commitments/
 data/runs/oracle-locks/
 data/runs/oracle-pending/
+# Database backups (generated, large binaries) — keep data/runs DB ignores above intact.
+data/backups/
 data/checkpoints/
 data/control-plane/
 data/counterfactuals/
@@ -26,6 +30,9 @@ dashboard/test-results/
 .codebase-memory/
 build/
 dist/
+# Generated tooling output and local agent workspaces.
+graphify-out/
+.qoder/
 *.log
 .worktrees/
 logs/

@@ -150,6 +150,22 @@ python run.py --config runs/base.yaml
 python run.py --config runs/v2-institutional-rehearsal.yaml
 ```
 
+POSIX (bash):
+
+```bash
+git clone https://github.com/alinojoumi8/agent-economy.git
+cd agent-economy
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --require-hashes -r requirements.lock
+
+# Free core-engine smoke world, deterministic and provider-free
+python run.py --config runs/base.yaml
+
+# Free full Observatory world: regions, contracts, legal matters, and politics
+python run.py --config runs/v2-institutional-rehearsal.yaml
+```
+
 Open <http://127.0.0.1:8000>. The world starts paused; press **Run** or **Step**.
 Use the institutional rehearsal when validating the Living economy map or the
 legal and political panels; the base profile is intentionally a smaller core
@@ -167,7 +183,7 @@ action, and press **Step**. The citizen inspector retains a paginated audit of
 queued, executed, rejected, and cancelled commands. Participant runs are clearly
 marked and cannot be used as acceptance evidence.
 
-macOS/Linux users can activate with `source .venv/bin/activate`. A headless smoke
+A headless smoke
 run that writes a standalone report is:
 
 ```bash
