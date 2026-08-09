@@ -16,6 +16,16 @@ def test_live_minimax_reserves_output_space_for_short_agent_contracts():
     assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
+def test_production_minimax_reserves_output_space_for_short_agent_contracts():
+    config = load_config("runs/production.yaml")
+    llm = config["llm"]
+
+    assert llm.get("reporter_max_tokens", 0) >= 1200
+    assert llm.get("newsroom_max_tokens", 0) >= 1000
+    assert llm.get("conversation_max_tokens", 0) >= 600
+    assert config["reports"]["narrative_max_tokens"] >= 1600
+
+
 def test_minimax_only_profile_reserves_reasoning_room_for_agent_decisions():
     llm = load_config("runs/hermes-minimax-m3-only-live.yaml")["llm"]
 

@@ -235,7 +235,12 @@ class OpenAICompatAdapter(Adapter):
             text = str(content or "")
         usage = data.get("usage", {})
         details = usage.get("prompt_tokens_details", {}) or {}
-        cached_in = int(details.get("cached_tokens", 0) or usage.get("cache_read_input_tokens", 0) or 0)
+        cached_in = int(
+            details.get("cached_tokens", 0)
+            or usage.get("cache_read_input_tokens", 0)
+            or usage.get("prompt_cache_hit_tokens", 0)
+            or 0
+        )
         return AdapterResult(
             text=text,
             in_tokens=int(usage.get("prompt_tokens", 0)) or sum(estimate_tokens(m["content"]) for m in messages),
