@@ -1,0 +1,3 @@
+# Civic Builder authority stops at the world boundary
+
+The city will add a separate eleventh in-world Civic Builder alongside the ten ordinary members of the Launch Cohort. Direct authority comes from a revocable Builder Mandate that permits a bounded catalog of engine-validated City Expansion Actions; it does not attach permanently to the builder's persona. The Civic Builder may also author Code Proposals in an isolated sandbox, but it cannot modify or deploy the running engine; a proposal must pass independent verification and human approval before becoming a new release or semantics version. This preserves meaningful in-world building authority and replaceability without letting a citizen rewrite the rules, evidence, or validators governing its own actions.

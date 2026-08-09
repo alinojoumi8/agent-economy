@@ -1,0 +1,3 @@
+# City scale uses a strategic core and deterministic periphery
+
+The eleven launch agents—the ten Owner-Run Citizens and the Civic Builder—form the initial full-fidelity strategic core. As the city grows, isolated Citizen Runtimes may be provisioned in approved cohorts up to a configured strategic cap, while larger demographic and economic growth uses persistent Peripheral Residents with deterministic policies and reduced cadence. Both tiers use the same identities, ledger, contracts, civic rules, and settlement engine. This avoids making cost grow linearly with population while preserving full cognition where it materially affects city outcomes.

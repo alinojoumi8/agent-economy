@@ -1,0 +1,3 @@
+# Cohort personas use deterministic bases and bounded enrichment
+
+Every City Cohort begins with a seeded deterministic demographic base. The Civic Builder may enrich bounded identity fields such as name, biography, goals, personality, values, and preferred occupation, after which the complete Cohort Manifest must satisfy schema validation and the Cohort Diversity Contract before admission. The authoritative engine alone assigns wealth, accounts, housing, region, opportunities, rights, and authority. This permits expressive personas without allowing model output to bias economic initialization or civic standing.
