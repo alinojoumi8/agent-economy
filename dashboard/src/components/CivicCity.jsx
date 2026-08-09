@@ -88,21 +88,29 @@ export function CivicCity(props) {
   const [localQuery, setLocalQuery] = useState("");
   const [localActiveOnly, setLocalActiveOnly] = useState(false);
   const [localSelectedId, setLocalSelectedId] = useState(null);
+  const [localPopulation, setLocalPopulation] = useState("core");
   const activeLayer = observerState?.layer ?? localActiveLayer;
   const query = observerState?.q ?? localQuery;
   const activeOnly = observerState?.activeOnly ?? localActiveOnly;
   const selectedId = observerState?.agent ?? localSelectedId;
+  const populationMode = observerState?.population ?? localPopulation;
   const lensRef = useRef(null);
   const model = useMemo(
-    () => deriveCityModel({ agents, firms, events, map, civic }),
-    [agents, firms, events, map, civic],
+    () => deriveCityModel({ agents, firms, events, map, civic, runtime, tick, historical }),
+    [agents, firms, events, map, civic, runtime, tick, historical],
   );
+  const needle = query.trim().toLowerCase();
   const visibleAgents = filterCityAgents(model.agents, {
     layer: activeLayer,
     q: query,
     activeOnly,
   });
+  const showClusters = populationMode === "clusters"
+    && activeLayer === "all"
+    && !activeOnly
+    && !needle;
   const selected = visibleAgents.find(agent => String(agent.id) === String(selectedId))
+    || visibleAgents.find(agent => agent.isActive)
     || visibleAgents.find(agent => agent.event)
     || visibleAgents[0]
     || null;
@@ -146,6 +154,16 @@ export function CivicCity(props) {
   );
   const providerActive = runtime?.global?.in_flight;
   const providerCapacity = runtime?.global?.capacity;
+  const liveAgents = model.agents
+    .filter(agent => agent.runtimeActivity)
+    .sort((left, right) => {
+      const precedence = { thinking: 0, queued: 1 };
+      return (precedence[left.activityState] ?? 2) - (precedence[right.activityState] ?? 2)
+        || Number(left.id) - Number(right.id);
+    });
+  const changedAgents = model.agents
+    .filter(agent => agent.transitionEvent && !agent.runtimeActivity)
+    .sort((left, right) => Number(right.transitionEvent.id) - Number(left.transitionEvent.id));
 
   const moveSelection = direction => {
     if (!visibleAgents.length) return;
@@ -167,8 +185,19 @@ export function CivicCity(props) {
     else setLocalActiveLayer(value);
   };
   const changeQuery = value => {
-    if (onObserverStateChange) changeObserverFilter({ q: value }, { replace: true });
-    else setLocalQuery(value);
+    if (onObserverStateChange) {
+      if (value && populationMode === "clusters") {
+        onObserverStateChange({ q: value, population: "all", agent: null }, { replace: true });
+      } else {
+        changeObserverFilter({ q: value }, { replace: true });
+      }
+    } else {
+      setLocalQuery(value);
+      if (value && populationMode === "clusters") {
+        setLocalPopulation("all");
+        setLocalSelectedId(null);
+      }
+    }
   };
   const changeActiveOnly = value => {
     if (onObserverStateChange) changeObserverFilter({ activeOnly: value });
@@ -178,15 +207,31 @@ export function CivicCity(props) {
     if (onObserverStateChange) onObserverStateChange({ agent: value });
     else setLocalSelectedId(value);
   };
+  const changePopulation = value => {
+    const clusterPatch = value === "clusters"
+      ? { population: value, q: null, layer: null, activeOnly: false, agent: null }
+      : { population: value, agent: null };
+    if (onObserverStateChange) onObserverStateChange(clusterPatch);
+    else {
+      setLocalPopulation(value);
+      setLocalSelectedId(null);
+      if (value === "clusters") {
+        setLocalQuery("");
+        setLocalActiveLayer("all");
+        setLocalActiveOnly(false);
+      }
+    }
+  };
   const resetView = () => {
     if (onObserverStateChange) {
-      onObserverStateChange({ q: null, layer: null, activeOnly: false, agent: null });
+      onObserverStateChange({ q: null, layer: null, activeOnly: false, agent: null, population: null });
       return;
     }
     setLocalQuery("");
     setLocalActiveLayer("all");
     setLocalActiveOnly(false);
     setLocalSelectedId(null);
+    setLocalPopulation("core");
   };
   const openMobileLens = () => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -196,7 +241,7 @@ export function CivicCity(props) {
     });
   };
   const runIsActive = ACTIVE_RUN_STATUSES.has(String(status).toLowerCase());
-  const animateLiveActivity = tick === "live" && connected && !historical && runIsActive;
+  const animateLiveActivity = tick === "live" && connected && !historical && liveAgents.length > 0;
 
   return <section
     className={`civic-city civic-city--${variant}${model.agents.length > 72 ? " civic-city--dense" : ""}`}
@@ -212,7 +257,9 @@ export function CivicCity(props) {
       <dl className="civic-city__run-state" aria-label="City run state">
         <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>
         <div><dt>Phase</dt><dd>{humanize(phase, "Between phases")}</dd></div>
-        <div><dt>Active marks</dt><dd>{model.counts.active} / {model.counts.agents}</dd></div>
+        <div><dt>AI live</dt><dd>{historical ? "—" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
+        <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
+        <div><dt>Residents</dt><dd>{model.counts.residents} <small>{model.population.core} core</small></dd></div>
         <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd></div>
       </dl>
     </header>
@@ -229,6 +276,14 @@ export function CivicCity(props) {
           <span>{layer.shortLabel}</span><b>{layerCounts[layer.id]}</b>
         </button>)}
       </div>
+      {model.population.periphery > 0 && <div className="civic-city__population" role="group" aria-label="City population detail">
+        <span>Population detail</span>
+        <div>
+          <button type="button" aria-pressed={populationMode === "core"} onClick={() => changePopulation("core")}>Core <b>{model.population.core}</b></button>
+          <button type="button" aria-pressed={populationMode === "all"} onClick={() => changePopulation("all")}>Everyone <b>{model.population.total}</b></button>
+          <button type="button" aria-pressed={populationMode === "clusters"} onClick={() => changePopulation("clusters")}>Clusters <b>{model.population.periphery}</b></button>
+        </div>
+      </div>}
       <label className="civic-city__search">
         <span>Find an agent</span>
         <input
@@ -240,7 +295,7 @@ export function CivicCity(props) {
       </label>
       <label className="civic-city__active-toggle">
         <input type="checkbox" checked={activeOnly} onChange={event => changeActiveOnly(event.target.checked)} />
-        <span>Committed events only</span>
+        <span>Live or changed this tick</span>
       </label>
     </div>
 
@@ -249,7 +304,9 @@ export function CivicCity(props) {
         <div className="civic-city__map-field">
           <div className="civic-city__atlas-meta">
             <span className={`civic-city__source civic-city__source--${model.coordinateMode}`}>{coordinateCopy(model.coordinateMode)}</span>
-            <span>{visibleAgents.length} marks visible</span>
+            <span>{showClusters
+              ? `${visibleAgents.length} core marks + ${model.population.clusteredAgents} clustered residents`
+              : `${visibleAgents.length} of ${model.population.total} residents visible`}</span>
           </div>
           <svg className="civic-city__plot" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <defs>
@@ -270,9 +327,9 @@ export function CivicCity(props) {
           <path className="civic-city__contour" d="M44 24c13-10 29 1 26 14s-23 15-30 4 0-15 4-18Zm-17 41c11-8 25 0 24 11s-17 16-27 7-5-13 3-18Z" vectorEffect="non-scaling-stroke" />
           {selected && <>
             <path
-              className={selected.event ? "civic-city__transect is-active" : "civic-city__transect"}
+              className={selected.isActive ? "civic-city__transect is-active" : "civic-city__transect"}
               d={`M${selected.x} ${selected.y} H92`}
-              markerEnd={selected.event ? `url(#civic-arrow-${variant})` : undefined}
+              markerEnd={selected.isActive ? `url(#civic-arrow-${variant})` : undefined}
               vectorEffect="non-scaling-stroke"
             />
             <circle className="civic-city__transect-origin" cx={selected.x} cy={selected.y} r="2.1" vectorEffect="non-scaling-stroke" />
@@ -321,17 +378,30 @@ export function CivicCity(props) {
             className={[
               "civic-city__agent",
               `civic-city__agent--${agent.layer}`,
-              agent.event ? "has-event" : "",
+              `is-${agent.activityState.replaceAll(" ", "-")}`,
               selected && String(selected.id) === String(agent.id) ? "is-selected" : "",
             ].filter(Boolean).join(" ")}
             style={{ left: `${agent.x}%`, top: `${agent.y}%` }}
             onClick={() => changeSelection(agent.id)}
             aria-pressed={selected && String(selected.id) === String(agent.id)}
-            aria-label={`${agent.name}, ${humanize(agent.role || agent.occupation || agent.kind)}, ${agent.event ? `committed ${humanize(agent.event.kind)} event` : agent.activityState}`}
+            aria-label={`${agent.name}, ${humanize(agent.role || agent.occupation || agent.kind)}, ${humanize(agent.activityState)}${agent.runtimeActivity?.active_calls > 1 ? `, ${agent.runtimeActivity.active_calls} active calls` : ""}`}
           >
             <span>{initials(agent.name)}</span>
           </button>)}
         </div>
+        {showClusters && <div className="civic-city__cluster-layer" aria-label="Peripheral resident clusters">
+          {model.clusters.map(cluster => <button
+            key={cluster.id}
+            type="button"
+            className="civic-city__cluster"
+            style={{ left: `${cluster.x}%`, top: `${cluster.y}%` }}
+            onClick={() => changePopulation("all")}
+            aria-label={`Show ${cluster.count} ${cluster.label} peripheral residents individually`}
+          >
+            <strong>{cluster.count}</strong>
+            <span>{cluster.label}</span>
+          </button>)}
+        </div>}
 
         {error && <div className="civic-city__empty" role="alert">
           <strong>City evidence is temporarily unavailable.</strong>
@@ -348,7 +418,11 @@ export function CivicCity(props) {
         </div>}
 
         <div className="civic-city__legend" role="group" aria-label="City map legend">
-          <span><i className="has-event" />Committed event</span>
+          <span><i className="is-thinking" />Thinking</span>
+          <span><i className="is-queued" />Queued</span>
+          <span><i className="is-settled" />Settled</span>
+          <span><i className="is-rejected" />Rejected</span>
+          <span><i className="is-cluster" />Peripheral cluster</span>
           <span><i />Assigned or resident</span>
           <span><b />Firm footprint</span>
         </div>
@@ -360,7 +434,7 @@ export function CivicCity(props) {
             className="civic-city__mobile-peek"
             onClick={openMobileLens}
           >
-            <span><b>{selected.name}</b><small>{selected.event ? humanize(selected.event.kind) : humanize(selected.activityState)}</small></span>
+            <span><b>{selected.name}</b><small>{humanize(selected.activityState)}</small></span>
             <strong>Open evidence ↓</strong>
           </button>}
         </div>
@@ -379,10 +453,26 @@ export function CivicCity(props) {
             <span className={`civic-city__avatar civic-city__avatar--${selected.layer}`}>{initials(selected.name)}</span>
             <div><p>Agent #{selected.id}</p><h3>{selected.name}</h3><span>{humanize(selected.role || selected.occupation || selected.kind)}</span></div>
           </div>
-          <div className={`civic-city__activity civic-city__activity--${selected.event ? "event" : "assigned"}`}>
-            <span>{selected.event ? "Committed activity" : "Current placement"}</span>
-            <strong>{selected.event ? humanize(selected.event.kind) : humanize(selected.activityState)}</strong>
-            <small>{selected.event ? `Tick ${selected.event.tick} · ${humanize(selected.event.phase)}` : `${selected.district} · no recent actor-linked event`}</small>
+          <div className={`civic-city__activity civic-city__activity--${
+            selected.runtimeActivity
+              ? selected.activityState
+              : selected.transitionEvent
+                ? selected.activityState
+                : selected.event ? "event" : "assigned"
+          }`}>
+            <span>{selected.runtimeActivity
+              ? "Live runtime telemetry"
+              : selected.transitionEvent
+                ? "Committed this tick"
+                : selected.event ? "Latest committed record" : "Current placement"}</span>
+            <strong>{selected.runtimeActivity || selected.transitionEvent
+              ? humanize(selected.activityState)
+              : selected.event ? humanize(selected.event.kind) : humanize(selected.activityState)}</strong>
+            <small>{selected.runtimeActivity
+              ? `Tick ${selected.runtimeActivity.tick} · ${selected.runtimeActivity.active_calls} active call${selected.runtimeActivity.active_calls === 1 ? "" : "s"} · ${selected.runtimeActivity.oldest_elapsed_ms}ms observed`
+              : selected.event
+                ? `Tick ${selected.event.tick} · ${humanize(selected.event.phase)}`
+                : `${selected.district} · no recent actor-linked event`}</small>
           </div>
           <dl className="civic-city__facts">
             <div><dt>District</dt><dd>{selected.district}</dd></div>
@@ -426,13 +516,40 @@ export function CivicCity(props) {
           <span><i className={`civic-city__provenance civic-city__provenance--${model.coordinateMode}`} />{coordinateCopy(model.coordinateMode)}</span>
           {lineage && <small>Semantics {lineage.semantics} · projection {lineage.projection} · policy {lineage.policy}</small>}
           {historical && <small>Events resolve at tick {tick}; the entity roster comes from the current agent and firm endpoints.</small>}
+          {!historical && selected?.runtimeActivity && <small>Live activity is ephemeral observer telemetry. It is not a thought trace or committed world state.</small>}
           <small>City selection is observer-only. Ledger and replay truth remain immutable.</small>
         </footer>
       </aside>
     </div>
 
+    <section className="civic-city__activity-dock" aria-label="Live agent activity dock">
+      <header>
+        <div><span>Agent activity</span><strong>{historical ? `Tick ${tick}` : "Live operations"}</strong></div>
+        <small>{historical
+          ? "Runtime overlays are disabled for historical views."
+          : `${liveAgents.length} live · ${changedAgents.length} changed this tick`}</small>
+      </header>
+      <div className="civic-city__activity-dock-items">
+        {[...liveAgents, ...changedAgents].slice(0, 12).map(agent => <button
+          key={`activity-${agent.id}`}
+          type="button"
+          className={`is-${agent.activityState}`}
+          onClick={() => changeSelection(agent.id)}
+          aria-label={`Select ${agent.name}, ${humanize(agent.activityState)}`}
+        >
+          <i aria-hidden="true" />
+          <span><strong>{agent.name}</strong><small>{humanize(agent.activityState)} · Agent #{agent.id}</small></span>
+          {agent.runtimeActivity?.active_calls > 1 && <b>{agent.runtimeActivity.active_calls}</b>}
+        </button>)}
+        {!liveAgents.length && !changedAgents.length && <p>
+          <strong>No agents are active at this observation.</strong>
+          <span>Queued and thinking calls appear here; committed outcomes remain in the evidence lens.</span>
+        </p>}
+      </div>
+    </section>
+
     <dl className="civic-city__instruments" aria-label="City instrumentation">
-      <div><dt>Actor-linked marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>agents in latest event sample</small></dd></div>
+      <div><dt>Active marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>live or changed at selected tick</small></dd></div>
       <div><dt>Operating firms</dt><dd><span className="civic-city__instrument-value">{model.counts.firms}</span><small>canonical firm endpoint</small></dd></div>
       <div><dt>Real places</dt><dd><span className="civic-city__instrument-value">{model.counts.places}</span><small>stable city coordinates</small></dd></div>
       <div><dt>Permit queue</dt><dd><span className="civic-city__instrument-value">{model.civic?.enabled ? model.counts.queue : "—"}</span><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></dd></div>

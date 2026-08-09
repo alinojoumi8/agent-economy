@@ -159,6 +159,8 @@ async function mockApi(page: Page) {
   ] }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
     live_only: true,
+    activity_revision: 0,
+    active_agents: [],
     global: { capacity: 3, in_flight: 1, queue_depth: 0, peak_in_flight: 2, peak_queue_depth: 1, logical_deadline_s: 90 },
     simulated_days: { samples: 2, p50_wall_ms: 1200, p95_wall_ms: 1600 },
     providers: [],
@@ -471,23 +473,56 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
   await expect(page.getByRole("heading", { name: "Dr. Amara Osei" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open citizen dossier" })).toHaveAttribute("href", "/runs/run-demo/people/3");
 
-  await page.getByRole("button", { name: /All/ }).click();
+  const allLayer = page.locator(".civic-city__layers button").filter({ hasText: /^All/ });
+  await allLayer.click();
+  await expect(allLayer).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Find an agent").fill("Supplier Officer");
   await expect(page).toHaveURL(/q=Supplier\+Officer/);
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
   await page.getByRole("button", { name: /^Supplier Officer,/ }).click();
   await expect(page).toHaveURL(/agent=1/);
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
-  await expect(page.locator(".civic-city__activity strong")).toHaveText("Goods Sale");
+  await expect(page.locator(".civic-city__activity strong")).toHaveText("Settled");
   await expect(page.getByRole("link", { name: "Trace this event" })).toHaveAttribute("href", "/runs/run-demo/investigations?event=9");
 });
 
+test("live AI activity coordinates map markers, dock, filters, and evidence", async ({ page }) => {
+  await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    live_only: true,
+    activity_revision: 4,
+    active_agents: [{
+      agent_id: 2, state: "thinking", active_calls: 2, tick: 6, oldest_elapsed_ms: 850,
+    }],
+    global: { capacity: 3, in_flight: 2, queue_depth: 0, peak_in_flight: 2, peak_queue_depth: 1, logical_deadline_s: 90 },
+    simulated_days: { samples: 2, p50_wall_ms: 1200, p95_wall_ms: 1600 },
+    providers: [],
+  } }));
+
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.locator(".civic-city__agent.is-thinking")).toHaveCount(1);
+  await expect(page.getByText("1 live · 1 changed this tick")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Select Editor Northstar, Thinking" })).toBeVisible();
+
+  await page.getByRole("button", { name: /Editor Northstar, Editor, Thinking/ }).click();
+  await expect(page.getByRole("heading", { name: "Editor Northstar" })).toBeVisible();
+  await expect(page.getByText("Live runtime telemetry")).toBeVisible();
+  await expect(page.locator(".civic-city__activity strong")).toHaveText("Thinking");
+  await expect(page.getByText(/2 active calls/)).toBeVisible();
+
+  await page.getByLabel("Live or changed this tick").focus();
+  await page.getByLabel("Live or changed this tick").press("Space");
+  await expect(page.getByLabel("Live or changed this tick")).toBeChecked();
+  await expect(page.locator(".civic-city__agent")).toHaveCount(2);
+  await expect(page.locator(".civic-city__agent.is-thinking")).toHaveCount(1);
+  await expect(page.locator(".civic-city__agent.is-settled")).toHaveCount(1);
+});
+
 test("a copied Civic City URL restores filters and selection", async ({ page, context }) => {
-  const url = "/runs/run-demo/overview?fork=fork-a&tick=4&layer=markets&q=Supplier&activeOnly=1&agent=1";
+  const url = "/runs/run-demo/overview?fork=fork-a&tick=6&layer=markets&q=Supplier&activeOnly=1&agent=1";
   await page.goto(url);
   await expect(page.getByRole("button", { name: /Markets/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Find an agent")).toHaveValue("Supplier");
-  await expect(page.getByLabel("Committed events only")).toBeChecked();
+  await expect(page.getByLabel("Live or changed this tick")).toBeChecked();
   await expect(page.getByRole("heading", { name: "Supplier Officer" })).toBeVisible();
 
   const fresh = await context.newPage();
@@ -509,6 +544,76 @@ test("Civic City discrete selections participate in browser history", async ({ p
   await page.goBack();
   await expect(page).toHaveURL(/agent=2/);
   await expect(page.getByRole("heading", { name: "Editor Northstar" })).toBeVisible();
+});
+
+test("Civic City scales from core agents to clusters and all 300 residents", async ({ page }) => {
+  const requestedModes: string[] = [];
+  const coreAgents = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1,
+    name: `Core Resident ${String(index + 1).padStart(3, "0")}`,
+    occupation: index % 2 ? "engineer" : "teacher",
+    population_tier: "core",
+    x: null,
+    y: null,
+  }));
+  const peripheralAgents = Array.from({ length: 200 }, (_, index) => ({
+    id: index + 101,
+    name: `Peripheral Resident ${String(index + 1).padStart(3, "0")}`,
+    occupation: index % 2 ? "nurse" : "logistics worker",
+    population_tier: "periphery",
+    x: null,
+    y: null,
+    place_id: null,
+    place_name: null,
+  }));
+  await page.route("**/api/v2/world-map*", route => {
+    const mode = new URL(route.request().url()).searchParams.get("population") || "core";
+    requestedModes.push(mode);
+    const clusters = mode === "clusters" ? [
+      { id: "region-1-periphery", region_id: 1, label: "Northstar", count: 170, x: .25, y: .35 },
+      { id: "region-2-periphery", region_id: 2, label: "Ironvale", count: 15, x: .72, y: .28 },
+      { id: "region-3-periphery", region_id: 3, label: "Suncoast", count: 15, x: .55, y: .78 },
+    ] : [];
+    return route.fulfill({ json: {
+      ...baseEnvelope,
+      projection: "world.map",
+      data: {
+        regions: [],
+        agents: mode === "all" ? [...coreAgents, ...peripheralAgents] : coreAgents,
+        organizations: [],
+        places: [],
+        presence: [],
+        population_mode: mode,
+        population_summary: {
+          total: 300,
+          core: 100,
+          periphery: 200,
+          rendered_agents: mode === "all" ? 300 : 100,
+          clustered_agents: mode === "clusters" ? 200 : 0,
+        },
+        population_clusters: clusters,
+      },
+    } });
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/runs/run-demo/overview?population=clusters");
+  await expect(page.locator(".civic-city__population")).toBeVisible();
+  await expect(page.locator(".civic-city__population button", { hasText: "Clusters" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".civic-city__cluster")).toHaveCount(3);
+  await expect(page.getByText("100 core marks + 200 clustered residents")).toBeVisible();
+
+  await page.locator(".civic-city__cluster").first().click();
+  await expect(page).toHaveURL(/population=all/);
+  await expect(page.locator(".civic-city__agent")).toHaveCount(300);
+
+  await page.locator(".civic-city__population button", { hasText: "Core" }).click();
+  await expect(page).not.toHaveURL(/population=/);
+  await expect(page.locator(".civic-city__agent")).toHaveCount(100);
+  await page.goBack();
+  await expect(page).toHaveURL(/population=all/);
+  await expect(page.locator(".civic-city__agent")).toHaveCount(300);
+  expect(requestedModes).toEqual(expect.arrayContaining(["clusters", "all", "core"]));
 });
 
 test("citizen menu unifies app and onboarding links in the same tab", async ({ page }) => {

@@ -199,7 +199,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByText("Mixed projected + derived layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
-  await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(1);
+  await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
   await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Live");
 
   await page.getByLabel("Find an agent").fill("zzz-no-match");

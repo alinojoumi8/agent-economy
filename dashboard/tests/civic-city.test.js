@@ -158,3 +158,127 @@ test("mixed coordinate provenance is reported when projected and derived coexist
   assert.equal(model.agents.find(agent => agent.id === 1).coordinateSource, "observed");
   assert.equal(model.agents.find(agent => agent.id === 2).coordinateSource, "derived");
 });
+
+test("population projection preserves totals and normalizes regional clusters", () => {
+  const model = deriveCityModel({
+    agents: [{ id: 1, name: "Core resident", population_tier: "core" }],
+    map: {
+      population_mode: "clusters",
+      population_summary: {
+        total: 300,
+        core: 100,
+        periphery: 200,
+        rendered_agents: 100,
+        clustered_agents: 200,
+      },
+      population_clusters: [
+        { id: "region-1-periphery", label: "Northstar", count: 175, x: 0.25, y: 0.35 },
+        { id: "region-2-periphery", label: "Ironvale", count: 25, x: 0.72, y: 0.28 },
+      ],
+    },
+  });
+
+  assert.deepEqual(model.population, {
+    mode: "clusters",
+    total: 300,
+    core: 100,
+    periphery: 200,
+    renderedAgents: 1,
+    clusteredAgents: 200,
+  });
+  assert.equal(model.counts.residents, 300);
+  assert.deepEqual(
+    model.clusters.map(cluster => [
+      cluster.label, cluster.count, Math.round(cluster.x), Math.round(cluster.y),
+    ]),
+    [["Northstar", 175, 25, 35], ["Ironvale", 25, 72, 28]],
+  );
+});
+
+test("peripheral presence cannot restore private placement into an all-resident map", () => {
+  const model = deriveCityModel({
+    agents: [
+      { id: 1, name: "Core", population_tier: "core", x: null, y: null },
+      { id: 2, name: "Peripheral", population_tier: "periphery", x: null, y: null },
+    ],
+    map: {
+      population_mode: "all",
+      agents: [
+        { id: 1, name: "Core", population_tier: "core", x: null, y: null },
+        { id: 2, name: "Peripheral", population_tier: "periphery", x: null, y: null },
+      ],
+      presence: [{
+        agent_id: 2,
+        name: "Peripheral",
+        slot: "business",
+        place_id: 99,
+        place_name: "Private office",
+        x: .88,
+        y: .77,
+      }],
+    },
+  });
+
+  const peripheral = model.agents.find(agent => agent.id === 2);
+  assert.equal(peripheral.place_id, undefined);
+  assert.equal(peripheral.place_name, undefined);
+  assert.equal(peripheral.coordinateSource, "derived");
+  assert.notDeepEqual([peripheral.x, peripheral.y], [88, 77]);
+});
+
+test("live runtime activity takes precedence over current-tick settlement", () => {
+  const model = deriveCityModel({
+    agents: [
+      { id: 1, name: "Queued", role: "citizen" },
+      { id: 2, name: "Thinking", role: "citizen" },
+      { id: 3, name: "Rejected", role: "citizen" },
+      { id: 4, name: "Old event", role: "citizen" },
+    ],
+    events: [
+      { id: 10, tick: 8, kind: "goods_sale", payload: { actor_id: 1 } },
+      { id: 11, tick: 8, kind: "action_rejected", payload: { agent_id: 3 } },
+      { id: 12, tick: 7, kind: "goods_sale", payload: { actor_id: 4 } },
+    ],
+    civic: { tick: 8 },
+    runtime: { active_agents: [
+      { agent_id: 1, state: "queued", active_calls: 1, tick: 8, oldest_elapsed_ms: 20 },
+      { agent_id: 2, state: "thinking", active_calls: 2, tick: 8, oldest_elapsed_ms: 40 },
+    ] },
+    tick: "live",
+  });
+
+  assert.deepEqual(
+    model.agents.map(agent => [agent.id, agent.activityState, agent.isActive]),
+    [
+      [1, "queued", true],
+      [2, "thinking", true],
+      [3, "rejected", true],
+      [4, "assigned role", false],
+    ],
+  );
+  assert.deepEqual(
+    {
+      active: model.counts.active,
+      queued: model.counts.queued,
+      thinking: model.counts.thinking,
+      settled: model.counts.settled,
+      rejected: model.counts.rejected,
+    },
+    { active: 3, queued: 1, thinking: 1, settled: 0, rejected: 1 },
+  );
+});
+
+test("historical city views ignore current runtime activity", () => {
+  const model = deriveCityModel({
+    agents: [{ id: 1, name: "Historian", role: "citizen" }],
+    events: [{ id: 3, tick: 4, kind: "goods_sale", payload: { actor_id: 1 } }],
+    runtime: { active_agents: [
+      { agent_id: 1, state: "thinking", active_calls: 1, tick: 9 },
+    ] },
+    tick: 4,
+    historical: true,
+  });
+
+  assert.equal(model.agents[0].activityState, "settled");
+  assert.equal(model.agents[0].runtimeActivity, null);
+});

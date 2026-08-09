@@ -1,6 +1,7 @@
 import { CITY_LAYERS } from "../lib/civicCity.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
+const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;
@@ -18,6 +19,7 @@ function normalizedTick(value) {
 /** @param {URLSearchParams} params */
 export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
+  const population = params.get("population") || "core";
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -26,6 +28,7 @@ export function parseObserverViewState(params) {
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
     agent: positiveInteger(params.get("agent")),
+    population: CITY_POPULATION_MODES.has(population) ? population : "core",
   };
 }
 
@@ -60,6 +63,13 @@ export function patchObserverViewState(params, patch) {
   if ("agent" in patch) {
     const agent = Number(patch.agent);
     setOrDelete("agent", Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null);
+  }
+  if ("population" in patch) {
+    const population = typeof patch.population === "string"
+      && CITY_POPULATION_MODES.has(patch.population)
+      ? patch.population
+      : "core";
+    setOrDelete("population", population === "core" ? null : population);
   }
   return next;
 }

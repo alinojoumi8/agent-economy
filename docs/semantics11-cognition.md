@@ -91,9 +91,13 @@ replay comparison. Final usable provider responses remain authoritative in
 
 `GET /api/llm/runtime` reports global and per-provider capacity, current and peak
 occupancy, queue depth, p50/p95 queue and response latency, failures, rate limits,
-fallbacks, cooldown, and p50/p95 simulated-day duration. The dashboard Overview
-shows provider lanes; People shows each citizen's plan, payer, expiry, last route,
-skills, XP, and progression history.
+fallbacks, cooldown, and p50/p95 simulated-day duration. It also reports an
+in-memory, public-safe `active_agents` observation containing only agent id,
+`queued|thinking` state, active-call count, tick, and elapsed time. Prompts,
+responses, reasoning, cache keys, model assignment, and raw errors remain
+excluded. The dashboard Overview shows provider lanes and coordinated live-agent
+map states; People shows each citizen's plan, payer, expiry, last route, skills,
+XP, and progression history.
 
 Every proposal and validation result remains in `action_proposals`; provider
 attempts and accepted model calls remain in `llm_attempts` and `llm_calls`.

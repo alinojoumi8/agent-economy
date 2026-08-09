@@ -666,6 +666,11 @@ class Gateway:
             1.0, float(llm_cfg.get("logical_deadline_s", 150.0)))
         self._live_in_flight = 0
         self._peak_live_in_flight = 0
+        # Observer telemetry only: these records never enter the store,
+        # replay inputs, or canonical world state.
+        self._agent_activity_sequence = 0
+        self._agent_activity_revision = 0
+        self._agent_activity_tokens: dict[int, dict[str, Any]] = {}
         self.provider_retries = max(0, int(llm_cfg.get("provider_retries", 1)))
         raw_backoff = llm_cfg.get("rate_limit_backoff_s", [15, 30, 60, 120, 300])
         self.rate_limit_backoff_s = tuple(
@@ -1845,6 +1850,7 @@ class Gateway:
                     f"routed provider '{target.provider}' is unavailable"]), None)
         gate = self.provider_gates[target.provider]
         priority = self._request_priority(req)
+        activity_token = self._begin_agent_activity(req, "queued")
         wait_started = time.perf_counter()
         queue_wait_ms = 0.0
         provider_latency_ms = 0.0
@@ -1888,6 +1894,7 @@ class Gateway:
             if active_task is not None:
                 self._active_adapter_tasks.add(active_task)
             provider_started = time.perf_counter()
+            self._set_agent_activity(activity_token, "thinking")
             self._live_in_flight += 1
             self._peak_live_in_flight = max(
                 self._peak_live_in_flight, self._live_in_flight)
@@ -1945,6 +1952,7 @@ class Gateway:
                 await self.global_gate.release()
             if gate_acquired:
                 await gate.release()
+            self._end_agent_activity(activity_token)
         attempt_id = self._insert_attempt(
             req, plan, target, outcome=outcome,
             queue_wait_ms=max(0.0, queue_wait_ms),
@@ -2027,6 +2035,70 @@ class Gateway:
         return max(0, int(self.global_gate.queued)) + sum(
             max(0, int(gate.queued)) for gate in self.provider_gates.values())
 
+    def _begin_agent_activity(
+            self, req: LLMRequest, state: str) -> int | None:
+        """Start one non-canonical, public-safe agent activity observation."""
+        if req.agent_id is None:
+            return None
+        self._agent_activity_sequence += 1
+        token = self._agent_activity_sequence
+        self._agent_activity_tokens[token] = {
+            "agent_id": int(req.agent_id),
+            "state": state,
+            "tick": int(req.tick),
+            "started_monotonic": time.perf_counter(),
+        }
+        self._agent_activity_revision += 1
+        return token
+
+    def _set_agent_activity(self, token: int | None, state: str) -> None:
+        if token is None or token not in self._agent_activity_tokens:
+            return
+        activity = self._agent_activity_tokens[token]
+        if activity["state"] == state:
+            return
+        activity["state"] = state
+        self._agent_activity_revision += 1
+
+    def _end_agent_activity(self, token: int | None) -> None:
+        if token is None or token not in self._agent_activity_tokens:
+            return
+        del self._agent_activity_tokens[token]
+        self._agent_activity_revision += 1
+
+    def active_agent_status(self) -> list[dict[str, Any]]:
+        """Aggregate active calls without exposing prompts, models, or errors."""
+        now = time.perf_counter()
+        precedence = {"queued": 0, "thinking": 1}
+        grouped: dict[int, dict[str, Any]] = {}
+        for activity in self._agent_activity_tokens.values():
+            agent_id = int(activity["agent_id"])
+            current = grouped.get(agent_id)
+            if current is None:
+                grouped[agent_id] = {
+                    "agent_id": agent_id,
+                    "state": str(activity["state"]),
+                    "active_calls": 1,
+                    "tick": int(activity["tick"]),
+                    "oldest_started": float(activity["started_monotonic"]),
+                }
+                continue
+            current["active_calls"] += 1
+            current["tick"] = max(current["tick"], int(activity["tick"]))
+            current["oldest_started"] = min(
+                current["oldest_started"], float(activity["started_monotonic"]))
+            if precedence.get(str(activity["state"]), -1) > precedence.get(
+                    str(current["state"]), -1):
+                current["state"] = str(activity["state"])
+        return [{
+            "agent_id": agent_id,
+            "state": item["state"],
+            "active_calls": item["active_calls"],
+            "tick": item["tick"],
+            "oldest_elapsed_ms": max(
+                0, int(round((now - item["oldest_started"]) * 1000.0))),
+        } for agent_id, item in sorted(grouped.items())]
+
     def runtime_status(self) -> dict[str, Any]:
         now = time.time()
         providers = []
@@ -2071,6 +2143,8 @@ class Gateway:
             default=0))
         return {
             "live_only": bool(self.config.get("llm", {}).get("live_only", False)),
+            "activity_revision": self._agent_activity_revision,
+            "active_agents": self.active_agent_status(),
             "global": {
                 "capacity": self.max_in_flight,
                 "in_flight": self._live_in_flight,

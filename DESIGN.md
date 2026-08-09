@@ -255,16 +255,30 @@ stamped, folded, or mounted, not inflated.
 
 ### Civic City
 
-The signature component is a code-native surveyed atlas with named districts,
-firm footprints, keyboard-reachable agent marks, a selected evidence transect,
-layer controls, search, and a contiguous instrumentation rail. On desktop, the
-evidence lens is a bounded inspector overlay on the atlas; below 980px, the
-selected mark surfaces in an immediate map action that leads to the full lens.
-Actor-linked transects end in directional arrowheads. Markers pulse only when a
-recent committed event exposes an actor identifier. Runs without coordinates
+The signature component is a code-native operational atlas with named
+districts, firm footprints, keyboard-reachable agent marks, a selected evidence
+transect, layer controls, search, and a contiguous instrumentation rail. Its
+World OS variant uses a dark, full-field command-map treatment while retaining
+the project's survey typography, evidence labels, and deterministic geometry.
+On desktop, the evidence lens is a bounded inspector overlay on the atlas;
+below 980px, the selected mark surfaces in an immediate map action that leads
+to the full lens.
+
+Actor-linked transects end in directional arrowheads. Markers animate only for
+real queued or in-flight provider activity; current-tick settlement and
+rejection use stable outcome rings. The activity dock and evidence lens pair
+every color with readable state text. Runtime activity is explicitly ephemeral
+observer telemetry. It never substitutes for the proposal, validation, event,
+receipt, or ledger records that settle world state. Runs without coordinates
 use deterministic role-based placement and say **Derived civic layout** in both
-the atlas and evidence lens. Historical views disclose that events are
-tick-resolved while entity rosters come from current endpoints.
+the atlas and evidence lens. Historical views suppress current runtime overlays
+and disclose that events are tick-resolved while entity rosters come from
+current endpoints.
+
+WorldMonitor informed the layout grammar—dominant map, compact layers,
+coordinated activity, and evidence inspection—but no WorldMonitor source,
+assets, or dependencies are imported. Agent Economy remains MIT-licensed while
+the reference project is AGPL-3.0-or-later.
 
 ### Identity Mark
 
@@ -289,8 +303,8 @@ never rasterized into the asset.
 
 - **Don't** turn the world into an isometric game, reward loop, or decorative
   agent aquarium.
-- **Don't** use generic dark-SaaS glass panels, neon glows, or interchangeable
-  metric-card grids.
+- **Don't** use generic dark-SaaS glass panels, decorative neon glows detached
+  from telemetry, or interchangeable metric-card grids.
 - **Don't** imply geographic precision when a run exposes no coordinates;
   derived layouts must say so.
 - **Don't** use motion or color as the only expression of state.

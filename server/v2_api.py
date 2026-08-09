@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -314,6 +314,7 @@ def install_v2_routes(app, world, controller) -> None:
     async def world_map_projection(
         tick: str = Query("live"), fork_id: str | None = None,
         layers: str = Query("regions,agents,organizations,places,presence"),
+        population: Literal["core", "all", "clusters"] = Query("core"),
     ):
         as_of_tick = projection_tick(tick, fork_id)
         principal = Principal("ordinary-dashboard")
@@ -322,32 +323,116 @@ def install_v2_routes(app, world, controller) -> None:
         if "regions" in selected:
             data["regions"] = world.economy.regions.region_state()
         if "agents" in selected:
+            population_row = store.query_one(
+                "SELECT COUNT(*) AS total,"
+                "SUM(CASE WHEN population_tier='core' OR COALESCE(pinned_core,0)=1 "
+                "THEN 1 ELSE 0 END) AS core "
+                "FROM agents WHERE alive=1 AND arrived_tick<=?",
+                (as_of_tick,),
+            )
+            total_population = int(population_row["total"] or 0)
+            core_population = int(population_row["core"] or 0)
+            live_active_ids = sorted({
+                int(item["agent_id"])
+                for item in world.gateway.active_agent_status()
+            }) if tick == "live" else []
+            agent_scope_params: tuple[int, ...] = ()
+            agent_scope = ""
+            if population in {"core", "clusters"}:
+                active_clause = ""
+                if live_active_ids:
+                    placeholders = ",".join("?" for _ in live_active_ids)
+                    active_clause = f" OR a.id IN ({placeholders})"
+                    agent_scope_params = tuple(live_active_ids)
+                agent_scope = (
+                    "AND (a.population_tier='core' OR COALESCE(a.pinned_core,0)=1"
+                    f"{active_clause}) "
+                )
             data["agents"] = [dict(row) for row in store.query(
                 "SELECT a.id,a.name,a.role,a.occupation,a.region_id,"
                 "a.population_tier,ep.slot,"
-                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
+                "CASE WHEN (COALESCE(a.population_tier,'periphery')<>'core' "
+                "AND COALESCE(a.pinned_core,0)<>1) "
+                "OR p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
                 "AS place_id,"
-                "CASE WHEN p.kind='licensing_office' THEN NULL ELSE p.name END "
+                "CASE WHEN (COALESCE(a.population_tier,'periphery')<>'core' "
+                "AND COALESCE(a.pinned_core,0)<>1) "
+                "OR p.kind='licensing_office' THEN NULL ELSE p.name END "
                 "AS place_name,"
-                "CASE WHEN p.kind='licensing_office' THEN r.x "
+                "CASE WHEN (COALESCE(a.population_tier,'periphery')<>'core' "
+                "AND COALESCE(a.pinned_core,0)<>1) "
+                "THEN NULL WHEN p.kind='licensing_office' THEN r.x "
                 "ELSE COALESCE(p.x,r.x) END AS x,"
-                "CASE WHEN p.kind='licensing_office' THEN r.y "
+                "CASE WHEN (COALESCE(a.population_tier,'periphery')<>'core' "
+                "AND COALESCE(a.pinned_core,0)<>1) "
+                "THEN NULL WHEN p.kind='licensing_office' THEN r.y "
                 "ELSE COALESCE(p.y,r.y) END AS y "
                 "FROM agents a LEFT JOIN regions r ON r.id=a.region_id "
                 "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
                 "AND ep.tick=? AND ep.slot='business' "
                 "LEFT JOIN places p ON p.id=ep.place_id "
-                "WHERE a.alive=1 AND "
-                "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
-                (as_of_tick,))]
+                "WHERE a.alive=1 AND a.arrived_tick<=? "
+                f"{agent_scope}ORDER BY a.id",
+                (as_of_tick, as_of_tick, *agent_scope_params))]
+            clusters = []
+            if population == "clusters":
+                cluster_exclusion = ""
+                cluster_params: tuple[int, ...] = ()
+                if live_active_ids:
+                    placeholders = ",".join("?" for _ in live_active_ids)
+                    cluster_exclusion = f"AND a.id NOT IN ({placeholders}) "
+                    cluster_params = tuple(live_active_ids)
+                for row in store.query(
+                    "SELECT a.region_id,r.name AS region_name,r.x,r.y,"
+                    "COUNT(*) AS resident_count FROM agents a "
+                    "LEFT JOIN regions r ON r.id=a.region_id "
+                    "WHERE a.alive=1 AND a.arrived_tick<=? "
+                    "AND NOT (COALESCE(a.population_tier,'periphery')='core' "
+                    "OR COALESCE(a.pinned_core,0)=1) "
+                    f"{cluster_exclusion}"
+                    "GROUP BY a.region_id,r.name,r.x,r.y ORDER BY a.region_id",
+                    (as_of_tick, *cluster_params),
+                ):
+                    region_id = row["region_id"]
+                    clusters.append({
+                        "id": f"region-{region_id if region_id is not None else 'unassigned'}-periphery",
+                        "region_id": int(region_id) if region_id is not None else None,
+                        "label": str(row["region_name"] or "Unassigned residents"),
+                        "count": int(row["resident_count"]),
+                        "x": row["x"],
+                        "y": row["y"],
+                    })
+                data["population_clusters"] = clusters
+            data["population_mode"] = population
+            data["population_summary"] = {
+                "total": total_population,
+                "core": core_population,
+                "periphery": max(0, total_population - core_population),
+                "rendered_agents": len(data["agents"]),
+                "clustered_agents": sum(item["count"] for item in clusters),
+            }
         if "organizations" in selected:
             data["organizations"] = build_world_map_organizations(
                 store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
         if "presence" in selected:
-            data["presence"] = world.economy.city.map_presence(
-                as_of_tick, public=True)
+            # Presence can carry exact place coordinates. Keep peripheral
+            # identities out of every observer mode so `all` can lay them out
+            # safely and `clusters` cannot be reversed through a sibling layer.
+            core_agent_ids = {
+                int(row["id"]) for row in store.query(
+                    "SELECT id FROM agents WHERE alive=1 AND arrived_tick<=? "
+                    "AND (population_tier='core' OR COALESCE(pinned_core,0)=1)",
+                    (as_of_tick,),
+                )
+            }
+            data["presence"] = [
+                item for item in world.economy.city.map_presence(
+                    as_of_tick, public=True)
+                if item.get("agent_id") is None
+                or int(item["agent_id"]) in core_agent_ids
+            ]
         return build_envelope(
             store, principal, "world.map", data, as_of_tick=as_of_tick)
 

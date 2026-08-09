@@ -18,6 +18,11 @@ type Overview = {
 };
 type ProviderRuntime = {
   live_only: boolean;
+  activity_revision: number;
+  active_agents: Array<{
+    agent_id: number; state: "queued" | "thinking"; active_calls: number;
+    tick: number | null; oldest_elapsed_ms: number;
+  }>;
   global: { capacity: number; in_flight: number; queue_depth: number; peak_in_flight: number; peak_queue_depth: number; logical_deadline_s: number };
   simulated_days: { samples: number; p50_wall_ms: number | null; p95_wall_ms: number | null };
   providers: Array<{
@@ -30,6 +35,7 @@ type ProviderRuntime = {
 type CityAgent = {
   id: number; name: string; kind?: string; role?: string | null; occupation?: string | null;
   health?: string; alive?: number; employer_id?: number | null; model_tier?: string;
+  region_id?: number | null; population_tier?: "core" | "periphery";
   x?: number | null; y?: number | null; place_id?: number | null; place_name?: string | null;
 };
 type CityFirm = {
@@ -45,6 +51,13 @@ type CityMap = {
   presence?: Array<Record<string, unknown>>;
   regions?: unknown[];
   flows?: unknown[];
+  population_mode?: "core" | "all" | "clusters";
+  population_summary?: {
+    total: number; core: number; periphery: number; rendered_agents: number; clustered_agents: number;
+  };
+  population_clusters?: Array<{
+    id: string; region_id: number | null; label: string; count: number; x: number | null; y: number | null;
+  }>;
 };
 type CivicSummary = {
   enabled: boolean;
@@ -84,13 +97,20 @@ export function OverviewWorkspace() {
   const runtimeQuery = useQuery({
     queryKey: ["llm-runtime", runId],
     queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
-    refetchInterval: pollCurrentRun ? 2000 : false,
+    refetchInterval: queryState => {
+      if (!pollCurrentRun) return false;
+      const runtime = queryState.state.data;
+      return runtime && (runtime.global.in_flight > 0 || runtime.global.queue_depth > 0)
+        ? 500
+        : 2000;
+    },
   });
   const cityQuery = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, "city", tick],
+    queryKey: ["world-os", runId, observerState.fork, "city", tick, observerState.population],
     queryFn: async ({ signal }) => {
       const mapParams = projectionScopeParams(observerState);
       mapParams.set("layers", "regions,agents,organizations,places,presence");
+      mapParams.set("population", observerState.population);
       const civicParams = projectionScopeParams(observerState);
       const [mapEnvelope, civicEnvelope] = await Promise.all([
         projectionApi<CityMap>(

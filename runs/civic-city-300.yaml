@@ -1,0 +1,73 @@
+# Deterministic 300-resident Civic City showcase.
+#
+# This profile is intentionally separate from historical and live-provider
+# profiles. It keeps 100 residents in the fully active core and represents the
+# remaining 200 through the existing deterministic periphery cadence.
+extends: civic-rehearsal.yaml
+
+seed: 20260801
+checkpoint_every: 30
+
+population:
+  # Civic bootstrap adds one permit clerk per region after genesis population;
+  # 297 base agents + 3 clerks produces the advertised 300-resident city.
+  target_total: 297
+  baseline_citizens_core: false
+
+living_world:
+  enabled: true
+  core_agents: 100
+  promotion_interval_ticks: 30
+  require_trade_contract: true
+  fx_market_maker_inventory: 100000000
+  regions:
+    - key: northstar
+      name: Northstar Federation
+      currency: NSD
+      population: 250
+      specialization: [technology, services, finance]
+      x: 0.25
+      y: 0.35
+      legal_ruleset: northstar-us-inspired-1.0
+      rate_ppm: 1000000
+    - key: ironvale
+      name: Ironvale Union
+      currency: IVC
+      population: 25
+      specialization: [manufacturing, energy]
+      x: 0.72
+      y: 0.28
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 750000
+    - key: suncoast
+      name: Suncoast Republic
+      currency: SCD
+      population: 25
+      specialization: [agriculture, logistics, tourism]
+      x: 0.55
+      y: 0.78
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 1200000
+
+city:
+  enabled: true
+  residential_districts_per_region: 8
+  business_permits:
+    required: true
+    application_fee_cents: 2500
+    office_capacity: 4
+    appointment_lead_ticks: 1
+    decision_sla_ticks: 3
+    authorization_ttl_ticks: 30
+    max_no_shows: 3
+    discretionary_competitor_floor: 2
+    prohibited_sectors: []
+  attention:
+    lane_limit: 8
+
+# Every route is inherited from v2-behavioral-rehearsal and remains scripted;
+# this showcase never requires a paid or networked model provider.
+budget:
+  cap_usd: 0.0
+  oracle_reserve_usd: 0.0
+  conversation_pairs: 1

@@ -140,6 +140,7 @@ function mergeAgents(agents, map) {
   }));
   asArray(map?.presence)
     .filter(item => item?.agent_id != null && item?.slot === "business")
+    .filter(item => merged.get(String(item.agent_id))?.population_tier !== "periphery")
     .forEach(item => {
       const key = String(item.agent_id);
       merged.set(key, {
@@ -242,7 +243,7 @@ export function filterCityAgents(agents = [], {
   const needle = String(q || "").trim().toLowerCase();
   return agents.filter(agent => {
     const layerMatch = layer === "all" || agent.layer === layer || agent.eventLayer === layer;
-    const activityMatch = !activeOnly || Boolean(agent.event);
+    const activityMatch = !activeOnly || Boolean(agent.isActive);
     const textMatch = !needle || [
       agent.name, agent.role, agent.occupation, agent.kind, agent.district,
       agent.event?.kind,
@@ -255,6 +256,7 @@ export function resolveCityFilterPatch(agents, current, update) {
   const next = { ...current, ...update };
   const visible = filterCityAgents(agents, next);
   const selected = visible.find(agent => String(agent.id) === String(next.agent))
+    || visible.find(agent => agent.isActive)
     || visible.find(agent => agent.event)
     || visible[0]
     || null;
@@ -263,6 +265,7 @@ export function resolveCityFilterPatch(agents, current, update) {
 
 export function deriveCityModel({
   agents = [], firms = [], events = [], map = null, civic = null,
+  runtime = null, tick = "live", historical = false,
 } = {}) {
   const people = mergeAgents(agents, map);
   const eventItems = asArray(events)
@@ -274,6 +277,14 @@ export function deriveCityModel({
       if (!latestByAgent.has(String(id))) latestByAgent.set(String(id), event);
     });
   });
+  const selectedTick = Number(
+    tick === "live" ? (civic?.tick ?? eventItems[0]?.tick ?? 0) : tick,
+  );
+  const runtimeByAgent = new Map(
+    tick === "live" && !historical
+      ? asArray(runtime?.active_agents).map(activity => [String(activity.agent_id), activity])
+      : [],
+  );
 
   const grouped = new Map();
   people.forEach(agent => {
@@ -294,14 +305,27 @@ export function deriveCityModel({
         ? { x: observedX, y: observedY }
         : pointInDistrict(agent, index, group.length, layer);
       const event = latestByAgent.get(String(agent.id)) || null;
+      const runtimeActivity = runtimeByAgent.get(String(agent.id)) || null;
+      const transitionEvent = event && Number(event.tick) === selectedTick ? event : null;
+      const transitionState = transitionEvent
+        ? String(transitionEvent.kind || "").toLowerCase() === "action_rejected"
+          ? "rejected"
+          : "settled"
+        : null;
+      const activityState = runtimeActivity?.state
+        || transitionState
+        || (agent.employer_id != null || agent.role ? "assigned role" : "resident");
       cityAgents.push({
         ...agent,
         ...point,
         layer,
         district: CITY_DISTRICTS[layer]?.name || CITY_DISTRICTS.commons.name,
         event,
+        transitionEvent,
+        runtimeActivity,
         eventLayer: event ? classifyEventLayer(event) : null,
-        activityState: event ? "committed event" : agent.employer_id != null || agent.role ? "assigned role" : "resident",
+        activityState,
+        isActive: Boolean(runtimeActivity || transitionEvent),
         coordinateSource: observed ? "observed" : "derived",
       });
     });
@@ -342,18 +366,51 @@ export function deriveCityModel({
   const receipts = eventItems
     .filter(event => event?.payload?.semantic_receipt)
     .map(event => ({ eventId: event.id, tick: event.tick, ...event.payload.semantic_receipt }));
+  const clusters = asArray(map?.population_clusters).map((cluster, index, list) => {
+    const observedX = normalizedCoordinate(cluster.x);
+    const observedY = normalizedCoordinate(cluster.y);
+    const point = observedX !== null && observedY !== null
+      ? { x: observedX, y: observedY }
+      : pointInDistrict({ id: cluster.id || `cluster-${index}` }, index, list.length, "commons");
+    return {
+      ...cluster,
+      ...point,
+      count: Number(cluster.count || 0),
+      label: String(cluster.label || "Resident cluster"),
+    };
+  });
+  const projectedPopulation = map?.population_summary || {};
+  const coreCount = Number(projectedPopulation.core
+    ?? cityAgents.filter(agent => agent.population_tier !== "periphery").length);
+  const population = {
+    mode: map?.population_mode || "core",
+    total: Number(projectedPopulation.total ?? cityAgents.length),
+    core: coreCount,
+    periphery: Number(projectedPopulation.periphery
+      ?? Math.max(0, cityAgents.length - coreCount)),
+    renderedAgents: cityAgents.length,
+    clusteredAgents: Number(projectedPopulation.clustered_agents
+      ?? clusters.reduce((total, cluster) => total + cluster.count, 0)),
+  };
 
   return {
     agents: cityAgents.sort((left, right) => Number(left.id) - Number(right.id)),
     firms: cityFirms,
     places,
     receipts,
+    clusters,
+    population,
     civic: civic || map?.civic || null,
     events: eventItems,
     coordinateMode,
     counts: {
       agents: cityAgents.length,
-      active: cityAgents.filter(agent => agent.event).length,
+      residents: population.total,
+      active: cityAgents.filter(agent => agent.isActive).length,
+      queued: cityAgents.filter(agent => agent.activityState === "queued").length,
+      thinking: cityAgents.filter(agent => agent.activityState === "thinking").length,
+      settled: cityAgents.filter(agent => agent.activityState === "settled").length,
+      rejected: cityAgents.filter(agent => agent.activityState === "rejected").length,
       assigned: cityAgents.filter(agent => agent.activityState === "assigned role").length,
       firms: operatingFirms.length,
       places: places.length,

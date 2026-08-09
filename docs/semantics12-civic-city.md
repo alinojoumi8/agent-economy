@@ -49,9 +49,36 @@ Participant, REST, MCP, map, and causal projections expose only the viewer's
 permitted case and task fields. Private attention items are not copied into
 public events, logs, exports, or replay diagnostics.
 
+## Live-agent map telemetry
+
+The World OS map distinguishes ephemeral provider activity from authoritative
+world changes. `GET /api/llm/runtime` exposes a public-safe `active_agents`
+array containing only agent id, `queued|thinking` state, active-call count,
+tick, and elapsed observation time, plus an in-memory activity revision. It
+never exposes prompts, response text, reasoning, cache keys, model assignment,
+or raw provider errors.
+
+This registry lives only in the running gateway process. It is cleared on
+success, fallback, timeout, interruption, cancellation, and failure, and never
+enters SQLite, events, checkpoints, replay inputs, or canonical hashes. The map
+derives `settled` and `rejected` only from tick-scoped committed projections.
+Historical views suppress current runtime activity and label provider capacity
+as current rather than reconstructed.
+
+When a peripheral resident is actively using a provider, core and clustered
+map views temporarily include that identity with a deterministic derived
+placement. Exact place id, name, coordinates, and presence remain withheld.
+Cluster totals exclude the promoted marker so the same resident is not counted
+twice.
+
 ## Profiles and experiment
 
 - `runs/civic-rehearsal.yaml` is the free deterministic acceptance profile.
+- `runs/civic-city-300.yaml` creates exactly 300 residents, keeps 100 in the
+  deterministic core, and schedules 200 through the existing periphery cadence.
+  Its World OS map supports `population=core`, `population=all`, and
+  `population=clusters`; cluster responses contain counts and regional labels,
+  never peripheral identities or place assignments.
 - `runs/civic-live.yaml` routes durable borderline permit work through the live
   provider gateway.
 - `scenarios/permit-office-day.yaml` compares immediate incorporation with one

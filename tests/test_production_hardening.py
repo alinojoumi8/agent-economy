@@ -691,7 +691,7 @@ def test_rate_limit_status_is_visible_and_wait_is_interruptible(tmp_path):
 
     async def exercise():
         task = asyncio.create_task(gateway.complete(
-            LLMRequest(role="citizen", purpose="decision", tick=4)))
+            LLMRequest(role="citizen", purpose="decision", agent_id=19, tick=4)))
         await first_call.wait()
         await asyncio.sleep(0)
         status = gateway.rate_limit_status()
@@ -705,6 +705,93 @@ def test_rate_limit_status_is_visible_and_wait_is_interruptible(tmp_path):
 
     asyncio.run(exercise())
     assert gateway.store.scalar("SELECT COUNT(*) FROM llm_calls") == 0
+    assert gateway.runtime_status()["active_agents"] == []
+
+
+def test_runtime_status_tracks_public_safe_per_agent_activity(tmp_path):
+    gateway = _gateway(tmp_path)
+    gateway.max_in_flight = 1
+    gateway.provider_gates["mock"] = PriorityProviderGate(1)
+    gateway.global_gate = PriorityProviderGate(1)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingAdapter:
+        async def complete(self, *args, **kwargs):
+            entered.set()
+            await release.wait()
+            return AdapterResult(text="{}", in_tokens=1, out_tokens=1)
+
+    gateway.adapters["mock"] = BlockingAdapter()
+    target = RouteTarget("mock", "metered", timeout_s=2.0)
+    plan = RoutePlan(
+        assigned_tier="local", effective_tier="local", reason="activity test",
+        targets=(target,), tiered=True)
+
+    async def exercise():
+        def dispatch(agent_id: int, marker: str):
+            req = LLMRequest(
+                role="citizen", purpose="decision", agent_id=agent_id, tick=7,
+                user=f"private-prompt-{marker}",
+                context={"private_reasoning": f"private-context-{marker}"})
+            return asyncio.create_task(gateway._call_live_target(
+                plan, target, req, req.messages(), 0.2,
+                f"private-cache-{marker}", time.monotonic() + 3.0))
+
+        tasks = [dispatch(11, "one")]
+        await entered.wait()
+        tasks.extend((dispatch(11, "two"), dispatch(12, "three")))
+        for _ in range(50):
+            status = gateway.runtime_status()
+            if status["global"]["queue_depth"] == 2:
+                break
+            await asyncio.sleep(0)
+
+        status = gateway.runtime_status()
+        assert status["activity_revision"] >= 4
+        assert [(item["agent_id"], item["state"], item["active_calls"], item["tick"])
+                for item in status["active_agents"]] == [
+            (11, "thinking", 2, 7),
+            (12, "queued", 1, 7),
+        ]
+        assert all(item["oldest_elapsed_ms"] >= 0
+                   for item in status["active_agents"])
+        serialized = json.dumps(status)
+        assert "private-prompt" not in serialized
+        assert "private-context" not in serialized
+        assert "private-cache" not in serialized
+
+        revision = status["activity_revision"]
+        release.set()
+        await asyncio.gather(*tasks)
+        cleared = gateway.runtime_status()
+        assert cleared["active_agents"] == []
+        assert cleared["activity_revision"] > revision
+
+        entered.clear()
+        release.clear()
+        cancelled = dispatch(13, "cancelled")
+        await entered.wait()
+        assert gateway.runtime_status()["active_agents"][0]["state"] == "thinking"
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        assert gateway.runtime_status()["active_agents"] == []
+
+        entered.clear()
+        timeout_target = RouteTarget("mock", "metered", timeout_s=0.01)
+        timeout_plan = RoutePlan(
+            assigned_tier="local", effective_tier="local", reason="timeout test",
+            targets=(timeout_target,), tiered=True)
+        timeout_req = LLMRequest(
+            role="citizen", purpose="decision", agent_id=14, tick=7)
+        with pytest.raises(Exception):
+            await gateway._call_live_target(
+                timeout_plan, timeout_target, timeout_req, timeout_req.messages(),
+                0.2, "timeout-cache", time.monotonic() + 1.0)
+        assert gateway.runtime_status()["active_agents"] == []
+
+    asyncio.run(exercise())
 
 
 def test_world_pause_during_cooldown_resumes_active_phase(tmp_path):

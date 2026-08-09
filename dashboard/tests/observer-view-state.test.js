@@ -10,7 +10,7 @@ import {
 
 test("observer URL state restores valid city and common selections", () => {
   const state = parseObserverViewState(new URLSearchParams(
-    "fork=fork-a&tick=004&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9",
+    "fork=fork-a&tick=004&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=all",
   ));
 
   assert.deepEqual(state, {
@@ -21,12 +21,13 @@ test("observer URL state restores valid city and common selections", () => {
     q: "Atlas",
     activeOnly: true,
     agent: 9,
+    population: "all",
   });
 });
 
 test("malformed observer URL values fail closed to safe defaults", () => {
   const state = parseObserverViewState(new URLSearchParams(
-    "tick=999999999999999999999999&event=0&layer=private&q=x&activeOnly=true&agent=not-a-number",
+    "tick=999999999999999999999999&event=0&layer=private&q=x&activeOnly=true&agent=not-a-number&population=private",
   ));
 
   assert.equal(state.tick, "live");
@@ -34,11 +35,12 @@ test("malformed observer URL values fail closed to safe defaults", () => {
   assert.equal(state.layer, "all");
   assert.equal(state.activeOnly, false);
   assert.equal(state.agent, null);
+  assert.equal(state.population, "core");
 });
 
 test("observer patches omit defaults and retain unrelated route state", () => {
   const current = new URLSearchParams(
-    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&relation=cited",
+    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=clusters&relation=cited",
   );
   const next = patchObserverViewState(current, {
     tick: "live",
@@ -46,6 +48,7 @@ test("observer patches omit defaults and retain unrelated route state", () => {
     q: "",
     activeOnly: false,
     agent: null,
+    population: "core",
   });
 
   assert.equal(next.toString(), "fork=fork-a&event=7&relation=cited");
@@ -53,7 +56,7 @@ test("observer patches omit defaults and retain unrelated route state", () => {
 
 test("cross-workspace and projection scopes use different fork keys", () => {
   const source = new URLSearchParams(
-    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&relation=cited",
+    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=all&relation=cited",
   );
   assert.equal(commonObserverSearchParams(source).toString(), "fork=fork-a&tick=4&event=7");
   assert.equal(
