@@ -38,6 +38,7 @@ export function WorldOSApp() {
       <Route path="people" element={<PeopleWorkspace />} />
       <Route path="people/:agentId" element={<PeopleWorkspace />} />
       <Route path="organizations" element={<OrganizationsWorkspace />} />
+      <Route path="organizations/:organizationType/:organizationId" element={<OrganizationsWorkspace />} />
       <Route path="organizations/:organizationId" element={<OrganizationsWorkspace />} />
       <Route path="markets" element={<MarketsWorkspace />} />
       <Route path="politics-law" element={<PoliticsLawWorkspace />} />

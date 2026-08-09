@@ -74,10 +74,11 @@ type WorkspaceColumn<T> = {
 
 export function WorkspaceTable<T extends { id?: string | number }>({
   caption, columns, rows, empty = "No authorized records at this tick.", selectedId,
-  onSelect,
+  onSelect, rowKey,
 }: {
   caption: string; columns: WorkspaceColumn<T>[]; rows: T[]; empty?: string;
   selectedId?: string | number | null; onSelect?(row: T): void;
+  rowKey?(row: T, index: number): string | number;
 }) {
   const selectable = Boolean(onSelect);
   return <div className="world-os-workspace-table-wrap">
@@ -88,12 +89,12 @@ export function WorkspaceTable<T extends { id?: string | number }>({
         {columns.map(column => <th key={column.key} scope="col">{column.label}</th>)}
       </tr></thead>
       <tbody>{rows.length ? rows.map((row, index) => {
-        const key = row.id ?? index;
-        const selected = selectedId != null && String(row.id) === String(selectedId);
+        const key = rowKey?.(row, index) ?? row.id ?? index;
+        const selected = selectedId != null && String(key) === String(selectedId);
         return <tr key={key} className={selected ? "selected" : ""}>
           {selectable && <td className="world-os-workspace-table-select">
             <button type="button" className="button" aria-pressed={selected}
-              aria-label={`Select ${caption} row ${row.id ?? index + 1}`}
+              aria-label={`Select ${caption} row ${key}`}
               onClick={() => onSelect?.(row)}>Select</button>
           </td>}
           {columns.map(column => <td key={column.key}>{column.render(row)}</td>)}

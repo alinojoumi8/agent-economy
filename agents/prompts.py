@@ -292,7 +292,8 @@ class ContextBuilder:
                     firm, tick, recovery_settings_at_tick=recovery)
                 ctx["firm_applications"] = self._firm_applications(
                     int(firm["id"]), include_posted_wage=recovery is not None,
-                    actionable_only=recovery is not None)
+                    actionable_only=recovery is not None,
+                    exclude_agent_id=int(agent_row["id"]))
                 if self.engine_semantics_version >= 6:
                     ctx["firm_job_offers"] = self._firm_job_offers(
                         int(firm["id"]), actionable_only=recovery is not None)
@@ -622,7 +623,8 @@ class ContextBuilder:
             "prices": goods_offers,
             "jobs": ([] if self.engine_semantics_version >= 7 and bool(a["retired"])
                      else self._open_jobs(
-                         currency_code if self.local_currency_action_surfaces else None)),
+                         currency_code if self.local_currency_action_surfaces else None,
+                         applicant_agent_id=agent_id)),
             "listed_firms": listed_firms,
             "banks": self._bank_views(
                 self.citizen_bank_visibility,
@@ -1027,9 +1029,15 @@ class ContextBuilder:
             out.append(offer)
         return out
 
-    def _open_jobs(self, currency_code: str | None = None) -> list[dict]:
+    def _open_jobs(self, currency_code: str | None = None, *,
+                   applicant_agent_id: int | None = None) -> list[dict]:
         currency_clause = " AND f.currency_code=?" if currency_code is not None else ""
-        params = (currency_code,) if currency_code is not None else ()
+        own_firm_clause = (
+            " AND COALESCE(f.founder_agent_id,0)<>?"
+            if applicant_agent_id is not None else "")
+        params = tuple(
+            value for value in (currency_code, applicant_agent_id)
+            if value is not None)
         order_clause = (
             " ORDER BY j.wage_cents DESC,j.id LIMIT 20" if currency_code is not None
             else " ORDER BY j.wage_cents DESC LIMIT 20")
@@ -1041,7 +1049,7 @@ class ContextBuilder:
                 " AND ap.state IN ('pending','negotiating')) "
                 "AS application_count FROM jobs j "
                 "JOIN firms f ON f.id=j.firm_id "
-                f"WHERE j.status='open'{currency_clause} "
+                f"WHERE j.status='open'{currency_clause}{own_firm_clause} "
                 f"{order_clause}", params):
             item = {"job_id": int(j["id"]), "firm_id": int(j["firm_id"]),
                     "title": j["title"], "wage": int(j["wage_cents"]),
@@ -1541,8 +1549,13 @@ class ContextBuilder:
 
     def _firm_applications(self, firm_id: int, *,
                            include_posted_wage: bool = False,
-                           actionable_only: bool = False) -> list[dict]:
+                           actionable_only: bool = False,
+                           exclude_agent_id: int | None = None) -> list[dict]:
         open_job_clause = " AND j.status='open'" if actionable_only else ""
+        exclude_agent_clause = (
+            " AND ap.agent_id<>?" if exclude_agent_id is not None else "")
+        params = ((firm_id, int(exclude_agent_id))
+                  if exclude_agent_id is not None else (firm_id,))
         if self.engine_semantics_version >= 6:
             rows = self.store.query(
                 "SELECT ap.id AS application_id,ap.agent_id,ap.job_id,ap.state,"
@@ -1559,10 +1572,10 @@ class ContextBuilder:
                 "JOIN accounts candidate_wallet "
                 "ON candidate_wallet.id=a.checking_account_id "
                 "LEFT JOIN job_offers jo ON jo.application_id=ap.id AND jo.status='pending' "
-                "WHERE j.firm_id=?" + open_job_clause + " "
+                "WHERE j.firm_id=?" + open_job_clause + exclude_agent_clause + " "
                 "AND candidate_wallet.currency_code=f.currency_code "
                 "AND ap.state IN ('pending','negotiating') ORDER BY ap.id",
-                (firm_id,))
+                params)
             return [{
                 "application_id": int(r["application_id"]), "agent_id": int(r["agent_id"]),
                 "job_id": int(r["job_id"]), "occupation": r["occupation"],
@@ -1582,9 +1595,9 @@ class ContextBuilder:
                 "a.occupation AS occupation, a.age AS age,j.wage_cents AS posted_wage "
                 "FROM applications ap JOIN jobs j ON j.id=ap.job_id "
                 "JOIN agents a ON a.id=ap.agent_id "
-                "WHERE j.firm_id=?" + open_job_clause + " "
+                "WHERE j.firm_id=?" + open_job_clause + exclude_agent_clause + " "
                 "AND ap.state='pending' ORDER BY ap.id",
-                (firm_id,))
+                params)
             return [{"application_id": int(r["application_id"]),
                      "agent_id": int(r["agent_id"]), "job_id": int(r["job_id"]),
                      "occupation": r["occupation"], "age": int(r["age"]),
@@ -1594,9 +1607,9 @@ class ContextBuilder:
             "SELECT ap.id AS application_id, ap.agent_id AS agent_id, ap.job_id AS job_id, "
             "a.occupation AS occupation, a.age AS age FROM applications ap "
             "JOIN jobs j ON j.id=ap.job_id JOIN agents a ON a.id=ap.agent_id "
-            "WHERE j.firm_id=?" + open_job_clause + " "
+            "WHERE j.firm_id=?" + open_job_clause + exclude_agent_clause + " "
             "AND ap.state='pending' ORDER BY ap.id",
-            (firm_id,))
+            params)
         return [{"application_id": int(r["application_id"]),
                  "agent_id": int(r["agent_id"]), "job_id": int(r["job_id"]),
                  "occupation": r["occupation"], "age": int(r["age"])}

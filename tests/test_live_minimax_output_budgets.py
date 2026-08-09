@@ -9,10 +9,12 @@ def test_live_minimax_reserves_output_space_for_short_agent_contracts():
     config = load_config("runs/v2-live-minimax.yaml")
     llm = config["llm"]
 
-    assert llm.get("founder_max_tokens", 0) >= 4096
+    assert llm.get("decision_max_tokens", 0) >= 16384
+    assert llm.get("founder_max_tokens", 0) >= 16384
+    assert llm.get("memory_max_tokens", 0) >= 16384
     assert llm.get("reporter_max_tokens", 0) >= 1200
     assert llm.get("newsroom_max_tokens", 0) >= 1000
-    assert llm.get("conversation_max_tokens", 0) >= 600
+    assert llm.get("conversation_max_tokens", 0) >= 16384
     assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
@@ -20,25 +22,29 @@ def test_production_minimax_reserves_output_space_for_short_agent_contracts():
     config = load_config("runs/production.yaml")
     llm = config["llm"]
 
+    assert llm.get("decision_max_tokens", 0) >= 16384
+    assert llm.get("founder_max_tokens", 0) >= 16384
+    assert llm.get("memory_max_tokens", 0) >= 16384
     assert llm.get("reporter_max_tokens", 0) >= 1200
     assert llm.get("newsroom_max_tokens", 0) >= 1000
-    assert llm.get("conversation_max_tokens", 0) >= 600
+    assert llm.get("conversation_max_tokens", 0) >= 16384
     assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
 def test_minimax_only_profile_reserves_reasoning_room_for_agent_decisions():
     llm = load_config("runs/hermes-minimax-m3-only-live.yaml")["llm"]
 
-    # A live M3 completion can spend 900 tokens entirely on reasoning. Keep
-    # enough room for the required JSON action envelope after that reasoning.
-    assert llm.get("decision_max_tokens", 0) >= 2400
-    assert llm.get("founder_max_tokens", 0) >= 4096
+    # Paid live M3 receipts exhausted both 2,400-token ordinary decision calls
+    # and 4,096-token founder calls without emitting the required JSON envelope.
+    assert llm.get("decision_max_tokens", 0) >= 16384
+    assert llm.get("founder_max_tokens", 0) >= 16384
+    assert llm.get("memory_max_tokens", 0) >= 16384
 
 
 def test_founder_contract_can_use_a_larger_budget_than_ordinary_decisions():
-    llm = {"decision_max_tokens": 2400, "founder_max_tokens": 4096}
+    llm = {"decision_max_tokens": 2400, "founder_max_tokens": 16384}
 
-    assert _decision_output_budget(llm, "founder") == 4096
+    assert _decision_output_budget(llm, "founder") == 16384
     assert _decision_output_budget(llm, "decision") == 2400
 
 
@@ -48,7 +54,7 @@ def test_minimax_only_profile_reserves_reasoning_room_for_short_contracts():
 
     assert llm.get("reporter_max_tokens", 0) >= 1200
     assert llm.get("newsroom_max_tokens", 0) >= 1000
-    assert llm.get("conversation_max_tokens", 0) >= 600
+    assert llm.get("conversation_max_tokens", 0) >= 16384
     assert config["reports"]["narrative_max_tokens"] >= 1600
 
 
@@ -61,9 +67,10 @@ def test_output_budget_activation_is_forward_only_persisted_and_idempotent():
     profile = {
         "llm": {
             "route_contract": {"provider": "minimax", "model": "MiniMax-M3"},
+            "memory_max_tokens": 16384,
             "reporter_max_tokens": 1600,
             "newsroom_max_tokens": 1200,
-            "conversation_max_tokens": 800,
+            "conversation_max_tokens": 16384,
         },
     }
 
@@ -100,12 +107,14 @@ def test_output_budget_activation_is_forward_only_persisted_and_idempotent():
 
     assert first == second == {
         "activation_tick": 207,
+        "memory_max_tokens": 16384,
         "reporter_max_tokens": 1600,
         "newsroom_max_tokens": 1200,
-        "conversation_max_tokens": 800,
+        "conversation_max_tokens": 16384,
     }
     assert stored["llm"]["output_budget_activation_tick"] == 207
+    assert stored["llm"]["memory_max_tokens"] == 16384
     assert stored["llm"]["reporter_max_tokens"] == 1600
     assert stored["llm"]["newsroom_max_tokens"] == 1200
-    assert stored["llm"]["conversation_max_tokens"] == 800
+    assert stored["llm"]["conversation_max_tokens"] == 16384
     assert len(store.events) == 1

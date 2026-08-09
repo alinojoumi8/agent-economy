@@ -36,8 +36,12 @@ class Labor:
     def apply_job(self, tick: int, agent_id: int, job_id: int) -> Optional[int]:
         if not self._agent_can_work(agent_id):
             return None
-        job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (job_id,))
+        job = self.store.query_one(
+            "SELECT j.*,f.founder_agent_id FROM jobs j "
+            "JOIN firms f ON f.id=j.firm_id WHERE j.id=?", (job_id,))
         if not job or job["status"] != "open":
+            return None
+        if int(job["founder_agent_id"] or 0) == int(agent_id):
             return None
         dup = self.store.query_one(
             "SELECT id FROM applications WHERE job_id=? AND agent_id=? "

@@ -10,7 +10,7 @@ import pytest
 
 from engine.store import Store
 from engine.actions import ActionExecutor
-from llm.adapters import catalog_model_suggestions
+from llm.adapters import AdapterResult, catalog_model_suggestions
 from llm.gateway import Gateway
 from observability import (
     JsonFormatter,
@@ -414,6 +414,53 @@ def test_live_preflight_rejects_catalog_miss_before_smoke_completion(tmp_path, c
     assert rejected.event_fields["suggested_models"] == [
         "MiniMax-M3", "MiniMax-M2.7-highspeed",
     ]
+    store.close()
+
+
+def test_live_preflight_uses_provider_smoke_output_budget(tmp_path):
+    config = {
+        "llm": {
+            "providers": {
+                "scripted": {
+                    "kind": "scripted",
+                    "preflight_max_tokens": 4096,
+                },
+            },
+            "default_route": {"provider": "scripted", "model": "scripted"},
+            "routes": {},
+        },
+        "budget": {"cap_usd": 1.0},
+    }
+    store = Store(str(tmp_path / "preflight-output-budget.db"))
+    store.init_run_meta("preflight-output-budget", 1, config)
+
+    class CapturingAdapter:
+        max_tokens = None
+
+        async def healthcheck(self, model):
+            return {
+                "ok": True,
+                "model": model,
+                "model_available": True,
+                "live": True,
+            }
+
+        async def complete(self, _model, _messages, **kwargs):
+            self.max_tokens = kwargs["max_tokens"]
+            return AdapterResult(
+                text='{"ok":true,"provider":"live"}',
+                in_tokens=12,
+                out_tokens=9,
+            )
+
+    gateway = Gateway(store, config)
+    adapter = CapturingAdapter()
+    gateway.adapters["scripted"] = adapter
+    report = asyncio.run(gateway.preflight(live=True))
+
+    assert report["live_ready"] is True
+    assert adapter.max_tokens == 4096
+    assert report["checks"][0]["smoke_max_tokens"] == 4096
     store.close()
 
 

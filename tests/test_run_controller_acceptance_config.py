@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from server.controller import RunController
+from server.controller import RunController, _is_expected_proactor_client_disconnect
 
 
 def _world(acceptance: dict) -> SimpleNamespace:
@@ -27,3 +27,24 @@ def test_acceptance_horizon_keeps_run_controls_governed() -> None:
 
     assert controller.acceptance_configured
     assert controller.acceptance_target_tick == 30
+
+
+def test_expected_windows_client_reset_is_narrowly_classified() -> None:
+    reset = ConnectionResetError(10054, "connection reset by peer")
+    context = {
+        "message": (
+            "Exception in callback "
+            "_ProactorBasePipeTransport._call_connection_lost(None)"
+        ),
+        "exception": reset,
+    }
+
+    assert _is_expected_proactor_client_disconnect(context)
+    assert not _is_expected_proactor_client_disconnect({
+        **context,
+        "message": "Exception in unrelated callback",
+    })
+    assert not _is_expected_proactor_client_disconnect({
+        **context,
+        "exception": ConnectionResetError(10053, "connection aborted"),
+    })

@@ -1,5 +1,6 @@
 import { Link, useSearchParams } from "react-router";
 import { filterMarketRows, normalizeMarketsWorkspace } from "./marketsWorkspaceModel.js";
+import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
 import {
   WorkspaceHeader,
   WorkspaceState,
@@ -47,7 +48,9 @@ export function MarketsWorkspace() {
     }
     setSearchParams(next, { replace: true });
   };
-  const organizationUrl = (id: number) => workspaceUrl(projection.runId, `organizations/${id}`, projection.observerState);
+  const organizationUrl = (id: number) => organizationWorkspaceUrl(
+    projection.runId, "firm", id, projection.observerState,
+  ) || workspaceUrl(projection.runId, "organizations", projection.observerState);
   const investigationUrl = (id: number) => workspaceUrl(projection.runId, "investigations", projection.observerState, { event: id });
   const orders = filterMarketRows(model.orders, filters) as MarketRow[];
   const fxOrders = filterMarketRows(model.fxOrders, filters) as MarketRow[];

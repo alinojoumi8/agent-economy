@@ -354,6 +354,7 @@ def test_model_reasoning_is_grounded_publicly_while_raw_call_remains_auditable(
 def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
     world = _world(tmp_path, "summary-grounding.db")
     world.config["beliefs"].update({"model_grounding_from_tick": 1})
+    world.config["llm"]["memory_max_tokens"] = 16384
     world.runtime.config = world.config
     agent_id = int(world.store.scalar(
         "SELECT id FROM agents WHERE kind='citizen' ORDER BY id LIMIT 1"
@@ -362,8 +363,11 @@ def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
         agent_id, 1, "Demand changed without a measured figure.", importance=4.7,
     )
 
+    requested_budgets = []
+
     class SummaryGateway:
         async def complete(self, request, **_kwargs):
+            requested_budgets.append(request.max_tokens)
             if request.user.startswith("["):
                 return SimpleNamespace(
                     parsed={"summary": "The prior model summary said 777.", "importance": 2},
@@ -387,6 +391,7 @@ def test_memory_summaries_ground_numbers_in_the_exact_model_sources(tmp_path):
     world.runtime.mem.write_summary(agent_id, 1, "A prior model summary said 777.", 2)
     weekly = asyncio.run(world.runtime._rollup_week(1, agent_id, 1))
     assert weekly[0] == "The prior model summary said 777."
+    assert requested_budgets == [16384, 16384]
     world.close()
 
 

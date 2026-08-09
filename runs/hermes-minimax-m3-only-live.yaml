@@ -31,15 +31,20 @@ llm:
   concurrency: 2
   logical_deadline_s: 600
   provider_retries: 1
-  # M3 includes hidden reasoning in the completion budget. A 900-token cap can
-  # end at length before any JSON action text is emitted.
-  decision_max_tokens: 2400
-  # Founder prompts expose the larger firm, labor, and financing contract. Live
-  # M3 can exhaust 2,400 tokens before it reaches the required JSON envelope.
-  founder_max_tokens: 4096
+  # A paid live receipt showed both an ordinary decision completion and its
+  # repair consuming all 2,400 tokens in reasoning without emitting JSON.
+  decision_max_tokens: 16384
+  # A paid live receipt showed both the initial founder completion and its
+  # repair consuming all 4,096 tokens in reasoning without emitting JSON.
+  founder_max_tokens: 16384
+  # Day-30 weekly rollups exhausted the previous 240-token ceiling before
+  # MiniMax could finish the compact JSON memory contract.
+  memory_max_tokens: 16384
   reporter_max_tokens: 1600
   newsroom_max_tokens: 1200
-  conversation_max_tokens: 800
+  # Multiple live conversations exhausted the 800-token ceiling in reasoning;
+  # one initial/repair pair then paused the world without emitting any JSON.
+  conversation_max_tokens: 16384
 
   providers:
     minimax:
@@ -50,6 +55,7 @@ llm:
       prompt_cache_mode: provider_automatic
       timeout_s: 240
       healthcheck_path: /models
+      preflight_max_tokens: 16384
       max_tokens_field: max_completion_tokens
       request_defaults:
         reasoning_split: true

@@ -94,6 +94,7 @@ async function mockWorkspaceApis(
       body = envelope("organizations", url, {
         organizations: [
           { id: 1, type: "firm", name: "Northstar Foods", sector: "food", region_id: 1, region_name: "North", status: "listed", active: true, employees: 2, balance_cents: 1200, currency_code: "CAD", founded_tick: 1, ...(historical ? {} : { owner_id: PRIVATE_CANARY }) },
+          { id: 1, type: "agency", name: "Northstar Markets Commission", status: "active", active: true, mandate: "markets" },
           { id: 2, type: "bank", name: "Civic Bank", status: "open", active: true, reserve_cents: 900, equity_cents: 300, currency_code: "USD" },
         ],
         institutions: { legal_enabled: !historical, politics_enabled: !historical, agencies: [] },
@@ -206,8 +207,10 @@ test("all canonical workspace routes navigate with observer context and validate
   }
 
   await page.goto("/runs/run-demo/organizations/1?fork=fork-1&tick=3");
+  await expect(page.getByText("This legacy ID matches multiple organization types. Choose a typed directory row.")).toBeVisible();
+  await page.getByRole("link", { name: "Northstar Foods", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Northstar Foods" })).toBeVisible();
-  await expect(page).toHaveURL(/organizations\/1\?fork=fork-1&tick=3/);
+  await expect(page).toHaveURL(/organizations\/firm\/1\?fork=fork-1&tick=3/);
   await page.goto("/runs/run-demo/experiments/1?fork=fork-1");
   await page.getByRole("button", { name: "campaigns", exact: true }).click();
   await expect(page.getByRole("heading", { name: "price-shock" })).toBeVisible();
@@ -332,11 +335,11 @@ test("narrow workspace tables stay contained and keyboard selection opens valida
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/runs/run-demo/organizations");
   const selection = page.getByRole("button", {
-    name: "Select Organization directory row 1",
+    name: "Select Organization directory row firm:1",
   });
   await selection.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/organizations\/1$/);
+  await expect(page).toHaveURL(/\/organizations\/firm\/1$/);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   const animationDuration = await page.locator(".world-os-workspace-card").first().evaluate(element => getComputedStyle(element).animationDuration);

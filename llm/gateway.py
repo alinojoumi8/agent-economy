@@ -1126,6 +1126,15 @@ class Gateway:
                         suggested_models=health.get("suggested_models", []),
                     )
                     continue
+                provider_config = (
+                    self.config.get("llm", {})
+                    .get("providers", {})
+                    .get(provider, {})
+                )
+                preflight_max_tokens = max(
+                    256,
+                    int(provider_config.get("preflight_max_tokens", 256)),
+                )
                 smoke_result = await asyncio.wait_for(
                     adapter.complete(
                         model,
@@ -1134,7 +1143,7 @@ class Gateway:
                          {"role": "user", "content": (
                             "Return {\"ok\":true,\"provider\":\"live\"} now.")}],
                         purpose="preflight", context={"preflight": True},
-                        max_tokens=256, temperature=0.0,
+                        max_tokens=preflight_max_tokens, temperature=0.0,
                         cache_key=f"{self.run_id}:preflight:{provider}"),
                     timeout=target.timeout_s,
                 )
@@ -1146,6 +1155,7 @@ class Gateway:
                     "provider": provider, **health,
                     "ok": bool(health.get("ok", False) and contract_ok),
                     "contract_ok": contract_ok,
+                    "smoke_max_tokens": preflight_max_tokens,
                     "smoke_in_tokens": int(smoke_result.in_tokens),
                     "smoke_out_tokens": int(smoke_result.out_tokens),
                 }

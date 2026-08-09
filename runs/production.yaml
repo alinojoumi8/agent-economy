@@ -21,11 +21,17 @@ llm:
   # Safe for the Token Plan's documented 3-4 concurrent-agent entry tier.
   concurrency: 3
   provider_retries: 1
-  decision_max_tokens: 2400
-  founder_max_tokens: 4096
+  # A paid live decision and its repair both exhausted 2,400 reasoning tokens
+  # without reaching the required JSON envelope.
+  decision_max_tokens: 16384
+  # Founder prompts need room beyond M3's private reasoning: a paid live call
+  # exhausted 4,096 tokens twice without reaching the required JSON envelope.
+  founder_max_tokens: 16384
+  # Weekly memory rollups also include private reasoning in this ceiling.
+  memory_max_tokens: 16384
   reporter_max_tokens: 1600
   newsroom_max_tokens: 1200
-  conversation_max_tokens: 800
+  conversation_max_tokens: 16384
   providers:
     minimax:
       kind: openai_compat
@@ -35,6 +41,7 @@ llm:
       prompt_cache_mode: provider_automatic
       timeout_s: 180
       healthcheck_path: /models
+      preflight_max_tokens: 16384
       max_tokens_field: max_completion_tokens
       request_defaults:
         reasoning_split: true

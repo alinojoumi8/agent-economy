@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  organizationIdentity,
   organizationWorkspaceUrl,
   normalizeWorkspaceFilters,
   validatedSelectedId,
@@ -52,12 +53,15 @@ test("workspace URLs preserve only validated observer and route state", () => {
     assert.equal(validatedSelectedId("1.5"), null);
     assert.equal(validatedSelectedId("private"), null);
     assert.equal(
-      organizationWorkspaceUrl("run/id", "12", { tick: 0 }),
-      "/runs/run%2Fid/organizations/12?tick=0",
+      organizationWorkspaceUrl("run/id", "firm", "12", { tick: 0 }),
+      "/runs/run%2Fid/organizations/firm/12?tick=0",
     );
+    assert.equal(organizationIdentity("firm", 12), "firm:12");
+    assert.equal(organizationIdentity("agency", 12), "agency:12");
     for (const invalid of [0, -1, "1.5", "private", Number.MAX_SAFE_INTEGER + 1]) {
-      assert.equal(organizationWorkspaceUrl("run", invalid, {}), null);
+      assert.equal(organizationWorkspaceUrl("run", "firm", invalid, {}), null);
     }
+    assert.equal(organizationWorkspaceUrl("run", "not valid", 1, {}), null);
 });
 
 test("workspace polling stops for every terminal run status", () => {
@@ -229,6 +233,7 @@ test("World OS maps organization list and detail routes to the canonical workspa
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ OrganizationsWorkspace \}/);
   assert.match(source, /path="organizations" element=\{<OrganizationsWorkspace \/>\}/);
+  assert.match(source, /path="organizations\/:organizationType\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
   assert.match(source, /path="organizations\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Organizations"/);
 });

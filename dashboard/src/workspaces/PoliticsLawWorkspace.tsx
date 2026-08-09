@@ -45,7 +45,7 @@ export function PoliticsLawWorkspace() {
     setSearchParams(next, { replace: true });
   };
   const organizationUrl = (id: unknown) => organizationWorkspaceUrl(
-    projection.runId, id, projection.observerState,
+    projection.runId, "firm", id, projection.observerState,
   );
 
   return <section className="world-os-politics-law-workspace">

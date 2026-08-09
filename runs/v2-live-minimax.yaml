@@ -24,13 +24,15 @@ llm:
   # calls need enough room to finish their JSON instead of ending at length.
   reporter_max_tokens: 1600
   newsroom_max_tokens: 1200
-  conversation_max_tokens: 800
-  # MiniMax-M3 includes reasoning in completion usage. 2,400 covers the
-  # observed p90 while bounding the long tail that made days appear frozen.
-  decision_max_tokens: 2400
-  # The founder contract includes firm, labor, and financing surfaces and needs
-  # a separate ceiling so ordinary citizen calls remain bounded at 2,400.
-  founder_max_tokens: 4096
+  conversation_max_tokens: 16384
+  # A paid live receipt showed both an ordinary decision completion and its
+  # repair consuming all 2,400 tokens in reasoning without emitting JSON.
+  decision_max_tokens: 16384
+  # A paid live receipt showed both the initial founder completion and its
+  # repair consuming all 4,096 tokens in reasoning without emitting JSON.
+  founder_max_tokens: 16384
+  # Weekly memory rollups also include private reasoning in this ceiling.
+  memory_max_tokens: 16384
   providers:
     minimax:
       kind: openai_compat
@@ -42,6 +44,7 @@ llm:
       # world's reconciled fail-closed pause after a ten-minute read window.
       timeout_s: 600
       healthcheck_path: /models
+      preflight_max_tokens: 16384
       max_tokens_field: max_completion_tokens
       request_defaults:
         reasoning_split: true

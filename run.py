@@ -272,6 +272,7 @@ def _hydrate_resumed_world(world: World, meta, config: dict) -> None:
 
 
 LLM_OUTPUT_BUDGET_KEYS = (
+    "memory_max_tokens",
     "reporter_max_tokens",
     "newsroom_max_tokens",
     "conversation_max_tokens",
@@ -1290,8 +1291,8 @@ def main() -> None:
         "--activate-llm-output-budgets",
         action="store_true",
         help=(
-            "only with --resume/--fork: persist the configured reporter, "
-            "newsroom, and conversation output budgets at the next tick"
+            "only with --resume/--fork: persist the configured memory, "
+            "reporter, newsroom, and conversation output budgets at the next tick"
         ),
     )
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")

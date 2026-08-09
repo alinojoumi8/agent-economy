@@ -24,7 +24,7 @@ Both authenticated `/models` checks passed. MiniMax returned eight available mod
 
 1. **Wrong Kimi service.** The Kimi Code key was being sent to the Moonshot pay-as-you-go endpoint and returned HTTP 401. The profile now uses the Kimi Code endpoint and stable model alias.
 2. **Wrong Kimi sampling value.** K2.7 Code rejected `temperature: 0.7`; the provider requires `1.0`.
-3. **Reasoning output truncation.** The original 700-token ceiling could end before either model emitted its JSON envelope. Production requests now allow up to 4,096 completion tokens.
+3. **Reasoning output truncation.** MiniMax M3 consumed complete 2,400-token decision, 4,096-token founder, 800-token conversation, and 240-token weekly-memory responses in private reasoning or truncated JSON. Decision, founder, conversation, memory, and MiniMax smoke-preflight calls now allow up to 16,384 completion tokens; reporter and newsroom contracts retain lower role-specific limits.
 4. **Token Plan concurrency and timeouts.** Eight concurrent calls and a 60-second timeout produced MiniMax timeouts. The profile now uses three concurrent calls and 180-second provider timeouts.
 5. **Missing conversation and memory contracts.** Raw context was previously sent without an output schema, causing universal repair and empty persisted messages/summaries. Explicit schemas and gateway schema validation now cover both paths.
 6. **Ambiguous identifiers.** Human-readable labels such as `firm7` caused invalid integer IDs. Prompts now expose prices/jobs as JSON and explicitly require context-provided integer IDs.

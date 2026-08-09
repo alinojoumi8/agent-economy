@@ -30,9 +30,28 @@ export function workspaceRouteUrl(runId, path, state, extra = {}) {
 
 export const workspaceUrl = workspaceRouteUrl;
 
-export function organizationWorkspaceUrl(runId, id, state) {
+export function validatedOrganizationType(value) {
+  const type = String(value ?? "").trim().toLowerCase();
+  return /^[a-z][a-z0-9_-]*$/.test(type) ? type : null;
+}
+
+export function organizationIdentity(type, id) {
+  const selectedType = validatedOrganizationType(type);
   const selectedId = validatedSelectedId(id);
-  return selectedId === null
+  return selectedType === null || selectedId === null
     ? null
-    : workspaceRouteUrl(runId, `organizations/${selectedId}`, state);
+    : `${selectedType}:${selectedId}`;
+}
+
+export function organizationWorkspaceUrl(runId, type, id, state) {
+  const identity = organizationIdentity(type, id);
+  if (identity === null) return null;
+  const separator = identity.lastIndexOf(":");
+  const selectedType = identity.slice(0, separator);
+  const selectedId = identity.slice(separator + 1);
+  return workspaceRouteUrl(
+    runId,
+    `organizations/${encodeURIComponent(selectedType)}/${selectedId}`,
+    state,
+  );
 }

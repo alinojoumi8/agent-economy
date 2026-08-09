@@ -547,15 +547,17 @@ class ActionExecutor:
 
     def _do_apply_job(self, tick, actor_id, action, phase) -> dict:
         job_id = int(action.get("job_id", 0))
+        job = self.store.query_one(
+            "SELECT j.status,f.currency_code,f.founder_agent_id FROM jobs j "
+            "JOIN firms f ON f.id=j.firm_id WHERE j.id=?", (job_id,))
+        if not job or job["status"] != "open":
+            return {"ok": False, "reason": "job unavailable"}
+        if int(job["founder_agent_id"] or 0) == int(actor_id):
+            return {"ok": False, "reason": "founder cannot apply to own firm"}
         if self.local_currency_action_surfaces:
-            job = self.store.query_one(
-                "SELECT j.status,f.currency_code FROM jobs j JOIN firms f ON f.id=j.firm_id "
-                "WHERE j.id=?", (job_id,))
             actor_currency = self.store.scalar(
                 "SELECT ac.currency_code FROM agents a JOIN accounts ac "
                 "ON ac.id=a.checking_account_id WHERE a.id=?", (actor_id,))
-            if not job or job["status"] != "open":
-                return {"ok": False, "reason": "job unavailable"}
             if (actor_currency is None
                     or str(job["currency_code"] or "USD")
                     != str(actor_currency or "USD")):

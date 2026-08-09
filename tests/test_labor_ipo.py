@@ -143,6 +143,35 @@ def test_wage_offer_counter_and_accept_is_bilateral_persisted_and_audited(store)
             "offer_id"] == second_counter["offer_id"]
 
 
+def test_founder_cannot_apply_to_or_review_own_firm_job(store):
+    economy, config, executor = _semantics7_economy(store)
+    bank_id = make_bank(economy)
+    founder, _ = make_agent(economy, bank_id, name="Founder", cash=1_000_000)
+    worker, _ = make_agent(economy, bank_id, name="Worker", cash=50_000)
+    firm_id = _firm(economy, founder)
+    job_id = economy.labor.post_job(1, firm_id, "Operator", 200_00)
+
+    rejected = executor.execute_action(
+        1, founder, {"type": "apply_job", "job_id": job_id})
+    assert rejected == {"ok": False, "reason": "founder cannot apply to own firm"}
+    assert economy.labor.apply_job(1, founder, job_id) is None
+
+    worker_application = economy.labor.apply_job(1, worker, job_id)
+    legacy_self_application = store.insert(
+        "applications", tick=1, job_id=job_id, agent_id=founder, state="pending")
+    context_builder = ContextBuilder(economy, Memory(store, config), config)
+    founder_row = store.query_one("SELECT * FROM agents WHERE id=?", (founder,))
+    context = context_builder.build(founder_row, 2)
+
+    assert all(item["firm_id"] != firm_id for item in context["jobs"])
+    assert [item["application_id"] for item in context["firm_applications"]] == [
+        worker_application,
+    ]
+    assert legacy_self_application not in {
+        item["application_id"] for item in context["firm_applications"]
+    }
+
+
 def test_accept_job_offer_rejects_non_integer_identifiers(store):
     economy, _, executor = _modern_economy(store)
     bank_id = make_bank(economy)

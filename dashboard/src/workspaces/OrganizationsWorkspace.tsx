@@ -11,6 +11,11 @@ import {
   workspaceUrl,
   useWorkspaceProjection,
 } from "./workspaceShared";
+import {
+  organizationIdentity,
+  organizationWorkspaceUrl,
+  validatedOrganizationType,
+} from "./workspaceRouteState.js";
 
 type Organization = {
   id: number; name?: string; type?: string; status?: string; active?: boolean;
@@ -40,7 +45,7 @@ function money(cents: unknown, currency: unknown) {
 
 export function OrganizationsWorkspace() {
   const projection = useWorkspaceProjection<OrganizationProjection>("workspace.organizations", "/api/v2/workspaces/organizations");
-  const { organizationId } = useParams();
+  const { organizationType, organizationId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeOrganizationsWorkspace(projection.data || {});
@@ -54,7 +59,15 @@ export function OrganizationsWorkspace() {
   };
   const filtered = filterOrganizations(model.organizations, filters) as Organization[];
   const selectedId = validatedSelectedId(organizationId);
-  const selected = model.organizations.find(item => Number(item.id) === selectedId) as Organization | undefined;
+  const selectedType = validatedOrganizationType(organizationType);
+  const selectedCandidates = selectedId === null
+    ? []
+    : model.organizations.filter(item => Number(item.id) === selectedId) as Organization[];
+  const selected = selectedType
+    ? selectedCandidates.find(item => validatedOrganizationType(item.type) === selectedType)
+    : selectedCandidates.length === 1 ? selectedCandidates[0] : undefined;
+  const selectedIdentity = selected ? organizationIdentity(selected.type, selected.id) : null;
+  const ambiguousLegacyId = selectedId !== null && selectedType === null && selectedCandidates.length > 1;
   const disclosures = selected?.type === "firm"
     ? model.disclosures.filter(item => Number(item.firm_id) === Number(selected.id))
     : [];
@@ -65,11 +78,12 @@ export function OrganizationsWorkspace() {
     else next.set(key, value === true ? "1" : String(value));
     setSearchParams(next, { replace: true });
   };
-  const detailUrl = (organization: Organization) => workspaceUrl(
+  const detailUrl = (organization: Organization) => organizationWorkspaceUrl(
     projection.runId,
-    `organizations/${organization.id}`,
+    organization.type,
+    organization.id,
     projection.observerState,
-  );
+  ) || workspaceUrl(projection.runId, "organizations", projection.observerState);
 
   return <section className="world-os-organizations-workspace">
     <WorkspaceHeader title="Organizations" kicker="Authorized organization directory"
@@ -97,7 +111,8 @@ export function OrganizationsWorkspace() {
       <div className="world-os-organization-grid">
         <article className="world-os-workspace-card">
           <header><div><p className="world-os-kicker">Directory</p><h3>{filtered.length} matching organizations</h3></div></header>
-          <WorkspaceTable caption="Organization directory" rows={filtered} selectedId={selected?.id}
+          <WorkspaceTable caption="Organization directory" rows={filtered} selectedId={selectedIdentity}
+            rowKey={organization => organizationIdentity(organization.type, organization.id) || `unknown:${organization.id}`}
             onSelect={organization => navigate(detailUrl(organization))}
             columns={[
               { key: "name", label: "Organization", render: row => <Link to={detailUrl(row)}>{label(row.name, `Organization ${row.id}`)}</Link> },
@@ -124,7 +139,9 @@ export function OrganizationsWorkspace() {
               <div><dt>Terminal tick</dt><dd>{selected.bankrupt_tick == null ? "—" : `Tick ${selected.bankrupt_tick}`}</dd></div>
             </dl>
             {disclosures.length > 0 && <section><h4>Public disclosures</h4><ul>{disclosures.map(item => <li key={String(item.id)}>Tick {label(item.tick)} · {label(item.disclosure_type)}</li>)}</ul></section>}
-          </> : <p>{selectedId ? "The requested ID is not present in this authorized projection." : "Choose a validated directory row to inspect public fields."}</p>}
+          </> : <p>{ambiguousLegacyId
+            ? "This legacy ID matches multiple organization types. Choose a typed directory row."
+            : selectedId ? "The requested organization is not present in this authorized projection." : "Choose a validated directory row to inspect public fields."}</p>}
         </aside>
       </div>
       {model.contracts.length > 0 && <article className="world-os-workspace-card world-os-organization-contracts">

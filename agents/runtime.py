@@ -1569,7 +1569,9 @@ class AgentRuntime:
                 + ". importance must be a number from 0 to 5. belief_updates must "
                   "contain only objects with key and numeric value fields."),
             user=json.dumps(context)[:4000], context=context,
-            agent_id=agent_id, tick=tick, max_tokens=200)
+            agent_id=agent_id, tick=tick,
+            max_tokens=int(self.config.get("llm", {}).get(
+                "memory_max_tokens", 200)))
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         raw_summary = str(env.get("summary", "")).strip()
@@ -1621,7 +1623,9 @@ class AgentRuntime:
             system=("Synthesize the daily summaries into one concise weekly memory. "
                     "Respond ONLY with JSON matching " + schema + "."),
             user=json.dumps(daily)[:4000], context=context,
-            agent_id=agent_id, tick=tick, max_tokens=240)
+            agent_id=agent_id, tick=tick,
+            max_tokens=int(self.config.get("llm", {}).get(
+                "memory_max_tokens", 240)))
         resp = await self.gw.complete(req, schema_hint=schema)
         env = resp.parsed if isinstance(resp.parsed, dict) else {}
         raw_summary = str(env.get("summary", "")).strip()

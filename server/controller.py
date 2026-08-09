@@ -26,6 +26,18 @@ from world.loop import World
 logger = get_logger("server")
 
 
+def _is_expected_proactor_client_disconnect(context: dict) -> bool:
+    """Recognize the Windows transport reset emitted for an abruptly closed client."""
+    exc = context.get("exception")
+    error_code = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
+    return (
+        isinstance(exc, ConnectionResetError)
+        and error_code == 10054
+        and "_ProactorBasePipeTransport._call_connection_lost"
+        in str(context.get("message") or "")
+    )
+
+
 class WebSocketHub:
     """Track dashboard clients and fan out structured server events."""
 
@@ -117,27 +129,46 @@ class RunController:
     @asynccontextmanager
     async def lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
         self.loop = asyncio.get_running_loop()
+        loop = self.loop
+        previous_exception_handler = loop.get_exception_handler()
+
+        def handle_loop_exception(
+                current_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+            if _is_expected_proactor_client_disconnect(context):
+                return
+            if previous_exception_handler is not None:
+                previous_exception_handler(current_loop, context)
+            else:
+                current_loop.default_exception_handler(context)
+
+        loop.set_exception_handler(handle_loop_exception)
         operational_log(logger, logging.INFO, "server.started",
                         run_id=self.world.gateway.run_id, tick=self.store.tick)
-        if self.acceptance_authorized:
-            await self.start()
         try:
+            if self.acceptance_authorized:
+                await self.start()
             yield
         finally:
-            replay_reader = getattr(_app.state, "replay_reader", None)
-            if replay_reader is not None:
-                replay_reader.close()
-            operator_workspace = getattr(_app.state, "operator_workspace", None)
-            if operator_workspace is not None:
-                operator_workspace.close()
-            citizenship_service = getattr(
-                _app.state, "citizenship_service", None)
-            if citizenship_service is not None:
-                citizenship_service.close()
-            operational_log(logger, logging.INFO, "server.stopped",
-                            run_id=self.world.gateway.run_id, tick=self.store.tick,
-                            run_active=self.is_running())
-            self.loop = None
+            try:
+                replay_reader = getattr(_app.state, "replay_reader", None)
+                if replay_reader is not None:
+                    replay_reader.close()
+                operator_workspace = getattr(
+                    _app.state, "operator_workspace", None)
+                if operator_workspace is not None:
+                    operator_workspace.close()
+                citizenship_service = getattr(
+                    _app.state, "citizenship_service", None)
+                if citizenship_service is not None:
+                    citizenship_service.close()
+                operational_log(
+                    logger, logging.INFO, "server.stopped",
+                    run_id=self.world.gateway.run_id, tick=self.store.tick,
+                    run_active=self.is_running())
+            finally:
+                if loop.get_exception_handler() is handle_loop_exception:
+                    loop.set_exception_handler(previous_exception_handler)
+                self.loop = None
 
     def on_tick(self, tick: int, summary: dict) -> None:
         if self.loop is None or not self.loop.is_running():
