@@ -743,7 +743,10 @@ def test_oracle_campaign_manifest_cannot_weaken_release_sample_floor(tmp_path):
         "runs": [],
     }), encoding="utf-8")
 
-    with pytest.raises(OracleCampaignError, match="minimum_runs must be"):
+    with pytest.raises(
+            OracleCampaignError,
+            match=(r"minimum_runs must be the fixed release floor "
+                   rf"{oracle_campaign.DEFAULT_MINIMUM_RUNS}")):
         evaluate_oracle_campaign(manifest)
 
 

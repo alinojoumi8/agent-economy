@@ -2919,7 +2919,9 @@ def evaluate_oracle_campaign(manifest_path: str | Path) -> dict:
         payload.get("minimum_forecasts", DEFAULT_MINIMUM_FORECASTS),
         "minimum_forecasts")
     if minimum_runs != DEFAULT_MINIMUM_RUNS:
-        raise OracleCampaignError("minimum_runs must be the fixed release floor 10")
+        raise OracleCampaignError(
+            "minimum_runs must be the fixed release floor "
+            f"{DEFAULT_MINIMUM_RUNS}")
     if minimum_forecasts != DEFAULT_MINIMUM_FORECASTS:
         raise OracleCampaignError(
             "minimum_forecasts must be the fixed release floor "
