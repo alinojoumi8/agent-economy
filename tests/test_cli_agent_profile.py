@@ -107,6 +107,40 @@ def test_minimax_only_profile_has_one_live_provider_and_no_fallback():
     assert config["resource_guard"]["enabled"] is True
 
 
+def test_deepseek_v4_flash_minimax_profile_routes_only_requested_models():
+    config = load_config(
+        ROOT / "runs" / "hermes-local-live-deepseek.yaml")
+    llm = config["llm"]
+
+    report = validate_llm_config(
+        config, require_secrets=False, raise_on_error=False)
+
+    assert report["ready"], report["errors"]
+    assert llm["live_only"] is True
+    assert report["routed_providers"] == ["deepseek", "minimax"]
+    assert set(llm["providers"]) == {"deepseek", "minimax"}
+    assert llm["providers"]["deepseek"]["documented_model_version"] == (
+        "DeepSeek-V4-Flash-0731")
+    assert llm["providers"]["deepseek"]["concurrency"] == 2
+    assert llm["providers"]["minimax"]["concurrency"] == 1
+    assert llm["default_route"] == {
+        "provider": "deepseek", "model": "deepseek-v4-flash"}
+    assert {
+        (route["provider"], route["model"])
+        for route in llm["routes"].values()
+    } == {
+        ("deepseek", "deepseek-v4-flash"),
+        ("minimax", "MiniMax-M3"),
+    }
+    assert llm["routes"]["founder"] == {
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert llm["routes"]["oracle"] == {
+        "provider": "minimax", "model": "MiniMax-M3"}
+    assert config["budget"]["cap_usd"] == 5.0
+    assert config["checkpoint_every"] == 5
+    assert config["resource_guard"]["enabled"] is True
+
+
 def test_minimax_light_live_profile_bounds_calls_and_conversation_coverage():
     config = load_config(
         ROOT / "runs" / "hermes-minimax-m3-light-live.yaml")

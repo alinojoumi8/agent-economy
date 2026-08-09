@@ -33,6 +33,8 @@ def test_desktop_profile_bounds_local_resource_use():
     assert config["llm"]["max_in_flight"] == 6
     assert config["llm"]["logical_deadline_s"] == 900
     assert config["llm"]["providers"]["ollama"]["concurrency"] == 1
+    assert config["llm"]["providers"]["deepseek"][
+        "documented_model_version"] == "DeepSeek-V4-Flash-0731"
     assert config["llm"]["tier_routes"]["local"]["primary"]["model"] == (
         "agent-economy-qwen3.5:9b-16k")
     assert config["llm"]["tier_routes"]["flash"]["fallback"]["provider"] == (

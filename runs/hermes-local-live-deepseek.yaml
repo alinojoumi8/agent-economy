@@ -1,27 +1,81 @@
-# Three-provider local Hermes sandbox. Use after DEEPSEEK_API_KEY passes
-# `python run.py --config runs/hermes-local-live-deepseek.yaml
-# --preflight-live --approve-live-inference`.
-extends: hermes-local-live.yaml
+# Two-provider local Hermes sandbox. The DeepSeek API identifier
+# `deepseek-v4-flash` currently serves DeepSeek-V4-Flash-0731; MiniMax is
+# pinned to MiniMax-M3. Launch only after the live preflight passes:
+#   python run.py --config runs/hermes-local-live-deepseek.yaml --preflight-live
+extends: hermes-local.yaml
+
+communications:
+  autonomous_scripted_enabled: false
+
+budget:
+  cap_usd: 5.0
+  oracle_reserve_usd: 0.50
+  report_reserve_usd: 0.25
+  conversation_pairs: 2
 
 llm:
+  live_only: true
+  require_preflight_live: true
+  max_in_flight: 3
+  concurrency: 3
+  logical_deadline_s: 600
+  provider_retries: 1
+  decision_max_tokens: 900
+
   providers:
     deepseek:
       kind: openai_compat
       base_url: https://api.deepseek.com
       api_key_env: DEEPSEEK_API_KEY
-      concurrency: 3
+      concurrency: 2
       prompt_cache_mode: provider_automatic
       timeout_s: 60
       healthcheck_path: /models
       max_tokens_field: max_tokens
+      documented_model_version: DeepSeek-V4-Flash-0731
       request_defaults:
         stream: false
         thinking: {type: disabled}
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      concurrency: 1
+      prompt_cache_mode: provider_automatic
+      timeout_s: 240
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        max_completion_tokens: 4096
 
-  # DeepSeek is the high-volume flash/default lane. MiniMax remains the
-  # founder specialist and Kimi handles institutional roles.
+  # DeepSeek is the high-volume flash/default lane. MiniMax handles the
+  # founder and institutional contracts. There is no scripted or Kimi route.
   default_route: {provider: deepseek, model: deepseek-v4-flash}
   routes:
     citizen:      {provider: deepseek, model: deepseek-v4-flash}
     conversation: {provider: deepseek, model: deepseek-v4-flash}
     memory:       {provider: deepseek, model: deepseek-v4-flash}
+    founder:        {provider: minimax, model: MiniMax-M3}
+    central_banker: {provider: minimax, model: MiniMax-M3}
+    credit_officer: {provider: minimax, model: MiniMax-M3}
+    reporter:       {provider: minimax, model: MiniMax-M3}
+    editor:         {provider: minimax, model: MiniMax-M3}
+    vc_partner:     {provider: minimax, model: MiniMax-M3}
+    oracle:         {provider: minimax, model: MiniMax-M3}
+
+  pricing:
+    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
+
+checkpoint_every: 5
+speed_delay_s: 0.0
+
+resource_guard:
+  enabled: true
+  sample_interval_s: 2
+  max_cpu_percent: 90
+  max_memory_percent: 75
+  min_available_memory_gb: 8
+  max_swap_percent: 60
+  consecutive_breaches: 2

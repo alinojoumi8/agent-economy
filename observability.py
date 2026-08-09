@@ -23,6 +23,10 @@ _SENSITIVE_PARTS = ("api_key", "authorization", "credential", "password", "secre
 _SECRET_TEXT_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+\S+"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{6,}"),
+    re.compile(
+        r"(?i)\b(?:api[_ -]?key|access[_ -]?token|credential)"
+        r"\s*[:=]\s*\*+[A-Za-z0-9_-]{2,}"
+    ),
     re.compile(r"(?i)(api[_-]?key|access[_-]?token|password|secret)=([^&\s]+)"),
 )
 

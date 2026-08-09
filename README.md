@@ -222,7 +222,9 @@ baseline and fails closed when history is missing.
 | Profile | Agents/purpose | Provider policy |
 |---|---|---|
 | `runs/evolving-live.yaml` | Default 100-agent Semantics-11 cognition world | Ollama 1, Ollama Cloud 3, DeepSeek 6, MiniMax 2, Kimi 2; global 6; resource guard and strict live preflight |
+| `runs/hermes-local-live-deepseek.yaml` | Bounded eight-citizen live Hermes sandbox | DeepSeek API alias `deepseek-v4-flash` (currently `DeepSeek-V4-Flash-0731`) for citizens/conversation/memory; `MiniMax-M3` for founder and institutions; $5 cap and strict live preflight |
 | `runs/civic-rehearsal.yaml` | Free Semantics-12 civic permit vertical | Scripted, deterministic, capacity-limited permit office |
+| `runs/civic-city-300.yaml` | Interactive 300-resident Civic City with a 100-agent core and 200-agent periphery | Scripted, deterministic; observer can switch between core, all residents, and privacy-safe regional clusters |
 | `runs/civic-live.yaml` | Bounded live Semantics-12 civic permit vertical | MiniMax permit clerk with configured live fallbacks |
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |

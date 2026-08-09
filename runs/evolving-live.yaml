@@ -129,6 +129,7 @@ llm:
       timeout_s: 60
       healthcheck_path: /models
       max_tokens_field: max_tokens
+      documented_model_version: DeepSeek-V4-Flash-0731
       request_defaults:
         stream: false
         thinking: {type: disabled}

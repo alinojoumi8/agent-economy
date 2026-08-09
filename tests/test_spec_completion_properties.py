@@ -1224,6 +1224,14 @@ def test_provider_text_sanitizers_cover_multiple_and_malformed_json_fragments():
     assert "unicode-error-private" not in unicode_error
 
 
+def test_provider_error_redacts_masked_credential_suffixes():
+    error = sanitize_provider_error(
+        "Authentication Fails, Your api key: ****f00d is invalid")
+
+    assert "[REDACTED]" in error
+    assert "f00d" not in error
+
+
 def test_gateway_sanitizes_provider_errors_before_preflight_and_events(
         tmp_path, monkeypatch):
     from engine.store import Store
