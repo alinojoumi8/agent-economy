@@ -323,12 +323,14 @@ def test_recovery_hire_accounting_consumes_the_pre_hook_approval(
         tmp_path, "preapproved-recovery-hire.db", engine_semantics_version=5)
     firm = world.store.query_one(
         "SELECT id,founder_agent_id FROM firms ORDER BY id LIMIT 1")
-    candidate = world.store.query_one(
-        "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
-        "AND alive=1 AND retired=0 ORDER BY id LIMIT 1")
-    assert firm is not None and candidate is not None
+    assert firm is not None
     firm_id = int(firm["id"])
     founder_id = int(firm["founder_agent_id"])
+    candidate = world.store.query_one(
+        "SELECT id FROM agents WHERE kind='citizen' AND employer_id IS NULL "
+        "AND alive=1 AND retired=0 AND id<>? ORDER BY id LIMIT 1",
+        (founder_id,))
+    assert candidate is not None
     job_id = world.economy.labor.post_job(1, firm_id, "worker", 15_000)
     application_id = world.economy.labor.apply_job(
         1, int(candidate["id"]), job_id)
