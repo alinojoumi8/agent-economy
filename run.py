@@ -1417,6 +1417,30 @@ def main() -> None:
         ap.error("--oracle-campaign-run is a finalized headless evidence command")
     if args.oracle_campaign_run and (args.fork or args.replay):
         ap.error("--oracle-campaign-run cannot use fork or replay inputs")
+    mode = (
+        "supply_recovery_report" if args.supply_recovery_report else
+        "dataset_refresh" if args.refresh_datasets else
+        "dataset_verify" if args.verify_datasets else
+        "counterfactual" if args.counterfactual else
+        "static_export" if args.export_static else
+        "experiment" if args.experiment else
+        "oracle_calibration_report" if args.oracle_calibration_report else
+        "release_evidence_report" if args.release_evidence_report else
+        "acceptance_report" if args.acceptance_report else
+        "oracle_campaign_run" if args.oracle_campaign_run else
+        "acceptance_run" if args.acceptance_run else
+        "report" if args.report else
+        "preflight" if (args.preflight or args.preflight_live) else
+        "fork" if args.fork else
+        "resume" if args.resume else
+        "replay" if args.replay else
+        "run"
+    )
+    if args.replay_source_dir is not None and mode != "replay":
+        ap.error(
+            "--replay-source-dir requires replay mode without competing "
+            "command modes"
+        )
     # This command is a read-only persisted-evidence boundary. Dispatch it
     # before logging setup so the default invocation produces no log or SQLite
     # sidecar artifacts; explicit --output remains its only filesystem output.
@@ -1434,18 +1458,6 @@ def main() -> None:
             raise SystemExit(5)
         return
 
-    mode = ("dataset_refresh" if args.refresh_datasets else
-            "dataset_verify" if args.verify_datasets else
-            "counterfactual" if args.counterfactual else
-            "static_export" if args.export_static else "experiment" if args.experiment else
-            "oracle_calibration_report" if args.oracle_calibration_report else
-            "release_evidence_report" if args.release_evidence_report else
-            "acceptance_report" if args.acceptance_report else
-            "oracle_campaign_run" if args.oracle_campaign_run else
-            "acceptance_run" if args.acceptance_run else "report" if args.report else
-            "preflight" if (args.preflight or args.preflight_live) else
-            "fork" if args.fork else "replay" if args.replay else
-            "resume" if args.resume else "run")
     operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
 
     if args.release_evidence_report:
@@ -1592,6 +1604,7 @@ def main() -> None:
         activate_entrepreneurship=args.activate_entrepreneurship,
         activate_numeric_grounding=args.activate_numeric_grounding,
     )
+    effective_config = world.config
     if args.activate_supply_recovery:
         try:
             firms_cfg = world.config.get("firms", {}) or {}
@@ -1643,18 +1656,20 @@ def main() -> None:
     if args.acceptance_run and not args.serve:
         from reports.acceptance import execute_acceptance_run, write_acceptance_package
         from reports.generate import generate_report_async
-        target_tick = args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365))
+        target_tick = args.ticks or int(
+            effective_config.get("acceptance", {}).get("min_ticks", 365))
+        report_dir = str(effective_config.get("report_dir", "reports/out"))
 
         async def execute_and_report_acceptance() -> str:
             await execute_acceptance_run(world, target_tick=target_tick)
             return await generate_report_async(
-                store, world, out_dir=str(config.get("report_dir", "reports/out")))
+                store, world, out_dir=report_dir)
 
         try:
             report_path = asyncio.run(execute_and_report_acceptance())
             receipt = write_acceptance_package(
                 store.path,
-                out_dir=str(config.get("report_dir", "reports/out")),
+                out_dir=report_dir,
                 experiment_json=args.experiment_evidence,
                 phenomena_yaml=args.phenomena_evidence,
             )
@@ -1670,7 +1685,8 @@ def main() -> None:
     if args.acceptance_run and args.serve:
         world.acceptance_authorized = True
         world.acceptance_target_tick = (
-            args.ticks or int(config.get("acceptance", {}).get("min_ticks", 365)))
+            args.ticks or int(
+                effective_config.get("acceptance", {}).get("min_ticks", 365)))
         world.acceptance_experiment_evidence = args.experiment_evidence
         world.acceptance_phenomena_evidence = args.phenomena_evidence
 
@@ -1683,7 +1699,10 @@ def main() -> None:
             await (replay_headless(world, ticks) if args.replay else headless(world, ticks))
             try:
                 return await generate_report_async(
-                    store, world, out_dir=str(config.get("report_dir", "reports/out")))
+                    store,
+                    world,
+                    out_dir=str(effective_config.get("report_dir", "reports/out")),
+                )
             except ReportBoundaryError as exc:
                 operational_log(
                     logger, logging.WARNING, "headless.report.deferred",

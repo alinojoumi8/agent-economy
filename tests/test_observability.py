@@ -1,5 +1,6 @@
 """Operational logs stay structured, bounded, and secret-safe."""
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import pytest
 
 from engine.store import Store
 from engine.actions import ActionExecutor
+from engine.checkpoint_manifest import finalize_sqlite_artifact
 from llm.adapters import AdapterResult, catalog_model_suggestions
 from llm.gateway import Gateway
 from observability import (
@@ -214,6 +216,100 @@ def test_cli_replay_source_directory_requires_replay(monkeypatch, capsys, tmp_pa
 
     assert exc_info.value.code == 2
     assert "--replay-source-dir requires --replay" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "competing_mode",
+    (
+        ("--resume", "saved-run"),
+        ("--fork", "saved-run@0"),
+        ("--report", "saved-run"),
+        ("--acceptance-report", "saved-run"),
+    ),
+)
+def test_cli_replay_source_directory_rejects_competing_modes(
+    monkeypatch, capsys, tmp_path, competing_mode,
+):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        "runs/base.yaml",
+        "--replay",
+        "saved-run",
+        "--replay-source-dir",
+        str(tmp_path / "source"),
+        *competing_mode,
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 2
+    assert (
+        "--replay-source-dir requires replay mode without competing "
+        "command modes"
+        in capsys.readouterr().err
+    )
+
+
+def test_cli_split_root_replay_preserves_source_and_uses_effective_report_dir(
+    monkeypatch, tmp_path, capsys,
+):
+    source_dir = tmp_path / "immutable-source"
+    source_config = load_config(
+        Path(cli.__file__).resolve().parent / "runs" / "base.yaml")
+    source_config["population"]["size"] = 4
+    source_config["banks"]["count"] = 1
+    source_config["firms"].update({"count": 1, "listed": 0})
+    source_config["budget"]["conversation_pairs"] = 0
+    source_config["checkpoint_every"] = 0
+    source_config["checkpoint_dir"] = str(source_dir / "checkpoints")
+    source_config["report_dir"] = str(source_dir / "reports")
+    source_store, source_world, source_run_id = cli.open_run(
+        source_config, None, None, data_dir=source_dir)
+    source_path = Path(source_store.path)
+    try:
+        asyncio.run(cli.headless(source_world, 1))
+    finally:
+        source_world.close()
+    finalize_sqlite_artifact(source_path)
+
+    def artifact_manifest(root):
+        return {
+            path.relative_to(root).as_posix(): hashlib.sha256(
+                path.read_bytes()).hexdigest()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    before = artifact_manifest(source_dir)
+    assert before
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        str(Path(cli.__file__).resolve().parent / "runs" / "base.yaml"),
+        "--replay",
+        source_run_id,
+        "--replay-source-dir",
+        str(source_dir),
+        "--ticks",
+        "1",
+    ])
+
+    cli.main()
+
+    output_root = tmp_path / "data" / "runs"
+    assert artifact_manifest(source_dir) == before
+    assert len(list(output_root.glob("replay-*.db"))) == 1
+    assert len(list((output_root / "reports").glob("run_replay-*.html"))) == 1
+    assert len(list((output_root / "reports").glob("run_replay-*.md"))) == 1
+    assert not (tmp_path / "reports" / "out").exists()
+    assert '"exact": true' in capsys.readouterr().out
 
 
 def test_cli_resume_checks_authoritative_persisted_provider_config(monkeypatch):
