@@ -80,3 +80,31 @@ test("small Observatory controls retain WCAG AA text contrast", async ({ page })
     expect.soft(await renderedContrast(target), label).toBeGreaterThanOrEqual(4.5);
   }
 });
+
+test("print media hides application chrome but preserves semantic content headers", async ({ page }) => {
+  await page.emulateMedia({ media: "print" });
+
+  await expect(page.locator(".civic-run-header")).toBeHidden();
+  await expect(page.locator(".civic-city__mast")).toBeVisible();
+});
+
+test("native controls use the color scheme of their visual surface", async ({ page }) => {
+  const schemes = await page.evaluate(() => {
+    const shell = document.createElement("div");
+    shell.className = "world-os-shell";
+    const world = document.createElement("div");
+    world.className = "civic-city civic-city--world-os";
+    shell.appendChild(world);
+    document.body.appendChild(shell);
+
+    const result = {
+      observatory: getComputedStyle(document.querySelector(".civic-observatory")!).colorScheme,
+      shell: getComputedStyle(shell).colorScheme,
+      world: getComputedStyle(world).colorScheme,
+    };
+    shell.remove();
+    return result;
+  });
+
+  expect(schemes).toEqual({ observatory: "light", shell: "light", world: "dark" });
+});

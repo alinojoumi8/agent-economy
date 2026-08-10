@@ -17,7 +17,6 @@
 }
 
 :root {
-  color-scheme: dark;
   font-family: var(--font-sans);
   background: #050a09;
   color: #e7f1ed;
@@ -1095,7 +1094,7 @@ body::before {
 
 @media print {
   body { background: white; color: black; }
-  body::before, header, .no-print { display: none !important; }
+  body::before, .civic-run-header, .world-os-topbar, .no-print { display: none !important; }
   .panel { break-inside: avoid; border-color: #bbb; background: white; box-shadow: none; }
   .panel * { color: black !important; }
   main { padding: 0 !important; }

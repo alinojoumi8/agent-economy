@@ -1,5 +1,4 @@
 :root {
-  color-scheme: light;
   --civic-navy: #12233f;
   --civic-cobalt: #2457d6;
   --civic-vermilion: #e44732;
@@ -17,6 +16,15 @@
   background: var(--civic-paper);
   color: var(--civic-ink);
   font-family: var(--civic-font-body);
+}
+
+.civic-observatory,
+.world-os-shell {
+  color-scheme: light;
+}
+
+.civic-city--world-os {
+  color-scheme: dark;
 }
 
 html,
