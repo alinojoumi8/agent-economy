@@ -146,7 +146,8 @@ The harness:
 7. closes the source and builds a canonical artifact-set manifest covering the
    main database, source-owned checkpoint bodies/manifests, and explicit absence
    of WAL, SHM, and rollback-journal sidecars;
-8. creates an offline replay that dispatches no provider call;
+8. creates an offline replay that dispatches no provider call, using a distinct
+   replay-output directory and a non-overlapping, read-only source directory;
 9. delegates comparison to `world.replay_verify.verify_replay`, which compares
    the sorted union of every non-excluded source/replay table and fails any
    missing or unequal table; the receipt records the schema version, compared
@@ -273,12 +274,17 @@ Failures are diagnosed at the persisted proposal/event/metric/ledger boundary.
 Permitted fixes include scale-dependent inventory-aware demand, production,
 staffing, capital, wage, offer, and recovery-policy mechanics. Monetary effects
 must flow through the ledger. Behavior changes are guarded by the existing
-semantics mechanism so historical semantics 1-7 replays remain exact. A new
-semantics version is a new-run schema/config path only: schema changes are
-additive columns or tables, changed behavior/output is gated by persisted
-`engine_semantics_version`, and neither source databases nor receipts are ever
-rewritten during replay. Compatibility fixtures must replay both the historical
-versions and the new version exactly before the new profile is eligible.
+semantics mechanism so historical behavior remains exact. The repository
+currently has generated exact-replay lifecycle fixtures for semantics 1 and 2,
+a recorded live golden at semantics 5, and a maintained semantics 7 acceptance
+source/replay; it has no dedicated exact-replay fixtures for semantics 3, 4, or
+6. Every final verification runs 1/2, 5, and 7 plus the all-supported-version
+resume guard. A new semantics version is a new-run schema/config path only:
+schema changes are additive columns or tables, changed behavior/output is gated
+by persisted `engine_semantics_version`, and neither source databases nor
+receipts are ever rewritten during replay. An additional exact source/replay
+case is required only when a new persisted version is introduced, before that
+profile is eligible.
 
 Every fix begins with a failing regression and includes success, rejection,
 reconciliation, and exact-replay coverage. Receipt thresholds are not weakened
@@ -350,10 +356,12 @@ Before every merge:
 
 ## Acceptance evidence
 
-The full objective is complete only when issue 52 has five checked stages, the
-formal provider-free source/replay receipt passes, both paid canary and browser
-receipts pass, every stage is merged into `main`, post-merge CI is green, local
-and remote `main` match, and GitHub has no open pull request.
+The full objective is complete only when issue 52 has five checked stages; the
+final aggregate binds the Stage 3 120-tick A/B aggregate and Stage 4 gate-closure
+receipt by identities and hashes and confirms their operational and recovery
+gates; the formal provider-free source/replay receipt passes; both paid canary
+and browser receipts pass; every stage is merged into `main`; post-merge CI is
+green; local and remote `main` match; and GitHub has no open pull request.
 
 ## Out of scope
 

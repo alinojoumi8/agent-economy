@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Follow `AGENTS.md`: all economic mutation remains in `engine/` or deterministic `world/` mechanics, all monetary effects use the ledger, and historical source runs are never rewritten during replay.
-- Keep seed 42 and semantics 7 for unchanged acceptance mechanics. A fix that changes persisted output must introduce a new persisted `engine_semantics_version`, separate profiles/receipts for that version, and an exact replay matrix covering existing recorded semantics 1 and 2 fixtures, the maintained semantics 7 profile, and the new version; it must preserve each old version's output and never rewrite a stored source run.
+- Keep seed 42 and semantics 7 for unchanged acceptance mechanics. The repository has generated source/replay lifecycle fixtures for semantics 1 and 2, a preserved live golden fixture at semantics 5, and the maintained semantics 7 acceptance profile; it does not have dedicated exact-replay fixtures for semantics 3, 4, or 6. Every final verification runs the semantics 1/2 lifecycle fixtures, the semantics 5 recorded golden, and a fresh semantics 7 source/replay. A fix that changes persisted output must introduce a new persisted `engine_semantics_version`, separate profiles/receipts, and an additional exact source/replay case for that new version. It must preserve all older behavior, keep the all-supported-version resume guard green, and never rewrite a stored source run.
 - Keep population size 270, 308 total agents, 272 citizen-kind rows, 36 staff rows, 100 core agents, 208 periphery agents, and regional counts 184/69/55.
 - Keep 25 coverage-first conversation pairs per tick and three persisted turn messages per conversation; system, tool, and provider-private rows do not count as messages.
 - Provider-free work uses only `scripted/scripted` and records USD 0 spend.
@@ -119,9 +119,11 @@ Run the focused test from Step 2 and expect one pass.
 
 **Files:**
 - Modify: `tests/test_scale_270_profiles.py`
+- Modify: `run.py`
 
 **Interfaces:**
 - Consumes: `run.open_run`, `run.replay_headless`, `world.replay_verify.verify_replay`.
+- Extends: `run.open_run(..., data_dir=replay_dir, replay_source_dir=source_dir)` so replay output and its immutable source never share a write root.
 - Produces: regressions for exact Genesis identity, ledger reconciliation, seven-tick communication coverage, and source-artifact-immutable one-tick replay.
 
 - [ ] **Step 1: Add a failing exact-Genesis test**
@@ -150,12 +152,21 @@ set equals all 308 living agents. Do not dispatch model calls in this unit test.
 
 - [ ] **Step 3: Add source-artifact-immutable exact replay regression**
 
-Run one scripted tick and close it. Build a canonical source artifact-set
-manifest containing the main database, every source-owned checkpoint body and
-manifest, and explicit absent entries for `-wal`, `-shm`, and rollback-journal
-sidecars. Hash every present artifact, replay one tick offline, assert `exact is
-True`, `differences == []`, source/replay ticks and aggregate hashes match, then
-rebuild and compare the complete source artifact-set manifest byte-for-byte.
+Run one scripted tick under a dedicated `source_dir` and close it. Build a
+canonical source artifact-set manifest containing the main database, every
+source-owned checkpoint body and manifest, and explicit absent entries for
+`-wal`, `-shm`, and rollback-journal sidecars. Hash every present artifact and
+make the complete source tree read-only. Extend `open_run` with a keyword-only
+`replay_source_dir` used only to locate the read-only source while `data_dir`
+remains the distinct replay-output root; reject equal, nested, or otherwise
+overlapping resolved roots before creating a replay database. Open the source
+only through the existing read-only `Store`/SQLite boundary, create the replay
+under `replay_dir`, and call `replay_headless` on that world. The regression
+must intercept and reject every attempted writable open under `source_dir`,
+assert `exact is True`, `differences == []`, and matching source/replay ticks and
+aggregate hashes, then rebuild and compare the complete source artifact-set
+manifest byte-for-byte. Restore test-only filesystem permissions during
+teardown without modifying an artifact body.
 
 - [ ] **Step 4: Run all provider-free profile tests**
 
@@ -594,8 +605,12 @@ only if stored historical output would otherwise change.
 
 - [ ] **Step 4: Run focused, compatibility, and replay tests**
 
-Run the new regression, supply/workforce suites, semantics 1-7 replay fixtures,
-scale receipt/profile suites, and the required smoke suite.
+Run the new regression, supply/workforce suites, generated semantics 1/2 replay
+lifecycle fixtures, the recorded semantics 5 golden, a fresh semantics 7
+source/replay, the all-supported-version resume guard, scale receipt/profile
+suites, and the required smoke suite. Run an additional exact source/replay
+case for a new semantics version only when this stage introduces one; dedicated
+semantics 3/4/6 exact-replay fixtures do not currently exist and are not claimed.
 
 - [ ] **Step 5: Run a fresh 120-tick recovery arm**
 
@@ -723,15 +738,21 @@ identity. Do not start DeepSeek while MiniMax's server or run process remains.
 
 - [ ] **Step 1: Build a final aggregate receipt**
 
-Include formal provider-free, MiniMax, DeepSeek, and both browser receipts with
-artifact hashes. Require the formal economic gate, both route/cap gates, both
-communications gates, both browser gates, every replay, and every integrity
-check.
+Include the Stage 3 baseline/recovery 120-tick A/B aggregate, the Stage 4
+gate-closure receipt, formal provider-free, MiniMax, DeepSeek, and both browser
+receipts. Bind every input by stage identity, commit, profile/config digest,
+source/replay/runtime identity, and artifact hash. Require both Stage 3 arms to
+have passed their operational contract, the accepted 120-tick recovery arm and
+Stage 4 gate closure to pass every recovery/economic gate, the formal economic
+gate, both route/cap gates, both communications gates, both browser gates, every
+replay, and every integrity check.
 
 - [ ] **Step 2: Run final verification**
 
-Run scale/economic tests, supply recovery, the exact semantics 1/2/7/new-version
-compatibility/replay matrix when a new version exists, the required smoke suite,
+Run scale/economic tests, supply recovery, the generated semantics 1/2 lifecycle
+fixtures, recorded semantics 5 golden, a fresh semantics 7 source/replay, the
+all-supported-version resume guard, and an exact new-version source/replay only
+when a new persisted version was introduced, plus the required smoke suite,
 dashboard unit/type/build/Playwright gates affected by the browser path,
 documentation, dependency/secret scans, evidence hash verifier, a recursive
 prohibited-artifact scan across every runtime/economic/aggregate/browser receipt,
