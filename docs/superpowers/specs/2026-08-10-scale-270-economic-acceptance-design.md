@@ -143,14 +143,16 @@ The harness:
    and checkpoint duration;
 6. checks population, communications, provider/model calls, spend governor,
    ledger, SQLite, foreign keys, and failure events;
-7. closes and hashes the source database;
+7. closes the source and builds a canonical artifact-set manifest covering the
+   main database, source-owned checkpoint bodies/manifests, and explicit absence
+   of WAL, SHM, and rollback-journal sidecars;
 8. creates an offline replay that dispatches no provider call;
 9. delegates comparison to `world.replay_verify.verify_replay`, which compares
    the sorted union of every non-excluded source/replay table and fails any
    missing or unequal table; the receipt records the schema version, compared
    table names/count, and SHA-256 of the verifier module rather than inventing a
    separate catalog version;
-10. confirms the source hash did not change;
+10. confirms the complete source artifact-set manifest did not change;
 11. emits one sanitized JSON runtime receipt.
 
 The harness never commits or deletes run/checkpoint databases. It never writes
@@ -254,6 +256,13 @@ integrity, checkpoint, and exact-replay gates. The recovery arm must pass every
 economic gate before stage 4 can close. If it fails, the failed receipt remains
 diagnostic evidence and any behavior change requires a fresh source and replay.
 
+The baseline evaluator may return the explicit
+`diagnostic_economic_failure` outcome only when every operational, artifact,
+integrity, and replay check passes and only economic checks fail. That outcome
+uses exit code 10 so the orchestrator can continue to the recovery arm without
+confusing the baseline diagnosis with success. CLI misuse is exit 2;
+operational, unexpected, or formal failures are exit 5; a pass is exit 0.
+
 The published A/B evidence contains canonical receipts, configuration hashes,
 source/replay hashes, aggregate economic windows, resource slopes, and exact
 sanitized commands. SQLite bodies and credentials remain local and ignored.
@@ -298,8 +307,9 @@ application in installed Google Chrome.
 
 Chrome verification serves the completed source through the existing
 read-only `ReplayReader`/static observatory boundary with no `World` or mutating
-controller attached. It hashes the source before launch and after shutdown and
-fails if the hash changes. The browser gate covers page load, run header/status,
+controller attached. It builds and compares the complete source artifact-set
+manifest before launch and after shutdown and fails if the main database,
+checkpoint bodies/manifests, or sidecar-absence entries change. The browser gate covers page load, run header/status,
 population and region views, agent directory/details, persisted
 conversations/messages, provider and spend surfaces, unavailable write controls,
 console errors, page errors, failed requests, desktop layout, and a narrow

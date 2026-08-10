@@ -1,6 +1,6 @@
 # 308-Agent Economic-Recovery Acceptance Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task inline. Steps use checkbox (`- [ ]`) syntax for tracking; this thread does not authorize sub-agent delegation.
 
 **Goal:** Reproduce the 308-agent scale configuration from tracked profiles, prove economic recovery through deterministic persisted receipts, pass a 120-tick A/B and 1,000-tick provider-free acceptance, then validate capped MiniMax and DeepSeek canaries in real Chrome.
 
@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Follow `AGENTS.md`: all economic mutation remains in `engine/` or deterministic `world/` mechanics, all monetary effects use the ledger, and historical source runs are never rewritten during replay.
-- Keep seed 42 and semantics 7 for unchanged acceptance mechanics. A fix that changes persisted output must introduce a new persisted semantics version, new profiles/receipts, and historical/new compatibility fixtures; it must never rewrite a stored source run.
+- Keep seed 42 and semantics 7 for unchanged acceptance mechanics. A fix that changes persisted output must introduce a new persisted `engine_semantics_version`, separate profiles/receipts for that version, and an exact replay matrix covering existing recorded semantics 1 and 2 fixtures, the maintained semantics 7 profile, and the new version; it must preserve each old version's output and never rewrite a stored source run.
 - Keep population size 270, 308 total agents, 272 citizen-kind rows, 36 staff rows, 100 core agents, 208 periphery agents, and regional counts 184/69/55.
 - Keep 25 coverage-first conversation pairs per tick and three persisted turn messages per conversation; system, tool, and provider-private rows do not count as messages.
 - Provider-free work uses only `scripted/scripted` and records USD 0 spend.
@@ -20,7 +20,7 @@
 - Diagnostic evidence cannot satisfy the 1,000-tick gate; integrity/replay cannot substitute for economic-health gates.
 - Stage N+1 starts only after stage N is merged, post-merge CI is green, local `main` equals `origin/main`, and `gh pr list --state open` returns an empty list.
 - GitHub issue 52 remains the tracking issue until all five stages pass.
-- Implement inline in the primary session; the current collaboration policy does not authorize sub-agent delegation.
+- Execute every stage inline in the primary session through `superpowers:executing-plans`.
 
 ---
 
@@ -46,6 +46,7 @@ REHEARSAL = ROOT / "runs" / "scale-270-rehearsal.yaml"
 
 def test_scale_270_rehearsal_is_exact():
     config = load_config(REHEARSAL)
+    assert config["seed"] == 42
     assert config["engine_semantics_version"] == 7
     assert config["population"] == {
         "baseline_citizens_core": False,
@@ -121,7 +122,7 @@ Run the focused test from Step 2 and expect one pass.
 
 **Interfaces:**
 - Consumes: `run.open_run`, `run.replay_headless`, `world.replay_verify.verify_replay`.
-- Produces: regressions for exact Genesis identity, ledger reconciliation, seven-tick communication coverage, and source-immutable one-tick replay.
+- Produces: regressions for exact Genesis identity, ledger reconciliation, seven-tick communication coverage, and source-artifact-immutable one-tick replay.
 
 - [ ] **Step 1: Add a failing exact-Genesis test**
 
@@ -147,11 +148,14 @@ Sample 25 pairs for ticks 1 through 7 using
 `world.conversations._sample_pairs`, collect all participant IDs, and assert the
 set equals all 308 living agents. Do not dispatch model calls in this unit test.
 
-- [ ] **Step 3: Add source-immutable exact replay regression**
+- [ ] **Step 3: Add source-artifact-immutable exact replay regression**
 
-Run one scripted tick, hash the closed source, replay one tick offline, assert
-`exact is True`, `differences == []`, source/replay ticks and aggregate hashes
-match, then assert the source file hash is unchanged.
+Run one scripted tick and close it. Build a canonical source artifact-set
+manifest containing the main database, every source-owned checkpoint body and
+manifest, and explicit absent entries for `-wal`, `-shm`, and rollback-journal
+sidecars. Hash every present artifact, replay one tick offline, assert `exact is
+True`, `differences == []`, source/replay ticks and aggregate hashes match, then
+rebuild and compare the complete source artifact-set manifest byte-for-byte.
 
 - [ ] **Step 4: Run all provider-free profile tests**
 
@@ -186,6 +190,7 @@ def test_scale_270_live_profiles_are_exact(monkeypatch, profile, key, provider, 
     config = load_config(profile)
     report = validate_llm_config(config, raise_on_error=False)
     assert report["ready"], report["errors"]
+    assert config["seed"] == 42
     assert config["population"]["size"] == 270
     assert config["llm"]["route_contract"] == {"provider": provider, "model": model}
     assert config["llm"]["concurrency"] == concurrency
@@ -279,8 +284,10 @@ Stage 1 in issue 52.
 Cover rejection of non-positive ticks, rejection of a live profile without
 `--approve-live-inference`, rejection of a profile outside `runs/`, exact
 profile-derived caps, an explicit `data_dir`, repository-relative artifact
-identifiers, and absence of credential/header/environment keys in serialized
-output.
+identifiers, and recursive absence of credential values, Authorization headers,
+cookies, private reasoning, raw private provider bodies, unrestricted
+environment dumps, and embedded or encoded SQLite run/checkpoint bodies in
+runtime, economic, aggregate, and browser receipt fixtures.
 
 - [ ] **Step 2: Verify the tests fail because the module is missing**
 
@@ -293,7 +300,8 @@ output.
 Use `ROOT = Path(__file__).resolve().parents[1]`; remove all scale overrides so
 the loaded profile is authoritative; keep per-tick/checkpoint/RSS/DB metrics;
 pass the explicit `data_dir` through source, replay, checkpoint, and manifest
-operations; make execution reusable through `run_validation`; write JSON
+operations; record and compare the complete source artifact-set manifest before
+and after replay; make execution reusable through `run_validation`; write JSON
 atomically; and emit a compact stdout summary containing receipt path, source
 run ID, replay run ID, result, tick, calls, spend, and replay status.
 
@@ -414,8 +422,13 @@ for every check, including an explicit error when evidence is missing.
 - [ ] **Step 6: Implement deterministic atomic JSON/Markdown output and CLI**
 
 The CLI requires `--source`, `--replay`, `--runtime-receipt`, and `--output`.
-It writes both extensions atomically, exits 0 only for a passing receipt, and
-exits nonzero after still writing a failed receipt.
+It writes both extensions atomically and uses this exact exit contract after
+output exists: `0` for a passing receipt; `10` for an expected economic-only
+failure on a 120-tick diagnostic profile when every operational/integrity/replay
+check passed; `5` for operational, artifact, integrity, replay, formal-horizon,
+or unexpected failures; and `2` for CLI misuse. Receipt JSON carries the same
+`outcome` value (`passed`, `diagnostic_economic_failure`, or `failed`) so callers
+never infer meaning from prose.
 
 - [ ] **Step 7: Implement and test the A/B aggregate boundary**
 
@@ -501,7 +514,9 @@ failure as a harness failure when operational/replay checks pass.
 
 Invoke `python -m reports.scale_economic_health` with the emitted source DB,
 replay DB, and runtime receipt; write sanitized output to
-`benchmarks/receipts/scale-270/ab-120/baseline`.
+`benchmarks/receipts/scale-270/ab-120/baseline`. Accept only exit `0` or the
+explicit diagnostic exit `10`; require the JSON outcome to match the exit. Any
+exit `2` or `5` stops the A/B as an operational failure.
 
 - [ ] **Step 4: Run and evaluate the recovery arm**
 
@@ -681,21 +696,22 @@ Require clean integrity/checkpoints and exact offline replay.
 
 - [ ] **Step 3: Serve the exact completed source read-only and test Chrome**
 
-Hash the closed source, then start only the existing read-only
+Build the canonical closed source artifact-set manifest, then start only the existing read-only
 `ReplayReader`/static observatory application at `127.0.0.1:8001`; do not attach
 a `World`, `RunController`, participant writer, or any mutation endpoint. Use
 installed Google Chrome to verify status/header, 308-agent population and
 regions, agent directory/detail, persisted conversation threads, provider/model
 and spend surfaces, unavailable write controls, desktop and narrow viewport,
 console/page errors, and failed requests. Capture screenshots and a sanitized
-browser JSON receipt bound to commit, source run ID, tick, and pre-launch source
-hash. Hash the source again after shutdown and fail the browser gate on any
-change.
+browser JSON receipt bound to commit, source run ID, tick, and the pre-launch
+artifact-set manifest. Rebuild the manifest after shutdown and fail the browser
+gate if the main DB, a checkpoint body/manifest, or an explicit sidecar absence
+entry differs.
 
 - [ ] **Step 4: Shut down and prove the server is down**
 
 Terminate the exact server process, verify port 8001 is no longer listening,
-and confirm the source database hash is unchanged.
+and confirm the complete source artifact-set manifest is unchanged.
 
 ### Task 5.3: Run capped DeepSeek canary and Chrome verification
 
@@ -714,9 +730,11 @@ check.
 
 - [ ] **Step 2: Run final verification**
 
-Run scale/economic tests, supply recovery, semantics compatibility/replay,
-required smoke suite, dashboard unit/type/build/Playwright gates affected by the
-browser path, documentation, dependency/secret scans, evidence hash verifier,
+Run scale/economic tests, supply recovery, the exact semantics 1/2/7/new-version
+compatibility/replay matrix when a new version exists, the required smoke suite,
+dashboard unit/type/build/Playwright gates affected by the browser path,
+documentation, dependency/secret scans, evidence hash verifier, a recursive
+prohibited-artifact scan across every runtime/economic/aggregate/browser receipt,
 and `git diff --check`.
 
 - [ ] **Step 3: Commit, review, PR, CI, and merge final evidence**
