@@ -1,0 +1,95 @@
+# Provider-free scale rehearsal for 270 sampled citizens. `population.size` is
+# the sampled-citizen count, not the final agent count: three currency-matched
+# banks require 36 institutional staff, and Genesis creates two health-economy
+# founders, for 308 agents total and 272 citizen-kind agents.
+extends: base.yaml
+
+seed: 42
+engine_semantics_version: 7
+
+population:
+  baseline_citizens_core: false
+  size: 270
+
+# Regional deposits must have a bank whose reserve and equity books use the
+# same currency. Region assignment maps these three banks one-to-one at Genesis.
+banks:
+  count: 3
+  names:
+    - Northstar Bank
+    - Ironvale Industrial Bank
+    - Suncoast Exchange Bank
+
+# Keep live inference bounded to 100 agents while the remaining 208 agents use
+# the deterministic semantics-7 periphery path. In size-based Genesis these
+# values guide the seeded allocator across all 308 eventual agents; the two
+# health founders are appended in Northstar, producing the tested 184/69/55
+# post-Genesis distribution.
+living_world:
+  enabled: true
+  core_agents: 100
+  promotion_interval_ticks: 30
+  require_trade_contract: true
+  fx_market_maker_inventory: 100000000
+  regions:
+    - key: northstar
+      name: Northstar Federation
+      currency: NSD
+      population: 182
+      specialization: [technology, services, finance]
+      x: 0.25
+      y: 0.35
+      legal_ruleset: northstar-us-inspired-1.0
+      rate_ppm: 1000000
+    - key: ironvale
+      name: Ironvale Union
+      currency: IVC
+      population: 70
+      specialization: [manufacturing, energy]
+      x: 0.72
+      y: 0.28
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 750000
+    - key: suncoast
+      name: Suncoast Republic
+      currency: SCD
+      population: 56
+      specialization: [agriculture, logistics, tourism]
+      x: 0.55
+      y: 0.78
+      legal_ruleset: external-lite-1.0
+      rate_ppm: 1200000
+
+llm:
+  local_currency_action_surfaces: true
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+conversations:
+  turns: 3
+  coverage_first: true
+  recent_utterance_limit: 360
+  similarity_jaccard_threshold: 0.65
+  similarity_shingle_threshold: 0.65
+
+budget:
+  cap_usd: 200.0
+  oracle_reserve_usd: 10.0
+  report_reserve_usd: 0.25
+  # Twenty-five pairs cover all 308 eligible agents within the seven-tick gate.
+  conversation_pairs: 25
+
+# Seven ticks gives a useful rolling recovery point without copying the larger
+# database every simulated day. Pause and stop still force a checkpoint.
+checkpoint_every: 7
+checkpoint_keep_last: 4
+speed_delay_s: 0.0
+
+resource_guard:
+  enabled: true
+  sample_interval_s: 2
+  max_cpu_percent: 95
+  max_memory_percent: 85
+  min_available_memory_gb: 8
+  max_swap_percent: 80
+  consecutive_breaches: 3

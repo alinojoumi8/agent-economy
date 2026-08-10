@@ -622,9 +622,23 @@ def _adopt_resume_local_citizenship(
 
 def open_run(config: dict, resume: str | None, replay: str | None, *,
              data_dir: Path = DATA_DIR,
+             replay_source_dir: Path | None = None,
              new_run_id_override: str | None = None,
              activate_entrepreneurship: bool = False,
              activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
+    if replay and replay_source_dir is not None:
+        source_root = Path(replay_source_dir).resolve()
+        output_root = Path(data_dir).resolve()
+        roots_overlap = (
+            source_root == output_root
+            or source_root.is_relative_to(output_root)
+            or output_root.is_relative_to(source_root)
+        )
+        if roots_overlap:
+            raise ValueError(
+                "replay source and output roots must not overlap")
+    else:
+        source_root = Path(data_dir).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     if resume:
         run_id = resume
@@ -664,7 +678,9 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         world.restore_prng_state()
         return store, world, run_id
     if replay:
-        source_db = data_dir / f"{replay}.db"
+        source_db = (source_root / f"{replay}.db").resolve()
+        if source_db.parent != source_root:
+            raise ValueError("replay source run id escapes its source root")
         if not source_db.exists():
             sys.exit(f"run database not found: {source_db}")
         source_store = Store(str(source_db), create=False, read_only=True)
@@ -685,6 +701,11 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             "replay_source_run_id": replay,
             "replay_source_tick": source_tick,
         })
+        if replay_source_dir is not None:
+            replay_cfg.update({
+                "checkpoint_dir": str((data_dir / "checkpoints").resolve()),
+                "report_dir": str((data_dir / "reports").resolve()),
+            })
         run_id = f"replay-{replay}-{new_run_id()}"
         store = Store(str(data_dir / f"{run_id}.db"))
         store.init_run_meta(run_id, source_seed, replay_cfg, parent_run_id=replay, fork_tick=0)
