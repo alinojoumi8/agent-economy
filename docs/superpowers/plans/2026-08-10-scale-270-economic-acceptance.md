@@ -681,7 +681,71 @@ Write canonical JSON/Markdown under
 source hash, immutable SQLite, ledger, checkpoint manifests, and replay proof
 after report generation to prove the evaluator did not mutate either DB.
 
-### Task 5.2: Run capped MiniMax M3 canary and Chrome verification
+### Task 5.2: Implement the immutable completed-run observatory
+
+**Files:**
+- Modify: `server/replay.py`
+- Create: `server/read_only_observatory.py`
+- Create: `dashboard/src/components/ReadOnlyRunObservatory.jsx`
+- Modify: `dashboard/src/App.jsx`
+- Test: `tests/test_read_only_observatory.py`
+- Test: `dashboard/tests/read-only-observatory.test.js`
+- Test: `dashboard/tests/e2e/read-only-observatory.spec.ts`
+
+**Interfaces:**
+- Produces: `create_read_only_observatory_app(*, runs_dir, run_id, expected_manifest) -> FastAPI` and `python -m server.read_only_observatory --runs-dir ... --run-id ... --manifest ... --host 127.0.0.1 --port 8001`.
+- Extends: `ReplayReader` with persisted-only status/region, agent list/detail, conversation/message, and provider/model/spend projections.
+
+- [ ] **Step 1: Add failing backend boundary and projection tests**
+
+Build a completed source fixture with agents, regions, messages, and `llm_calls`.
+Require the standalone app to expose the exact pinned run ID, completed tick,
+status, expected source hash, 308-agent/regional counts, paginated agent
+list/detail, persisted conversation threads, and aggregate provider/model/spend.
+Assert every route method is only `GET`, `HEAD`, or `OPTIONS`; representative
+run, shock, participant, fork, acceptance, and WebSocket mutation paths must be
+absent or return 405. Assert `app.state` has no `World`, gateway, store writer,
+or `RunController`.
+
+- [ ] **Step 2: Implement immutable SQLite projections and the standalone app**
+
+Make `ReplayReader` use `mode=ro&immutable=1`, `PRAGMA query_only=ON`, one exact
+allowlisted run ID, bounded pagination, and persisted/public fields only. The
+standalone FastAPI app serves the production static bundle and only the
+read-only projections above. It must not call `create_app`, instantiate a
+`World`/gateway/controller, install external/operator routes, create a database,
+or accept a source outside `runs_dir`. Startup fails on a missing/mismatched
+manifest, any WAL/SHM/rollback-journal sidecar, a non-completed source, an
+occupied port, or a source path that resolves through a symlink outside the
+pinned root. Recheck the complete artifact manifest on shutdown.
+
+- [ ] **Step 3: Add the dedicated read-only dashboard surface**
+
+Route `/read-only-runs/:runId` to `ReadOnlyRunObservatory`. Render the pinned run
+ID/hash/status, population and regions, agent directory/detail, conversation
+threads/messages, and provider/model/spend using only the standalone GET APIs.
+Render an explicit `Immutable completed run` badge and no buttons/forms for
+step, pause, resume, shock, fork, join, participant submission, or provider
+dispatch. Do not open a WebSocket or poll a mutating/live endpoint in this mode.
+
+- [ ] **Step 4: Prove source immutability and browser usability**
+
+Capture the canonical source artifact-set manifest before TestClient and
+Playwright sessions and compare it byte-for-byte after shutdown, including
+explicit absent sidecars. Intercept every SQLite/file open and fail on a
+writable access mode under the source root. Unit-test empty/paginated views,
+404s for another run ID, route-method allowlisting, sanitization, and spend
+rounding. In Playwright, cover directory/detail navigation, conversations,
+provider/spend, immutable controls, desktop/narrow layouts, and zero console,
+page, or failed-request errors.
+
+- [ ] **Step 5: Run focused backend and dashboard verification**
+
+Run the new Python tests, dashboard unit/type/build tests, and the dedicated
+Playwright spec before any paid inference. The observatory contract must pass
+against a completed scripted fixture before it is allowed to serve a canary.
+
+### Task 5.3: Run capped MiniMax M3 canary and Chrome verification
 
 **Files:**
 - Generate locally: `reports/out/scale-270/minimax-canary/`
@@ -711,30 +775,33 @@ Require clean integrity/checkpoints and exact offline replay.
 
 - [ ] **Step 3: Serve the exact completed source read-only and test Chrome**
 
-Build the canonical closed source artifact-set manifest, then start only the existing read-only
-`ReplayReader`/static observatory application at `127.0.0.1:8001`; do not attach
-a `World`, `RunController`, participant writer, or any mutation endpoint. Use
-installed Google Chrome to verify status/header, 308-agent population and
-regions, agent directory/detail, persisted conversation threads, provider/model
-and spend surfaces, unavailable write controls, desktop and narrow viewport,
-console/page errors, and failed requests. Capture screenshots and a sanitized
-browser JSON receipt bound to commit, source run ID, tick, and the pre-launch
-artifact-set manifest. Rebuild the manifest after shutdown and fail the browser
-gate if the main DB, a checkpoint body/manifest, or an explicit sidecar absence
-entry differs.
+Build the canonical closed source artifact-set manifest and verify port 8001 is
+free, then start only the Stage 5.2 standalone process at `127.0.0.1:8001` with
+the explicit source root, run ID, and manifest; do not attach a `World`,
+`RunController`, participant writer, or mutation route. Verify the listening PID
+and command are that exact process and that its status API returns the expected
+run ID and source hash. Use installed Google Chrome to verify the UI displays
+those identities plus status/header, 308-agent population and regions, agent
+directory/detail, persisted conversation threads, provider/model and spend
+surfaces, absent write controls, desktop and narrow viewport, console/page
+errors, and failed requests. Capture screenshots and a sanitized browser JSON
+receipt bound to commit, source run ID, tick, process identity, and the
+pre-launch artifact-set manifest. Rebuild the manifest after shutdown and fail
+the browser gate if the main DB, a checkpoint body/manifest, or an explicit
+sidecar absence entry differs.
 
 - [ ] **Step 4: Shut down and prove the server is down**
 
 Terminate the exact server process, verify port 8001 is no longer listening,
 and confirm the complete source artifact-set manifest is unchanged.
 
-### Task 5.3: Run capped DeepSeek canary and Chrome verification
+### Task 5.4: Run capped DeepSeek canary and Chrome verification
 
-Repeat Task 5.2 sequentially with `runs/scale-270-deepseek-live.yaml`, only
+Repeat Task 5.3 sequentially with `runs/scale-270-deepseek-live.yaml`, only
 `deepseek/deepseek-v4-flash`, cap USD 0.20, and a fresh source/replay/browser
 identity. Do not start DeepSeek while MiniMax's server or run process remains.
 
-### Task 5.4: Publish final evidence, merge, and close the goal
+### Task 5.5: Publish final evidence, merge, and close the goal
 
 - [ ] **Step 1: Build a final aggregate receipt**
 

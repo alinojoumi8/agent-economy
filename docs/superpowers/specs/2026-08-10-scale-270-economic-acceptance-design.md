@@ -311,16 +311,32 @@ ID. Each canary persists only its exact provider/model, stays under cap, passes
 checkpoints/integrity/replay, and exposes the completed run through the real
 application in installed Google Chrome.
 
-Chrome verification serves the completed source through the existing
-read-only `ReplayReader`/static observatory boundary with no `World` or mutating
-controller attached. It builds and compares the complete source artifact-set
-manifest before launch and after shutdown and fails if the main database,
-checkpoint bodies/manifests, or sidecar-absence entries change. The browser gate covers page load, run header/status,
-population and region views, agent directory/details, persisted
-conversations/messages, provider and spend surfaces, unavailable write controls,
-console errors, page errors, failed requests, desktop layout, and a narrow
-viewport. Screenshots and a sanitized browser receipt are hash-bound to the
-source run and exact commit.
+Before paid inference, Stage 5 adds and tests a standalone completed-run
+observatory. It extends `ReplayReader` with persisted-only status/region, agent
+list/detail, conversation/message, and provider/model/spend projections and
+opens the one pinned database with `mode=ro&immutable=1` plus
+`PRAGMA query_only=ON`. `create_read_only_observatory_app` serves the production
+static bundle and only allowlisted GET/HEAD/OPTIONS projections. It never calls
+the mutable application factory and never instantiates a `World`, gateway,
+store writer, `RunController`, external/operator route, or WebSocket.
+
+The dedicated `/read-only-runs/:runId` dashboard surface displays the pinned run
+ID and source hash, immutable status, population/regions, agent directory/detail,
+persisted conversations/messages, and provider/model/spend. It contains no
+step, pause, resume, shock, fork, join, participant-submission, or provider-
+dispatch control. Backend and browser regressions fail on any writable source
+open, non-read route, unexpected run identity, private provider body, or live
+endpoint request.
+
+Chrome verification starts that exact standalone process with an explicit run
+ID and precomputed manifest only after confirming the port is free, then binds
+the listening PID/command, status response, UI run ID/hash, screenshots, and
+sanitized browser receipt to the source and commit. It compares the complete
+source artifact-set manifest before launch and after shutdown and fails if the
+main database, checkpoint bodies/manifests, or sidecar-absence entries change.
+The browser gate covers page load, status/header, all projections above, absent
+write controls, console errors, page errors, failed requests, desktop layout,
+and a narrow viewport.
 
 ## Failure handling
 
