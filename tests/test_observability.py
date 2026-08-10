@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 import pytest
 
@@ -173,6 +174,46 @@ def test_cli_live_replay_does_not_require_run_approval(monkeypatch):
     monkeypatch.setattr(cli, "open_run", replay_opened)
     with pytest.raises(RuntimeError, match="live replay"):
         cli.main()
+
+
+def test_cli_replay_forwards_explicit_source_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    source_dir = tmp_path / "immutable-source"
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        "runs/base.yaml",
+        "--replay",
+        "saved-run",
+        "--replay-source-dir",
+        str(source_dir),
+    ])
+
+    def replay_opened(*_args, **kwargs):
+        assert kwargs["replay_source_dir"] == Path(source_dir)
+        raise RuntimeError("split-root replay reached open_run")
+
+    monkeypatch.setattr(cli, "open_run", replay_opened)
+    with pytest.raises(RuntimeError, match="split-root replay"):
+        cli.main()
+
+
+def test_cli_replay_source_directory_requires_replay(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "load_dotenv", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "run.py",
+        "--config",
+        "runs/base.yaml",
+        "--replay-source-dir",
+        str(tmp_path / "source"),
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 2
+    assert "--replay-source-dir requires --replay" in capsys.readouterr().err
 
 
 def test_cli_resume_checks_authoritative_persisted_provider_config(monkeypatch):

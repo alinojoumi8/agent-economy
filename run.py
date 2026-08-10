@@ -1317,6 +1317,15 @@ def main() -> None:
         ),
     )
     ap.add_argument("--replay", default=None, help="replay run id from stored LLM responses")
+    ap.add_argument(
+        "--replay-source-dir",
+        type=Path,
+        default=None,
+        help=(
+            "only with --replay: read the source database from this distinct "
+            "directory while writing replay artifacts under data/runs"
+        ),
+    )
     ap.add_argument("--fork", default=None,
                     help="fork a what-if branch: checkpoint .db path or RUNID@TICK")
     ap.add_argument("--upgrade-semantics", type=int, default=None,
@@ -1369,6 +1378,8 @@ def main() -> None:
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
     args = ap.parse_args()
+    if args.replay_source_dir is not None and not args.replay:
+        ap.error("--replay-source-dir requires --replay")
     if args.activate_entrepreneurship and (
             not args.resume or args.replay or args.fork):
         ap.error(
@@ -1577,6 +1588,7 @@ def main() -> None:
         config,
         args.resume,
         args.replay,
+        replay_source_dir=args.replay_source_dir,
         activate_entrepreneurship=args.activate_entrepreneurship,
         activate_numeric_grounding=args.activate_numeric_grounding,
     )
