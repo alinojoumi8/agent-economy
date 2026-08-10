@@ -1,18 +1,12 @@
-const DEFAULT_WORLD_SLUG = "local-sandbox";
-
 function encoded(value) {
   return encodeURIComponent(String(value || ""));
 }
 
 export function buildProductNavigation({
   runId = "",
-  worldSlug = DEFAULT_WORLD_SLUG,
   navigation = null,
 } = {}) {
   const resolvedRunId = String(navigation?.run_id || runId || "");
-  const resolvedWorldSlug = String(
-    navigation?.world_slug || worldSlug || DEFAULT_WORLD_SLUG,
-  );
   const defaults = {
     observatory: "/",
     world_os: resolvedRunId
@@ -21,8 +15,8 @@ export function buildProductNavigation({
     commons: resolvedRunId
       ? `/runs/${encoded(resolvedRunId)}/commons`
       : null,
-    join: `/join/${encoded(resolvedWorldSlug)}`,
-    my_agents: "/my-agents",
+    join: null,
+    my_agents: null,
   };
 
   return [

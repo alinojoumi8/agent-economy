@@ -123,10 +123,16 @@ def install_v2_routes(app, world, controller) -> None:
     @router.get("/mode")
     async def local_mode():
         hosted = bool(controller.hosted_safe)
+        citizenship = getattr(app.state, "citizenship_service", None)
+        navigation = None
+        if not hosted and citizenship is not None and citizenship.enabled:
+            from server.citizenship_api import navigation_document
+            navigation = navigation_document(citizenship)
         return {
             "mode": "hosted" if hosted else "local",
             "hosted": hosted,
             "api_base": "/api/v2",
+            "navigation": navigation,
         }
 
     @router.get("/snapshot")

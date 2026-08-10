@@ -5,7 +5,7 @@ import worldOsEmblem from "../assets/world-os-emblem.png";
 import { CitizenMenu } from "../components/CitizenMenu";
 import { FreshnessBadge, type ProjectionTransport } from "../components/FreshnessBadge";
 import { useModalFocus } from "../components/useModalFocus";
-import { projectionApi } from "./api";
+import { projectionApi, workspaceApi } from "./api";
 import { searchResultPath, workspacePath, type SearchResultItem, type SearchResultKind } from "./commandNavigation";
 import { parseObserverViewState, projectionScopeParams } from "./observerViewState";
 import { useProjectionSocket } from "./useProjectionSocket";
@@ -29,6 +29,20 @@ type SearchGroup = {
 };
 
 type SearchData = { groups: SearchGroup[] };
+
+type ProductNavigation = {
+  run_id?: string;
+  world_slug?: string;
+  observatory?: string;
+  world_os?: string;
+  commons?: string;
+  join?: string;
+  my_agents?: string;
+};
+
+type ModeDocument = {
+  navigation?: ProductNavigation | null;
+};
 
 type CommandChoice = {
   key: string;
@@ -195,6 +209,13 @@ export function WorkspaceShell() {
     ? entitySearch.error
     : null;
 
+  const modeQuery = useQuery({
+    queryKey: ["world-os", "mode"],
+    queryFn: () => workspaceApi<ModeDocument>("/api/v2/mode"),
+    staleTime: Infinity,
+    retry: false,
+  });
+
   const openCommand = useCallback((returnTarget?: HTMLElement | null) => {
     commandReturnFocus.current = returnTarget
       || (document.activeElement instanceof HTMLElement ? document.activeElement : commandTrigger.current);
@@ -296,7 +317,11 @@ export function WorkspaceShell() {
           <p className="world-os-kicker">{activeRoute.group} workspace</p>
           <div><h1>{activeRoute.label}</h1><span className="world-os-run-pill" title={runId}>Run {runId}</span></div>
         </div>
-        <CitizenMenu runId={runId} variant="dropdown" />
+        <CitizenMenu
+          runId={runId}
+          navigation={modeQuery.data?.navigation ?? null}
+          variant="dropdown"
+        />
         <div className="world-os-top-actions">
           <form className="world-os-tick-control" onSubmit={submitTick} aria-label="Simulation tick travel">
             <button type="button" className={tick === "live" ? "active" : ""} onClick={() => setTick(null)} aria-pressed={tick === "live"}>Live</button>

@@ -138,6 +138,7 @@ def test_migration_join_documents_and_security_headers(citizen_client):
         "join": "/join/local-sandbox",
         "my_agents": "/my-agents",
     }
+    assert client.get("/api/v2/mode").json()["navigation"] == navigation
 
 
 def test_agent_registration_claim_exchange_hashing_and_replay(citizen_client):
