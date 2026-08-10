@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
-from run import open_run
+from run import open_run, replay_headless
+from run_config import load_config
+from world.replay_verify import verify_replay
 
 from .recorded_replay_fixture import SOURCE_RUN_ID, restore_recorded_source
 
@@ -63,6 +68,44 @@ def test_replay_source_is_not_initialized_migrated_or_left_open(tmp_path):
     source_path.replace(moved)
     moved.replace(source_path)
     assert replay_store._closed
+
+
+@pytest.mark.parametrize("semantics_version", [1, 2])
+def test_legacy_semantics_replay_is_exact_and_source_is_immutable(
+    tmp_path, semantics_version,
+):
+    config = load_config("runs/base.yaml")
+    config["engine_semantics_version"] = semantics_version
+    config["population"]["size"] = 8
+    config["banks"]["count"] = 1
+    config["firms"].update({"count": 2, "listed": 1})
+    config["budget"]["conversation_pairs"] = 0
+    config["checkpoint_every"] = 0
+    config["checkpoint_dir"] = str(tmp_path / "checkpoints")
+    config["report_dir"] = str(tmp_path / "reports")
+
+    source_store, source_world, source_run_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(source_store.path)
+    try:
+        asyncio.run(source_world.step())
+    finally:
+        source_world.close()
+    before = _source_state(source_path)
+
+    replay_store, replay_world, _ = open_run(
+        {}, None, source_run_id, data_dir=tmp_path)
+    try:
+        asyncio.run(replay_headless(replay_world, 1))
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"], proof["differences"]
+        assert proof["differences"] == []
+        assert proof["source_tick"] == proof["replay_tick"] == 1
+        assert proof["source_hash"] == proof["replay_hash"]
+    finally:
+        replay_world.close()
+
+    assert _source_state(source_path) == before
 
 
 def test_read_only_replay_connection_sees_committed_wal_rows(tmp_path):

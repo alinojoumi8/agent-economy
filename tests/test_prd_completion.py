@@ -3633,6 +3633,7 @@ def test_local_mode_probe_reports_non_hosted_v2_api(tmp_path):
         "mode": "local",
         "hosted": False,
         "api_base": "/api/v2",
+        "navigation": None,
     }
 
 

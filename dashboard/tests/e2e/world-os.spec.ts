@@ -41,7 +41,14 @@ async function mockApi(page: Page) {
   await page.route("**/api/v2/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (path === "/api/v2/mode") return route.fulfill({ status: 404, json: {} });
+    if (path === "/api/v2/mode") return route.fulfill({ json: {
+      mode: "local", hosted: false, api_base: "/api/v2",
+      navigation: {
+        run_id: "run-demo", world_slug: "test-world", observatory: "/",
+        world_os: "/runs/run-demo/overview", commons: "/runs/run-demo/commons",
+        join: "/join/test-world", my_agents: "/my-agents",
+      },
+    } });
     if (path === "/api/v2/snapshot") return route.fulfill({ json: {
       ...baseEnvelope, projection: "world.snapshot", data: {
         summary: { status: "paused", phase: "FINALIZE", active_tick: null, agents_alive: 3, active_firms: 1, ledger_balance: 0 },
@@ -626,7 +633,7 @@ test("citizen menu unifies app and onboarding links in the same tab", async ({ p
     Observatory: "/",
     "World OS": "/runs/run-demo/overview",
     Commons: "/runs/run-demo/commons",
-    Join: "/join/local-sandbox",
+    Join: "/join/test-world",
     "My Agents": "/my-agents",
   };
   for (const [label, href] of Object.entries(expected)) {
@@ -661,6 +668,9 @@ test("graph and semantic table share keyboard selection with reduced motion", as
   await page.goto("/runs/run-demo/investigations?event=9");
   const proposalNode = page.locator('.world-os-causal-graph [role="button"][aria-label^="action_proposal 8"]');
   await proposalNode.focus();
+  await expect(proposalNode).toHaveCSS("outline-style", "solid");
+  await expect(proposalNode).toHaveCSS("outline-width", "2px");
+  await expect(proposalNode).toHaveCSS("outline-color", "rgb(36, 87, 214)");
   await page.keyboard.press("Enter");
   await expect(page.locator(".world-os-semantic-panel tr.selected")).toContainText("buy_goods");
   await page.getByRole("button", { name: "Zoom in" }).click();

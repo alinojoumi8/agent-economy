@@ -138,6 +138,7 @@ def test_migration_join_documents_and_security_headers(citizen_client):
         "join": "/join/local-sandbox",
         "my_agents": "/my-agents",
     }
+    assert client.get("/api/v2/mode").json()["navigation"] == navigation
 
 
 def test_agent_registration_claim_exchange_hashing_and_replay(citizen_client):
@@ -371,6 +372,9 @@ def test_capacity_claims_are_serialized_and_hosted_mode_has_no_local_routes(tmp_
             assert service.seats_used() == 1
 
         with TestClient(create_app(world, hosted_safe=True)) as hosted:
+            mode = hosted.get("/api/v2/mode")
+            assert mode.status_code == 200
+            assert mode.json()["navigation"] is None
             assert hosted.get("/join/local-sandbox").status_code == 404
             assert hosted.get(
                 f"/claim/{claim_tokens[0]}").status_code == 404

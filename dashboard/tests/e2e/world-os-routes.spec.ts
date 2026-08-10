@@ -50,9 +50,16 @@ async function mockWorkspaceApis(
   servedHistoricalBodies: string[] = [],
 ) {
   await page.route("**/api/v2/**", async route => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
     const path = url.pathname;
     const historical = url.searchParams.get("tick") === "3";
+    if (path === "/api/v2/operator/session") {
+      return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
+    }
+    if (path === "/api/v2/operator/investigations" && request.method() === "GET") {
+      return route.fulfill({ json: { items: [] } });
+    }
     let body: unknown;
     if (path === "/api/v2/mode") {
       body = { hosted: false, mode: "local" };
@@ -150,6 +157,22 @@ async function mockWorkspaceApis(
         enabled: false, tick: historical ? 3 : 6,
         queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
       }, "civic.summary");
+    } else if (path === "/api/v2/events") {
+      body = envelope("events", url, {
+        items: [], next_after_id: null, truncated: false,
+      }, "events.page");
+    } else if (path.startsWith("/api/v2/causal/")) {
+      const root = {
+        kind: "commons_entry", id: "1", tick: historical ? 3 : 6,
+        order_key: "commons-entry-1",
+      };
+      body = envelope("causal", url, {
+        root, truncated: false, cycles: [], nodes: [root], edges: [],
+        semantic_rows: [{
+          stable_ref: root, kind: "commons_entry", id: 1,
+          tick: historical ? 3 : 6, label: "Bounded historical commons post",
+        }],
+      }, "causal.neighborhood");
     } else if (path === "/api/v2/search") {
       body = envelope("search", url, { groups: [
         { kind: "agent", items: [], truncated: false }, { kind: "firm", items: [], truncated: false },

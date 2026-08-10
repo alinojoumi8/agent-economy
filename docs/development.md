@@ -9,8 +9,19 @@ The backend and committed dashboard bundle are one release unit.
 ## Backend
 
 ```powershell
+python -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --require-hashes -r requirements.lock
+python run.py --config runs/base.yaml
+```
+
+POSIX (bash):
+
+```bash
+python3 -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install --require-hashes -r requirements.lock
 python run.py --config runs/base.yaml
 ```
@@ -25,12 +36,30 @@ cross-platform, hash-locked install after changing it:
 uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
 ```
 
+The full gate also uses `uvx` for the Python dependency audit. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) first and verify
+that it is available before running the gate:
+
+```bash
+uv --version
+```
+
 ## Dashboard
 
 Run FastAPI on port 8000, then in another terminal:
 
 ```powershell
 Set-Location dashboard
+npm ci
+npm test
+npm run licenses:check
+npm run dev
+```
+
+POSIX (bash):
+
+```bash
+cd dashboard
 npm ci
 npm test
 npm run licenses:check
@@ -79,16 +108,47 @@ npm --prefix dashboard run build
 git diff --check
 ```
 
+POSIX (bash); every gate command is shell-neutral, so these match the
+ubuntu-latest CI invocations:
+
+```bash
+python -m compileall -q agents engine experiments hosted llm oracle reports research server world run.py
+python run.py --verify-datasets config/data-manifest.yaml
+python -m pytest tests/ -q
+python -m pip check
+uvx pip-audit -r requirements.lock
+npm --prefix dashboard ci
+npm --prefix dashboard test
+npm --prefix dashboard run licenses:check
+npm --prefix dashboard audit --audit-level=high
+npm --prefix dashboard run build
+git diff --check
+```
+
 The closure/release audit also scans the current tree and full Git history with
 Gitleaks using the narrow repository config in `.gitleaks.toml`. Repeat the
 dependency, notice, dataset-provenance, attribution, and secret audits before a
 public tag; a successful merge audit is not a permanent publication waiver.
+
+Commits are additionally guarded by a local pre-commit secret scan: run
+`scripts/install_precommit_hook.sh` once per clone to wire
+`scripts/secret_scan.sh --staged` (Gitleaks on staged changes, fail-closed)
+into `.git/hooks/pre-commit`. The ruleset is pinned to Gitleaks 8.30.1 so its
+inherited detectors cannot drift. Provider credentials live only in the
+ignored `.env`; never commit a populated `env` or `.env` file.
 
 After a clean build, verify both tracked changes and newly generated files:
 
 ```powershell
 git diff --exit-code -- server/static
 if (git status --porcelain --untracked-files=all -- server/static) { throw "Uncommitted static output" }
+```
+
+POSIX (bash), exactly as the ubuntu-latest dashboard job runs it:
+
+```bash
+git diff --exit-code -- server/static
+test -z "$(git status --porcelain --untracked-files=all -- server/static)"
 ```
 
 When the bundle changed intentionally, review and commit every generated file.
@@ -122,5 +182,9 @@ for important failure/recovery logs.
 ## CI and review
 
 GitHub Actions builds the dashboard on Node.js 22 and runs Python 3.11/3.12 on
-Ubuntu and Windows. Pull requests should state behavior, tests, live calls/cost,
+Ubuntu and Windows. Every PR also runs a single deterministic shard of the
+engine/world/agents-focused tests via `scripts/pytest_shard.py`, so edits to
+`run.py`, `llm/gateway.py`, `agents/`, `world/`, and `engine/` are exercised
+before merge; the full cross-platform matrix remains a manual workflow
+dispatch. Pull requests should state behavior, tests, live calls/cost,
 compatibility impact, and remaining risk. See [CONTRIBUTING.md](../CONTRIBUTING.md).

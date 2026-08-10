@@ -139,8 +139,26 @@ dashboard.
 ```powershell
 git clone https://github.com/alinojoumi8/agent-economy.git
 Set-Location agent-economy
+python -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --require-hashes -r requirements.lock
+
+# Free core-engine smoke world, deterministic and provider-free
+python run.py --config runs/base.yaml
+
+# Free full Observatory world: regions, contracts, legal matters, and politics
+python run.py --config runs/v2-institutional-rehearsal.yaml
+```
+
+POSIX (bash):
+
+```bash
+git clone https://github.com/alinojoumi8/agent-economy.git
+cd agent-economy
+python3 -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install --require-hashes -r requirements.lock
 
 # Free core-engine smoke world, deterministic and provider-free
@@ -167,7 +185,7 @@ action, and press **Step**. The citizen inspector retains a paginated audit of
 queued, executed, rejected, and cancelled commands. Participant runs are clearly
 marked and cannot be used as acceptance evidence.
 
-macOS/Linux users can activate with `source .venv/bin/activate`. A headless smoke
+A headless smoke
 run that writes a standalone report is:
 
 ```bash

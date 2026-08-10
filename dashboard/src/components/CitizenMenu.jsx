@@ -23,13 +23,12 @@ function MenuLinks({ items, pathname, routerReady }) {
 
 function CitizenMenuContent({
   runId = "",
-  worldSlug = "local-sandbox",
   navigation = null,
   variant = "header",
   pathname = "/",
   routerReady = false,
 }) {
-  const items = buildProductNavigation({ runId, worldSlug, navigation });
+  const items = buildProductNavigation({ runId, navigation });
 
   if (variant === "dropdown") {
     return <details className="citizen-menu-dropdown">

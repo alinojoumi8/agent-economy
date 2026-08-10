@@ -48,7 +48,9 @@ def test_local_observatory_mode_probe_is_an_explicit_success(r21_client):
 
     assert response.status_code == 200
     assert response.json() == {
-        "hosted": False, "mode": "local", "api_base": "/api/v2"}
+        "hosted": False, "mode": "local", "api_base": "/api/v2",
+        "navigation": None,
+    }
 
 
 def test_hosted_safe_observatory_mode_probe_reports_hosted(tmp_path):
@@ -63,7 +65,9 @@ def test_hosted_safe_observatory_mode_probe_reports_hosted(tmp_path):
             response = client.get("/api/v2/mode")
         assert response.status_code == 200
         assert response.json() == {
-            "hosted": True, "mode": "hosted", "api_base": "/api/v2"}
+            "hosted": True, "mode": "hosted", "api_base": "/api/v2",
+            "navigation": None,
+        }
     finally:
         world.close()
 

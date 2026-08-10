@@ -1,0 +1,68 @@
+# Paid target-scale canary: the same 100-agent core uses DeepSeek V4 Flash.
+# It extends the provider-free scale contract directly so no unused provider or
+# credential is configured. Every gateway route is fail-closed to DeepSeek.
+extends: scale-170-rehearsal.yaml
+
+budget:
+  cap_usd: 25.0
+  oracle_reserve_usd: 5.0
+  report_reserve_usd: 0.25
+
+reports:
+  narrative_max_tokens: 1600
+
+llm:
+  live_only: true
+  require_preflight_live: true
+  institutional_role_purposes: true
+  max_in_flight: 6
+  concurrency: 6
+  logical_deadline_s: 1200
+  provider_retries: 1
+  rate_limit_backoff_s: [5, 15, 30]
+  decision_max_tokens: 2400
+  founder_max_tokens: 4096
+  reporter_max_tokens: 1600
+  newsroom_max_tokens: 1200
+  conversation_max_tokens: 800
+  providers:
+    deepseek:
+      kind: openai_compat
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      concurrency: 6
+      prompt_cache_mode: provider_automatic
+      timeout_s: 120
+      healthcheck_path: /models
+      max_tokens_field: max_tokens
+      documented_model_version: DeepSeek-V4-Flash-0731
+      request_defaults:
+        stream: false
+        thinking: {type: disabled}
+  route_contract: {provider: deepseek, model: deepseek-v4-flash}
+  default_route: &deepseek_route {provider: deepseek, model: deepseek-v4-flash}
+  routes:
+    citizen: *deepseek_route
+    decision: *deepseek_route
+    founder: *deepseek_route
+    central_banker: *deepseek_route
+    credit_officer: *deepseek_route
+    vc_partner: *deepseek_route
+    lawyer: *deepseek_route
+    exchange: *deepseek_route
+    gov_official: *deepseek_route
+    legislator_house: *deepseek_route
+    legislator_senate: *deepseek_route
+    regulator: *deepseek_route
+    competition_regulator: *deepseek_route
+    labor_regulator: *deepseek_route
+    executive: *deepseek_route
+    lobbyist: *deepseek_route
+    reporter: *deepseek_route
+    editor: *deepseek_route
+    conversation: *deepseek_route
+    memory: *deepseek_route
+    newsroom: *deepseek_route
+    oracle: *deepseek_route
+  pricing:
+    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}

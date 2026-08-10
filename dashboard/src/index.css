@@ -17,7 +17,6 @@
 }
 
 :root {
-  color-scheme: dark;
   font-family: var(--font-sans);
   background: #050a09;
   color: #e7f1ed;
@@ -861,7 +860,8 @@ body::before {
 .world-os-causal-graph line { stroke: rgba(121, 230, 189, .28); stroke-width: 1.2; }
 .world-os-causal-graph marker path { fill: var(--os-mint); }
 .world-os-causal-graph .world-os-graph-canvas > g > text { fill: #66756d; font-size: 7px; paint-order: stroke; stroke: #0c1210; stroke-width: 3px; }
-.world-os-causal-graph g[role='button'] { cursor: pointer; outline: none; }
+.world-os-causal-graph g[role='button'] { cursor: pointer; }
+.world-os-causal-graph g[role='button']:focus-visible { outline: 2px solid var(--os-mint); outline-offset: 3px; }
 .world-os-causal-graph g[role='button'] circle { fill: #141e1a; stroke: #3e5b4f; stroke-width: 1.5; transition: fill 140ms ease, stroke 140ms ease; }
 .world-os-causal-graph g[role='button'] text { fill: #ced7d0; stroke: none; font-size: 6.7px; }
 .world-os-causal-graph g[role='button']:hover circle,
@@ -1095,7 +1095,8 @@ body::before {
 
 @media print {
   body { background: white; color: black; }
-  body::before, header, .no-print { display: none !important; }
+  body::before, .civic-run-header, .world-os-topbar, .world-os-rail, .no-print { display: none !important; }
+  .world-os-shell { display: block !important; }
   .panel { break-inside: avoid; border-color: #bbb; background: white; box-shadow: none; }
   .panel * { color: black !important; }
   main { padding: 0 !important; }

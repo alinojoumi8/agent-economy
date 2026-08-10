@@ -20,7 +20,15 @@ const civicStyles = readFileSync(
 test("product navigation keeps app and citizenship surfaces on canonical paths", () => {
   const items = buildProductNavigation({
     runId: "run/id",
-    worldSlug: "local world",
+    navigation: {
+      run_id: "run/id",
+      world_slug: "local world",
+      observatory: "/",
+      world_os: "/runs/run%2Fid/overview",
+      commons: "/runs/run%2Fid/commons",
+      join: "/join/local%20world",
+      my_agents: "/my-agents",
+    },
   });
   assert.deepEqual(
     Object.fromEntries(items.map(item => [item.key, item.href])),
@@ -34,6 +42,14 @@ test("product navigation keeps app and citizenship surfaces on canonical paths",
   );
   assert.equal(items.find(item => item.key === "join").clientSide, false);
   assert.equal(items.find(item => item.key === "commons").clientSide, true);
+});
+
+test("product navigation omits citizenship links when the server does not offer them", () => {
+  const items = buildProductNavigation({ runId: "run-demo" });
+
+  assert.deepEqual(items.map(item => item.key), [
+    "observatory", "world_os", "commons",
+  ]);
 });
 
 test("product navigation distinguishes Commons and citizen onboarding", () => {
