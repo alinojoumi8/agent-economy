@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -30,12 +31,12 @@ def _prepared_repo(tmp_path: Path, *, hooks_path: str | None = None):
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    if hooks_path is not None:
-        subprocess.run(
-            ["git", "config", "core.hooksPath", hooks_path],
-            cwd=repo,
-            check=True,
-        )
+    configured_hooks_path = hooks_path or ".git/hooks"
+    subprocess.run(
+        ["git", "config", "core.hooksPath", configured_hooks_path],
+        cwd=repo,
+        check=True,
+    )
 
     installer = scripts / "install_precommit_hook.sh"
     shutil.copy2(ROOT / "scripts" / installer.name, installer)
@@ -45,7 +46,7 @@ def _prepared_repo(tmp_path: Path, *, hooks_path: str | None = None):
         "#!/usr/bin/env bash\n"
         "printf 'scan %s\\n' \"$*\" >> \"$TRACE_FILE\"\n",
     )
-    hook_dir = repo / (hooks_path or ".git/hooks")
+    hook_dir = repo / configured_hooks_path
     return repo, installer, scanner, hook_dir
 
 
@@ -145,6 +146,7 @@ def test_secret_scan_invokes_gitleaks_with_redaction():
     source = (ROOT / "scripts" / "secret_scan.sh").read_text(encoding="utf-8")
 
     assert "--verbose --redact" in source
+    assert 'required_version="8.30.1"' in source
 
 
 @pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
@@ -157,20 +159,46 @@ def test_gitleaks_allowlisted_path_still_detects_unexpected_key(tmp_path):
     candidate.write_text("KIMI_API_KEY=\n", encoding="utf-8")
     subprocess.run(["git", "add", ".env.example"], cwd=repo, check=True)
 
-    command = [
+    configured_command = [
         "gitleaks", "protect", "--source", str(repo),
         "--config", str(repo / ".gitleaks.toml"), "--staged",
         "--no-banner", "--verbose", "--redact",
     ]
-    allowed = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+    allowed = subprocess.run(
+        configured_command, cwd=repo, capture_output=True, text=True)
     assert allowed.returncode == 0, allowed.stdout + allowed.stderr
 
-    value = hashlib.sha256(b"agent-economy-gitleaks-regression").hexdigest()
-    candidate.write_text(f"KIMI_API_KEY={value}\n", encoding="utf-8")
+    credential_value = hashlib.sha256(
+        b"agent-economy-credential-regression").hexdigest()
+    creds_value = hashlib.sha256(b"agent-economy-creds-regression").hexdigest()
+    fixture = (
+        f"credential={credential_value}\n"
+        f"creds={creds_value}\n"
+    )
+    candidate.write_text(fixture, encoding="utf-8")
     subprocess.run(["git", "add", ".env.example"], cwd=repo, check=True)
 
-    detected = subprocess.run(command, cwd=repo, capture_output=True, text=True)
-    output = detected.stdout + detected.stderr
-    assert detected.returncode != 0
-    assert value not in output
-    assert "REDACTED" in output
+    default_repo = tmp_path / "default-repo"
+    default_repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=default_repo, check=True)
+    (default_repo / ".env.example").write_text(fixture, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", ".env.example"], cwd=default_repo, check=True)
+    default_command = [
+        "gitleaks", "protect", "--source", str(default_repo), "--staged",
+        "--no-banner", "--verbose", "--redact",
+    ]
+
+    for command, source_repo in (
+        (default_command, default_repo),
+        (configured_command, repo),
+    ):
+        detected = subprocess.run(
+            command, cwd=source_repo, capture_output=True, text=True)
+        output = detected.stdout + detected.stderr
+        plain_output = re.sub(r"\x1b\[[0-9;]*m", "", output)
+        assert detected.returncode != 0
+        assert credential_value not in output
+        assert creds_value not in output
+        assert "credential=REDACTED" in plain_output
+        assert "creds=REDACTED" in plain_output

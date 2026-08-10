@@ -133,8 +133,9 @@ public tag; a successful merge audit is not a permanent publication waiver.
 Commits are additionally guarded by a local pre-commit secret scan: run
 `scripts/install_precommit_hook.sh` once per clone to wire
 `scripts/secret_scan.sh --staged` (Gitleaks on staged changes, fail-closed)
-into `.git/hooks/pre-commit`. Provider credentials live only in the ignored
-`.env`; never commit a populated `env` or `.env` file.
+into `.git/hooks/pre-commit`. The ruleset is pinned to Gitleaks 8.30.1 so its
+inherited detectors cannot drift. Provider credentials live only in the
+ignored `.env`; never commit a populated `env` or `.env` file.
 
 After a clean build, verify both tracked changes and newly generated files:
 

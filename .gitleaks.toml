@@ -1,25 +1,13 @@
 [extend]
 useDefault = true
 
-# Redefine the default generic-api-key rule in full. gitleaks 8.16 REPLACES a
-# default rule when a redeclared rule shares its id (no partial merging), so
-# the detection regex/entropy/keywords must be repeated verbatim here; the
-# allowlist below then rides along with them. Gitleaks 8.21+ is required for
-# multiple rule allowlists and enforceable AND matching. Keep this block in
-# sync with the upstream default rule when upgrading gitleaks. Every exception
-# requires both the named path and the expected benign line; no file or rule is
-# ignored wholesale.
-[[rules]]
-description = "Generic API Key"
-id = "generic-api-key"
-regex = '''(?i)(?:key|api|token|secret|client|passwd|password|auth|access)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:=|\|\|:|<=|=>|:)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;]|$)'''
-secretGroup = 1
-entropy = 3.5
-keywords = [
-    "key","api","token","secret","client","passwd","password","auth","access",
-]
-
-[[rules.allowlists]]
+# Pin scripts/secret_scan.sh to Gitleaks 8.30.1 so the inherited default rules
+# cannot drift underneath this targeted exception. `targetRules` retains the
+# complete upstream generic-api-key detector (including credential/creds) and
+# adds only this repository's path-plus-line exceptions. Every exception must
+# match both lists; no path or rule is ignored wholesale.
+[[allowlists]]
+targetRules = ["generic-api-key"]
 description = "Narrow path+line allowlists for known benign lines"
 condition = "AND"
 regexTarget = "line"
