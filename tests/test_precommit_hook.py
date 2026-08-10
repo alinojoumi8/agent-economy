@@ -20,6 +20,16 @@ V1_HOOK = (
 )
 
 
+def _gitleaks_version() -> str | None:
+    binary = shutil.which("gitleaks")
+    if binary is None:
+        return None
+    result = subprocess.run(
+        [binary, "version"], capture_output=True, text=True, check=False)
+    match = re.search(r"\b(\d+\.\d+\.\d+)\b", result.stdout + result.stderr)
+    return match.group(1) if match else None
+
+
 def _write_executable(path: Path, source: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source, encoding="utf-8")
@@ -128,6 +138,23 @@ def test_installer_upgrades_managed_v1_hook_without_backup(tmp_path):
     assert trace.read_text(encoding="utf-8").splitlines() == ["scan --staged"]
 
 
+def test_installer_refuses_to_overwrite_existing_backup(tmp_path):
+    repo, installer, _scanner, hook_dir = _prepared_repo(tmp_path)
+    hook = hook_dir / "pre-commit"
+    original = "#!/usr/bin/env bash\nexit 0\n"
+    _write_executable(hook, original)
+    backup = hook.with_name("pre-commit.agent-economy-original")
+    _write_executable(backup, "#!/usr/bin/env bash\nexit 7\n")
+    trace = tmp_path / "hook.trace"
+
+    result = _run(installer, repo, trace, check=False)
+
+    assert result.returncode == 1
+    assert "refusing to overwrite" in result.stderr
+    assert hook.read_text(encoding="utf-8") == original
+    assert V2_MARKER not in hook.read_text(encoding="utf-8")
+
+
 def test_installer_honors_configured_hooks_path(tmp_path):
     repo, installer, _scanner, hook_dir = _prepared_repo(
         tmp_path, hooks_path=".custom-hooks")
@@ -147,9 +174,14 @@ def test_secret_scan_invokes_gitleaks_with_redaction():
 
     assert "--verbose --redact" in source
     assert 'required_version="8.30.1"' in source
+    assert "gitleaks git" in source
+    assert "leak_exit_code=23" in source
 
 
-@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
+@pytest.mark.skipif(
+    _gitleaks_version() != "8.30.1",
+    reason="pinned gitleaks 8.30.1 not installed",
+)
 def test_gitleaks_allowlisted_path_still_detects_unexpected_key(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -160,9 +192,8 @@ def test_gitleaks_allowlisted_path_still_detects_unexpected_key(tmp_path):
     subprocess.run(["git", "add", ".env.example"], cwd=repo, check=True)
 
     configured_command = [
-        "gitleaks", "protect", "--source", str(repo),
-        "--config", str(repo / ".gitleaks.toml"), "--staged",
-        "--no-banner", "--verbose", "--redact",
+        "gitleaks", "git", "--config", str(repo / ".gitleaks.toml"),
+        "--staged", "--no-banner", "--verbose", "--redact", str(repo),
     ]
     allowed = subprocess.run(
         configured_command, cwd=repo, capture_output=True, text=True)
@@ -185,8 +216,8 @@ def test_gitleaks_allowlisted_path_still_detects_unexpected_key(tmp_path):
     subprocess.run(
         ["git", "add", ".env.example"], cwd=default_repo, check=True)
     default_command = [
-        "gitleaks", "protect", "--source", str(default_repo), "--staged",
-        "--no-banner", "--verbose", "--redact",
+        "gitleaks", "git", "--staged", "--no-banner", "--verbose",
+        "--redact", str(default_repo),
     ]
 
     for command, source_repo in (
@@ -202,3 +233,81 @@ def test_gitleaks_allowlisted_path_still_detects_unexpected_key(tmp_path):
         assert creds_value not in output
         assert "credential=REDACTED" in plain_output
         assert "creds=REDACTED" in plain_output
+
+
+@pytest.mark.skipif(
+    _gitleaks_version() != "8.30.1",
+    reason="pinned gitleaks 8.30.1 not installed",
+)
+def test_gitleaks_allowlist_preserves_path_associations(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    shutil.copy2(ROOT / ".gitleaks.toml", repo / ".gitleaks.toml")
+    expected = repo / "tests" / "test_information_completion.py"
+    misplaced = repo / "tests" / "test_prd_completion.py"
+    expected.parent.mkdir(parents=True)
+    misplaced.parent.mkdir(parents=True, exist_ok=True)
+    benign_line = (
+        'secret = "'
+        + "private-liquidity-"
+        + "belief-9f8a"
+        + '"\n'
+    )
+    expected.write_text(benign_line, encoding="utf-8")
+    subprocess.run(["git", "add", "tests"], cwd=repo, check=True)
+    command = [
+        "gitleaks", "git", "--config", str(repo / ".gitleaks.toml"),
+        "--staged", "--no-banner", "--redact", str(repo),
+    ]
+
+    allowed = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+
+    expected.unlink()
+    misplaced.write_text(benign_line, encoding="utf-8")
+    subprocess.run(["git", "add", "-A", "tests"], cwd=repo, check=True)
+    rejected = subprocess.run(command, cwd=repo, capture_output=True, text=True)
+
+    assert rejected.returncode != 0
+
+
+@pytest.mark.parametrize(
+    ("gitleaks_status", "expected_message", "unexpected_message"),
+    [
+        (23, "potential secrets in staged changes", "scanner failed"),
+        (2, "scanner failed with status 2", "potential secrets"),
+    ],
+)
+def test_secret_scan_distinguishes_findings_from_runtime_failure(
+    tmp_path, gitleaks_status, expected_message, unexpected_message,
+):
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    fake_bin = repo / "fake-bin"
+    scripts.mkdir(parents=True)
+    fake_bin.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    scanner = scripts / "secret_scan.sh"
+    shutil.copy2(ROOT / "scripts" / scanner.name, scanner)
+    shutil.copy2(ROOT / ".gitleaks.toml", repo / ".gitleaks.toml")
+    _write_executable(
+        fake_bin / "gitleaks",
+        "#!/usr/bin/env bash\n"
+        "if [[ \"${1:-}\" == version ]]; then echo 8.30.1; exit 0; fi\n"
+        "exit \"$FAKE_GITLEAKS_STATUS\"\n",
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "FAKE_GITLEAKS_STATUS": str(gitleaks_status),
+    }
+
+    result = subprocess.run(
+        [str(scanner), "--staged"], cwd=repo, env=env,
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 1
+    assert expected_message in result.stderr
+    assert unexpected_message not in result.stderr

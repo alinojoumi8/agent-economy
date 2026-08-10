@@ -64,6 +64,9 @@ test("named status, ticker, and scroll areas use valid keyboard-accessible roles
     const region = page.getByRole("region", { name });
     await expect(region).toBeVisible();
     await expect(region).toHaveAttribute("tabindex", "0");
+    await region.focus();
+    await expect(region).toHaveCSS("outline-width", "2px");
+    await expect(region).toHaveCSS("outline-color", "rgb(36, 87, 214)");
   }
 });
 

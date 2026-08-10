@@ -173,6 +173,8 @@ def test_full_suite_ci_uses_deterministic_cross_platform_shards():
     assert "-p scripts.pytest_shard" in workflow
     assert "--ci-shard-index ${{ matrix.shard }}" in workflow
     assert "--ci-shard-count 8" in workflow
+    assert workflow.count("persist-credentials: false") == workflow.count(
+        "uses: actions/checkout@v7")
 
 
 def test_static_bundle_advisory_cannot_fail_when_diff_is_truncated():

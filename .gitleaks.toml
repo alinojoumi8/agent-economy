@@ -1,69 +1,166 @@
 [extend]
 useDefault = true
 
-# Pin scripts/secret_scan.sh to Gitleaks 8.30.1 so the inherited default rules
-# cannot drift underneath this targeted exception. `targetRules` retains the
-# complete upstream generic-api-key detector (including credential/creds) and
-# adds only this repository's path-plus-line exceptions. Every exception must
-# match both lists; no path or rule is ignored wholesale.
+# Pin scripts/secret_scan.sh to Gitleaks 8.30.1 so inherited default rules
+# cannot drift. Each targeted exception binds one path to only its expected
+# benign lines; no path, rule, or cross-product of unrelated fixtures is
+# ignored wholesale.
+
 [[allowlists]]
 targetRules = ["generic-api-key"]
-description = "Narrow path+line allowlists for known benign lines"
+description = "Blank API-key placeholders in the checked-in env template"
 condition = "AND"
 regexTarget = "line"
-paths = [
-  '''^\.env\.example$''',
-  '''^config/data-manifest\.yaml$''',
-  '''^research/data/bls-unemployment-2020\.json$''',
-  '''^research/data/fred-fedfunds-2020\.json$''',
-  '''^tests/test_v2_research_observatory\.py$''',
-  '''^tests/test_information_completion\.py$''',
-  '''^benchmarks/receipts/world-os-v8-standard\.json$''',
-  '''^tests/test_hosted_app\.py$''',
-  '''^tests/test_hosted_catalog\.py$''',
-  '''^tests/test_prd_completion\.py$''',
-  '''^tests/test_semantics12_civic_city\.py$''',
-  '''^dashboard/tests/ui\.test\.js$''',
-  '''^reports/oracle_campaign\.py$''',
-  '''^runs/v2-live-behavioral\.yaml$''',
-  '''^runs/v2-spec-closure-rehearsal\.yaml$''',
-]
+paths = ['''^\.env\.example$''']
 regexes = [
-  # Blank API-key placeholders in the checked-in env template.
   '''^KIMI_API_KEY=[[:space:]]*$''',
   '''^ANTHROPIC_API_KEY=[[:space:]]*$''',
-  # Public BLS dataset identifier in the research manifest.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Public BLS dataset identifier in the research manifest"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^config/data-manifest\.yaml$''']
+regexes = [
   '''^[[:space:]]*-[[:space:]]+key:[[:space:]]+bls-unemployment-2020[[:space:]]*$''',
-  # Public BLS dataset and target identifiers in the pinned snapshot.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Public BLS dataset and target identifiers in the pinned snapshot"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^research/data/bls-unemployment-2020\.json$''']
+regexes = [
   '''^[[:space:]]*"dataset_key":[[:space:]]*"bls-unemployment-2020",[[:space:]]*$''',
   '''^[[:space:]]*\{"key": "unemployment\.2020-01", "value": 3\.6, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
   '''^[[:space:]]*\{"key": "unemployment\.2020-04", "value": 14\.8, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\},[[:space:]]*$''',
   '''^[[:space:]]*\{"key": "unemployment\.2020-12", "value": 6\.7, "unit": "percent", "dimensions": \{"population": "civilian labor force"\}\}[[:space:]]*$''',
-  # Public FRED target identifiers in the pinned snapshot.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Public FRED target identifiers in the pinned snapshot"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^research/data/fred-fedfunds-2020\.json$''']
+regexes = [
   '''^[[:space:]]*\{"key": "policy_rate\.2020-01", "value": 1\.55, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
   '''^[[:space:]]*\{"key": "policy_rate\.2020-04", "value": 0\.05, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\},[[:space:]]*$''',
   '''^[[:space:]]*\{"key": "policy_rate\.2020-12", "value": 0\.09, "unit": "percent", "dimensions": \{"frequency": "monthly"\}\}[[:space:]]*$''',
-  # Expected FRED target identifiers in the snapshot regression assertion.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Expected FRED target identifiers in the snapshot regression"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_v2_research_observatory\.py$''']
+regexes = [
   '''^[[:space:]]*"key": "policy_rate\.2020-01", "unit": "percent", "value": 1\.55\},[[:space:]]*$''',
   '''^[[:space:]]*"key": "policy_rate\.2020-04", "unit": "percent", "value": 0\.05\},[[:space:]]*$''',
   '''^[[:space:]]*"key": "policy_rate\.2020-12", "unit": "percent", "value": 0\.09\},[[:space:]]*$''',
-  # Private-data redaction sentinel used only by the news privacy test.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Private-data redaction sentinel in the news privacy test"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_information_completion\.py$''']
+regexes = [
   '''^[[:space:]]*secret = "private-liquidity-belief-9f8a"[[:space:]]*$''',
-  # Pinned canonical receipt hash in the benchmark standard (checked-in fixture).
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Pinned canonical receipt hash in the benchmark standard"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^benchmarks/receipts/world-os-v8-standard\.json$''']
+regexes = [
   '''^[[:space:]]*"authoritative_sha256": "d4360069c631be7b5e59f7837d550f750c6afe7da72da8743e1ca530dba42a30",[[:space:]]*$''',
-  # Fixed OAuth test client identifiers.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Fixed OAuth client identifier in hosted app tests"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_hosted_app\.py$''']
+regexes = [
   '''^[[:space:]]*client_id = "ae_client_hosted_test_123456"[[:space:]]*$''',
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Fixed OAuth client identifier in hosted catalog tests"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_hosted_catalog\.py$''']
+regexes = [
   '''^[[:space:]]*client_id = "ae_client_1234567890abcdef"[[:space:]]*$''',
-  # Offline replay dataset key in the PRD completion fixture.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Offline replay dataset key in the PRD completion fixture"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_prd_completion\.py$''']
+regexes = [
   '''^[[:space:]]*"key": "offline-replay-v1",[[:space:]]*$''',
-  # Idempotency key in the civic-city gateway test fixture.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Idempotency key in the civic-city gateway fixture"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_semantics12_civic_city\.py$''']
+regexes = [
   '''^[[:space:]]*"idempotency_key": "civic-permit-gateway-1",[[:space:]]*$''',
-  # Ruleset key in the dashboard UI test fixture.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Ruleset key in the dashboard UI fixture"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^dashboard/tests/ui\.test\.js$''']
+regexes = [
   '''^.*ruleset_key: "northstar-us-inspired-1\.0" \}\],[[:space:]]*$''',
-  # Receipt hash column names in the oracle campaign report generator.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Receipt hash column names in the Oracle report generator"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^reports/oracle_campaign\.py$''']
+regexes = [
   '''^[[:space:]]*hash_key="replay_execution_receipt_sha256",[[:space:]]*$''',
   '''^[[:space:]]*hash_key="source_receipt_sha256", label="source receipt"\)[[:space:]]*$''',
-  # Scenario seed keys in run configs.
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Seeded startup scenario key in the behavioral profile"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^runs/v2-live-behavioral\.yaml$''']
+regexes = [
   '''^[[:space:]]*key: seeded-startup-behavior-v1[[:space:]]*$''',
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Semantics-7 scenario key in the closure rehearsal"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^runs/v2-spec-closure-rehearsal\.yaml$''']
+regexes = [
   '''^[[:space:]]*key: semantics-7-spec-closure-v1[[:space:]]*$''',
 ]

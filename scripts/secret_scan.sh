@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Commit-time secret scan using the repository's .gitleaks.toml.
 #
-# Runs `gitleaks protect --staged` so only staged changes are scanned, which
+# Runs `gitleaks git --staged` so only staged changes are scanned, which
 # matches what a pre-commit hook is authorizing. Fails closed: any detection
 # or a missing gitleaks binary aborts the commit.
 #
@@ -46,10 +46,20 @@ fi
 
 # --staged makes gitleaks diff the index, so partially staged files are
 # judged exactly as they will be committed.
-if ! gitleaks protect --source "$repo_root" --config "$config" --staged --no-banner --verbose --redact; then
+leak_exit_code=23
+scan_status=0
+gitleaks git --config "$config" --staged --no-banner --verbose --redact \
+  --exit-code "$leak_exit_code" "$repo_root" || scan_status=$?
+if (( scan_status == leak_exit_code )); then
   echo "" >&2
   echo "secret-scan: potential secrets in staged changes; commit blocked." >&2
   echo "secret-scan: remove the secrets, then 'git add' the fixed files again." >&2
   echo "secret-scan: false positive? Add a narrow allowlist entry to .gitleaks.toml." >&2
+  exit 1
+fi
+if (( scan_status != 0 )); then
+  echo "" >&2
+  echo "secret-scan: scanner failed with status ${scan_status}; commit blocked." >&2
+  echo "secret-scan: inspect the Gitleaks output and repository ruleset before retrying." >&2
   exit 1
 fi
