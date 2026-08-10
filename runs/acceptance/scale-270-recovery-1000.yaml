@@ -1,0 +1,10 @@
+# Formal provider-free acceptance using the already pinned recovery policy.
+extends: scale-270-recovery-120.yaml
+
+checkpoint_every: 100
+checkpoint_keep_last: 2
+
+acceptance:
+  min_ticks: 1000
+  scale_economic_health:
+    required_ticks: 1000

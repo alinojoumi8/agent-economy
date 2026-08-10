@@ -1,0 +1,23 @@
+# Provider-free 120-tick diagnostic arm for the maintained 308-agent lane.
+extends: ../scale-270-rehearsal.yaml
+
+# The baseline intentionally preserves the pre-recovery mechanics.
+supply_recovery:
+  enabled: false
+
+acceptance:
+  min_ticks: 120
+  scale_economic_health:
+    schema_version: 1
+    required_ticks: 120
+    warmup_ticks: 60
+    trailing_window_ticks: 60
+    max_buy_goods_rejection_rate: 0.05
+    max_unemployment_rebound: 0.10
+    max_pending_applications: 20
+    max_pending_job_offers: 20
+    max_open_jobs: 20
+    max_peak_rss_mb: 2048
+    min_available_memory_gb: 8
+    max_database_growth_bytes_per_tick: 8388608
+    max_checkpoint_p95_seconds: 5.0
