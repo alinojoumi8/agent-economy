@@ -83,14 +83,18 @@ cannot support a durable 1,000-tick or release-evidence claim.
 
 `runs/scale-270-rehearsal.yaml` extends `runs/base.yaml` and pins:
 
-- seed 42 and `engine_semantics_version: 7`;
+- seed 42 and `engine_semantics_version: 7` for the unchanged acceptance
+  mechanics; a recovery fix that changes persisted output must introduce and
+  persist a new maintained semantics version instead of rewriting version 7;
 - `population.size: 270` and `baseline_citizens_core: false`;
 - three currency-matched regional banks;
 - configured regional populations 182, 70, and 56;
 - expected post-Genesis regional populations 184, 69, and 55;
 - 308 living agents, including 272 `citizen` rows and 36 `staff` rows;
 - 100 core agents and 208 deterministic periphery agents;
-- 25 coverage-first conversation pairs per tick and three turns;
+- 25 coverage-first conversation pairs per tick and three turns; each turn
+  creates exactly one non-empty row in `messages`, while system prompts, tool
+  calls, and provider-private reasoning are excluded from that table;
 - checkpoint interval 7, retention 4, zero delay, and the existing resource
   guard;
 - scripted/scripted as the only provider/model route.
@@ -126,7 +130,8 @@ profile, raises the required horizon to 1,000 ticks, uses checkpoint interval
 
 `scripts/run_scale_validation.py` owns execution-time evidence. It replaces the
 temporary 608-line script and accepts only a maintained profile plus explicit
-tick horizon, label, output directory, and optional live-provider approval.
+tick horizon, label, output directory, isolated run-store/checkpoint root, and
+optional live-provider approval.
 
 The harness:
 
@@ -140,9 +145,13 @@ The harness:
    ledger, SQLite, foreign keys, and failure events;
 7. closes and hashes the source database;
 8. creates an offline replay that dispatches no provider call;
-9. compares all deterministic tables and confirms the source hash did not
-   change;
-10. emits one sanitized JSON runtime receipt.
+9. delegates comparison to `world.replay_verify.verify_replay`, which compares
+   the sorted union of every non-excluded source/replay table and fails any
+   missing or unequal table; the receipt records the schema version, compared
+   table names/count, and SHA-256 of the verifier module rather than inventing a
+   separate catalog version;
+10. confirms the source hash did not change;
+11. emits one sanitized JSON runtime receipt.
 
 The harness never commits or deletes run/checkpoint databases. It never writes
 credentials, Authorization headers, raw private provider bodies, private
@@ -255,8 +264,12 @@ Failures are diagnosed at the persisted proposal/event/metric/ledger boundary.
 Permitted fixes include scale-dependent inventory-aware demand, production,
 staffing, capital, wage, offer, and recovery-policy mechanics. Monetary effects
 must flow through the ledger. Behavior changes are guarded by the existing
-semantics mechanism so historical semantics 1-7 replays remain exact unless a
-new maintained semantics version is explicitly introduced and migrated.
+semantics mechanism so historical semantics 1-7 replays remain exact. A new
+semantics version is a new-run schema/config path only: schema changes are
+additive columns or tables, changed behavior/output is gated by persisted
+`engine_semantics_version`, and neither source databases nor receipts are ever
+rewritten during replay. Compatibility fixtures must replay both the historical
+versions and the new version exactly before the new profile is eligible.
 
 Every fix begins with a failing regression and includes success, rejection,
 reconciliation, and exact-replay coverage. Receipt thresholds are not weakened
@@ -275,16 +288,23 @@ Only then are the two paid canaries run, sequentially:
 - DeepSeek: exactly `deepseek/deepseek-v4-flash`, two completed ticks, cap
   USD 0.20.
 
-Each canary must record 50 conversations and 150 non-empty messages, cover the
-100 paid core participants, persist only its exact provider/model, stay under
-cap, pass checkpoints/integrity/replay, and expose the completed run through the
-real application in installed Google Chrome.
+Each canary must record 50 conversations and 150 non-empty `messages` rows: two
+distinct paid-core participants per conversation and three persisted turn rows,
+with system/tool/private rows excluded. Coverage-first scheduling must use each
+of the 100 paid-core IDs exactly once across the 50 pairs, with no repeated core
+ID. Each canary persists only its exact provider/model, stays under cap, passes
+checkpoints/integrity/replay, and exposes the completed run through the real
+application in installed Google Chrome.
 
-Chrome verification covers page load, run header/status, population and region
-views, agent directory/details, persisted conversations/messages, provider and
-spend surfaces, pause/resume-safe controls, console errors, page errors, failed
-requests, desktop layout, and a narrow viewport. Screenshots and a sanitized
-browser receipt are hash-bound to the source run and exact commit.
+Chrome verification serves the completed source through the existing
+read-only `ReplayReader`/static observatory boundary with no `World` or mutating
+controller attached. It hashes the source before launch and after shutdown and
+fails if the hash changes. The browser gate covers page load, run header/status,
+population and region views, agent directory/details, persisted
+conversations/messages, provider and spend surfaces, unavailable write controls,
+console errors, page errors, failed requests, desktop layout, and a narrow
+viewport. Screenshots and a sanitized browser receipt are hash-bound to the
+source run and exact commit.
 
 ## Failure handling
 

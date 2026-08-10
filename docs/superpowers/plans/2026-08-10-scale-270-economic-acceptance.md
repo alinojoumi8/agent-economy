@@ -11,8 +11,9 @@
 ## Global Constraints
 
 - Follow `AGENTS.md`: all economic mutation remains in `engine/` or deterministic `world/` mechanics, all monetary effects use the ledger, and historical source runs are never rewritten during replay.
-- Keep seed 42, semantics 7, population size 270, 308 total agents, 272 citizen-kind rows, 36 staff rows, 100 core agents, 208 periphery agents, and regional counts 184/69/55.
-- Keep 25 coverage-first conversation pairs per tick and three messages per conversation.
+- Keep seed 42 and semantics 7 for unchanged acceptance mechanics. A fix that changes persisted output must introduce a new persisted semantics version, new profiles/receipts, and historical/new compatibility fixtures; it must never rewrite a stored source run.
+- Keep population size 270, 308 total agents, 272 citizen-kind rows, 36 staff rows, 100 core agents, 208 periphery agents, and regional counts 184/69/55.
+- Keep 25 coverage-first conversation pairs per tick and three persisted turn messages per conversation; system, tool, and provider-private rows do not count as messages.
 - Provider-free work uses only `scripted/scripted` and records USD 0 spend.
 - MiniMax uses only `minimax/MiniMax-M3` under a USD 0.50 cap; DeepSeek uses only `deepseek/deepseek-v4-flash` under a USD 0.20 cap.
 - Never commit SQLite run/checkpoint bodies, credentials, Authorization headers, cookies, private reasoning, raw private provider bodies, or unrestricted environment dumps.
@@ -52,9 +53,25 @@ def test_scale_270_rehearsal_is_exact():
     }
     assert config["living_world"]["core_agents"] == 100
     assert [r["population"] for r in config["living_world"]["regions"]] == [182, 70, 56]
+    assert [r["currency"] for r in config["living_world"]["regions"]] == ["NSD", "IVC", "SCD"]
+    assert config["banks"]["count"] == 3
+    assert config["checkpoint_every"] == 7
+    assert config["checkpoint_keep_last"] == 4
+    assert config["speed_delay_s"] == 0.0
     assert config["budget"]["conversation_pairs"] == 25
+    assert config["conversations"]["coverage_first"] is True
     assert config["llm"]["default_route"] == {
         "provider": "scripted", "model": "scripted",
+    }
+    assert config["llm"]["routes"] == {}
+    assert config["resource_guard"] == {
+        "enabled": True,
+        "sample_interval_s": 2,
+        "max_cpu_percent": 95,
+        "max_memory_percent": 85,
+        "min_available_memory_gb": 8,
+        "max_swap_percent": 80,
+        "consecutive_breaches": 3,
     }
 ```
 
@@ -175,8 +192,20 @@ def test_scale_270_live_profiles_are_exact(monkeypatch, profile, key, provider, 
     assert config["budget"]["cap_usd"] == cap
     assert config["budget"]["oracle_reserve_usd"] == 0.0
     assert config["budget"]["report_reserve_usd"] == 0.0
-    assert {(r["provider"], r["model"]) for r in config["llm"]["routes"].values()} == {(provider, model)}
+    expected_route = {"provider": provider, "model": model}
+    assert config["llm"]["routes"] == {
+        purpose: expected_route for purpose in EXPECTED_LIVE_PURPOSES
+    }
+    reference = load_config(SCALE_170_BY_PROVIDER[provider])
+    assert config["llm"]["providers"][provider] == reference["llm"]["providers"][provider]
+    assert config["llm"]["pricing"] == reference["llm"]["pricing"]
 ```
+
+`EXPECTED_LIVE_PURPOSES` is the exact sorted purpose tuple declared by the
+maintained scale-170 profiles. The provider-block comparison covers base URL,
+credential environment name, timeouts, healthcheck path, request defaults,
+pricing, concurrency, token field, cache mode, and documented-model/fallback
+settings without duplicating them in the test.
 
 Add a second parameterized test that removes the required key and asserts
 readiness is false with at least one error.
@@ -243,14 +272,15 @@ Stage 1 in issue 52.
 
 **Interfaces:**
 - Consumes: `load_config`, `validate_llm_config`, `provider_preflight`, `open_run`, `replay_headless`, `verify_replay`.
-- Produces: `run_validation(profile: Path, ticks: int, label: str, output_dir: Path, approve_live: bool) -> dict[str, object]` and a CLI that writes one sanitized runtime receipt.
+- Produces: `run_validation(profile: Path, ticks: int, label: str, output_dir: Path, data_dir: Path, approve_live: bool) -> dict[str, object]` and a CLI that writes one sanitized runtime receipt.
 
 - [ ] **Step 1: Write failing unit tests for input and sanitization boundaries**
 
 Cover rejection of non-positive ticks, rejection of a live profile without
 `--approve-live-inference`, rejection of a profile outside `runs/`, exact
-profile-derived caps, repository-relative artifact identifiers, and absence of
-credential/header/environment keys in serialized output.
+profile-derived caps, an explicit `data_dir`, repository-relative artifact
+identifiers, and absence of credential/header/environment keys in serialized
+output.
 
 - [ ] **Step 2: Verify the tests fail because the module is missing**
 
@@ -262,16 +292,18 @@ credential/header/environment keys in serialized output.
 
 Use `ROOT = Path(__file__).resolve().parents[1]`; remove all scale overrides so
 the loaded profile is authoritative; keep per-tick/checkpoint/RSS/DB metrics;
-make the source and replay execution reusable through `run_validation`; write
-JSON atomically; and emit a compact stdout summary containing receipt path,
-source run ID, replay run ID, result, tick, calls, spend, and replay status.
+pass the explicit `data_dir` through source, replay, checkpoint, and manifest
+operations; make execution reusable through `run_validation`; write JSON
+atomically; and emit a compact stdout summary containing receipt path, source
+run ID, replay run ID, result, tick, calls, spend, and replay status.
 
 - [ ] **Step 4: Add a one-tick provider-free integration test**
 
-Run the permanent rehearsal against `tmp_path`, assert 308 agents, 25
-conversations, 75 messages, scripted-only calls, zero spend, clean integrity,
-at least one checkpoint, exact replay, and no absolute repository path in the
-serialized receipt.
+Run the permanent rehearsal with `data_dir=tmp_path / "runs"`, assert 308
+agents, 25 conversations, 75 messages, scripted-only calls, zero spend, clean
+integrity, at least one checkpoint, exact replay, and no absolute repository
+path in the serialized receipt. Assert every generated database, checkpoint,
+manifest, and receipt is beneath the isolated `tmp_path` root.
 
 - [ ] **Step 5: Run harness tests**
 
@@ -389,12 +421,15 @@ exits nonzero after still writing a failed receipt.
 
 `evaluate_scale_ab(baseline: Mapping[str, object], recovery: Mapping[str,
 object]) -> dict[str, object]` verifies both receipt schemas and operational
-checks, proves the seed/population/tiering/region/conversation/route contracts
-match, proves the recovery policy is the only configured economic difference,
-and emits canonical per-window deltas. `write_scale_ab_receipt` writes atomic
-JSON/Markdown and passes only when both arms are operationally valid and the
-recovery arm passes every economic check; baseline economic failures remain
-visible diagnostics.
+checks. It compares canonical effective runtime configs after resolving
+inheritance and removes only non-semantic identity fields (`profile_path`,
+`label`, receipt/output paths, and the diagnostic recovery-arm name). It permits
+differences only in the exact `supply_recovery` policy block; every other seed,
+semantics, population, tiering, region, conversation, route, budget, checkpoint,
+resource, and inherited acceptance value must match. It emits canonical
+per-window deltas. `write_scale_ab_receipt` writes atomic JSON/Markdown and
+passes only when both arms are operationally valid and the recovery arm passes
+every economic check; baseline economic failures remain visible diagnostics.
 
 - [ ] **Step 8: Run focused and integration tests**
 
@@ -639,17 +674,23 @@ Load `.env` without printing it, validate only MiniMax is routed, run the live
 ```
 
 Require positive spend at or below cap, only `minimax/MiniMax-M3`, 50
-conversations, 150 non-empty messages, 100 unique paid-core participants, clean
-integrity/checkpoints, and exact offline replay.
+conversations, 150 non-empty persisted turn messages, and exactly 100 distinct
+paid-core participants. Query all 50 persisted `participant_ids` pairs and
+assert each contains two distinct core IDs and no core ID repeats across pairs.
+Require clean integrity/checkpoints and exact offline replay.
 
 - [ ] **Step 3: Serve the exact completed source read-only and test Chrome**
 
-Start the application at `127.0.0.1:8001` against the exact run without
-advancing it. Use installed Google Chrome to verify status/header, 308-agent
-population and regions, agent directory/detail, persisted conversation threads,
-provider/model and spend surfaces, controls, desktop and narrow viewport,
+Hash the closed source, then start only the existing read-only
+`ReplayReader`/static observatory application at `127.0.0.1:8001`; do not attach
+a `World`, `RunController`, participant writer, or any mutation endpoint. Use
+installed Google Chrome to verify status/header, 308-agent population and
+regions, agent directory/detail, persisted conversation threads, provider/model
+and spend surfaces, unavailable write controls, desktop and narrow viewport,
 console/page errors, and failed requests. Capture screenshots and a sanitized
-browser JSON receipt bound to commit, source run ID, tick, and source hash.
+browser JSON receipt bound to commit, source run ID, tick, and pre-launch source
+hash. Hash the source again after shutdown and fail the browser gate on any
+change.
 
 - [ ] **Step 4: Shut down and prove the server is down**
 
