@@ -313,9 +313,13 @@ application in installed Google Chrome.
 
 Before paid inference, Stage 5 adds and tests a standalone completed-run
 observatory. It extends `ReplayReader` with persisted-only status/region, agent
-list/detail, conversation/message, and provider/model/spend projections and
-opens the one pinned database with `mode=ro&immutable=1` plus
-`PRAGMA query_only=ON`. `create_read_only_observatory_app` serves the production
+list/detail, conversation/message, and provider/model/spend projections plus an
+explicit `immutable_completed=True` mode. The existing default stays `mode=ro`
+and WAL-aware for active-run replay; a regression proves it sees committed WAL
+rows. Only the standalone completed-run app opts into the immutable mode, which
+rejects sidecars and opens the one pinned database with
+`mode=ro&immutable=1` plus `PRAGMA query_only=ON`.
+`create_read_only_observatory_app` serves the production
 static bundle and only allowlisted GET/HEAD/OPTIONS projections. It never calls
 the mutable application factory and never instantiates a `World`, gateway,
 store writer, `RunController`, external/operator route, or WebSocket.

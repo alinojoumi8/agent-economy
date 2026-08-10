@@ -694,7 +694,7 @@ after report generation to prove the evaluator did not mutate either DB.
 
 **Interfaces:**
 - Produces: `create_read_only_observatory_app(*, runs_dir, run_id, expected_manifest) -> FastAPI` and `python -m server.read_only_observatory --runs-dir ... --run-id ... --manifest ... --host 127.0.0.1 --port 8001`.
-- Extends: `ReplayReader` with persisted-only status/region, agent list/detail, conversation/message, and provider/model/spend projections.
+- Extends: `ReplayReader` with an explicit completed-source mode and persisted-only status/region, agent list/detail, conversation/message, and provider/model/spend projections; its existing active-run default remains WAL-aware.
 
 - [ ] **Step 1: Add failing backend boundary and projection tests**
 
@@ -709,15 +709,20 @@ or `RunController`.
 
 - [ ] **Step 2: Implement immutable SQLite projections and the standalone app**
 
-Make `ReplayReader` use `mode=ro&immutable=1`, `PRAGMA query_only=ON`, one exact
-allowlisted run ID, bounded pagination, and persisted/public fields only. The
-standalone FastAPI app serves the production static bundle and only the
-read-only projections above. It must not call `create_app`, instantiate a
-`World`/gateway/controller, install external/operator routes, create a database,
-or accept a source outside `runs_dir`. Startup fails on a missing/mismatched
-manifest, any WAL/SHM/rollback-journal sidecar, a non-completed source, an
-occupied port, or a source path that resolves through a symlink outside the
-pinned root. Recheck the complete artifact manifest on shutdown.
+Add an explicit `ReplayReader(..., immutable_completed=True, run_id=...)` mode
+that uses `mode=ro&immutable=1`, `PRAGMA query_only=ON`, one exact allowlisted
+run ID, bounded pagination, and persisted/public fields only. Preserve the
+existing default `ReplayReader()` behavior with `mode=ro` and no immutable flag
+so the live application's replay routes continue to observe committed WAL rows.
+Reject immutable-completed mode unless the source is closed and every sidecar is
+absent. The standalone FastAPI app is the only caller that enables this mode;
+it serves the production static bundle and only the read-only projections above.
+It must not call `create_app`, instantiate a `World`/gateway/controller, install
+external/operator routes, create a database, or accept a source outside
+`runs_dir`. Startup fails on a missing/mismatched manifest, any WAL/SHM/rollback-
+journal sidecar, a non-completed source, an occupied port, or a source path that
+resolves through a symlink outside the pinned root. Recheck the complete
+artifact manifest on shutdown.
 
 - [ ] **Step 3: Add the dedicated read-only dashboard surface**
 
@@ -733,11 +738,13 @@ dispatch. Do not open a WebSocket or poll a mutating/live endpoint in this mode.
 Capture the canonical source artifact-set manifest before TestClient and
 Playwright sessions and compare it byte-for-byte after shutdown, including
 explicit absent sidecars. Intercept every SQLite/file open and fail on a
-writable access mode under the source root. Unit-test empty/paginated views,
-404s for another run ID, route-method allowlisting, sanitization, and spend
-rounding. In Playwright, cover directory/detail navigation, conversations,
-provider/spend, immutable controls, desktop/narrow layouts, and zero console,
-page, or failed-request errors.
+writable access mode under the source root. Add a separate WAL regression using
+the default reader to prove a committed active-run row remains visible; assert
+only `immutable_completed=True` adds the immutable URI flag. Unit-test empty/
+paginated views, 404s for another run ID, route-method allowlisting,
+sanitization, and spend rounding. In Playwright, cover directory/detail
+navigation, conversations, provider/spend, immutable controls, desktop/narrow
+layouts, and zero console, page, or failed-request errors.
 
 - [ ] **Step 5: Run focused backend and dashboard verification**
 
