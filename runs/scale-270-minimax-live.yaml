@@ -1,0 +1,67 @@
+# Paid two-tick canary: the 100-agent core uses MiniMax M3 and the 208-agent
+# periphery remains deterministic. Every gateway route is locked to the exact
+# provider/model pair and the total canary spend is capped at USD 0.50.
+extends: scale-270-rehearsal.yaml
+
+budget:
+  cap_usd: 0.50
+  oracle_reserve_usd: 0.0
+  report_reserve_usd: 0.0
+
+reports:
+  narrative_max_tokens: 1600
+
+llm:
+  live_only: true
+  require_preflight_live: true
+  institutional_role_purposes: true
+  max_in_flight: 3
+  concurrency: 3
+  logical_deadline_s: 1200
+  provider_retries: 1
+  rate_limit_backoff_s: [5, 15, 30]
+  decision_max_tokens: 2400
+  founder_max_tokens: 4096
+  reporter_max_tokens: 1600
+  newsroom_max_tokens: 1200
+  conversation_max_tokens: 800
+  providers:
+    minimax:
+      kind: openai_compat
+      base_url: https://api.minimax.io/v1
+      api_key_env: MINIMAX_API_KEY
+      concurrency: 3
+      prompt_cache_mode: provider_automatic
+      timeout_s: 600
+      healthcheck_path: /models
+      max_tokens_field: max_completion_tokens
+      request_defaults:
+        reasoning_split: true
+        thinking: {type: disabled}
+  route_contract: {provider: minimax, model: MiniMax-M3}
+  default_route: &minimax_route {provider: minimax, model: MiniMax-M3}
+  routes:
+    citizen: *minimax_route
+    decision: *minimax_route
+    founder: *minimax_route
+    central_banker: *minimax_route
+    credit_officer: *minimax_route
+    vc_partner: *minimax_route
+    lawyer: *minimax_route
+    exchange: *minimax_route
+    gov_official: *minimax_route
+    legislator_house: *minimax_route
+    legislator_senate: *minimax_route
+    regulator: *minimax_route
+    competition_regulator: *minimax_route
+    labor_regulator: *minimax_route
+    executive: *minimax_route
+    lobbyist: *minimax_route
+    reporter: *minimax_route
+    editor: *minimax_route
+    conversation: *minimax_route
+    memory: *minimax_route
+    newsroom: *minimax_route
+    oracle: *minimax_route
+  pricing:
+    MiniMax-M3: {in: 0.30, out: 1.20, cache: 0.06}
