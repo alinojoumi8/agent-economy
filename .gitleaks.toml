@@ -4,10 +4,11 @@ useDefault = true
 # Redefine the default generic-api-key rule in full. gitleaks 8.16 REPLACES a
 # default rule when a redeclared rule shares its id (no partial merging), so
 # the detection regex/entropy/keywords must be repeated verbatim here; the
-# allowlist below then rides along with them. Keep this block in sync with the
-# upstream default rule when upgrading gitleaks. Every exception requires both
-# the named path and the expected benign line; no file or rule is ignored
-# wholesale.
+# allowlist below then rides along with them. Gitleaks 8.21+ is required for
+# multiple rule allowlists and enforceable AND matching. Keep this block in
+# sync with the upstream default rule when upgrading gitleaks. Every exception
+# requires both the named path and the expected benign line; no file or rule is
+# ignored wholesale.
 [[rules]]
 description = "Generic API Key"
 id = "generic-api-key"
@@ -18,7 +19,7 @@ keywords = [
     "key","api","token","secret","client","passwd","password","auth","access",
 ]
 
-[rules.allowlist]
+[[rules.allowlists]]
 description = "Narrow path+line allowlists for known benign lines"
 condition = "AND"
 regexTarget = "line"

@@ -176,6 +176,9 @@ jobs:
             echo "Committed static bundle is current; no rebuild needed."
             exit 0
           fi
+          diff_file=$(mktemp)
+          trap 'rm -f "$diff_file"' EXIT
+          git --no-pager diff -- server/static > "$diff_file"
           {
             echo "Advisory: the committed server/static bundle is out of date with a"
             echo "fresh dashboard rebuild on this branch. Rebuild with"
@@ -188,7 +191,7 @@ jobs:
             git --no-pager diff --stat -- server/static
             # Cap the posted diff: minified bundles can exceed the step-summary
             # size limit, so truncate long payloads after the file-level stats.
-            git --no-pager diff -- server/static | head -c 200000
+            head -c 200000 "$diff_file"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::warning::server/static drift detected; rebuild and commit the dashboard bundle if intentional. See the step summary for the diff."

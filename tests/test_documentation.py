@@ -175,6 +175,23 @@ def test_full_suite_ci_uses_deterministic_cross_platform_shards():
     assert "--ci-shard-count 8" in workflow
 
 
+def test_static_bundle_advisory_cannot_fail_when_diff_is_truncated():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert 'git --no-pager diff -- server/static > "$diff_file"' in workflow
+    assert 'head -c 200000 "$diff_file"' in workflow
+    assert "git --no-pager diff -- server/static | head -c" not in workflow
+
+
+def test_setup_docs_fail_closed_on_unsupported_python_and_provision_uv():
+    for relative_path in ("README.md", "docs/development.md"):
+        text = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "sys.version_info[:2] in {(3, 11), (3, 12)}" in text
+
+    development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
+    assert "uv --version" in development
+
+
 def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
     matches = list(ENTRY_HEADING.finditer(text))
     entries: dict[str, dict[str, str]] = {}

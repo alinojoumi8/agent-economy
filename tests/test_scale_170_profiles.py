@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from llm.readiness import validate_llm_config
-from run import open_run
+from run import open_run, replay_headless
 from run_config import load_config
+from world.replay_verify import verify_replay
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +29,12 @@ LIVE_PROFILE_CASES = [
         25.0,
     ),
 ]
+
+
+def test_scale_170_rehearsal_pins_its_engine_semantics_version():
+    source = yaml.safe_load(REHEARSAL.read_text(encoding="utf-8"))
+
+    assert source["engine_semantics_version"] == 7
 
 
 def test_scale_170_rehearsal_builds_exact_population_and_paid_core(tmp_path):
@@ -81,7 +90,33 @@ def test_scale_170_rehearsal_builds_exact_population_and_paid_core(tmp_path):
         ok, diagnostic = world.economy.ledger.reconcile()
         assert ok, diagnostic
     finally:
-        store.close()
+        world.close()
+
+
+def test_scale_170_rehearsal_replays_exactly_without_mutating_source(tmp_path):
+    config = load_config(REHEARSAL)
+    store, world, source_run_id = open_run(
+        config, None, None, data_dir=tmp_path)
+    source_path = Path(store.path)
+    try:
+        asyncio.run(world.step())
+    finally:
+        world.close()
+
+    before = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    replay_store, replay_world, _replay_run_id = open_run(
+        {}, None, source_run_id, data_dir=tmp_path)
+    try:
+        asyncio.run(replay_headless(replay_world, 1))
+        proof = verify_replay(source_path, replay_store.path)
+        assert proof["exact"], proof["differences"]
+        assert proof["differences"] == []
+        assert proof["source_tick"] == proof["replay_tick"] == 1
+        assert proof["source_hash"] == proof["replay_hash"]
+    finally:
+        replay_world.close()
+
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == before
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ The backend and committed dashboard bundle are one release unit.
 ## Backend
 
 ```powershell
+python -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --require-hashes -r requirements.lock
@@ -18,6 +19,7 @@ python run.py --config runs/base.yaml
 POSIX (bash):
 
 ```bash
+python3 -c "import sys; assert sys.version_info[:2] in {(3, 11), (3, 12)}, 'Python 3.11 or 3.12 required'"
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes -r requirements.lock
@@ -32,6 +34,14 @@ cross-platform, hash-locked install after changing it:
 
 ```powershell
 uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+```
+
+The full gate also uses `uvx` for the Python dependency audit. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) first and verify
+that it is available before running the gate:
+
+```bash
+uv --version
 ```
 
 ## Dashboard

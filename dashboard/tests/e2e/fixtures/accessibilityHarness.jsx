@@ -46,6 +46,15 @@ function AccessibilityHarness() {
           mode: "network",
           providers: [{ name: "minimax" }],
         },
+        navigation: {
+          run_id: "accessibility-test",
+          world_slug: "local-sandbox",
+          observatory: "/",
+          world_os: "/runs/accessibility-test/overview",
+          commons: "/runs/accessibility-test/commons",
+          join: "/join/local-sandbox",
+          my_agents: "/my-agents",
+        },
       }}
       participant={{}}
       connected

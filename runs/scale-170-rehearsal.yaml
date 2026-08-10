@@ -6,6 +6,7 @@
 extends: base.yaml
 
 seed: 42
+engine_semantics_version: 7
 
 population:
   baseline_citizens_core: false

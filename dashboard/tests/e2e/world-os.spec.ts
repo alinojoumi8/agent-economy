@@ -668,6 +668,7 @@ test("graph and semantic table share keyboard selection with reduced motion", as
   await page.goto("/runs/run-demo/investigations?event=9");
   const proposalNode = page.locator('.world-os-causal-graph [role="button"][aria-label^="action_proposal 8"]');
   await proposalNode.focus();
+  await expect(proposalNode).toHaveCSS("outline-style", "solid");
   await page.keyboard.press("Enter");
   await expect(page.locator(".world-os-semantic-panel tr.selected")).toContainText("buy_goods");
   await page.getByRole("button", { name: "Zoom in" }).click();

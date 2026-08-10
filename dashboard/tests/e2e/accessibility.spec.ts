@@ -51,6 +51,9 @@ test("named status, ticker, and scroll areas use valid keyboard-accessible roles
   await expect(page.getByRole("heading", { level: 1, name: "Civic Observatory" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Live connection" })).toBeVisible();
   await expect(page.getByRole("group", { name: "Live stock ticker" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Join", exact: true })).toHaveAttribute(
+    "href", "/join/local-sandbox",
+  );
 
   for (const name of [
     "Firms and exchange records",
@@ -82,10 +85,18 @@ test("small Observatory controls retain WCAG AA text contrast", async ({ page })
 });
 
 test("print media hides application chrome but preserves semantic content headers", async ({ page }) => {
+  await page.evaluate(() => {
+    const shell = document.createElement("div");
+    shell.className = "world-os-shell";
+    shell.innerHTML = '<aside class="world-os-rail">Navigation</aside><header class="world-os-topbar">Toolbar</header>';
+    document.body.appendChild(shell);
+  });
   await page.emulateMedia({ media: "print" });
 
   await expect(page.locator(".civic-run-header")).toBeHidden();
   await expect(page.locator(".civic-city__mast")).toBeVisible();
+  await expect(page.locator(".world-os-rail")).toBeHidden();
+  await expect(page.locator(".world-os-shell")).toHaveCSS("display", "block");
 });
 
 test("native controls use the color scheme of their visual surface", async ({ page }) => {
