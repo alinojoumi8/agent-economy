@@ -171,6 +171,22 @@
   --ae-city-unrecorded: #838c9c;
   --ae-city-anon: #b48ad8;
   --ae-city-chip: 7px;
+  /*
+   * TERRITORY. The hull of a region's own places is real geography — every
+   * place carries a region_id and a coordinate — so a polity gets a ground and
+   * an edge. Deliberately ONE neutral pair for all three rather than a hue per
+   * region: the three person hues already spend blue/green/amber on home, work
+   * and commons, and a second hue system on the same field would make "which
+   * colour am I reading" the first question asked of every mark.
+   */
+  /* The ground a name plate sits on. More opaque than a chrome panel because it
+     lies UNDER the people: at panel opacity the commuters crossing it read as
+     shredding the letterforms rather than passing in front of them. */
+  --ae-city-plate: rgba(10, 14, 20, .94);
+  --ae-city-land: rgba(140, 168, 196, .052);
+  --ae-city-land-edge: rgba(140, 168, 196, .30);
+  --ae-city-graticule: rgba(140, 168, 196, .055);
+  --ae-city-focus: #9cc4ff;
 }
 
 [data-theme="light"] {

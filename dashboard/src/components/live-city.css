@@ -33,7 +33,9 @@
   background:
     radial-gradient(120% 90% at 50% -10%, var(--ae-city-line-soft), transparent 60%),
     var(--ae-city-sky-business);
-  transition: background-color 2.4s linear;
+  /* Long enough that the sky is still turning when the people arrive, so the
+     hour reads as a change the commute caused rather than a switch thrown. */
+  transition: background-color 5.5s linear;
 }
 
 .live-city__field[data-beat="morning"] { background-color: var(--ae-city-sky-morning); }
@@ -46,13 +48,25 @@
   display: block;
 }
 
-.live-city__halo { pointer-events: none; }
-
-.live-city__ring {
-  fill: none;
-  stroke: var(--ae-city-line-soft);
+/* The map's own coordinate system, at 0.1 intervals. It is not terrain and it
+   claims nothing: it gives the empty band between the polities a surface, and a
+   sense of how far apart they actually are. */
+.live-city__graticule line {
+  stroke: var(--ae-city-graticule);
   stroke-width: 1;
-  stroke-dasharray: 2 7;
+}
+
+/*
+ * TERRITORY. The convex hull of the places a region owns — derived, never drawn
+ * beyond the outermost place the polity actually holds. One neutral ground for
+ * all three: the person hues already spend blue, green and amber on home, work
+ * and commons, and a second colour system on one field is one too many.
+ */
+.live-city__land {
+  fill: var(--ae-city-land);
+  stroke: var(--ae-city-land-edge);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
 }
 
 .live-city__place { fill: var(--ae-city-place); opacity: .5; }
@@ -64,6 +78,23 @@
   stroke: var(--ae-city-place-civic);
   stroke-width: 1.2;
   opacity: .8;
+}
+
+/* The followed person's whole recorded day: the closed path through their three
+   placements. Dashed, because the legs between them are interpolated. */
+.live-city__focus-day {
+  fill: none;
+  stroke: var(--ae-city-focus);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  opacity: .85;
+}
+
+.live-city__focus-anchor {
+  fill: none;
+  stroke: var(--ae-city-focus);
+  stroke-width: 1.4;
+  opacity: .9;
 }
 
 /* ================================================================ chips == */
@@ -78,6 +109,12 @@
 /*
  * One person. Positioned at the origin and moved only by transform, so the
  * animation loop writes one property and the browser never reflows.
+ *
+ * `color` carries the hue and `background` takes it from there, so the wake and
+ * every glow resolve to the SAME hue as the dot. Round one lit moving chips with
+ * `currentColor` while currentColor was still the inherited page ink, which is
+ * why every chip blew out to undifferentiated white at exactly the moment the
+ * At home / At work / In the commons code was needed to read the commute.
  */
 .live-city__chip {
   position: absolute;
@@ -87,17 +124,64 @@
   height: var(--ae-city-chip);
   margin: calc(var(--ae-city-chip) / -2) 0 0 calc(var(--ae-city-chip) / -2);
   border-radius: 50%;
-  background: var(--ae-city-unrecorded);
-  transition: opacity .5s linear, box-shadow .5s linear;
+  color: var(--ae-city-unrecorded);
+  background: currentColor;
+  pointer-events: auto;
+  cursor: pointer;
+  /*
+   * The hue hands over at the half-way point of a leg, and it hands over as a
+   * wash rather than a switch: three hundred dots flipping blue to green in one
+   * frame reads as a control being thrown, where a cross-fade reads as what it
+   * is — the city arriving at work. Position is untouched by this. No CSS
+   * transition may ever touch chip position, because a transition invents the
+   * in-between and every in-between here has to be on a recorded segment.
+   */
+  transition: color 2.6s linear, opacity .5s linear;
 }
 
-.live-city__chip--routine_home { background: var(--ae-city-home); }
-.live-city__chip--routine_work { background: var(--ae-city-work); }
-.live-city__chip--public_commons { background: var(--ae-city-commons); }
+.live-city__chip--routine_home { color: var(--ae-city-home); }
+.live-city__chip--routine_work { color: var(--ae-city-work); }
+.live-city__chip--public_commons { color: var(--ae-city-commons); }
 
-/* In transit between two recorded placements: brighter, and trailing. */
+/*
+ * The wake: the stretch of this leg the person has already covered, drawn behind
+ * them. Every pixel of it lies on the same recorded segment the chip is on, so
+ * it adds no claim — it makes the claim visible, gives the dot a heading, and
+ * makes one dot in three hundred followable between two frames.
+ */
+.live-city__wake {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 2px;
+  margin-top: -1px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(to right, currentColor, transparent);
+  border-radius: 1px;
+  opacity: .5;
+  pointer-events: none;
+}
+
+/* In transit between two recorded placements: the chip keeps its hue and gains
+   a halo OF that hue. Never white — the halo must not cost the encoding. */
 .live-city__chip.is-moving {
-  box-shadow: 0 0 0 1px var(--ae-city-veil), 0 0 9px 1px currentColor;
+  box-shadow: 0 0 6px 0 currentColor;
+}
+
+/*
+ * The 97 people whose recorded day crosses a regional border. They are the only
+ * marks that ever occupy the middle of the field, and a size up plus a ring
+ * gives the eye something whose identity survives maximum dispersal.
+ */
+.live-city__chip[data-haul="1"] {
+  --ae-city-chip: 9.5px;
+  box-shadow: inset 0 0 0 1.4px var(--ae-city-veil);
+}
+
+.live-city__chip[data-haul="1"].is-moving {
+  box-shadow: inset 0 0 0 1.4px var(--ae-city-veil), 0 0 7px 0 currentColor;
 }
 
 /*
@@ -111,48 +195,116 @@
   opacity: .75;
 }
 
+.live-city__chip.is-focus {
+  box-shadow: 0 0 0 2px var(--ae-city-focus), 0 0 10px 0 currentColor;
+}
+
 /* ================================================== marks on the ground == */
 
 .live-city__marks--under { z-index: 0; }
+.live-city__marks--crowds { z-index: 1; }
 
-/* A district name on a map: centred on the region, quiet enough to read
-   people over, never competing with them for attention. */
-.live-city__region {
+/*
+ * A territory's name plate. Round one set these as huge letterspaced ghost type
+ * at 15 % opacity UNDER three hundred moving dots, which shredded them exactly
+ * when the field was busiest. This is a map's margin note instead: on a plate,
+ * at readable weight, placed outside the hull on the side facing the empty
+ * middle of the canvas — so it is never under the people and the void between
+ * the polities carries something worth reading.
+ */
+.live-city__territory {
   position: absolute;
   transform: translate(-50%, -50%);
   display: grid;
   gap: 2px;
   justify-items: center;
+  padding: var(--ae-space-1) var(--ae-space-3);
+  border-radius: var(--ae-radius-sm);
+  border: 1px solid var(--ae-city-land-edge);
+  background: var(--ae-city-plate);
   text-align: center;
   white-space: nowrap;
 }
 
-.live-city__region strong {
-  font-size: var(--ae-fs-2);
-  font-weight: 500;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--ae-city-ink);
-  opacity: .3;
+.live-city__territory::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  height: 20px;
+  background: var(--ae-city-land-edge);
 }
 
-.live-city__region span {
+.live-city__territory:not(.is-below)::after { top: 100%; }
+.live-city__territory.is-below::after { bottom: 100%; }
+
+.live-city__territory strong {
+  font-size: var(--ae-fs-3);
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ae-city-ink);
+}
+
+.live-city__territory span {
   font-size: var(--ae-fs-6);
   letter-spacing: var(--ae-ls-cap);
   color: var(--ae-city-ink);
-  opacity: .26;
+  opacity: .68;
 }
 
 /*
- * The marker sits exactly on the office; only the words hang off it. That
- * matters — the dashed ring is a claim about a real coordinate, and centring
- * the ring-plus-label pair would have put the ring beside the building.
+ * A crowd. The ring is drawn at the radius the de-collision spiral actually
+ * occupies, so the number is tied to the smudge it describes: without it a place
+ * holding four and a place holding forty-two render identically.
+ *
+ * Opacity is written per frame from the weight of the slot this count belongs
+ * to, so a headcount recorded for the morning fades out as the morning does.
+ */
+.live-city__crowd {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+}
+
+.live-city__crowd i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--ae-city-line);
+}
+
+.live-city__crowd b {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 2px);
+  transform: translateX(-50%);
+  padding: 0 4px;
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-city-panel);
+  font-family: var(--ae-font-mono);
+  font-size: var(--ae-fs-6);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ae-city-ink);
+  opacity: .92;
+}
+
+/*
+ * The marker sits exactly on the office; only the count hangs off it. Rendered
+ * once per SLOT the world recorded it in and faded on that slot's weight, so it
+ * is simply not on the field in the morning or the evening — round one summed
+ * the three business rows into one permanent label that sat over a region name
+ * all day, including hours it had no figure for.
  */
 .live-city__anon {
   position: absolute;
   width: 16px;
   height: 16px;
   transform: translate(-50%, -50%);
+  opacity: 0;
 }
 
 .live-city__anon i {
@@ -162,26 +314,91 @@
   border: 1.5px dashed var(--ae-city-anon);
 }
 
-.live-city__anon span {
+.live-city__anon b {
   position: absolute;
-  left: calc(100% + var(--ae-space-2));
+  left: calc(100% + 3px);
   top: 50%;
   transform: translateY(-50%);
-  padding: 2px var(--ae-space-2);
-  border-radius: var(--ae-radius-sm);
-  background: var(--ae-city-panel);
+  font-family: var(--ae-font-mono);
   font-size: var(--ae-fs-6);
-  color: var(--ae-city-ink);
-  opacity: .82;
-  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ae-city-anon);
 }
 
-.live-city__anon.is-flipped span {
-  left: auto;
-  right: calc(100% + var(--ae-space-2));
+/* ---- the lock-on: one person, followed ---- */
+
+.live-city__lockon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
 }
 
-.live-city__anon b { font-family: var(--ae-font-mono); font-weight: 600; }
+.live-city__lockon.is-on { opacity: 1; }
+
+.live-city__lockon i {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--ae-city-focus);
+  opacity: .8;
+}
+
+.live-city__lockon-plate {
+  position: absolute;
+  left: 20px;
+  top: -12px;
+  width: 244px;
+  padding: var(--ae-space-2);
+  display: grid;
+  gap: var(--ae-space-1);
+  border-radius: var(--ae-radius);
+  border: 1px solid var(--ae-city-focus);
+  background: var(--ae-city-panel);
+  backdrop-filter: blur(9px);
+}
+
+.live-city__lockon-plate strong { font-size: var(--ae-fs-3); font-weight: 600; }
+.live-city__lockon-plate > span { font-size: var(--ae-fs-6); opacity: .7; }
+
+.live-city__lockon-plate ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1px;
+}
+
+.live-city__lockon.is-flipped .live-city__lockon-plate { left: auto; right: 20px; }
+
+.live-city__lockon-plate li {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: var(--ae-space-2);
+  font-size: var(--ae-fs-6);
+  line-height: 1.4;
+}
+
+.live-city__lockon-plate li b { font-weight: 600; opacity: .62; }
+.live-city__lockon-plate li span { opacity: .92; }
+.live-city__lockon-plate li em {
+  grid-column: 2;
+  font-style: normal;
+  color: var(--ae-city-unrecorded);
+}
+
+.live-city__lockon-plate p {
+  margin: 0;
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  opacity: .55;
+}
 
 /* =============================================================== chrome == */
 
@@ -190,7 +407,7 @@
 .live-city__legend,
 .live-city__disclosure {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   background: var(--ae-city-panel);
   backdrop-filter: blur(9px);
   border: 1px solid var(--ae-city-line);
@@ -205,16 +422,23 @@
   align-items: flex-start;
   gap: var(--ae-space-6);
   padding: var(--ae-space-3) var(--ae-space-4);
-  max-width: min(58vw, 720px);
 }
 
+/* One line, always. The round-one wordmark joined all three region names and
+   wrapped to two lines that overran the map labels beneath it; the region names
+   are now plates on the territories they belong to, where they are of use. */
 .live-city__identity h1 {
   margin: 2px 0 var(--ae-space-1);
   font-size: var(--ae-fs-1);
   font-weight: 600;
   letter-spacing: var(--ae-ls-hero);
   line-height: 1.1;
+  white-space: nowrap;
 }
+
+.live-city__identity .ae-cap { opacity: .72; }
+/* A run id is an identifier, not a heading — it keeps the case it was issued in. */
+.live-city__identity .ae-cap .mono { text-transform: none; letter-spacing: 0; }
 
 .live-city__run {
   display: flex;
@@ -222,6 +446,7 @@
   gap: var(--ae-space-3);
   font-size: var(--ae-fs-5);
   opacity: .78;
+  white-space: nowrap;
 }
 
 .live-city__run a { color: var(--ae-city-ink); text-decoration: none; }
@@ -256,6 +481,7 @@
   letter-spacing: var(--ae-ls-cap);
   text-transform: uppercase;
   opacity: .6;
+  white-space: nowrap;
 }
 .live-city__readout dd {
   margin: 0;
@@ -269,21 +495,17 @@
 .live-city__clock {
   right: var(--ae-space-4);
   top: var(--ae-space-4);
-  width: 232px;
+  width: 236px;
   padding: var(--ae-space-3);
   display: grid;
   gap: var(--ae-space-2);
 }
 
 .live-city__clock strong {
-  font-size: var(--ae-fs-1);
+  font-size: var(--ae-fs-2);
   font-weight: 600;
   line-height: 1.05;
 }
-
-/* Mid-leg the clock names both ends, so it never says "Morning" over a
-   screen full of people who have already left. */
-.live-city__clock strong.is-travelling { font-size: var(--ae-fs-2); }
 
 .live-city__beats {
   display: grid;
@@ -318,7 +540,9 @@
   font-weight: 600;
 }
 
-/* The day's own progress bar. Written as a CSS variable every frame. */
+/* Two tracks, both written as CSS variables every frame: how far along this leg
+   the people are, and how far through the day. */
+.live-city__leg-track,
 .live-city__day-track {
   height: 2px;
   border-radius: 1px;
@@ -326,23 +550,25 @@
   overflow: hidden;
 }
 
+.live-city__leg-track i,
 .live-city__day-track i {
   display: block;
   height: 100%;
   background: var(--ae-city-ink);
-  opacity: .7;
-  transform: scaleX(var(--live-city-day, 0));
   transform-origin: left center;
 }
 
+.live-city__leg-track i { opacity: .85; transform: scaleX(var(--live-city-leg, 0)); }
+.live-city__day-track i { opacity: .4; transform: scaleX(var(--live-city-day, 0)); }
+
 .live-city__clock small { font-size: var(--ae-fs-5); opacity: .68; line-height: 1.35; }
 
-/* ---- legend ---- */
+/* ---- legend: stacked under the clock, in the band the map already reserves ---- */
 
 .live-city__legend {
-  left: var(--ae-space-4);
-  bottom: 96px;
-  max-width: 320px;
+  right: var(--ae-space-4);
+  top: 268px;
+  width: 236px;
   padding: var(--ae-space-3);
   display: grid;
   gap: var(--ae-space-2);
@@ -371,11 +597,33 @@
 .live-city__key--routine_home { background: var(--ae-city-home); }
 .live-city__key--routine_work { background: var(--ae-city-work); }
 .live-city__key--public_commons { background: var(--ae-city-commons); }
+.live-city__key--haul {
+  width: 11px;
+  height: 11px;
+  margin: 3px 0 0 -1px;
+  background: var(--ae-city-ink);
+  box-shadow: inset 0 0 0 1.4px var(--ae-city-veil);
+}
+.live-city__key--crowd {
+  background: transparent;
+  border: 1px solid var(--ae-city-line);
+  width: 11px;
+  height: 11px;
+  margin-left: -1px;
+}
 .live-city__key--unrecorded {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--ae-city-unrecorded);
 }
 .live-city__key--anon { background: transparent; border: 1.5px dashed var(--ae-city-anon); }
+
+.live-city__hint {
+  margin: 0;
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  opacity: .55;
+}
 
 /* ---- the disclosure: permanent, never dismissible ---- */
 
@@ -393,21 +641,26 @@
 .live-city__disclosure p { margin: 0; font-size: var(--ae-fs-5); line-height: 1.45; opacity: .82; max-width: 88ch; }
 .live-city__disclosure b { font-weight: 600; opacity: 1; }
 
+/*
+ * Provenance, not telemetry. Round one shipped "/api/v2/map 152 ms" and
+ * "/api/run/status 47 ms" in the foot of a city view — a latency readout is a
+ * developer's instrument and this is not its surface. What survives is the
+ * thing a reader of a truth claim needs: what was recorded, and when.
+ */
 .live-city__provenance {
   display: flex;
   align-items: center;
   gap: var(--ae-space-4);
   white-space: nowrap;
+  opacity: .62;
 }
-
-.live-city__disclosure .ae-pmeta { color: var(--ae-city-ink); opacity: .72; }
 
 /* ================================================== states + assistive == */
 
 .live-city__veil {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   display: grid;
   align-content: center;
   justify-items: center;
@@ -436,20 +689,22 @@
 
 /*
  * REDUCED MOTION. The loop already stops gliding — chips step between recorded
- * placements on the beat instead of travelling between them — so all that is
- * left here is to still the atmosphere and the in-transit glow.
+ * placements on the leg boundary instead of travelling between them — so all
+ * that is left here is to still the atmosphere, the wake and the in-transit
+ * halo.
  */
 @media (prefers-reduced-motion: reduce) {
   .live-city__field { transition: none; }
   .live-city__chip { transition: none; }
   .live-city__chip.is-moving { box-shadow: none; }
+  .live-city__chip[data-haul="1"].is-moving { box-shadow: inset 0 0 0 1.4px var(--ae-city-veil); }
+  .live-city__wake { display: none; }
 }
 
 /* Narrow viewports: the chrome stacks, the city keeps the whole screen. */
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .live-city__masthead { max-width: calc(100% - var(--ae-space-6)); flex-direction: column; gap: var(--ae-space-2); }
   .live-city__readout { flex-wrap: wrap; gap: var(--ae-space-4); }
-  .live-city__clock { top: auto; bottom: 128px; width: 200px; }
   .live-city__legend { display: none; }
   .live-city__disclosure { flex-direction: column; align-items: flex-start; gap: var(--ae-space-2); }
 }
