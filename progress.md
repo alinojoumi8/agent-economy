@@ -101,7 +101,45 @@ reflow as motion. **The trustworthy result is 3/3 against ADS-B**, where the shi
 `framediff.js` should be upgraded to align frames before differencing; until then its numbers are an upper
 bound, not a measure.
 
-### Round 3 — built ✅ (judgement in flight)
+## ✅ Round 3 result — 6/6 again. Exit condition met twice running.
+
+| round | vs Mini Tokyo | vs ADS-B | total | decisive |
+|---|---|---|---|---|
+| 1 | *(void — bar was static)* | **1/3** | 1/3 | 0 |
+| 2 | 3/3 | 3/3 | **6/6** | 2 |
+| 3 | 3/3 | 3/3 | **6/6** | 1 |
+
+Critics actively checked and **cleared** in ours: no frozen intervals (all 11 show 50–67% of grid cells
+changed and 72%+ of tracked chips displaced *after* shift compensation); no stale readouts — one verified the
+constant rather than assuming it: *"'TICK 349' is the identifier of the recorded day being replayed, not a
+frozen clock — I checked it against the footer copy before clearing it"*; **no entity-over-text occlusion on
+the region plates** — *"chips and trails render around and behind them, never over the type, which is exactly
+where A fails"*; no chrome debris; no teleporting or popping.
+
+They also independently confirmed the trap I had been measuring wrong: compensating for canvas shift removes
+**77–91%** of Mini Tokyo's raw difference but only **5–53%** of ours.
+
+### The pattern worth naming: each round's fix becomes the next round's defect
+
+- The 2.6× inset that resolved the crowd now has **its own labels destroyed** — *"'24 District 2' is destroyed
+  by amber chips and route lines drawn straight through the glyphs with no halo or plate."* The same occlusion
+  class that was fixed on the region plates, relocated into the fix.
+- The destination rings that stopped travellers "gliding into black" became **a route hairball** — *"hundreds
+  of long straight chords at uniform weight blanket the entire canvas, including large stretches of territory
+  holding no dots at all."*
+- The honesty disclosures became **a wall of text** — *"B's right rail is not a legend, it is four stacked 3–4
+  line paragraphs of implementation rules."*
+- Count badges are **half-finished**: some get a dark plate and read cleanly; *"'35', '25', '16' are bare ~6px
+  numerals dropped straight onto the densest part of the dot field."*
+- The Northstar core **still** overplots at peak density — *"the design still answers 'many' but stops
+  answering 'how many'."*
+- A raw build hash still ships in the footer, and NSD / IVC / SCD are unexplained codes.
+
+This is the third time in two loops that a targeted fix has generated the next round's finding. It is a
+property of the method, not an accident: each brief is written from the previous round's evidence, so it can
+only ever see backwards.
+
+### Round 3 — build detail
 
 Motion floor, all captures re-measured with the upgraded tool:
 
