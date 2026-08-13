@@ -13,7 +13,7 @@ import { useProjectionSocket } from "./useProjectionSocket";
 type GlyphName =
   | "overview" | "world" | "people" | "organizations" | "markets"
   | "politics" | "communications" | "commons" | "investigations"
-  | "experiments" | "panel" | "search";
+  | "experiments" | "panel" | "search" | "street";
 
 type RouteItem = {
   path: string;
@@ -63,6 +63,13 @@ type CommandGroup = {
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Observe", items: [
     { path: "overview", label: "Live City", caption: "Agents at work, evidence in motion", icon: "overview" },
+    /*
+     * Named for what it is rather than for the route, because "Live City" is
+     * already taken by Overview one line above and two identical labels in one
+     * nav is a coin toss for the reader. This one is the map itself: the whole
+     * screen, three hundred people, the recorded day playing across the tick.
+     */
+    { path: "live-city", label: "Street Level", caption: "The recorded day, full screen", icon: "street" },
     { path: "world", label: "World", caption: "Population and environment", icon: "world" },
     { path: "people", label: "People", caption: "Agents, lives, and memory", icon: "people" },
     { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
@@ -105,6 +112,7 @@ function Glyph({ name }: { name: GlyphName }) {
     case "commons": paths = <><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="17" r="2.5" /><circle cx="19" cy="17" r="2.5" /><path d="m10.8 7.2-4.6 7.6M13.2 7.2l4.6 7.6M7.5 17h9" /></>; break;
     case "investigations": paths = <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5" /></>; break;
     case "experiments": paths = <><path d="M9 3h6M10 3v6l-6 10a1.4 1.4 0 0 0 1.2 2h13.6a1.4 1.4 0 0 0 1.2-2L14 9V3" /><path d="M7.5 15h9" /></>; break;
+    case "street": paths = <><path d="M3 20h18M6 20V9l4-3v14M14 20V4l4 3v13" /><circle cx="8" cy="12.5" r=".6" /><circle cx="16" cy="11" r=".6" /></>; break;
     case "panel": paths = <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M5.5 8h1M5.5 12h1" /></>; break;
     default: paths = <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></>;
   }

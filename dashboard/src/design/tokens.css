@@ -136,6 +136,41 @@
   --ae-elev-0: none;
   --ae-elev-1: inset 0 0 0 1px var(--ae-border-soft);
   --ae-elev-2: 0 0 0 1px var(--ae-border);
+
+  /*
+   * ---- Live City ----
+   * The one surface where the ground is not a panel. A map read at a glance
+   * needs a darker field than any panel provides and a person-mark that stays
+   * findable at 7px against it, so the city gets its own short ladder rather
+   * than bending the panel tokens out of shape. Three grounds, one per beat of
+   * the recorded day, so the hour is legible from the field colour alone —
+   * dawn cool, business neutral, evening warm. Each is measured against
+   * --ae-city-ink, the ink every overlay on the map uses:
+   *   ink #e8eef7 on sky-morning #0a1420  15.6:1
+   *   ink on sky-business #0c1119          16.3:1
+   *   ink on sky-evening  #16111a          15.4:1
+   * The three person hues sit above 4.5:1 on all three grounds as fills and
+   * are never the only channel: shape and the legend carry the same split.
+   */
+  --ae-city-sky-morning: #0a1420;
+  --ae-city-sky-business: #0c1119;
+  --ae-city-sky-evening: #16111a;
+  --ae-city-ink: #e8eef7;
+  --ae-city-veil: rgba(7, 9, 12, .82);
+  --ae-city-panel: rgba(14, 18, 25, .84);
+  --ae-city-line: rgba(140, 168, 196, .26);
+  --ae-city-line-soft: rgba(140, 168, 196, .12);
+  --ae-city-halo-core: rgba(74, 128, 178, .17);
+  --ae-city-halo-edge: rgba(74, 128, 178, 0);
+  --ae-city-place: #6d7f92;
+  --ae-city-place-home: #7f8fa8;
+  --ae-city-place-civic: #8fb4cf;
+  --ae-city-home: #6ea8ff;
+  --ae-city-work: #3fbf8c;
+  --ae-city-commons: #e6a94a;
+  --ae-city-unrecorded: #838c9c;
+  --ae-city-anon: #b48ad8;
+  --ae-city-chip: 7px;
 }
 
 [data-theme="light"] {
@@ -166,6 +201,15 @@
   --ae-spark-fill: #eef1f6;
   --ae-track: #dde3ea;
   --ae-scroll-edge: rgba(14, 19, 27, .22);
+
+  /*
+   * The city keeps its dark field in the light theme. A map is not a document:
+   * inverting it would put 300 small marks on white and cost the whole surface
+   * its legibility, so only the chrome that sits ON the map follows the theme.
+   * The three beat grounds and the person hues are unchanged above.
+   */
+  --ae-city-veil: rgba(20, 26, 34, .78);
+  --ae-city-panel: rgba(18, 24, 32, .88);
 }
 
 /*

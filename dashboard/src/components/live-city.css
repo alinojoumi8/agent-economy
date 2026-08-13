@@ -1,0 +1,455 @@
+/*
+ * LIVE CITY — the map is the page.
+ *
+ * Everything resolves from src/design/tokens.css; there is no raw hex here. The
+ * field is fixed to the viewport rather than laid out inside a panel, because a
+ * city inside a card reads as a chart of a city. Chrome floats on top of it in
+ * translucent slabs, and the geography runs underneath them to the window edge —
+ * while the projection's inset keeps every recorded point clear of the slabs, so
+ * nothing is drawn where it cannot be seen.
+ *
+ * MOTION LIVES IN JS, NOT HERE. Chip position is a transform written by the
+ * animation loop each frame. No CSS transition touches chip position: a
+ * transition would invent the in-between, and every in-between on this surface
+ * has to be a point on a segment between two recorded placements.
+ */
+
+.live-city {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--ae-city-sky-business);
+  color: var(--ae-city-ink);
+  font-family: var(--ae-font-ui);
+  font-size: var(--ae-fs-4);
+  contain: strict;
+}
+
+/* =============================================================== field == */
+
+.live-city__field {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--ae-city-line-soft), transparent 60%),
+    var(--ae-city-sky-business);
+  transition: background-color 2.4s linear;
+}
+
+.live-city__field[data-beat="morning"] { background-color: var(--ae-city-sky-morning); }
+.live-city__field[data-beat="business"] { background-color: var(--ae-city-sky-business); }
+.live-city__field[data-beat="evening"] { background-color: var(--ae-city-sky-evening); }
+
+.live-city__terrain {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.live-city__halo { pointer-events: none; }
+
+.live-city__ring {
+  fill: none;
+  stroke: var(--ae-city-line-soft);
+  stroke-width: 1;
+  stroke-dasharray: 2 7;
+}
+
+.live-city__place { fill: var(--ae-city-place); opacity: .5; }
+.live-city__place--firm_workplace { opacity: .38; }
+.live-city__place--residential_district { fill: var(--ae-city-place-home); opacity: .62; }
+.live-city__place--public_commons,
+.live-city__place--licensing_office {
+  fill: none;
+  stroke: var(--ae-city-place-civic);
+  stroke-width: 1.2;
+  opacity: .8;
+}
+
+/* ================================================================ chips == */
+
+.live-city__chips,
+.live-city__marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/*
+ * One person. Positioned at the origin and moved only by transform, so the
+ * animation loop writes one property and the browser never reflows.
+ */
+.live-city__chip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--ae-city-chip);
+  height: var(--ae-city-chip);
+  margin: calc(var(--ae-city-chip) / -2) 0 0 calc(var(--ae-city-chip) / -2);
+  border-radius: 50%;
+  background: var(--ae-city-unrecorded);
+  transition: opacity .5s linear, box-shadow .5s linear;
+}
+
+.live-city__chip--routine_home { background: var(--ae-city-home); }
+.live-city__chip--routine_work { background: var(--ae-city-work); }
+.live-city__chip--public_commons { background: var(--ae-city-commons); }
+
+/* In transit between two recorded placements: brighter, and trailing. */
+.live-city__chip.is-moving {
+  box-shadow: 0 0 0 1px var(--ae-city-veil), 0 0 9px 1px currentColor;
+}
+
+/*
+ * No business placement was recorded for this person. They are held at their
+ * last recorded place and never move; the ring says the position is carried,
+ * not observed. Hollow, not merely faint — a second channel besides opacity.
+ */
+.live-city__chip.is-unrecorded {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ae-city-unrecorded);
+  opacity: .75;
+}
+
+/* ================================================== marks on the ground == */
+
+.live-city__marks--under { z-index: 0; }
+
+/* A district name on a map: centred on the region, quiet enough to read
+   people over, never competing with them for attention. */
+.live-city__region {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.live-city__region strong {
+  font-size: var(--ae-fs-2);
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ae-city-ink);
+  opacity: .3;
+}
+
+.live-city__region span {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  color: var(--ae-city-ink);
+  opacity: .26;
+}
+
+/*
+ * The marker sits exactly on the office; only the words hang off it. That
+ * matters — the dashed ring is a claim about a real coordinate, and centring
+ * the ring-plus-label pair would have put the ring beside the building.
+ */
+.live-city__anon {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+}
+
+.live-city__anon i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px dashed var(--ae-city-anon);
+}
+
+.live-city__anon span {
+  position: absolute;
+  left: calc(100% + var(--ae-space-2));
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px var(--ae-space-2);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-city-panel);
+  font-size: var(--ae-fs-6);
+  color: var(--ae-city-ink);
+  opacity: .82;
+  white-space: nowrap;
+}
+
+.live-city__anon.is-flipped span {
+  left: auto;
+  right: calc(100% + var(--ae-space-2));
+}
+
+.live-city__anon b { font-family: var(--ae-font-mono); font-weight: 600; }
+
+/* =============================================================== chrome == */
+
+.live-city__masthead,
+.live-city__clock,
+.live-city__legend,
+.live-city__disclosure {
+  position: absolute;
+  z-index: 2;
+  background: var(--ae-city-panel);
+  backdrop-filter: blur(9px);
+  border: 1px solid var(--ae-city-line);
+  border-radius: var(--ae-radius);
+  color: var(--ae-city-ink);
+}
+
+.live-city__masthead {
+  left: var(--ae-space-4);
+  top: var(--ae-space-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ae-space-6);
+  padding: var(--ae-space-3) var(--ae-space-4);
+  max-width: min(58vw, 720px);
+}
+
+.live-city__identity h1 {
+  margin: 2px 0 var(--ae-space-1);
+  font-size: var(--ae-fs-1);
+  font-weight: 600;
+  letter-spacing: var(--ae-ls-hero);
+  line-height: 1.1;
+}
+
+.live-city__run {
+  display: flex;
+  align-items: center;
+  gap: var(--ae-space-3);
+  font-size: var(--ae-fs-5);
+  opacity: .78;
+}
+
+.live-city__run a { color: var(--ae-city-ink); text-decoration: none; }
+.live-city__run a:hover { text-decoration: underline; }
+
+.live-city__pulse::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--ae-space-1);
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+
+.live-city__pulse--live { color: var(--ae-pos); }
+.live-city__pulse--paused { color: var(--ae-caution); }
+.live-city__pulse--stale,
+.live-city__pulse--reconnecting { color: var(--ae-neg); }
+
+.live-city__readout {
+  display: flex;
+  gap: var(--ae-space-5);
+  margin: 0;
+  padding-top: var(--ae-space-2);
+}
+
+.live-city__readout div { display: grid; gap: 1px; }
+.live-city__readout dt {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  opacity: .6;
+}
+.live-city__readout dd {
+  margin: 0;
+  font-family: var(--ae-font-mono);
+  font-size: var(--ae-fs-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- day clock ---- */
+
+.live-city__clock {
+  right: var(--ae-space-4);
+  top: var(--ae-space-4);
+  width: 232px;
+  padding: var(--ae-space-3);
+  display: grid;
+  gap: var(--ae-space-2);
+}
+
+.live-city__clock strong {
+  font-size: var(--ae-fs-1);
+  font-weight: 600;
+  line-height: 1.05;
+}
+
+/* Mid-leg the clock names both ends, so it never says "Morning" over a
+   screen full of people who have already left. */
+.live-city__clock strong.is-travelling { font-size: var(--ae-fs-2); }
+
+.live-city__beats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--ae-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-city__beats li {
+  display: grid;
+  gap: 1px;
+  padding: var(--ae-space-1) var(--ae-space-2);
+  border-radius: var(--ae-radius-sm);
+  border-top: 2px solid var(--ae-city-line-soft);
+  font-size: var(--ae-fs-6);
+  opacity: .5;
+}
+
+.live-city__beats li.is-past { opacity: .68; }
+.live-city__beats li.is-now {
+  border-top-color: var(--ae-city-ink);
+  background: var(--ae-city-line-soft);
+  opacity: 1;
+}
+
+.live-city__beats b {
+  font-family: var(--ae-font-mono);
+  font-size: var(--ae-fs-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* The day's own progress bar. Written as a CSS variable every frame. */
+.live-city__day-track {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ae-city-line-soft);
+  overflow: hidden;
+}
+
+.live-city__day-track i {
+  display: block;
+  height: 100%;
+  background: var(--ae-city-ink);
+  opacity: .7;
+  transform: scaleX(var(--live-city-day, 0));
+  transform-origin: left center;
+}
+
+.live-city__clock small { font-size: var(--ae-fs-5); opacity: .68; line-height: 1.35; }
+
+/* ---- legend ---- */
+
+.live-city__legend {
+  left: var(--ae-space-4);
+  bottom: 96px;
+  max-width: 320px;
+  padding: var(--ae-space-3);
+  display: grid;
+  gap: var(--ae-space-2);
+}
+
+.live-city__legend ul { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--ae-space-1); }
+
+.live-city__legend li {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: var(--ae-space-2);
+  align-items: start;
+  font-size: var(--ae-fs-5);
+  line-height: 1.4;
+  opacity: .86;
+}
+
+.live-city__key {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--ae-city-unrecorded);
+}
+
+.live-city__key--routine_home { background: var(--ae-city-home); }
+.live-city__key--routine_work { background: var(--ae-city-work); }
+.live-city__key--public_commons { background: var(--ae-city-commons); }
+.live-city__key--unrecorded {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ae-city-unrecorded);
+}
+.live-city__key--anon { background: transparent; border: 1.5px dashed var(--ae-city-anon); }
+
+/* ---- the disclosure: permanent, never dismissible ---- */
+
+.live-city__disclosure {
+  left: var(--ae-space-4);
+  right: var(--ae-space-4);
+  bottom: var(--ae-space-4);
+  padding: var(--ae-space-2) var(--ae-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ae-space-5);
+}
+
+.live-city__disclosure p { margin: 0; font-size: var(--ae-fs-5); line-height: 1.45; opacity: .82; max-width: 88ch; }
+.live-city__disclosure b { font-weight: 600; opacity: 1; }
+
+.live-city__provenance {
+  display: flex;
+  align-items: center;
+  gap: var(--ae-space-4);
+  white-space: nowrap;
+}
+
+.live-city__disclosure .ae-pmeta { color: var(--ae-city-ink); opacity: .72; }
+
+/* ================================================== states + assistive == */
+
+.live-city__veil {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--ae-space-2);
+  padding: var(--ae-space-6);
+  text-align: center;
+  background: var(--ae-city-veil);
+  backdrop-filter: blur(3px);
+}
+
+.live-city__veil p { margin: 0; font-size: var(--ae-fs-4); opacity: .78; }
+.live-city__veil .ae-empty { color: var(--ae-city-ink); }
+
+.live-city__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.live-city .mono { font-family: var(--ae-font-mono); }
+
+/*
+ * REDUCED MOTION. The loop already stops gliding — chips step between recorded
+ * placements on the beat instead of travelling between them — so all that is
+ * left here is to still the atmosphere and the in-transit glow.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .live-city__field { transition: none; }
+  .live-city__chip { transition: none; }
+  .live-city__chip.is-moving { box-shadow: none; }
+}
+
+/* Narrow viewports: the chrome stacks, the city keeps the whole screen. */
+@media (max-width: 900px) {
+  .live-city__masthead { max-width: calc(100% - var(--ae-space-6)); flex-direction: column; gap: var(--ae-space-2); }
+  .live-city__readout { flex-wrap: wrap; gap: var(--ae-space-4); }
+  .live-city__clock { top: auto; bottom: 128px; width: 200px; }
+  .live-city__legend { display: none; }
+  .live-city__disclosure { flex-direction: column; align-items: flex-start; gap: var(--ae-space-2); }
+}
