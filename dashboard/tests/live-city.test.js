@@ -4,6 +4,7 @@ import {
   CROWD_MIN,
   DAY_MS,
   DAY_SLOTS,
+  DETAIL_ZOOM,
   GLIDE_LINEARITY,
   MAX_DECOLLISION_RADIUS_PX,
   chipScreenPoint,
@@ -12,16 +13,19 @@ import {
   crowdCensus,
   dayClock,
   decollisionLayout,
+  detailWindow,
   distanceToRecordedPath,
   easeTravel,
   fitProjection,
   hullPath,
   legPlan,
+  liveCounts,
   normalizeLiveCity,
   offsetFor,
   placeCohorts,
   segmentDistance,
   slotWeights,
+  zoomProjection,
 } from "../src/lib/liveCity.js";
 
 /*
@@ -421,6 +425,214 @@ test("distance to the recorded path detects a fabricated position", () => {
   assert.ok(distanceToRecordedPath(commuter, 0.4, 0.6) > 0.1);
   assert.equal(segmentDistance(0, 5, 0, 0, 10, 0), 5);
   assert.equal(segmentDistance(-5, 0, 0, 0, 10, 0), 5);
+});
+
+test("the top line counts the chips in the frame, and moves when they do", () => {
+  /*
+   * The measured defect: five masthead figures pixel-identical across 23 s.
+   * These are read off the same anchors and the same clock the renderer draws
+   * from, so they change with the leg instead of describing the whole tick.
+   */
+  const legMs = plan.legs[0].ms;
+  const start = liveCounts(model.agents, dayClock(0, plan));
+  const middle = liveCounts(model.agents, dayClock(legMs / 2, plan));
+  const end = liveCounts(model.agents, { ...dayClock(legMs / 2, plan), t: 1, ease: 1 });
+
+  /* At the head of the leg nobody has left yet, so everyone is at a place. */
+  assert.equal(start.inTransit, 0);
+  assert.equal(start.atPlace, model.agents.length);
+
+  /* Mid-leg exactly the people this leg moves are between two places, and the
+     total is conserved: nobody is counted twice and nobody is dropped. */
+  assert.equal(middle.inTransit, plan.legs[0].movers);
+  assert.equal(middle.inTransit + middle.atPlace, model.agents.length);
+  assert.ok(middle.inTransit !== start.inTransit, "the top line did not move with the leg");
+
+  /* And it lands: at the far end of the leg everyone is on a placement again. */
+  assert.equal(end.inTransit, 0);
+  assert.equal(end.arrived, plan.legs[0].movers);
+
+  /* Someone held at a placement the world never recorded is flagged as such
+     rather than folded silently into the count of people standing somewhere. */
+  assert.equal(middle.held, model.counts.withoutFullDay);
+  assert.deepEqual(liveCounts([], null), { inTransit: 0, atPlace: 0, arrived: 0, held: 0 });
+});
+
+test("the detail camera is the wide camera, closer — and still affine", () => {
+  const projection = fitProjection(model.bounds, 1440, 900,
+    { top: 108, right: 268, bottom: 132, left: 72 });
+  const panel = { width: 430, height: 292 };
+  const detail = detailWindow(model.crowds, model.places, projection, {
+    zoom: DETAIL_ZOOM, panel,
+  });
+
+  /* It is aimed at the busiest recorded place, and that is a recorded
+     coordinate — the inset never centres on a point the data does not hold. */
+  const busiest = [...model.crowds].sort((left, right) => right.peak - left.peak)[0];
+  assert.equal(detail.anchor.placeId, busiest.placeId);
+  assert.deepEqual(detail.centre, { x: busiest.x, y: busiest.y });
+  assert.ok(model.places.some(place =>
+    place.x === detail.centre.x && place.y === detail.centre.y));
+
+  /*
+   * Given the city's bounds the framing slides so the panel holds map instead
+   * of void — and sliding is framing, so the place it is aimed at must still be
+   * inside the window it produces.
+   */
+  const framed = detailWindow(model.crowds, model.places, projection, {
+    zoom: DETAIL_ZOOM, panel, bounds: model.bounds,
+  });
+  assert.ok(framed.camera.window.minX >= model.bounds.minX - 1e-9);
+  assert.ok(framed.camera.window.maxX <= model.bounds.maxX + 1e-9);
+  const slack = 1e-9;
+  assert.ok(busiest.x >= framed.camera.window.minX - slack
+    && busiest.x <= framed.camera.window.maxX + slack);
+  assert.ok(busiest.y >= framed.camera.window.minY - slack
+    && busiest.y <= framed.camera.window.maxY + slack);
+  assert.equal(framed.camera.scaleX, detail.camera.scaleX);
+  /* A window wider than the city is left where it is rather than crushed. */
+  const wide = detailWindow(model.crowds, model.places, projection, {
+    zoom: 0.2, panel, bounds: model.bounds,
+  });
+  assert.deepEqual(wide.centre, { x: busiest.x, y: busiest.y });
+
+  /* The centre of the panel is the centre of the window. */
+  const middle = detail.camera.project(detail.centre.x, detail.centre.y);
+  assert.ok(Math.abs(middle.x - panel.width / 2) < 1e-9);
+  assert.ok(Math.abs(middle.y - panel.height / 2) < 1e-9);
+
+  /* Exactly the magnification claimed, on both axes — an inset that stretched
+     one axis would make a straight recorded segment read as a different one. */
+  assert.ok(Math.abs(detail.camera.scaleX / projection.scaleX - DETAIL_ZOOM) < 1e-9);
+  assert.ok(Math.abs(detail.camera.scaleY / projection.scaleY - DETAIL_ZOOM) < 1e-9);
+
+  /* Affine, so the pixel check works identically inside the panel: the
+     midpoint of two recorded points is the midpoint of their inset pixels. */
+  const a = detail.camera.project(0.2, 0.2);
+  const b = detail.camera.project(0.6, 0.5);
+  const mid = detail.camera.project(0.4, 0.35);
+  assert.ok(Math.abs(mid.x - (a.x + b.x) / 2) < 1e-9);
+  assert.ok(Math.abs(mid.y - (a.y + b.y) / 2) < 1e-9);
+
+  /* Membership is a containment test on recorded coordinates, not a grouping. */
+  for (const place of detail.places) {
+    assert.ok(place.x >= detail.camera.window.minX && place.x <= detail.camera.window.maxX);
+    assert.ok(place.y >= detail.camera.window.minY && place.y <= detail.camera.window.maxY);
+  }
+  for (const place of model.places.filter(item => !detail.places.includes(item))) {
+    const inside = place.x >= detail.camera.window.minX && place.x <= detail.camera.window.maxX
+      && place.y >= detail.camera.window.minY && place.y <= detail.camera.window.maxY;
+    assert.equal(inside, false, "a place inside the window was left out of the panel");
+  }
+
+  /* No panel, no camera — and a city with no crowds gets no inset at all. */
+  assert.equal(detailWindow(model.crowds, model.places, projection, { panel: null }), null);
+  assert.equal(detailWindow([], model.places, projection, { panel }), null);
+});
+
+test("a chip in the detail camera is on the same recorded segment as in the wide one", () => {
+  /*
+   * The inset must not become a second layout. Its pixels are checked the same
+   * way the wide view's are: undo the inset projection and the declared offset,
+   * and the residual against the recorded path must be zero.
+   */
+  const offsets = decollisionLayout(model.agents);
+  const projection = fitProjection(model.bounds, 1440, 900,
+    { top: 108, right: 268, bottom: 132, left: 72 });
+  const detail = detailWindow(model.crowds, model.places, projection, {
+    zoom: DETAIL_ZOOM, panel: { width: 430, height: 292 },
+  });
+  const camera = detail.camera;
+
+  for (const agent of model.agents) {
+    for (let ms = 0; ms < plan.dayMs; ms += 211) {
+      const clock = dayClock(ms, plan);
+      const wide = chipScreenPoint(agent, clock, projection, offsets);
+      const near = chipScreenPoint(agent, clock, camera, offsets);
+      const dataX = (near.x - near.offsetX - camera.left) / camera.scaleX + camera.minX;
+      const dataY = (near.y - near.offsetY - camera.top) / camera.scaleY + camera.minY;
+      assert.ok(distanceToRecordedPath(agent, dataX, dataY) < 1e-9,
+        `agent ${agent.id} left the recorded path in the detail camera`);
+      /* And it is the SAME point: the two cameras cannot disagree about where
+         a person is, only about how large the pixel between them is. */
+      const wideX = (wide.x - wide.offsetX - projection.left) / projection.scaleX + projection.minX;
+      assert.ok(Math.abs(wideX - dataX) < 1e-9, "the two cameras disagree about a position");
+    }
+  }
+
+  /*
+   * The one declared displacement is magnified with the ground, exactly and
+   * only by the zoom. That is what makes the inset resolve a crowd instead of
+   * reprinting the same fused blob larger — and in data terms it makes the
+   * inset the more faithful camera, since the same 27 px disc now stands for
+   * 2.6 times less of the map.
+   */
+  const sample = model.agents.find(agent => agent.id === 1);
+  const wide = chipScreenPoint(sample, dayClock(0, plan), projection, offsets);
+  const near = chipScreenPoint(sample, dayClock(0, plan), camera, offsets);
+  assert.ok(Math.abs(wide.offsetX) > 0, "the sample must actually be de-collided");
+  assert.ok(Math.abs(near.offsetX - wide.offsetX * DETAIL_ZOOM) < 1e-9);
+  assert.ok(Math.abs(near.offsetY - wide.offsetY * DETAIL_ZOOM) < 1e-9);
+  /* And in data units the inset's spread is smaller, not larger. */
+  assert.ok(Math.abs(near.offsetX) / camera.scaleX
+    < Math.abs(wide.offsetX) / projection.scaleX + 1e-12);
+});
+
+test("a moving chip carries the pixel of the recorded placement it is bound for", () => {
+  /*
+   * The cross-border defect: chips gliding into black with nothing at the far
+   * end. The destination the surface draws must be the recorded `to` placement
+   * and the lead must be the remainder of the same segment — never longer than
+   * what is left of it, and zero for somebody who is not going anywhere.
+   */
+  const offsets = decollisionLayout(model.agents);
+  const projection = fitProjection(model.bounds, 1440, 900,
+    { top: 108, right: 268, bottom: 132, left: 72 });
+  const traveller = agentById(5);
+  const resident = agentById(3);
+
+  for (let ms = 0; ms < plan.legs[0].ms; ms += 97) {
+    const clock = dayClock(ms, plan);
+    const chip = chipScreenPoint(traveller, clock, projection, offsets);
+    const target = projection.project(chip.point.to.x, chip.point.to.y);
+    const declared = offsetFor(offsets, traveller.id, chip.point.to.placeId);
+    assert.ok(Math.abs(chip.destX - (target.x + declared.x)) < 1e-9);
+    assert.ok(Math.abs(chip.destY - (target.y + declared.y)) < 1e-9);
+
+    /* Covered plus remaining is exactly the whole segment, so the lead cannot
+       overrun the recorded end of it: the two together ARE the segment. */
+    const origin = projection.project(chip.point.from.x, chip.point.from.y);
+    const fromOffset = offsetFor(offsets, traveller.id, chip.point.from.placeId);
+    const whole = Math.hypot(
+      chip.destX - (origin.x + fromOffset.x), chip.destY - (origin.y + fromOffset.y));
+    assert.ok(chip.remainingPx >= 0);
+    assert.ok(Math.abs(chip.travelledPx + chip.remainingPx - whole) < 1e-6,
+      `covered + remaining (${chip.travelledPx + chip.remainingPx}) is not the segment (${whole})`);
+    /* And both point the same way: the lead continues the wake, it does not
+       bend off it. A curved route would show up here as a bearing that
+       disagrees with the heading. */
+    assert.ok(ms === 0 || Math.abs(chip.bearingDeg - chip.headingDeg) < 1e-6);
+  }
+
+  /* Nobody who stays put is given a destination to travel to. */
+  const still = chipScreenPoint(resident, dayClock(plan.legs[0].ms / 2, plan), projection, offsets);
+  assert.equal(still.remainingPx, 0);
+  assert.equal(still.bearingDeg, 0);
+
+  /* At the far end of the leg the chip IS its destination pixel. */
+  const landed = chipScreenPoint(traveller, dayClock(plan.legs[0].ms - 1e-9, plan), projection, offsets);
+  assert.ok(landed.remainingPx < 0.01);
+});
+
+test("zooming about a point moves nothing but the scale", () => {
+  const base = fitProjection({ minX: 0, minY: 0, maxX: 1, maxY: 1 }, 1000, 800, {});
+  const camera = zoomProjection(base, { x: 0.5, y: 0.5 }, 4, { width: 200, height: 100 });
+  assert.deepEqual(camera.project(0.5, 0.5), { x: 100, y: 50 });
+  assert.equal(camera.scaleX, base.scaleX * 4);
+  assert.equal(camera.zoom, 4);
+  /* The window is what the panel can hold, in data units, and it is centred. */
+  assert.ok(Math.abs((camera.window.minX + camera.window.maxX) / 2 - 0.5) < 1e-9);
+  assert.ok(Math.abs((camera.window.maxX - camera.window.minX) - 200 / camera.scaleX) < 1e-9);
 });
 
 test("bounds frame every place and every recorded person", () => {

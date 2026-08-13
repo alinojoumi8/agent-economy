@@ -160,9 +160,56 @@
   transform: scaleX(0);
   background: linear-gradient(to right, currentColor, transparent);
   border-radius: 1px;
-  opacity: .5;
+  /* The one cue that carries identity between two sampled frames: a chip is the
+     head of a trail that passes through where it was 2 s ago. Raised in round
+     three because a critic could not follow an individual through the dense
+     core, and the trail is the only thing in the frame that says which dot came
+     from where. */
+  opacity: .62;
   pointer-events: none;
 }
+
+/*
+ * THE SEGMENT, AND WHAT IS AT THE END OF IT.
+ *
+ * A critic watched cross-border chips "glide into empty black with no
+ * destination rendered near them", and read the straight interpolation as "a
+ * fan of parallel rays". The rays are the recorded segments and they stay
+ * straight — inventing a curve would be a lie about a journey nobody recorded.
+ * What was missing is the far end. Each corridor is the whole straight segment
+ * between one traveller's two recorded placements, with a ring on the placement
+ * it ends at; the bright wake on the chip says how far along it they are.
+ *
+ * Fainter than anything carrying a position, and in the civic hue rather than
+ * the person hue, so a corridor can never be mistaken for a person.
+ */
+.live-city__corridors line {
+  stroke: var(--ae-city-place-civic);
+  stroke-width: 1;
+  opacity: .17;
+}
+
+.live-city__arrival {
+  fill: none;
+  stroke: var(--ae-city-place-civic);
+  stroke-width: 1;
+  opacity: .5;
+}
+
+/*
+ * DENSE CROWDS DRAW A SIZE DOWN. The de-collision spiral fixes the gap between
+ * neighbours at 8.5 px whatever the crowd holds, so at 7 px a chip touches its
+ * neighbours on both sides and forty-two of them are one mass. At 5.5 px there
+ * is 3 px of sky between every pair and the crowd is countable. Applied to the
+ * person for the whole day, not to the moment, so nothing changes size mid-glide.
+ *
+ * THE SIZE IS SET AGAINST THE FRAME-TO-FRAME FLOOR, NOT BY EYE. Smaller dots
+ * resolve better and put less ink on the canvas, and the ink is what the motion
+ * measurement counts: at 5 px the quietest interval fell to 3.99 %, under the
+ * 4 % this surface has to hold. 5.5 px is the smallest dot that keeps the floor
+ * above 6 %. Legibility that buys itself a dead frame is a bad trade.
+ */
+.live-city__chip[data-dense="1"] { --ae-city-chip: 5.5px; }
 
 /* In transit between two recorded placements: the chip keeps its hue and gains
    a halo OF that hue. Never white — the halo must not cost the encoding. */
@@ -201,8 +248,25 @@
 
 /* ================================================== marks on the ground == */
 
-.live-city__marks--under { z-index: 0; }
-.live-city__marks--crowds { z-index: 1; }
+/*
+ * THE STACK, WRITTEN DOWN ONCE.
+ *
+ * Round two left the layering to DOM order and lost: the chips came after the
+ * crowd rings and the territory plates, so three hundred dots painted over the
+ * only persistent text on the canvas — a chip inside the E of IRONVALE UNION, a
+ * chip on the final N of NORTHSTAR FEDERATION, and the crowd headcounts buried
+ * under the crowds they count. Anything carrying WORDS now sits above the dot
+ * layer by explicit z-index, and the order is stated here rather than implied
+ * by where a JSX block happens to sit.
+ *
+ *   0 terrain      1 chips        2 crowd rings + counts, anonymised counts
+ *   3 territory plates            4 lock-on      5 chrome      6 veil
+ */
+.live-city__terrain { z-index: 0; }
+.live-city__chips { z-index: 1; }
+.live-city__marks--crowds,
+.live-city__marks--anon { z-index: 2; }
+.live-city__marks--plates { z-index: 3; }
 
 /*
  * A territory's name plate. Round one set these as huge letterspaced ghost type
@@ -276,20 +340,42 @@
   border: 1px solid var(--ae-city-line);
 }
 
+.live-city__crowd.is-major i { border-color: var(--ae-city-land-edge); }
+
+/*
+ * The headcount. It is the affordance the legend promises, so it is opaque and
+ * it is above the people: round two set it on a .84 panel UNDER the chip layer,
+ * which is how a 42-strong crowd ended up with no legible 42 anywhere near it.
+ */
 .live-city__crowd b {
   position: absolute;
   left: 50%;
   bottom: calc(100% - 2px);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   transform: translateX(-50%);
-  padding: 0 4px;
+  padding: 0 5px;
   border-radius: var(--ae-radius-sm);
-  background: var(--ae-city-panel);
+  border: 1px solid var(--ae-city-line);
+  background: var(--ae-city-plate);
   font-family: var(--ae-font-mono);
   font-size: var(--ae-fs-6);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--ae-city-ink);
-  opacity: .92;
+  white-space: nowrap;
+}
+
+/* The place the count belongs to, on the crowds big enough to be mistaken for
+   their neighbours. The region's own name is on a plate elsewhere, so only the
+   part that identifies the place is repeated here. */
+.live-city__crowd b em {
+  font-family: var(--ae-font-ui);
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: var(--ae-ls-cap);
+  opacity: .72;
 }
 
 /*
@@ -331,7 +417,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 2;
+  z-index: 4;
   pointer-events: none;
   opacity: 0;
 }
@@ -405,9 +491,10 @@
 .live-city__masthead,
 .live-city__clock,
 .live-city__legend,
+.live-city__detail,
 .live-city__disclosure {
   position: absolute;
-  z-index: 3;
+  z-index: 5;
   background: var(--ae-city-panel);
   backdrop-filter: blur(9px);
   border: 1px solid var(--ae-city-line);
@@ -483,8 +570,12 @@
   opacity: .6;
   white-space: nowrap;
 }
+/* Tabular figures and a floor under the width: these five are rewritten by the
+   animation loop, and a readout that reflows as its digits change is a readout
+   that reads as a glitch rather than as a measurement. */
 .live-city__readout dd {
   margin: 0;
+  min-width: 3.4ch;
   font-family: var(--ae-font-mono);
   font-size: var(--ae-fs-2);
   font-variant-numeric: tabular-nums;
@@ -616,6 +707,14 @@
   box-shadow: inset 0 0 0 1.5px var(--ae-city-unrecorded);
 }
 .live-city__key--anon { background: transparent; border: 1.5px dashed var(--ae-city-anon); }
+.live-city__key--detail {
+  background: transparent;
+  border: 1px dashed var(--ae-city-land-edge);
+  border-radius: 2px;
+  width: 12px;
+  height: 9px;
+  margin-left: -1px;
+}
 
 .live-city__hint {
   margin: 0;
@@ -623,6 +722,70 @@
   letter-spacing: var(--ae-ls-cap);
   text-transform: uppercase;
   opacity: .55;
+}
+
+/* ---- the detail camera: the crowded ground, magnified in the empty ground ---- */
+
+/*
+ * A second camera on the same recorded points, standing where this tick's own
+ * geography leaves the canvas empty. It answers two measured defects with one
+ * move: the third to a half of the plot area that carried nothing but graticule
+ * now carries the thing that could not be read at whole-city zoom, and the
+ * "unresolvable mass" resolves into three named places with their own counts.
+ *
+ * It is a camera and not a layout: the chips inside are the same chips, at the
+ * same recorded placements, with the same de-collision offsets, scaled about a
+ * recorded coordinate by one affine transform.
+ */
+.live-city__detail {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--ae-space-1);
+  padding: var(--ae-space-2) var(--ae-space-2) var(--ae-space-1);
+  overflow: hidden;
+}
+
+.live-city__detail-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--ae-radius-sm);
+  border: 1px solid var(--ae-city-line-soft);
+  background: var(--ae-city-sky-business);
+}
+
+.live-city__detail-stage svg { position: absolute; inset: 0; display: block; }
+.live-city__detail-stage .live-city__chips { pointer-events: none; }
+
+/* No halo in the panel. A blurred shadow on every moving dot is the single
+   most expensive thing this surface asks a rasteriser for, and the panel's
+   whole point is that a dot there is separated from its neighbours by 22 px —
+   it does not need a glow to be found. */
+.live-city__chip--detail { pointer-events: none; }
+.live-city__chip--detail.is-moving,
+.live-city__chip--detail.is-focus { box-shadow: none; }
+
+.live-city__detail-cap {
+  order: -1;
+  margin: 0;
+  opacity: .72;
+}
+
+.live-city__detail-note {
+  margin: 0;
+  font-size: var(--ae-fs-6);
+  line-height: 1.35;
+  opacity: .66;
+}
+
+.live-city__detail-note b { font-weight: 600; opacity: .92; }
+
+/* The ground the inset is looking at, marked on the wide map so the panel is
+   anchored to a place rather than floating as decoration. */
+.live-city__detail-frame {
+  fill: none;
+  stroke: var(--ae-city-land-edge);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
 }
 
 /* ---- the disclosure: permanent, never dismissible ---- */
@@ -660,7 +823,7 @@
 .live-city__veil {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: 6;
   display: grid;
   align-content: center;
   justify-items: center;

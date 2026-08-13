@@ -23,14 +23,18 @@ import {
   CROWD_MIN,
   DAY_MS,
   DAY_SLOTS,
+  DENSE_COHORT,
+  DETAIL_ZOOM,
   MAX_DECOLLISION_RADIUS_PX,
   chipScreenPoint,
   convexHull,
   dayClock,
   decollisionLayout,
+  detailWindow,
   fitProjection,
   hullPath,
   legPlan,
+  liveCounts,
   normalizeLiveCity,
   placeCohorts,
   slotWeights,
@@ -129,13 +133,32 @@ type Projection = {
   top: number;
   width: number;
   height: number;
+  zoom?: number;
+  window?: { minX: number; maxX: number; minY: number; maxY: number };
   project(x: number, y: number): { x: number; y: number };
+};
+type Detail = {
+  camera: Projection & { window: { minX: number; maxX: number; minY: number; maxY: number } };
+  zoom: number;
+  centre: { x: number; y: number };
+  anchor: Crowd;
+  places: CityPlace[];
+  crowds: Crowd[];
+  headcount: number[];
+};
+type ChipPoint = {
+  x: number; y: number; offsetX: number; offsetY: number;
+  travelledPx: number; remainingPx: number; destX: number; destY: number;
+  headingDeg: number; bearingDeg: number;
+  point: { from: Anchor; to: Anchor; moving: boolean; t: number };
 };
 type Offset = { x: number; y: number; cohort: number; radius: number };
 type Disc = { members: number[]; cohort: number; radius: number; rotation: number };
 type Clock = {
   cycle: number;
+  within: number;
   legIndex: number;
+  legMs: number;
   legMovers: number;
   beatIndex: number;
   nextIndex: number;
@@ -147,6 +170,7 @@ type Clock = {
   ease: number;
   dayProgress: number;
 };
+type LiveCount = { inTransit: number; atPlace: number; arrived: number; held: number };
 type Plan = ReturnType<typeof legPlan>;
 type RunStatus = { tick?: number; status?: string; next_phase?: string; running?: boolean };
 
@@ -162,10 +186,25 @@ type RunStatus = { tick?: number; status?: string; next_phase?: string; running?
  * cannot resolve.
  */
 const CHROME_INSET = { top: 108, right: 268, bottom: 132, left: 72 };
+/*
+ * THE DETAIL PANEL, AND WHERE IT IS ALLOWED TO GO.
+ *
+ * A critic measured that "roughly a third to a half of the plot area carries
+ * nothing but faint graticule". The regions sit where the data puts them, so
+ * the void is not something a camera can close — but it is somewhere to put the
+ * second camera, which is how the same choice answers both the dead canvas and
+ * the unresolvable cluster inside it.
+ *
+ * The panel is only ever placed in a rectangle that holds NO projected place
+ * and NO recorded agent point, tested against this tick's own geography. If no
+ * candidate is clear, the panel is not drawn at all: an inset that hides people
+ * to make room for itself would be worse than the blob it explains.
+ */
+const DETAIL_PANEL = { width: 430, height: 292, margin: 24, footClearance: 146 };
 /* How much of the segment already covered is drawn behind a chip. Every pixel of
    a wake is a point on the same recorded segment the chip is travelling, so the
    trail is not an embellishment on the claim — it is the claim, drawn. */
-const WAKE_MAX_PX = 54;
+const WAKE_MAX_PX = 64;
 /* How far a territory's hull is pushed out from its outermost place, and how
    far beyond that its name plate sits. The plate must clear the boundary line
    entirely or it reads as a label ON the border rather than OF the polity. */
@@ -262,6 +301,25 @@ export function LiveCity() {
     [model.agents],
   );
   /*
+   * Who spends part of the recorded day inside a crowd. The spiral fixes the
+   * gap between neighbours at 8.5 px whatever the crowd size, so the only lever
+   * left on whether two dots touch is the dot: these are drawn a size down and
+   * the crowd resolves into countable people instead of a fused mass. It is a
+   * property of the person's whole day, so no chip changes size mid-glide.
+   */
+  const dense = useMemo(() => {
+    const ids = new Set<number>();
+    for (const agent of model.agents) {
+      for (const anchor of agent.anchors) {
+        if ((discs.get(String(anchor.placeId))?.cohort ?? 1) >= DENSE_COHORT) {
+          ids.add(agent.id);
+          break;
+        }
+      }
+    }
+    return ids;
+  }, [model.agents, discs]);
+  /*
    * The day's shape, derived from the day itself: each leg gets the share of the
    * 45 s that matches the share of the city's movement it carries. In this run
    * nobody at all moves between their evening and morning placements — every one
@@ -276,6 +334,77 @@ export function LiveCity() {
     [model.bounds, size.width, size.height],
   );
 
+  /*
+   * WHERE THE SECOND CAMERA IS ALLOWED TO STAND.
+   *
+   * Candidate rectangles are tested against every projected place AND every
+   * recorded agent point, with the de-collision radius added as clearance, so
+   * the panel can only take ground the geography has left genuinely empty. The
+   * first clear candidate wins; if none is clear the panel is not drawn.
+   */
+  const detailSlot = useMemo(() => {
+    if (!projection || !model.places.length || size.width < 1180) return null;
+    const points = [
+      ...model.places.map(place => projection.project(place.x, place.y)),
+      ...model.agents.flatMap(agent => agent.anchors.map(
+        anchor => projection.project(anchor.x, anchor.y))),
+    ];
+    const { width, height, margin, footClearance } = DETAIL_PANEL;
+    const top = size.height - footClearance - height;
+    const clearance = MAX_DECOLLISION_RADIUS_PX + 14;
+    const candidates = [
+      { key: "left", left: margin, top },
+      { key: "right", left: size.width - margin - width, top },
+    ];
+    for (const candidate of candidates) {
+      /*
+       * The panel lives inside the band the projection already reserves for the
+       * map, so it can never come to rest under the clock or the legend — the
+       * two would share a z-index and whichever lost would be a panel with a
+       * hole in it. At 1280 the right-hand candidate fails this and the left one
+       * is occupied, so the surface simply does not draw an inset.
+       */
+      if (candidate.top < CHROME_INSET.top || candidate.left < 0) continue;
+      if (candidate.left + width > size.width - CHROME_INSET.right) continue;
+      if (candidate.top + height > size.height - CHROME_INSET.bottom) continue;
+      const busy = points.some(point =>
+        point.x > candidate.left - clearance && point.x < candidate.left + width + clearance
+        && point.y > candidate.top - clearance && point.y < candidate.top + height + clearance);
+      if (!busy) return candidate;
+    }
+    return null;
+  }, [projection, model.places, model.agents, size.width, size.height]);
+
+  const detail = useMemo<Detail | null>(() => {
+    if (!projection || !detailSlot || !model.crowds.length) return null;
+    const busiest = [...model.crowds].sort((left, right) => right.peak - left.peak)[0];
+    return detailWindow(model.crowds, model.places, projection, {
+      zoom: DETAIL_ZOOM,
+      panel: { width: DETAIL_PANEL.width, height: DETAIL_PANEL.height },
+      anchorRadiusPx: discs.get(String(busiest.placeId))?.radius ?? 0,
+      bounds: model.bounds,
+    }) as Detail | null;
+  }, [projection, detailSlot, model.crowds, model.places, model.bounds, discs]);
+
+  /*
+   * Who can ever appear inside the panel. A chip travels the straight segment
+   * between two recorded placements, so if the bounding box of that segment
+   * misses the window the chip cannot enter it — and drawing a twin for all
+   * three hundred to keep two hundred of them parked off-screen is a frame's
+   * work spent on nothing. Over-inclusive by construction: a box that overlaps
+   * gets a twin whether or not the segment itself crosses, so nobody who could
+   * be in the panel is missing from it.
+   */
+  const detailMembers = useMemo(() => {
+    if (!detail) return [] as CityAgent[];
+    const box = detail.camera.window;
+    return model.agents.filter(agent => agent.anchors.some((from, index) => {
+      const to = agent.anchors[(index + 1) % agent.anchors.length];
+      return Math.min(from.x, to.x) <= box.maxX && Math.max(from.x, to.x) >= box.minX
+        && Math.min(from.y, to.y) <= box.maxY && Math.max(from.y, to.y) >= box.minY;
+    }));
+  }, [detail, model.agents]);
+
   const serverTick = status.data?.tick ?? null;
   const mapTick = model.tick;
   const refetchMap = map.refetch;
@@ -288,25 +417,34 @@ export function LiveCity() {
 
   const chipRefs = useRef(new Map<number, HTMLElement>());
   const wakeRefs = useRef(new Map<number, HTMLElement>());
+  const detailRefs = useRef(new Map<number, HTMLElement>());
+  const detailWakeRefs = useRef(new Map<number, HTMLElement>());
+  const detailParked = useRef(new Set<number>());
   const chipClass = useRef(new Map<number, string>());
+  const detailClass = useRef(new Map<number, string>());
   const crowdRefs = useRef(new Map<string, HTMLElement>());
   const anonRefs = useRef(new Map<string, HTMLElement>());
+  const statRefs = useRef(new Map<string, HTMLElement>());
+  const statText = useRef(new Map<string, string>());
   const lockRef = useRef<HTMLDivElement | null>(null);
   const fieldRef = useRef<HTMLDivElement | null>(null);
   const dayOrigin = useRef(0);
   const lastFrame = useRef<{
     clock: Clock;
     positions: Map<number, { x: number; y: number; offsetX: number; offsetY: number }>;
+    detailPositions: Map<number, { x: number; y: number; offsetX: number; offsetY: number }>;
+    live: LiveCount;
   } | null>(null);
   const scene = useRef<{
     agents: CityAgent[];
     offsets: Map<string, Offset>;
     projection: Projection | null;
+    detail: Detail | null;
     plan: Plan;
     reducedMotion: boolean;
     focusId: number | null;
   }>({
-    agents: [], offsets: new Map(), projection: null,
+    agents: [], offsets: new Map(), projection: null, detail: null,
     plan: legPlan([]) as Plan, reducedMotion: false, focusId: null,
   });
   const [phase, setPhase] = useState({ legIndex: 0, nearIndex: 0 });
@@ -331,30 +469,33 @@ export function LiveCity() {
 
   const paint = useCallback((now: number) => {
     const {
-      agents, offsets: layout, projection: camera,
+      agents, offsets: layout, projection: camera, detail,
       plan: legs, reducedMotion: still, focusId,
     } = scene.current;
     if (!camera || !agents.length) return;
+    /* A readout is only rewritten when its digits actually change, so the
+       masthead costs nothing on the frames where nothing happened. */
+    const writeStat = (key: string, value: string) => {
+      if (statText.current.get(key) === value) return;
+      statText.current.set(key, value);
+      const node = statRefs.current.get(key);
+      if (node) node.textContent = value;
+    };
     const elapsed = now - dayOrigin.current;
     const clock = dayClock(elapsed, legs) as Clock;
     /* Reduced motion keeps the day, drops the glide: chips sit at the leg's
        recorded placement and change position only on a leg boundary. */
     const effective: Clock = still ? { ...clock, t: 0, ease: 0 } : clock;
     const positions = new Map<number, { x: number; y: number; offsetX: number; offsetY: number }>();
+    const detailPositions = new Map<
+      number, { x: number; y: number; offsetX: number; offsetY: number }>();
 
     for (const agent of agents) {
-      const point = chipScreenPoint(agent, effective, camera, layout) as {
-        x: number; y: number; offsetX: number; offsetY: number;
-        travelledPx: number; headingDeg: number;
-        point: { from: Anchor; to: Anchor; moving: boolean; t: number };
-      } | null;
+      const point = chipScreenPoint(agent, effective, camera, layout) as ChipPoint | null;
       if (!point) continue;
       positions.set(agent.id, {
         x: point.x, y: point.y, offsetX: point.offsetX, offsetY: point.offsetY,
       });
-      const node = chipRefs.current.get(agent.id);
-      if (!node) continue;
-      node.style.transform = `translate3d(${point.x.toFixed(2)}px, ${point.y.toFixed(2)}px, 0)`;
       /*
        * WHICH PLACE COLOURS THE CHIP. The first half of a leg keeps the hue of
        * where the person still mostly is; the second half takes the hue of where
@@ -363,21 +504,78 @@ export function LiveCity() {
        * it, and the turn of the field from blue to green IS the commute.
        */
       const anchor = point.point.t < 0.5 ? point.point.from : point.point.to;
-      const className = [
-        "live-city__chip",
+      const node = chipRefs.current.get(agent.id);
+      if (node) {
+        node.style.transform = `translate3d(${point.x.toFixed(2)}px, ${point.y.toFixed(2)}px, 0)`;
+        const className = [
+          "live-city__chip",
+          `live-city__chip--${anchor.sourceType || "unknown"}`,
+          point.point.moving ? "is-moving" : "",
+          anchor.recorded ? "" : "is-unrecorded",
+          focusId === agent.id ? "is-focus" : "",
+        ].filter(Boolean).join(" ");
+        if (chipClass.current.get(agent.id) !== className) {
+          chipClass.current.set(agent.id, className);
+          node.className = className;
+        }
+        const wake = wakeRefs.current.get(agent.id);
+        if (wake) {
+          const length = Math.min(WAKE_MAX_PX, point.travelledPx);
+          wake.style.transform = length > 0.5
+            ? `rotate(${(point.headingDeg + 180).toFixed(1)}deg) scaleX(${length.toFixed(1)})`
+            : "scaleX(0)";
+        }
+      }
+
+      /*
+       * THE SAME PERSON, IN THE DETAIL CAMERA. One more affine projection of the
+       * one interpolated point — no second layout, no re-packing, no separate
+       * set of positions that could disagree with the wide view.
+       */
+      const twin = detailRefs.current.get(agent.id);
+      if (!detail || !twin) continue;
+      /*
+       * THE DETAIL PIXEL, DERIVED RATHER THAN RECOMPUTED.
+       *
+       * Both cameras are affine and the detail one is the wide one scaled about
+       * a point, so its pixel falls out of the wide pixel in two multiplies:
+       *   detail = camera.left + zoom * (wide - base.left)
+       * — the de-collision offset is inside `wide` and scales with everything
+       * else, which is exactly the behaviour the offsetScale gives it. Running
+       * the whole placement twice cost a second pass over 300 agents every
+       * frame and showed up as dropped frames in the capture harness; this
+       * cannot disagree with the wide view even in principle.
+       */
+      const zoom = detail.camera.zoom ?? 1;
+      const nx = detail.camera.left + zoom * (point.x - camera.left);
+      const ny = detail.camera.top + zoom * (point.y - camera.top);
+      detailPositions.set(agent.id, {
+        x: nx, y: ny, offsetX: point.offsetX * zoom, offsetY: point.offsetY * zoom,
+      });
+      const outside = nx < -40 || ny < -40
+        || nx > detail.camera.width + 40 || ny > detail.camera.height + 40;
+      if (!outside || !detailParked.current.has(agent.id)) {
+        twin.style.transform = outside
+          ? "translate3d(-999px, -999px, 0)"
+          : `translate3d(${nx.toFixed(2)}px, ${ny.toFixed(2)}px, 0)`;
+      }
+      if (outside) { detailParked.current.add(agent.id); continue; }
+      detailParked.current.delete(agent.id);
+      const twinClass = [
+        "live-city__chip live-city__chip--detail",
         `live-city__chip--${anchor.sourceType || "unknown"}`,
         point.point.moving ? "is-moving" : "",
         anchor.recorded ? "" : "is-unrecorded",
         focusId === agent.id ? "is-focus" : "",
       ].filter(Boolean).join(" ");
-      if (chipClass.current.get(agent.id) !== className) {
-        chipClass.current.set(agent.id, className);
-        node.className = className;
+      if (detailClass.current.get(agent.id) !== twinClass) {
+        detailClass.current.set(agent.id, twinClass);
+        twin.className = twinClass;
       }
-      const wake = wakeRefs.current.get(agent.id);
-      if (wake) {
-        const length = Math.min(WAKE_MAX_PX, point.travelledPx);
-        wake.style.transform = length > 0.5
+      const twinWake = detailWakeRefs.current.get(agent.id);
+      if (twinWake) {
+        const length = Math.min(WAKE_MAX_PX * 1.6, point.travelledPx * zoom);
+        twinWake.style.transform = length > 0.5
           ? `rotate(${(point.headingDeg + 180).toFixed(1)}deg) scaleX(${length.toFixed(1)})`
           : "scaleX(0)";
       }
@@ -414,7 +612,29 @@ export function LiveCity() {
       );
     }
 
-    lastFrame.current = { clock: effective, positions };
+    /*
+     * THE TOP LINE, COUNTED OFF THE CHIPS IN THE FRAME.
+     *
+     * Round two's masthead held five figures that describe the whole tick, and
+     * on a paused run all five are constant: a critic found TICK, PLACEMENTS,
+     * COMMUTING and CROSS-BORDER pixel-identical across 23 seconds while the
+     * world recoloured underneath them. The tick's own figures are still on the
+     * surface — they moved to the provenance foot, which is where a fixed fact
+     * about the recording belongs. What is on the top line now is the leg in
+     * view: who is between two places at this instant, who is at one, and how
+     * far the leg and the day have run. Two of the five change every frame and
+     * one changes every second, and every one of them is read off the same
+     * anchors and the same clock that placed the chips above.
+     */
+    const live = liveCounts(agents, effective) as LiveCount;
+    const remainingMs = Math.max(0, (effective.legMs ?? 0) * (1 - effective.t));
+    writeStat("transit", String(live.inTransit));
+    writeStat("placed", String(live.atPlace));
+    writeStat("leg", `${Math.round(effective.ease * 100)}%`);
+    writeStat("day", `${Math.round(clock.dayProgress * 100)}%`);
+    writeStat("left", `${Math.ceil(remainingMs / 1000)}s`);
+
+    lastFrame.current = { clock: effective, positions, detailPositions, live };
     if (clockHand.current) {
       clockHand.current.style.setProperty("--live-city-day", String(clock.dayProgress));
       clockHand.current.style.setProperty("--live-city-leg", String(effective.ease));
@@ -438,11 +658,11 @@ export function LiveCity() {
    */
   useLayoutEffect(() => {
     scene.current = {
-      agents: model.agents, offsets, projection, plan, reducedMotion,
+      agents: model.agents, offsets, projection, detail, plan, reducedMotion,
       focusId: focus?.id ?? null,
     };
     paint(performance.now());
-  }, [model.agents, offsets, projection, plan, reducedMotion, focus, paint]);
+  }, [model.agents, offsets, projection, detail, plan, reducedMotion, focus, paint]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -477,7 +697,7 @@ export function LiveCity() {
   useEffect(() => {
     const probe = () => {
       const frame = lastFrame.current;
-      const { agents, projection: camera, plan: legs } = scene.current;
+      const { agents, projection: camera, detail: inset, plan: legs } = scene.current;
       if (!frame || !camera) return null;
       return {
         tick: mapTick,
@@ -487,19 +707,37 @@ export function LiveCity() {
         })),
         maxOffsetPx: MAX_DECOLLISION_RADIUS_PX,
         clock: frame.clock,
+        live: frame.live,
         projection: {
           minX: camera.minX, minY: camera.minY,
           scaleX: camera.scaleX, scaleY: camera.scaleY,
           left: camera.left, top: camera.top,
         },
+        /* The detail camera, published on the same terms as the wide one: an
+           affine map a checker can invert to re-derive every inset pixel. */
+        detail: inset ? {
+          zoom: inset.zoom,
+          centre: inset.centre,
+          window: inset.camera.window,
+          projection: {
+            minX: inset.camera.minX, minY: inset.camera.minY,
+            scaleX: inset.camera.scaleX, scaleY: inset.camera.scaleY,
+            left: inset.camera.left, top: inset.camera.top,
+          },
+        } : null,
         chips: agents.map(agent => {
           const position = frame.positions.get(agent.id);
+          const near = frame.detailPositions.get(agent.id);
           return {
             id: agent.id,
             x: position?.x ?? null,
             y: position?.y ?? null,
             offsetX: position?.offsetX ?? null,
             offsetY: position?.offsetY ?? null,
+            detailX: near?.x ?? null,
+            detailY: near?.y ?? null,
+            detailOffsetX: near?.offsetX ?? null,
+            detailOffsetY: near?.offsetY ?? null,
             anchors: agent.anchors.map(anchor => ({
               slot: anchor.slot, placeId: anchor.placeId,
               x: anchor.x, y: anchor.y, recorded: anchor.recorded,
@@ -590,8 +828,21 @@ export function LiveCity() {
     if (!projection) return [];
     const marks: {
       key: string; slotIndex: number; slot: string; count: number;
-      x: number; y: number; radius: number; name: string | null;
+      x: number; y: number; radius: number; name: string | null; short: string | null;
     }[] = [];
+    /* The region's own name is already on a plate a few hundred pixels away, so
+       a badge repeating it is three words the reader has to skip. What is left
+       is the part that identifies the place. */
+    const prefixes = model.regions.map(region => region.name);
+    const shorten = (name: string | null) => {
+      if (!name) return null;
+      for (const prefix of prefixes) {
+        if (name.startsWith(`${prefix} `)) {
+          return name.slice(prefix.length + 1).replace(/^Residential /, "");
+        }
+      }
+      return name;
+    };
     for (const crowd of model.crowds) {
       const disc = discs.get(String(crowd.placeId));
       const point = projection.project(crowd.x, crowd.y);
@@ -607,11 +858,12 @@ export function LiveCity() {
           y: point.y,
           radius: Math.max(11, (disc?.radius ?? 0) + 7),
           name: crowd.name,
+          short: shorten(crowd.name),
         });
       });
     }
     return marks;
-  }, [model.crowds, discs, projection]);
+  }, [model.crowds, model.regions, discs, projection]);
 
   /*
    * Anonymised occupancy, per slot. Every one of this run's three rows is a
@@ -642,6 +894,89 @@ export function LiveCity() {
     }
     return marks;
   }, [model.anonymous, projection]);
+
+  /* The same rings and the same headcounts, in the detail camera. Registered
+     under keys that end in the slot index, so one opacity loop drives both. */
+  const detailCrowdMarks = useMemo(() => {
+    if (!detail) return [];
+    const marks: {
+      key: string; slotIndex: number; count: number;
+      x: number; y: number; radius: number; short: string | null;
+    }[] = [];
+    for (const crowd of detail.crowds) {
+      const disc = discs.get(String(crowd.placeId));
+      const point = detail.camera.project(crowd.x, crowd.y);
+      DAY_SLOTS.forEach((slot, slotIndex) => {
+        const headcount = crowd.slots[slot] ?? 0;
+        if (headcount < CROWD_MIN) return;
+        const source = crowdMarks.find(mark => mark.key === `${crowd.placeId}:${slotIndex}`);
+        marks.push({
+          key: `${crowd.placeId}:${slotIndex}`,
+          slotIndex,
+          count: headcount,
+          x: point.x,
+          y: point.y,
+          /* The spread is magnified with the ground, so the ring that describes
+             it must be too, or the number is tied to the wrong smudge. */
+          radius: Math.max(13, (disc?.radius ?? 0) * detail.zoom + 9),
+          short: source?.short ?? null,
+        });
+      });
+    }
+    return marks;
+  }, [detail, discs, crowdMarks]);
+
+  /* The rectangle the detail camera is looking at, drawn on the wide map so the
+     inset is anchored to the ground it magnifies rather than floating free. */
+  const detailFrame = useMemo(() => {
+    if (!detail || !projection) return null;
+    const topLeft = projection.project(detail.camera.window.minX, detail.camera.window.minY);
+    const bottomRight = projection.project(detail.camera.window.maxX, detail.camera.window.maxY);
+    return {
+      x: topLeft.x,
+      y: topLeft.y,
+      width: Math.max(1, bottomRight.x - topLeft.x),
+      height: Math.max(1, bottomRight.y - topLeft.y),
+    };
+  }, [detail, projection]);
+
+  /*
+   * WHERE THE CROSS-BORDER TRAVELLERS ARE GOING — DRAWN ONCE PER LEG.
+   *
+   * A critic watched these chips "glide into empty black with no destination
+   * rendered near them". The destination is recorded, so it can be drawn: this
+   * is the whole straight segment between the two recorded placements, with a
+   * ring on the placement at the far end. The chip is somewhere on that line and
+   * its wake says where it has got to.
+   *
+   * It is STATIC within a leg, and that is not an optimisation detail — it is
+   * the honest shape of the claim. The segment does not depend on the moment;
+   * only the person's position on it does. Drawing it per frame as a
+   * chip-anchored element cost 35 ms a frame for ninety-seven long rotated
+   * boxes and started returning half-painted frames to the capture harness.
+   * Drawn as one SVG layer that changes only on a leg boundary, it costs
+   * nothing per frame and says exactly the same thing.
+   */
+  const corridors = useMemo(() => {
+    if (!projection) return [];
+    const from = plan.legs[phase.legIndex]?.fromIndex ?? 0;
+    const to = plan.legs[phase.legIndex]?.toIndex ?? 1;
+    return model.agents.flatMap(agent => {
+      if (!agent.longHaul) return [];
+      const start = agent.anchors[from];
+      const end = agent.anchors[to];
+      if (!start || !end || start.placeId === end.placeId) return [];
+      const a = projection.project(start.x, start.y);
+      const b = projection.project(end.x, end.y);
+      const offA = offsets.get(`${agent.id}@${start.placeId}`);
+      const offB = offsets.get(`${agent.id}@${end.placeId}`);
+      return [{
+        id: agent.id,
+        x1: a.x + (offA?.x ?? 0), y1: a.y + (offA?.y ?? 0),
+        x2: b.x + (offB?.x ?? 0), y2: b.y + (offB?.y ?? 0),
+      }];
+    });
+  }, [projection, model.agents, offsets, plan.legs, phase.legIndex]);
 
   /* The person being followed, drawn as their whole recorded day: the closed
      path through their three placements, which is the entire itinerary. */
@@ -721,6 +1056,28 @@ export function LiveCity() {
             r={place.kind === "firm_workplace" ? 2.1 : place.kind === "residential_district" ? 3.4 : 4.6}
           />;
         })}
+        {/* The 97 recorded cross-border segments of the leg in view, and a ring
+            on the placement each one ends at. One layer, redrawn on a leg
+            boundary and never between: the segment is a property of the leg,
+            not of the moment. */}
+        <g className="live-city__corridors">
+          {corridors.map(line => <line
+            key={`corridor-${line.id}`}
+            x1={line.x1.toFixed(1)} y1={line.y1.toFixed(1)}
+            x2={line.x2.toFixed(1)} y2={line.y2.toFixed(1)}
+          />)}
+          {corridors.map(line => <circle
+            key={`arrival-${line.id}`}
+            className="live-city__arrival"
+            cx={line.x2.toFixed(1)} cy={line.y2.toFixed(1)} r={4}
+          />)}
+        </g>
+        {detailFrame && <rect
+          className="live-city__detail-frame"
+          x={detailFrame.x} y={detailFrame.y}
+          width={detailFrame.width} height={detailFrame.height}
+          rx="3"
+        />}
         {focusDay && <path className="live-city__focus-day" d={focusDay.path} />}
         {focusDay?.points.map((point, index) => <circle
           key={`focus-anchor-${index}`}
@@ -728,47 +1085,6 @@ export function LiveCity() {
           cx={point.x} cy={point.y} r={4.5}
         />)}
       </svg>}
-
-      {/*
-        * The territory name plates. A map's own margin note: set on a plate at
-        * readable weight, placed OUTSIDE the hull on the side that faces the
-        * empty middle of the field, so the people never shred the letterforms
-        * and the void between polities carries something worth reading.
-        */}
-      {projection && <div className="live-city__marks live-city__marks--under" aria-hidden="true">
-        {territories.map(territory => <div
-          key={`label-${territory.region.id}`}
-          className={`live-city__territory${territory.below ? " is-below" : ""}`}
-          style={{ left: `${territory.label.x}px`, top: `${territory.label.y}px` }}
-        >
-          <strong>{territory.region.name}</strong>
-          <span>
-            {count(territory.region.population) ?? "—"} residents ·
-            {" "}{count(territory.places)} places ·
-            {" "}{territory.region.currency || "—"}
-          </span>
-        </div>)}
-      </div>}
-
-      {projection && <div className="live-city__marks live-city__marks--crowds" aria-hidden="true">
-        {crowdMarks.map(mark => <div
-          key={`crowd-${mark.key}`}
-          className="live-city__crowd"
-          style={{
-            left: `${mark.x}px`,
-            top: `${mark.y}px`,
-            width: `${mark.radius * 2}px`,
-            height: `${mark.radius * 2}px`,
-          }}
-          ref={node => {
-            if (node) crowdRefs.current.set(`crowd:${mark.key}`, node);
-            else crowdRefs.current.delete(`crowd:${mark.key}`);
-          }}
-        >
-          <i />
-          <b className="ae-num">{mark.count}</b>
-        </div>)}
-      </div>}
 
       {projection && <div
         className="live-city__chips"
@@ -782,6 +1098,7 @@ export function LiveCity() {
           className="live-city__chip"
           data-agent-id={agent.id}
           data-haul={agent.longHaul ? "1" : undefined}
+          data-dense={dense.has(agent.id) ? "1" : undefined}
           ref={node => {
             if (node) chipRefs.current.set(agent.id, node);
             else {
@@ -800,7 +1117,43 @@ export function LiveCity() {
         </div>)}
       </div>}
 
-      {projection && <div className="live-city__marks" aria-hidden="true">
+      {/*
+        * EVERY PIECE OF PERSISTENT TEXT SITS ABOVE THE DOT LAYER, AND SAYS SO
+        * IN THE STACK RATHER THAN IN THE DOM ORDER.
+        *
+        * Round two put the crowd rings and the territory plates UNDER the
+        * chips, and a critic caught a green chip eating the E of IRONVALE
+        * UNION, two more sitting on NORTHSTAR FEDERATION, and the headcount
+        * numerals — the one thing the legend promises for a crowd — buried
+        * under the very crowd they count. Marks that carry words are now
+        * layered over the people by explicit z-index, which is the same defect
+        * class the World map had and the same structural fix.
+        */}
+      {projection && <div className="live-city__marks live-city__marks--crowds" aria-hidden="true">
+        {crowdMarks.map(mark => <div
+          key={`crowd-${mark.key}`}
+          className={`live-city__crowd${mark.count >= DENSE_COHORT ? " is-major" : ""}`}
+          style={{
+            left: `${mark.x}px`,
+            top: `${mark.y}px`,
+            width: `${mark.radius * 2}px`,
+            height: `${mark.radius * 2}px`,
+          }}
+          ref={node => {
+            if (node) crowdRefs.current.set(`crowd:${mark.key}`, node);
+            else crowdRefs.current.delete(`crowd:${mark.key}`);
+          }}
+        >
+          <i />
+          {/* The count only. Nine of this run's crowds are within 90 px of
+              another, so naming them all on the wide map builds a wall of
+              overlapping plates — the names are carried in the inset, which is
+              where there is room to read them. */}
+          <b className="ae-num">{mark.count}</b>
+        </div>)}
+      </div>}
+
+      {projection && <div className="live-city__marks live-city__marks--anon" aria-hidden="true">
         {anonMarks.map(mark => <div
           key={`anon-${mark.key}`}
           className="live-city__anon"
@@ -812,6 +1165,27 @@ export function LiveCity() {
         >
           <i />
           <b className="ae-num">{mark.occupancy}</b>
+        </div>)}
+      </div>}
+
+      {/*
+        * The territory name plates. A map's own margin note: set on a plate at
+        * readable weight, placed OUTSIDE the hull on the side that faces the
+        * empty middle of the field, so the people never shred the letterforms
+        * and the void between polities carries something worth reading.
+        */}
+      {projection && <div className="live-city__marks live-city__marks--plates" aria-hidden="true">
+        {territories.map(territory => <div
+          key={`label-${territory.region.id}`}
+          className={`live-city__territory${territory.below ? " is-below" : ""}`}
+          style={{ left: `${territory.label.x}px`, top: `${territory.label.y}px` }}
+        >
+          <strong>{territory.region.name}</strong>
+          <span>
+            {count(territory.region.population) ?? "—"} residents ·
+            {" "}{count(territory.places)} places ·
+            {" "}{territory.region.currency || "—"}
+          </span>
         </div>)}
       </div>}
 
@@ -838,9 +1212,100 @@ export function LiveCity() {
       </div>
     </div>
 
+    {/*
+      * THE SECOND CAMERA.
+      *
+      * A critic found "roughly 90 orange chips fused into one solid
+      * unresolvable mass" and the promised headcount ring failing inside it.
+      * The recorded truth underneath that mass is three places — a public
+      * commons holding 42 and two residential districts holding 24 and 23 —
+      * whose coordinates are 34 and 47 px apart at whole-city zoom. No spread
+      * separates them without moving somebody off their recorded coordinate,
+      * so the fix is magnification, not relocation: the same placements, the
+      * same offsets, the same clock, through an affine camera 2.6x closer,
+      * standing on ground this tick's geography leaves empty.
+      */}
+    {detail && detailSlot && <aside
+      className="live-city__detail"
+      style={{
+        left: `${detailSlot.left}px`,
+        top: `${detailSlot.top}px`,
+        width: `${DETAIL_PANEL.width}px`,
+        height: `${DETAIL_PANEL.height}px`,
+      }}
+    >
+      <div className="live-city__detail-stage" aria-hidden="true">
+        <svg width={DETAIL_PANEL.width} height={DETAIL_PANEL.height}>
+          {detail.places.map(place => {
+            const point = detail.camera.project(place.x, place.y);
+            return <circle
+              key={`detail-place-${place.id}`}
+              className={`live-city__place live-city__place--${place.kind}`}
+              cx={point.x} cy={point.y}
+              r={place.kind === "firm_workplace" ? 3.2 : place.kind === "residential_district" ? 5 : 6.4}
+            />;
+          })}
+        </svg>
+        <div className="live-city__chips live-city__chips--detail">
+          {detailMembers.map(agent => <div
+            key={`detail-${agent.id}`}
+            className="live-city__chip live-city__chip--detail"
+            ref={node => {
+              if (node) detailRefs.current.set(agent.id, node);
+              else {
+                detailRefs.current.delete(agent.id);
+                detailClass.current.delete(agent.id);
+              }
+            }}
+          >
+            <i
+              className="live-city__wake"
+              ref={node => {
+                if (node) detailWakeRefs.current.set(agent.id, node);
+                else detailWakeRefs.current.delete(agent.id);
+              }}
+            />
+          </div>)}
+        </div>
+        <div className="live-city__marks live-city__marks--crowds">
+          {detailCrowdMarks.map(mark => <div
+            key={`detail-crowd-${mark.key}`}
+            className={`live-city__crowd${mark.count >= DENSE_COHORT ? " is-major" : ""}`}
+            style={{
+              left: `${mark.x}px`,
+              top: `${mark.y}px`,
+              width: `${mark.radius * 2}px`,
+              height: `${mark.radius * 2}px`,
+            }}
+            ref={node => {
+              if (node) crowdRefs.current.set(`detail:${mark.key}`, node);
+              else crowdRefs.current.delete(`detail:${mark.key}`);
+            }}
+          >
+            <i />
+            <b className="ae-num">
+              {mark.count}
+              {mark.count >= DENSE_COHORT && mark.short ? <em>{mark.short}</em> : null}
+            </b>
+          </div>)}
+        </div>
+      </div>
+      <p className="ae-cap live-city__detail-cap">
+        Detail · {detail.zoom}× · the boxed ground, magnified
+      </p>
+      <p className="live-city__detail-note">
+        The boxed ground holds {count(detail.places.length)} places and{" "}
+        {count(detail.crowds.length)} crowds, the busiest in the tick among them —{" "}
+        <b>{detail.anchor.name}</b>, {detail.anchor.peak} people. At whole-city zoom their discs
+        overlap and read as one mass. Same placements, same offsets, one camera closer.
+      </p>
+    </aside>}
+
     <header className="live-city__masthead">
       <div className="live-city__identity">
-        <p className="ae-cap">Street level · <span className="mono">run {runId}</span></p>
+        {/* No run hash here. A build identifier is provenance, not a title; it
+            is set beside the tick it belongs to in the foot. */}
+        <p className="ae-cap">Street level · {model.regions.length} territories</p>
         <h1>The recorded day</h1>
         <p className="live-city__run">
           <Link to={`/runs/${encodeURIComponent(runId)}/overview`}>← Workspaces</Link>
@@ -849,12 +1314,29 @@ export function LiveCity() {
           </span>
         </p>
       </div>
+      {/*
+        * THE LEG IN VIEW, NOT THE TICK. Every figure here is written by the
+        * animation loop from the chips it just placed: the first two are counts
+        * of those chips, the last three are where the leg and the day have got
+        * to. The tick's own totals sit in the provenance foot.
+        */}
       <dl className="live-city__readout">
-        <div><dt>Tick</dt><dd className="ae-num">{mapTick ?? "—"}</dd></div>
-        <div><dt>People</dt><dd className="ae-num">{count(model.counts.agents) ?? "—"}</dd></div>
-        <div><dt>Placements</dt><dd className="ae-num">{count(model.counts.recordedPlacements) ?? "—"}</dd></div>
-        <div><dt>Commuting</dt><dd className="ae-num">{count(model.counts.commuters) ?? "—"}</dd></div>
-        <div><dt>Cross-border</dt><dd className="ae-num">{count(model.counts.longHaul) ?? "—"}</dd></div>
+        {([
+          ["transit", "In transit"],
+          ["placed", "At a place"],
+          ["leg", "Leg run"],
+          ["day", "Day run"],
+          ["left", "Leg ends in"],
+        ] as [string, string][]).map(([key, label]) => <div key={key}>
+          <dt>{label}</dt>
+          <dd
+            className="ae-num"
+            ref={node => {
+              if (node) statRefs.current.set(key, node);
+              else { statRefs.current.delete(key); statText.current.delete(key); }
+            }}
+          >—</dd>
+        </div>)}
       </dl>
     </header>
 
@@ -888,11 +1370,17 @@ export function LiveCity() {
         <li><i className="live-city__key live-city__key--routine_work" />At work</li>
         <li><i className="live-city__key live-city__key--public_commons" />In the commons</li>
         <li><i className="live-city__key live-city__key--haul" />
-          {count(model.counts.longHaul)} whose day crosses a border — drawn a size up, ringed
+          {count(model.counts.longHaul)} whose day crosses a border — drawn a size up, and while
+          they travel, the rest of their segment and the recorded place at the end of it
         </li>
         <li><i className="live-city__key live-city__key--crowd" />
-          A ring and a count wherever {CROWD_MIN} or more share one place
+          A ring and a count wherever {CROWD_MIN} or more share one place — drawn over the people,
+          never under them
         </li>
+        {detail && <li><i className="live-city__key live-city__key--detail" />
+          Where places sit closer than their crowds are wide, the boxed ground is magnified
+          {" "}{detail.zoom}× in the inset. Nobody is moved to make room
+        </li>}
         {model.counts.withoutFullDay > 0 && <li>
           <i className="live-city__key live-city__key--unrecorded" />
           {count(model.counts.withoutFullDay)} with no business placement recorded — held at their last
@@ -911,10 +1399,25 @@ export function LiveCity() {
       <p>
         <b>Movement between recorded points is interpolated.</b> The world records three placements per person
         per tick — morning, business, evening. Chips glide in a straight line between those points; the journey
-        itself is not recorded. Someone whose consecutive placements name the same place does not move.
+        itself is not recorded. Someone whose consecutive placements name the same place does not move. A
+        traveller in transit also carries the rest of that same straight line and a ring on the recorded place
+        at the end of it — the destination is recorded, the route between is not.
       </p>
+      {/*
+        * THE TICK'S OWN FIGURES, WHERE A FIXED FACT BELONGS. These are true of
+        * the whole recorded tick and do not change while it is on screen, which
+        * is exactly why they are no longer on the top line: five constants in
+        * the masthead read as a broken instrument. Here they read as the
+        * provenance of a truth claim, which is what they are.
+        */}
       <p className="live-city__provenance">
-        <span>{count(model.counts.recordedPlacements) ?? "0"} placements recorded at tick {mapTick ?? "—"}</span>
+        <span>
+          <b>{count(model.counts.recordedPlacements) ?? "0"}</b> placements ·
+          {" "}<b>{count(model.counts.agents) ?? "0"}</b> people ·
+          {" "}<b>{count(model.counts.commuters) ?? "0"}</b> commuting ·
+          {" "}<b>{count(model.counts.longHaul) ?? "0"}</b> across a border
+        </span>
+        <span>tick {mapTick ?? "—"} · <span className="mono">{runId}</span></span>
         {reducedMotion && <span>Reduced motion: chips step between placements without gliding.</span>}
       </p>
     </footer>

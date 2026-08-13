@@ -69,15 +69,26 @@ export const DAY_MS = 45000;
  *
  * Pure smoothstep is flat at both ends and crosses only 2.8 % of a leg in its
  * first tenth, which is that floor rebuilt inside every leg. Blending it with
- * the straight ramp at 0.72 gives ease'(0) = ease'(1) = 0.72 against a mid-leg
- * 1.14, so the quietest tenth of a leg now covers 7.98 % of it and the busiest
- * tenth 11.4 % — a 1.43 ratio, tighter than the bars' own 1.6 — while keeping
- * enough S that a departure and an arrival are still legible as such.
+ * the straight ramp gives ease'(0) = ease'(1) = the blend against a mid-leg
+ * 1.5 - blend/2, while keeping enough S that a departure and an arrival are
+ * still legible as such.
+ *
+ * ROUND THREE RAISED THE BLEND TO 0.94. The peak matters twice over now, and in
+ * opposite directions. A critic measured median chip displacement at 4.8-7.5 px
+ * against a median neighbour spacing of 7.6-11.4 px and could not follow one
+ * chip through the dense core; the mid-leg spike is what sets that worst case.
+ * At 0.94 the quietest tenth of a leg covers 9.6 % of it and the busiest 10.4 %
+ * — a 1.09 ratio against the bars' own 1.6 — which lifts the FLOOR of the
+ * frame-to-frame change while cutting the PEAK displacement by 11 %.
+ *
+ * A trace of S survives, and it has to: the blend cannot reach 1 without the
+ * departure and the arrival losing the acceleration that makes them legible as
+ * a departure and an arrival rather than as a conveyor.
  *
  * Easing changes WHEN a chip is somewhere along its segment, never WHERE the
  * segment runs, so none of this touches what is claimed.
  */
-export const GLIDE_LINEARITY = 0.72;
+export const GLIDE_LINEARITY = 0.94;
 
 /*
  * DE-COLLISION. Position is the *place's* coordinate, so every agent at one
@@ -87,10 +98,15 @@ export const GLIDE_LINEARITY = 0.72;
  * disc grows as sqrt(n) so a crowd of 42 stays a crowd and does not become a
  * district. A place with a single occupant gets no offset at all, so 205 of
  * this run's 252 occupied places draw exactly on their recorded coordinate.
+ *
+ * The pitch fixes the spacing and nothing else: points laid on this spiral sit
+ * pitch * sqrt(pi) apart whatever n is, so 4.8 buys an 8.5 px gap between
+ * neighbours at every crowd size. Round two ran at 4.2 — a 7.4 px gap under a
+ * 7 px chip, which is a chip touching its neighbour on both sides.
  */
 export const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-export const DECOLLISION_PITCH_PX = 4.2;
-export const MAX_DECOLLISION_RADIUS_PX = 34;
+export const DECOLLISION_PITCH_PX = 4.8;
+export const MAX_DECOLLISION_RADIUS_PX = 40;
 
 /*
  * A cluster of this many or more is drawn with a ring at its de-collision
@@ -99,6 +115,30 @@ export const MAX_DECOLLISION_RADIUS_PX = 34;
  * smudge unless the number is written down.
  */
 export const CROWD_MIN = 4;
+
+/*
+ * At and above this cohort the chip is drawn down a size. The spiral's gap is
+ * fixed at 8.5 px, so the only remaining lever on whether two neighbours touch
+ * is the dot itself: 7 px leaves 1.5 px of sky between them, 5 px leaves 3.5.
+ * Below this threshold the crowd is not dense enough for the trade to be worth
+ * the loss of presence.
+ */
+export const DENSE_COHORT = 16;
+
+/*
+ * THE DETAIL WINDOW. Three of this run's places — a public commons holding 42,
+ * and two residential districts holding 24 and 23 — sit 34 and 47 px apart at
+ * whole-city zoom. Their de-collision discs therefore overlap, and the merge is
+ * the "roughly 90 chips fused into one unresolvable mass" a critic measured. It
+ * is not one place with ninety people in it; it is three places whose people
+ * cannot be told apart at this scale, which no amount of spreading fixes
+ * without moving somebody off their recorded coordinate.
+ *
+ * The camera is a free choice, so the answer is a second camera: an inset on
+ * the densest crowd and its neighbours, at this magnification, drawn from the
+ * same placements by the same rules. At 2.6x the commons' 42 sit 22 px apart.
+ */
+export const DETAIL_ZOOM = 2.6;
 
 const EMPTY_OFFSET = { x: 0, y: 0, cohort: 1, radius: 0 };
 
@@ -586,25 +626,49 @@ export function recordedPointAt(agent, clock) {
  * `travelledPx` is how far along the leg the chip has come, in pixels. The wake
  * drawn behind the chip is exactly that stretch of the segment it has already
  * covered, so every pixel of the trail is itself on the recorded path.
+ *
+ * `destX`/`destY` are the pixel of the RECORDED PLACEMENT the chip is bound
+ * for, and `remainingPx` is the stretch of the same segment still ahead of it.
+ * A cross-border chip otherwise glides into black with nothing at the far end,
+ * and a reader cannot tell a journey from a drift. The destination is recorded;
+ * the line to it is the rest of the one straight segment already disclosed as
+ * interpolated. Nothing here is a route, and no waypoint is invented.
  */
 export function chipScreenPoint(agent, clock, projection, offsets) {
   const point = recordedPointAt(agent, clock);
   if (!point || !projection) return null;
   const base = projection.project(point.x, point.y);
-  const from = offsetFor(offsets, agent.id, point.from.placeId);
-  const to = offsetFor(offsets, agent.id, point.to.placeId);
+  /*
+   * The spread scales with the camera. The de-collision offset is a screen-space
+   * displacement standing in for "these people share one coordinate", so a
+   * camera 2.6x closer must show it 2.6x larger — otherwise the inset magnifies
+   * the ground and leaves the crowd exactly as fused as it was, which is the
+   * defect it exists to answer. In DATA terms this makes the inset the more
+   * faithful of the two: the same 27 px disc is 2.6x less of the map.
+   */
+  const spread = finite(projection.offsetScale) ?? 1;
+  const raw = { from: offsetFor(offsets, agent.id, point.from.placeId), to: offsetFor(offsets, agent.id, point.to.placeId) };
+  const from = { x: raw.from.x * spread, y: raw.from.y * spread };
+  const to = { x: raw.to.x * spread, y: raw.to.y * spread };
   const x = base.x + from.x + (to.x - from.x) * point.t;
   const y = base.y + from.y + (to.y - from.y) * point.t;
   const origin = projection.project(point.from.x, point.from.y);
+  const target = projection.project(point.to.x, point.to.y);
   const startX = origin.x + from.x;
   const startY = origin.y + from.y;
+  const destX = target.x + to.x;
+  const destY = target.y + to.y;
   return {
     x,
     y,
     offsetX: from.x + (to.x - from.x) * point.t,
     offsetY: from.y + (to.y - from.y) * point.t,
     travelledPx: Math.hypot(x - startX, y - startY),
+    destX,
+    destY,
+    remainingPx: point.stationary ? 0 : Math.hypot(destX - x, destY - y),
     headingDeg: point.moving ? (Math.atan2(y - startY, x - startX) * 180) / Math.PI : 0,
+    bearingDeg: point.stationary ? 0 : (Math.atan2(destY - y, destX - x) * 180) / Math.PI,
     point,
   };
 }
@@ -643,6 +707,149 @@ export function fitProjection(bounds, width, height, inset = {}) {
       return { x: left + (x - minX) * scaleX, y: top + (y - minY) * scaleY };
     },
   };
+}
+
+/**
+ * A second camera on the same recorded points.
+ *
+ * The same affine form as `fitProjection`, so it carries segments to segments
+ * exactly as the wide view does and the pixel check works identically inside
+ * the inset. It is the wide camera scaled about one data coordinate: nothing is
+ * re-laid-out, re-packed or re-placed for the detail view — the inset shows the
+ * same chips at the same recorded placements, larger.
+ */
+export function zoomProjection(base, centre, zoom, panel) {
+  const factor = Math.max(1e-6, finite(zoom) ?? 1);
+  const width = Math.max(1, finite(panel?.width) ?? 1);
+  const height = Math.max(1, finite(panel?.height) ?? 1);
+  const cx = finite(centre?.x) ?? 0;
+  const cy = finite(centre?.y) ?? 0;
+  const scaleX = base.scaleX * factor;
+  const scaleY = base.scaleY * factor;
+  const left = width / 2 - (cx - base.minX) * scaleX;
+  const top = height / 2 - (cy - base.minY) * scaleY;
+  return {
+    minX: base.minX,
+    minY: base.minY,
+    scaleX,
+    scaleY,
+    left,
+    top,
+    width,
+    height,
+    zoom: factor,
+    /* The declared de-collision displacement is magnified with the ground. */
+    offsetScale: factor,
+    /* The data the panel can show, so a caller can say what is inside it. */
+    window: {
+      minX: cx - width / (2 * scaleX),
+      maxX: cx + width / (2 * scaleX),
+      minY: cy - height / (2 * scaleY),
+      maxY: cy + height / (2 * scaleY),
+    },
+    project(x, y) {
+      return { x: left + (x - base.minX) * scaleX, y: top + (y - base.minY) * scaleY };
+    },
+  };
+}
+
+/**
+ * What the detail inset is aimed at, and what falls inside it.
+ *
+ * The busiest recorded place in the tick, plus every place whose coordinate is
+ * inside the panel at this magnification. Both are read off the data: the
+ * centre is a recorded coordinate and the membership is a containment test, so
+ * the inset never claims a grouping the placements do not already make.
+ */
+export function detailWindow(crowds = [], places = [], projection, {
+  zoom = DETAIL_ZOOM, panel = { width: 0, height: 0 }, anchorRadiusPx = 0,
+  /* NaN reads as "no bound" through `finite`, and keeps the inferred shape a
+     box of numbers so a caller can hand this the city's own bounds. */
+  bounds = { minX: NaN, minY: NaN, maxX: NaN, maxY: NaN },
+} = {}) {
+  const busiest = [...crowds].sort((left, right) => right.peak - left.peak)[0];
+  const box = panel || { width: 0, height: 0 };
+  if (!busiest || !projection || !(box.width > 0) || !(box.height > 0)) return null;
+  /*
+   * The aim is the busiest recorded place; the FRAMING is then slid so the
+   * panel holds map rather than void. The commons this run centres on sits
+   * 0.012 from the western edge of the coordinate space, so an unclamped window
+   * would spend half the panel on nothing — the very defect the inset exists to
+   * answer. Sliding a camera is framing and changes no position: every chip in
+   * the panel is still at the placement the wide view puts it at.
+   */
+  const halfX = box.width / (2 * projection.scaleX * zoom);
+  const halfY = box.height / (2 * projection.scaleY * zoom);
+  const slide = (value, min, max, half) => {
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max - min <= half * 2) return value;
+    return Math.min(max - half, Math.max(min + half, value));
+  };
+  /*
+   * ...but never so far that the crowd it is aimed at falls off its own edge.
+   * The anchor's spread is magnified with the ground, so the room its disc needs
+   * is the same fraction of the window whatever the zoom; the panel is slid back
+   * until the whole of it fits.
+   */
+  const discX = anchorRadiusPx / projection.scaleX;
+  const discY = anchorRadiusPx / projection.scaleY;
+  const pin = (value, centrePoint, room) => (room <= 0
+    ? centrePoint
+    : Math.min(centrePoint + room, Math.max(centrePoint - room, value)));
+  const centre = {
+    x: pin(slide(busiest.x, finite(bounds?.minX), finite(bounds?.maxX), halfX),
+      busiest.x, halfX - discX),
+    y: pin(slide(busiest.y, finite(bounds?.minY), finite(bounds?.maxY), halfY),
+      busiest.y, halfY - discY),
+  };
+  const camera = zoomProjection(projection, centre, zoom, box);
+  const inside = item => item.x >= camera.window.minX && item.x <= camera.window.maxX
+    && item.y >= camera.window.minY && item.y <= camera.window.maxY;
+  const held = places.filter(inside);
+  return {
+    camera,
+    zoom,
+    centre,
+    anchor: busiest,
+    places: held,
+    /* Only the places that carry a ring — a "crowd" on this surface is a place
+       CROWD_MIN or more people share, and counting every occupied place as one
+       would put a figure in the caption the panel does not draw. */
+    crowds: crowds.filter(crowd => inside(crowd) && crowd.peak >= CROWD_MIN),
+    /* How many recorded placements the panel actually holds, per slot. */
+    headcount: DAY_SLOTS.map(slot => crowds
+      .filter(inside)
+      .reduce((total, crowd) => total + (crowd.slots?.[slot] ?? 0), 0)),
+  };
+}
+
+/**
+ * Which of the chips on screen are between two places at this instant.
+ *
+ * Read off the same anchors and the same clock the renderer draws from, so the
+ * top line counts the chips actually in the frame rather than a property of the
+ * tick. A person whose two consecutive placements name one place is at a place
+ * for the whole leg and is counted as such; a person the leg does move is in
+ * transit until the leg lands them.
+ */
+export function liveCounts(agents = [], clock) {
+  const counts = { inTransit: 0, atPlace: 0, arrived: 0, held: 0 };
+  if (!clock) return counts;
+  const eased = clamp01(finite(clock.ease) ?? easeTravel(clock.t));
+  const fromIndex = clock.beatIndex ?? 0;
+  const toIndex = clock.nextIndex ?? (fromIndex + 1);
+  for (const agent of agents) {
+    const anchors = agent?.anchors;
+    if (!anchors?.length) continue;
+    const from = anchors[fromIndex % anchors.length];
+    const to = anchors[toIndex % anchors.length];
+    if (!from || !to) continue;
+    if (!from.recorded || !to.recorded) counts.held += 1;
+    if (from.placeId === to.placeId) { counts.atPlace += 1; continue; }
+    if (eased >= 1) { counts.atPlace += 1; counts.arrived += 1; continue; }
+    if (eased <= 0) { counts.atPlace += 1; continue; }
+    counts.inTransit += 1;
+  }
+  return counts;
 }
 
 /**
