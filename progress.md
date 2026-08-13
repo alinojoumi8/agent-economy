@@ -30,7 +30,102 @@ Every rendered position derives from a **recorded placement**. An agent's day is
 — `morning`, `business`, `evening`. Chips glide between *those* points. **An agent whose consecutive slots name
 the same place does not move.** No idle drift, no milling, no filler agents.
 
-## Round 1 — built and filmed ✅
+## 🔴 Round 1 result — 1/3, and a bar was broken
+
+**Scored honestly: 1 of 3 against the only valid bar.**
+
+| bar | alive | legible | craft |
+|---|---|---|---|
+| Mini Tokyo 3D | ~~ours, decisive~~ | ~~ours, decisive~~ | ~~ours, decisive~~ |
+| ADS-B Exchange | **bar wins** | **bar wins** | ours |
+
+**All three Mini Tokyo wins are VOID.** Three critics independently *measured* that capture and found it
+static — *"Nothing moves. Measured, not guessed: consecutive frames differ by mean 0.006/255 with fewer than
+0.005% of pixels changed"*; *"5 pixels out of 466,528 differ by more than 10 levels… a still map with a clock
+stamped on it."* The capture was taken at **01:31 Tokyo time, when the trains are stabled.** We beat a
+screenshot. Those verdicts are discarded.
+
+**Bar repaired.** Mini Tokyo 3D has a playback mode (`.mapboxgl-ctrl-playback`); wound forward at 60× to
+07:00 rush hour, dropped back to 1×, re-filmed. Measured proof, per-interval pixel change:
+
+| capture | min % changed | max % | dead intervals |
+|---|---|---|---|
+| Mini Tokyo **03:14 night** — the invalid one | **0.263** | 0.379 | 0 |
+| Mini Tokyo **07:00 rush** — repaired | **4.908** | 7.947 | 0 |
+| ADS-B Exchange | **4.001** | 6.381 | 0 |
+| **our round 1** | **0.008** | 8.447 | **2** |
+
+Night-time Mini Tokyo moved **19× less** than its rush-hour self. Tool: `scratchpad/framediff.js`.
+
+**This diagnoses our real problem exactly.** Our *peak* motion (8.4%) already beats both bars. Our *floor* is
+0.008%. The bars move **steadily**; we alternate between bursts and dead air — which is precisely what three
+critics said in words: *"only in short bursts at three phase boundaries; between them the field is frozen"*,
+*"the strip contains genuine dead air."*
+
+**Round 2 target: minimum per-interval change ≥4%, zero dead intervals.** The fix costs no honesty — the data
+never says "stand still for 9 s then move for 6 s", only "recorded at A, then at B". Spreading the transition
+across the whole beat is equally truthful and removes every dead frame.
+
+Other defects sent to round 2: every person is an identical 3 px dot so you cannot track one; crowds and
+couples render identically with no count badge; chips blow out to white bloom at exactly the moment travel is
+visible, discarding the colour code; a stale "1 anonymised at Suncoast Republic Permit Office" tooltip parked
+over a region label through all twelve frames; developer telemetry (`/api/v2/map 152 ms`) shipped in the
+footer; ~40% of canvas height is dead space; region names at ~15% opacity *beneath* the dots with no boundary
+or hull marking territory.
+
+## Round 2 — rebuilt against the measurement ✅
+
+**Every acceptance number met, and the truthfulness assertion still passes.**
+
+### Defect 1 — the floor, measured with `scratchpad/framediff.js`
+
+| capture | MIN % changed per interval | MAX % | dead intervals |
+|---|---|---|---|
+| ADS-B Exchange | 4.001 | 6.381 | 0 |
+| Mini Tokyo 3D, rush hour | 4.908 | 7.947 | 0 |
+| ~~ours, round 1~~ | ~~0.008~~ | ~~8.447~~ | ~~2~~ |
+| **ours, round 2 — 16 frames @ 2.0 s** | **4.847** | **7.124** | **0** |
+| **ours, round 2 — 12 frames @ 1.5 s** | **4.849** | **6.581** | **0** |
+
+Spread 1.36-1.47 against the bars' ~1.6: **steadier than either bar, with a lower peak than round 1.**
+
+**The root cause was not only the dwell.** Weighting each leg by movers exposed it: 296 of 300 move on
+morning->business, 296 on business->evening, and **0 on evening->morning** — every agent's evening placement
+names the same place as its morning placement. Under equal 15 s beats, a third of the day is a *correctly
+rendered* still field. Two fixes, neither costing a claim:
+
+1. **No dwell** — the eased glide fills the whole leg. Ease is smoothstep blended 0.72 with a straight ramp so
+   the quietest tenth of a leg still covers 7.98% of it (pure smoothstep: 2.8%).
+2. **Wall time in proportion to the people a leg moves** — the zero-mover leg gets none. Skipping it is
+   *provably invisible*: both ends name the same place, so coordinate and de-collision offset are identical and
+   the day loops without one chip changing pixel. Asserted by test.
+
+### Truthfulness assertion — PASS, re-run on the shipped code
+
+| check | result |
+|---|---|
+| rendered positions verified | **3,600** (300 agents x 12 frames) |
+| worst residual off the recorded segment | **0.007 px** (epsilon 0.02) |
+| stationary violations | **0** |
+| agents that moved | 296 of 300 |
+| anchor mismatches · place marks exact | **0** · **266 of 266** |
+| console errors | **0** |
+
+### Defects 2-8
+
+| # | Defect | Fix |
+|---|---|---|
+| 2 | every person an identical dot | a **wake** of the segment already covered (every pixel of it *on* the recorded segment); the **97 cross-border** people drawn a size up and ringed; **click anyone to pin** a halo that rides their pixel with name, occupation, all three placements and their whole day as a closed path |
+| 3 | crowd and couple identical | a **ring at the de-collision radius with the headcount in it** wherever 4+ share a place, counted per slot from the chips actually drawn |
+| 4 | encoding lost in motion | `currentColor` was the inherited page ink, hence white bloom; hue now on `color`, halo takes it from there, and the code hands over mid-leg as a **cross-fade** |
+| 5 | stale anonymised tooltip | anonymised occupancy kept **per slot**; all three rows are `business` rows, so the marks are simply **absent** in the morning and evening |
+| 6 | developer telemetry in the footer | `/api/v2/map 152 ms` and `/api/run/status 47 ms` **removed**; what survives is what was recorded, and when |
+| 7 | dead space, invisible geography | **convex hull per region** from its own places' `region_id` + coordinates, one neutral ground; names off the field onto **plates outside the hull facing the empty band**; a 0.1 **graticule**; and the right inset now clears the day clock, which had been covering a third of Ironvale |
+| 8 | wordmark collides | one line, `nowrap` — it had joined three region names, which are now plates on the territories they name |
+
+Gate: ledger+replay **8 passed** · typecheck **clean** · **158 dashboard tests** (baseline 151, +7 new).
+
+## Round 1 — built and filmed
 
 Route **`/runs/:runId/live-city`**, registered *outside* `WorkspaceShell` so it owns the viewport rather than
 sitting in a panel. Labelled **"Street Level"** in the rail — the builder declined to call it "Live City"
