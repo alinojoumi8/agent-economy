@@ -73,7 +73,49 @@ over a region label through all twelve frames; developer telemetry (`/api/v2/map
 footer; ~40% of canvas height is dead space; region names at ~15% opacity *beneath* the dots with no boundary
 or hull marking territory.
 
-## Round 2 — rebuilt against the measurement ✅
+## ✅ Round 2 result — 6/6 (2 decisive). Up from 1/3.
+
+| bar | alive | legible | craft |
+|---|---|---|---|
+| Mini Tokyo 3D (rush hour) | ours, clear | ours, **decisive** | ours, clear |
+| ADS-B Exchange | ours, clear | ours, **decisive** | ours, clear |
+
+Critics actively checked and **cleared**: no dead or frozen intervals (all 11 measured 6.1–9.0% aligned
+change); no stale readouts (leg title, body copy and progress bar all track state); recolour is **not**
+masquerading as motion (the blue→green flip coincides with 7.8% genuine positional redistribution); no clipped
+chrome. And they credited the honesty affordance directly:
+
+> *"B declares its static elements instead of letting them read as a bug."*
+
+### ⚠️ A measurement lesson — my tool over-credited the bar
+
+Critics used **phase correlation** to compensate for whole-canvas shift before measuring motion. My
+`framediff.js` does not:
+
+> *"Raw frame-to-frame change looks healthy (14–26% of pixels) until you compensate for a whole-canvas 2–4 px
+> shift, at which point it collapses to 3–6%. **70–85% of everything that 'changes' [in Mini Tokyo] is the
+> entire map twitching two pixels.**"*
+
+So Mini Tokyo at 07:00 rush hour is *still* largely a re-rendering diagram — my 4.908% figure credited tile
+reflow as motion. **The trustworthy result is 3/3 against ADS-B**, where the shift correction was only 10–15%.
+`framediff.js` should be upgraded to align frames before differencing; until then its numbers are an upper
+bound, not a measure.
+
+### Round 3 — seven defects named in the winner
+
+1. **The header KPI row is dead** — TICK / PLACEMENTS / COMMUTING / CROSS-BORDER pixel-identical across all
+   12 frames and 23 seconds while the world visibly cycles.
+2. **Chips render on top of region label text** — *"a green chip sits inside 'IRONVALE UNION', eating the E"*.
+   Same defect class as the World map's label/agent-layer bug.
+3. **A raw run hash ships as chrome** — `STREET LEVEL · run 33f5b4ca8c`.
+4. **~90 commons chips fuse into one unresolvable mass**, and the ring-count numerals the legend promises fail
+   at exactly that size — a broken promise, not just density.
+5. **The dense core cannot be tracked** — median chip displacement 4.8–7.5 px against median neighbour spacing
+   7.6–11.4 px, so a chip moves ~0.6 of a neighbour gap per interval.
+6. **A third to a half of the canvas carries nothing** but faint graticule.
+7. **Cross-border travellers glide into empty black** with no destination rendered near them.
+
+## Round 2 — rebuilt against the measurement
 
 **Every acceptance number met, and the truthfulness assertion still passes.**
 
