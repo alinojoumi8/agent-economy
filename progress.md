@@ -101,7 +101,48 @@ reflow as motion. **The trustworthy result is 3/3 against ADS-B**, where the shi
 `framediff.js` should be upgraded to align frames before differencing; until then its numbers are an upper
 bound, not a measure.
 
-### Round 3 — seven defects named in the winner
+### Round 3 — built ✅ (judgement in flight)
+
+Motion floor, all captures re-measured with the upgraded tool:
+
+| capture | floor | ceiling | dead intervals |
+|---|---|---|---|
+| ADS-B Exchange | 3.909% | 6.402% | 0 |
+| Mini Tokyo 3D (rush) | 4.795% | 7.935% | 0 |
+| ours, round 1 | **0.006%** | 8.852% | **2** |
+| **ours, round 3** | **6.722%** | 8.501% | **0** |
+
+The builder **corrected my brief from the data**: the commons blob is *not* one 90-person place — the busiest
+holds **42**, and the mass is a commons (42) plus two districts (24, 23) whose coordinates sit 34 px and 47 px
+apart at whole-city zoom. Its answer was a **second camera**: a 2.6× inset on the busiest ground, drawn only
+where this tick's geography leaves the canvas empty, and **not drawn at all** if no clear candidate exists
+(verified across 4 viewports, 0 chips ever under the panel).
+
+Measured outcomes: plot coverage **37.3% → 69.3%**; z-order occlusion **11,295 chip pixels inside 39 of 77
+label plates → 0 of 77**; truthfulness worst residual **2.5e-16 data units** across 300 chips at 10 timestamps,
+with the 4 same-place people never changing pixel. Gate: 8 passed · typecheck clean · **163 tests**.
+
+**Honest limit it declared rather than hid:** at whole-city zoom with a 2.1 s sampling interval, median chip
+displacement still exceeds median neighbour spacing — *"set by the recording's own pace"* — so an individual
+in the dense core still cannot be followed by eye. The mitigations are the wake, the lock-on and the inset.
+
+**Two self-caught errors worth recording:**
+- A regression it introduced: the first cross-border implementation anchored a rotated element per chip at
+  **39 ms/frame**, and the capture harness started returning **half-painted frames, one in twelve**. Redrawn as
+  a static per-leg SVG layer: median frame **62.5 ms → 23.2 ms**. It flagged that **round-2 numbers may also
+  have carried capture noise**.
+- Its first occlusion probe was **invalid**: hiding the chip layer as a control flipped Chromium's text
+  antialiasing to subpixel, so the no-chips control scored *higher* than the arm under test.
+
+### ⚠️ My measuring tool is still not equivalent to the critics'
+
+I added best-fit integer shift search to `framediff.js`. It now reports 0 px shift and 0% jitter on every
+capture — **and that reading should not be trusted.** The tool downscales 2880 px → 480 px before differencing,
+so the 2–4 px full-resolution shift the critics found becomes sub-pixel and invisible to an integer search.
+The correction is an improvement, not a substitute for phase correlation at full resolution. Treat
+`framediff.js` numbers as an upper bound on motion and a lower bound on jitter.
+
+### Round 3's brief — seven defects named in the round-2 winner
 
 1. **The header KPI row is dead** — TICK / PLACEMENTS / COMMUTING / CROSS-BORDER pixel-identical across all
    12 frames and 23 seconds while the world visibly cycles.
