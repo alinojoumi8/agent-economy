@@ -331,13 +331,28 @@ export function WorkspaceShell() {
           <button ref={commandTrigger} className="world-os-command-button" type="button" onClick={event => openCommand(event.currentTarget)} aria-label="Open command menu" aria-haspopup="dialog">
             <Glyph name="search" /><span>Navigate</span><kbd>Ctrl K</kbd>
           </button>
-          <FreshnessBadge transport={transport} tick={tick} placement="global" />
+          {/*
+            * One condition, one place. The shell used to say "stale" three times in
+            * a single band: this badge, a full-width amber banner below it, and the
+            * workspace's own chrome. The banner is gone — its plain-English rewrite
+            * and its raw reason code both live inside this badge's disclosure.
+            *
+            * The state word belongs to the workspace, and every workspace already
+            * prints it: Overview in its chrome row, six of the rest through
+            * WorkspaceHeader, and People, Investigations and Communications through
+            * their own FreshnessBadge. So the shell's copy never repeats it — it is
+            * the provenance control, and it is the only one of the three that the
+            * shell still renders.
+            */}
+          <FreshnessBadge
+            transport={transport}
+            tick={tick}
+            placement="global"
+            statusShownElsewhere
+          />
         </div>
       </header>
       <main id="workspace-main" className="world-os-main" tabIndex={-1}>
-        {transport.status === "stale" && <div className="world-os-alert" role="alert">
-          Live updates are stale. The workspace is refetching the canonical projection: {transport.staleReason}.
-        </div>}
         <Outlet context={{ tick, forkId: observerState.fork, transport }} />
       </main>
     </section>

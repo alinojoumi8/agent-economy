@@ -1,0 +1,925 @@
+/*
+ * UI kit + World OS Overview composition.
+ *
+ * Everything here reads from src/design/tokens.css. No colour, size, or radius is
+ * written literally below. Imported after the legacy sheets in main.jsx so the new
+ * layer is authoritative wherever it overlaps.
+ */
+
+/* ================================================================ atoms == */
+
+.ae-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.ae-overview .mono { font-family: var(--ae-font-mono); }
+
+/* For assistive tech only. Used where a figure is drawn as two boxes so that a
+   layout boundary can fall inside it: the reading is given here whole and the
+   boxes are hidden, so the number is never heard as fragments. Out of flow, so
+   it occupies no grid track and no flex slot. */
+.ae-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ae-cap {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  color: var(--ae-text-3);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ae-pending {
+  font-size: var(--ae-fs-5);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ae-text-3);
+  font-weight: 600;
+}
+
+.ae-pos { color: var(--ae-pos); }
+.ae-neg { color: var(--ae-neg); }
+.ae-caution { color: var(--ae-caution); }
+.ae-neutral { color: var(--ae-text-2); }
+.ae-hold { color: var(--ae-text-3); }
+
+.ae-r { text-align: right; }
+
+/* ================================================================ badge == */
+
+.ae-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  font-family: var(--ae-font-mono);
+  font-size: var(--ae-fs-6);
+  letter-spacing: .04em;
+  color: var(--ae-text-2);
+  white-space: nowrap;
+}
+.ae-badge--accent { border-color: var(--ae-accent); color: var(--ae-accent); }
+.ae-badge--pos { border-color: var(--ae-pos); color: var(--ae-pos); }
+.ae-badge--caution { border-color: var(--ae-caution); color: var(--ae-caution); }
+.ae-badge--neg { border-color: var(--ae-neg); color: var(--ae-neg); }
+
+/*
+ * The event-kind code. One neutral ink for every registered kind — the channel
+ * carries two hundred kinds and a palette cannot — and a second, quieter tier
+ * for a kind the registry does not hold, which is the only case where the glyph
+ * is shorter than the thing it names. That case also carries the truncation mark
+ * in the text itself, so the distinction survives greyscale, low vision and a
+ * printed screenshot; the ink is the reinforcement, never the sole signal.
+ */
+.ae-kindcode {
+  font-size: var(--ae-fs-5);
+  letter-spacing: .04em;
+  color: var(--ae-text-2);
+  font-family: var(--ae-font-mono);
+}
+.ae-kindcode.is-approx { color: var(--ae-text-3); }
+
+/* state: text only. no pill, no border, no fill, no dot. a luminance ramp. */
+.ae-status {
+  font-size: var(--ae-fs-6);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.ae-status--high { color: var(--ae-text-hi); }
+.ae-status--normal { color: var(--ae-text-2); font-weight: 500; }
+.ae-status--quiet { color: var(--ae-text-3); font-weight: 500; }
+.ae-status--caution { color: var(--ae-caution); }
+.ae-status--bad { color: var(--ae-neg); }
+
+/* =============================================================== button == */
+
+/*
+ * Defect 7: PREV and NEXT were the same muted grey whether or not they did
+ * anything, because "disabled" was only 45% opacity applied to an already-quiet
+ * control — a 55% ink on a 45% ink is not a category difference, it is a shade.
+ * Available and unavailable are now different in BOTH channels at once:
+ *   available   full border ink + headline label + a surface under it
+ *   unavailable divider-weight border + non-text-tier label + no surface
+ * That is 16.05:1 against 3.22:1 on the label and 3.07:1 against ~1.3:1 on the
+ * box, which no reader can mistake for the same control twice.
+ *
+ * Defect 8: `quiet` is the second rank. A theme switch is a view preference, not
+ * a run command, so it does not wear the box a run command wears.
+ */
+.ae-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--ae-radius-sm);
+  background: none;
+  font-family: inherit;
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ae-button--sm { height: 19px; padding: 0 8px; letter-spacing: .05em; }
+
+.ae-button--solid { border-color: var(--ae-border); background: var(--ae-surface-1); color: var(--ae-text-hi); }
+.ae-button--solid:hover:not(:disabled) { background: var(--ae-surface-3); }
+.ae-button--quiet { border-color: transparent; color: var(--ae-text-3); }
+.ae-button--quiet:hover:not(:disabled) { border-color: var(--ae-border-soft); color: var(--ae-text-hi); }
+
+.ae-button.is-on { border-color: var(--ae-border); background: var(--ae-surface-3); color: var(--ae-text-hi); }
+.ae-button:disabled {
+  border-color: var(--ae-divider);
+  background: none;
+  color: var(--ae-text-4);
+  cursor: not-allowed;
+}
+.ae-button--quiet:disabled { border-color: transparent; }
+.ae-overview :focus-visible { outline: 2px solid var(--ae-focus); outline-offset: 1px; }
+
+/* ============================================================= skeleton == */
+
+.ae-skeleton {
+  display: block;
+  height: 9px;
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-skeleton);
+  animation: ae-sk 1.5s ease-in-out infinite;
+}
+.ae-skeleton.is-dim { background: var(--ae-skeleton-dim); }
+.ae-skeleton-lines { display: flex; flex-direction: column; gap: 9px; padding: 4px 0; }
+@keyframes ae-sk { 0%, 100% { opacity: .85; } 50% { opacity: .42; } }
+
+/* ================================================================ empty == */
+
+.ae-empty {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: 9px var(--ae-pad) 11px;
+  border-top: 1px solid var(--ae-divider);
+}
+.ae-empty.is-compact { margin-top: 0; padding: 7px 0 0; border-top: 0; }
+.ae-empty .ae-cap { color: var(--ae-text-3); }
+.ae-empty p {
+  margin: 3px 0 0;
+  font-size: var(--ae-fs-5);
+  line-height: 1.45;
+  color: var(--ae-text-2);
+  max-width: 30ch;
+}
+
+/* ================================================================ panel == */
+
+/* panels detach by surface and by a border strong enough to do it — no shadow */
+.ae-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ae-border);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  box-shadow: var(--ae-elev-0);
+}
+.ae-phead {
+  flex: 0 0 var(--ae-h-panelhead);
+  height: var(--ae-h-panelhead);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--ae-pad);
+  border-bottom: 1px solid var(--ae-border-soft);
+  background: var(--ae-surface-2);
+}
+.ae-ptitle {
+  font-size: var(--ae-fs-5);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-hi);
+  white-space: nowrap;
+}
+/* Prose is set in the prose face; only the endpoint keeps the mono. */
+.ae-pmeta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--ae-fs-6);
+  font-variant-numeric: tabular-nums;
+  color: var(--ae-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ae-pmeta > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ae-pmeta b { flex: 0 0 auto; font-family: var(--ae-font-mono); color: var(--ae-text-2); font-weight: 400; }
+.ae-pmeta-bad { color: var(--ae-neg); }
+/* The one truncation rule on this surface: ellipsis, never a hard cut mid-word. */
+.ae-pmeta-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/*
+ * WHERE THE QUIET TIER STOPS. `--text-3` is calibrated to clear 4.5:1 and it does
+ * — 4.77:1 here on `--surface-2`, 5.15:1 on `--surface-1` — but it was carrying
+ * two different jobs at once and only one of them is served by a bare pass.
+ *
+ *   A CAP OR A UNIT is a short token, uppercase or three letters long, set at 600
+ *   against a figure that is four times its size. It is recognised, not read, and
+ *   it keeps `--text-3`: giving it more ink would put it in competition with the
+ *   number it annotates, which is the opposite of what it is for.
+ *
+ *   A FOOT OR A NOTE is a full sentence of 10px prose at weight 400 — the
+ *   smallest, lightest, longest-lined text on the surface, and the only text here
+ *   that has to be read word by word. At 4.77:1 two independent readers reported
+ *   it as texture rather than as text, which is what a bare pass buys at this
+ *   size. Every one of them moves to `--text-2`: 6.19:1 dark, 7.08:1 light.
+ *
+ * No new colour enters the surface — `--text-2` is already the ink of the ledger
+ * key column, the kind code and the neutral delta — so the palette is unchanged
+ * and one tier of it is retired from a job it was never sized for.
+ */
+.ae-pfoot {
+  flex: 0 0 var(--ae-h-foot);
+  height: var(--ae-h-foot);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--ae-pad);
+  border-top: 1px solid var(--ae-border-soft);
+  background: var(--ae-surface-2);
+  font-size: var(--ae-fs-6);
+  color: var(--ae-text-2);
+  overflow: hidden;
+}
+.ae-pfoot > * { flex: 0 0 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The legend is the one line in the foot that may give ground, and it gives it
+   as an ellipsis like everything else — not as ink. The foot is one voice. */
+.ae-pfoot .ae-legend { flex: 0 1 auto; }
+.ae-pfoot .ae-rt { margin-left: auto; display: flex; align-items: center; gap: 6px; overflow: visible; }
+
+.ae-refetch {
+  display: inline-block;
+  width: 42px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--ae-track);
+  overflow: hidden;
+}
+.ae-refetch i { display: block; height: 100%; width: 38%; background: var(--ae-accent); animation: ae-slide 2.2s linear infinite; }
+@keyframes ae-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
+
+/* ================================================================= stat == */
+
+.ae-stat { min-width: 0; }
+.ae-stat-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.ae-stat-lead { min-width: 0; }
+.ae-stat-value { display: flex; align-items: baseline; gap: 7px; margin-top: 2px; }
+.ae-stat-num {
+  font-size: var(--ae-fs-1);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -.012em;
+  color: var(--ae-text-hi);
+}
+.ae-stat-unit { font-size: var(--ae-fs-5); color: var(--ae-text-3); }
+.ae-stat--hero .ae-stat-value { gap: 9px; margin-top: 3px; }
+.ae-stat--hero .ae-stat-num {
+  font-size: var(--ae-fs-hero);
+  line-height: 1;
+  letter-spacing: var(--ae-ls-hero);
+}
+.ae-stat--hero .ae-stat-unit { font-size: var(--ae-fs-2); font-weight: 500; }
+.ae-stat--hero .ae-pending { font-size: var(--ae-fs-2); }
+
+.ae-delta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+  font-size: var(--ae-fs-5);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ae-stat--hero .ae-delta { margin-top: 6px; font-size: var(--ae-fs-4); }
+.ae-gly { display: inline-block; width: 9px; text-align: center; font-size: var(--ae-fs-6); line-height: 1; }
+.ae-dunit { color: var(--ae-text-3); font-size: var(--ae-fs-6); }
+.ae-dvs { color: var(--ae-text-3); font-size: var(--ae-fs-6); }
+
+/* =============================================================== figure == */
+
+/*
+ * The ledger figure, and the two rules it has to hold at once.
+ *
+ * SPINE. The alignment is on the DECIMAL POINT, and the point is now a GRID
+ * TRACK BOUNDARY rather than an offset measured back from the cell's right wall.
+ * The whole part is right-aligned into track 1, so its last digit ends exactly on
+ * the boundary; the fraction and the unit flow rightward out of track 2. Every
+ * figure in a column therefore puts its point on the same x — that is the whole
+ * mechanism, and it holds whatever mix of precisions the column carries.
+ *
+ * PAIRING, AND WHY THE ANCHOR HAD TO MOVE. The unit trails the number here now,
+ * because the panel beside this one trails its units and one surface may not
+ * spell the same unit two ways. A right-wall anchor cannot carry a trailing unit:
+ * it can only hold the point still if everything to the RIGHT of the point keeps
+ * a constant width, which means a whole number keeps its empty fraction slot
+ * reserved and its unit is shoved 3ch (42.6px measured) clear of the last digit.
+ * Anchoring on the point instead means nothing after the point is reserved, so
+ * the unit sits one 6px gap from the last glyph the number actually drew —
+ * 6px after ".00" and 6px after a bare "39", the same pair either way.
+ *
+ * THE TAIL TRACK is the one reserved width left, and it is reserved on the side
+ * where slack costs nothing but air. 88px carries the widest tail this surface
+ * can produce — ".00" (29.4px) + the 6px pair gap + "major units" (48.4px), all
+ * measured in this surface's own faces — and `minmax(…, max-content)` lets a
+ * longer unit push the track rather than be cut, so an unforeseen unit costs one
+ * row's alignment and never a hidden glyph.
+ */
+.ae-fig { min-width: 0; --ae-fig-tail: 88px; }
+.ae-fig-lbl { min-width: 0; }
+.ae-fig-lbl .ae-cap { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ae-fig-val {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(var(--ae-fig-tail), max-content);
+  align-items: baseline;
+  margin-top: 3px;
+  font-size: var(--ae-fs-1);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -.012em;
+  color: var(--ae-text-hi);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+/* Right-aligned into track 1: the last digit of the whole part lands on the
+   boundary, which is the point's x and the column's spine. */
+.ae-fig-whole { min-width: 0; text-align: right; white-space: nowrap; }
+.ae-fig-tail { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ae-fig-frac { flex: 0 0 auto; white-space: nowrap; }
+/* The gap above is between the fraction BOX and the unit, and the fraction box is
+   its own ink — empty for a whole number — so the 6px is measured from the last
+   glyph drawn, not from a reserved slot. */
+.ae-fig-unit { flex: 0 1 auto; min-width: 0; font-size: var(--ae-fs-6); color: var(--ae-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ae-fig-val .ae-pending { grid-column: 1 / -1; justify-self: end; font-size: var(--ae-fs-6); }
+/*
+ * Exceptionality, and only exceptionality. A treasury in deficit is the one
+ * reading on this panel that a reader must not walk past, so it is the one
+ * reading that takes ink; a large number is not exceptional for being large.
+ */
+.ae-fig-val.is-neg { color: var(--ae-neg); }
+.ae-fig-val.is-caution { color: var(--ae-caution); }
+
+/* ======================================================== latency meter == */
+
+.ae-lat { flex: 0 0 auto; padding: 8px var(--ae-pad) 9px; border-top: 1px solid var(--ae-divider); }
+.ae-lat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.ae-lat-head .ae-cap { white-space: nowrap; }
+.ae-lat-scale { font-size: var(--ae-fs-6); color: var(--ae-text-2); white-space: nowrap; }
+/* The meter gives up 13px of internal air so the counted-entities ledger above it
+   can stand whole at the reference height. Nothing it says is lost. */
+.ae-latrow + .ae-latrow { margin-top: 3px; }
+.ae-latrow-line { display: flex; align-items: baseline; gap: 8px; }
+.ae-latrow-k {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--ae-fs-6);
+  color: var(--ae-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ae-latrow-v { flex: 0 0 auto; font-size: var(--ae-fs-6); color: var(--ae-text-hi); font-variant-numeric: tabular-nums; }
+.ae-latbar { height: 3px; margin: 1px 0 0; border-radius: 1px; background: var(--ae-track); overflow: hidden; }
+.ae-latbar i { display: block; height: 100%; border-radius: 1px; background: var(--ae-text-4); }
+.ae-latbar.is-slow i { background: var(--ae-caution); }
+.ae-latbar.is-pending i { width: 34% !important; background: var(--ae-accent); animation: ae-slide 2.2s linear infinite; }
+.ae-lat-axis { display: flex; justify-content: space-between; margin-top: 5px; font-size: var(--ae-fs-6); color: var(--ae-text-3); }
+
+/* ============================================================ data table == */
+
+/*
+ * Round 1 shipped a column collision here: the fixed tracks summed past the panel,
+ * the `minmax(0,1fr)` name track resolved to 0px, and the 12px cell padding was
+ * still painted — outside a zero-width track, straight on top of the next column.
+ * The header had no clip at all, so NAME printed over ROLE in every table.
+ *
+ * Three changes make that arithmetically impossible rather than merely unlikely:
+ *   1. the gutter is a grid `column-gap`, not cell padding, so nothing a cell owns
+ *      is ever drawn outside its own track;
+ *   2. every column declares a px floor and the table carries the sum as a
+ *      min-width, so no track can be squeezed to nothing — the ledger scrolls
+ *      sideways as one piece first, header locked to rows;
+ *   3. the header cells clip and ellipsise exactly like the body cells.
+ */
+.ae-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.ae-thead {
+  flex: 0 0 var(--ae-h-colhead);
+  height: var(--ae-h-colhead);
+  display: grid;
+  align-items: center;
+  padding: 0 var(--ae-pad);
+  border-bottom: 1px solid var(--ae-border-soft);
+  background: var(--ae-surface-1);
+}
+.ae-thead > *,
+.ae-trow > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ae-thead > * {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-3);
+}
+.ae-tbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 var(--ae-pad); }
+.ae-trow {
+  position: relative;
+  min-height: var(--ae-h-row);
+  display: grid;
+  align-items: center;
+  border-bottom: 1px solid var(--ae-divider);
+}
+.ae-trow:hover:not(.is-skeleton) { background: var(--ae-surface-2); }
+.ae-trow > * {
+  font-size: var(--ae-fs-4);
+  color: var(--ae-text);
+}
+
+/* exceptional rows: one 2px edge rule, no box. salience tracks exceptionality. */
+.ae-trow.is-exception { background: var(--ae-wash-neg); }
+.ae-trow.is-caution { background: var(--ae-wash-caution); }
+.ae-trow.is-exception::before,
+.ae-trow.is-caution::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+}
+.ae-trow.is-exception::before { background: var(--ae-neg); }
+.ae-trow.is-caution::before { background: var(--ae-caution); }
+
+.ae-tempty { padding: 10px 0; }
+.ae-tcell-hi { color: var(--ae-text-hi); font-size: var(--ae-fs-3); }
+.ae-tcell-dim { color: var(--ae-text-3); }
+/* Prose values — a glossed role, not a protocol token — sit one step below the
+   name they qualify, in the prose face rather than the mono of a raw enum. */
+.ae-tcell-2 { color: var(--ae-text-2); }
+.ae-tcell-tier { font-style: italic; font-size: var(--ae-fs-6); color: var(--ae-text-3); }
+.ae-tcell-mono { font-family: var(--ae-font-mono); font-size: var(--ae-fs-5); color: var(--ae-text-2); }
+
+/*
+ * Scrolling shadows. Two `local` cover layers ride with the content and two fixed
+ * shadow layers sit under them, so an edge shadow appears exactly when there is
+ * content past that edge and vanishes at the ends of the scroll. A row cut by the
+ * boundary then reads as more-below, which is what it is, rather than as the
+ * clipped glyph row this surface shipped in round 1.
+ */
+.ae-tbody, .ae-raillist, .ae-regionlist {
+  background:
+    linear-gradient(var(--ae-surface-1) 42%, transparent) top / 100% 16px no-repeat local,
+    linear-gradient(transparent, var(--ae-surface-1) 58%) bottom / 100% 16px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, var(--ae-scroll-edge), transparent) top / 100% 7px no-repeat,
+    radial-gradient(farthest-side at 50% 100%, var(--ae-scroll-edge), transparent) bottom / 100% 7px no-repeat;
+}
+
+.ae-tbody::-webkit-scrollbar, .ae-raillist::-webkit-scrollbar, .ae-regionlist::-webkit-scrollbar { width: 9px; }
+.ae-tbody::-webkit-scrollbar-track, .ae-raillist::-webkit-scrollbar-track, .ae-regionlist::-webkit-scrollbar-track { background: var(--ae-inset); }
+.ae-tbody::-webkit-scrollbar-thumb, .ae-raillist::-webkit-scrollbar-thumb, .ae-regionlist::-webkit-scrollbar-thumb {
+  border: 2px solid var(--ae-inset);
+  border-radius: 5px;
+  background: var(--ae-border-soft);
+}
+.ae-tbody::-webkit-scrollbar-thumb:hover,
+.ae-raillist::-webkit-scrollbar-thumb:hover,
+.ae-regionlist::-webkit-scrollbar-thumb:hover { background: var(--ae-border); }
+
+/* ========================================================= overview shell == */
+
+/*
+ * THE WORKSPACE GROUND. All ten workspaces sit on the token ground — this rule is
+ * the only ground in play. It used to paint --civic-paper here and hand Overview a
+ * token-ground exception, which is what put a seam down the middle of the app:
+ * nine workspaces drawn for paper, one drawn for the token ladder. The paper
+ * ground is retired, so Overview's rule keeps only the padding that is genuinely
+ * its own. civic-weather-room.css carries the content max-width.
+ */
+.world-os-main { background: var(--ae-bg); color: var(--ae-text); }
+.world-os-main:has(.ae-overview) { padding: var(--ae-pad); }
+
+.ae-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ae-gap);
+  min-height: 0;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  font-family: var(--ae-font-ui);
+  font-size: var(--ae-fs-3);
+  line-height: 1.4;
+
+  /* One region row, and a window that is an exact whole number of them. These
+     two must stay in that relationship: it is the whole reason the regional
+     split cannot be sliced through a row again. */
+  --ae-h-regionrow: 22px;
+  --ae-regions: calc(3 * var(--ae-h-regionrow));
+}
+
+/* ---- ONE row of chrome. The run identity already lives in the shell topbar,
+        so this strip carries only what the topbar does not: clock, phase,
+        transport, spend, provider mode, theme.
+
+        One spacing scale for the row. It shipped on 2/6/7/9/10/12/16px gaps
+        chosen per item, which is exactly what reads as hand-placed. Every gap
+        below comes off the --ae-space-* ladder in src/design/tokens.css, the
+        same ladder the shell topbar above it uses. ---- */
+.ae-chrome {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--ae-space-4);
+  height: var(--ae-h-chrome);
+  padding: 0 var(--ae-pad);
+  border: 1px solid var(--ae-border);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-2);
+  overflow: hidden;
+}
+/* Defect 8: five fields, ruled apart, so STALE / cursor 668 / semantics 12 /
+   LIGHT cannot read as one continuous run of chrome. The rule is the cheapest
+   thing on the strip that says "a new field starts here". */
+.ae-chrome > * + *:not(.world-os-error) {
+  border-left: 1px solid var(--ae-divider);
+  padding-left: var(--ae-space-2);
+}
+.ae-chrome-block { display: flex; align-items: center; gap: var(--ae-space-2); flex: 0 0 auto; min-width: 0; }
+.ae-chrome-end { margin-left: auto; display: flex; align-items: center; gap: var(--ae-space-3); flex: 0 0 auto; }
+.ae-tickval { font-size: var(--ae-fs-2); font-weight: 600; letter-spacing: -.01em; color: var(--ae-text-hi); }
+.ae-tickmeta { font-size: var(--ae-fs-6); color: var(--ae-text-2); }
+.ae-phase { font-family: var(--ae-font-mono); font-size: var(--ae-fs-5); color: var(--ae-text-hi); }
+.ae-phase em { font-style: normal; color: var(--ae-text-3); }
+.ae-phasebar { display: flex; gap: var(--ae-space-0); }
+.ae-seg { display: block; width: 8px; height: 6px; border-radius: 1px; background: var(--ae-track); }
+.ae-seg.is-done { background: var(--ae-text-4); }
+.ae-seg.is-now { background: var(--ae-accent); }
+.ae-ctl { display: flex; gap: var(--ae-space-1); }
+/* The link field takes the same shape as every other fact on the strip: one
+   value in the headline ink with its measurements beneath it in the quiet tier.
+   Before this they ran side by side at nearly the same weight, which is what
+   made STALE, cursor 668 and the semantics chip read as one undivided line. */
+.ae-conn { display: flex; align-items: center; gap: var(--ae-space-2); min-width: 0; }
+.ae-conn-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ae-conn-text b {
+  font-size: var(--ae-fs-5);
+  font-weight: 600;
+  letter-spacing: .06em;
+  line-height: 1.2;
+  color: var(--ae-text-hi);
+}
+.ae-conn-text em {
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.2;
+  font-size: var(--ae-fs-6);
+  color: var(--ae-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/*
+ * The link state, on the same contract as everything else: chroma only when the
+ * reading is exceptional.
+ *
+ * A working link is the routine case, so it carries no hue at all — the word in
+ * the headline ink, the dot in the non-text tier, and a slow beat that says
+ * "arriving" through motion rather than through colour. A link that has stopped
+ * delivering is the exceptional case, and STALE, RECONNECTING and CONNECTING all
+ * take the caution ink in BOTH channels at once, word and dot, with the beat
+ * stopped because nothing is arriving to beat about. That is the same amber the
+ * ledgers use for a caution row — one meaning, one hue, used twice — and not a
+ * second hue spent on a second idea.
+ *
+ * HISTORICAL is a chosen view rather than a fault, so it stops the beat and
+ * keeps the quiet ink; the tick it is pinned to is printed directly beneath it.
+ */
+.ae-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ae-text-4); animation: ae-beat 2.4s ease-in-out infinite; }
+.ae-dot.is-off { animation: none; }
+.ae-conn.is-degraded .ae-dot { background: var(--ae-caution); animation: none; }
+.ae-conn.is-degraded .ae-conn-text b { color: var(--ae-caution); }
+@keyframes ae-beat { 0%, 100% { opacity: 1; } 50% { opacity: .42; } }
+
+/* Defect 4: a zero-cap run states its condition in words. A progress track whose
+   numerator and denominator are both 0.00 is an empty meter pretending to measure. */
+.ae-spend { display: flex; align-items: center; gap: var(--ae-space-2); min-width: 0; flex: 1 1 auto; font-size: var(--ae-fs-5); }
+.ae-spend .ae-cap { flex: 0 0 auto; }
+.ae-spend-plain {
+  min-width: 0;
+  color: var(--ae-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ae-spend-plain b { color: var(--ae-text-hi); font-weight: 600; }
+.ae-spend-val { color: var(--ae-text-hi); font-variant-numeric: tabular-nums; }
+.ae-spend-val u { text-decoration: none; color: var(--ae-text-3); }
+.ae-meter { width: 96px; height: 6px; border-radius: 1px; background: var(--ae-track); overflow: hidden; }
+.ae-meter i { display: block; height: 100%; background: var(--ae-accent); }
+
+/* ---- stage ---- */
+.ae-stage {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: var(--ae-rail-w) minmax(0, 1fr);
+  gap: var(--ae-gap);
+  min-height: 0;
+  height: clamp(620px, calc(100vh - 210px), 1180px);
+}
+/*
+ * The band row was a hard 240px, so the CPI / UNEMPLOYMENT / POLICY RATE deltas
+ * sat 9px below the panel's bottom edge and shipped as half-height glyph
+ * fragments. A number is either shown or dropped; it is never truncated to noise.
+ * `minmax(<floor>, min-content)` keeps the airy floor when the content is short
+ * and grows the row to whatever the content actually measures when it is not, so
+ * the band cannot clip itself again at any figure width.
+ */
+.ae-content {
+  display: grid;
+  grid-template-columns:
+    minmax(var(--ae-roster-min), 1fr)
+    minmax(var(--ae-stream-min), var(--ae-stream-w));
+  grid-template-rows: minmax(var(--ae-band-h), min-content) minmax(0, 1fr);
+  gap: var(--ae-gap);
+  min-height: 0;
+}
+
+/* ---- rail ---- */
+.ae-rail { overflow: hidden; }
+/*
+ * The counted ledger is the ONLY thing in the rail allowed to give ground: the
+ * regional split, the latency meter and the halts block are all `0 0 auto`, so a
+ * short viewport can never shave a row off the bottom of one of them. Slack left
+ * over collects on the halts block's auto margin, i.e. against the panel's
+ * bottom edge, instead of opening a hole in the middle of the rail.
+ */
+.ae-raillist { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 2px var(--ae-pad) 6px; }
+/*
+ * THE LEDGER'S HEIGHT BUDGET, and why three pixels came back.
+ *
+ * The rail is exactly as tall as the stage and every block in it is `0 0 auto`
+ * except this one, so this ledger is the only thing that gives ground — and the
+ * BALANCES section defect 6 asks for costs it 23px it did not have. Squeezed, it
+ * became a scroller whose fade fell across the very row that had just been moved
+ * out for being different, dimming it. Three reclamations pay for the section
+ * outright, and none of them drops a figure or a source:
+ *
+ *   12px  the fade reserve. The bottom pad exists so that at the end of a scroll
+ *         the fade lands on empty space and never on the last row; it only has to
+ *         exceed the fade's own length, and it was carrying twice that. Padding
+ *         and mask are re-stated together here so they can never drift apart —
+ *         a shorter pad under a longer mask is exactly what dims a real row.
+ *    9px  one pixel off each of the nine ledger rows.
+ *    5px  the first group heading's top margin, which was stacking on the
+ *         scroller's own top padding and drawing a double gap at the ledger head.
+ *
+ * That is 26px reclaimed against 23px spent, so the ledger stands whole with
+ * marginally more slack than it had before the section existed.
+ */
+.ae-rail .ae-raillist {
+  padding-bottom: var(--ae-space-3);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--ae-space-3)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--ae-space-3)), transparent 100%);
+}
+.ae-raillist .world-os-metrics > .ae-railgrp:first-child { margin-top: 0; }
+/* The rail's whole ledger has to stand in the panel at the reference height, so
+   a scroll boundary never slices a row in half on the first read. */
+.ae-railgrp {
+  display: flex;
+  align-items: flex-end;
+  height: 18px;
+  margin-top: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--ae-divider);
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-3);
+  white-space: nowrap;
+}
+/*
+ * Defect 6: the group heading is where a money column declares its unit. The
+ * counts above it are unitless by nature and carry nothing, so the presence of a
+ * unit on this line is itself the statement that the figure below is a settled
+ * amount and not a tally.
+ */
+.ae-railunit {
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--ae-text-3);
+}
+.ae-railrow { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.ae-railrow .k { min-width: 0; font-size: var(--ae-fs-4); color: var(--ae-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ae-railrow .v { margin-left: auto; flex: 0 0 auto; font-size: var(--ae-fs-4); font-weight: 600; color: var(--ae-text-hi); font-variant-numeric: tabular-nums; }
+.ae-railrow .v .ae-pending { font-size: var(--ae-fs-6); }
+/* The cents drop to the quiet tier: a fractional figure reads as an amount at a
+   glance, where a count never has one. */
+.ae-railfrac { color: var(--ae-text-3); font-weight: 500; }
+
+/*
+ * Defect 1 — the clipped REGIONS row, and the one the critics called the worst.
+ *
+ * The section is now a PINNED sibling of the counted-entities scroller rather
+ * than its last child, so the rail's scroll boundary cannot fall inside it. Its
+ * own list is a real scroller with a real thumb, and its window is `--ae-regions`
+ * = an exact integer multiple of `--ae-h-regionrow`, so the boundary can only
+ * ever land between two rows. Snapping holds that invariant after a scroll as
+ * well as at rest. A half-row cannot be produced here at any region count.
+ */
+.ae-regions { flex: 0 0 auto; padding: 0 var(--ae-pad) 2px; }
+.ae-regions .ae-empty.is-compact { padding-top: 5px; }
+.ae-region-src {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--ae-fs-6);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ae-text-2);
+  font-weight: 400;
+}
+.ae-regionlist {
+  max-height: var(--ae-regions);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+}
+.ae-regionlist:focus-visible { outline: 2px solid var(--ae-focus); outline-offset: 1px; }
+.ae-regionrow {
+  display: grid;
+  /* Both numeric tracks clear their own column heading at its natural width, so
+     neither AGENTS nor FIRMS is ever drawn outside the track it labels. */
+  grid-template-columns: minmax(0, 1fr) 46px 38px;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--ae-h-regionrow);
+  border-bottom: 1px solid var(--ae-divider);
+  scroll-snap-align: start;
+}
+.ae-regionrow:last-child { border-bottom: 0; }
+.ae-regionrow.is-head {
+  height: 15px;
+  border-bottom: 0;
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-3);
+}
+.ae-regionrow.is-head .ae-regionrow-k { color: var(--ae-text-3); }
+.ae-regionrow-k {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: var(--ae-fs-5);
+  color: var(--ae-text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ae-regionrow-k u { flex: 0 0 auto; text-decoration: none; font-size: var(--ae-fs-6); color: var(--ae-text-3); }
+.ae-regionrow-n {
+  text-align: right;
+  font-size: var(--ae-fs-4);
+  color: var(--ae-text);
+  font-variant-numeric: tabular-nums;
+}
+.ae-regionrow.is-head .ae-regionrow-n { font-size: var(--ae-fs-6); }
+
+/* The rail's counted entities are the World OS summary group. */
+.ae-rail .world-os-metrics {
+  display: block;
+  margin: 0;
+  gap: 0;
+  border: 0;
+  background: none;
+}
+
+/* ---- economy hero band ---- */
+.ae-macro { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 11px; padding: 9px var(--ae-pad) 11px; min-height: 0; }
+/*
+ * Round 1 drew the sparkline through the last glyph of the hero figure. The cause
+ * was `minmax(0, 1fr)` on the figure's column: a 58px number needs about 230px and
+ * the track was allowed to resolve to 156px, so the number overflowed into the
+ * chart's column and the chart was painted over it. The floor is now the figure's
+ * own min-content, which cannot be crossed, and the chart takes what is left.
+ */
+.ae-macro-top { display: grid; grid-template-columns: minmax(min-content, 1fr) minmax(0, 256px); align-items: end; gap: 16px; }
+/*
+ * One line, always. As a flex row of sentence fragments this caption shrank each
+ * fragment to its own min-content and stacked three ragged columns with a
+ * hyphenated FINAL- across three lines. It is now a single nowrap line whose
+ * qualifier ellipsises if it ever runs out of room.
+ */
+.ae-herolbl {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ae-text-3);
+}
+.ae-herolbl > b { flex: 0 0 auto; font-weight: 600; }
+.ae-herodef {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--ae-text-2);
+}
+.ae-spark { min-width: 0; padding-bottom: 4px; }
+.ae-spark svg { display: block; width: 100%; height: 54px; }
+/* The series stops 9 of 268 viewBox units short of the frame so it can close on
+   its own right edge (see Sparkline); the caption is inset by the same 3.4% so
+   the last tick label sits over the point it names, not over the frame corner. */
+.ae-sparkcap {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+  padding-right: 3.4%;
+  font-size: var(--ae-fs-6);
+  color: var(--ae-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ae-macro-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--ae-divider); padding-top: 9px; }
+.ae-macro-row > * + * { border-left: 1px solid var(--ae-divider); padding-left: 14px; }
+.ae-macro-row > * { padding-right: 14px; }
+/* Defect 4: what a row of "– 0.00 … vs t333" placeholders collapses into. */
+.ae-macro-hold { margin: 0; font-size: var(--ae-fs-6); color: var(--ae-text-2); line-height: 1.3; }
+
+/* ---- institutions band (fast source, prime slot) ---- */
+/* Two columns, two spines. Every figure in a column ends on that column's right
+   edge, and the election record has left the grid for the footnote band. */
+.ae-inst { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px var(--ae-pad) 12px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.ae-inst-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 14px; }
+.ae-inst-grid > * + * { border-left: 1px solid var(--ae-divider); padding-left: 14px; }
+.ae-inst-grid > *:nth-child(odd) { border-left: 0; padding-left: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ae-dot, .ae-skeleton, .ae-refetch i, .ae-latbar.is-pending i { animation: none; }
+}
+
+/* Below this the band cannot seat both ledgers at their floors side by side, so
+   they stack rather than start scrolling sideways. */
+@media (max-width: 1344px) {
+  .ae-chrome { flex-wrap: wrap; height: auto; min-height: var(--ae-h-chrome); padding: 8px var(--ae-pad); }
+  /* Once the strip wraps, the line break separates the fields and a field rule
+     would land at the start of a row with nothing to its left to divide. */
+  .ae-chrome > * + *:not(.world-os-error) { border-left: 0; padding-left: 0; }
+  .ae-spend-plain { white-space: normal; }
+  .ae-content { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .ae-stage { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .ae-rail { max-height: 520px; }
+  .ae-content > .ae-panel { min-height: 300px; }
+}

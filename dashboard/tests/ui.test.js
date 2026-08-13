@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -440,6 +442,151 @@ test("agent directory starts loading before debounce and keyboard activation pre
       preventDefault: () => activation.push("prevented"),
     }, id => activation.push(`inspected:${id}`), 17);
     assert.deepEqual(activation, ["prevented", "inspected:17"]);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("every coded kind holds a unique code and every uncoded kind says so", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const {
+      KIND_TRUNCATION_MARK,
+      codedKinds,
+      kindCode,
+      kindCoding,
+    } = await vite.ssrLoadModule("/src/ui/format.ts");
+    const { KindCode } = await vite.ssrLoadModule("/src/ui/primitives.tsx");
+
+    /* The registry may grow; it may not quietly shrink, and no two kinds may ever
+       land on one glyph — that merge is the failure the old PRMT table shipped. */
+    const kinds = codedKinds();
+    assert.ok(kinds.length >= 164, `registry shrank to ${kinds.length} kinds`);
+    const owner = new Map();
+    for (const kind of kinds) {
+      const { code, exact } = kindCoding(kind);
+      assert.equal(exact, true, `${kind} is registered but reported inexact`);
+      assert.match(code, /^[A-Z0-9]{2,4}$/, `${kind} carries a malformed code ${code}`);
+      assert.equal(
+        owner.get(code), undefined,
+        `${code} is shared by ${owner.get(code)} and ${kind}`,
+      );
+      owner.set(code, kind);
+    }
+    assert.equal(owner.size, kinds.length);
+
+    /* An unregistered kind is abbreviated, never coded, and the glyph carries the
+       mark that says so — `CIV…`, which cannot be mistaken for a real code the way
+       a bare `CIVI` could. */
+    const uncoded = "civic_x_y";
+    assert.ok(!kinds.includes(uncoded), `${uncoded} is now registered; pick another`);
+    const abbreviated = kindCoding(uncoded);
+    assert.equal(abbreviated.exact, false);
+    assert.equal(abbreviated.code, `CIV${KIND_TRUNCATION_MARK}`);
+    assert.ok(abbreviated.code.endsWith(KIND_TRUNCATION_MARK));
+
+    /* Short enough to survive whole: nothing is lost, so nothing is marked —
+       whether the kind is registered (`ipo`) or not (`halt`). */
+    assert.deepEqual(kindCoding("ipo"), { code: "IPO", exact: true });
+    assert.ok(!kinds.includes("halt"), "halt is now registered; pick another");
+    assert.deepEqual(kindCoding("halt"), { code: "HALT", exact: true });
+    for (const survivor of ["IPO", "HALT"]) {
+      assert.ok(!survivor.includes(KIND_TRUNCATION_MARK));
+    }
+
+    /* Kinds separated on purpose stay separated: near-homonyms, one labour pair
+       that means two different things, the two information channels, and all six
+       permit outcomes that an earlier table collapsed onto a single glyph. */
+    const disambiguated = {
+      benefit_paid: "BENP",
+      benefits_paid: "BENS",
+      hired: "HIRD",
+      job_offer_accepted: "JOFA",
+      information_published: "IPUB",
+      information_exposed: "IEXP",
+      business_permit_applied: "PMAP",
+      business_permit_approved: "PMOK",
+      business_permit_denied: "PMNO",
+      business_permit_referred: "PMRF",
+      business_permit_case_transferred: "PMTR",
+      business_permit_abandoned: "PMAB",
+    };
+    const assigned = [];
+    for (const [kind, code] of Object.entries(disambiguated)) {
+      assert.equal(kindCode(kind), code, `${kind} no longer codes as ${code}`);
+      assigned.push(kindCode(kind));
+    }
+    assert.equal(new Set(assigned).size, assigned.length);
+
+    /* And the cell reports the difference: a coded kind takes the normal ink, an
+       abbreviated one drops to the quieter ink and explains itself on hover. */
+    const coded = renderToStaticMarkup(React.createElement(KindCode, { kind: "business_permit_denied" }));
+    assert.match(coded, />PMNO</);
+    assert.doesNotMatch(coded, /is-approx/);
+    const approx = renderToStaticMarkup(React.createElement(KindCode, { kind: uncoded }));
+    assert.match(approx, /is-approx/);
+    assert.match(approx, /No code is registered for this kind, so it is shown abbreviated\./);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test("the kind registry covers every kind the engine and world packages emit", async t => {
+  const roots = [
+    fileURLToPath(new URL("../../engine", import.meta.url)),
+    fileURLToPath(new URL("../../world", import.meta.url)),
+  ];
+  const sources = [];
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = await readdir(root, { recursive: true });
+    } catch {
+      /* The dashboard is also built and tested apart from the Python packages.
+         Absence is a reason to skip this check, never to silently pass it. */
+      return t.skip(`engine sources unavailable at ${root}`);
+    }
+    for (const entry of entries) {
+      if (entry.endsWith(".py")) sources.push(join(root, entry));
+    }
+  }
+
+  /* Every event enters the spine through `store.log_event(tick, "<kind>", ...)`,
+     usually across several lines. The first argument is always the tick, so it
+     can hold no comma, no quote and no closing paren — which is what lets this
+     read the kind literal without parsing Python. */
+  const emitted = new Map();
+  for (const source of sources) {
+    const text = await readFile(source, "utf8");
+    const calls = text.matchAll(
+      /\blog_event\(\s*[^,)"']{0,80},\s*(?:kind\s*=\s*)?"([a-z][a-z0-9_]{2,60})"/g,
+    );
+    for (const [, kind] of calls) {
+      if (!emitted.has(kind)) emitted.set(kind, source);
+    }
+  }
+
+  /* A broken reader finds nothing and would then pass vacuously. The floor is far
+     below the count this currently reads (147) so that adding or retiring kinds
+     never trips it, while a reader that stops working does. */
+  assert.ok(
+    emitted.size >= 100,
+    `only ${emitted.size} kind literals found; the log_event reader is broken`,
+  );
+
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { codedKinds } = await vite.ssrLoadModule("/src/ui/format.ts");
+    const coded = new Set(codedKinds());
+    const uncoded = [...emitted]
+      .filter(([kind]) => !coded.has(kind))
+      .map(([kind, source]) => `${kind} (${source})`);
+    assert.deepEqual(
+      uncoded, [],
+      `these emitted kinds have no designed code:\n${uncoded.join("\n")}`,
+    );
   } finally {
     await vite.close();
   }

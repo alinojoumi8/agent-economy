@@ -132,7 +132,14 @@ export function WorldWorkspace() {
           projection: envelope.projection_version,
           policy: envelope.policy_version,
         } : null}
-        variant="world-os-world"
+        /*
+         * "world-os", not "world-os-world". The variant string is what becomes
+         * the modifier class, and civic-weather-room.css only ever defined
+         * .civic-city--world-os. The extra word meant the atlas matched none of
+         * its own dark treatment and fell back to the light civic default, which
+         * is why "Civic Forum" was white-on-paper at 1.25:1 inside a dark app.
+         */
+        variant="world-os"
         observerState={projection.observerState}
         onObserverStateChange={projection.setObserverState}
       />
