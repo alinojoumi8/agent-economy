@@ -89,6 +89,11 @@ or hull marking territory.
 
 Spread 1.36-1.47 against the bars' ~1.6: **steadier than either bar, with a lower peak than round 1.**
 
+**Independently re-measured on my own capture, not the builder's** (12 frames @ 1.5 s, fresh film):
+`min 4.973 · max 7.917 · dead 0` — per-interval
+`6.75 6.81 6.57 6.08 5.58 5.19 5.00 4.97 5.02 5.43 5.95 7.92 7.05 6.60 5.53`.
+The floor clears ADS-B's 4.001 and matches Mini Tokyo's 4.908. The claim holds.
+
 **The root cause was not only the dwell.** Weighting each leg by movers exposed it: 296 of 300 move on
 morning->business, 296 on business->evening, and **0 on evening->morning** — every agent's evening placement
 names the same place as its morning placement. Under equal 15 s beats, a third of the day is a *correctly
