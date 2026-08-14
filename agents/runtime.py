@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from functools import partial
 from typing import NamedTuple, Optional
 
 from engine.actions import ActionExecutor
@@ -91,6 +92,45 @@ async def _gather_fail_fast(coroutines):
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+
+
+def _bounded(coroutine_factories, width: int):
+    """Admit `width` coroutines at a time, in order, without a barrier.
+
+    The world shares its event loop with the HTTP server, and asyncio runs every
+    ready callback in one batch before it polls I/O again. Handing it 300 agents
+    at once therefore buries the server for as long as all 300 take: the context
+    build in front of each decision is synchronous SQL, so a 300-agent tick
+    stalled the loop for 45 s and the dashboard sat on a stale payload without
+    ever looking broken.
+
+    A semaphore keeps the batch to `width` heavy items — the rest suspend on
+    acquire, which is cheap — so the loop polls I/O every few hundred
+    milliseconds instead of once a tick. `asyncio.Semaphore` wakes waiters
+    first-in-first-out, so agents still proceed in list order and results still
+    come back in input order; this changes when work runs, never what it is.
+
+    Deliberately not a barrier: a slow agent delays only its own slot, not the
+    whole cohort, which matters once a live provider is answering.
+    """
+    gate = asyncio.Semaphore(max(1, int(width)))
+
+    async def admit(factory):
+        async with gate:
+            # The gate alone does not bound the batch. On Python 3.11
+            # `Semaphore.locked()` is `_value == 0`, so a release that happens
+            # while the batch is still draining lets the next task acquire
+            # without ever suspending, and all 300 run back to back exactly as
+            # before — measured, after the gate was added and changed nothing.
+            # An unconditional yield is what actually ends the batch and lets
+            # the loop poll I/O, so the cost is bounded by `width`, not by the
+            # size of the cohort.
+            await asyncio.sleep(0)
+            return await factory()
+
+    # Factories, not coroutines: a cohort cancelled by fail-fast must not leave
+    # coroutine objects that were created and never awaited.
+    return [admit(factory) for factory in coroutine_factories]
 
 
 def _maximum_candidate_job_matching(offers: list[dict]) -> list[dict]:
@@ -274,7 +314,12 @@ class AgentRuntime:
             agents = [a for a in agents if int(a["id"]) != participant_agent_id]
         if external_agent_ids:
             agents = [a for a in agents if int(a["id"]) not in external_agent_ids]
-        tasks = [self._decide_guarded(tick, a) for a in agents]
+        # Bounded at the gateway's own in-flight width: the provider is already
+        # the throughput ceiling, so gating the context build to the same width
+        # costs nothing and keeps the serving loop responsive during MORNING.
+        tasks = _bounded(
+            [partial(self._decide_guarded, tick, a) for a in agents],
+            getattr(self.gw, "max_in_flight", 8))
         results = await _gather_fail_fast(tasks)
         decisions = []
         errors = 0

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
@@ -80,6 +81,7 @@ class RunController:
         self.task: asyncio.Task[None] | None = None
         self._step_active = False
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.loop_watchdog = None
         self._control_lock = asyncio.Lock()
         self._tick_broadcasts: set[Future[None]] = set()
         self._tick_broadcasts_lock = Lock()
@@ -142,6 +144,14 @@ class RunController:
                 current_loop.default_exception_handler(context)
 
         loop.set_exception_handler(handle_loop_exception)
+        # A tick that never yields starves every reader of this same loop, and
+        # does it silently — the dashboard keeps animating off its last payload.
+        # The detector has to live off the loop to see that at all.
+        from server.loop_watchdog import LoopWatchdog
+        self.loop_watchdog = LoopWatchdog(
+            loop, run_id=self.world.gateway.run_id,
+            capture_stacks=os.environ.get("AE_LOOP_WATCHDOG_STACKS", "1") != "0")
+        self.loop_watchdog.start()
         operational_log(logger, logging.INFO, "server.started",
                         run_id=self.world.gateway.run_id, tick=self.store.tick)
         try:
@@ -149,6 +159,8 @@ class RunController:
                 await self.start()
             yield
         finally:
+            if self.loop_watchdog is not None:
+                self.loop_watchdog.stop()
             try:
                 replay_reader = getattr(_app.state, "replay_reader", None)
                 if replay_reader is not None:
@@ -383,7 +395,7 @@ class RunController:
         self.world.status = "finished"
         self.store.set_meta(status="finished")
         self.store.commit()
-        self.world.checkpoint(self.store.tick, reason="stop")
+        await self.world.checkpoint_async(self.store.tick, reason="stop")
         meta = self.store.get_meta()
         if meta["active_tick"] is not None:
             deferred = {
@@ -540,6 +552,10 @@ class RunController:
             "pause_reason": self.world.last_pause_reason,
             "acceptance_orchestration": orchestration,
             "participant_active": self.participant.active_agent_id() is not None,
+            # A stalled loop is why a dashboard goes stale while still looking
+            # alive, so the figure belongs on the status every client polls.
+            "loop_health": (
+                self.loop_watchdog.status() if self.loop_watchdog is not None else {}),
         }
         if self.hosted_safe:
             payload["report_artifact"] = {
