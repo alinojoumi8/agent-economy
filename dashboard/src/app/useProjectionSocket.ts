@@ -33,14 +33,7 @@ export function useProjectionSocket(historical: boolean) {
         // During lineage recovery the server's mandatory first frame is the
         // authoritative hello. Wait for it before requesting backfill so an
         // old-lineage cursor is never sent against the new run or fork.
-        //
-        // A cursor of 0 is the same situation for a different reason: there is
-        // no history to reconcile, and asking to be caught up from 0 on a run
-        // of any length can only answer `backfill_truncated`, which marks the
-        // client stale one frame after the server's own hello made it live.
-        // That was the permanent "stale" badge — the client asking for a
-        // recovery it did not need and could not be given.
-        if (!lineageRecovery.current && cursor.current > 0) {
+        if (!lineageRecovery.current) {
           socket?.send(JSON.stringify({ type: "hello", event_cursor: cursor.current }));
         }
       });
