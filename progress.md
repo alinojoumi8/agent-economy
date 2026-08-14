@@ -581,6 +581,48 @@ running-world section was measured against a paused world.
    `design/`. Restored; nothing lost. Two other local sessions are operating in this same tree — anything
    uncommitted is at risk, which is why progress.md is now committed rather than left untracked.
 
+## 🔴 The branch fails 18 Playwright specs, and they are reporting lost features
+
+`main` passes **35/35**. This branch passes **17/35**. None of it is the engine work — rounds 1-3 touched zero
+non-dashboard files — and it went unseen because the branch was 13 commits ahead and had never been pushed.
+
+**First read, wrong:** "the specs point at the old route." **Second read, from the props:** the redesign moved
+the Civic City panel out of Overview into the World workspace *and did not carry its data with it*.
+
+| prop | `main`, in Overview | this branch, in World |
+|---|---|---|
+| `events` | `data.events?.items` | `[]` |
+| `civic` | `cityQuery.data?.civic` | `null` |
+| `runtime` | `runtimeQuery.data` | `null` |
+| `status` / `phase` | `data.summary?.status` / `.phase` | **not passed** |
+| `loading` / `error` | query state | **not passed** |
+
+`WorldWorkspace` makes no data fetches at all — it renders from the outlet projection — and the new Overview
+has no city section of any kind. So what the specs report as missing really is missing:
+
+- **"Run paused" / "Run failed" / "Historical tick N"** — needs `status`/`phase`
+- **"No city marks match this view."** and **"City evidence is temporarily unavailable."** — needs `loading`/`error`
+- **the evidence lens** — needs `events`
+- **the live AI activity dock** — needs `runtime`
+
+A second, separate regression: `8b08902` removed the `role="alert"` stale banner from `WorkspaceShell` under
+*"one condition, one place"*, consolidating into `FreshnessBadge` — which renders `role="status"` **inside a
+collapsed `<details>`**. So when the transport goes stale, nothing visible or assertive says so. That is a real
+accessibility defect, not a selector mismatch, and it accounts for the transport specs.
+
+**The blind rounds cannot be cited against this.** Six critics judged the new `/live-city` route against its
+bars. Nobody was ever shown Overview losing its civic panel, or a stale badge that cannot be seen.
+
+Two ways to repair, and the difference is a design decision rather than a bug fix:
+
+1. **Restore the feeds where the panel now lives** — give `WorldWorkspace` the sources it needs and pass
+   `status`/`phase`/`loading`/`error`, then re-point the specs from `/overview` to `/world`. Accepts the
+   redesign's information architecture.
+2. **Put the panel back in Overview.** Treats the move as an unintended casualty and leaves the specs alone.
+
+Either way the stale banner needs restoring as a *visible, assertive* element — that part is not optional and
+is not a matter of taste.
+
 ## 🔴 Piece 5's substrate is one twelfth of what the plan assumed
 
 Checked before building, and it changes the piece. **The run holds 372 conversations across 372 ticks —
