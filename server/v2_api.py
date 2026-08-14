@@ -856,7 +856,7 @@ def install_v2_routes(app, world, controller) -> None:
         controller._require_mutable("God-mode fork")
         if controller.is_running() or body.expected_tick != store.tick:
             raise HTTPException(status_code=409, detail="pause at the expected tick before forking")
-        checkpoint = world.checkpoint(store.tick, reason="god_mode_fork")
+        checkpoint = await world.checkpoint_async(store.tick, reason="god_mode_fork")
         if not checkpoint:
             raise HTTPException(status_code=500, detail="checkpoint failed")
         from run import fork_run

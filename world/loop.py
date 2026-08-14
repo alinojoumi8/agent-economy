@@ -191,7 +191,7 @@ class World:
             self.store.set_meta(status=new_status)
             self._save_prng_state()
             self.store.commit()
-            self.checkpoint(
+            await self.checkpoint_async(
                 self.store.tick,
                 reason="stop" if self._stop_requested else "pause")
             if self._stop_requested:
@@ -431,7 +431,7 @@ class World:
                        "governor": self.gateway.governor.status()}
             self._record_runtime_tick(tick, summary)
             if self.checkpoint_every and tick % self.checkpoint_every == 0:
-                self.checkpoint(tick)
+                await self.checkpoint_async(tick)
             operational_log(logger, logging.INFO, "world.tick.completed",
                             run_id=self.gateway.run_id, tick=tick, phase=phase,
                             wall_s=summary["wall_s"], decisions=decisions_count)
@@ -968,24 +968,72 @@ class World:
                 subject_type="agent", subject_id=agent_id, importance=2.0)
 
     # ── checkpoints (SQLite backup + PRNG state, TECH-SPEC §13) ──────────────
-    def checkpoint(self, tick: int, reason: str = "interval") -> Optional[str]:
+    def _checkpoint_prepare(self, tick: int) -> tuple[Path, str]:
+        """Everything that must happen on the owning thread, before the copy."""
+        self._save_prng_state()
+        # SQLite backup only sees committed pages from its separate source
+        # connection. Commit status/events/PRNG before taking the snapshot.
+        self.store.commit()
+        ckpt_dir = Path(
+            self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        run_id = self.store.get_meta()["run_id"]
+        return ckpt_dir / f"{run_id}_t{tick}.db", run_id
+
+    @staticmethod
+    def _checkpoint_write(source_path: str, dest: Path) -> None:
+        """Copy the database page by page — the expensive half of a checkpoint.
+
+        Touches no shared state: its own source and destination connections,
+        both opened and closed here. That is what makes it safe to hand to a
+        worker thread, which matters because this is a full copy of the run
+        database and took 27-78 s of a *serving* event loop when it ran inline.
+        """
+        import sqlite3
+        src = sqlite3.connect(source_path)
+        dst = sqlite3.connect(str(dest))
         try:
-            self._save_prng_state()
-            # SQLite backup only sees committed pages from its separate source
-            # connection. Commit status/events/PRNG before taking the snapshot.
-            self.store.commit()
-            ckpt_dir = Path(
-                self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
-            run_id = self.store.get_meta()["run_id"]
-            dest = ckpt_dir / f"{run_id}_t{tick}.db"
-            src = __import__("sqlite3").connect(self.store.path)
-            dst = __import__("sqlite3").connect(str(dest))
             with dst:
                 src.backup(dst)
-            src.close(); dst.close()
-            finalize_sqlite_artifact(dest)
-            write_checkpoint_manifest(dest)
+        finally:
+            src.close()
+            dst.close()
+        finalize_sqlite_artifact(dest)
+        write_checkpoint_manifest(dest)
+
+    def _checkpoint_failed(self, tick: int, reason: str, exc: Exception) -> None:
+        self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)
+        operational_log(logger, logging.ERROR, "world.checkpoint.failed",
+                        run_id=self.gateway.run_id, tick=tick, reason=reason,
+                        error_type=type(exc).__name__, error=str(exc))
+        return None
+
+    async def checkpoint_async(self, tick: int, reason: str = "interval") -> Optional[str]:
+        """The same checkpoint, with the page copy off the serving event loop.
+
+        Used from the async paths — the interval checkpoint inside a tick and
+        the one on pause/stop — because the world shares its loop with the HTTP
+        server, and a blocking copy there takes every reader down with it.
+        """
+        try:
+            dest, run_id = self._checkpoint_prepare(tick)
+            await asyncio.to_thread(self._checkpoint_write, self.store.path, dest)
+            return self._checkpoint_record(tick, dest, run_id, reason)
+        except Exception as exc:
+            return self._checkpoint_failed(tick, reason, exc)
+
+    def checkpoint(self, tick: int, reason: str = "interval") -> Optional[str]:
+        """Blocking checkpoint, for the CLI and halt paths that have no loop."""
+        try:
+            dest, run_id = self._checkpoint_prepare(tick)
+            self._checkpoint_write(self.store.path, dest)
+            return self._checkpoint_record(tick, dest, run_id, reason)
+        except Exception as exc:
+            return self._checkpoint_failed(tick, reason, exc)
+
+    def _checkpoint_record(self, tick: int, dest: Path, run_id: str,
+                           reason: str) -> Optional[str]:
+        try:
             created_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc).isoformat()
             existing = self.store.query_one(
@@ -1029,11 +1077,9 @@ class World:
                             run_id=run_id, tick=tick, reason=reason, path=str(dest))
             return str(dest)
         except Exception as exc:
-            self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)
-            operational_log(logger, logging.ERROR, "world.checkpoint.failed",
-                            run_id=self.gateway.run_id, tick=tick, reason=reason,
-                            error_type=type(exc).__name__, error=str(exc))
-            return None
+            # Both entry points wrap this too; catching here as well keeps the
+            # failure attributable to the catalog step rather than the copy.
+            return self._checkpoint_failed(tick, reason, exc)
 
     def _prune_checkpoints(self, run_id: str, keep_last: int) -> None:
         """Retain only the newest safe, current-run checkpoint rows and artifacts."""

@@ -190,10 +190,56 @@ def test_snapshot_backfill_websocket_lineage_and_operator_api(economy, tmp_path)
     delta = projection_delta_message(economy.store, tick=6)
     assert hello["type"] == "hello"
     assert delta["type"] == "projection_delta"
-    assert delta["previous_event_cursor"] == 1
+    # Tick 6 commits twice (INBOX_DELIVERY -> 1, FINALIZE -> 2) and exactly one
+    # delta is emitted per tick, carrying that tick's LAST cursor. So the cursor
+    # a client holds before this delta is the last one of the PREVIOUS tick --
+    # here none, hence 0. Chaining to the intra-tick commit 1 was the old
+    # behaviour and it was a defect: no client is ever sent cursor 1, so every
+    # live delta failed the client's continuity check and was discarded.
+    assert delta["previous_event_cursor"] == 0
     assert delta["event_cursor"] == 2
     assert recovery_messages(economy.store, after_cursor=2)[0]["type"] == "heartbeat"
     assert recovery_messages(economy.store, after_cursor=999)[0]["code"] == "cursor_ahead"
     recovered = recovery_messages(economy.store, after_cursor=0)
     assert [message["event_cursor"] for message in recovered] == [1, 2]
     app.state.operator_workspace.close()
+
+
+def test_live_deltas_chain_across_ticks_so_no_client_sees_a_gap(economy):
+    """The delta stream must be continuous for the client's own continuity rule.
+
+    A client applies a delta only when `previous_event_cursor` equals the cursor
+    it currently holds (dashboard/src/app/cursorReducer.js). It holds whatever
+    the last delta gave it, and one delta is emitted per tick carrying that
+    tick's final cursor -- so `previous_event_cursor` has to be the previous
+    TICK's final cursor, not the previous commit.
+
+    Every tick commits more than once in practice, so resolving `previous` to
+    the previous commit put an intra-tick cursor there that no client had ever
+    been sent, and the payload was discarded and re-handshaked on every tick.
+    """
+    economy.store.set_meta(
+        tick=9, config_json=json.dumps({"engine_semantics_version": 8}))
+    for tick in (7, 8, 9):
+        for phase in ("INBOX_DELIVERY", "FINALIZE"):
+            economy.store.execute(
+                "INSERT INTO projection_commits (tick,phase,domains_json) "
+                "VALUES (?,?,'[]')", (tick, phase))
+    economy.store.commit()
+
+    held = None
+    for tick in (7, 8, 9):
+        delta = projection_delta_message(economy.store, tick=tick)
+        if held is not None:
+            assert delta["previous_event_cursor"] == held, (
+                f"tick {tick} delta claims previous "
+                f"{delta['previous_event_cursor']} but the client holds {held}")
+        assert delta["event_cursor"] > (held or 0)
+        held = delta["event_cursor"]
+
+    # And each tick's delta carries that tick's LAST cursor, which is what makes
+    # the previous-tick rule the correct one.
+    last_of_eight = economy.store.scalar(
+        "SELECT MAX(cursor) FROM projection_commits WHERE tick=8", default=0)
+    assert projection_delta_message(
+        economy.store, tick=8)["event_cursor"] == last_of_eight

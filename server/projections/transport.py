@@ -38,9 +38,18 @@ def hello_message(store, *, status: str) -> dict:
 
 def projection_delta_message(store, *, tick: int) -> dict:
     cursor = current_cursor(store, tick)
+    # `previous_event_cursor` must name the cursor the CLIENT last received, so
+    # it can prove the chain is unbroken. One delta is emitted per tick carrying
+    # that tick's LAST cursor, so the client's previous value is the last cursor
+    # of the previous tick -- not the previous commit, which is usually this
+    # same tick's earlier commit and was never sent to anyone.
+    #
+    # Every tick commits more than once here, so the old query made the two
+    # disagree on every single delta: the client flagged cursor_gap, discarded
+    # the payload and re-handshaked, every tick, forever. Measured on the wire.
     previous = int(store.scalar(
-        "SELECT COALESCE(MAX(cursor),0) FROM projection_commits WHERE cursor<?",
-        (cursor,), default=0) or 0)
+        "SELECT COALESCE(MAX(cursor),0) FROM projection_commits WHERE tick<?",
+        (int(tick),), default=0) or 0)
     data = build_snapshot(
         store, ORDINARY_PRINCIPAL, as_of_tick=int(tick),
         domains=("summary", "alerts", "communications", "events"))
