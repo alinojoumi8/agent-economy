@@ -478,7 +478,7 @@ last-known state.
 | Dev server | `127.0.0.1:4174` | vite, proxies to `:8000` with the **stock** config |
 | Motion capture | `scratchpad/film.js` | frames + labelled filmstrip + motion probe |
 | Blind pairing | `scratchpad/harness.js` | randomised A/B with a sealed key |
-| Running-world capture |  `scripts/live-city/runworld.mjs` | starts the world, films it, times every fetch to *body*, logs every WS cursor, samples the day clock and chip transforms per frame |
+| Running-world capture | `scripts/live-city/runworld.mjs` | starts the world, films it, times every fetch to *body*, logs every WS cursor, samples the day clock and chip transforms per frame |
 
 Rounds 1–3 were all captured at **tick 349**. Any figure in this document that is not inside the
 running-world section was measured against a paused world.
