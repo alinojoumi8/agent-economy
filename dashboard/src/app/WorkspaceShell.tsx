@@ -341,25 +341,51 @@ export function WorkspaceShell() {
           </button>
           {/*
             * One condition, one place. The shell used to say "stale" three times in
-            * a single band: this badge, a full-width amber banner below it, and the
-            * workspace's own chrome. The banner is gone — its plain-English rewrite
-            * and its raw reason code both live inside this badge's disclosure.
+            * a single band: this badge, a full-width banner below it, and the
+            * workspace's own chrome. Two of the three are gone, and the badge's
+            * disclosure carries the detail — the plain-English rewrite, the raw
+            * reason code, and the cursor it stopped at.
             *
             * The state word belongs to the workspace, and every workspace already
             * prints it: Overview in its chrome row, six of the rest through
             * WorkspaceHeader, and People, Investigations and Communications through
             * their own FreshnessBadge. So the shell's copy never repeats it — it is
-            * the provenance control, and it is the only one of the three that the
-            * shell still renders.
+            * the provenance control.
+            */}
+          {/*
+            * Not `statusShownElsewhere`. Suppressing the state word here to stop
+            * "stale" appearing three times also took "Live", "Reconnecting" and
+            * "Historical" out of the only badge that spans every workspace, and
+            * the cursor with them — so the provenance control stopped carrying
+            * the one datum that is purely provenance.
+            *
+            * The duplication it was fixing was specific to `stale`, and that is
+            * now handled by the assertive line below, which no workspace repeats.
             */}
           <FreshnessBadge
             transport={transport}
             tick={tick}
             placement="global"
-            statusShownElsewhere
           />
         </div>
       </header>
+      {/*
+        * The one thing the disclosure above cannot do: interrupt.
+        *
+        * Consolidating into the badge put the whole stale condition inside a
+        * collapsed <details> tagged role="status" — polite, and shut. A reader
+        * watching the map saw nothing at all, and a screen reader announced
+        * nothing, while the data underneath them stopped being current. That is
+        * the failure mode this surface exists to prevent, so the condition gets
+        * one visible, assertive line and the detail stays in the disclosure.
+        *
+        * Still one place: it renders only here, only while stale, and it names
+        * the reason code so the disclosure is a deepening rather than a repeat.
+        */}
+      {transport.status === "stale" && <p className="world-os-alert" role="alert">
+        Live updates are stale. The workspace is refetching the canonical
+        projection: {transport.staleReason}.
+      </p>}
       <main id="workspace-main" className="world-os-main" tabIndex={-1}>
         <Outlet context={{ tick, forkId: observerState.fork, transport }} />
       </main>

@@ -80,6 +80,14 @@ async function mockApi(page: Page) {
         presence: [],
       },
     } });
+    /* The civic panel lives in the World workspace, so its atlas projection has
+       to be answered too or the workspace renders its error state instead. */
+    if (path === "/api/v2/workspaces/world") return route.fulfill({ json: {
+      ...baseEnvelope, projection: "workspace.world", data: {
+        enabled: true, regions: [], agents: [], organizations: [],
+        places: [], presence: [], flows: [],
+      },
+    } });
     if (path === "/api/v2/civic/summary") return route.fulfill({ json: {
       ...baseEnvelope, projection: "civic.summary", data: {
         enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
@@ -254,6 +262,14 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
           organizations: [],
           places: [],
           presence: [],
+        },
+      } });
+    }
+    if (path === "/api/v2/workspaces/world") {
+      return route.fulfill({ json: {
+        ...baseEnvelope, projection: "workspace.world", data: {
+          enabled: true, regions: [], agents: [], organizations: [],
+          places: [], presence: [], flows: [],
         },
       } });
     }
@@ -469,7 +485,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
 });
 
 test("live city layers, search, and evidence lens stay truthful and interactive", async ({ page }) => {
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByRole("heading", { name: "The living city" })).toBeVisible();
   await expect(page.getByText("Derived civic layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
@@ -505,7 +521,7 @@ test("live AI activity coordinates map markers, dock, filters, and evidence", as
     providers: [],
   } }));
 
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.locator(".civic-city__agent.is-thinking")).toHaveCount(1);
   await expect(page.getByText("1 live · 1 changed this tick")).toBeVisible();
   await expect(page.getByRole("button", { name: "Select Editor Northstar, Thinking" })).toBeVisible();
@@ -525,7 +541,7 @@ test("live AI activity coordinates map markers, dock, filters, and evidence", as
 });
 
 test("a copied Civic City URL restores filters and selection", async ({ page, context }) => {
-  const url = "/runs/run-demo/overview?fork=fork-a&tick=6&layer=markets&q=Supplier&activeOnly=1&agent=1";
+  const url = "/runs/run-demo/world?fork=fork-a&tick=6&layer=markets&q=Supplier&activeOnly=1&agent=1";
   await page.goto(url);
   await expect(page.getByRole("button", { name: /Markets/ })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel("Find an agent")).toHaveValue("Supplier");
@@ -543,7 +559,7 @@ test("a copied Civic City URL restores filters and selection", async ({ page, co
 });
 
 test("Civic City discrete selections participate in browser history", async ({ page }) => {
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await page.getByRole("button", { name: /Editor Northstar, Editor/ }).click();
   await expect(page).toHaveURL(/agent=2/);
   await page.getByRole("button", { name: /Dr\. Amara Osei, Doctor/ }).click();
@@ -604,7 +620,7 @@ test("Civic City scales from core agents to clusters and all 300 residents", asy
   });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/runs/run-demo/overview?population=clusters");
+  await page.goto("/runs/run-demo/world?population=clusters");
   await expect(page.locator(".civic-city__population")).toBeVisible();
   await expect(page.locator(".civic-city__population button", { hasText: "Clusters" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".civic-city__cluster")).toHaveCount(3);
@@ -700,7 +716,8 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
   await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
-  await expect(command.getByRole("option")).toHaveCount(10);
+  /* Eleven, not ten: "Street Level" joined the Observe group as its own route. */
+  await expect(command.getByRole("option")).toHaveCount(11);
   const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");
   await commandSearch.press("Enter");

@@ -140,7 +140,7 @@ async function mockCommonApis(page: Page, options: {
 test("live city paused status is truthful and does not invent agents", async ({ page }) => {
   await installSocket(page, "paused");
   await mockCommonApis(page, { status: "paused" });
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByText("Run paused", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
@@ -150,7 +150,7 @@ test("live city paused status is truthful and does not invent agents", async ({ 
 test("live city failed status is truthful", async ({ page }) => {
   await installSocket(page, "failed");
   await mockCommonApis(page, { status: "failed" });
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByText("Run failed", { exact: true })).toBeVisible();
   await expect(page.getByText("Final inference fabric", { exact: true })).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
@@ -160,7 +160,7 @@ test("live city failed status is truthful", async ({ page }) => {
 test("historical tick preserves run identity and label", async ({ page }) => {
   await installSocket(page, "running");
   await mockCommonApis(page, { status: "running" });
-  await page.goto("/runs/run-demo/overview?tick=4");
+  await page.goto("/runs/run-demo/world?tick=4");
   await expect(page.getByText("Historical tick 4", { exact: true })).toBeVisible();
   await expect(page.getByText("Current inference fabric", { exact: true })).toBeVisible();
   await expect(page.getByText(
@@ -168,13 +168,13 @@ test("historical tick preserves run identity and label", async ({ page }) => {
     { exact: true },
   )).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
-  await expect(page).toHaveURL(/\/runs\/run-demo\/overview\?tick=4/);
+  await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
 
 test("empty city invents no agents", async ({ page }) => {
   await installSocket(page, "running");
   await mockCommonApis(page, { agents: [], mapAgents: [] });
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByText("No city marks match this view.")).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(0);
 });
@@ -182,7 +182,7 @@ test("empty city invents no agents", async ({ page }) => {
 test("API error city invents no agents", async ({ page }) => {
   await installSocket(page, "running");
   await mockCommonApis(page, { agentsError: true });
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByText("City evidence is temporarily unavailable.")).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(0);
 });
@@ -196,7 +196,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
       { id: 3, name: "Dr. Amara Osei", role: null, occupation: "doctor", x: 0.8, y: 0.7 },
     ],
   });
-  await page.goto("/runs/run-demo/overview");
+  await page.goto("/runs/run-demo/world");
   await expect(page.getByText("Mixed projected + derived layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
@@ -207,7 +207,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await page.getByRole("button", { name: "Reset city view" }).click();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
 
-  await page.goto("/runs/run-demo/overview?tick=4");
+  await page.goto("/runs/run-demo/world?tick=4");
   await page.getByRole("link", { name: /World state|World/ }).first().click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
