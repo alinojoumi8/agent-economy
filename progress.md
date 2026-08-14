@@ -101,6 +101,160 @@ reflow as motion. **The trustworthy result is 3/3 against ADS-B**, where the shi
 `framediff.js` should be upgraded to align frames before differencing; until then its numbers are an upper
 bound, not a measure.
 
+## 🔴 The running-world test — the city does not survive a live tick boundary
+
+**Every previous measurement in this document was taken with the world paused at tick 349.** All three builds,
+all 18 blind verdicts, every motion probe. The stated requirement — *"whenever we run the backend the front end
+looks live"* — was the one condition never exercised. It has now been run, and it fails.
+
+**Method.** `/api/run/start?max_ticks=6` on run `53f5b4ce8c`, a 20 s paused baseline first, then 348 s of real
+ticking; the page instrumented before first paint (every `fetch` timed to *body* as well as headers, every
+WebSocket frame logged with its cursors, every `requestAnimationFrame` sampling the day clock and eight chip
+transforms) and filmed at 1 still/s. **15,491 frames, 62 fetches, 326 stills, ticks 349 → 355, spend $0.00.**
+
+### The result in one line
+
+The world advanced six ticks. **The city rendered exactly one of them.**
+
+| | |
+|---|---|
+| Ticks the world ran | 349 → 355 (six) |
+| Ticks the city ever displayed | **349, then 355** — 350, 351, 352, 353, 354 were never drawn |
+| One frame of truth stayed on screen for | **369 s** (design intent: ~46 s) |
+| Status polls completed while running | **2**, against ~115 expected at the 3 s interval |
+| Map fetches completed while running | **0** |
+| Frame rate throughout | **median 16.7 ms, p99 50 ms, zero frames over 500 ms** |
+
+That last row is the trap. **The animation never faltered.** For the whole 348 s the city glided at 60 fps,
+296 chips in motion, looking exactly as alive as it does in every screenshot in this document — while showing
+data that was up to six minutes old and a badge that read *"Paused"*. It does not look broken when it is
+broken. That is the worst available failure mode, and only a running world exposes it.
+
+### 1. The server stops answering — the tick blocks the event loop it is served from
+
+`world.run()` is an `asyncio` task on uvicorn's own loop ([world/loop.py:172-181](world/loop.py:172)), and
+`speed_delay_s` is `0.0`, so one `await self.step()` runs straight into the next with no yield between ticks.
+Under the scripted showcase provider there is no real I/O to suspend on, so a tick is one uninterrupted block
+of CPU on the loop that is supposed to be serving HTTP.
+
+| endpoint | paused | **while running** |
+|---|---|---|
+| `/api/run/status` (1 KB) | median **168 ms** | **123,346 ms** and **218,716 ms** — the only two that returned |
+| `/api/v2/map` (408 KB) | median **133 ms** | **never completed** |
+| `POST /api/run/start` | — | **62 s to return** |
+
+An independent `curl` gave up on `/api/run/status` at a 60 s timeout. This is not the 2 ms→40 s degradation on
+record; it is worse, and it is total. Note the direction of the surprise: the 408 KB payload was never the
+problem. The **1 KB** status endpoint is, because it is the city's only tick detector.
+
+### 2. Detection lag — the city asks for the wrong tick and gets it 223 s later
+
+The city does not poll the map. It polls `/api/run/status` every 3 s and refetches the map when the tick
+changes ([LiveCity.tsx:411-414](dashboard/src/components/LiveCity.tsx:411)) — sound reasoning against a 408 KB
+payload, and it collapses when the detector is the thing being starved.
+
+- tick 349 → 350 was first *seen* at **125.1 s**; the map fetch it triggered landed **223 s later**, and by then
+  the world was at 355. **The city requested tick 350's frame and was served tick 355's.**
+- Between them the day loop wrapped **8 times** on tick 349's placements — the same recorded day replayed
+  eight times over while five real ones went past unrendered.
+
+### 3. The day loop at a real boundary — clean when it wraps, a 330 px teleport when it is cut
+
+Both behaviours were captured, and the difference is stark:
+
+| | day clock | worst chip movement in one frame |
+|---|---|---|
+| **Natural wrap** ×8 (loop reaches its end) | 100% → 0% | **0.00–0.86 px** |
+| **Forced reset** ×1 (a new tick lands mid-day) | **19.6% → 0%** | **330.76 px** |
+| *ordinary frame, for scale* | | *0.57 px median, 1.92 px p99* |
+
+The wrap is seamless because it returns to the morning anchors it started from. The forced reset is not: it
+cuts the day off wherever it happens to be and snaps 300 people to new positions in a single frame — a **170×**
+departure from ordinary motion. `dayOrigin` resets on `mapTick` ([LiveCity.tsx:466-468](dashboard/src/components/LiveCity.tsx:466))
+with nothing to carry the old positions into the new ones.
+
+**This fired only once in six minutes, and only because the map was unfetchable until the world stopped.** Fix
+the starvation without fixing this and the teleport goes from once per session to once per tick.
+
+### 4. The cursor bug is not intermittent — it is structural, and it fires on every tick
+
+Measured on the wire, not inferred. **Every tick commits exactly two cursors** (verified in
+`projection_commits` for ticks 348–355: `697..698`, `699..700`, `701..702`, …). `projection_delta_message`
+sends the tick's *last* cursor as `event_cursor` and the tick's *first* as `previous_event_cursor`
+([transport.py:41-43](server/projections/transport.py:41)) — but the client holds the previous tick's last
+cursor and never receives the intra-tick one. So `previous_event_cursor` is **always** off by exactly one
+commit, and `cursorReducer.js:67` flags `cursor_gap` on **every live delta**:
+
+```
+122.9s  <- projection_delta cur=700 prev=699 tick=350   CURSOR_GAP (client held 698) -> discarded, re-handshake
+170.4s  <- projection_delta cur=702 prev=701 tick=351   CURSOR_GAP (client held 698) -> discarded, re-handshake
+218.4s  <- 7 backfill deltas, 699..705, correctly chained   -> all applied
+222.3s  <- close code=1011 reason=keepalive ping timeout
+```
+
+Two things this run corrected in the record:
+
+- **The push path is not simply dead — it is dead and self-healing.** The re-handshake triggers a backfill, and
+  the backfill's cursors *are* correct (a different code path), so the client catches up. The steady state is
+  gap → re-handshake → backfill → gap. Wasteful, and it re-handshakes on every tick, but not silent.
+- **The uvicorn keepalive hazard is no longer an inference.** `code=1011 reason=keepalive ping timeout` was
+  observed. The socket then took **125 s to reopen**, because opening it also needs the blocked event loop. The
+  city showed *"Reconnecting"* for that entire time.
+
+### What the reader was actually told, over 348 s of running world
+
+| from | the badge said | true? |
+|---|---|---|
+| 0 s | **Paused** | **no** — the world was running; the status poll that would have said so was blocked for 125 s |
+| 125 s | Stale | yes |
+| 170 s | Live → Stale within 50 ms | the tick-351 delta gapped |
+| 218 s | Live | yes, briefly — the backfill had landed |
+| 222 s | **Reconnecting** (125 s) | yes — keepalive timeout, socket unable to reopen |
+| 347 s | Live | yes |
+
+**For the first 125 seconds of a running world the city told the reader it was paused.** The one label a viewer
+would trust to distinguish "replaying a recorded day" from "watching a live one" was wrong, in the direction
+that conceals the failure.
+
+### What this changes
+
+The three hazards were listed as separate risks. They are one failure with one root: **a tick monopolises the
+event loop, so the city's only tick detector cannot fire, so no new frame of truth arrives, so nothing else
+gets a chance to go wrong.** The teleport and the cursor gap are what will be waiting once the starvation is
+lifted — the cursor bug fires every tick, and the teleport becomes per-tick rather than per-session.
+
+Order that follows from the measurement, and it is not the order the piece list had:
+
+1. **Unblock the loop.** Yield inside the tick, or move `world.step()` off the serving loop. Nothing else in
+   the city is observable until this is done, and no amount of front-end work compensates for it.
+2. **Fix `previous_event_cursor`** to the last cursor the client was *sent*, not the previous commit. Cheap,
+   and it retires the permanent "stale" banner in every screenshot in this document.
+3. **Carry the day across a tick change** — ease from held positions into the new anchors instead of snapping
+   `dayOrigin` to zero. Until then a working transport makes the motion *worse*.
+4. Only then are conversations on the map (piece 5) worth building, because only then is there a live city to
+   pin them to.
+
+**Nothing about the three passed rounds is retracted.** The city is truthful and it is beautiful, and 6/6 twice
+stands — against a paused world, which is what those rounds measured. What is now on record is that the claim
+those rounds appeared to support, *"whenever we run the backend the front end looks live"*, is not yet true.
+
+**Evidence.** The probe is committed and re-runnable — `scripts/live-city/` (`runworld.mjs` capture,
+`analyse.mjs`, `film.mjs`, and a README on the two traps in measuring it). Artefacts: `probe.json`, 326 stills,
+`city-running.mp4` (whole session at 8×), `the-jump.jpg` (the teleport, four-up).
+**The run is now paused at tick 355, not 349** — this test advanced it, which is irreversible. Spend `$0.00`.
+
+*Correction against my own first pass: the analyser initially measured the chip jump on the frame the map
+landed and reported **4.1 px**. `dayOrigin` resets in an effect that runs a frame later, so that was the wrong
+frame; keyed off the day clock instead, the true figure is **330.76 px**. The committed `analyse.mjs` uses the
+corrected method and the README says why.*
+
+### One thing this test does not settle
+
+The starvation was measured under the **scripted/offline** provider, where a tick is pure CPU with nothing to
+await. A live-inference profile awaits real network I/O throughout `MORNING` and would yield to the loop
+constantly, so HTTP may well stay responsive there. **That is reasoning, not measurement** — flagged as such.
+It does not soften the finding: `civic-city-300.yaml` is the profile the Live City is demonstrated on.
+
 ## ✅ Round 3 result — 6/6 again. Exit condition met twice running.
 
 | round | vs Mini Tokyo | vs ADS-B | total | decisive |
@@ -310,14 +464,24 @@ the three-beat day paced across it. The WebSocket is *not* starved like HTTP (fr
 tick boundary) but is **silent between ticks and indefinitely while paused**, so the UI animates locally off
 last-known state.
 
+> ⚠️ **Corrected by the running-world test.** Two claims in this section were measured against a *paused* world
+> and do not hold against a running one. The city does **not** get one frame of truth per ~45 s — it got one in
+> 369 s, because the status poll that detects a tick cannot complete while a tick is running. And the WebSocket
+> is **not** exempt from the starvation: it dies on a keepalive timeout mid-run and then needs the same blocked
+> event loop to reopen, which took **125 s**. See the running-world test above.
+
 ## Environment
 
 | | | |
 |---|---|---|
-| Simulation | `127.0.0.1:8000` | run `53f5b4ce8c`, semantics 12, 300 agents, **paused at tick 349**, spend `$0.00` |
+| Simulation | `127.0.0.1:8000` | run `53f5b4ce8c`, semantics 12, 300 agents, **paused at tick 355** (was 349 — the running-world test advanced it), spend `$0.00` |
 | Dev server | `127.0.0.1:4174` | vite, proxies to `:8000` with the **stock** config |
 | Motion capture | `scratchpad/film.js` | frames + labelled filmstrip + motion probe |
 | Blind pairing | `scratchpad/harness.js` | randomised A/B with a sealed key |
+| Running-world capture |  `scripts/live-city/runworld.mjs` | starts the world, films it, times every fetch to *body*, logs every WS cursor, samples the day clock and chip transforms per frame |
+
+Rounds 1–3 were all captured at **tick 349**. Any figure in this document that is not inside the
+running-world section was measured against a paused world.
 
 ### Operational incidents this session
 
@@ -357,15 +521,31 @@ Legend: ⬜ queued · 🔨 building · 🔍 in judgement · ❌ rejected · ✅ 
 | 8 | Claim diffusion as a spreading stain | ADS-B | ⬜ |
 | 9 | Live transport — fix the cursor bug, carry `city` in the delta | ADS-B | ⬜ |
 | 10 | Density at 300 | ADS-B | ⬜ |
+| **0** | **Unblock the serving event loop during a tick** | — | 🔴 **blocks everything above** — measured, see the running-world test |
 
-## Known bugs found while planning (not yet fixed)
+Piece 0 was not on the list because the paused world could not reveal it. It now precedes all of them: until a
+tick stops monopolising the loop, no front-end work is observable against a running world.
 
-- 🐛 **`previous_event_cursor` is computed wrong** (`server/projections/transport.py:41-43`) — resolves to the
-  *same* tick's earlier commit, never the cursor the client holds, so `cursorReducer.js:70-72` flags
-  `cursor_gap` on **every** live delta and the payload is discarded and re-handshaked. Source of the permanent
-  "stale" banner. Piece 9.
-- ⚠️ uvicorn's default `ws_ping_interval`/`ws_ping_timeout` are 20 s while `MORNING` blocks ~45 s — keepalive
-  drops are plausible. Inferred from library defaults, not measured.
+## Known bugs — status after the running-world test
+
+- 🔴 **`previous_event_cursor` is wrong on *every* tick** (`server/projections/transport.py:41-43`) — and it is
+  worse than "computed wrong". Every tick commits **exactly two** cursors, so the delta's `previous` always
+  names an intra-tick commit the client was never sent, and `cursorReducer.js:67` flags `cursor_gap` on every
+  live delta without exception. **Confirmed on the wire**, twice, with the client's held cursor logged.
+  Mitigating detail also confirmed: the re-handshake's backfill chains correctly and the client does catch up,
+  so the push path is broken-and-self-healing rather than silent. Piece 9.
+- 🔴 **The serving event loop is starved for the whole tick** — `/api/run/status` (1 KB) took **123 s** and
+  **219 s**; `/api/v2/map` never completed while running. This is the root cause of the city's staleness, and
+  it was not on the bug list at all. Piece 0.
+- 🔴 **A new tick mid-day teleports the population 330 px in one frame** — `dayOrigin` snaps to zero on
+  `mapTick` with nothing carrying the old positions across. Fired once here only because maps were unfetchable;
+  fixing the starvation makes it fire every tick. Piece 3.
+- 🔴 **The badge says "Paused" while the world runs** — for the first **125 s**, because the status poll that
+  would correct it is itself blocked. The label that distinguishes a replayed day from a live one is wrong in
+  the direction that hides the failure.
+- ✅ ~~⚠️ uvicorn's `ws_ping_interval`/`ws_ping_timeout` are 20 s while `MORNING` blocks ~45 s — keepalive drops
+  are plausible.~~ **No longer an inference — observed:** `close code=1011 reason=keepalive ping timeout` at
+  222 s, after which the socket needed **125 s** to reopen because opening it also needs the blocked loop.
 - **My own error, on record:** the `45.4`/`45.3` sub-tick notation in the earlier design specimens was
   *invented*. Real instead: `events.phase` + monotonic `events.id` + millisecond `created_at`.
 
@@ -373,6 +553,9 @@ Legend: ⬜ queued · 🔨 building · 🔍 in judgement · ❌ rejected · ✅ 
 
 _(newest first)_
 
+- **🔴 The running-world test was run — the city does not survive a live tick boundary.** Six ticks passed;
+  one was rendered. The animation held 60 fps throughout, which is precisely why three rounds of paused
+  judgement could not see it. Run advanced 349 → 355 and re-paused; spend `$0.00`.
 - **Round 1 built, filmed and sent to blind judgement.** The city moves on real recorded placements; 3,600
   positions machine-verified with a worst residual of 0.0068 px.
 - **Stray duplicate server on `:8002` killed** — it was holding the same run DB as `:8000`.
