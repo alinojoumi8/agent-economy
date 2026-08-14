@@ -581,6 +581,43 @@ running-world section was measured against a paused world.
    `design/`. Restored; nothing lost. Two other local sessions are operating in this same tree — anything
    uncommitted is at risk, which is why progress.md is now committed rather than left untracked.
 
+## 🔴 Piece 5's substrate is one twelfth of what the plan assumed
+
+Checked before building, and it changes the piece. **The run holds 372 conversations across 372 ticks —
+exactly one per tick**, not a city humming with talk. `budget.conversation_pairs: 1` is set explicitly in the
+profile, and the governor is at level 0, so this is the configured baseline and not a throttle that lifts.
+
+```
+tick 372  participants [250, 268]  "The Ledger daily brief: settlement offered"   shared place 25
+tick 371  participants  [73, 159]  "The Ledger daily brief: policy rate set"      shared place  5
+tick 370  participants   [2, 116]  "The Ledger daily brief: legal matter filed"   shared place  4
+```
+
+What survives the check:
+
+- **Co-location is real.** Every pair examined shares exactly one place at its tick, so a bubble pins to a
+  precise coordinate with no invention. The gate works.
+- **Pairs, always two.** Never a group.
+- **Topics are templated** — every one is `The Ledger daily brief: <event>`, derived from the newsroom rather
+  than authored by the pair.
+
+**My own error, on record:** I described this piece as *"330 conversations, already co-location-gated"* and
+*"the single biggest addition to the city feeling inhabited rather than commuting."* The 330 was the whole
+run's total read as if it were a single tick's population. At one pair per tick it is a single bubble on a
+map of 300 people — worth building, but not the thing that makes the city feel inhabited, and anything drawn
+to suggest otherwise would be a fabrication of exactly the kind this document already forbids.
+
+Two honest routes, and they compose:
+
+1. **Build it at true scale** — one bubble at the shared place, the pair named, the topic quoted, for the tick
+   the city is showing. Small, truthful, and it lands today.
+2. **Raise the substrate first.** `conversation_pairs` is a config value and this profile is **scripted, so
+   ticks cost `$0.00`**. Raising it and running the world forward gives later ticks a genuine conversational
+   population at no cost. It cannot rewrite ticks 1-372, but the city renders the *current* tick, which is
+   precisely the part that would be enriched.
+
+Route 2 before route 1 is the order that makes the piece worth its bar.
+
 ## Do NOT build — these would be fabrications
 
 | Tempting | Reality |
@@ -603,7 +640,7 @@ Legend: ⬜ queued · 🔨 building · 🔍 in judgement · ❌ rejected · ✅ 
 | 2 | The commute — interpolated three-beat day | MINI TOKYO | 🔍 round 1 in judgement |
 | 3 | Day clock driving atmosphere | MINI TOKYO | 🔍 round 1 in judgement |
 | 4 | Interpolation disclosure | both | ✅ shipped |
-| 5 | Conversation bubbles pinned at the co-located place | MINI TOKYO | ⬜ |
+| 5 | Conversation bubbles pinned at the co-located place | MINI TOKYO | ⬜ **substrate checked — 1 pair per tick, not 330; see above** |
 | 6 | Errands & scheduled intent | ADS-B | ⬜ |
 | 7 | Click an agent → its day | ADS-B | ⬜ |
 | 8 | Claim diffusion as a spreading stain | ADS-B | ⬜ |
