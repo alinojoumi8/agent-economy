@@ -101,6 +101,93 @@ reflow as motion. **The trustworthy result is 3/3 against ADS-B**, where the shi
 `framediff.js` should be upgraded to align frames before differencing; until then its numbers are an upper
 bound, not a measure.
 
+## ✅ The running world, fixed — every tick rendered, no teleport, no cursor gap
+
+The five defects the running-world test found are fixed and re-measured with the same probe. Same run, same
+profile, same harness; ticks **368 → 372**.
+
+| | before | after |
+|---|---|---|
+| Ticks rendered, of those the world ran | **1 of 6** | **5 of 5** |
+| Worst event-loop stall | **45 s** (78 s at checkpoint) | **1.97 s** |
+| `/api/run/status` while running | **123 s, 219 s** | median **2.6 s** |
+| `/api/v2/map` while running | **never completed** | median **3.1 s** |
+| `POST /api/run/start` returns in | **62 s** | **0.3 s** |
+| Worst chip jump at a tick boundary | **330.76 px** | **1.14 px** (ordinary frame: 0.57 px) |
+| Live deltas rejected as `cursor_gap` | **every one** | **none** — 4 applied, 4 chained |
+| WebSocket keepalive deaths | 1, then **125 s** to reopen | **none** |
+| What the badge said | Paused 125 s · Stale · Reconnecting 125 s | **Live, from 4.7 s onward** |
+| Frame rate | median 16.7 ms | median 16.7 ms (unchanged) |
+
+### 1. The tick no longer monopolises the serving loop
+
+The watchdog named the culprit exactly: **all 300 agents' context builds ran in a single event-loop batch**
+(`prompts.py:276 build` → per-agent SQL). asyncio runs every ready callback before it polls I/O again, so
+handing it 300 agents at once buries the server for as long as all 300 take. The gateway's own semaphore only
+gates the *provider call*, which happens after the expensive part.
+
+`decide_all` now admits agents through a gate sized to `llm.max_in_flight` — the width the provider is already
+capped at, so no throughput is lost — with an unconditional yield inside it.
+
+**The gate alone was not enough, and that is worth recording.** Added by itself it changed nothing: on Python
+3.11 `Semaphore.locked()` is `_value == 0`, so a release that lands while the batch is still draining lets the
+next task acquire without ever suspending, and all 300 run back to back exactly as before. The
+`await asyncio.sleep(0)` is what actually ends the batch. Measured, not reasoned — the first attempt was
+re-run and still showed a 44.6 s stall.
+
+### 2. The checkpoint copy runs off the loop
+
+`checkpoint()` did a full `sqlite3.backup` of the 4.6 GB run database inline — **27 s and 78 s**, observed. It
+fires on pause, on stop, and every `checkpoint_every` ticks (**30** in this profile), so it froze a *running*
+world too. Split into prepare / copy / record; the copy is handed to `asyncio.to_thread` via a new
+`checkpoint_async` used from the async paths. During what used to be a 27-78 s dead window, status now answers
+in **2 ms**.
+
+### 3. `previous_event_cursor` names the cursor the client actually holds
+
+Every tick commits exactly twice, and one delta is emitted per tick carrying that tick's *last* cursor — so the
+client's previous value is the previous **tick's** last cursor, never the previous *commit*, which is this same
+tick's earlier one and was never sent to anyone. Verified against 17 real ticks of commit history: the old rule
+was off by one on every single one, the new rule chains on every one.
+
+### 4. The day clock is no longer restarted by an arriving tick
+
+The 330 px teleport was **not the world re-arranging**. Consecutive ticks change only **1-4 of 900** recorded
+placements (0.1-0.4%) — the incoming frame of truth is very nearly the one already on screen. The jump was the
+clock being sent back to zero, snapping all 300 chips from mid-day onto their morning anchors.
+
+So the reset is gone: the clock runs free and new placements are adopted in place. The two or three people who
+actually moved, move; nobody else is teleported to represent a change that did not happen. Five natural day
+wraps in the after-run, worst chip movement **1.14 px**. The reset was written for a paused world, where it
+never fires — which is exactly why three rounds could not see it.
+
+### 5. The permanent "stale" badge
+
+The client asked to be caught up from cursor **0** on every fresh connection. It has no history to reconcile,
+and on a run of any length that can only answer `backfill_truncated` — marking the client stale one frame after
+the server's own hello had made it live. It now skips the recovery request when it holds no cursor, which is
+the same reasoning the lineage-recovery branch already applied. The badge reads **Live** and stays there.
+
+### Honest residue
+
+- **Detection lag is 8-23 s**, not instant: the status poll is 3 s and now takes ~2.6 s under load, and the map
+  ~3 s behind it. Against a ~46 s tick every tick is rendered and holds the screen for most of its life, but
+  the city trails the world by a few seconds. Closing it further means shrinking the atom — one agent's context
+  build, ~750 ms — rather than the batch, which is a bigger change than this one.
+- **Two halt paths still checkpoint inline** (`_pause_safely`, `_record_reconciliation_halt` in `world/loop.py`)
+  because they are sync helpers on terminal error paths. They fire on budget exhaustion or a reconciliation
+  halt, neither of which occurs in this profile, and error handling is the worst place to take risk for a path
+  that does not run. Left deliberately, recorded here rather than silently.
+- **`data/checkpoints` is 59 GB** because `checkpoint_keep_last` is unset, so nothing is ever pruned. A config
+  decision, not a defect, and not mine to change unasked.
+- The starvation was only ever measured under the **scripted/offline** provider. A live-inference profile
+  awaits real network I/O and would yield anyway; the fix is harmless there and the gate is sized to the
+  provider's own width so it cannot throttle it.
+
+Gate: **165 dashboard tests** (+2 new on the day clock across a tick), typecheck **clean**, **134 Python tests**
+across projections, replay/golden determinism, ledger, checkpoints, world and gateway. One existing test
+asserted the old cursor rule and was corrected — it encoded the defect; a new test pins the chaining contract.
+
 ## 🔴 The running-world test — the city does not survive a live tick boundary
 
 **Every previous measurement in this document was taken with the world paused at tick 349.** All three builds,
@@ -241,7 +328,8 @@ those rounds appeared to support, *"whenever we run the backend the front end lo
 **Evidence.** The probe is committed and re-runnable — `scripts/live-city/` (`runworld.mjs` capture,
 `analyse.mjs`, `film.mjs`, and a README on the two traps in measuring it). Artefacts: `probe.json`, 326 stills,
 `city-running.mp4` (whole session at 8×), `the-jump.jpg` (the teleport, four-up).
-**The run is now paused at tick 355, not 349** — this test advanced it, which is irreversible. Spend `$0.00`.
+**The run is now paused at tick 372, not 349** — this test and the fix verification advanced it, which is
+irreversible. Spend `$0.00` throughout.
 
 *Correction against my own first pass: the analyser initially measured the chip jump on the frame the map
 landed and reported **4.1 px**. `dayOrigin` resets in an effect that runs a frame later, so that was the wrong
@@ -474,7 +562,7 @@ last-known state.
 
 | | | |
 |---|---|---|
-| Simulation | `127.0.0.1:8000` | run `53f5b4ce8c`, semantics 12, 300 agents, **paused at tick 355** (was 349 — the running-world test advanced it), spend `$0.00` |
+| Simulation | `127.0.0.1:8000` | run `53f5b4ce8c`, semantics 12, 300 agents, **paused at tick 372** (was 349 — the running-world test and the fix verification advanced it), spend `$0.00` |
 | Dev server | `127.0.0.1:4174` | vite, proxies to `:8000` with the **stock** config |
 | Motion capture | `scratchpad/film.js` | frames + labelled filmstrip + motion probe |
 | Blind pairing | `scratchpad/harness.js` | randomised A/B with a sealed key |
@@ -519,12 +607,12 @@ Legend: ⬜ queued · 🔨 building · 🔍 in judgement · ❌ rejected · ✅ 
 | 6 | Errands & scheduled intent | ADS-B | ⬜ |
 | 7 | Click an agent → its day | ADS-B | ⬜ |
 | 8 | Claim diffusion as a spreading stain | ADS-B | ⬜ |
-| 9 | Live transport — fix the cursor bug, carry `city` in the delta | ADS-B | ⬜ |
+| 9 | Live transport — fix the cursor bug, carry `city` in the delta | ADS-B | ✅ cursor bug fixed; deltas chain and apply |
 | 10 | Density at 300 | ADS-B | ⬜ |
-| **0** | **Unblock the serving event loop during a tick** | — | 🔴 **blocks everything above** — measured, see the running-world test |
+| **0** | **Unblock the serving event loop during a tick** | — | ✅ **fixed** — 45 s stall → 1.97 s, every tick rendered |
 
-Piece 0 was not on the list because the paused world could not reveal it. It now precedes all of them: until a
-tick stops monopolising the loop, no front-end work is observable against a running world.
+Piece 0 was not on the list because the paused world could not reveal it. It blocked everything above it, and
+is now done — the city renders every tick of a running world, so the remaining pieces are worth building.
 
 ## Known bugs — status after the running-world test
 

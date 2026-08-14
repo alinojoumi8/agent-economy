@@ -459,12 +459,33 @@ export function LiveCity() {
   );
 
   /*
-   * A new tick is a new frame of truth, so the recorded day restarts with it.
-   * That is what keeps the loop honest on a paused run: the city is replaying
-   * ONE tick's recorded placements, and the clock says which tick.
+   * The day clock starts once and then runs free. It is deliberately NOT reset
+   * when a new tick lands.
+   *
+   * Restarting it on every tick was written for a paused run, where the tick
+   * never changes and the reset therefore never fires. Against a running world
+   * it fired mid-day and snapped all 300 chips from wherever they had glided to
+   * back onto their morning anchors — a measured 330 px jump in a single frame,
+   * against 0.57 px for an ordinary one.
+   *
+   * That jump was pure artefact. Consecutive ticks change only 1-4 of 900
+   * recorded placements (0.1-0.4%), so the incoming frame of truth is very
+   * nearly the one already on screen: adopting it in place moves the two or
+   * three people whose placements actually changed and leaves everyone else
+   * mid-stride. The clock keeps time, the data underneath it is replaced, and
+   * nobody is teleported to represent a change that did not happen.
+   *
+   * The day and the tick are both ~45 s but not locked, so they drift. That is
+   * fine and stays honest: the day is a reading of ONE tick's three recorded
+   * slots, and the masthead names the tick it is reading.
    */
   useEffect(() => {
-    dayOrigin.current = performance.now();
+    /* Started by the FIRST frame of truth, not by mount: before the map lands
+       there is nobody to place, and a clock running against an empty field
+       would put the city a second or two into a day it had not begun. */
+    if (mapTick !== null && dayOrigin.current === 0) {
+      dayOrigin.current = performance.now();
+    }
   }, [mapTick]);
 
   const paint = useCallback((now: number) => {

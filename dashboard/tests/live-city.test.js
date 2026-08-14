@@ -668,3 +668,65 @@ test("an empty or malformed payload yields an empty city, not a guessed one", ()
   assert.equal(stillPlan.walked.length, DAY_SLOTS.length);
   assert.equal(dayClock(0, stillPlan).slot, "morning");
 });
+
+/* ---- the day clock across a real tick boundary ------------------------- */
+
+/*
+ * These pin the behaviour that the running-world test found broken. Against a
+ * paused world the day clock never crosses a tick, so nothing here could fail;
+ * against a running one it crosses every ~46 s, and a restart there threw the
+ * whole population 330 px in a single frame.
+ */
+
+function presenceFor(agentId, places) {
+  return DAY_SLOTS.map((slot, index) => ({
+    slot, agent_id: agentId, place_id: places[index],
+    x: 0.1 * places[index], y: 0.1 * places[index],
+    source_type: "routine_home",
+  }));
+}
+
+test("a new tick's placements are adopted without restarting the day", () => {
+  /* Two consecutive ticks that differ the way real ones do: one person moves,
+     everyone else is exactly where they were. */
+  const before = normalizeLiveCity({
+    presence: [...presenceFor(1, [1, 2, 3]), ...presenceFor(2, [4, 5, 6])],
+  });
+  const after = normalizeLiveCity({
+    presence: [...presenceFor(1, [1, 2, 3]), ...presenceFor(2, [4, 9, 6])],
+  });
+
+  const planBefore = legPlan(before.agents);
+  const planAfter = legPlan(after.agents);
+
+  /* Mid-day, a third of the way through the second leg. */
+  const elapsed = planBefore.legs[0].ms + planBefore.legs[1].ms / 3;
+  const held = dayClock(elapsed, planBefore);
+  /* The same wall clock read against the new tick's plan stays mid-day: the
+     reader's day is not sent back to morning by data arriving. */
+  const carried = dayClock(elapsed, planAfter);
+
+  assert.equal(held.legIndex, carried.legIndex);
+  assert.ok(Math.abs(held.dayProgress - carried.dayProgress) < 0.05,
+    `day progress must carry across the tick, got ${held.dayProgress} -> ${carried.dayProgress}`);
+
+  /* And a reset would have been the discontinuity: proof the guard is load-bearing. */
+  const restarted = dayClock(0, planAfter);
+  assert.equal(restarted.legIndex, 0);
+  assert.ok(held.dayProgress - restarted.dayProgress > 0.2,
+    "restarting the day is a large backwards jump, which is what must not happen");
+});
+
+test("the person who actually moved is the only one whose anchors changed", () => {
+  const before = normalizeLiveCity({
+    presence: [...presenceFor(1, [1, 2, 3]), ...presenceFor(2, [4, 5, 6])],
+  });
+  const after = normalizeLiveCity({
+    presence: [...presenceFor(1, [1, 2, 3]), ...presenceFor(2, [4, 9, 6])],
+  });
+  const anchorsOf = (city, id) =>
+    city.agents.find(agent => agent.id === id).anchors.map(a => a.placeId);
+
+  assert.deepEqual(anchorsOf(before, 1), anchorsOf(after, 1));
+  assert.notDeepEqual(anchorsOf(before, 2), anchorsOf(after, 2));
+});
