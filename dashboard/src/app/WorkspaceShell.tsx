@@ -13,7 +13,7 @@ import { useProjectionSocket } from "./useProjectionSocket";
 type GlyphName =
   | "overview" | "world" | "people" | "organizations" | "markets"
   | "politics" | "communications" | "commons" | "investigations"
-  | "experiments" | "panel" | "search";
+  | "experiments" | "panel" | "search" | "street";
 
 type RouteItem = {
   path: string;
@@ -63,6 +63,13 @@ type CommandGroup = {
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Observe", items: [
     { path: "overview", label: "Live City", caption: "Agents at work, evidence in motion", icon: "overview" },
+    /*
+     * Named for what it is rather than for the route, because "Live City" is
+     * already taken by Overview one line above and two identical labels in one
+     * nav is a coin toss for the reader. This one is the map itself: the whole
+     * screen, three hundred people, the recorded day playing across the tick.
+     */
+    { path: "live-city", label: "Street Level", caption: "The recorded day, full screen", icon: "street" },
     { path: "world", label: "World", caption: "Population and environment", icon: "world" },
     { path: "people", label: "Living Agents", caption: "Progress, journeys, and evidence", icon: "people" },
     { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
@@ -105,6 +112,7 @@ function Glyph({ name }: { name: GlyphName }) {
     case "commons": paths = <><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="17" r="2.5" /><circle cx="19" cy="17" r="2.5" /><path d="m10.8 7.2-4.6 7.6M13.2 7.2l4.6 7.6M7.5 17h9" /></>; break;
     case "investigations": paths = <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5" /></>; break;
     case "experiments": paths = <><path d="M9 3h6M10 3v6l-6 10a1.4 1.4 0 0 0 1.2 2h13.6a1.4 1.4 0 0 0 1.2-2L14 9V3" /><path d="M7.5 15h9" /></>; break;
+    case "street": paths = <><path d="M3 20h18M6 20V9l4-3v14M14 20V4l4 3v13" /><circle cx="8" cy="12.5" r=".6" /><circle cx="16" cy="11" r=".6" /></>; break;
     case "panel": paths = <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M5.5 8h1M5.5 12h1" /></>; break;
     default: paths = <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></>;
   }
@@ -331,13 +339,54 @@ export function WorkspaceShell() {
           <button ref={commandTrigger} className="world-os-command-button" type="button" onClick={event => openCommand(event.currentTarget)} aria-label="Open command menu" aria-haspopup="dialog">
             <Glyph name="search" /><span>Navigate</span><kbd>Ctrl K</kbd>
           </button>
-          <FreshnessBadge transport={transport} tick={tick} placement="global" />
+          {/*
+            * One condition, one place. The shell used to say "stale" three times in
+            * a single band: this badge, a full-width banner below it, and the
+            * workspace's own chrome. Two of the three are gone, and the badge's
+            * disclosure carries the detail — the plain-English rewrite, the raw
+            * reason code, and the cursor it stopped at.
+            *
+            * The state word belongs to the workspace, and every workspace already
+            * prints it: Overview in its chrome row, six of the rest through
+            * WorkspaceHeader, and People, Investigations and Communications through
+            * their own FreshnessBadge. So the shell's copy never repeats it — it is
+            * the provenance control.
+            */}
+          {/*
+            * Not `statusShownElsewhere`. Suppressing the state word here to stop
+            * "stale" appearing three times also took "Live", "Reconnecting" and
+            * "Historical" out of the only badge that spans every workspace, and
+            * the cursor with them — so the provenance control stopped carrying
+            * the one datum that is purely provenance.
+            *
+            * The duplication it was fixing was specific to `stale`, and that is
+            * now handled by the assertive line below, which no workspace repeats.
+            */}
+          <FreshnessBadge
+            transport={transport}
+            tick={tick}
+            placement="global"
+          />
         </div>
       </header>
+      {/*
+        * The one thing the disclosure above cannot do: interrupt.
+        *
+        * Consolidating into the badge put the whole stale condition inside a
+        * collapsed <details> tagged role="status" — polite, and shut. A reader
+        * watching the map saw nothing at all, and a screen reader announced
+        * nothing, while the data underneath them stopped being current. That is
+        * the failure mode this surface exists to prevent, so the condition gets
+        * one visible, assertive line and the detail stays in the disclosure.
+        *
+        * Still one place: it renders only here, only while stale, and it names
+        * the reason code so the disclosure is a deepening rather than a repeat.
+        */}
+      {transport.status === "stale" && <p className="world-os-alert" role="alert">
+        Live updates are stale. The workspace is refetching the canonical
+        projection: {transport.staleReason}.
+      </p>}
       <main id="workspace-main" className="world-os-main" tabIndex={-1}>
-        {transport.status === "stale" && <div className="world-os-alert" role="alert">
-          Live updates are stale. The workspace is refetching the canonical projection: {transport.staleReason}.
-        </div>}
         <Outlet context={{ tick, forkId: observerState.fork, transport }} />
       </main>
     </section>

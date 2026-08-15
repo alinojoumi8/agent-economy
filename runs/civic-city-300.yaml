@@ -70,4 +70,15 @@ city:
 budget:
   cap_usd: 0.0
   oracle_reserve_usd: 0.0
-  conversation_pairs: 1
+  # One pair per tick is a live-provider economy, and this profile has no
+  # provider to economise on: every route is scripted and a tick costs $0.00.
+  # At one pair a showcase of three hundred people records two of them ever
+  # speaking, which is what the map then has to draw. Fifteen is what base.yaml
+  # runs, and at 300 agents it puts thirty people in conversation without
+  # crowding the geography.
+  #
+  # Forward-only for a run already under way: the engine reads the config
+  # persisted in run_meta, not this file, so an existing run keeps the pairs it
+  # recorded and only new ticks change. Run 53f5b4ce8c was raised in place at
+  # tick 374 and is the reference for that.
+  conversation_pairs: 15

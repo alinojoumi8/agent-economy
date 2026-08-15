@@ -1,0 +1,279 @@
+/*
+ * Agent Economy design tokens — ported from the variant-d2 specimen.
+ *
+ * CONTRAST (WCAG 2.1 relative luminance, measured against --surface-1 #161a21,
+ * which is the ground for essentially all text):
+ *   --text-hi  #eef1f6  16.05:1   headline figures, names, counts
+ *   --text     #c9d0da  11.70:1   body / table values
+ *   --text-2   #98a1af   6.97:1   secondary labels, role codes, kind codes
+ *   --text-3   #838c9c   5.15:1   units, micro labels, provenance, empty states
+ *                        4.77:1   ...and against --surface-2, the panel head/foot
+ *   --text-4   #5f6875   3.22:1   NON-TEXT ONLY: bar fills, segments, dormant dot
+ *   --pos      #3fbf8c   7.82:1
+ *   --neg      #ff7a6e   7.15:1
+ *   --caution  #e6a94a   8.77:1
+ *   --accent   #6ea8ff   7.54:1
+ * Body text is never below 4.5:1 (the lowest body token is --text-3 at 4.82:1).
+ * Non-text and disabled ink stays above 3:1 (--text-4 3.22:1; --border #5a6574 is
+ * 3.07:1 against the panel it outlines). Panels detach by surface AND border,
+ * never by shadow. The light theme mirrors the same ladder.
+ *
+ * UNIT CONVENTION — one everywhere: <value><thin space><unit>.
+ * DIRECTION vs JUDGEMENT — two channels: glyph carries direction, hue carries
+ * whether that direction is welcome, the number stays unsigned.
+ * SALIENCE — tracks exceptionality, never frequency.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- surface + line ---- */
+  --ae-bg: #07090c;
+  --ae-surface-1: #161a21;
+  --ae-surface-2: #1c212a;
+  --ae-surface-3: #232935;
+  --ae-inset: #0f1319;
+  --ae-border: #5a6574;
+  --ae-border-soft: #333b47;
+  --ae-divider: #262c36;
+
+  /* ---- ink ---- */
+  --ae-text-hi: #eef1f6;
+  --ae-text: #c9d0da;
+  --ae-text-2: #98a1af;
+  /* Lifted from the specimen's #7b8494. That value clears 4.5:1 against
+     --surface-1 but only reaches 4.28:1 against --surface-2, which is the ground
+     for every panel head and foot — so it failed exactly where provenance,
+     latency, and row counts are read. #838c9c measures 5.15:1 on --surface-1 and
+     4.77:1 on --surface-2, so the quietest *text* tier clears the floor on both. */
+  --ae-text-3: #838c9c;
+  /* Non-text only: bar fills, phase segments, the dormant connection dot. */
+  --ae-text-4: #5f6875;
+  /*
+   * WHERE --text-3 MAY SIT. It is calibrated against --surface-1 (5.15:1) and
+   * --surface-2 (4.77:1) and clears the floor on both. It does NOT clear it on
+   * --surface-3: 4.30:1. So --surface-3 is a CHROME surface — key caps, the
+   * active segment of a switch, an avatar disc — where the ink is --text-hi or
+   * --text-2. A row or list-item selection wash carries quiet ink by
+   * definition, so selection steps surface-1 -> surface-2, never to surface-3.
+   */
+
+  /* ---- judgement ---- */
+  --ae-pos: #3fbf8c;
+  --ae-neg: #ff7a6e;
+  --ae-caution: #e6a94a;
+  --ae-accent: #6ea8ff;
+  --ae-wash-neg: #2b1a18;
+  --ae-wash-caution: #241d10;
+  --ae-wash-accent: #141c28;
+  --ae-focus: #9cc4ff;
+
+  /* ---- state ---- */
+  --ae-skeleton: #2c333f;
+  --ae-skeleton-dim: #212733;
+  --ae-spark-fill: #1f2530;
+  --ae-track: #242a34;
+  /* Shown at a scroll container's edge only while content continues past it, so a
+     half-visible row reads as "there is more below" and never as a clipped glyph. */
+  --ae-scroll-edge: rgba(0, 0, 0, .55);
+
+  /* ---- type ---- */
+  --ae-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ae-font-mono: ui-monospace, "SF Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --ae-fs-hero: 58px;
+  --ae-fs-1: 22px;
+  --ae-fs-2: 16px;
+  --ae-fs-3: 13px;
+  --ae-fs-4: 12px;
+  --ae-fs-5: 11px;
+  --ae-fs-6: 10px;
+  --ae-ls-cap: .09em;
+  --ae-ls-hero: -.022em;
+
+  /* ---- rhythm: one grid, one pitch ---- */
+  /* One height for the shell's top band, used by BOTH the rail's brand block and
+     the workbench topbar, so the rule under them is a single unbroken line
+     across the seam instead of two rules 5px apart. */
+  --ae-h-topbar: 72px;
+  --ae-h-chrome: 46px;
+  --ae-h-panelhead: 34px;
+  --ae-h-colhead: 26px;
+  --ae-h-row: 28px;
+  --ae-h-foot: 30px;
+  --ae-rail-w: 216px;
+  /*
+   * The event stream's five columns need 352px of floor, the agent roster's six
+   * need 425px, and the table primitive enforces both. These are the same floors
+   * plus the panel's own 24px of padding and 2px of border, so the band's two
+   * columns can never be handed less than their ledgers require: the stream gives
+   * ground first, and only once both are at their floor does anything scroll.
+   */
+  --ae-roster-min: 451px;
+  --ae-stream-min: 378px;
+  --ae-stream-w: 432px;
+  --ae-band-h: 240px;
+  --ae-pad: 12px;
+  --ae-gap: 12px;
+
+  /*
+   * SPACING SCALE — one ladder, 4px pitch, and every gap in the shell chrome and
+   * in the workspace chrome row is drawn from it. Before this existed the chrome
+   * band ran on 2/6/7/9/10/12/16px gaps picked per item, which is exactly what a
+   * reader sees as "hand-placed" rather than "systematic".
+   */
+  --ae-space-0: 2px;
+  --ae-space-1: 4px;
+  --ae-space-2: 8px;
+  --ae-space-3: 12px;
+  --ae-space-4: 16px;
+  --ae-space-5: 24px;
+  --ae-space-6: 32px;
+
+  /* ---- radii + elevation (elevation is surface + line, never shadow) ---- */
+  --ae-radius-sm: 2px;
+  --ae-radius: 6px;
+  --ae-radius-lg: 10px;
+  --ae-elev-0: none;
+  --ae-elev-1: inset 0 0 0 1px var(--ae-border-soft);
+  --ae-elev-2: 0 0 0 1px var(--ae-border);
+
+  /*
+   * ---- Live City ----
+   * The one surface where the ground is not a panel. A map read at a glance
+   * needs a darker field than any panel provides and a person-mark that stays
+   * findable at 7px against it, so the city gets its own short ladder rather
+   * than bending the panel tokens out of shape. Three grounds, one per beat of
+   * the recorded day, so the hour is legible from the field colour alone —
+   * dawn cool, business neutral, evening warm. Each is measured against
+   * --ae-city-ink, the ink every overlay on the map uses:
+   *   ink #e8eef7 on sky-morning #0a1420  15.6:1
+   *   ink on sky-business #0c1119          16.3:1
+   *   ink on sky-evening  #16111a          15.4:1
+   * The three person hues sit above 4.5:1 on all three grounds as fills and
+   * are never the only channel: shape and the legend carry the same split.
+   */
+  --ae-city-sky-morning: #0a1420;
+  --ae-city-sky-business: #0c1119;
+  --ae-city-sky-evening: #16111a;
+  --ae-city-ink: #e8eef7;
+  --ae-city-veil: rgba(7, 9, 12, .82);
+  --ae-city-panel: rgba(14, 18, 25, .84);
+  --ae-city-line: rgba(140, 168, 196, .26);
+  --ae-city-line-soft: rgba(140, 168, 196, .12);
+  --ae-city-halo-core: rgba(74, 128, 178, .17);
+  --ae-city-halo-edge: rgba(74, 128, 178, 0);
+  --ae-city-place: #6d7f92;
+  --ae-city-place-home: #7f8fa8;
+  --ae-city-place-civic: #8fb4cf;
+  --ae-city-home: #6ea8ff;
+  --ae-city-work: #3fbf8c;
+  --ae-city-commons: #e6a94a;
+  --ae-city-unrecorded: #838c9c;
+  --ae-city-anon: #b48ad8;
+  --ae-city-chip: 7px;
+  /*
+   * TERRITORY. The hull of a region's own places is real geography — every
+   * place carries a region_id and a coordinate — so a polity gets a ground and
+   * an edge. Deliberately ONE neutral pair for all three rather than a hue per
+   * region: the three person hues already spend blue/green/amber on home, work
+   * and commons, and a second hue system on the same field would make "which
+   * colour am I reading" the first question asked of every mark.
+   */
+  /* The ground a name plate sits on. More opaque than a chrome panel because it
+     lies UNDER the people: at panel opacity the commuters crossing it read as
+     shredding the letterforms rather than passing in front of them. */
+  --ae-city-plate: rgba(10, 14, 20, .94);
+  --ae-city-land: rgba(140, 168, 196, .052);
+  --ae-city-land-edge: rgba(140, 168, 196, .30);
+  --ae-city-graticule: rgba(140, 168, 196, .055);
+  --ae-city-focus: #9cc4ff;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --ae-bg: #e5e9ef;
+  --ae-surface-1: #ffffff;
+  --ae-surface-2: #f3f6fa;
+  --ae-surface-3: #e8edf4;
+  --ae-inset: #eef1f6;
+  --ae-border: #858fa0;
+  --ae-border-soft: #c3cbd7;
+  --ae-divider: #e2e7ee;
+  --ae-text-hi: #0e131b;
+  --ae-text: #1e242e;
+  --ae-text-2: #4a5462;
+  --ae-text-3: #5c6675;
+  --ae-text-4: #767f8d;
+  --ae-pos: #0a7a52;
+  --ae-neg: #bd3226;
+  --ae-caution: #7f5405;
+  --ae-accent: #1a56c4;
+  --ae-wash-neg: #fbeceb;
+  --ae-wash-caution: #fdf4e3;
+  --ae-wash-accent: #eaf0fc;
+  --ae-focus: #1a56c4;
+  --ae-skeleton: #dbe1ea;
+  --ae-skeleton-dim: #e9edf3;
+  --ae-spark-fill: #eef1f6;
+  --ae-track: #dde3ea;
+  --ae-scroll-edge: rgba(14, 19, 27, .22);
+
+  /*
+   * The city keeps its dark field in the light theme. A map is not a document:
+   * inverting it would put 300 small marks on white and cost the whole surface
+   * its legibility, so only the chrome that sits ON the map follows the theme.
+   * The three beat grounds and the person hues are unchanged above.
+   */
+  --ae-city-veil: rgba(20, 26, 34, .78);
+  --ae-city-panel: rgba(18, 24, 32, .88);
+}
+
+/*
+ * The single .world-os-shell definition. It used to be declared four times
+ * (index.css:245, index.css:327, civic-weather-room.css:22, :1296) with the last
+ * import silently winning. Everything below is now derived from the tokens above,
+ * and the legacy --os-* names are kept as a bridge so the workspaces that have not
+ * been ported yet keep resolving.
+ */
+.world-os-shell {
+  --os-ink: var(--ae-bg);
+  --os-ink-soft: var(--ae-inset);
+  --os-surface: var(--ae-surface-1);
+  --os-surface-raised: var(--ae-surface-2);
+  --os-surface-warm: var(--ae-surface-3);
+  --os-line: var(--ae-border-soft);
+  --os-line-strong: var(--ae-border);
+  --os-panel: var(--ae-surface-1);
+  --os-text: var(--ae-text);
+  --os-muted: var(--ae-text-2);
+  --os-dim: var(--ae-text-3);
+  /*
+   * The legacy sheet spent one mint on two jobs: identifiers/selection ("this is
+   * the interactive thing, this row is chosen") and judgement ("this is healthy").
+   * Tokens keep those channels apart — hue carries whether a direction is welcome
+   * — so the bridge resolves mint to the interaction hue, and the handful of
+   * genuine health readouts (the live dots, the mint metric signal) name --ae-pos
+   * for themselves. Before this, every selected row and every mono identifier in
+   * the nine workspaces was painted "good".
+   */
+  --os-mint: var(--ae-accent);
+  --os-mint-soft: var(--ae-accent);
+  --os-amber: var(--ae-caution);
+  --os-coral: var(--ae-neg);
+
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 252px minmax(0, 1fr);
+  min-height: 100vh;
+  overflow: clip;
+  background: var(--ae-bg);
+  color: var(--ae-text);
+  font-family: var(--ae-font-ui);
+  font-size: var(--ae-fs-3);
+}
+
+.world-os-shell :focus-visible {
+  outline: 2px solid var(--ae-focus);
+  outline-offset: 1px;
+}

@@ -5,6 +5,7 @@ import {
   isSafeCsrfCookieName,
   resetApiRouting,
 } from "../hostedRouting.js";
+import { presumedDeploymentMode } from "../lib/deploymentMode.js";
 
 function validModeConfig(value) {
   return Boolean(
@@ -16,8 +17,25 @@ function validModeConfig(value) {
   );
 }
 
-export function useHostedMode() {
-  const [state, setState] = useState({ loading: true, hosted: false, config: null });
+/**
+ * Resolve the deployment mode without blocking first paint.
+ *
+ * `presumed` is derived synchronously from the document URL (see
+ * `lib/deploymentMode.js`) and is available on the very first render, so a
+ * caller that lands on a local-only route can mount the real shell immediately.
+ * `/api/v2/mode` still runs on every load and remains authoritative: hosted mode
+ * is only ever entered once the probe has returned a valid hosted config, and a
+ * presumption that disagrees with the probe is corrected when it lands.
+ *
+ * @param {string} [pathname] document path; defaults to the live location.
+ */
+export function useHostedMode(pathname) {
+  const [state, setState] = useState(() => ({
+    loading: true,
+    hosted: false,
+    config: null,
+    presumed: presumedDeploymentMode(pathname),
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -35,10 +53,10 @@ export function useHostedMode() {
           csrfCookieName: config.csrf_cookie_name,
           csrfHeaderName: config.csrf_header_name,
         });
-        setState({ loading: false, hosted: true, config });
+        setState(current => ({ ...current, loading: false, hosted: true, config }));
       } else {
         resetApiRouting();
-        setState({ loading: false, hosted: false, config: null });
+        setState(current => ({ ...current, loading: false, hosted: false, config: null }));
       }
     });
     return () => { cancelled = true; };

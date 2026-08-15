@@ -18,8 +18,7 @@
   font-family: var(--civic-font-body);
 }
 
-.civic-observatory,
-.world-os-shell {
+.civic-observatory {
   color-scheme: light;
 }
 
@@ -44,6 +43,20 @@ body::before {
 }
 
 .civic-city {
+  /*
+   * ONE source of truth for the evidence lens footprint, because the map field
+   * and the lens are two absolutely-positioned boxes that have to agree on where
+   * the atlas ends. They used to carry the number twice, by hand: the field
+   * reserved 300px while the lens occupied 340px of width plus an 18px gutter,
+   * so the panel was laid over the last 58px of the map it describes -- the
+   * right edge of Signal Ward and the tail of the "N of N residents visible"
+   * pill went under it. Derived from these two values the reserve is exact by
+   * construction, and the responsive step below only has to restate the width.
+   */
+  --civic-lens-w: 340px;
+  --civic-lens-gutter: 18px;
+  --civic-lens-reserve: calc(var(--civic-lens-w) + var(--civic-lens-gutter) * 2);
+
   grid-column: 1 / -1;
   width: 100%;
   overflow: hidden;
@@ -359,7 +372,7 @@ body::before {
 
 .civic-city__map-field {
   position: absolute;
-  inset: 0 300px 0 0;
+  inset: 0 var(--civic-lens-reserve) 0 0;
 }
 
 .civic-city__plot {
@@ -469,7 +482,7 @@ body::before {
 
 .civic-city__atlas-meta {
   position: absolute;
-  z-index: 8;
+  z-index: 11;
   top: .75rem;
   right: .75rem;
   display: flex;
@@ -509,12 +522,32 @@ body::before {
   background: transparent;
 }
 
+/*
+ * A district name is a map legend, not a map mark, so it is drawn as a PLATE.
+ *
+ * Two things were wrong at 300 residents. The label sat at z-index 2 while
+ * .civic-city__agent-layer sits at 5, so every one of the six names rendered
+ * UNDER the chips -- occlusion probing found 180 of 180 sample points covered,
+ * and "Works / firms, labor, and production" was gone entirely behind ~200 red
+ * chips. Raising the label above the chips is necessary but not sufficient:
+ * bare ink over a dense field of ringed discs is still unreadable whichever way
+ * the stack runs. So the label now carries the same opaque chrome plate the
+ * atlas already uses for its meta chip and its legend -- one plate idiom, three
+ * uses -- and its ink is measured against that plate rather than against
+ * whatever cartography happens to be underneath.
+ *
+ * It stays pointer-events: none, so the plate never steals a click from an
+ * agent chip beneath it. The full ladder is documented at .civic-city__agent-layer.
+ */
 .civic-city__district-label {
   position: absolute;
-  z-index: 2;
+  z-index: 8;
   display: flex;
   max-width: 190px;
   flex-direction: column;
+  border: 1px solid var(--civic-rule);
+  background: var(--civic-white);
+  padding: .3rem .45rem;
   pointer-events: none;
 }
 
@@ -532,13 +565,16 @@ body::before {
   line-height: 1.25;
 }
 
-.civic-city__district-label--institutions strong {
-  color: white;
-}
-
-.civic-city__district-label--institutions span {
-  color: #d7dfe2;
-}
+/*
+ * The institutions label used to be white-on-white.
+ *
+ * These two rules paint the institutions district for a DARK fill, but on the
+ * light map that district is rgba(18, 35, 63, .2) over #e2ebe8 -- pale. "Civic
+ * Forum" measured 1.25:1 and its caption 1.08:1, i.e. invisible, on the Classic
+ * Observatory and on every light-theme atlas. There is nothing special about
+ * this district on a light ground, so it now reads like every other label; the
+ * dark atlas keeps its own override further down this file.
+ */
 
 .civic-city__firm {
   position: absolute;
@@ -716,21 +752,46 @@ body::before {
   display: none;
 }
 
+/*
+ * ATLAS STACKING ORDER, in one place, because it is a real ladder and it was
+ * being written one rule at a time:
+ *
+ *    0  .civic-city__plot            the survey sheet, districts, river, routes
+ *    3  .civic-city__firm            firm footprints
+ *    4  .civic-city__place           real places and their tags
+ *    5  .civic-city__agent           resident chips
+ *    7  .civic-city__cluster         peripheral cluster discs
+ *    8  .civic-city__district-label  district name plates
+ *    9  .civic-city__agent / __cluster  hover, selected
+ *   10  .civic-city__agent           :focus-visible
+ *   11  .civic-city__atlas-meta, .civic-city__legend   map chrome
+ *   12  .civic-city__empty           error / empty / loading takeover
+ *   15  .civic-city__lens            evidence panel
+ *
+ * The layer itself carries NO z-index on purpose. When it had one it opened a
+ * stacking context, which trapped the hover, selected and focus steps inside it
+ * -- so a chip could never rise above anything outside the layer, and once the
+ * district plates went in at 8, the one chip the reader had actually selected
+ * was the one the plate covered. The chips now carry their own steps, which
+ * keeps them over firms and places exactly as before and lets the selected mark
+ * come out on top of a label.
+ */
 .civic-city__agent-layer {
   position: absolute;
-  z-index: 5;
   inset: 0;
 }
 
+/* Same shape as the agent layer above: no z-index on the layer, so a cluster
+   under the reader's cursor can rise over a district plate the way a chip does. */
 .civic-city__cluster-layer {
   position: absolute;
-  z-index: 7;
   inset: 0;
   pointer-events: none;
 }
 
 .civic-city__cluster {
   position: absolute;
+  z-index: 7;
   display: grid;
   width: 72px;
   min-height: 72px;
@@ -761,12 +822,14 @@ body::before {
 
 .civic-city__cluster:hover,
 .civic-city__cluster:focus-visible {
+  z-index: 9;
   box-shadow: 0 0 0 3px var(--civic-white), 0 0 0 6px var(--civic-cobalt), 0 10px 28px rgba(18, 35, 63, .28);
   transform: translate(-50%, -50%) scale(1.08);
 }
 
 .civic-city__agent {
   position: absolute;
+  z-index: 5;
   display: grid;
   width: 24px;
   height: 24px;
@@ -786,15 +849,17 @@ body::before {
   letter-spacing: -.04em;
 }
 
+/* Above the district plates: the mark under the reader's cursor, and the mark
+   the evidence lens is describing, are never the thing that gets covered. */
 .civic-city__agent:hover,
 .civic-city__agent.is-selected {
-  z-index: 8;
+  z-index: 9;
   box-shadow: 0 0 0 3px var(--civic-white), 0 0 0 5px var(--civic-cobalt);
   transform: translate(-50%, -50%) scale(1.28);
 }
 
 .civic-city__agent:focus-visible {
-  z-index: 9;
+  z-index: 10;
 }
 
 .civic-city__agent--communications {
@@ -833,7 +898,7 @@ body::before {
 
 .civic-city__legend {
   position: absolute;
-  z-index: 8;
+  z-index: 11;
   left: .75rem;
   bottom: .75rem;
   display: flex;
@@ -896,7 +961,9 @@ body::before {
   bottom: .72rem;
   display: flex;
   gap: .7rem;
-  color: rgba(18, 35, 63, .62);
+  /* A quiet annotation, not a faded one: at .62 alpha this measured 4.18:1
+     against the map sheet. */
+  color: var(--civic-muted);
   font: 570 .49rem var(--civic-font-label);
 }
 
@@ -940,13 +1007,13 @@ body::before {
 .civic-city__lens {
   position: absolute;
   z-index: 15;
-  top: 18px;
-  right: 18px;
-  bottom: 18px;
+  top: var(--civic-lens-gutter);
+  right: var(--civic-lens-gutter);
+  bottom: var(--civic-lens-gutter);
   display: flex;
-  width: 340px;
+  width: var(--civic-lens-w);
   min-width: 0;
-  max-height: calc(100% - 36px);
+  max-height: calc(100% - var(--civic-lens-gutter) * 2);
   flex-direction: column;
   overflow: auto;
   border: 1px solid var(--civic-navy);
@@ -1394,46 +1461,34 @@ body::before {
   white-space: nowrap;
 }
 
-/* World OS: the civic rail frames chart paper instead of a dark SaaS shell. */
-.world-os-shell {
-  --os-ink: var(--civic-paper);
-  --os-ink-soft: #e5eae8;
-  --os-surface: var(--civic-white);
-  --os-surface-raised: white;
-  --os-surface-warm: #f2f4ed;
-  --os-line: rgba(18, 35, 63, .16);
-  --os-line-strong: rgba(18, 35, 63, .34);
-  --os-text: var(--civic-navy);
-  --os-muted: var(--civic-muted);
-  --os-dim: #768593;
-  --os-mint: var(--civic-cobalt);
-  --os-mint-soft: #183e9c;
-  --os-amber: #806d00;
-  --os-coral: var(--civic-vermilion);
-  grid-template-columns: 252px minmax(0, 1fr);
-  background: var(--civic-paper);
-  color: var(--civic-ink);
-  font-family: var(--civic-font-body);
-}
-
-.world-os-shell::before {
-  background: none;
-}
-
+/*
+ * World OS shell chrome.
+ *
+ * This block used to repaint the shell in the civic palette — navy rail, cream
+ * topbar, chartreuse active nav — while the workspace beneath it ran on the dark
+ * token ladder. That is what made one screen read as two themes with a seam down
+ * the middle. Everything here now resolves from src/design/tokens.css, so the
+ * chrome is the same surface as the workspace and follows data-theme in both
+ * directions. Only civic *typography* and the emblem's silhouette are kept.
+ *
+ * The workspace CONTENT area now resolves the same way: .world-os-main is painted
+ * from the token ladder in src/ui/ui.css, and all ten workspaces share it. The
+ * light paper ground the rules further down this file were written for is retired.
+ */
 .world-os-rail {
-  border-right-color: #07152d;
-  background: var(--civic-navy);
-  color: white;
+  border-right-color: var(--ae-border-soft);
+  background: var(--ae-bg);
+  color: var(--ae-text);
   backdrop-filter: none;
 }
 
 .world-os-brand {
-  border-bottom-color: rgba(255, 255, 255, .2);
+  border-bottom-color: var(--ae-border-soft);
 }
 
 .world-os-brand img {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1442,131 +1497,143 @@ body::before {
 }
 
 .world-os-brand-copy strong {
-  color: white;
+  color: var(--ae-text-hi);
   font-family: var(--civic-font-display);
 }
 
 .world-os-brand-copy span,
 .world-os-nav-copy small,
 .world-os-nav-link.active .world-os-nav-copy small {
-  color: #aebbc5;
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-rail-toggle {
-  border-color: rgba(255, 255, 255, .23);
+  border-color: transparent;
   background: transparent;
-  color: #dbe3e7;
+  color: var(--ae-text-3);
 }
 
 .world-os-rail-toggle:hover {
-  border-color: white;
-  background: rgba(255, 255, 255, .09);
-  color: white;
+  border-color: var(--ae-border);
+  background: var(--ae-surface-2);
+  color: var(--ae-text-hi);
 }
 
 .world-os-nav-group-title {
-  color: #8fa0ae;
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-nav a.world-os-nav-link {
-  border-radius: 4px;
-  color: #d7e0e5;
+  border-radius: var(--ae-radius);
+  color: var(--ae-text-2);
 }
 
 .world-os-nav a.world-os-nav-link:hover {
-  border-color: rgba(255, 255, 255, .22);
-  background: rgba(255, 255, 255, .08);
-  color: white;
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .world-os-nav a.world-os-nav-link.active {
-  border-color: var(--civic-chartreuse);
-  background: var(--civic-chartreuse);
-  color: var(--civic-navy);
+  border-color: var(--ae-border);
+  background: var(--ae-surface-2);
+  color: var(--ae-text-hi);
 }
 
-.world-os-nav-icon,
-.world-os-nav-link.active .world-os-nav-icon {
-  border-color: rgba(255, 255, 255, .24);
+.world-os-nav-icon {
+  border-color: var(--ae-border-soft);
   background: transparent;
-  color: currentColor;
+  color: var(--ae-text-2);
 }
 
 .world-os-nav-link.active .world-os-nav-icon {
-  border-color: rgba(18, 35, 63, .28);
-}
-
-.world-os-nav-link.active .world-os-nav-copy small {
-  color: rgba(18, 35, 63, .72);
+  border-color: var(--ae-border);
+  background: var(--ae-surface-3);
+  color: var(--ae-text-hi);
 }
 
 .world-os-nav-link.active .world-os-nav-indicator {
-  background: var(--civic-vermilion);
+  background: var(--ae-text-2);
   box-shadow: none;
 }
 
 .world-os-rail-footer {
-  border-top-color: rgba(255, 255, 255, .18);
+  border-top-color: var(--ae-border-soft);
 }
 
 .world-os-rail-footer > a {
-  color: #dbe3e7;
+  color: var(--ae-text-2);
 }
 
 .world-os-rail-footer > a:hover {
-  background: rgba(255, 255, 255, .08);
-  color: white;
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-1);
+  color: var(--ae-text-hi);
 }
 
 .world-os-rail-orbit {
-  border-color: #b9c4cb;
+  border-color: var(--ae-border);
 }
 
 .world-os-rail-orbit::before {
-  border-color: var(--civic-chartreuse);
+  border-color: var(--ae-border-soft);
 }
 
 .world-os-rail-orbit::after {
-  background: var(--civic-vermilion);
+  background: var(--ae-text-4);
 }
 
 .world-os-rail-footer-copy small {
-  color: #9cacb7;
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-topbar {
-  border-bottom-color: var(--civic-rule);
-  background: var(--civic-white);
-  color: var(--civic-ink);
+  border-bottom-color: var(--ae-border-soft);
+  background: var(--ae-bg);
+  color: var(--ae-text);
   backdrop-filter: none;
 }
 
 .world-os-topbar .citizen-menu-dropdown > summary {
-  border-color: var(--civic-rule);
-  border-radius: 4px;
-  background: white;
-  color: var(--civic-navy);
+  min-height: 34px;
+  gap: var(--ae-space-2);
+  padding: 0 var(--ae-space-3);
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  color: var(--ae-text-2);
+  font-size: var(--ae-fs-5);
+  font-weight: 600;
 }
 
-.world-os-topbar .citizen-menu-dropdown > summary:hover {
-  border-color: var(--civic-cobalt);
-  color: var(--civic-cobalt);
+.world-os-topbar .citizen-menu-dropdown > summary:hover,
+.world-os-topbar .citizen-menu-dropdown[open] > summary {
+  border-color: var(--ae-border);
+  color: var(--ae-text-hi);
 }
 
 .world-os-topbar .citizen-menu--panel {
-  border-color: var(--civic-navy);
-  border-radius: 6px;
-  background: var(--civic-white);
+  border-color: var(--ae-border);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  box-shadow: none;
 }
 
 .world-os-topbar .citizen-menu--panel a {
-  color: var(--civic-ink);
+  border-radius: var(--ae-radius-sm);
+  color: var(--ae-text);
 }
 
-.world-os-context h1,
+.world-os-topbar .citizen-menu--panel a:hover,
+.world-os-topbar .citizen-menu--panel a.is-active {
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-2);
+  color: var(--ae-text-hi);
+}
+
 .world-os-heading h2,
 .world-os-panel h3,
 .world-os-thread-detail h3,
@@ -1575,7 +1642,11 @@ body::before {
 .world-os-inspector-empty h3,
 .world-os-empty h2,
 .world-os-empty h3 {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
+}
+
+.world-os-context h1 {
+  color: var(--ae-text-hi);
 }
 
 .world-os-context h1,
@@ -1583,62 +1654,72 @@ body::before {
   font-family: var(--civic-font-display);
 }
 
+/* One eyebrow everywhere. This used to fork: the shell's own kickers took the
+   token ink and the nine workspaces kept civic cobalt, which measured 1.35:1
+   once their cards stopped being paper. There is only one kicker now. */
 .world-os-kicker {
-  color: var(--civic-cobalt);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-run-pill {
-  border-radius: 2px;
-  color: #53657a;
-  font-size: .625rem;
+  border-radius: var(--ae-radius-sm);
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-tick-control,
 .world-os-command-button,
 .world-os-transport {
-  border-radius: 4px;
-  background: white;
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
 }
 
 .world-os-tick-control button {
-  border-radius: 2px;
-  color: #52647a;
+  border-radius: var(--ae-radius-sm);
+  color: var(--ae-text-2);
 }
 
-.world-os-tick-control button:hover,
+.world-os-tick-control button:hover {
+  background: var(--ae-surface-2);
+  color: var(--ae-text-hi);
+}
+
 .world-os-tick-control button.active {
-  background: var(--civic-cobalt);
-  color: white;
+  background: var(--ae-surface-3);
+  color: var(--ae-text-hi);
 }
 
 .world-os-tick-control input {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-command-button {
-  color: #52647a;
+  color: var(--ae-text-2);
 }
 
 .world-os-command-button:hover {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-command-button kbd,
 .world-os-command kbd {
-  border-color: var(--civic-rule);
-  background: var(--civic-paper);
-  color: #52647a;
-  font-size: .625rem;
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-3);
+  /* --ae-text-3 is calibrated against surface-1 and surface-2; on surface-3 it
+     measures 4.30:1, under the floor. The key cap is the only chip in the shell
+     drawn on surface-3, so it reads one tier up. */
+  color: var(--ae-text-2);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-transport strong {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-transport small {
-  color: var(--civic-muted);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-health,
@@ -1648,12 +1729,15 @@ body::before {
   box-shadow: none;
 }
 
-.world-os-health--live,
 .world-os-live-dot {
-  background: var(--civic-chartreuse);
+  background: var(--ae-pos);
 }
 
-.world-os-main {
+/*
+ * The content measure for the workspace area. The ground it sits on is painted by
+ * .world-os-main in src/ui/ui.css, which all ten workspaces now share.
+ */
+.world-os-shell .world-os-main {
   max-width: 1760px;
 }
 
@@ -1668,58 +1752,169 @@ body::before {
 .world-os-provider-deck,
 .world-os-people-list,
 .world-os-person-detail > article {
-  border-color: var(--civic-rule);
-  border-radius: 8px;
-  background: var(--civic-white);
-  color: var(--civic-ink);
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .world-os-panel > header,
 .world-os-thread-detail > header,
 .world-os-message-inspector > header {
-  border-bottom-color: var(--civic-rule);
+  border-bottom-color: var(--ae-border-soft);
 }
 
 .world-os-metrics > a {
-  border-right-color: var(--civic-rule);
-  color: var(--civic-navy);
+  border-right-color: var(--ae-border-soft);
+  color: var(--ae-text-hi);
 }
 
 .world-os-metrics > a:hover {
-  background: var(--civic-paper);
+  background: var(--ae-surface-2);
 }
 
 .world-os-metrics strong,
 .world-os-event-copy strong {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-metric-label,
 .world-os-metrics small,
 .world-os-event-copy small,
-.world-os-policy-note,
+.world-os-policy-note {
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
+}
+
+/* .muted is shared with the Classic Observatory, which is still a paper
+   document, so it keeps the civic ink there and takes the token ink inside the
+   shell. Same class, two grounds, stated once. */
 .muted {
   color: var(--civic-muted);
   font-size: .625rem;
 }
 
+.world-os-shell .muted {
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
+}
+
+/*
+ * The other shared classes, same story as .muted.
+ *
+ * .button / .field predate both grounds and are still the Observatory's
+ * controls, so index.css keeps the mint originals and the shell gets the token
+ * ones. Inside World OS the untouched .button measured 3.49:1 on hover in the
+ * light theme, and its judgement-free mint said "positive" on every Select and
+ * every filter. It is now surface + line like the rest of the system, and a
+ * primary action is a washed accent chip -- white on --ae-accent is 2.4:1, so a
+ * filled one could not have been read.
+ */
+.world-os-shell .button {
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-surface-2);
+  color: var(--ae-text);
+}
+
+.world-os-shell .button:hover:not(:disabled) {
+  border-color: var(--ae-border);
+  background: var(--ae-surface-3);
+  color: var(--ae-text-hi);
+  transform: none;
+}
+
+.world-os-shell .button-primary,
+.world-os-shell .button-primary:hover:not(:disabled) {
+  border-color: var(--ae-accent);
+  background: var(--ae-wash-accent);
+  color: var(--ae-accent);
+}
+
+.world-os-shell .button-primary:hover:not(:disabled) {
+  background: var(--ae-surface-3);
+}
+
+.world-os-shell .button-danger {
+  border-color: var(--ae-neg);
+  color: var(--ae-neg);
+}
+
+.world-os-shell .field {
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-inset);
+  color: var(--ae-text-hi);
+}
+
+/*
+ * Agent Commons was the last surface still painted from the Tailwind palette --
+ * text-slate-500, text-mint-300, text-gold-300, divide-mint-300/10. Those are
+ * fixed hexes: they cannot follow data-theme, and this run has an empty feed, so
+ * no measurement would ever have caught them. The markup now names these
+ * classes and they resolve from the same ladder as everything else.
+ */
+.world-os-commons-list > li + li {
+  border-top: 1px solid var(--ae-divider);
+}
+
+.world-os-commons-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ae-space-2);
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-5);
+}
+
+.world-os-commons-name {
+  color: var(--ae-text-hi);
+}
+
+.world-os-commons-body {
+  margin-top: var(--ae-space-2);
+  color: var(--ae-text);
+  font-size: var(--ae-fs-3);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.world-os-commons-tag {
+  border: 1px solid var(--ae-accent);
+  border-radius: 999px;
+  padding: 1px var(--ae-space-2);
+  color: var(--ae-accent);
+}
+
+/* A moderation label is a claim about the item, so it is caution, not decoration. */
+.world-os-commons-label {
+  margin-top: var(--ae-space-2);
+  color: var(--ae-caution);
+  font-size: var(--ae-fs-5);
+}
+
+.world-os-commons-rep {
+  color: var(--ae-accent);
+  font-size: var(--ae-fs-5);
+}
+
 .world-os-segmented {
-  border-radius: 3px;
-  background: var(--civic-paper);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-surface-2);
 }
 
 .world-os-segmented button {
-  border-radius: 2px;
-  color: #53657a;
+  border-radius: var(--ae-radius-sm);
+  color: var(--ae-text-2);
 }
 
 .world-os-segmented button[aria-pressed="true"] {
-  background: var(--civic-cobalt);
-  color: white;
+  background: var(--ae-surface-3);
+  color: var(--ae-text-hi);
 }
 
 .world-os-segmented button[aria-pressed="true"] span {
-  color: white;
+  color: var(--ae-text-hi);
 }
 
 .world-os-segmented button span,
@@ -1729,24 +1924,24 @@ body::before {
 }
 
 .world-os-event-stream .world-os-timeline li {
-  border-bottom-color: #dbe1e2;
+  border-bottom-color: var(--ae-divider);
 }
 
 .world-os-event-stream .world-os-timeline li.selected {
-  background: #edf1fa;
+  background: var(--ae-surface-3);
 }
 
 .world-os-event-select:hover .world-os-event-copy strong {
-  color: var(--civic-cobalt);
+  color: var(--ae-accent);
 }
 
 .world-os-event-stream .world-os-timeline li > a {
-  border-left-color: #dbe1e2;
-  color: var(--civic-cobalt);
+  border-left-color: var(--ae-border-soft);
+  color: var(--ae-accent);
 }
 
 .world-os-event-inspector {
-  border-top: 5px solid var(--civic-cobalt);
+  border-top: 2px solid var(--ae-accent);
 }
 
 .world-os-inspector-orbit {
@@ -1755,22 +1950,22 @@ body::before {
 
 .world-os-payload pre,
 .world-os-evidence pre {
-  border: 1px solid var(--civic-rule);
-  border-radius: 3px;
-  background: #edf1ef;
-  color: var(--civic-ink);
-  font-size: .625rem;
+  border: 1px solid var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-inset);
+  color: var(--ae-text);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-event-inspector dt,
 .world-os-payload > span {
-  color: var(--civic-muted);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-event-inspector dd {
-  color: var(--civic-navy);
-  font-size: .625rem;
+  color: var(--ae-text);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-alert,
@@ -1778,52 +1973,53 @@ body::before {
   border-radius: 4px;
 }
 
+/* The shimmer itself is drawn from tokens in index.css; only the radius is set
+   here, so a loading panel is the same object as the panel it becomes. */
 .world-os-loading {
-  border-radius: 8px;
-  background: var(--civic-white);
+  border-radius: var(--ae-radius);
 }
 
 .world-os-command-backdrop {
-  background: rgba(18, 35, 63, .58);
+  background: rgba(0, 0, 0, .62);
 }
 
 .world-os-command {
-  border-color: var(--civic-navy);
-  border-radius: 8px;
-  background: var(--civic-white);
-  color: var(--civic-ink);
+  border-color: var(--ae-border);
+  border-radius: var(--ae-radius-lg);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .world-os-command-search {
-  border-color: var(--civic-cobalt);
-  border-radius: 3px;
-  background: white;
-  color: var(--civic-cobalt);
+  border-color: var(--ae-border);
+  border-radius: var(--ae-radius);
+  background: var(--ae-inset);
+  color: var(--ae-text-3);
 }
 
 .world-os-command-search input {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-command-results > button {
-  border-radius: 3px;
-  color: var(--civic-navy);
+  border-radius: var(--ae-radius);
+  color: var(--ae-text);
 }
 
 .world-os-command-results > button:hover,
 .world-os-command-results > button:focus-visible {
-  background: var(--civic-paper);
+  background: var(--ae-surface-2);
 }
 
 .world-os-command-results small,
 .world-os-command-arrow,
 .world-os-command > footer {
-  color: var(--civic-muted);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-command > footer {
-  border-top-color: var(--civic-rule);
+  border-top-color: var(--ae-border-soft);
 }
 
 .world-os-agent-input input,
@@ -1831,102 +2027,104 @@ body::before {
 .world-os-filters select,
 .world-os-hypotheses textarea,
 .world-os-people-list input {
-  border-color: var(--civic-rule);
-  border-radius: 3px;
-  background: white;
-  color: var(--civic-navy);
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-inset);
+  color: var(--ae-text-hi);
 }
 
 .world-os-semantic-panel th {
-  background: #e8edeb;
-  color: #53657a;
+  background: var(--ae-surface-2);
+  color: var(--ae-text-3);
 }
 
 .world-os-semantic-panel th,
 .world-os-semantic-panel td {
-  border-bottom-color: #dbe1e2;
+  border-bottom-color: var(--ae-divider);
 }
 
 .world-os-semantic-panel tr.selected {
-  background: #edf1fa;
+  background: var(--ae-surface-3);
 }
 
 .world-os-causal-graph > g > text,
 .world-os-causal-graph g[role="button"] text {
-  fill: var(--civic-navy);
-  stroke: var(--civic-white);
+  fill: var(--ae-text);
+  stroke: var(--ae-surface-1);
 }
 
 .world-os-causal-graph g[role="button"] circle {
-  fill: var(--civic-white);
-  stroke: var(--civic-cobalt);
+  fill: var(--ae-surface-2);
+  stroke: var(--ae-accent);
 }
 
 .world-os-causal-graph line {
-  stroke: rgba(36, 87, 214, .42);
+  stroke: var(--ae-border);
 }
 
 .world-os-causal-graph marker path {
-  fill: var(--civic-cobalt);
+  fill: var(--ae-accent);
 }
 
+/* Untrusted agent prose is fenced in the caution channel, not the interaction
+   channel — the reader must not mistake "quoted from an agent" for "a link". */
 .world-os-message-body {
-  border-left-color: var(--civic-cobalt);
-  background: #edf1fa;
-  color: var(--civic-ink);
+  border-left-color: var(--ae-caution);
+  background: var(--ae-wash-caution);
+  color: var(--ae-text);
 }
 
 .world-os-untrusted-label {
-  color: #806d00;
+  color: var(--ae-caution);
 }
 
 .world-os-thread-list > button,
 .world-os-message-chronology button {
-  color: var(--civic-ink);
+  color: var(--ae-text);
 }
 
 .world-os-thread-list > button:hover,
 .world-os-thread-list > button.active,
 .world-os-message-chronology button[aria-pressed="true"] {
-  border-color: var(--civic-cobalt);
-  background: #edf1fa;
+  border-color: var(--ae-accent);
+  background: var(--ae-surface-3);
 }
 
 .world-os-provider-lane {
-  border-color: var(--civic-rule);
-  background: white;
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-2);
 }
 
 .world-os-provider-lane-head strong,
 .world-os-provider-global strong,
 .world-os-person-identity h3 {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-provider-global span {
-  color: var(--civic-cobalt);
-  font-size: .625rem;
+  color: var(--ae-accent);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-provider-global small,
 .world-os-provider-lane-head em,
 .world-os-provider-lane dt,
 .world-os-provider-lane > small {
-  color: var(--civic-muted);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-provider-lane dd {
-  color: var(--civic-navy);
-  font-size: .625rem;
+  color: var(--ae-text);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-provider-capacity {
-  background: #dfe5e4;
+  background: var(--ae-track);
 }
 
 .world-os-provider-capacity span {
-  background: var(--civic-cobalt);
+  background: var(--ae-accent);
 }
 
 /* Classic Observatory: preserve every control while moving it onto the same civic field. */
@@ -2114,12 +2312,9 @@ body::before {
     min-height: 690px;
   }
 
-  .civic-city__map-field {
-    right: 270px;
-  }
-
-  .civic-city__lens {
-    width: 310px;
+  /* Only the width is restated; the field's reserve follows from it. */
+  .civic-city {
+    --civic-lens-w: 310px;
   }
 
   .civic-city__controls {
@@ -2381,15 +2576,12 @@ body::before {
 
   .world-os-shell,
   .world-os-shell--collapsed {
-    background: var(--civic-paper);
+    background: var(--ae-bg);
   }
 
-  .world-os-rail {
-    background: var(--civic-navy);
-  }
-
+  .world-os-rail,
   .world-os-brand {
-    background: var(--civic-navy);
+    background: var(--ae-bg);
   }
 
   .world-os-main {
@@ -2476,95 +2668,111 @@ body::before {
 
 .world-os-freshness--global,
 .world-os-freshness--workspace {
-  border-color: var(--civic-rule);
-  border-radius: 4px;
-  background: white;
-  color: var(--civic-ink);
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .world-os-freshness-copy strong {
-  color: var(--civic-navy);
+  color: var(--ae-text-hi);
 }
 
 .world-os-freshness-copy small,
 .world-os-freshness-chevron {
-  color: var(--civic-muted);
-  font-size: .625rem;
+  color: var(--ae-text-3);
+  font-size: var(--ae-fs-6);
 }
 
 .world-os-freshness-details {
-  border-color: var(--civic-navy);
-  border-radius: 6px;
-  background: var(--civic-white);
-  color: var(--civic-ink);
+  border-color: var(--ae-border);
+  border-radius: var(--ae-radius);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .world-os-freshness-details > p,
 .world-os-freshness-details dt {
-  color: var(--civic-muted);
+  color: var(--ae-text-3);
 }
 
 .world-os-freshness-details dl div {
-  border-color: var(--civic-rule);
-  border-radius: 3px;
-  background: var(--civic-paper);
+  border-color: var(--ae-border-soft);
+  border-radius: var(--ae-radius-sm);
+  background: var(--ae-surface-2);
 }
 
 .world-os-freshness-details dd {
-  color: var(--civic-navy);
+  color: var(--ae-text);
 }
 
 .world-os-health--connecting,
 .world-os-health--reconnecting {
-  background: #f0ae39;
+  background: var(--ae-caution);
   box-shadow: none;
 }
 
 .world-os-health--historical {
-  background: var(--civic-cobalt);
+  background: var(--ae-accent);
   box-shadow: none;
 }
 
+/*
+ * The freshness badge used to fork here: the shell's copy on the token ladder,
+ * the in-workspace copy repainted for paper, and the health dots given a
+ * dark-on-light judgement hue so a 7px dot cleared 2:1 against white. All three
+ * workarounds existed only because the workspace ground differed from the
+ * shell's. It does not any more, so one badge serves both placements.
+ */
+
 .world-os-command-group > header {
-  color: var(--civic-muted);
+  color: var(--ae-text-3);
 }
 
 .world-os-command-group > header small {
-  color: #9b6200;
+  color: var(--ae-caution);
 }
 
 .world-os-command-group > button {
-  border-radius: 3px;
-  color: var(--civic-navy);
+  border-radius: var(--ae-radius);
+  color: var(--ae-text);
 }
 
 .world-os-command-group > button:hover,
 .world-os-command-group > button.active {
-  outline-color: #b6c6df;
-  background: var(--civic-paper);
+  outline-color: var(--ae-border-soft);
+  background: var(--ae-surface-2);
 }
 
 .world-os-command-status {
-  background: #eef6f2;
-  color: #24624c;
+  background: var(--ae-wash-accent);
+  color: var(--ae-accent);
 }
 
 .world-os-command-error {
-  background: #fff0ed;
-  color: #9e2e1f;
+  background: var(--ae-wash-neg);
+  color: var(--ae-neg);
 }
 
-/* WorldMonitor-inspired operations treatment for the World OS map only. */
+/*
+ * WorldMonitor-inspired operations treatment for the World OS map only.
+ *
+ * The map's CHROME — its frame, panels, rules and copy — resolves from tokens,
+ * so the atlas is the same object as the panels above and below it. Its
+ * CARTOGRAPHY does not: districts, river and routes keep a hue-coded palette,
+ * because "which district is this" is a categorical question the ink ladder
+ * cannot answer. Illustration keeps its colours; chrome joins the system.
+ */
 .civic-city--world-os {
-  --ops-bg: #07111f;
-  --ops-panel: #0b1929;
-  --ops-panel-strong: #10243a;
-  --ops-rule: #29445f;
-  --ops-copy: #dbe9f3;
-  --ops-muted: #8fa6b8;
+  --ops-bg: var(--ae-inset);
+  --ops-panel: var(--ae-surface-1);
+  --ops-panel-strong: var(--ae-surface-2);
+  --ops-rule: var(--ae-border-soft);
+  --ops-copy: var(--ae-text);
+  --ops-muted: var(--ae-text-2);
   border-color: var(--ops-rule);
   background: var(--ops-bg);
-  box-shadow: 0 24px 70px rgba(7, 17, 31, .22);
+  box-shadow: var(--ae-elev-0);
 }
 
 .civic-city--world-os .civic-city__mast,
@@ -2577,7 +2785,7 @@ body::before {
 }
 
 .civic-city--world-os .civic-city__heading {
-  background: linear-gradient(135deg, #0a2135 0%, #102b41 70%, #14334a 100%);
+  background: var(--ae-surface-2);
 }
 
 .civic-city--world-os .civic-city__run-state {
@@ -2608,7 +2816,7 @@ body::before {
 }
 
 .civic-city--world-os .civic-city__controls {
-  background: #081522;
+  background: var(--ae-inset);
 }
 
 .civic-city--world-os .civic-city__layers button,
@@ -2616,20 +2824,20 @@ body::before {
 .civic-city--world-os .civic-city__active-toggle,
 .civic-city--world-os .civic-city__search {
   border-color: var(--ops-rule);
-  background: #0b1929;
-  color: #b9cbd8;
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .civic-city--world-os .civic-city__layers button:hover,
 .civic-city--world-os .civic-city__population button:hover {
-  background: #132b43;
-  color: white;
+  background: var(--ae-surface-2);
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__layers button.is-active,
 .civic-city--world-os .civic-city__population button[aria-pressed="true"] {
-  background: #1d6ed8;
-  color: white;
+  background: var(--ae-surface-3);
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__search > span,
@@ -2638,7 +2846,7 @@ body::before {
 }
 
 .civic-city--world-os .civic-city__search input {
-  color: white;
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__atlas,
@@ -2646,8 +2854,10 @@ body::before {
   background: var(--ops-bg);
 }
 
+/* The map sheet is the app's deepest surface, so the atlas reads as an inset
+   plate in the page rather than as a second window with its own night. */
 .civic-city--world-os .civic-city__paper {
-  fill: #081522;
+  fill: var(--ae-inset);
 }
 
 .civic-city--world-os .civic-city__grid path {
@@ -2674,38 +2884,294 @@ body::before {
   stroke: rgba(38, 166, 189, .72);
 }
 
+/*
+ * The label plate is chrome, so it resolves from tokens like the meta chip and
+ * the legend beside it, while the district FILL underneath keeps its hue code.
+ * Ink is measured against the plate, not against the cartography: --text-hi is
+ * 16.05:1 on --surface-1 and --text-2 is 6.97:1, in both themes.
+ */
+.civic-city--world-os .civic-city__district-label {
+  border-color: var(--ops-rule);
+  background: var(--ae-surface-1);
+}
+
 .civic-city--world-os .civic-city__district-label strong,
 .civic-city--world-os .civic-city__district-label--institutions strong {
-  color: #d8e8f2;
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__district-label span,
 .civic-city--world-os .civic-city__district-label--institutions span {
-  color: #829eb1;
+  color: var(--ae-text-2);
 }
 
 .civic-city--world-os .civic-city__atlas-meta,
 .civic-city--world-os .civic-city__legend {
   border-color: var(--ops-rule);
-  background: rgba(7, 17, 31, .9);
-  color: #aec3d1;
-  backdrop-filter: blur(8px);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
+  backdrop-filter: none;
 }
 
 .civic-city--world-os .civic-city__source {
-  color: white;
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__firm,
 .civic-city--world-os .civic-city__place span {
-  border-color: #58718a;
-  background: rgba(13, 32, 49, .9);
-  color: #dceaf2;
+  border-color: var(--ae-border);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
 }
 
 .civic-city--world-os .civic-city__place i {
-  border-color: #9dc0d3;
-  background: #102c43;
+  border-color: var(--ae-accent);
+  background: var(--ae-surface-3);
+}
+
+/*
+ * The rest of the atlas.
+ *
+ * The dark treatment above covered the map plate and its controls; everything
+ * else in this component -- the evidence lens, the identity card, the activity
+ * band, the record, the receipt, the instruments strip -- was still the light
+ * civic document, because this whole variant was dead code until now. The World
+ * workspace asked for variant="world-os-world", which matched no selector, so
+ * the atlas fell back to the light default and nobody saw the gap.
+ *
+ * Three of the civic variables are single-role inside this component, so they
+ * are re-pointed once here instead of being chased through forty rules:
+ * --civic-rule is only ever a line, --civic-muted only ever quiet ink, and
+ * --civic-paper only ever a hover ground. --civic-navy and --civic-white are
+ * NOT re-pointed: navy is ink in eighteen rules, a line in twenty-three and a
+ * fill in seven, so no single value can serve all three. Those are named below.
+ *
+ * The cartography is deliberately left alone. District fills, the river, the
+ * routes and the agent markers keep their hue-coded palette, because "which
+ * district is this" is a categorical question the ink ladder cannot answer.
+ */
+.civic-city--world-os {
+  --civic-rule: var(--ae-border-soft);
+  --civic-muted: var(--ae-text-3);
+  --civic-paper: var(--ae-surface-3);
+  --civic-ink: var(--ae-text);
+  --civic-chartreuse: var(--ae-pos);
+}
+
+/* masthead */
+.civic-city--world-os .civic-city__heading,
+.civic-city--world-os .civic-city__heading h2 {
+  color: var(--ae-text-hi);
+}
+
+.civic-city--world-os .civic-city__heading > p:first-child span {
+  border-left-color: var(--ae-border-soft);
+  color: var(--ae-text-2);
+}
+
+.civic-city--world-os .civic-city__lede {
+  color: var(--ae-text);
+}
+
+/* control band and map surrounds */
+.civic-city--world-os .civic-city__search,
+.civic-city--world-os .civic-city__population > div,
+.civic-city--world-os .civic-city__population button,
+.civic-city--world-os .civic-city__atlas,
+.civic-city--world-os .civic-city__provenance {
+  border-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__population {
+  background: var(--ae-surface-1);
+}
+
+.civic-city--world-os .civic-city__search input::placeholder {
+  color: var(--ae-text-3);
+}
+
+.civic-city--world-os .civic-city__coordinates {
+  color: var(--ae-text-3);
+}
+
+.civic-city--world-os .civic-city__empty {
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-1);
+}
+
+.civic-city--world-os .civic-city__empty strong {
+  color: var(--ae-text-hi);
+}
+
+/* A filled accent chip would put white on --ae-accent at 2.4:1, so every
+   primary action in the atlas is a washed chip with accent ink instead --
+   the same shape the command deck already uses. */
+.civic-city--world-os .civic-city__empty button,
+.civic-city--world-os .civic-city__lens-actions a.is-primary {
+  border-color: var(--ae-accent);
+  background: var(--ae-wash-accent);
+  color: var(--ae-accent);
+}
+
+.civic-city--world-os .civic-city__lens-actions a.is-primary:hover {
+  background: var(--ae-surface-3);
+}
+
+/* evidence lens */
+.civic-city--world-os .civic-city__lens {
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-1);
+  box-shadow: var(--ae-elev-0);
+}
+
+.civic-city--world-os .civic-city__lens > header,
+.civic-city--world-os .civic-city__identity,
+.civic-city--world-os .civic-city__activity {
+  border-bottom-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__lens > footer {
+  border-top-color: var(--ae-border-soft);
+  color: var(--ae-text-2);
+}
+
+/* The lens eyebrow is the same object as .world-os-kicker, so it reads the same. */
+.civic-city--world-os .civic-city__lens > header p,
+.civic-city--world-os .civic-city__lens-empty > span {
+  color: var(--ae-text-3);
+}
+
+.civic-city--world-os .civic-city__lens-nav {
+  border-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__lens-nav button,
+.civic-city--world-os .civic-city__lens-actions a {
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-2);
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__lens-nav button + button {
+  border-left-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__lens-empty h3,
+.civic-city--world-os .civic-city__identity h3,
+.civic-city--world-os .civic-city__activity strong,
+.civic-city--world-os .civic-city__activity--event strong {
+  color: var(--ae-text-hi);
+}
+
+.civic-city--world-os .civic-city__avatar {
+  border-color: var(--ae-surface-1);
+  background: var(--ae-surface-3);
+  box-shadow: 0 0 0 1px var(--ae-border);
+  color: var(--ae-text-hi);
+}
+
+.civic-city--world-os .civic-city__identity div > span,
+.civic-city--world-os .civic-city__activity small {
+  color: var(--ae-text-2);
+}
+
+.civic-city--world-os .civic-city__activity {
+  background: var(--ae-surface-2);
+}
+
+/* An event is a washed band, not a solid cobalt one: white on cobalt measured
+   2.4:1 and the two ink tiers under it had no ladder to sit on. */
+.civic-city--world-os .civic-city__activity--event {
+  background: var(--ae-wash-accent);
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__activity--event > span,
+.civic-city--world-os .civic-city__activity--event small {
+  color: var(--ae-text-2);
+}
+
+/* record and receipt */
+.civic-city--world-os .civic-city__facts dd,
+.civic-city--world-os .civic-city__record dd,
+.civic-city--world-os .civic-city__receipt p {
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__record {
+  background: var(--ae-surface-2);
+}
+
+.civic-city--world-os .civic-city__record dl > div {
+  border-bottom-color: var(--ae-divider);
+}
+
+.civic-city--world-os .civic-city__record > header b,
+.civic-city--world-os .civic-city__receipt p i,
+.civic-city--world-os .civic-city__mobile-peek strong {
+  color: var(--ae-accent);
+}
+
+/* A receipt is a claim about what was committed, so it is fenced in caution. */
+.civic-city--world-os .civic-city__receipt {
+  border-color: var(--ae-caution);
+  background: var(--ae-wash-caution);
+}
+
+/* instruments strip */
+.civic-city--world-os .civic-city__instruments {
+  border-top-color: var(--ae-border-soft);
+  background: var(--ae-surface-2);
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__instruments > div {
+  border-right-color: var(--ae-border-soft);
+  border-bottom-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__instruments dt {
+  color: var(--ae-text-3);
+}
+
+.civic-city--world-os .civic-city__instruments small {
+  color: var(--ae-text-2);
+}
+
+.civic-city--world-os .civic-city__mobile-peek {
+  border-color: var(--ae-border-soft);
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
+  box-shadow: var(--ae-elev-0);
+}
+
+/* activity dock */
+.civic-city--world-os .civic-city__activity-dock {
+  border-top-color: var(--ae-border-soft);
+  background: var(--ae-inset);
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__activity-dock > header,
+.civic-city--world-os .civic-city__activity-dock-items button {
+  border-color: var(--ae-border-soft);
+}
+
+.civic-city--world-os .civic-city__activity-dock-items button {
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
+}
+
+.civic-city--world-os .civic-city__activity-dock-items button:hover,
+.civic-city--world-os .civic-city__activity-dock-items button:focus-visible {
+  background: var(--ae-surface-2);
+}
+
+.civic-city--world-os .civic-city__activity-dock > header span,
+.civic-city--world-os .civic-city__activity-dock > header small,
+.civic-city--world-os .civic-city__activity-dock-items button small,
+.civic-city--world-os .civic-city__activity-dock-items > p span {
+  color: var(--ae-text-2);
 }
 
 .civic-city__agent.is-thinking::after,
@@ -2755,7 +3221,7 @@ body::before {
 .civic-city__legend i.is-rejected { border-color: #f05d57; background: #f05d57; }
 
 .civic-city--world-os .civic-city__lens {
-  box-shadow: 0 18px 50px rgba(0, 0, 0, .44);
+  box-shadow: var(--ae-elev-0);
 }
 
 .civic-city--world-os .civic-city__lens > header,
@@ -2774,7 +3240,7 @@ body::before {
 .civic-city--world-os .civic-city__facts dd,
 .civic-city--world-os .civic-city__record dd,
 .civic-city--world-os .civic-city__receipt strong {
-  color: #eef7fb;
+  color: var(--ae-text-hi);
 }
 
 .civic-city--world-os .civic-city__identity p,

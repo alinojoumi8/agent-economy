@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
+import { LiveCity } from "../components/LiveCity";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
@@ -26,6 +27,14 @@ export function WorldOSApp() {
     </Route></Routes>;
   }
   return <Routes>
+    {/*
+      * Live City sits OUTSIDE the workspace shell on purpose. The shell's rail
+      * and topbar are the right frame for a workspace and the wrong one for a
+      * map: this route's whole claim is that the city is the screen, so it owns
+      * the viewport and floats its own chrome over the geography. It links back
+      * to the shell rather than living inside it.
+      */}
+    <Route path="live-city" element={<LiveCity />} />
     <Route element={<WorkspaceShell />}>
       <Route index element={<Navigate to="overview" replace />} />
       <Route path="overview" element={<OverviewWorkspace />} />

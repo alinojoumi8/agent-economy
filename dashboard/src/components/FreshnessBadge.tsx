@@ -28,15 +28,66 @@ type FreshnessBadgeProps = {
   sourceLabel?: string;
   sourceMode?: "projection" | "current-roster";
   placement?: "global" | "workspace";
+  /*
+   * Set when the workspace under this badge already names the transport state in
+   * its own chrome. The badge then stops repeating the state word and presents
+   * itself as the provenance disclosure it actually is, so one screen states one
+   * condition once. Nothing is lost: the plain-English explanation and the raw
+   * reason code both live inside the disclosure.
+   */
+  statusShownElsewhere?: boolean;
 };
 
-const REASON_LABELS: Record<string, string> = {
-  cursor_ahead: "cursor ahead; canonical refetch requested",
-  cursor_gap: "cursor gap; canonical refetch requested",
-  invalidated: "projection invalidated",
-  lineage_mismatch: "lineage mismatch; authoritative hello requested",
-  socket_closed: "connection closed; retrying",
+/*
+ * Transport reason tokens, written out for people.
+ *
+ * The token set has two sources and this map covers both. The server emits
+ * `backfill_truncated` on a projection_invalidated frame (server/projections/
+ * transport.py). The client's cursor reducer (src/app/cursorReducer.js) emits
+ * `cursor_ahead`, `cursor_gap`, `lineage_mismatch`, `socket_closed`, and falls
+ * back to `invalidated` for an invalidation that carries no reason of its own.
+ *
+ * SHORT is the one line the badge can show inline; SENTENCE is the full
+ * explanation inside the disclosure. The token itself is never dropped — it is
+ * demoted to the "Reason code" row so an operator can still quote it.
+ */
+export const REASON_SHORT: Record<string, string> = {
+  backfill_truncated: "reloading; live feed fell behind",
+  cursor_ahead: "resyncing to the server",
+  cursor_gap: "updates arrived out of order",
+  invalidated: "this view was retired; reloading",
+  lineage_mismatch: "the run changed; reloading",
+  socket_closed: "connection dropped; reconnecting",
 };
+
+export const REASON_SENTENCE: Record<string, string> = {
+  backfill_truncated:
+    "The live feed fell too far behind to replay update by update, so the workspace is reloading the whole picture from the server.",
+  cursor_ahead:
+    "The workspace asked for updates the server has not published yet, so it is resyncing to the server's position.",
+  cursor_gap:
+    "Some updates arrived out of order, so the workspace is reloading from the server rather than showing a gap.",
+  invalidated:
+    "The server retired this view, so the workspace is reloading it.",
+  lineage_mismatch:
+    "The run or fork behind this view changed, so the workspace is reloading from the new source.",
+  socket_closed:
+    "The live connection dropped. The workspace is reconnecting and will catch up on its own.",
+};
+
+const UNKNOWN_SHORT = "reloading from the server";
+const UNKNOWN_SENTENCE =
+  "Live updates stopped arriving cleanly, so the workspace is reloading from the server.";
+
+export function reasonShort(staleReason: string | null): string {
+  if (!staleReason) return "";
+  return REASON_SHORT[staleReason] || UNKNOWN_SHORT;
+}
+
+export function reasonSentence(staleReason: string | null): string {
+  if (!staleReason) return "";
+  return REASON_SENTENCE[staleReason] || UNKNOWN_SENTENCE;
+}
 
 function displayStatus(status: TransportStatus, historical: boolean) {
   if (historical) return "Historical";
@@ -61,17 +112,22 @@ export function FreshnessBadge({
   sourceLabel = "Committed projection",
   sourceMode = "projection",
   placement = "workspace",
+  statusShownElsewhere = false,
 }: FreshnessBadgeProps) {
   const historical = tick !== "live";
   const currentRoster = sourceMode === "current-roster";
-  const display = currentRoster ? "Current roster" : displayStatus(transport.status, historical);
-  const detail = currentRoster
+  const ownStatus = currentRoster ? "Current roster" : displayStatus(transport.status, historical);
+  const ownDetail = currentRoster
     ? historical ? `current data; tick ${tick} selected` : "polling current data"
     : historical
       ? `as of tick ${tick}`
       : transport.status === "live"
         ? `cursor ${transport.cursor}`
-        : REASON_LABELS[transport.staleReason || ""] || transport.status;
+        : reasonShort(transport.staleReason) || "reconnecting";
+  const display = statusShownElsewhere ? "Provenance" : ownStatus;
+  const detail = statusShownElsewhere
+    ? historical ? `as of tick ${tick}` : sourceLabel.toLowerCase()
+    : ownDetail;
   const statusClass = historical ? "historical" : transport.status;
   const runId = envelope?.run_id ?? transport.runId;
   const forkId = envelope?.fork_id ?? transport.forkId;
@@ -83,7 +139,8 @@ export function FreshnessBadge({
 
   return <details className={`world-os-freshness world-os-freshness--${placement}`}>
     <summary aria-label={`${display}: ${detail}`}>
-      <span className={`world-os-health world-os-health--${statusClass}`} aria-hidden="true" />
+      {!statusShownElsewhere
+        && <span className={`world-os-health world-os-health--${statusClass}`} aria-hidden="true" />}
       <span className="world-os-freshness-copy" aria-live="polite">
         <strong>{display}</strong>
         <small>{detail}</small>
@@ -108,9 +165,11 @@ export function FreshnessBadge({
           <div><dt>Policy</dt><dd>{value(policyVersion)}</dd></div>
           <div><dt>View</dt><dd>{value(viewKey)}</dd></div>
         </>}
+        {transport.staleReason
+          && <div><dt>Reason code</dt><dd>{transport.staleReason}</dd></div>}
       </dl>
       {transport.staleReason && <p role="status">
-        {REASON_LABELS[transport.staleReason] || transport.staleReason}
+        {statusShownElsewhere ? `${ownStatus}. ` : ""}{reasonSentence(transport.staleReason)}
       </p>}
     </div>
   </details>;
