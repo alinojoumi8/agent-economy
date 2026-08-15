@@ -24,6 +24,7 @@ from server.projections import (
     build_markets_workspace,
     build_organizations_workspace,
     build_politics_law_workspace,
+    build_world_flows,
     build_world_workspace,
     build_world_map_organizations,
     resolve_tick,
@@ -333,8 +334,9 @@ def install_v2_routes(app, world, controller) -> None:
                 "SELECT COUNT(*) AS total,"
                 "SUM(CASE WHEN population_tier='core' OR COALESCE(pinned_core,0)=1 "
                 "THEN 1 ELSE 0 END) AS core "
-                "FROM agents WHERE alive=1 AND arrived_tick<=?",
-                (as_of_tick,),
+                "FROM agents WHERE arrived_tick<=? "
+                "AND (died_tick IS NULL OR died_tick>?)",
+                (as_of_tick, as_of_tick),
             )
             total_population = int(population_row["total"] or 0)
             core_population = int(population_row["core"] or 0)
@@ -377,9 +379,10 @@ def install_v2_routes(app, world, controller) -> None:
                 "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
                 "AND ep.tick=? AND ep.slot='business' "
                 "LEFT JOIN places p ON p.id=ep.place_id "
-                "WHERE a.alive=1 AND a.arrived_tick<=? "
+                "WHERE a.arrived_tick<=? "
+                "AND (a.died_tick IS NULL OR a.died_tick>?) "
                 f"{agent_scope}ORDER BY a.id",
-                (as_of_tick, as_of_tick, *agent_scope_params))]
+                (as_of_tick, as_of_tick, as_of_tick, *agent_scope_params))]
             clusters = []
             if population == "clusters":
                 cluster_exclusion = ""
@@ -392,12 +395,13 @@ def install_v2_routes(app, world, controller) -> None:
                     "SELECT a.region_id,r.name AS region_name,r.x,r.y,"
                     "COUNT(*) AS resident_count FROM agents a "
                     "LEFT JOIN regions r ON r.id=a.region_id "
-                    "WHERE a.alive=1 AND a.arrived_tick<=? "
+                    "WHERE a.arrived_tick<=? "
+                    "AND (a.died_tick IS NULL OR a.died_tick>?) "
                     "AND NOT (COALESCE(a.population_tier,'periphery')='core' "
                     "OR COALESCE(a.pinned_core,0)=1) "
                     f"{cluster_exclusion}"
                     "GROUP BY a.region_id,r.name,r.x,r.y ORDER BY a.region_id",
-                    (as_of_tick, *cluster_params),
+                    (as_of_tick, as_of_tick, *cluster_params),
                 ):
                     region_id = row["region_id"]
                     clusters.append({
@@ -428,9 +432,10 @@ def install_v2_routes(app, world, controller) -> None:
             # safely and `clusters` cannot be reversed through a sibling layer.
             core_agent_ids = {
                 int(row["id"]) for row in store.query(
-                    "SELECT id FROM agents WHERE alive=1 AND arrived_tick<=? "
+                    "SELECT id FROM agents WHERE arrived_tick<=? "
+                    "AND (died_tick IS NULL OR died_tick>?) "
                     "AND (population_tier='core' OR COALESCE(pinned_core,0)=1)",
-                    (as_of_tick,),
+                    (as_of_tick, as_of_tick),
                 )
             }
             data["presence"] = [
@@ -439,6 +444,8 @@ def install_v2_routes(app, world, controller) -> None:
                 if item.get("agent_id") is None
                 or int(item["agent_id"]) in core_agent_ids
             ]
+        if "flows" in selected:
+            data["flows"] = build_world_flows(store, as_of_tick=as_of_tick)
         return build_envelope(
             store, principal, "world.map", data, as_of_tick=as_of_tick)
 

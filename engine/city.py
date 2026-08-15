@@ -2154,6 +2154,75 @@ class City:
         )
 
     # -- projections and metrics ------------------------------------------
+    def _service_case_snapshot(
+            self, tick: int, agency_id: int | None = None) -> dict[str, Any]:
+        """Reconstruct public queue state without leaking later case outcomes."""
+        as_of = int(tick)
+        scope = "created_tick<=?"
+        scope_params: list[Any] = [as_of]
+        if agency_id is not None:
+            scope += " AND agency_id=?"
+            scope_params.append(int(agency_id))
+
+        if as_of >= int(self.store.tick):
+            counts = {
+                str(row["status"]): int(row["count"])
+                for row in self.store.query(
+                    f"SELECT status,COUNT(*) AS count FROM service_cases "
+                    f"WHERE {scope} GROUP BY status ORDER BY status",
+                    tuple(scope_params),
+                )
+            }
+            open_predicate = (
+                f"{scope} AND status IN "
+                "('applied','appointment_scheduled','submitted','under_review')"
+            )
+            open_params = tuple(scope_params)
+            resolution = "exact"
+        else:
+            reconstructed_status = (
+                "CASE "
+                "WHEN status IN ('approved','denied') "
+                "AND decided_tick IS NOT NULL AND decided_tick<=? THEN status "
+                "WHEN status IN ('abandoned','withdrawn') "
+                "AND updated_tick<=? THEN status "
+                "ELSE 'open' END"
+            )
+            counts = {
+                str(row["status"]): int(row["count"])
+                for row in self.store.query(
+                    f"SELECT {reconstructed_status} AS status,COUNT(*) AS count "
+                    f"FROM service_cases WHERE {scope} "
+                    "GROUP BY 1 ORDER BY 1",
+                    (as_of, as_of, *scope_params),
+                )
+            }
+            open_predicate = (
+                f"{scope} AND NOT ("
+                "(status IN ('approved','denied') "
+                "AND decided_tick IS NOT NULL AND decided_tick<=?) OR "
+                "(status IN ('abandoned','withdrawn') AND updated_tick<=?))"
+            )
+            open_params = (*scope_params, as_of, as_of)
+            resolution = "terminal_and_open"
+
+        depth = int(self.store.scalar(
+            f"SELECT COUNT(*) FROM service_cases WHERE {open_predicate}",
+            open_params,
+            default=0,
+        ))
+        oldest = self.store.scalar(
+            f"SELECT MIN(created_tick) FROM service_cases WHERE {open_predicate}",
+            open_params,
+            default=None,
+        )
+        return {
+            "queue_depth": depth,
+            "oldest_created_tick": int(oldest) if oldest is not None else None,
+            "cases_by_status": counts,
+            "case_status_resolution": resolution,
+        }
+
     def public_summary(self, tick: int | None = None) -> dict[str, Any]:
         as_of = int(self.store.tick if tick is None else tick)
         if not self.enabled:
@@ -2161,29 +2230,21 @@ class City:
                 "enabled": False,
                 "tick": as_of,
                 "queue": {"depth": 0, "oldest_age_ticks": 0},
+                "cases_by_status": {},
+                "case_status_resolution": "exact",
                 "offices": [],
             }
-        queue_statuses = (
-            "'applied','appointment_scheduled','submitted','under_review'")
-        depth = int(self.store.scalar(
-            f"SELECT COUNT(*) FROM service_cases WHERE created_tick<=? "
-            f"AND status IN ({queue_statuses})",
-            (as_of,), default=0))
-        oldest = self.store.scalar(
-            f"SELECT MIN(created_tick) FROM service_cases WHERE created_tick<=? "
-            f"AND status IN ({queue_statuses})",
-            (as_of,), default=None)
+        case_snapshot = self._service_case_snapshot(as_of)
         offices = []
         for office in self.store.query(
                 "SELECT p.id,p.name,p.region_id,p.capacity,p.x,p.y,"
                 "a.id AS agency_id,a.name AS agency_name "
                 "FROM places p JOIN agencies a ON a.id=p.owner_id "
-                "WHERE p.kind='licensing_office' AND p.active=1 ORDER BY p.id"):
-            office_depth = int(self.store.scalar(
-                "SELECT COUNT(*) FROM service_cases WHERE agency_id=? "
-                "AND created_tick<=? AND status IN "
-                "('applied','appointment_scheduled','submitted','under_review')",
-                (int(office["agency_id"]), as_of), default=0))
+                "WHERE p.kind='licensing_office' AND p.created_tick<=? "
+                "AND (p.closed_tick IS NULL OR p.closed_tick>?) ORDER BY p.id",
+                (as_of, as_of)):
+            office_snapshot = self._service_case_snapshot(
+                as_of, int(office["agency_id"]))
             scheduled = int(self.store.scalar(
                 "SELECT COUNT(*) FROM service_appointments "
                 "WHERE place_id=? AND scheduled_tick=? "
@@ -2202,26 +2263,23 @@ class City:
                 "capacity": int(office["capacity"] or self.office_capacity),
                 "scheduled_today": scheduled,
                 "occupancy": occupancy,
-                "queue_depth": office_depth,
+                "queue_depth": office_snapshot["queue_depth"],
+                "case_status_resolution": office_snapshot[
+                    "case_status_resolution"],
                 "x": float(office["x"]),
                 "y": float(office["y"]),
             })
-        counts = {
-            str(row["status"]): int(row["count"])
-            for row in self.store.query(
-                "SELECT status,COUNT(*) AS count FROM service_cases "
-                "WHERE created_tick<=? GROUP BY status ORDER BY status",
-                (as_of,))
-        }
         return {
             "enabled": True,
             "tick": as_of,
             "queue": {
-                "depth": depth,
+                "depth": case_snapshot["queue_depth"],
                 "oldest_age_ticks": (
-                    max(0, as_of - int(oldest)) if oldest is not None else 0),
+                    max(0, as_of - case_snapshot["oldest_created_tick"])
+                    if case_snapshot["oldest_created_tick"] is not None else 0),
             },
-            "cases_by_status": counts,
+            "cases_by_status": case_snapshot["cases_by_status"],
+            "case_status_resolution": case_snapshot["case_status_resolution"],
             "offices": offices,
         }
 
@@ -2341,7 +2399,10 @@ class City:
     def place_detail(self, place_id: int, tick: int) -> dict[str, Any] | None:
         row = self.store.query_one(
             "SELECT * FROM places WHERE id=?", (int(place_id),))
-        if row is None or int(row["created_tick"]) > int(tick):
+        if (row is None
+                or int(row["created_tick"]) > int(tick)
+                or (row["closed_tick"] is not None
+                    and int(row["closed_tick"]) <= int(tick))):
             return None
         occupancy = {
             slot: int(self.store.scalar(
@@ -2357,11 +2418,11 @@ class City:
         }
         detail.pop("metadata_json", None)
         if row["kind"] == "licensing_office":
-            detail["queue_depth"] = int(self.store.scalar(
-                "SELECT COUNT(*) FROM service_cases WHERE agency_id=? "
-                "AND status IN "
-                "('applied','appointment_scheduled','submitted','under_review')",
-                (int(row["owner_id"]),), default=0))
+            case_snapshot = self._service_case_snapshot(
+                int(tick), int(row["owner_id"]))
+            detail["queue_depth"] = case_snapshot["queue_depth"]
+            detail["case_status_resolution"] = case_snapshot[
+                "case_status_resolution"]
         return detail
 
     def agency_detail(self, agency_id: int, tick: int) -> dict[str, Any] | None:
@@ -2370,26 +2431,16 @@ class City:
         if agency is None:
             return None
         staff = int(self.store.scalar(
-            "SELECT COUNT(*) FROM agency_staff WHERE agency_id=? AND active=1",
-            (int(agency_id),), default=0))
-        queue = int(self.store.scalar(
-            "SELECT COUNT(*) FROM service_cases WHERE agency_id=? "
-            "AND created_tick<=? AND status IN "
-            "('applied','appointment_scheduled','submitted','under_review')",
-            (int(agency_id), int(tick)), default=0))
+            "SELECT COUNT(*) FROM agency_staff WHERE agency_id=? "
+            "AND effective_tick<=? AND (ended_tick IS NULL OR ended_tick>?)",
+            (int(agency_id), int(tick), int(tick)), default=0))
+        case_snapshot = self._service_case_snapshot(int(tick), int(agency_id))
         return {
             **dict(agency),
             "active_staff": staff,
-            "queue_depth": queue,
-            "cases_by_status": {
-                str(row["status"]): int(row["count"])
-                for row in self.store.query(
-                    "SELECT status,COUNT(*) AS count FROM service_cases "
-                    "WHERE agency_id=? AND created_tick<=? "
-                    "GROUP BY status ORDER BY status",
-                    (int(agency_id), int(tick)),
-                )
-            },
+            "queue_depth": case_snapshot["queue_depth"],
+            "cases_by_status": case_snapshot["cases_by_status"],
+            "case_status_resolution": case_snapshot["case_status_resolution"],
         }
 
     def map_places(self, tick: int) -> list[dict[str, Any]]:
@@ -2410,11 +2461,11 @@ class City:
                 for slot in SLOTS
             }
             if row["kind"] == "licensing_office":
-                item["queue_depth"] = int(self.store.scalar(
-                    "SELECT COUNT(*) FROM service_cases WHERE agency_id=? "
-                    "AND created_tick<=? AND status IN "
-                    "('applied','appointment_scheduled','submitted','under_review')",
-                    (int(row["owner_id"]), int(tick)), default=0))
+                case_snapshot = self._service_case_snapshot(
+                    int(tick), int(row["owner_id"]))
+                item["queue_depth"] = case_snapshot["queue_depth"]
+                item["case_status_resolution"] = case_snapshot[
+                    "case_status_resolution"]
             items.append(item)
         return items
 

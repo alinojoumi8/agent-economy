@@ -211,3 +211,102 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await page.getByRole("link", { name: /World state|World/ }).first().click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
+
+test("Diorama shares place and agent evidence through browser history", async ({ page }) => {
+  await installSocket(page, "running");
+  await mockCommonApis(page, { status: "running" });
+  await page.route("**/api/v2/world-map?*", route => route.fulfill({ json: {
+    ...baseEnvelope,
+    projection_version: 2,
+    projection: "world.map",
+    data: {
+      regions: [
+        { id: 1, name: "North", x: 0.2, y: 0.3 },
+        { id: 2, name: "South", x: 0.8, y: 0.7 },
+      ],
+      agents: [
+        { ...agents[0], x: 0.24, y: 0.34, population_tier: "core" },
+        { ...agents[1], x: 0.68, y: 0.28, population_tier: "core" },
+      ],
+      organizations: [{
+        id: 1, name: "Northstar Foods", sector: "food", status: "private",
+        x: 0.65, y: 0.7, employees: 4,
+      }],
+      places: [{
+        id: 4, name: "North Permit Office", kind: "licensing_office",
+        owner_type: "agency", owner_id: 2, region_id: 1,
+        x: 0.28, y: 0.36, capacity: 9,
+        occupancy: { business: 3 }, queue_depth: 5,
+        case_status_resolution: "exact",
+      }],
+      presence: [{
+        tick: 6, slot: "business", agent_id: null, place_id: 4,
+        place_name: "North Permit Office", place_kind: "licensing_office",
+        x: 0.28, y: 0.36, source_type: "privacy_aggregate", occupancy: 3,
+      }],
+      flows: [{
+        kind: "migration", id: 6, agent_id: 1,
+        origin_region_id: 1, destination_region_id: 2,
+        tick: 6, completed_tick: null, status: "pending",
+      }],
+      population_mode: "core",
+      population_summary: {
+        total: 2, core: 2, periphery: 0, rendered_agents: 2, clustered_agents: 0,
+      },
+    },
+  } }));
+
+  await page.goto("/runs/run-demo/overview?view=diorama");
+  await expect(page.getByText(/2 buildings · 2 agents · 1 flows/)).toBeVisible({ timeout: 15_000 });
+
+  const explorer = page.getByLabel("Keyboard explorer");
+  await explorer.selectOption("place:4");
+  await expect(page.getByRole("heading", { name: "North Permit Office" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("place")).toBe("4");
+  await expect.poll(() => new URL(page.url()).searchParams.get("agent")).toBe(null);
+
+  await explorer.selectOption("agent:2");
+  await expect(page.getByRole("heading", { name: "Editor Northstar" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("agent")).toBe("2");
+  await expect.poll(() => new URL(page.url()).searchParams.get("place")).toBe(null);
+
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "North Permit Office" })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("place")).toBe("4");
+});
+
+test("historical Diorama explicitly disables live motion", async ({ page }) => {
+  await installSocket(page, "running");
+  await mockCommonApis(page, { status: "running" });
+  await page.goto("/runs/run-demo/overview?tick=4&view=diorama");
+
+  await expect(page.getByText(
+    "Historical tick 4 · motion off",
+    { exact: true },
+  )).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Live telemetry pulse", { exact: true })).toHaveCount(0);
+});
+
+test("Diorama offers Atlas when WebGL2 is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function getContext(
+      contextId: string,
+      options?: unknown,
+    ) {
+      if (contextId === "webgl2") return null;
+      return original.call(this, contextId, options as never);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  await installSocket(page, "running");
+  await mockCommonApis(page, { status: "running" });
+
+  await page.goto("/runs/run-demo/overview?view=diorama");
+  await expect(page.getByText(
+    "2.5D rendering is unavailable in this browser.",
+    { exact: true },
+  )).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Use Atlas" }).click();
+  await expect(page.locator(".civic-city__map-field")).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe(null);
+});

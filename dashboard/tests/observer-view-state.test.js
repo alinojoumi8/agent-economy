@@ -10,7 +10,7 @@ import {
 
 test("observer URL state restores valid city and common selections", () => {
   const state = parseObserverViewState(new URLSearchParams(
-    "fork=fork-a&tick=004&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=all",
+    "fork=fork-a&tick=004&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&place=11&population=all&view=diorama",
   ));
 
   assert.deepEqual(state, {
@@ -21,7 +21,9 @@ test("observer URL state restores valid city and common selections", () => {
     q: "Atlas",
     activeOnly: true,
     agent: 9,
+    place: null,
     population: "all",
+    view: "diorama",
   });
 });
 
@@ -35,12 +37,14 @@ test("malformed observer URL values fail closed to safe defaults", () => {
   assert.equal(state.layer, "all");
   assert.equal(state.activeOnly, false);
   assert.equal(state.agent, null);
+  assert.equal(state.place, null);
   assert.equal(state.population, "core");
+  assert.equal(state.view, "atlas");
 });
 
 test("observer patches omit defaults and retain unrelated route state", () => {
   const current = new URLSearchParams(
-    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=clusters&relation=cited",
+    "fork=fork-a&tick=4&event=7&layer=markets&q=Atlas&activeOnly=1&agent=9&population=clusters&view=diorama&relation=cited",
   );
   const next = patchObserverViewState(current, {
     tick: "live",
@@ -49,9 +53,33 @@ test("observer patches omit defaults and retain unrelated route state", () => {
     activeOnly: false,
     agent: null,
     population: "core",
+    view: "atlas",
   });
 
   assert.equal(next.toString(), "fork=fork-a&event=7&relation=cited");
+});
+
+test("agent and place selections remain mutually exclusive", () => {
+  const place = patchObserverViewState(
+    new URLSearchParams("agent=9"),
+    { place: 11, view: "diorama" },
+  );
+  assert.equal(place.toString(), "place=11&view=diorama");
+  assert.deepEqual(parseObserverViewState(place), {
+    fork: null,
+    tick: "live",
+    event: null,
+    layer: "all",
+    q: "",
+    activeOnly: false,
+    agent: null,
+    place: 11,
+    population: "core",
+    view: "diorama",
+  });
+
+  const agent = patchObserverViewState(place, { agent: 7 });
+  assert.equal(agent.toString(), "view=diorama&agent=7");
 });
 
 test("cross-workspace and projection scopes use different fork keys", () => {

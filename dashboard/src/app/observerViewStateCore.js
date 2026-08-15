@@ -2,6 +2,7 @@ import { CITY_LAYERS } from "../lib/civicCity.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
+const CITY_VIEW_MODES = new Set(["atlas", "diorama"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;
@@ -20,6 +21,8 @@ function normalizedTick(value) {
 export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
+  const view = params.get("view") || "atlas";
+  const agent = positiveInteger(params.get("agent"));
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -27,8 +30,10 @@ export function parseObserverViewState(params) {
     layer: CITY_LAYER_IDS.has(layer) ? layer : "all",
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
-    agent: positiveInteger(params.get("agent")),
+    agent,
+    place: agent ? null : positiveInteger(params.get("place")),
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
+    view: CITY_VIEW_MODES.has(view) ? view : "atlas",
   };
 }
 
@@ -62,7 +67,15 @@ export function patchObserverViewState(params, patch) {
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
   if ("agent" in patch) {
     const agent = Number(patch.agent);
-    setOrDelete("agent", Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null);
+    const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
+    setOrDelete("agent", selected);
+    if (selected) next.delete("place");
+  }
+  if ("place" in patch) {
+    const place = Number(patch.place);
+    const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
+    setOrDelete("place", selected);
+    if (selected) next.delete("agent");
   }
   if ("population" in patch) {
     const population = typeof patch.population === "string"
@@ -70,6 +83,12 @@ export function patchObserverViewState(params, patch) {
       ? patch.population
       : "core";
     setOrDelete("population", population === "core" ? null : population);
+  }
+  if ("view" in patch) {
+    const view = typeof patch.view === "string" && CITY_VIEW_MODES.has(patch.view)
+      ? patch.view
+      : "atlas";
+    setOrDelete("view", view === "atlas" ? null : view);
   }
   return next;
 }

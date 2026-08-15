@@ -9,7 +9,7 @@ from communications.policy import Principal
 from engine.store import load_json
 
 
-PROJECTION_VERSION = 1
+PROJECTION_VERSION = 2
 POLICY_VERSION = 1
 
 

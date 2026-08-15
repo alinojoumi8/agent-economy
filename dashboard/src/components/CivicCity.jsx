@@ -5,7 +5,15 @@ STORY: Orient to the run, find working agents, select a city mark, then follow i
 FIRST VIEWPORT: Stable civic navigation frames a two-thirds live atlas and a one-third evidence lens.
 FORM: Civic Weather Room, grounded direction position 4; surveyed evidence-transect staging; seed 5d725ec9.
 */
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "react-router";
 import {
   CITY_DISTRICTS,
@@ -27,6 +35,33 @@ const DISTRICT_PATHS = {
 };
 
 const ACTIVE_RUN_STATUSES = new Set(["active", "running"]);
+const CivicDiorama = lazy(() => import("./CivicDiorama.jsx").then(module => ({
+  default: module.CivicDiorama,
+})));
+
+class DioramaBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+function webGL2Available() {
+  if (typeof document === "undefined") return false;
+  try {
+    return Boolean(document.createElement("canvas").getContext("webgl2"));
+  } catch {
+    return false;
+  }
+}
 
 function initials(name) {
   return String(name || "Agent")
@@ -88,12 +123,17 @@ export function CivicCity(props) {
   const [localQuery, setLocalQuery] = useState("");
   const [localActiveOnly, setLocalActiveOnly] = useState(false);
   const [localSelectedId, setLocalSelectedId] = useState(null);
+  const [localSelectedPlaceId, setLocalSelectedPlaceId] = useState(null);
   const [localPopulation, setLocalPopulation] = useState("core");
+  const [localView, setLocalView] = useState("atlas");
+  const [hasWebGL2, setHasWebGL2] = useState(null);
   const activeLayer = observerState?.layer ?? localActiveLayer;
   const query = observerState?.q ?? localQuery;
   const activeOnly = observerState?.activeOnly ?? localActiveOnly;
   const selectedId = observerState?.agent ?? localSelectedId;
+  const selectedPlaceId = observerState?.place ?? localSelectedPlaceId;
   const populationMode = observerState?.population ?? localPopulation;
+  const cityView = observerState?.view ?? localView;
   const lensRef = useRef(null);
   const model = useMemo(
     () => deriveCityModel({ agents, firms, events, map, civic, runtime, tick, historical }),
@@ -109,26 +149,57 @@ export function CivicCity(props) {
     && activeLayer === "all"
     && !activeOnly
     && !needle;
-  const selected = visibleAgents.find(agent => String(agent.id) === String(selectedId))
-    || visibleAgents.find(agent => agent.isActive)
-    || visibleAgents.find(agent => agent.event)
-    || visibleAgents[0]
-    || null;
+  const selectedPlace = model.places.find(
+    place => String(place.id) === String(selectedPlaceId),
+  ) || null;
+  const selected = selectedPlace ? null : (
+    visibleAgents.find(agent => String(agent.id) === String(selectedId))
+      || visibleAgents.find(agent => agent.isActive)
+      || visibleAgents.find(agent => agent.event)
+      || visibleAgents[0]
+      || null
+  );
   const selectedIndex = selected
     ? visibleAgents.findIndex(agent => String(agent.id) === String(selected.id))
     : -1;
   useEffect(() => {
     if (!observerState || !onObserverStateChange || loading) return;
     const resolvedId = selected ? Number(selected.id) : null;
+    if (observerState.place != null) {
+      if (!selectedPlace) {
+        onObserverStateChange(
+          { place: null, agent: resolvedId },
+          { replace: true },
+        );
+      }
+      return;
+    }
     if (observerState.agent !== resolvedId) {
       onObserverStateChange({ agent: resolvedId }, { replace: true });
     }
-  }, [loading, observerState, onObserverStateChange, selected]);
+  }, [
+    loading,
+    observerState,
+    onObserverStateChange,
+    selected,
+    selectedPlace,
+  ]);
+  useEffect(() => {
+    if (cityView === "diorama" && hasWebGL2 === null) {
+      setHasWebGL2(webGL2Available());
+    }
+  }, [cityView, hasWebGL2]);
   const employer = selected?.employer_id == null
     ? null
     : model.firms.find(firm => String(firm.id) === String(selected.employer_id));
   const eventFacts = payloadFacts(selected?.event?.payload);
   const semanticReceipt = semanticReceiptForEvent(selected?.event, model.receipts);
+  const associatedFirm = selectedPlace
+    ? model.firms.find(firm =>
+      String(firm.place_id) === String(selectedPlace.id)
+      || (selectedPlace.owner_type === "firm"
+        && String(firm.id) === String(selectedPlace.owner_id)))
+    : null;
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const commonParams = new URLSearchParams();
@@ -143,6 +214,14 @@ export function CivicCity(props) {
   if (selected?.event) traceParams.set("event", String(selected.event.id));
   const traceHref = selected?.event && runId
     ? `/runs/${encodeURIComponent(runId)}/investigations?${traceParams}`
+    : null;
+  const worldPlaceParams = new URLSearchParams(commonParams);
+  if (selectedPlace) {
+    worldPlaceParams.set("place", String(selectedPlace.id));
+    worldPlaceParams.set("view", cityView);
+  }
+  const placeHref = selectedPlace && runId
+    ? `/runs/${encodeURIComponent(runId)}/world?${worldPlaceParams}`
     : null;
   const layerCounts = Object.fromEntries(
     CITY_LAYERS.map(layer => [
@@ -170,7 +249,10 @@ export function CivicCity(props) {
     const nextIndex = (Math.max(0, selectedIndex) + direction + visibleAgents.length) % visibleAgents.length;
     const nextId = visibleAgents[nextIndex].id;
     if (onObserverStateChange) onObserverStateChange({ agent: nextId });
-    else setLocalSelectedId(nextId);
+    else {
+      setLocalSelectedId(nextId);
+      setLocalSelectedPlaceId(null);
+    }
   };
   const changeObserverFilter = (update, options) => {
     onObserverStateChange(resolveCityFilterPatch(model.agents, {
@@ -205,7 +287,21 @@ export function CivicCity(props) {
   };
   const changeSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ agent: value });
-    else setLocalSelectedId(value);
+    else {
+      setLocalSelectedId(value);
+      setLocalSelectedPlaceId(null);
+    }
+  };
+  const changePlaceSelection = value => {
+    if (onObserverStateChange) onObserverStateChange({ place: value });
+    else {
+      setLocalSelectedPlaceId(value);
+      setLocalSelectedId(null);
+    }
+  };
+  const changeView = value => {
+    if (onObserverStateChange) onObserverStateChange({ view: value });
+    else setLocalView(value);
   };
   const changePopulation = value => {
     const clusterPatch = value === "clusters"
@@ -224,13 +320,21 @@ export function CivicCity(props) {
   };
   const resetView = () => {
     if (onObserverStateChange) {
-      onObserverStateChange({ q: null, layer: null, activeOnly: false, agent: null, population: null });
+      onObserverStateChange({
+        q: null,
+        layer: null,
+        activeOnly: false,
+        agent: null,
+        place: null,
+        population: null,
+      });
       return;
     }
     setLocalQuery("");
     setLocalActiveLayer("all");
     setLocalActiveOnly(false);
     setLocalSelectedId(null);
+    setLocalSelectedPlaceId(null);
     setLocalPopulation("core");
   };
   const openMobileLens = () => {
@@ -244,7 +348,7 @@ export function CivicCity(props) {
   const animateLiveActivity = tick === "live" && connected && !historical && liveAgents.length > 0;
 
   return <section
-    className={`civic-city civic-city--${variant}${model.agents.length > 72 ? " civic-city--dense" : ""}`}
+    className={`civic-city civic-city--${variant} civic-city--view-${cityView}${model.agents.length > 72 ? " civic-city--dense" : ""}`}
     aria-labelledby={`civic-city-title-${variant}`}
     aria-busy={loading}
   >
@@ -265,6 +369,13 @@ export function CivicCity(props) {
     </header>
 
     <div className="civic-city__controls">
+      <div className="civic-city__view-toggle" role="group" aria-label="City view">
+        <span>Projection</span>
+        <div>
+          <button type="button" aria-pressed={cityView === "atlas"} onClick={() => changeView("atlas")}>Atlas</button>
+          <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
+        </div>
+      </div>
       <div className="civic-city__layers" role="group" aria-label="City evidence layer">
         {CITY_LAYERS.map(layer => <button
           key={layer.id}
@@ -300,8 +411,40 @@ export function CivicCity(props) {
     </div>
 
     <div className="civic-city__workfield">
-      <div className="civic-city__atlas">
-        <div className="civic-city__map-field">
+      <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
+        {cityView === "diorama" && <div className="civic-city__diorama-field">
+          {hasWebGL2 === false ? <div className="civic-city__diorama-fallback" role="status">
+            <strong>2.5D rendering is unavailable in this browser.</strong>
+            <span>The evidence-safe Atlas remains fully available.</span>
+            <button type="button" onClick={() => changeView("atlas")}>Use Atlas</button>
+          </div> : hasWebGL2 === null ? <div className="civic-city__diorama-fallback" role="status">
+            <strong>Checking 2.5D rendering support…</strong>
+          </div> : <DioramaBoundary fallback={<div className="civic-city__diorama-fallback" role="alert">
+            <strong>The 2.5D renderer could not start.</strong>
+            <span>No simulation state was changed. Continue in the Atlas view.</span>
+            <button type="button" onClick={() => changeView("atlas")}>Use Atlas</button>
+          </div>}>
+            <Suspense fallback={<div className="civic-city__diorama-fallback" role="status">
+              <strong>Loading the 2.5D city…</strong>
+              <span>The renderer is loaded only when this view is requested.</span>
+            </div>}>
+              <CivicDiorama
+                model={model}
+                visibleAgents={visibleAgents}
+                showClusters={showClusters}
+                selectedAgentId={selected?.id ?? null}
+                selectedPlaceId={selectedPlace?.id ?? null}
+                onSelectAgent={changeSelection}
+                onSelectPlace={changePlaceSelection}
+                onShowAllResidents={() => changePopulation("all")}
+                animateLiveActivity={animateLiveActivity}
+                tick={tick}
+                historical={historical}
+              />
+            </Suspense>
+          </DioramaBoundary>}
+        </div>}
+        <div className="civic-city__map-field" hidden={cityView === "diorama"}>
           <div className="civic-city__atlas-meta">
             <span className={`civic-city__source civic-city__source--${model.coordinateMode}`}>{coordinateCopy(model.coordinateMode)}</span>
             <span>{showClusters
@@ -355,21 +498,25 @@ export function CivicCity(props) {
           <span>{String(firm.name || "Firm").replace(/\s+(co|company|inc)\b.*$/i, "").slice(0, 16)}</span>
         </div>)}
 
-        {model.places.map(place => <div
+        {model.places.map(place => <button
+          type="button"
           key={`place-${place.id}`}
           className={[
             "civic-city__place",
             place.kind === "licensing_office" ? "is-permit-office" : "",
+            selectedPlace && String(selectedPlace.id) === String(place.id) ? "is-selected" : "",
           ].filter(Boolean).join(" ")}
           style={{ left: `${place.x}%`, top: `${place.y}%` }}
           title={`${place.name} · ${humanize(place.kind)} · ${place.businessOccupancy}/${place.capacity || "∞"} present${place.queueDepth ? ` · queue ${place.queueDepth}` : ""}`}
-          aria-hidden="true"
+          onClick={() => changePlaceSelection(place.id)}
+          aria-pressed={selectedPlace && String(selectedPlace.id) === String(place.id)}
+          aria-label={`Select ${place.name}, ${humanize(place.kind)}, ${place.businessOccupancy} of ${place.capacity || "unbounded"} present${place.queueDepth ? `, queue ${place.queueDepth}` : ""}`}
         >
           <i />
           {place.kind === "licensing_office" && <span>
             Permit office · {place.businessOccupancy}/{place.capacity} · q{place.queueDepth}
           </span>}
-        </div>)}
+        </button>)}
 
         <div className="civic-city__agent-layer">
           {visibleAgents.map(agent => <button
@@ -429,18 +576,26 @@ export function CivicCity(props) {
         <div className="civic-city__coordinates" aria-hidden="true">
           <span>GRID A-01</span><span>FIELD E-23</span><span>AE / {String(tick).padStart(4, "0")}</span>
         </div>
-          {selected && <button
+          {(selected || selectedPlace) && <button
             type="button"
             className="civic-city__mobile-peek"
             onClick={openMobileLens}
           >
-            <span><b>{selected.name}</b><small>{humanize(selected.activityState)}</small></span>
+            <span>
+              <b>{selectedPlace?.name || selected?.name}</b>
+              <small>{selectedPlace ? humanize(selectedPlace.kind) : humanize(selected?.activityState)}</small>
+            </span>
             <strong>Open evidence ↓</strong>
           </button>}
         </div>
       </div>
 
-      <aside ref={lensRef} className="civic-city__lens" aria-live="polite" aria-label="Selected agent evidence">
+      <aside
+        ref={lensRef}
+        className="civic-city__lens"
+        aria-live="polite"
+        aria-label="Selected city evidence"
+      >
         <header>
           <div><p>Evidence lens</p><span>Observed + derived fields</span></div>
           <div className="civic-city__lens-nav">
@@ -448,7 +603,55 @@ export function CivicCity(props) {
             <button type="button" onClick={() => moveSelection(1)} disabled={visibleAgents.length < 2} aria-label="Next visible agent">→</button>
           </div>
         </header>
-        {selected ? <>
+        {selectedPlace ? <>
+          <div className="civic-city__identity">
+            <span className="civic-city__avatar civic-city__avatar--place" aria-hidden="true">⌂</span>
+            <div>
+              <p>Place #{selectedPlace.id}</p>
+              <h3>{selectedPlace.name}</h3>
+              <span>{humanize(selectedPlace.kind)}</span>
+            </div>
+          </div>
+          <div className="civic-city__activity civic-city__activity--place">
+            <span>Committed public place</span>
+            <strong>{selectedPlace.businessOccupancy} present · queue {selectedPlace.queueDepth}</strong>
+            <small>
+              {historical ? `Reconstructed at tick ${tick}` : `Observed at ${tick === "live" ? "the current tick" : `tick ${tick}`}`}
+            </small>
+          </div>
+          <dl className="civic-city__facts">
+            <div><dt>Kind</dt><dd>{humanize(selectedPlace.kind)}</dd></div>
+            <div><dt>Owner</dt><dd>{associatedFirm?.name || (
+              selectedPlace.owner_type && selectedPlace.owner_id != null
+                ? `${humanize(selectedPlace.owner_type)} #${selectedPlace.owner_id}`
+                : "Not exposed"
+            )}</dd></div>
+            <div><dt>Region</dt><dd>{selectedPlace.region_id == null ? "Not exposed" : `Region #${selectedPlace.region_id}`}</dd></div>
+            <div><dt>Capacity</dt><dd>{selectedPlace.capacity || "Unbounded"}</dd></div>
+            <div><dt>Business occupancy</dt><dd>{selectedPlace.businessOccupancy}</dd></div>
+            <div><dt>Queue depth</dt><dd>{selectedPlace.queueDepth}</dd></div>
+            <div><dt>Queue history</dt><dd>{humanize(selectedPlace.case_status_resolution, "Not applicable")}</dd></div>
+          </dl>
+          <section className="civic-city__record">
+            <header><span>Presence evidence</span><b>tick {tick}</b></header>
+            {selectedPlace.occupants?.length ? <dl>
+              {selectedPlace.occupants.slice(0, 8).map(occupant => <div key={occupant.agent_id}>
+                <dt>Agent #{occupant.agent_id}</dt>
+                <dd>{occupant.name || humanize(occupant.role)}</dd>
+              </div>)}
+            </dl> : selectedPlace.privacyOccupancy > 0
+              ? <p>{selectedPlace.privacyOccupancy} occupants are exposed only as a privacy aggregate.</p>
+              : <p>No public occupant identities are projected at this tick.</p>}
+          </section>
+          <section className="civic-city__receipt">
+            <header><span>Visual encoding</span><b>derived</b></header>
+            <p>In 2.5D, building height derives from exposed capacity, occupancy, and queue magnitude. Shape and height are not canonical world geometry.</p>
+          </section>
+          <div className="civic-city__lens-actions">
+            {placeHref && <Link className="is-primary" to={placeHref}>Open in World workspace <span>→</span></Link>}
+            <span className="civic-city__no-trace">Associations are labelled separately from direct event records.</span>
+          </div>
+        </> : selected ? <>
           <div className="civic-city__identity">
             <span className={`civic-city__avatar civic-city__avatar--${selected.layer}`}>{initials(selected.name)}</span>
             <div><p>Agent #{selected.id}</p><h3>{selected.name}</h3><span>{humanize(selected.role || selected.occupation || selected.kind)}</span></div>
@@ -515,7 +718,7 @@ export function CivicCity(props) {
         <footer>
           <span><i className={`civic-city__provenance civic-city__provenance--${model.coordinateMode}`} />{coordinateCopy(model.coordinateMode)}</span>
           {lineage && <small>Semantics {lineage.semantics} · projection {lineage.projection} · policy {lineage.policy}</small>}
-          {historical && <small>Events resolve at tick {tick}; the entity roster comes from the current agent and firm endpoints.</small>}
+          {historical && <small>City evidence resolves at tick {tick}; live runtime overlays are disabled.</small>}
           {!historical && selected?.runtimeActivity && <small>Live activity is ephemeral observer telemetry. It is not a thought trace or committed world state.</small>}
           <small>City selection is observer-only. Ledger and replay truth remain immutable.</small>
         </footer>

@@ -339,7 +339,7 @@ export function deriveCityModel({
   const operatingFirms = firmSource.filter(firm =>
     !["bankrupt", "closed", "inactive"].includes(String(firm?.status || "").toLowerCase()),
   );
-  const cityFirms = firmSource.slice(0, 14).map((firm, index, list) => {
+  const cityFirms = operatingFirms.map((firm, index, list) => {
     const layer = classifyFirmLayer(firm);
     const observedX = normalizedCoordinate(firm.x);
     const observedY = normalizedCoordinate(firm.y);
@@ -355,14 +355,38 @@ export function deriveCityModel({
       ? "observed"
       : "mixed";
 
-  const places = asArray(map?.places).map(place => ({
-    ...place,
-    x: normalizedCoordinate(place.x),
-    y: normalizedCoordinate(place.y),
-    businessOccupancy: Number(place?.occupancy?.business || 0),
-    capacity: Number(place?.capacity || 0),
-    queueDepth: Number(place?.queue_depth || 0),
-  })).filter(place => place.x !== null && place.y !== null);
+  const presence = asArray(map?.presence).map(item => ({ ...item }));
+  const places = asArray(map?.places).map(place => {
+    const placePresence = presence.filter(
+      item => String(item?.place_id) === String(place?.id),
+    );
+    return {
+      ...place,
+      x: normalizedCoordinate(place.x),
+      y: normalizedCoordinate(place.y),
+      businessOccupancy: Number(place?.occupancy?.business || 0),
+      capacity: Number(place?.capacity || 0),
+      queueDepth: Number(place?.queue_depth || 0),
+      occupants: placePresence
+        .filter(item => item?.agent_id != null)
+        .map(item => ({
+          agent_id: item.agent_id,
+          name: item.name,
+          role: item.role,
+          slot: item.slot,
+          source_type: item.source_type,
+        })),
+      privacyOccupancy: placePresence
+        .filter(item => item?.agent_id == null)
+        .reduce((total, item) => total + Number(item?.occupancy || 0), 0),
+    };
+  }).filter(place => place.x !== null && place.y !== null);
+  const regions = asArray(map?.regions).map(region => ({
+    ...region,
+    x: normalizedCoordinate(region.x),
+    y: normalizedCoordinate(region.y),
+  })).filter(region => region.x !== null && region.y !== null);
+  const flows = asArray(map?.flows).map(flow => ({ ...flow }));
   const receipts = eventItems
     .filter(event => event?.payload?.semantic_receipt)
     .map(event => ({ eventId: event.id, tick: event.tick, ...event.payload.semantic_receipt }));
@@ -397,11 +421,15 @@ export function deriveCityModel({
     agents: cityAgents.sort((left, right) => Number(left.id) - Number(right.id)),
     firms: cityFirms,
     places,
+    regions,
+    flows,
+    presence,
     receipts,
     clusters,
     population,
     civic: civic || map?.civic || null,
     events: eventItems,
+    selectedTick,
     coordinateMode,
     counts: {
       agents: cityAgents.length,

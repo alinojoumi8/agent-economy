@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
+import { patchObserverViewState } from "../app/observerViewState";
 import { CivicCity } from "../components/CivicCity";
 import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
 import {
@@ -50,7 +51,7 @@ export function WorldWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeWorldWorkspace(projection.data || {});
   const selectedRegionId = validatedSelectedId(searchParams.get("region"));
-  const selectedPlaceId = validatedSelectedId(searchParams.get("place"));
+  const selectedPlaceId = projection.observerState.place;
   const selectedRegion = model.regions.find(region => Number(region.id) === selectedRegionId) || null;
   const selectedPlace = model.places.find(place => Number(place.id) === selectedPlaceId) || null;
 
@@ -58,7 +59,11 @@ export function WorldWorkspace() {
     if (projection.loading) return;
     const next = new URLSearchParams(searchParams);
     if (selectedPlace) next.delete("region");
-    else if (selectedPlaceId != null) next.delete("place");
+    else if (selectedPlaceId != null) {
+      const cleared = patchObserverViewState(next, { place: null });
+      setSearchParams(cleared, { replace: true });
+      return;
+    }
     if (selectedRegionId != null && !selectedRegion) next.delete("region");
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
@@ -74,11 +79,15 @@ export function WorldWorkspace() {
   ]);
 
   const select = (key: "region" | "place", rawValue: string) => {
-    const next = new URLSearchParams(searchParams);
     const value = validatedSelectedId(rawValue);
-    if (value == null) next.delete(key);
-    else next.set(key, String(value));
-    if (key === "region") next.delete("place");
+    const next = key === "place"
+      ? patchObserverViewState(searchParams, { place: value })
+      : new URLSearchParams(searchParams);
+    if (key === "region") {
+      if (value == null) next.delete("region");
+      else next.set("region", String(value));
+      next.delete("place");
+    }
     if (key === "place") next.delete("region");
     setSearchParams(next);
   };

@@ -68,6 +68,7 @@ type CivicSummary = {
     occupancy: number; queue_depth: number; x: number; y: number;
   }>;
   cases_by_status?: Record<string, number>;
+  case_status_resolution?: "exact" | "terminal_and_open";
 };
 
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "finished", "halted", "stopped"]);
@@ -109,7 +110,7 @@ export function OverviewWorkspace() {
     queryKey: ["world-os", runId, observerState.fork, "city", tick, observerState.population],
     queryFn: async ({ signal }) => {
       const mapParams = projectionScopeParams(observerState);
-      mapParams.set("layers", "regions,agents,organizations,places,presence");
+      mapParams.set("layers", "regions,agents,organizations,places,presence,flows");
       mapParams.set("population", observerState.population);
       const civicParams = projectionScopeParams(observerState);
       const [mapEnvelope, civicEnvelope] = await Promise.all([
