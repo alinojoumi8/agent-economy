@@ -115,7 +115,13 @@ function normalizedCoordinate(value) {
   return Math.max(4, Math.min(96, percentage));
 }
 
-function stableHash(value) {
+/**
+ * FNV-1a over the string form of a value. Deterministic, dependency-free, and
+ * stable across reloads, which is what makes it usable as the seed for any
+ * layout decision that must not move between frames. Exported because the Live
+ * City surface needs exactly the same guarantee for its de-collision scatter.
+ */
+export function stableHash(value) {
   const text = String(value ?? "");
   let hash = 2166136261;
   for (let index = 0; index < text.length; index += 1) {

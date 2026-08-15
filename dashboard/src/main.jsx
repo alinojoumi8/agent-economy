@@ -2,9 +2,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createBrowserRouter, RouterProvider } from "react-router";
+import "./design/tokens.css";
 import App from "./App";
 import "./index.css";
 import "./civic-weather-room.css";
+import "./ui/ui.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

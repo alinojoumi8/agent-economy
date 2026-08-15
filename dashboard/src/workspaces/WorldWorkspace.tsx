@@ -1,6 +1,10 @@
 import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
+import { projectionApi, workspaceApi } from "../app/api";
+import { projectionScopeParams } from "../app/observerViewState";
 import { CivicCity } from "../components/CivicCity";
+import { titleCase } from "../ui";
 import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
 import {
   validatedSelectedId,
@@ -40,6 +44,31 @@ type WorldProjection = {
   flows?: WorldFlow[];
 };
 
+/* A run in one of these states emits nothing further, so polling it is waste. */
+const TERMINAL_RUN_STATUSES = new Set(
+  ["completed", "failed", "finished", "halted", "stopped"]);
+
+type ProviderLane = {
+  provider: string;
+  capacity: number;
+  in_flight: number;
+  queue_depth: number;
+  cooldown_remaining_s: number;
+  p50_queue_ms: number | null;
+  p95_response_ms: number | null;
+  failures: number;
+  rate_limits: number;
+  fallbacks: number;
+};
+type ProviderRuntime = {
+  live_only: boolean;
+  global: {
+    capacity: number; in_flight: number; queue_depth: number; peak_in_flight: number;
+  };
+  simulated_days: { p50_wall_ms: number | null };
+  providers: ProviderLane[];
+};
+
 function display(value: unknown, fallback = "Not exposed") {
   if (value === null || value === undefined || value === "") return fallback;
   return String(value).replaceAll("_", " ");
@@ -48,6 +77,61 @@ function display(value: unknown, fallback = "Not exposed") {
 export function WorldWorkspace() {
   const projection = useWorkspaceProjection<WorldProjection>("workspace.world", "/api/v2/workspaces/world");
   const [searchParams, setSearchParams] = useSearchParams();
+  /*
+   * The civic panel used to live in Overview and was fed there. Moving it here
+   * carried the component but not its sources, so it lost the things that only
+   * data can supply: the run status line, the empty and error states, the
+   * evidence lens and the live inference fabric. They are restored at the panel's
+   * new home rather than by moving it back — see the workspace-projection query
+   * above, which answers a different question (the atlas) and cannot stand in
+   * for these.
+   */
+  const { observerState, runId } = projection;
+  const tick = observerState.tick;
+  const overview = useQuery({
+    queryKey: ["world-os", runId, observerState.fork, "world-city-overview", tick],
+    queryFn: ({ signal }) => {
+      const params = projectionScopeParams(observerState);
+      params.set("domains", "summary,events");
+      return projectionApi<{
+        summary?: { status?: string; phase?: string };
+        events?: { items?: unknown[] };
+      }>(`/api/v2/snapshot?${params}`, signal);
+    },
+    retry: false,
+  });
+  const runStatus = String(overview.data?.data.summary?.status || "").toLowerCase();
+  /* A finished or halted run has no more telemetry to poll for. */
+  const pollCurrentRun = tick === "live" && !TERMINAL_RUN_STATUSES.has(runStatus);
+  const runtime = useQuery({
+    queryKey: ["llm-runtime", runId],
+    queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
+    retry: false,
+    refetchInterval: () => (pollCurrentRun ? 2000 : false),
+  });
+  const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
+  const city = useQuery({
+    queryKey: ["world-os", runId, observerState.fork, "world-city", tick, observerState.population],
+    queryFn: async ({ signal }) => {
+      const mapParams = projectionScopeParams(observerState);
+      mapParams.set("layers", "regions,agents,organizations,places,presence");
+      mapParams.set("population", observerState.population);
+      const civicParams = projectionScopeParams(observerState);
+      const [mapEnvelope, civicEnvelope] = await Promise.all([
+        projectionApi<{ agents?: unknown[]; organizations?: unknown[] }>(
+          `/api/v2/world-map?${mapParams}`, signal),
+        projectionApi<unknown>(`/api/v2/civic/summary?${civicParams}`, signal),
+      ]);
+      return {
+        agents: mapEnvelope.data.agents || [],
+        firms: mapEnvelope.data.organizations || [],
+        map: mapEnvelope.data,
+        civic: civicEnvelope.data,
+      };
+    },
+    retry: false,
+    refetchInterval: () => (pollCurrentRun ? 3000 : false),
+  });
   const model = normalizeWorldWorkspace(projection.data || {});
   const selectedRegionId = validatedSelectedId(searchParams.get("region"));
   const selectedPlaceId = validatedSelectedId(searchParams.get("place"));
@@ -117,14 +201,20 @@ export function WorldWorkspace() {
       </dl>
 
       <CivicCity
-        agents={model.agents}
-        firms={model.organizations}
-        events={[]}
-        map={model}
-        civic={null}
-        runtime={null}
+        agents={city.data?.agents}
+        firms={city.data?.firms}
+        events={overview.data?.data.events?.items || []}
+        /* No fallback to the atlas projection: when the city query fails the
+           panel must say so, not quietly draw a different dataset's people. */
+        map={city.data?.map}
+        civic={city.data?.civic ?? null}
+        runtime={runtime.data ?? null}
         runId={projection.runId}
         tick={projection.observerState.tick}
+        phase={overview.data?.data.summary?.phase}
+        status={overview.data?.data.summary?.status}
+        loading={city.isLoading}
+        error={city.error instanceof Error ? city.error.message : ""}
         connected={projection.transport.status === "live"}
         historical={projection.observerState.tick !== "live"}
         lineage={envelope ? {
@@ -132,10 +222,88 @@ export function WorldWorkspace() {
           projection: envelope.projection_version,
           policy: envelope.policy_version,
         } : null}
-        variant="world-os-world"
+        /*
+         * "world-os", not "world-os-world". The variant string is what becomes
+         * the modifier class, and civic-weather-room.css only ever defined
+         * .civic-city--world-os. The extra word meant the atlas matched none of
+         * its own dark treatment and fell back to the light civic default, which
+         * is why "Civic Forum" was white-on-paper at 1.25:1 inside a dark app.
+         */
+        variant="world-os"
         observerState={projection.observerState}
         onObserverStateChange={projection.setObserverState}
       />
+
+      {/*
+        * Provider lanes — the inference fabric actually answering for this
+        * world. It sat beside the civic panel in Overview and was dropped when
+        * that surface was rewritten, taking the only readout of who is thinking
+        * and how hard with it. Restored beside the panel it belongs to.
+        *
+        * Scripted and mock lanes are filtered out on purpose: they are not a
+        * provider under load, and showing them as one would overstate the fabric.
+        */}
+      <section
+        className="world-os-provider-deck"
+        aria-label={tick === "live" && !terminalRun ? "Live AI provider lanes" : "Current AI provider lanes"}
+      >
+        <header>
+          <div>
+            <p className="world-os-kicker">{
+              tick !== "live" ? "Current inference fabric"
+                : terminalRun ? "Final inference fabric" : "Live inference fabric"
+            }</p>
+            <h3>Provider lanes</h3>
+          </div>
+          {runtime.data && <div className="world-os-provider-global">
+            <span>{runtime.data.live_only ? "Live only" : "Mixed mode"}</span>
+            <strong>{runtime.data.global.in_flight}/{runtime.data.global.capacity}</strong>
+            <small>
+              {runtime.data.global.queue_depth} queued · peak {runtime.data.global.peak_in_flight}
+              {runtime.data.simulated_days?.p50_wall_ms == null
+                ? ""
+                : ` · day p50 ${(runtime.data.simulated_days.p50_wall_ms / 1000).toFixed(1)}s`}
+            </small>
+          </div>}
+        </header>
+        {runtime.error && <p className="world-os-policy-note">Runtime telemetry is temporarily unavailable.</p>}
+        {tick !== "live" && <p className="world-os-policy-note">
+          Provider capacity is current runtime telemetry, not a historical reconstruction.
+        </p>}
+        <div className="world-os-provider-lanes">
+          {(runtime.data?.providers || [])
+            .filter(lane => !["scripted", "mock"].includes(lane.provider))
+            .map(lane => {
+              const utilization = Math.min(
+                100, Math.round((lane.in_flight / Math.max(1, lane.capacity)) * 100));
+              const state = lane.cooldown_remaining_s > 0 ? "cooldown"
+                : lane.queue_depth > 0 ? "queued"
+                  : lane.in_flight > 0 ? "active" : "ready";
+              return <article
+                key={lane.provider}
+                className={`world-os-provider-lane world-os-provider-lane--${state}`}
+              >
+                <div className="world-os-provider-lane-head">
+                  <span className="world-os-live-dot" />
+                  <strong>{titleCase(lane.provider)}</strong>
+                  <em>{state}</em>
+                </div>
+                <div className="world-os-provider-capacity"><span style={{ width: `${utilization}%` }} /></div>
+                <dl>
+                  <div><dt>Active</dt><dd>{lane.in_flight}/{lane.capacity}</dd></div>
+                  <div><dt>Queued</dt><dd>{lane.queue_depth}</dd></div>
+                  <div><dt>p50 wait</dt><dd>{lane.p50_queue_ms == null ? "—" : `${Math.round(lane.p50_queue_ms)}ms`}</dd></div>
+                  <div><dt>p95 response</dt><dd>{lane.p95_response_ms == null ? "—" : `${(lane.p95_response_ms / 1000).toFixed(1)}s`}</dd></div>
+                </dl>
+                <small>
+                  {lane.failures} failures · {lane.rate_limits} rate limits
+                  · {lane.fallbacks} fallback attempts
+                </small>
+              </article>;
+            })}
+          {runtime.isLoading && <div className="world-os-provider-loading">Loading live provider capacity…</div>}
+        </div>
+      </section>
 
       <div className="world-os-world-detail-grid">
         <article className="world-os-workspace-card world-os-world-inspector" aria-live="polite">
