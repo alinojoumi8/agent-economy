@@ -623,7 +623,7 @@ Two ways to repair, and the difference is a design decision rather than a bug fi
 Either way the stale banner needs restoring as a *visible, assertive* element — that part is not optional and
 is not a matter of taste.
 
-## 🔴 Piece 5's substrate is one twelfth of what the plan assumed
+## ✅ Piece 5 — the substrate was raised, then the piece was built
 
 Checked before building, and it changes the piece. **The run holds 372 conversations across 372 ticks —
 exactly one per tick**, not a city humming with talk. `budget.conversation_pairs: 1` is set explicitly in the
@@ -658,7 +658,47 @@ Two honest routes, and they compose:
    population at no cost. It cannot rewrite ticks 1-372, but the city renders the *current* tick, which is
    precisely the part that would be enriched.
 
-Route 2 before route 1 is the order that makes the piece worth its bar.
+Route 2 before route 1 is the order that makes the piece worth its bar. **Both were taken.**
+
+### What changed, and one claim above that is now wrong
+
+`budget.conversation_pairs` went 1 → 15 (#59). Two things follow, and the second corrects the bullet
+above:
+
+| | at 1 pair | at 15 pairs |
+|---|---|---|
+| conversations per tick | 1 | **15** |
+| co-located (a bubble can pin) | 1/1 | **15/15** |
+| distinct places hosting one | 1 | **10** |
+| topics | only `The Ledger daily brief` | **varied** |
+
+> ⚠️ **"Topics are templated — every one is `The Ledger daily brief`" was true at one pair and is
+> not true now.** At fifteen the recorded topics include *"saving, borrowing, and confidence in local
+> banks"*, *"health costs and financial resilience"*, and *"how market moves affect ordinary
+> households"*. The cap was doing more than limiting volume — it was flattening the subject matter.
+
+The engine reads the config persisted in `run_meta`, not the profile, so editing the file alone
+changed nothing: tick 373 still recorded one pair. Run `53f5b4ce8c` was raised in place at tick 374.
+
+### The piece, as built (#60)
+
+Every pair at tick 375 shares a **home**, morning and evening, and **none** share the business slot —
+they part for the day. The conversation is recorded in EVENING. So this is the other half of the
+commute the city already draws, and it is drawn only on the evening leg.
+
+The world records a tick, a pair, a topic and their lines — **never a coordinate**. So a bubble sits
+only where the map already puts *both* people, and `conversationPlacements` drops the rest: a
+participant the map does not carry (which is what keeps an anonymised resident anonymous), a held
+placement, or a pair the map places apart. Four refusals, four tests.
+
+**The first build was wrong and was rebuilt.** Drawing all fifteen quotes put them on top of each
+other in the residential cluster — the same occlusion defect round 1 was rejected for. Moving a
+quote to fit would misplace a recorded fact, so every conversation is marked at its address and only
+those with room are quoted. At tick 375: 15 marks, 5 quotes, and the foot says which were withheld.
+
+Checked against the data rather than by eye — an independent script re-derives the expected set from
+`/api/v2/map` and `/api/conversations` and reads the DOM: **15 recorded · 15 expected · 15 marked ·
+5 quoted · both speakers named on every quote · 0 rendered lines absent from the transcript.**
 
 ## Do NOT build — these would be fabrications
 
@@ -682,7 +722,7 @@ Legend: ⬜ queued · 🔨 building · 🔍 in judgement · ❌ rejected · ✅ 
 | 2 | The commute — interpolated three-beat day | MINI TOKYO | 🔍 round 1 in judgement |
 | 3 | Day clock driving atmosphere | MINI TOKYO | 🔍 round 1 in judgement |
 | 4 | Interpolation disclosure | both | ✅ shipped |
-| 5 | Conversation bubbles pinned at the co-located place | MINI TOKYO | ⬜ **substrate checked — 1 pair per tick, not 330; see above** |
+| 5 | Conversation bubbles pinned at the co-located place | MINI TOKYO | ✅ **built** — 15 marked, quoted where legible; substrate raised 1 → 15 pairs first |
 | 6 | Errands & scheduled intent | ADS-B | ⬜ |
 | 7 | Click an agent → its day | ADS-B | ⬜ |
 | 8 | Claim diffusion as a spreading stain | ADS-B | ⬜ |
