@@ -163,7 +163,7 @@ export function WorldWorkspace() {
         </article>
         <nav className="world-os-workspace-card world-os-world-links" aria-label="Related World workspaces">
           <p className="world-os-kicker">Follow the evidence</p>
-          <Link to={route("people")}>People <span>↗</span></Link>
+          <Link to={route("people")}>Living Agents <span>↗</span></Link>
           <Link to={route("organizations")}>Organizations <span>↗</span></Link>
           <Link to={route("investigations")}>Investigations <span>↗</span></Link>
         </nav>

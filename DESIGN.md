@@ -290,6 +290,15 @@ coordinated activity, and evidence inspection—but no WorldMonitor source,
 assets, or dependencies are imported. Agent Economy remains MIT-licensed while
 the reference project is AGPL-3.0-or-later.
 
+### Living Agents
+
+The People route is presented as **Living Agents** and combines the historical
+agent directory, selected journey, and progress streams without adding a second
+navigation destination. It consumes only the v2 observer projections and keeps
+committed, runtime, and derived evidence visibly distinct. Runtime state is
+live-only; historical ticks never inherit it. See the
+[Living Agents review and projection contract](docs/living-agents.md).
+
 ### Identity Mark
 
 The generated World OS emblem is a clipped municipal survey plate containing

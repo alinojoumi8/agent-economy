@@ -64,7 +64,7 @@ const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Observe", items: [
     { path: "overview", label: "Live City", caption: "Agents at work, evidence in motion", icon: "overview" },
     { path: "world", label: "World", caption: "Population and environment", icon: "world" },
-    { path: "people", label: "People", caption: "Agents, lives, and memory", icon: "people" },
+    { path: "people", label: "Living Agents", caption: "Progress, journeys, and evidence", icon: "people" },
     { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
   ] },
   { label: "Flows", items: [
@@ -86,7 +86,7 @@ const entityGroupOrder: Array<{
   label: string;
   icon: GlyphName;
 }> = [
-  { kind: "agent", label: "People", icon: "people" },
+  { kind: "agent", label: "Living Agents", icon: "people" },
   { kind: "firm", label: "Organizations", icon: "organizations" },
   { kind: "event", label: "Events", icon: "investigations" },
   { kind: "communication_thread", label: "Public Communications", icon: "communications" },

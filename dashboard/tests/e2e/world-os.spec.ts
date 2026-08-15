@@ -90,6 +90,248 @@ async function mockApi(page: Page) {
         { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { qty: 5 } },
       ], next_after_id: null, truncated: false },
     } });
+    if (path === "/api/v2/workspaces/living-agents") {
+      const projectionTick = Number(url.searchParams.get("tick") || baseEnvelope.tick);
+      return route.fulfill({ json: {
+        ...baseEnvelope,
+        tick: projectionTick,
+        fork_id: url.searchParams.get("fork_id"),
+        projection: "workspace.living_agents",
+        data: {
+          summary: {
+            tick: projectionTick,
+            living_agents: 2,
+            active_employments: 1,
+            active_projects: 2,
+            completed_projects: 1,
+            public_outputs: 1,
+            runtime_active: 0,
+            projects_total: 3,
+            projects_shown: 3,
+          },
+          agents: [{
+            id: 1,
+            name: "Atlas Builder",
+            kind: "person",
+            role: null,
+            occupation: "carpenter",
+            population_tier: "core",
+            arrived_tick: 0,
+            died_tick: null,
+            alive: true,
+            region: { id: 2, name: "Harbor Ward" },
+            balance_cents: 12500,
+            employment: {
+              id: 8,
+              firm_id: 3,
+              firm_name: "Atlas Works",
+              title: "Lead carpenter",
+              wage_cents: 900,
+              start_tick: 2,
+            },
+            compute: {
+              tier: "local",
+              payer_type: "self",
+              price_cents: 0,
+              effective_tick: 0,
+              expiry_tick: null,
+              evidence_ref: null,
+            },
+            skills: [{
+              skill_key: "construction",
+              level: 2,
+              xp: 140,
+              last_practiced_tick: projectionTick,
+              milestone_count: 2,
+              source: "committed",
+              evidence_ref: { kind: "skill_progress", id: 14, tick: projectionTick },
+            }],
+            residence: {
+              visibility: "public",
+              id: 7,
+              name: "Harbor House",
+              kind: "home",
+              region: { id: 2, name: "Harbor Ward" },
+            },
+            workplace: null,
+            latest_committed_tick: projectionTick,
+            runtime: null,
+          }],
+          projects: [{
+            project_id: "skill:1:construction",
+            kind: "skill",
+            title: "Construction skill",
+            owner_agent_id: 1,
+            stage: "level_2",
+            status: "active",
+            started_tick: 2,
+            updated_tick: projectionTick,
+            completed_tick: null,
+            milestone_count: 2,
+            source: "committed",
+            evidence_refs: [{ kind: "skill_progress", id: 14, tick: projectionTick }],
+            organization: null,
+            place: null,
+            region: { id: 2, name: "Harbor Ward" },
+            metrics: { level: 2, xp: 140 },
+            privacy: "exact",
+          }, {
+            project_id: "employment:8",
+            kind: "employment",
+            title: "Lead carpenter at Atlas Works",
+            owner_agent_id: 1,
+            stage: "employed",
+            status: "active",
+            started_tick: 2,
+            updated_tick: 2,
+            completed_tick: null,
+            milestone_count: 1,
+            source: "committed",
+            evidence_refs: [{ kind: "employment", id: 8, tick: 2 }],
+            organization: { id: 3, name: "Atlas Works" },
+            place: null,
+            region: { id: 2, name: "Harbor Ward" },
+            metrics: { wage_cents: 900 },
+            privacy: "exact",
+          }, {
+            project_id: "residence:7",
+            kind: "residence",
+            title: "Established Harbor House",
+            owner_agent_id: 1,
+            stage: "established",
+            status: "completed",
+            started_tick: 3,
+            updated_tick: 3,
+            completed_tick: 3,
+            milestone_count: 1,
+            source: "committed",
+            evidence_refs: [{ kind: "lease", id: 4, tick: 3 }],
+            organization: null,
+            place: { id: 7, name: "Harbor House", kind: "home" },
+            region: { id: 2, name: "Harbor Ward" },
+            metrics: {},
+            privacy: "exact",
+          }],
+          activity: {
+            items: [{
+              activity_id: "skill:14",
+              tick: projectionTick,
+              kind: "skill",
+              stage: "level_2",
+              title: "Reached construction level 2",
+              agent_id: 1,
+              project_id: "skill:1:construction",
+              source: "committed",
+              evidence_ref: { kind: "skill_progress", id: 14, tick: projectionTick },
+            }],
+            next_cursor: null,
+            total: 1,
+            cursor_kind: "offset",
+          },
+          source_legend: {
+            committed: "Stored actions, transactions, cases, skills, and outcomes.",
+            runtime: "Live-only activity that is never written into history.",
+            derived: "Summaries calculated from committed evidence.",
+          },
+          privacy: {
+            private_bodies_omitted: true,
+            peripheral_locations: "aggregated_or_masked",
+            civic_cases: "aggregate_only",
+          },
+        },
+      } });
+    }
+    if (path === "/api/v2/agents/1/journey") {
+      const projectionTick = Number(url.searchParams.get("tick") || baseEnvelope.tick);
+      return route.fulfill({ json: {
+        ...baseEnvelope,
+        tick: projectionTick,
+        fork_id: url.searchParams.get("fork_id"),
+        projection: "workspace.agent_journey",
+        data: {
+          profile: {
+            id: 1,
+            name: "Atlas Builder",
+            kind: "person",
+            role: null,
+            occupation: "carpenter",
+            population_tier: "core",
+            arrived_tick: 0,
+            died_tick: null,
+          },
+          current_state: {
+            region: { id: 2, name: "Harbor Ward" },
+            employment: {
+              id: 8,
+              firm_id: 3,
+              firm_name: "Atlas Works",
+              title: "Lead carpenter",
+              wage_cents: 900,
+              start_tick: 2,
+            },
+            balance_cents: 12500,
+            compute: {
+              tier: "local",
+              payer_type: "self",
+              price_cents: 0,
+              effective_tick: 0,
+              expiry_tick: null,
+              evidence_ref: null,
+            },
+            residence: {
+              visibility: "public",
+              id: 7,
+              name: "Harbor House",
+              kind: "home",
+              region: { id: 2, name: "Harbor Ward" },
+            },
+            workplace: null,
+          },
+          skills: [{
+            skill_key: "construction",
+            level: 2,
+            xp: 140,
+            last_practiced_tick: projectionTick,
+            milestone_count: 2,
+            source: "committed",
+            evidence_ref: { kind: "skill_progress", id: 14, tick: projectionTick },
+          }],
+          projects: [],
+          milestones: {
+            items: [{
+              activity_id: "skill:14",
+              tick: projectionTick,
+              kind: "skill",
+              stage: "level_2",
+              title: "Reached construction level 2",
+              agent_id: 1,
+              project_id: "skill:1:construction",
+              source: "committed",
+              evidence_ref: { kind: "skill_progress", id: 14, tick: projectionTick },
+            }],
+            next_cursor: null,
+            total: 1,
+            cursor_kind: "offset",
+          },
+          public_outputs: [],
+          runtime: null,
+          evidence_refs: [
+            { kind: "employment", id: 8, tick: 2 },
+            { kind: "skill_progress", id: 14, tick: projectionTick },
+          ],
+          source_legend: {
+            committed: "Stored actions, transactions, cases, skills, and outcomes.",
+            runtime: "Live-only activity that is never written into history.",
+            derived: "Summaries calculated from committed evidence.",
+          },
+          privacy: {
+            private_bodies_omitted: true,
+            peripheral_locations: "aggregated_or_masked",
+            civic_cases: "aggregate_only",
+          },
+        },
+      } });
+    }
     if (path === "/api/v2/search") return route.fulfill({ json: {
       ...baseEnvelope, projection: "search.results", data: { groups: [
         { kind: "agent", truncated: false, items: [{ kind: "agent", id: 12, label: "Atlas Researcher", sublabel: "researcher · Agent #12" }] },
@@ -993,6 +1235,43 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
   expect(searchUrl).toContain("fork_id=fork-a");
 });
 
+test("Living Agents reconstructs history and preserves Live City focus", async ({ page }) => {
+  let workspaceUrl = "";
+  let journeyUrl = "";
+  await page.route("**/api/v2/workspaces/living-agents?*", async route => {
+    workspaceUrl = route.request().url();
+    await route.fallback();
+  });
+  await page.route("**/api/v2/agents/1/journey?*", async route => {
+    journeyUrl = route.request().url();
+    await route.fallback();
+  });
+
+  await page.goto("/runs/run-demo/people/1?fork=fork-a&tick=4");
+
+  await expect(page.getByRole("heading", { name: "Living Agents" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Atlas Builder" })).toBeVisible();
+  await expect(page.getByText("Lead carpenter", { exact: true })).toBeVisible();
+  const constructionSkill = page.getByText("Construction", { exact: true });
+  await constructionSkill.scrollIntoViewIfNeeded();
+  await expect(constructionSkill).toBeVisible();
+  await expect(page.getByText("Level 2 · 140 XP · 2 milestones")).toBeVisible();
+  await expect(page.locator(".world-os-person-identity")
+    .getByText("Historical", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Evidence source legend").getByText("Runtime", { exact: true })).toBeVisible();
+
+  expect(workspaceUrl).toContain("tick=4");
+  expect(workspaceUrl).toContain("fork_id=fork-a");
+  expect(journeyUrl).toContain("tick=4");
+  expect(journeyUrl).toContain("fork_id=fork-a");
+
+  const cityLink = page.getByRole("link", { name: "Focus in Live City" });
+  await expect(cityLink).toHaveAttribute(
+    "href",
+    "/runs/run-demo/overview?fork=fork-a&tick=4&view=diorama&agent=1&population=all",
+  );
+});
+
 test("superseded entity searches never replace the newest result", async ({ page }) => {
   await page.route("**/api/v2/search?*", async route => {
     const query = new URL(route.request().url()).searchParams.get("q");
@@ -1039,9 +1318,9 @@ test("entity-search failure leaves matching routes operable", async ({ page }) =
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
-  await input.fill("People");
+  await input.fill("Living Agents");
   await expect(command.getByText("Entity search is unavailable. Route navigation remains available.")).toBeVisible();
-  await expect(command.getByRole("option", { name: /People Agents, lives, and memory/ })).toBeVisible();
+  await expect(command.getByRole("option", { name: /Living Agents Progress, journeys, and evidence/ })).toBeVisible();
   await input.press("Enter");
   await expect(page).toHaveURL(/\/people$/);
 });
