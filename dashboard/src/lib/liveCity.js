@@ -952,3 +952,117 @@ export function distanceToRecordedPath(agent, x, y) {
   }
   return best;
 }
+
+/* ------------------------------------------------- recorded conversation -- */
+
+/**
+ * Where a recorded conversation belongs on the map, and whether it belongs
+ * there at all.
+ *
+ * The world records a conversation as a tick, a pair of participants, a topic
+ * and the lines they exchanged. It does NOT record a coordinate — so the only
+ * honest place to draw one is a place the map already puts BOTH people at, in
+ * the slot the conversation was recorded in. Every gate below exists to refuse
+ * rather than approximate:
+ *
+ *   · a participant the map does not carry is not drawn. That is what keeps an
+ *     anonymised resident anonymous: they reach the city as a count at a place,
+ *     never as an agent, so they can never be named by this layer.
+ *   · a slot whose placement was HELD rather than recorded is not drawn, because
+ *     "probably still there" is not evidence of being there.
+ *   · a pair the map puts in two different places is not drawn at all. They may
+ *     well have spoken; this surface simply cannot say where.
+ *
+ * What survives is a bubble whose position, participants and words are each a
+ * recorded fact. The one presentational choice is WHEN inside the leg it shows,
+ * and the city says so in its disclosure.
+ */
+export function conversationPlacements(conversations = [], agents = [], options = {}) {
+  const slot = options.slot || "evening";
+  const slotIndex = DAY_SLOTS.indexOf(slot);
+  if (slotIndex < 0) return [];
+  const byId = new Map((agents || []).map(agent => [Number(agent.id), agent]));
+  const placements = [];
+  for (const conversation of conversations || []) {
+    const ids = Array.isArray(conversation?.participants)
+      ? conversation.participants.map(Number).filter(Number.isFinite)
+      : [];
+    if (ids.length < 2) continue;
+    const people = ids.map(id => byId.get(id));
+    if (people.some(person => !person)) continue;
+    const anchors = people.map(person => person.anchors?.[slotIndex]);
+    if (anchors.some(anchor => !anchor || anchor.recorded !== true)) continue;
+    const placeId = anchors[0].placeId;
+    if (anchors.some(anchor => anchor.placeId !== placeId)) continue;
+    const lines = (conversation.messages || [])
+      .slice()
+      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+      .map(message => ({
+        speaker: message.name || byId.get(Number(message.agent_id))?.name || "",
+        text: String(message.text ?? ""),
+      }))
+      .filter(line => line.speaker && line.text);
+    placements.push({
+      id: Number(conversation.id),
+      placeId,
+      placeName: anchors[0].placeName,
+      x: anchors[0].x,
+      y: anchors[0].y,
+      slot,
+      people: people.map(person => person.name),
+      topic: String(conversation.topic ?? ""),
+      lines,
+    });
+  }
+  /* Deterministic, and stacked so two conversations at one address do not draw
+     on top of each other. */
+  placements.sort((a, b) => (a.placeId - b.placeId) || (a.id - b.id));
+  const seen = new Map();
+  for (const placement of placements) {
+    const rank = seen.get(placement.placeId) ?? 0;
+    placement.stackIndex = rank;
+    seen.set(placement.placeId, rank + 1);
+  }
+  return placements;
+}
+
+/**
+ * Which conversations can actually be READ where they are.
+ *
+ * `conversationPlacements` decides where a bubble is entitled to sit; this
+ * decides whether it can be drawn there without destroying its neighbour. Two
+ * conversations at the same address stack, but two at different addresses can
+ * still land a few pixels apart on screen, and a pile of half-covered quotes is
+ * worse than a smaller number of legible ones — an earlier round of this map was
+ * rejected for exactly that, labels destroyed by what was drawn over them.
+ *
+ * So bubbles are placed greedily in a deterministic order and any that would
+ * overlap one already placed is dropped, not nudged: moving it would put a
+ * recorded conversation at an address the world did not record. The caller is
+ * told how many were dropped so the surface can say so.
+ */
+export function packBubbles(items = [], options = {}) {
+  const width = options.width ?? 260;
+  const height = options.height ?? 54;
+  const gap = options.gap ?? 6;
+  const bounds = options.bounds || null;
+  const kept = [];
+  let dropped = 0;
+  for (const item of items) {
+    const left = item.screenX;
+    const top = item.screenY - height;
+    if (bounds && (left < bounds.minX || left + width > bounds.maxX
+        || top < bounds.minY || top + height > bounds.maxY)) {
+      dropped += 1;
+      continue;
+    }
+    const clash = kept.some(other => (
+      left < other.left + width + gap
+      && left + width + gap > other.left
+      && top < other.top + height + gap
+      && top + height + gap > other.top));
+    if (clash) { dropped += 1; continue; }
+    kept.push({ ...item, left, top });
+  }
+  return { kept, dropped };
+}

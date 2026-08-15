@@ -27,6 +27,8 @@ import {
   DETAIL_ZOOM,
   MAX_DECOLLISION_RADIUS_PX,
   chipScreenPoint,
+  conversationPlacements,
+  packBubbles,
   convexHull,
   dayClock,
   decollisionLayout,
@@ -172,6 +174,15 @@ type Clock = {
 };
 type LiveCount = { inTransit: number; atPlace: number; arrived: number; held: number };
 type Plan = ReturnType<typeof legPlan>;
+type ConversationRow = {
+  id: number; tick: number; participants: number[]; topic: string | null;
+  messages: Array<{ agent_id: number; name: string | null; text: string; seq: number }>;
+};
+type Talk = {
+  id: number; placeId: number; placeName: string | null; x: number; y: number;
+  slot: string; people: string[]; topic: string; stackIndex: number;
+  lines: Array<{ speaker: string; text: string }>;
+};
 type RunStatus = { tick?: number; status?: string; next_phase?: string; running?: boolean };
 
 /*
@@ -205,6 +216,8 @@ const DETAIL_PANEL = { width: 430, height: 292, margin: 24, footClearance: 146 }
    a wake is a point on the same recorded segment the chip is travelling, so the
    trail is not an embellishment on the claim — it is the claim, drawn. */
 const WAKE_MAX_PX = 64;
+/* A bubble's drawn box, which is what decides whether two of them collide. */
+const BUBBLE = { width: 194, height: 40, gap: 6 };
 /* How far a territory's hull is pushed out from its outermost place, and how
    far beyond that its name plate sits. The plate must clear the boundary line
    entirely or it reads as a label ON the border rather than OF the polity. */
@@ -292,6 +305,23 @@ export function LiveCity() {
     () => (map.data ? (normalizeLiveCity(map.data) as CityModel) : EMPTY_MODEL),
     [map.data],
   );
+  /*
+   * The tick's recorded conversations. Small (fifteen pairs, three lines each)
+   * and keyed to the frame of truth on screen rather than to wall clock, so the
+   * words a reader sees always belong to the tick the map is showing.
+   */
+  const conversations = useSource<ConversationRow[]>({
+    key: ["live-city", runId, "conversations", String(model.tick ?? "")],
+    path: `/api/conversations?limit=60&tick_from=${model.tick ?? 0}&tick_to=${model.tick ?? 0}`,
+    label: "/api/conversations",
+    enabled: model.tick !== null,
+  });
+  const talk = useMemo(
+    () => (conversationPlacements(
+      conversations.data || [], model.agents, { slot: "evening" }) as Talk[]),
+    [conversations.data, model.agents],
+  );
+
   const offsets = useMemo<Map<string, Offset>>(
     () => decollisionLayout(model.agents) as Map<string, Offset>,
     [model.agents],
@@ -395,6 +425,28 @@ export function LiveCity() {
    * gets a twin whether or not the segment itself crosses, so nobody who could
    * be in the panel is missing from it.
    */
+
+  /*
+   * Legibility is decided in screen space, not in the world's coordinates: two
+   * conversations at different addresses can still land on top of each other
+   * once projected, and a pile of half-covered quotes reads as a bug. Anything
+   * that cannot be drawn clear of its neighbour is dropped and counted.
+   */
+  const drawnTalk = useMemo(() => {
+    if (!projection) return { kept: [] as Array<Talk & { left: number; top: number }>, dropped: 0 };
+    const projected = talk.map(item => {
+      const point = projection.project(item.x, item.y);
+      return { ...item, screenX: point.x, screenY: point.y - 10 - item.stackIndex * 4 };
+    });
+    return packBubbles(projected, {
+      width: BUBBLE.width, height: BUBBLE.height, gap: BUBBLE.gap,
+      bounds: {
+        minX: CHROME_INSET.left - 40, minY: CHROME_INSET.top,
+        maxX: size.width - CHROME_INSET.right + 40,
+        maxY: size.height - CHROME_INSET.bottom,
+      },
+    }) as { kept: Array<Talk & { left: number; top: number }>; dropped: number };
+  }, [talk, projection, size.width, size.height]);
   const detailMembers = useMemo(() => {
     if (!detail) return [] as CityAgent[];
     const box = detail.camera.window;
@@ -1107,6 +1159,52 @@ export function LiveCity() {
         />)}
       </svg>}
 
+      {/*
+        * EVENING ONLY, AND NOT AS DECORATION.
+        *
+        * The world records these conversations in the evening phase, between
+        * people the map puts at the same address — and it is the same address
+        * they left in the morning. So this layer is the other half of the
+        * commute the city already draws: the chips go out, the chips come back,
+        * and this is what happens when they do.
+        *
+        * It is drawn only while the day is on its evening leg, because that is
+        * the leg the words belong to. Showing them at noon would put a recorded
+        * fact at an hour it did not happen.
+        */}
+      {/*
+        * Every conversation gets a mark at its own address; only the ones with
+        * room get their words. At whole-city zoom the residential ground is
+        * dense enough that most quote boxes would sit on top of each other, and
+        * the answer is not to move them off the address the world recorded —
+        * it is to mark the address and let the reader see which are speaking.
+        */}
+      {projection && phase.nearIndex === 2 && talk.length > 0
+        && <div className="live-city__talk-marks" aria-hidden="true">
+        {talk.map(item => {
+          const point = projection.project(item.x, item.y);
+          return <i
+            key={item.id}
+            className="live-city__talk-mark"
+            style={{ transform: `translate3d(${point.x.toFixed(1)}px, ${point.y.toFixed(1)}px, 0)` }}
+          />;
+        })}
+      </div>}
+
+      {projection && phase.nearIndex === 2 && drawnTalk.kept.length > 0
+        && <div className="live-city__talk">
+        {drawnTalk.kept.map(item => <article
+          key={item.id}
+          className="live-city__bubble"
+          style={{ transform: `translate3d(${item.left.toFixed(1)}px, ${item.top.toFixed(1)}px, 0)` }}
+        >
+          <p className="live-city__bubble-who">{item.people.join(" · ")}</p>
+          {item.lines[0]
+            ? <p className="live-city__bubble-line">&ldquo;{item.lines[0].text}&rdquo;</p>
+            : <p className="live-city__bubble-line">{item.topic}</p>}
+        </article>)}
+      </div>}
+
       {projection && <div
         className="live-city__chips"
         aria-hidden="true"
@@ -1390,6 +1488,12 @@ export function LiveCity() {
         <li><i className="live-city__key live-city__key--routine_home" />At home</li>
         <li><i className="live-city__key live-city__key--routine_work" />At work</li>
         <li><i className="live-city__key live-city__key--public_commons" />In the commons</li>
+        {/* The map explains every other mark it draws; this one is no different. */}
+        {talk.length > 0 && phase.nearIndex === 2 && <li>
+          <i className="live-city__key live-city__key--talk" />
+          {count(talk.length)} recorded conversation{talk.length === 1 ? "" : "s"} this evening,
+          each at the address the world places both speakers at
+        </li>}
         <li><i className="live-city__key live-city__key--haul" />
           {count(model.counts.longHaul)} whose day crosses a border — drawn a size up, and while
           they travel, the rest of their segment and the recorded place at the end of it
@@ -1424,6 +1528,18 @@ export function LiveCity() {
         traveller in transit also carries the rest of that same straight line and a ring on the recorded place
         at the end of it — the destination is recorded, the route between is not.
       </p>
+      {/* Said out loud for the same reason the interpolation is: a reader should
+          never have to guess which part of a bubble is evidence. */}
+      {talk.length > 0 && <p className="ae-cap live-city__talk-note">
+        <b>What people say is recorded; when inside the evening it is not.</b>{" "}
+        {count(talk.length)} conversation{talk.length === 1 ? "" : "s"} this tick, each drawn at the
+        address the world places <em>both</em> speakers at. The words and the speakers are the
+        world&rsquo;s own — a pair the map places apart, or anyone it does not carry, is not drawn
+        at all rather than positioned by guess.{drawnTalk.dropped > 0 && <>{" "}
+        Every one is marked where it happened; {count(drawnTalk.kept.length)} had room to be quoted
+        and {count(drawnTalk.dropped)} did not, because moving a quote off its address to make it
+        fit would misplace a recorded fact.</>}
+      </p>}
       {/*
         * THE TICK'S OWN FIGURES, WHERE A FIXED FACT BELONGS. These are true of
         * the whole recorded tick and do not change while it is on screen, which
