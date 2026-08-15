@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { post } from "../api.js";
-import { projectionScopeParams, useObserverViewState } from "../app/observerViewState";
+import {
+  commonObserverParamsFromState, projectionScopeParams, useObserverViewState,
+} from "../app/observerViewState";
 /* Lineage provenance is the shell topbar's global FreshnessBadge; a second copy
    here is what made the chrome double-decked, so this surface does not repeat it. */
 import { useWorkspaceOutletContext } from "../components/FreshnessBadge";
@@ -233,6 +235,22 @@ function RailRow({ k, v }: { k: string; v: string | null }) {
 }
 
 /**
+ * A rail row whose value is a verdict rather than a quantity, so it is not set
+ * in the tabular-numeral track the counts use. `note` carries the magnitude for
+ * the reader who needs it, without making the magnitude the headline.
+ */
+function RailVerdict({ k, verdict, tone, note }: {
+  k: string; verdict: string | null; tone: "normal" | "bad"; note?: string;
+}) {
+  return <div className="ae-railrow">
+    <span className="k">{k}</span>
+    <span className="v">{verdict === null
+      ? <Pending />
+      : <StatusText tone={tone}>{verdict}{note ? <small> {note}</small> : null}</StatusText>}</span>
+  </div>;
+}
+
+/**
  * Defect 6: a count column and a currency column are not the same column.
  *
  * "27,893,861.39" was dropped into the same right-aligned track as 305, 101 and
@@ -367,6 +385,25 @@ export function OverviewWorkspace() {
     enabled: slowReleased,
     refetchInterval: polling ? 20000 : false,
   });
+  /*
+   * THE INVARIANT, NOT A STATISTIC.
+   *
+   * `ledger_balance` is SUM(delta_cents) over every ledger entry to this tick.
+   * Double entry means it must be exactly zero; any other number says the world
+   * created or destroyed money, which invalidates everything else on this page.
+   *
+   * It had no reader anywhere on this surface — the one figure that says whether
+   * the economy is sound was the one figure nobody could see. It belongs beside
+   * the balances, because that is what it is measured against.
+   */
+  const summaryParams = projectionScopeParams(observerState);
+  summaryParams.set("domains", "summary");
+  const ledger = useSource<{ data: { summary?: { ledger_balance?: number } } }>({
+    key: ["overview-summary", runId, summaryParams.toString()],
+    path: `/api/v2/snapshot?${summaryParams}`,
+    label: "/api/v2/snapshot",
+    refetchInterval: polling ? 20000 : false,
+  });
   const regionParams = projectionScopeParams(observerState);
   regionParams.set("layers", "regions");
   const regions = useSource<RegionEnvelope>({
@@ -448,6 +485,14 @@ export function OverviewWorkspace() {
   const election = government?.last_election ?? null;
   const vc = institutions.data?.vc;
   const health = institutions.data?.health;
+  const ledgerBalance = numberOr(ledger.data?.data.summary?.ledger_balance) ?? null;
+  /* The investigations workspace opens on the event it was sent, at the same
+     fork and tick the reader is already looking at. */
+  const traceUrl = (eventId: number) => {
+    const params = commonObserverParamsFromState(observerState);
+    params.set("event", String(eventId));
+    return `/runs/${encodeURIComponent(runId)}/investigations?${params}`;
+  };
   const regionRows = [...(regions.data?.data.regions ?? [])]
     .sort((a, b) => (numberOr(b.population) ?? 0) - (numberOr(a.population) ?? 0));
   const totalAgents = numberOr(agents.data?.total);
@@ -555,6 +600,15 @@ export function OverviewWorkspace() {
     { key: "phase", label: "Phase", min: 87, skeleton: "70%", render: row => <StatusText
       tone={EXCEPTIONAL.test(row.kind) ? "bad" : "quiet"}
     >{String(row.phase || "").replaceAll("_", " ")}</StatusText> },
+    /*
+     * The way out of "something happened" and into "here is the proof". Without
+     * it the stream is a list a reader can only look at: every event on this
+     * page has a causal chain behind it, and this is the door to it.
+     */
+    { key: "trace", label: "Trace", min: 44, align: "right", skeleton: "40%", render: row =>
+      <Link className="ae-tracelink" aria-label={`Investigate event ${row.id}`} to={traceUrl(row.id)}>
+        Trace <span aria-hidden="true">→</span>
+      </Link> },
   ];
 
   const eventTone = (row: EventRow): RowTone => {
@@ -718,6 +772,17 @@ export function OverviewWorkspace() {
               <span className="ae-railunit">major units</span>
             </div>
             <RailMoney k="Bank deposits" v={fromCents(deposits)} />
+            {/*
+              Stated as the verdict, not the number, because the number is only
+              ever interesting when it is wrong. The cents sit underneath so a
+              reader who needs the magnitude has it without reading the ledger.
+            */}
+            <RailVerdict
+              k="Ledger invariant"
+              verdict={ledgerBalance === null ? null : ledgerBalance === 0 ? "Balanced" : "Review"}
+              tone={ledgerBalance === 0 ? "normal" : "bad"}
+              note={ledgerBalance === null ? undefined : `${count(ledgerBalance)} cents net`}
+            />
           </div>
         </div>
 

@@ -164,6 +164,11 @@ async function mockApi(page: Page) {
     if (path === "/api/v2/operator/investigations") return route.fulfill({ json: { items: [] } });
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
+  /* Overview's event stream is the REST roster endpoint, not the v2 projection,
+     and the trace link is rendered per row — so the row has to exist. */
+  await page.route("**/api/events*", route => route.fulfill({ json: [
+    { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { buyer_id: 1, qty: 5 } },
+  ] }));
   await page.route("**/api/agents", route => route.fulfill({ json: [
     { id: 1, name: "Supplier Officer", kind: "staff", role: "supplier_officer", occupation: "trader", health: "healthy", alive: 1, employer_id: 1, model_tier: "premium" },
     { id: 2, name: "Editor Northstar", kind: "staff", role: "editor", occupation: "editor", health: "healthy", alive: 1, employer_id: null, model_tier: "flash" },
@@ -289,6 +294,11 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
     }
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
+  /* Overview's event stream is the REST roster endpoint, not the v2 projection,
+     and the trace link is rendered per row — so the row has to exist. */
+  await page.route("**/api/events*", route => route.fulfill({ json: [
+    { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { buyer_id: 1, qty: 5 } },
+  ] }));
   await page.route("**/api/agents", route => route.fulfill({ json: [
     { id: 1, name: "Supplier Officer", kind: "staff", role: "supplier_officer", occupation: "trader", alive: 1 },
   ] }));
@@ -686,7 +696,9 @@ test("graph and semantic table share keyboard selection with reduced motion", as
   await proposalNode.focus();
   await expect(proposalNode).toHaveCSS("outline-style", "solid");
   await expect(proposalNode).toHaveCSS("outline-width", "2px");
-  await expect(proposalNode).toHaveCSS("outline-color", "rgb(36, 87, 214)");
+  await expect(proposalNode).toHaveCSS("outline-color", /* --ae-accent. The token layer replaced civic-cobalt #2457d6 with #6ea8ff,
+       which tokens.css records at 7.54:1 — a deliberate contrast raise, not drift. */
+      "rgb(110, 168, 255)");
   await page.keyboard.press("Enter");
   await expect(page.locator(".world-os-semantic-panel tr.selected")).toContainText("buy_goods");
   await page.getByRole("button", { name: "Zoom in" }).click();
