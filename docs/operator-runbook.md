@@ -629,12 +629,12 @@ an evidence receipt from persisted run data without advancing the simulation.
 
 ## Independent external connector evidence
 
-The external connector harness targets an already deployed HTTPS test tenant.
-It never creates a tenant, deploys infrastructure, or authorizes provider or
-hosting spend. Before each invocation, record the exact candidate commit/tree,
-hosted origin, tenant/run, independent signer, expected infrastructure cost,
-and receipt/source retention period. Approval is per connector; one checked
-line does not authorize any other line:
+The external connector finalizer targets an already deployed HTTPS test tenant.
+It never creates a tenant, deploys infrastructure, invokes a native client, or
+authorizes provider or hosting spend. Before each invocation, record the exact
+candidate commit/tree, hosted origin, tenant/run, independent signer, expected
+infrastructure cost, and receipt/source retention period. Approval is per
+connector; one checked line does not authorize any other line:
 
 - [ ] Independent MCP client, including OAuth and protected-resource discovery.
 - [ ] Hermes, including exactly three completed wakes and executed receipts.
@@ -642,14 +642,31 @@ line does not authorize any other line:
 - [ ] Independent Python client submit/read flow.
 - [ ] Independent TypeScript client submit/read flow.
 
-Put the process-only access credential and a cross-tenant isolation probe path
-in an ignored JSON file. On POSIX, give the file mode `600`; the runner verifies
-that mode and current-user ownership. On Windows, restrict the file ACL to the
-current user before invoking the runner; Python's `st_mode` cannot represent or
-verify that ACL. On both platforms the runner refuses symlinks/reparse points,
-verifies that the opened file is the one it inspected, refuses loopback/private
-targets, revokes the credential after the test, and writes only public hashes
-and sanitized identifiers:
+Run the selected native client first. It must write one sanitized
+`agent-economy-native-connector-result-v1` JSON artifact with the candidate,
+hosted-origin hash, public exchange hashes, executed receipt IDs/hashes, and its
+actual implementation provenance. The accepted implementation identities are
+`official_mcp_conformance`, `hermes_cli`, `openclaw_cli`,
+`agent_economy_python_client`, and `agent_economy_typescript_client`; the
+selected connector determines the only eligible identity. The artifact also
+records the native version plus SHA-256 hashes for its executable and sanitized
+invocation. The independent MCP artifact must pin protocol revision
+`2025-11-25`. Free-form client labels cannot substitute for this provenance.
+
+Put the still-active process-only credential and a cross-tenant isolation probe
+path in an ignored JSON file. On POSIX, give the file mode `600`; the finalizer
+verifies that mode and current-user ownership. On Windows, restrict the file ACL
+to the current user before invoking it; Python's `st_mode` cannot represent or
+verify that ACL. On both platforms it refuses symlinks/reparse points, verifies
+that the opened credential is the one it inspected, refuses loopback/private
+targets, re-reads every native receipt from the server, verifies tenant/run/
+actor/scope identity, runs isolation, revokes the credential, and confirms the
+post-revocation `401`.
+
+The finalizer emits two immutable files: a detailed
+`agent-economy-external-connector-v2` receipt and the generic release-gate
+wrapper consumed by `reports/release_evidence.py`. The release collector then
+revalidates both files and the original native artifact offline:
 
 ```bash
 python scripts/run_external_connector_acceptance.py \
@@ -657,15 +674,20 @@ python scripts/run_external_connector_acceptance.py \
   --base-url https://HOSTED_TEST_ORIGIN \
   --commit <CANDIDATE_COMMIT> --tree <CANDIDATE_TREE> \
   --credential-file <IGNORED_MODE_600_JSON> \
-  --output benchmarks/receipts/release-v1/independent-mcp.json \
+  --native-result benchmarks/receipts/release-v1/independent-mcp-native.json \
+  --output benchmarks/receipts/release-v1/independent-mcp-detail.json \
+  --release-gate-output benchmarks/receipts/release-v1/independent-mcp.json \
+  --repo-root . \
   --signer-label <INDEPENDENT_SIGNER> \
-  --server-operator <SERVER_OPERATOR> \
-  --client-name <CLIENT_NAME> --client-version <CLIENT_VERSION>
+  --server-operator <SERVER_OPERATOR>
 ```
 
 Repeat only after separately approving the selected connector. A local mock,
 same-operator signer, failed revocation/isolation probe, short wake set, or
-receipt that contains credentials or private payloads is ineligible.
+receipt that contains credentials or private payloads is ineligible. The
+`--rehearsal` mode exercises the hosted REST surface with urllib, but always
+writes `execution_scope: local` under a rehearsal-only schema. It cannot satisfy
+any of the five native connector gates, regardless of `--connector`.
 
 ## Evidence retention
 

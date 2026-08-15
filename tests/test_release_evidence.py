@@ -10,6 +10,14 @@ import pytest
 import yaml
 import reports.release_evidence as release_evidence
 
+from benchmarks.external_connector_acceptance import (
+    CONNECTOR_IMPLEMENTATIONS,
+    NATIVE_RESULT_SCHEMA,
+    build_external_release_gate_receipt,
+    external_configuration_sha256,
+    hosted_origin_sha256,
+)
+
 from reports.release_evidence import (
     REQUIRED_GATES,
     canonical_release_json,
@@ -39,10 +47,94 @@ V1_REQUIRED_GATES = frozenset({
     "tenant_isolation_load",
     "typescript_connector",
 })
+EXTERNAL_GATE_CONNECTORS = {
+    "independent_mcp": "independent_mcp",
+    "hermes_connector": "hermes",
+    "openclaw_connector": "openclaw",
+    "python_connector": "python",
+    "typescript_connector": "typescript",
+}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _native_connector_result(connector: str) -> dict:
+    value = {
+        "schema": NATIVE_RESULT_SCHEMA,
+        "connector": connector,
+        "execution_scope": "independent_external",
+        "status": "passed",
+        "candidate": {"commit": COMMIT, "tree": TREE},
+        "client": {
+            "implementation": CONNECTOR_IMPLEMENTATIONS[connector],
+            "name": f"outside-{connector}",
+            "version": "1.2.3",
+            "executable_sha256": "a" * 64,
+            "invocation_sha256": "b" * 64,
+        },
+        "hosted_origin_sha256": hosted_origin_sha256("https://agents.example.test"),
+        "tenant_id": "10000000-0000-4000-8000-000000000001",
+        "run_id": "20000000-0000-4000-8000-000000000002",
+        "actor_id": "30000000-0000-4000-8000-000000000003",
+        "scopes": ["world.act", "world.read"],
+        "started_at": "2026-08-05T12:00:00Z",
+        "ended_at": "2026-08-05T12:00:30Z",
+        "public_exchange": {
+            "request_sha256": "3" * 64,
+            "response_sha256": "5" * 64,
+        },
+        "executed_receipts": [{
+            "receipt_id": "receipt-1",
+            "sha256": "6" * 64,
+            "status": "executed",
+        }],
+        "flows": {"authorized_submit": True, "receipt_read": True},
+        "notes": "Public hashes only; no transport payloads retained.",
+    }
+    if connector == "independent_mcp":
+        value["discovery"] = {
+            "passed": True,
+            "protocol_version": "2025-11-25",
+            "authorization_server_sha256": "7" * 64,
+            "protected_resource_sha256": "8" * 64,
+            "initialize_sha256": "9" * 64,
+        }
+        del value["flows"]
+    if connector in {"hermes", "openclaw"}:
+        value["wakes"] = [
+            {
+                "target_tick": index,
+                "submission_id": f"submission-{index}",
+                "receipt_id": f"receipt-{index}",
+                "status": "executed",
+            }
+            for index in range(1, 4)
+        ]
+        value["executed_receipts"] = [
+            {
+                "receipt_id": f"receipt-{index}",
+                "sha256": f"{index + 5:x}" * 64,
+                "status": "executed",
+            }
+            for index in range(1, 4)
+        ]
+        del value["flows"]
+    return value
+
+
+def _detailed_connector_receipt(native: dict, native_sha256: str) -> dict:
+    value = json.loads(json.dumps(native))
+    value["schema"] = "agent-economy-external-connector-v2"
+    value["client"]["native_evidence_sha256"] = native_sha256
+    value["signer"] = {"label": "independent-lab", "independent": True}
+    value["server_operator"] = "agent-economy-operator"
+    value["base_url"] = "https://agents.example.test"
+    value["ended_at"] = "2026-08-05T12:01:00Z"
+    value["revocation"] = {"passed": True, "post_revoke_status": 401}
+    value["cross_tenant_isolation"] = {"passed": True, "status": 403}
+    return value
 
 
 def release_fixture(
@@ -61,42 +153,68 @@ def release_fixture(
     for gate_id in sorted(V1_REQUIRED_GATES):
         if gate_id in omitted:
             continue
-        artifact = artifacts / f"{gate_id}.txt"
-        artifact.write_text(f"public evidence for {gate_id}\n", encoding="utf-8")
-        scope = (
-            "independent_external"
-            if gate_id in {
-                "independent_mcp",
-                "hermes_connector",
-                "openclaw_connector",
-                "python_connector",
-                "typescript_connector",
+        if gate_id in EXTERNAL_GATE_CONNECTORS:
+            connector = EXTERNAL_GATE_CONNECTORS[gate_id]
+            native = _native_connector_result(connector)
+            native_artifact = artifacts / f"{gate_id}-native.json"
+            native_artifact.write_text(
+                json.dumps(native, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            detailed = _detailed_connector_receipt(native, _sha256(native_artifact))
+            detailed_artifact = artifacts / f"{gate_id}-detail.json"
+            detailed_artifact.write_text(
+                json.dumps(detailed, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            receipt = build_external_release_gate_receipt(
+                detailed,
+                detailed_artifact={
+                    "path": detailed_artifact.relative_to(repo).as_posix(),
+                    "sha256": _sha256(detailed_artifact),
+                },
+                native_artifact={
+                    "path": native_artifact.relative_to(repo).as_posix(),
+                    "sha256": _sha256(native_artifact),
+                },
+                environment={
+                    "os": "linux",
+                    "architecture": "x86_64",
+                    "tool_versions": {
+                        CONNECTOR_IMPLEMENTATIONS[connector]: "1.2.3"
+                    },
+                    "hosted_origin_sha256": detailed["hosted_origin_sha256"],
+                },
+                verifier={"name": "fixture", "version": "2"},
+                reviewer_notes="fixture evidence only",
+            )
+            receipt["status"] = status
+        else:
+            artifact = artifacts / f"{gate_id}.txt"
+            artifact.write_text(f"public evidence for {gate_id}\n", encoding="utf-8")
+            receipt = {
+                "schema": "agent-economy-release-gate-v1",
+                "gate_id": gate_id,
+                "candidate": {"commit": COMMIT, "tree": TREE, "dirty": False},
+                "execution_scope": "local",
+                "status": status,
+                "started_at": "2026-08-05T12:00:00Z",
+                "ended_at": "2026-08-05T12:01:00Z",
+                "command": f"verify {gate_id}",
+                "configuration_sha256": "3" * 64,
+                "environment": {
+                    "os": "linux",
+                    "architecture": "x86_64",
+                    "tool_versions": {"python": "3.12"},
+                },
+                "summary": "eligible evidence passed",
+                "artifacts": [{
+                    "path": artifact.relative_to(repo).as_posix(),
+                    "sha256": _sha256(artifact),
+                }],
+                "verifier": {"name": "fixture", "version": "1"},
+                "reviewer_notes": "fixture evidence only",
             }
-            else "local"
-        )
-        receipt = {
-            "schema": "agent-economy-release-gate-v1",
-            "gate_id": gate_id,
-            "candidate": {"commit": COMMIT, "tree": TREE, "dirty": False},
-            "execution_scope": scope,
-            "status": status,
-            "started_at": "2026-08-05T12:00:00Z",
-            "ended_at": "2026-08-05T12:01:00Z",
-            "command": f"verify {gate_id}",
-            "configuration_sha256": "3" * 64,
-            "environment": {
-                "os": "linux",
-                "architecture": "x86_64",
-                "tool_versions": {"python": "3.12"},
-            },
-            "summary": "eligible evidence passed",
-            "artifacts": [{
-                "path": artifact.relative_to(repo).as_posix(),
-                "sha256": _sha256(artifact),
-            }],
-            "verifier": {"name": "fixture", "version": "1"},
-            "reviewer_notes": "fixture evidence only",
-        }
         receipt_path = receipts / f"{gate_id}.json"
         receipt_path.write_text(
             json.dumps(receipt, indent=2, sort_keys=True) + "\n",
@@ -128,6 +246,75 @@ def test_complete_manifest_passes_only_for_exact_candidate(tmp_path):
     assert result["candidate"] == {"commit": COMMIT, "tree": TREE}
     assert len(result["gates"]) == len(V1_REQUIRED_GATES)
     assert result["errors"] == []
+
+
+def test_passed_external_gate_rejects_generic_text_as_native_evidence(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(item for item in payload["gates"] if item["gate_id"] == "independent_mcp")
+    receipt_path = repo / row["receipt"]
+    wrapper = json.loads(receipt_path.read_text(encoding="utf-8"))
+    generic = repo / "artifacts" / "generic-mcp.txt"
+    generic.write_text("generic hashed evidence\n", encoding="utf-8")
+    wrapper["artifacts"] = [{
+        "path": generic.relative_to(repo).as_posix(),
+        "sha256": _sha256(generic),
+    }]
+    receipt_path.write_text(
+        json.dumps(wrapper, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert ("independent_mcp", "missing_external_detail") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
+
+
+def test_external_native_result_rejects_relabelled_client(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = next(item for item in payload["gates"] if item["gate_id"] == "typescript_connector")
+    receipt_path = repo / row["receipt"]
+    wrapper = json.loads(receipt_path.read_text(encoding="utf-8"))
+    native_record = next(
+        artifact for artifact in wrapper["artifacts"] if artifact["path"].endswith("-native.json")
+    )
+    detail_record = next(
+        artifact for artifact in wrapper["artifacts"] if artifact["path"].endswith("-detail.json")
+    )
+    native_path = repo / native_record["path"]
+    native = json.loads(native_path.read_text(encoding="utf-8"))
+    native["client"]["implementation"] = "agent_economy_python_client"
+    native_path.write_text(
+        json.dumps(native, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    native_record["sha256"] = _sha256(native_path)
+    detail_path = repo / detail_record["path"]
+    detailed = json.loads(detail_path.read_text(encoding="utf-8"))
+    detailed["client"]["native_evidence_sha256"] = native_record["sha256"]
+    detail_path.write_text(
+        json.dumps(detailed, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    detail_record["sha256"] = _sha256(detail_path)
+    wrapper["configuration_sha256"] = external_configuration_sha256(detailed)
+    receipt_path.write_text(
+        json.dumps(wrapper, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert ("typescript_connector", "invalid_native_result") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
 
 
 def test_published_gate_omits_unbounded_receipt_narrative(tmp_path):
@@ -168,6 +355,29 @@ def test_collector_decodes_the_same_bytes_used_for_hashing(tmp_path, monkeypatch
     result = collect_release_evidence(manifest, repo_root=repo)
 
     assert result["overall_status"] == "passed"
+
+
+def test_external_artifacts_are_not_reopened_after_hash_verification(
+    tmp_path, monkeypatch,
+):
+    repo, manifest = release_fixture(tmp_path)
+    original_read_bytes = Path.read_bytes
+    artifact_reads: dict[Path, int] = {}
+
+    def guarded_read_bytes(path, *args, **kwargs):
+        if path.parent.name == "artifacts" and path.suffix == ".json":
+            artifact_reads[path] = artifact_reads.get(path, 0) + 1
+            if artifact_reads[path] > 1:
+                raise AssertionError("verified external artifact was reopened")
+        return original_read_bytes(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "passed"
+    assert artifact_reads
+    assert set(artifact_reads.values()) == {1}
 
 
 def test_collector_scans_ascii_secrets_inside_non_utf8_artifacts(tmp_path):
