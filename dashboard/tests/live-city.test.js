@@ -9,6 +9,8 @@ import {
   MAX_DECOLLISION_RADIUS_PX,
   chipScreenPoint,
   cityBounds,
+  conversationPlacements,
+  packBubbles,
   convexHull,
   crowdCensus,
   dayClock,
@@ -729,4 +731,86 @@ test("the person who actually moved is the only one whose anchors changed", () =
 
   assert.deepEqual(anchorsOf(before, 1), anchorsOf(after, 1));
   assert.notDeepEqual(anchorsOf(before, 2), anchorsOf(after, 2));
+});
+
+/* ---- conversations, and the four ways one is refused ------------------- */
+
+function household(id, name, homeId, workId) {
+  const home = { placeId: homeId, placeName: "Home", x: 0.2, y: 0.3, recorded: true };
+  const work = { placeId: workId, placeName: "Work", x: 0.7, y: 0.6, recorded: true };
+  return { id, name, anchors: [home, work, home] };
+}
+
+test("a conversation is pinned to the place the map puts both people at", () => {
+  const agents = [household(1, "Zoe", 5, 9), household(2, "Dara", 5, 8)];
+  const [placed] = conversationPlacements([{
+    id: 11, participants: [1, 2], topic: "local banks",
+    /* Deliberately out of order: the transcript is ordered by seq, not arrival. */
+    messages: [{ seq: 1, name: "Dara", text: "second" }, { seq: 0, name: "Zoe", text: "first" }],
+  }], agents);
+
+  assert.equal(placed.placeId, 5);
+  assert.equal(placed.x, 0.2);
+  assert.equal(placed.y, 0.3);
+  assert.deepEqual(placed.people, ["Zoe", "Dara"]);
+  assert.deepEqual(placed.lines.map(line => line.text), ["first", "second"]);
+});
+
+test("a pair the map places apart is refused, not approximated", () => {
+  /* They may well have spoken. The map cannot say where, so nothing is drawn. */
+  const agents = [household(1, "Zoe", 5, 9), household(2, "Far", 6, 8)];
+  assert.deepEqual(
+    conversationPlacements([{ id: 11, participants: [1, 2], messages: [] }], agents), []);
+});
+
+test("a participant the map does not carry keeps the whole conversation off", () => {
+  /* This is the privacy guarantee: an anonymised resident arrives as a count at
+     a place and never as an agent, so this layer can never name them. */
+  const agents = [household(1, "Zoe", 5, 9)];
+  assert.deepEqual(
+    conversationPlacements([{ id: 11, participants: [1, 404], messages: [] }], agents), []);
+});
+
+test("a held placement is not evidence of being there", () => {
+  const agents = [household(1, "Zoe", 5, 9), household(2, "Dara", 5, 8)];
+  agents[1].anchors[2] = { ...agents[1].anchors[2], recorded: false };
+  assert.deepEqual(
+    conversationPlacements([{ id: 11, participants: [1, 2], messages: [] }], agents), []);
+});
+
+test("two conversations at one address stack instead of overlapping", () => {
+  const agents = [
+    household(1, "A", 5, 9), household(2, "B", 5, 8),
+    household(3, "C", 5, 7), household(4, "D", 5, 6),
+  ];
+  const placed = conversationPlacements([
+    { id: 22, participants: [3, 4], messages: [] },
+    { id: 11, participants: [1, 2], messages: [] },
+  ], agents);
+  assert.deepEqual(placed.map(item => item.id), [11, 22], "ordering must be deterministic");
+  assert.deepEqual(placed.map(item => item.stackIndex), [0, 1]);
+});
+
+test("bubbles that would cover each other are dropped, never nudged", () => {
+  /* Nudging would put a recorded conversation at an address the world did not
+     record, so an unreadable bubble is refused instead. */
+  const items = [
+    { id: 1, screenX: 100, screenY: 200 },
+    { id: 2, screenX: 108, screenY: 205 },   // lands on top of #1
+    { id: 3, screenX: 600, screenY: 200 },   // clear
+  ];
+  const { kept, dropped } = packBubbles(items, { width: 200, height: 50 });
+  assert.deepEqual(kept.map(item => item.id), [1, 3]);
+  assert.equal(dropped, 1);
+  /* Whatever survives sits exactly where it was entitled to sit. */
+  assert.equal(kept[0].left, 100);
+  assert.equal(kept[0].top, 150);
+});
+
+test("a bubble that would hang outside the frame is dropped too", () => {
+  const bounds = { minX: 0, minY: 0, maxX: 500, maxY: 400 };
+  const { kept, dropped } = packBubbles(
+    [{ id: 1, screenX: 460, screenY: 200 }], { width: 200, height: 50, bounds });
+  assert.deepEqual(kept, []);
+  assert.equal(dropped, 1);
 });

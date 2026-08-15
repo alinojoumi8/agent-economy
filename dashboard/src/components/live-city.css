@@ -871,3 +871,83 @@
   .live-city__legend { display: none; }
   .live-city__disclosure { flex-direction: column; align-items: flex-start; gap: var(--ae-space-2); }
 }
+
+/* ---- recorded conversations, evening leg only -------------------------- */
+
+/*
+ * Held to the same rule as every other mark on this map: the position is a
+ * recorded placement, so the bubble is anchored to the point and never nudged
+ * to make room. Where two conversations share an address they stack upward,
+ * which is why the transform carries a stack offset rather than a layout.
+ */
+.live-city__talk {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.live-city__bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 194px;   /* the box packBubbles reserves, so collisions match the draw */
+  padding: .3rem .5rem .34rem;
+  border: 1px solid color-mix(in oklab, var(--ae-accent) 42%, transparent);
+  border-radius: .5rem;
+  background: color-mix(in oklab, var(--ae-bg) 88%, transparent);
+  backdrop-filter: blur(3px);
+  transform-origin: 0 100%;
+  animation: live-city-bubble-in .5s ease both;
+}
+
+.live-city__bubble-who {
+  margin: 0;
+  font-size: .58rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ae-accent);
+}
+
+.live-city__bubble-line {
+  margin: .1rem 0 0;
+  font-size: .68rem;
+  line-height: 1.32;
+  color: var(--ae-fg);
+  /* Two lines, then stop: the transcript is in the panel, not over the map. */
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@keyframes live-city-bubble-in {
+  from { opacity: 0; transform-origin: 0 100%; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-city__bubble { animation: none; }
+}
+
+/* Every recorded conversation, marked at its own address. Small on purpose:
+   this layer must never be what covers the people it belongs to. */
+.live-city__talk-marks { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+
+.live-city__talk-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  margin: -13px 0 0 -3.5px;
+  border-radius: 50% 50% 50% 1px;
+  background: var(--ae-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ae-bg) 70%, transparent);
+  opacity: .85;
+}
+
+.live-city__key--talk {
+  background: var(--ae-accent);
+  border-radius: 50% 50% 50% 1px;
+}
