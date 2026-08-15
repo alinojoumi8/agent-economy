@@ -570,6 +570,100 @@ body::before {
   background: rgba(36, 87, 214, .2);
 }
 
+.civic-city__construction {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: 30px;
+  min-height: 24px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--civic-navy);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+.civic-city__construction i {
+  display: block;
+  width: 22px;
+  height: 11px;
+  border: 2px dashed #9c6541;
+  background: rgba(238, 220, 189, .78);
+  box-shadow: 0 3px 0 rgba(91, 61, 43, .18);
+  transform: skewY(-8deg);
+}
+
+.civic-city__construction.is-foundation i {
+  height: 8px;
+  border-style: solid;
+  background: #b77147;
+  box-shadow: 0 4px 0 #79462f;
+}
+
+.civic-city__construction.is-frame i {
+  height: 21px;
+  border: 3px double #c57838;
+  background: rgba(255, 240, 199, .14);
+  box-shadow: inset 0 -2px 0 #c57838;
+}
+
+.civic-city__construction.is-shell i {
+  height: 25px;
+  border-style: solid;
+  background: #d6a854;
+  box-shadow: inset 0 6px 0 rgba(255, 243, 204, .32), 0 4px 0 #7b5731;
+}
+
+.civic-city__construction.is-completed i {
+  height: 29px;
+  border-style: solid;
+  background: #6f9d7f;
+  box-shadow: inset 0 7px 0 rgba(234, 247, 232, .3), 0 4px 0 #3f6550;
+}
+
+.civic-city__construction.is-cancelled i {
+  border-color: #9e4035;
+  background: repeating-linear-gradient(135deg, rgba(157, 64, 53, .65) 0 4px, rgba(250, 240, 221, .55) 4px 8px);
+}
+
+.civic-city__construction.is-aggregate i {
+  border-radius: 50%;
+  transform: none;
+}
+
+.civic-city__construction span {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  width: max-content;
+  max-width: 190px;
+  border-left: 2px solid #c57838;
+  background: rgba(250, 247, 238, .94);
+  padding: .18rem .3rem;
+  color: #5d452f;
+  font: 720 .5rem/1.25 var(--civic-font-label);
+  letter-spacing: .025em;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.civic-city__construction:hover,
+.civic-city__construction.is-selected {
+  z-index: 9;
+}
+
+.civic-city__construction:hover i,
+.civic-city__construction.is-selected i {
+  box-shadow: 0 0 0 3px var(--civic-white), 0 0 0 6px var(--civic-vermilion);
+}
+
+.civic-city__construction:focus-visible {
+  outline: 3px solid var(--civic-amber);
+  outline-offset: 5px;
+}
+
 .civic-city__place {
   position: absolute;
   z-index: 4;
@@ -778,6 +872,14 @@ body::before {
   border: 2px solid white;
   background: var(--civic-chartreuse);
   box-shadow: 0 0 0 1px var(--civic-navy);
+}
+
+.civic-city__legend i.is-construction {
+  width: 12px;
+  height: 9px;
+  border: 2px solid #c57838;
+  border-radius: 0;
+  background: rgba(214, 168, 84, .7);
 }
 
 .civic-city__legend b {

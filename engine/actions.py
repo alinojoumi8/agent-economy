@@ -59,6 +59,10 @@ VALID_TYPES = {
     "buy_compute_plan", "cancel_compute_plan", "set_compute_sponsorship", "study_skill",
     # semantics-12 civic permit workflow
     "apply_business_permit", "attend_civic_appointment", "decide_business_permit",
+    # semantics-13 construction economy
+    "propose_construction", "apply_construction_permit",
+    "decide_construction_permit", "contribute_construction_funding",
+    "perform_construction_work", "cancel_construction",
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
@@ -199,7 +203,13 @@ class ActionExecutor:
                     and self.engine_semantics_version < 11)
                 or (atype in {"apply_business_permit", "attend_civic_appointment",
                               "decide_business_permit"}
-                    and self.engine_semantics_version < 12)):
+                    and self.engine_semantics_version < 12)
+                or (atype in {
+                        "propose_construction", "apply_construction_permit",
+                        "decide_construction_permit",
+                        "contribute_construction_funding",
+                        "perform_construction_work", "cancel_construction",
+                    } and self.engine_semantics_version < 13)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -735,6 +745,32 @@ class ActionExecutor:
             str(action["decision"]),
             str(action["reason_code"]),
         )
+
+    def _do_propose_construction(self, tick, actor_id, action, phase) -> dict:
+        return self.e.construction.propose(tick, actor_id, action)
+
+    def _do_apply_construction_permit(
+        self, tick, actor_id, action, phase,
+    ) -> dict:
+        return self.e.construction.apply_permit(tick, actor_id, action)
+
+    def _do_decide_construction_permit(
+        self, tick, actor_id, action, phase,
+    ) -> dict:
+        return self.e.construction.decide_permit(tick, actor_id, action)
+
+    def _do_contribute_construction_funding(
+        self, tick, actor_id, action, phase,
+    ) -> dict:
+        return self.e.construction.contribute_funding(tick, actor_id, action)
+
+    def _do_perform_construction_work(
+        self, tick, actor_id, action, phase,
+    ) -> dict:
+        return self.e.construction.perform_work(tick, actor_id, action)
+
+    def _do_cancel_construction(self, tick, actor_id, action, phase) -> dict:
+        return self.e.construction.cancel(tick, actor_id, action)
 
     def _do_found_company(self, tick, actor_id, action, phase) -> dict:
         entrepreneurship = self.e.config.get("entrepreneurship", {})

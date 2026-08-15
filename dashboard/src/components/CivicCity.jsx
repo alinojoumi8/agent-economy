@@ -86,6 +86,21 @@ function coordinateCopy(mode) {
   return "Derived civic layout";
 }
 
+function constructionMetrics(project) {
+  return {
+    funding: Number(project?.contributedFundingCents ?? project?.contributed?.funding_cents ?? 0),
+    requiredFunding: Number(project?.requiredFundingCents ?? project?.requirements?.funding_cents ?? 0),
+    work: Number(project?.contributedWorkUnits ?? project?.contributed?.work_units ?? 0),
+    requiredWork: Number(project?.requiredWorkUnits ?? project?.requirements?.work_units ?? 0),
+  };
+}
+
+function constructionStage(project) {
+  if (project?.stage) return String(project.stage);
+  if (project?.status === "completed") return "completed";
+  return "site";
+}
+
 function statusCopy(status, connected, tick, historical) {
   if (!connected) return "Connection unavailable";
   if (historical) return `Historical tick ${tick}`;
@@ -124,6 +139,7 @@ export function CivicCity(props) {
   const [localActiveOnly, setLocalActiveOnly] = useState(false);
   const [localSelectedId, setLocalSelectedId] = useState(null);
   const [localSelectedPlaceId, setLocalSelectedPlaceId] = useState(null);
+  const [localSelectedProjectId, setLocalSelectedProjectId] = useState(null);
   const [localPopulation, setLocalPopulation] = useState("core");
   const [localView, setLocalView] = useState("atlas");
   const [hasWebGL2, setHasWebGL2] = useState(null);
@@ -132,6 +148,7 @@ export function CivicCity(props) {
   const activeOnly = observerState?.activeOnly ?? localActiveOnly;
   const selectedId = observerState?.agent ?? localSelectedId;
   const selectedPlaceId = observerState?.place ?? localSelectedPlaceId;
+  const selectedProjectId = observerState?.project ?? localSelectedProjectId;
   const populationMode = observerState?.population ?? localPopulation;
   const cityView = observerState?.view ?? localView;
   const lensRef = useRef(null);
@@ -152,7 +169,10 @@ export function CivicCity(props) {
   const selectedPlace = model.places.find(
     place => String(place.id) === String(selectedPlaceId),
   ) || null;
-  const selected = selectedPlace ? null : (
+  const selectedProject = model.constructionProjects.find(
+    project => String(project.id) === String(selectedProjectId),
+  ) || null;
+  const selected = selectedPlace || selectedProject ? null : (
     visibleAgents.find(agent => String(agent.id) === String(selectedId))
       || visibleAgents.find(agent => agent.isActive)
       || visibleAgents.find(agent => agent.event)
@@ -165,6 +185,15 @@ export function CivicCity(props) {
   useEffect(() => {
     if (!observerState || !onObserverStateChange || loading) return;
     const resolvedId = selected ? Number(selected.id) : null;
+    if (observerState.project != null) {
+      if (!selectedProject) {
+        onObserverStateChange(
+          { project: null, agent: resolvedId },
+          { replace: true },
+        );
+      }
+      return;
+    }
     if (observerState.place != null) {
       if (!selectedPlace) {
         onObserverStateChange(
@@ -183,6 +212,7 @@ export function CivicCity(props) {
     onObserverStateChange,
     selected,
     selectedPlace,
+    selectedProject,
   ]);
   useEffect(() => {
     if (cityView === "diorama" && hasWebGL2 === null) {
@@ -200,6 +230,7 @@ export function CivicCity(props) {
       || (selectedPlace.owner_type === "firm"
         && String(firm.id) === String(selectedPlace.owner_id)))
     : null;
+  const selectedProjectMetrics = constructionMetrics(selectedProject);
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const commonParams = new URLSearchParams();
@@ -222,6 +253,22 @@ export function CivicCity(props) {
   }
   const placeHref = selectedPlace && runId
     ? `/runs/${encodeURIComponent(runId)}/world?${worldPlaceParams}`
+    : null;
+  const worldProjectParams = new URLSearchParams(commonParams);
+  if (selectedProject) {
+    worldProjectParams.set("project", String(selectedProject.id));
+    worldProjectParams.set("view", cityView);
+  }
+  const projectHref = selectedProject && runId
+    ? `/runs/${encodeURIComponent(runId)}/world?${worldProjectParams}`
+    : null;
+  const completedPlaceParams = new URLSearchParams(commonParams);
+  if (selectedProject?.place_id != null) {
+    completedPlaceParams.set("place", String(selectedProject.place_id));
+    completedPlaceParams.set("view", cityView);
+  }
+  const completedPlaceHref = selectedProject?.place_id != null && runId
+    ? `/runs/${encodeURIComponent(runId)}/world?${completedPlaceParams}`
     : null;
   const layerCounts = Object.fromEntries(
     CITY_LAYERS.map(layer => [
@@ -252,6 +299,7 @@ export function CivicCity(props) {
     else {
       setLocalSelectedId(nextId);
       setLocalSelectedPlaceId(null);
+      setLocalSelectedProjectId(null);
     }
   };
   const changeObserverFilter = (update, options) => {
@@ -290,12 +338,22 @@ export function CivicCity(props) {
     else {
       setLocalSelectedId(value);
       setLocalSelectedPlaceId(null);
+      setLocalSelectedProjectId(null);
     }
   };
   const changePlaceSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ place: value });
     else {
       setLocalSelectedPlaceId(value);
+      setLocalSelectedId(null);
+      setLocalSelectedProjectId(null);
+    }
+  };
+  const changeProjectSelection = value => {
+    if (onObserverStateChange) onObserverStateChange({ project: value });
+    else {
+      setLocalSelectedProjectId(value);
+      setLocalSelectedPlaceId(null);
       setLocalSelectedId(null);
     }
   };
@@ -305,12 +363,14 @@ export function CivicCity(props) {
   };
   const changePopulation = value => {
     const clusterPatch = value === "clusters"
-      ? { population: value, q: null, layer: null, activeOnly: false, agent: null }
-      : { population: value, agent: null };
+      ? { population: value, q: null, layer: null, activeOnly: false, agent: null, place: null, project: null }
+      : { population: value, agent: null, place: null, project: null };
     if (onObserverStateChange) onObserverStateChange(clusterPatch);
     else {
       setLocalPopulation(value);
       setLocalSelectedId(null);
+      setLocalSelectedPlaceId(null);
+      setLocalSelectedProjectId(null);
       if (value === "clusters") {
         setLocalQuery("");
         setLocalActiveLayer("all");
@@ -326,6 +386,7 @@ export function CivicCity(props) {
         activeOnly: false,
         agent: null,
         place: null,
+        project: null,
         population: null,
       });
       return;
@@ -335,6 +396,7 @@ export function CivicCity(props) {
     setLocalActiveOnly(false);
     setLocalSelectedId(null);
     setLocalSelectedPlaceId(null);
+    setLocalSelectedProjectId(null);
     setLocalPopulation("core");
   };
   const openMobileLens = () => {
@@ -364,6 +426,7 @@ export function CivicCity(props) {
         <div><dt>AI live</dt><dd>{historical ? "—" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
         <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
         <div><dt>Residents</dt><dd>{model.counts.residents} <small>{model.population.core} core</small></dd></div>
+        <div><dt>Construction</dt><dd>{model.counts.construction} <small>stored projects</small></dd></div>
         <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd></div>
       </dl>
     </header>
@@ -434,8 +497,10 @@ export function CivicCity(props) {
                 showClusters={showClusters}
                 selectedAgentId={selected?.id ?? null}
                 selectedPlaceId={selectedPlace?.id ?? null}
+                selectedProjectId={selectedProject?.id ?? null}
                 onSelectAgent={changeSelection}
                 onSelectPlace={changePlaceSelection}
+                onSelectProject={changeProjectSelection}
                 onShowAllResidents={() => changePopulation("all")}
                 animateLiveActivity={animateLiveActivity}
                 tick={tick}
@@ -498,6 +563,40 @@ export function CivicCity(props) {
           <span>{String(firm.name || "Firm").replace(/\s+(co|company|inc)\b.*$/i, "").slice(0, 16)}</span>
         </div>)}
 
+        {model.constructionProjects
+          .filter(project => !(project.status === "completed" && project.place_id != null))
+          .map(project => {
+            const metrics = constructionMetrics(project);
+            const stage = constructionStage(project);
+            const selectedHere = selectedProject
+              && String(selectedProject.id) === String(project.id);
+            const aggregateCount = Number(project.aggregateCount ?? project.aggregate_count ?? 1);
+            const aggregate = project.privacy === "aggregated_private";
+            const stageCopy = stage === "site" ? humanize(project.status) : humanize(stage);
+            return <button
+              type="button"
+              key={`construction-${project.id}`}
+              className={[
+                "civic-city__construction",
+                `is-${stage}`,
+                project.status === "cancelled" ? "is-cancelled" : "",
+                aggregate ? "is-aggregate" : "",
+                selectedHere ? "is-selected" : "",
+              ].filter(Boolean).join(" ")}
+              style={{ left: `${project.x}%`, top: `${project.y}%` }}
+              title={`${project.name} · ${stageCopy} · ${metrics.work}/${metrics.requiredWork} work units`}
+              onClick={() => changeProjectSelection(project.id)}
+              aria-pressed={selectedHere}
+              aria-label={`Select ${project.name}, ${stageCopy}, ${metrics.work} of ${metrics.requiredWork} work units${aggregate ? `, ${aggregateCount} private homes aggregated` : ""}`}
+            >
+              <i aria-hidden="true" />
+              <span>
+                {aggregate && aggregateCount > 1 ? `${aggregateCount} homes · ` : ""}
+                {stageCopy} · {metrics.work}/{metrics.requiredWork} work
+              </span>
+            </button>;
+          })}
+
         {model.places.map(place => <button
           type="button"
           key={`place-${place.id}`}
@@ -554,7 +653,7 @@ export function CivicCity(props) {
           <strong>City evidence is temporarily unavailable.</strong>
           <span>{error}</span>
         </div>}
-        {!loading && !error && !visibleAgents.length && <div className="civic-city__empty">
+        {!loading && !error && !visibleAgents.length && !model.places.length && !model.constructionProjects.length && <div className="civic-city__empty">
           <strong>No city marks match this view.</strong>
           <span>Clear the search or show all activity layers.</span>
           <button type="button" onClick={resetView}>Reset city view</button>
@@ -570,20 +669,23 @@ export function CivicCity(props) {
           <span><i className="is-settled" />Settled</span>
           <span><i className="is-rejected" />Rejected</span>
           <span><i className="is-cluster" />Peripheral cluster</span>
+          <span><i className="is-construction" />Construction stage</span>
           <span><i />Assigned or resident</span>
           <span><b />Firm footprint</span>
         </div>
         <div className="civic-city__coordinates" aria-hidden="true">
           <span>GRID A-01</span><span>FIELD E-23</span><span>AE / {String(tick).padStart(4, "0")}</span>
         </div>
-          {(selected || selectedPlace) && <button
+          {(selected || selectedPlace || selectedProject) && <button
             type="button"
             className="civic-city__mobile-peek"
             onClick={openMobileLens}
           >
             <span>
-              <b>{selectedPlace?.name || selected?.name}</b>
-              <small>{selectedPlace ? humanize(selectedPlace.kind) : humanize(selected?.activityState)}</small>
+              <b>{selectedProject?.name || selectedPlace?.name || selected?.name}</b>
+              <small>{selectedProject
+                ? `${humanize(constructionStage(selectedProject))} · ${selectedProjectMetrics.work}/${selectedProjectMetrics.requiredWork} work`
+                : selectedPlace ? humanize(selectedPlace.kind) : humanize(selected?.activityState)}</small>
             </span>
             <strong>Open evidence ↓</strong>
           </button>}
@@ -603,7 +705,49 @@ export function CivicCity(props) {
             <button type="button" onClick={() => moveSelection(1)} disabled={visibleAgents.length < 2} aria-label="Next visible agent">→</button>
           </div>
         </header>
-        {selectedPlace ? <>
+        {selectedProject ? <>
+          <div className="civic-city__identity">
+            <span className="civic-city__avatar civic-city__avatar--construction" aria-hidden="true">▧</span>
+            <div>
+              <p>Construction {selectedProject.privacy === "aggregated_private" ? "aggregate" : `#${selectedProject.id}`}</p>
+              <h3>{selectedProject.name}</h3>
+              <span>{humanize(selectedProject.target_place_type)}</span>
+            </div>
+          </div>
+          <div className={`civic-city__activity civic-city__activity--construction is-${constructionStage(selectedProject)}`}>
+            <span>{selectedProject.privacy === "aggregated_private" ? "Privacy-safe district aggregate" : "Committed construction record"}</span>
+            <strong>{humanize(selectedProject.status)} · {humanize(constructionStage(selectedProject))}</strong>
+            <small>{selectedProjectMetrics.work}/{selectedProjectMetrics.requiredWork} stored work units · updated tick {selectedProject.updated_tick}</small>
+          </div>
+          <dl className="civic-city__facts">
+            <div><dt>Target</dt><dd>{humanize(selectedProject.target_place_type)}</dd></div>
+            <div><dt>Region</dt><dd>{selectedProject.region?.name || (selectedProject.region?.id == null ? "Not exposed" : `Region #${selectedProject.region.id}`)}</dd></div>
+            <div><dt>Lifecycle status</dt><dd>{humanize(selectedProject.status)}</dd></div>
+            <div><dt>Physical stage</dt><dd>{humanize(constructionStage(selectedProject))}</dd></div>
+            <div><dt>Funding</dt><dd>{selectedProjectMetrics.funding}/{selectedProjectMetrics.requiredFunding} cents</dd></div>
+            <div><dt>Work</dt><dd>{selectedProjectMetrics.work}/{selectedProjectMetrics.requiredWork} units</dd></div>
+            <div><dt>Milestones</dt><dd>{Number(selectedProject.milestone_count || 0)}</dd></div>
+            <div><dt>Privacy</dt><dd>{selectedProject.privacy === "aggregated_private" ? "Owners and exact sites withheld" : "Public or policy-authorized site"}</dd></div>
+          </dl>
+          <section className="civic-city__record">
+            <header><span>Stored milestones</span><b>{Number(selectedProject.milestone_count || 0)}</b></header>
+            {selectedProject.milestones?.length ? <dl>
+              {selectedProject.milestones.map((milestone, index) => <div key={`${milestone.stage}-${milestone.tick}-${index}`}>
+                <dt>{humanize(milestone.stage)}</dt><dd>Tick {milestone.tick}</dd>
+              </div>)}
+            </dl> : <p>{selectedProject.privacy === "aggregated_private"
+              ? "Individual project milestones are withheld inside this district aggregate."
+              : "No later milestone was committed by this tick."}</p>}
+          </section>
+          <section className="civic-city__receipt">
+            <header><span>Construction evidence</span><b>observer only</b></header>
+            <p>Stage geometry is derived from stored work units. This view cannot assign work, fund a project, or mutate the simulation.</p>
+          </section>
+          <div className="civic-city__lens-actions">
+            {projectHref && <Link className="is-primary" to={projectHref}>Open in World workspace <span>→</span></Link>}
+            {completedPlaceHref && <Link to={completedPlaceHref}>Open completed place <span>↗</span></Link>}
+          </div>
+        </> : selectedPlace ? <>
           <div className="civic-city__identity">
             <span className="civic-city__avatar civic-city__avatar--place" aria-hidden="true">⌂</span>
             <div>
@@ -755,6 +899,7 @@ export function CivicCity(props) {
       <div><dt>Active marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>live or changed at selected tick</small></dd></div>
       <div><dt>Operating firms</dt><dd><span className="civic-city__instrument-value">{model.counts.firms}</span><small>canonical firm endpoint</small></dd></div>
       <div><dt>Real places</dt><dd><span className="civic-city__instrument-value">{model.counts.places}</span><small>stable city coordinates</small></dd></div>
+      <div><dt>Construction</dt><dd><span className="civic-city__instrument-value">{model.counts.construction}</span><small>exact stages from stored work</small></dd></div>
       <div><dt>Permit queue</dt><dd><span className="civic-city__instrument-value">{model.civic?.enabled ? model.counts.queue : "—"}</span><small>{model.civic?.queue ? `oldest ${model.civic.queue.oldest_age_ticks} ticks` : "civic service disabled"}</small></dd></div>
       <div><dt>Office load</dt><dd><span className="civic-city__instrument-value">{busiestOffice ? `${busiestOffice.occupancy}/${busiestOffice.capacity}` : "—"}</span><small>{busiestOffice ? `${busiestOffice.name} · q${busiestOffice.queue_depth}` : "no licensing office"}</small></dd></div>
       <div><dt>AI inference</dt><dd><span className="civic-city__instrument-value">{providerActive == null ? "—" : `${providerActive}/${providerCapacity}`}</span><small>{runtime?.global?.queue_depth == null ? "runtime telemetry unavailable" : `${runtime.global.queue_depth} requests queued`}</small></dd></div>

@@ -381,6 +381,24 @@ export function deriveCityModel({
         .reduce((total, item) => total + Number(item?.occupancy || 0), 0),
     };
   }).filter(place => place.x !== null && place.y !== null);
+  const constructionSource = asArray(map?.constructionProjects).length
+    ? asArray(map?.constructionProjects)
+    : asArray(map?.construction_projects);
+  const constructionProjects = constructionSource.map(project => ({
+    ...project,
+    id: project?.project_id ?? project?.id,
+    x: normalizedCoordinate(project?.x ?? project?.site?.x),
+    y: normalizedCoordinate(project?.y ?? project?.site?.y),
+    requiredFundingCents: Number(project?.requirements?.funding_cents || 0),
+    contributedFundingCents: Number(project?.contributed?.funding_cents || 0),
+    requiredWorkUnits: Number(project?.requirements?.work_units || 0),
+    contributedWorkUnits: Number(project?.contributed?.work_units || 0),
+    aggregateCount: Number(project?.aggregate_count || 1),
+  })).filter(project =>
+    project.id !== null
+    && project.id !== undefined
+    && project.x !== null
+    && project.y !== null);
   const regions = asArray(map?.regions).map(region => ({
     ...region,
     x: normalizedCoordinate(region.x),
@@ -421,6 +439,7 @@ export function deriveCityModel({
     agents: cityAgents.sort((left, right) => Number(left.id) - Number(right.id)),
     firms: cityFirms,
     places,
+    constructionProjects,
     regions,
     flows,
     presence,
@@ -442,6 +461,7 @@ export function deriveCityModel({
       assigned: cityAgents.filter(agent => agent.activityState === "assigned role").length,
       firms: operatingFirms.length,
       places: places.length,
+      construction: constructionProjects.length,
       queue: Number(civic?.queue?.depth || map?.civic?.queue?.depth || 0),
     },
   };

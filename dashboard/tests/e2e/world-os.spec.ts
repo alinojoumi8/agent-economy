@@ -1252,7 +1252,8 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
   await expect(page.getByRole("heading", { name: "Living Agents" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Atlas Builder" })).toBeVisible();
   await expect(page.getByText("Lead carpenter", { exact: true })).toBeVisible();
-  const constructionSkill = page.getByText("Construction", { exact: true });
+  const constructionSkill = page.locator(".world-os-skill-card")
+    .getByText("Construction", { exact: true });
   await constructionSkill.scrollIntoViewIfNeeded();
   await expect(constructionSkill).toBeVisible();
   await expect(page.getByText("Level 2 · 140 XP · 2 milestones")).toBeVisible();

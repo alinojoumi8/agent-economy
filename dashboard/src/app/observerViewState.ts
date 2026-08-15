@@ -17,6 +17,7 @@ export type ObserverViewState = {
   activeOnly: boolean;
   agent: number | null;
   place: number | null;
+  project: string | null;
   population: "core" | "all" | "clusters";
   view: "atlas" | "diorama";
 };
@@ -30,6 +31,7 @@ export type ObserverViewPatch = Partial<{
   activeOnly: boolean;
   agent: number | null;
   place: number | null;
+  project: string | null;
   population: "core" | "all" | "clusters" | null;
   view: "atlas" | "diorama" | null;
 }>;

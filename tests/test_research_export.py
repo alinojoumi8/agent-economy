@@ -75,7 +75,7 @@ def test_hash_contract_rejects_every_unclassified_schema_or_value(tmp_path):
         invalid.close()
 
 
-def test_hash_contract_v1_is_frozen_and_v2_covers_gateway_commons(tmp_path):
+def test_hash_contract_v1_is_frozen_and_v2_covers_current_extensions(tmp_path):
     historical = Store(str(tmp_path / "semantics-8.db"))
     current = Store(str(tmp_path / "semantics-10.db"))
     try:
@@ -87,13 +87,19 @@ def test_hash_contract_v1_is_frozen_and_v2_covers_gateway_commons(tmp_path):
             "0df8926132314e91b603c6cb2b56c0743fb690347680dd0a3b62b3fbc356c8d0")
 
         current.init_run_meta(
-            "semantics-10", 10, {"engine_semantics_version": 10})
+            "semantics-13", 13, {"engine_semantics_version": 13})
         agent_id = current.insert(
             "agents", name="Commons Citizen", kind="citizen", age=30)
         before = canonical_hashes(current)
         assert before["contract_id"] == "hash-contract-v2"
         assert before["schema_inventory_sha256"] == (
-            "1c67660e71d06adca32d2b040d760180ac554897f74a5d0bf0ac356503594ae0")
+            "f5aec6d6dfd884735b80afe6404b26222e5cc72394d55a83d5bc88c97742d7f4")
+        assert {
+            "construction_projects",
+            "construction_permit_cases",
+            "construction_contributions",
+            "construction_action_receipts",
+        } <= set(before["tables"])
         current.insert(
             "commons_profiles", agent_id=agent_id,
             display_name="Commons Citizen", created_tick=0, updated_tick=0)

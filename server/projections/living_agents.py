@@ -5,6 +5,10 @@ from collections import defaultdict
 from typing import Any
 
 from .workspaces import _agent_regions_at, _balances_as_of, _dicts
+from .construction import (
+    construction_projects_as_of,
+    construction_projects_for_agent,
+)
 
 
 PROJECT_KINDS = frozenset({
@@ -16,6 +20,7 @@ PROJECT_KINDS = frozenset({
     "residence",
     "workplace",
     "public_output",
+    "construction",
 })
 PROJECT_STATUSES = frozenset({"active", "completed", "cancelled"})
 
@@ -466,6 +471,92 @@ def _living_state(
             tick=stage_tick, kind="civic_case", stage=stage,
             title=f"{len(rows)} permit cases {stage}",
             agent_id=None, project_id=pid, source="derived", evidence_ref=ref))
+
+    construction = (
+        construction_projects_for_agent(
+            store, agent_id=int(agent_id), as_of_tick=tick)
+        if agent_id is not None
+        else construction_projects_as_of(store, as_of_tick=tick)
+    )
+    for item in construction:
+        pid = f"construction:{item['project_id']}"
+        owner = item.get("owner") or {}
+        owner_agent_id = (
+            int(owner["id"]) if owner.get("type") == "agent" else
+            int(item["initiator_agent_id"])
+            if item.get("initiator_agent_id") is not None else None
+        )
+        status_value = (
+            str(item["status"])
+            if item["status"] in {"completed", "cancelled"} else "active"
+        )
+        stage_value = str(item["stage"] or item["status"])
+        organization = (
+            {
+                "id": int(owner["id"]),
+                "name": str(owner.get("name") or ""),
+                "kind": str(owner["type"]),
+            }
+            if owner.get("type") in {"firm", "agency"} else None
+        )
+        place = (
+            {
+                "id": int(item["place_id"]),
+                "name": str(item["name"]),
+                "kind": str(item["target_place_type"]),
+            }
+            if item.get("place_id") is not None else None
+        )
+        refs = list(item.get("evidence_refs") or [])
+        projects.append(_project(
+            project_id=pid,
+            kind="construction",
+            title=str(item["name"]),
+            owner_agent_id=owner_agent_id,
+            stage=stage_value,
+            status=status_value,
+            started_tick=int(item["proposed_tick"]),
+            updated_tick=int(item["updated_tick"]),
+            completed_tick=item.get("completed_tick"),
+            milestone_count=int(item["milestone_count"]),
+            evidence_refs=refs,
+            organization=organization,
+            place=place,
+            region=item.get("region"),
+            metrics={
+                "target_place_type": str(item["target_place_type"]),
+                "required_funding_cents": int(
+                    item["requirements"]["funding_cents"]),
+                "contributed_funding_cents": int(
+                    item["contributed"]["funding_cents"]),
+                "required_work_units": int(
+                    item["requirements"]["work_units"]),
+                "contributed_work_units": int(
+                    item["contributed"]["work_units"]),
+                "aggregate_count": int(item.get("aggregate_count") or 1),
+            },
+            source=(
+                "derived" if item["privacy"] == "aggregated_private"
+                else "committed"),
+            privacy=str(item["privacy"]),
+        ))
+        for ordinal, milestone in enumerate(item.get("milestones") or []):
+            ref = milestone.get("evidence_ref") or _evidence(
+                "construction_project", str(item["project_id"]),
+                int(milestone["tick"]))
+            activities.append(_activity(
+                activity_id=(
+                    f"construction:{item['project_id']}:"
+                    f"{milestone['stage']}:{ordinal}"),
+                tick=int(milestone["tick"]),
+                kind="construction",
+                stage=str(milestone["stage"]),
+                title=f"{item['name']}: {milestone['stage']}",
+                agent_id=owner_agent_id,
+                project_id=pid,
+                source="committed",
+                evidence_ref=ref,
+            ))
 
     latest_activity: dict[int, int] = defaultdict(int)
     for item in activities:

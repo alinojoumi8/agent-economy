@@ -282,3 +282,45 @@ test("historical city views ignore current runtime activity", () => {
   assert.equal(model.agents[0].activityState, "settled");
   assert.equal(model.agents[0].runtimeActivity, null);
 });
+
+test("city construction preserves exact stored counters and aggregate privacy", () => {
+  const model = deriveCityModel({
+    map: {
+      construction_projects: [{
+        project_id: "private-homes:region:2:building:frame",
+        name: "Private home construction in South",
+        status: "building",
+        stage: "frame",
+        site: { x: 0.72, y: 0.64 },
+        requirements: { funding_cents: 1800, work_units: 9 },
+        contributed: { funding_cents: 1800, work_units: 3 },
+        privacy: "aggregated_private",
+        aggregate_count: 4,
+      }],
+    },
+    tick: 6,
+    historical: true,
+  });
+
+  assert.equal(model.counts.construction, 1);
+  assert.deepEqual(
+    {
+      id: model.constructionProjects[0].id,
+      x: model.constructionProjects[0].x,
+      y: model.constructionProjects[0].y,
+      funding: model.constructionProjects[0].contributedFundingCents,
+      work: model.constructionProjects[0].contributedWorkUnits,
+      count: model.constructionProjects[0].aggregateCount,
+      privacy: model.constructionProjects[0].privacy,
+    },
+    {
+      id: "private-homes:region:2:building:frame",
+      x: 72,
+      y: 64,
+      funding: 1800,
+      work: 3,
+      count: 4,
+      privacy: "aggregated_private",
+    },
+  );
+});

@@ -119,6 +119,10 @@ class City:
             "attention": attention,
         }
         self.engine_semantics_version = int(economy.engine_semantics_version)
+        self.construction_enabled = (
+            self.engine_semantics_version >= 13
+            and bool(economy.config.get("construction", {}).get("enabled", False))
+        )
         requested = bool(self.config.get("enabled", False))
         if requested and self.engine_semantics_version < 12:
             raise CityError("city.enabled requires engine_semantics_version 12")
@@ -485,11 +489,12 @@ class City:
             region, agency_id, office_id, tick)
 
     def _sync_firm_workplaces(self, tick: int) -> None:
-        for firm in self.store.query(
+        firms = [] if self.construction_enabled else self.store.query(
                 "SELECT f.*,r.id AS place_region_id,r.region_key,"
                 "r.name AS region_name,r.x,r.y "
                 "FROM firms f JOIN regions r ON r.id=f.region_id "
-                "WHERE f.status<>'bankrupt' ORDER BY f.id"):
+                "WHERE f.status<>'bankrupt' ORDER BY f.id")
+        for firm in firms:
             region = dict(firm)
             region["id"] = int(firm["place_region_id"])
             self._ensure_place(
@@ -513,6 +518,12 @@ class City:
     def register_firm_workplace(self, firm_id: int, tick: int) -> int | None:
         if not self.enabled:
             return None
+        if self.construction_enabled:
+            existing = self.store.scalar(
+                "SELECT id FROM places WHERE owner_type='firm' AND owner_id=? "
+                "AND kind='firm_workplace' AND active=1 ORDER BY id LIMIT 1",
+                (int(firm_id),), default=None)
+            return int(existing) if existing is not None else None
         firm = self.store.query_one(
             "SELECT f.*,r.id AS place_region_id,r.region_key,"
             "r.name AS region_name,r.x,r.y "
@@ -631,6 +642,15 @@ class City:
         )
 
     def _home_place(self, region_id: int, agent_id: int):
+        if self.construction_enabled:
+            completed = self.store.scalar(
+                "SELECT place_id FROM construction_projects "
+                "WHERE owner_type='agent' AND owner_id=? "
+                "AND target_place_type='private_home' AND status='completed' "
+                "AND place_id IS NOT NULL ORDER BY completed_tick DESC,id DESC LIMIT 1",
+                (int(agent_id),), default=None)
+            if completed is not None:
+                return int(completed)
         rows = self.store.query(
             "SELECT id FROM places WHERE region_id=? "
             "AND kind='residential_district' AND active=1 ORDER BY id",

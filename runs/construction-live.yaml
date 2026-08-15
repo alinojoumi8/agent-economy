@@ -1,0 +1,16 @@
+# Agent-built city profile. Existing Semantics-12 profiles remain unchanged.
+extends: civic-live.yaml
+
+engine_semantics_version: 13
+
+construction:
+  enabled: true
+  agent_initiation: true
+  private_home_funding_cents: 20000
+  workplace_funding_cents: 60000
+  public_facility_funding_cents: 80000
+  private_home_work_units: 4
+  workplace_work_units: 8
+  public_facility_work_units: 10
+  funding_contribution_cents: 10000
+  work_units_per_action: 2

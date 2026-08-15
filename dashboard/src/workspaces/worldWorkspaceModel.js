@@ -25,6 +25,16 @@ function publicMapRow(row) {
   return normalized;
 }
 
+function constructionMapRow(row) {
+  const site = row?.site && typeof row.site === "object" ? row.site : {};
+  return publicMapRow({
+    ...row,
+    id: row?.project_id,
+    x: site.x,
+    y: site.y,
+  });
+}
+
 function regionId(value) {
   const numeric = Number(value);
   return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null;
@@ -36,6 +46,9 @@ export function normalizeWorldWorkspace(data = {}) {
   const agents = rows(source.agents).map(publicMapRow).sort(compareRows);
   const organizations = rows(source.organizations).map(publicMapRow).sort(compareRows);
   const places = rows(source.places).map(publicMapRow).sort(compareRows);
+  const constructionProjects = rows(source.construction_projects)
+    .map(constructionMapRow)
+    .sort(compareRows);
   const presence = rows(source.presence).map(row => ({ ...row })).sort(compareRows);
   const knownRegions = new Set(regions.map(region => regionId(region.id)).filter(Boolean));
   const seenFlows = new Set();
@@ -63,6 +76,7 @@ export function normalizeWorldWorkspace(data = {}) {
     agents,
     organizations,
     places,
+    constructionProjects,
     presence,
     flows,
     summary: {
@@ -71,6 +85,7 @@ export function normalizeWorldWorkspace(data = {}) {
       currencies,
       migrationCount: flows.filter(flow => flow.kind === "migration").length,
       tradeCount: flows.filter(flow => flow.kind === "trade").length,
+      constructionCount: constructionProjects.length,
     },
   };
 }

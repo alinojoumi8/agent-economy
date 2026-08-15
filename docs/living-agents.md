@@ -36,5 +36,10 @@ ordinary workspace projection.
   does not use them.
 
 Links back to Live City preserve the observer fork and tick and use stable
-`agent`, `place`, organization-layer, and `view=diorama` parameters so refresh
+`agent`, `place`, `project`, organization-layer, and `view=diorama` parameters so refresh
 and browser history retain the same evidence focus.
+
+With Semantics 13 enabled, construction is an additional progress stream.
+Cards report the exact lifecycle state, physical stage, funding cents, work
+units, milestone count, and privacy class. The workspace remains read-only; see
+the [construction economy contract](semantics13-construction-economy.md).

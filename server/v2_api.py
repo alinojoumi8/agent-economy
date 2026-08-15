@@ -22,6 +22,9 @@ from server.projections import (
     build_threads,
     build_agent_journey,
     build_living_agents_workspace,
+    build_construction_project_detail,
+    build_construction_projects,
+    construction_projects_as_of,
     build_experiments_workspace,
     build_markets_workspace,
     build_organizations_workspace,
@@ -32,6 +35,8 @@ from server.projections import (
     resolve_tick,
     PROJECT_KINDS,
     PROJECT_STATUSES,
+    CONSTRUCTION_KINDS,
+    CONSTRUCTION_STATUSES,
     SEARCH_KINDS,
 )
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
@@ -324,7 +329,8 @@ def install_v2_routes(app, world, controller) -> None:
     @router.get("/world-map")
     async def world_map_projection(
         tick: str = Query("live"), fork_id: str | None = None,
-        layers: str = Query("regions,agents,organizations,places,presence"),
+        layers: str = Query(
+            "regions,agents,organizations,places,presence,construction_projects"),
         population: Literal["core", "all", "clusters"] = Query("core"),
     ):
         as_of_tick = projection_tick(tick, fork_id)
@@ -430,6 +436,9 @@ def install_v2_routes(app, world, controller) -> None:
                 store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
+        if "construction_projects" in selected:
+            data["construction_projects"] = construction_projects_as_of(
+                store, as_of_tick=as_of_tick)
         if "presence" in selected:
             # Presence can carry exact place coordinates. Keep peripheral
             # identities out of every observer mode so `all` can lay them out
@@ -518,6 +527,39 @@ def install_v2_routes(app, world, controller) -> None:
                 status_code=404, detail="agent not found at the selected tick"
             )
         return workspace_envelope("agent_journey", data, as_of_tick)
+
+    @router.get("/construction-projects")
+    async def construction_projects(
+        tick: str = Query("live"), fork_id: str | None = None,
+        project_kind: str = Query("all"), status: str = Query("all"),
+        after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200),
+    ):
+        if project_kind != "all" and project_kind not in CONSTRUCTION_KINDS:
+            raise HTTPException(
+                status_code=422, detail="unknown construction project kind")
+        if status != "all" and status not in CONSTRUCTION_STATUSES:
+            raise HTTPException(
+                status_code=422, detail="unknown construction project status")
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_construction_projects(
+            store, as_of_tick=as_of_tick, project_kind=project_kind,
+            status=status, after=after, limit=limit)
+        return workspace_envelope("construction_projects", data, as_of_tick)
+
+    @router.get("/construction-projects/{project_id}")
+    async def construction_project_detail(
+        project_id: str, tick: str = Query("live"),
+        fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_construction_project_detail(
+            store, project_id=project_id, as_of_tick=as_of_tick)
+        if data is None:
+            raise HTTPException(
+                status_code=404,
+                detail="construction project not found at the selected tick")
+        return workspace_envelope(
+            "construction_project_detail", data, as_of_tick)
 
     @router.get("/workspaces/commons")
     async def commons_workspace(

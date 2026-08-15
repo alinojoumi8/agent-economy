@@ -20,9 +20,10 @@ not "reconcile" the two sets into one file.
 | What did a dated release gate prove? | [Semantics 8 historical release receipt](SEMANTICS-8-RELEASE-STATUS.md) · [requirements traceability matrix](REQUIREMENTS-MATRIX.md) |
 
 The root PRD tracks the maintained implementation contract through R22. The
-World OS specifications extend through Semantics 12. Current status is not
+World OS specifications extend through Semantics 12; the separately approved
+runtime construction contract is documented as Semantics 13. Current status is not
 inferred from specification prose: Semantics 8 is the released deterministic
-causal baseline; Semantics 9–10 code is rollout-gated; Semantics 11–12 are
+causal baseline; Semantics 9–10 code is rollout-gated; Semantics 11–13 are
 implemented opt-in contracts whose public use inherits those hosted gates.
 The maintained implementation-status ledger owns those labels.
 

@@ -72,6 +72,7 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | `checkpoint_every`, `checkpoint_dir` | Recovery cadence and storage |
 | `speed_delay_s` | Wall-clock pause between ticks; does not change simulation time |
 | `outlets`, `shocks` | Information institutions and scheduled interventions |
+| `construction` | Semantics-13 agent initiation, funding requirements, work requirements, and bounded contribution sizes |
 
 `runs/evolving-live.yaml` and `runs/production.yaml` sample 63 citizens. The
 engine-owned institutional and health-economy actors produce exactly 100 living
@@ -91,6 +92,31 @@ creating an explicit new run or fork.
 
 Money keys ending in `_cents` use integer cents. Rate keys ending in `_bps` use
 basis points. One tick is one simulated day.
+
+### Semantics-13 construction
+
+Construction is disabled by default and fails closed below Semantics 13 or when
+the civic city is disabled. Use `runs/construction-live.yaml` as the maintained
+live profile. Requirements are exact positive integers; work-stage geometry is
+derived from the stored work numerator and denominator.
+
+```yaml
+engine_semantics_version: 13
+construction:
+  enabled: true
+  agent_initiation: true
+  private_home_funding_cents: 20000
+  workplace_funding_cents: 60000
+  public_facility_funding_cents: 80000
+  private_home_work_units: 4
+  workplace_work_units: 8
+  public_facility_work_units: 10
+  funding_contribution_cents: 10000
+  work_units_per_action: 2
+```
+
+These values define new runs only. Do not change a stored source run's semantics
+or construction requirements before replay.
 
 The maintained `runs/v2.yaml` enables
 `llm.local_currency_action_surfaces: true`. Under semantics 7, decision context

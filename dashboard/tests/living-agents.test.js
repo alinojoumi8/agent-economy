@@ -32,6 +32,10 @@ test("Living Agents exposes evidence classes and privacy-safe states", () => {
   assert.match(workspace, /No projects match these filters/);
   assert.match(workspace, /role="alert"/);
   assert.match(workspace, /aria-label="Projects and progress streams"/);
+  assert.match(workspace, /\["construction", "Construction"\]/);
+  assert.match(workspace, /contributed_work_units/);
+  assert.match(workspace, /required_work_units/);
+  assert.doesNotMatch(workspace, /construction[^\n]{0,100}percent/i);
 });
 
 test("Living Agents keeps People URLs and creates stable Live City focus links", () => {
@@ -41,6 +45,8 @@ test("Living Agents keeps People URLs and creates stable Live City focus links",
   assert.match(workspace, /params\.set\("view", "diorama"\)/);
   assert.match(workspace, /params\.set\("agent", String\(agent\)\)/);
   assert.match(workspace, /params\.set\("place", String\(place\)\)/);
+  assert.match(workspace, /params\.set\("project", project\)/);
+  assert.match(workspace, /replace\(\/\^construction:\//);
   assert.match(workspace, /params\.set\("layer", "organizations"\)/);
   assert.match(workspace, /commonObserverParamsFromState\(observerState\)/);
 });

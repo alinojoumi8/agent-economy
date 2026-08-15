@@ -37,6 +37,22 @@ type WorldProjection = {
   agents?: WorldRow[];
   organizations?: WorldRow[];
   places?: WorldRow[];
+  construction_projects?: Array<{
+    project_id: number | string;
+    name: string;
+    target_place_type: string;
+    status: string;
+    stage: string | null;
+    region?: { id: number; name: string } | null;
+    site?: { x: number; y: number } | null;
+    requirements?: { funding_cents: number; work_units: number };
+    contributed?: { funding_cents: number; work_units: number };
+    milestone_count?: number;
+    updated_tick?: number;
+    privacy?: string;
+    aggregate_count?: number;
+    place_id?: number | null;
+  }>;
   presence?: WorldRow[];
   flows?: WorldFlow[];
 };
@@ -52,13 +68,22 @@ export function WorldWorkspace() {
   const model = normalizeWorldWorkspace(projection.data || {});
   const selectedRegionId = validatedSelectedId(searchParams.get("region"));
   const selectedPlaceId = projection.observerState.place;
+  const selectedProjectId = projection.observerState.project;
   const selectedRegion = model.regions.find(region => Number(region.id) === selectedRegionId) || null;
   const selectedPlace = model.places.find(place => Number(place.id) === selectedPlaceId) || null;
+  const selectedProject = model.constructionProjects.find(
+    project => String(project.id) === String(selectedProjectId),
+  ) || null;
 
   useEffect(() => {
     if (projection.loading) return;
     const next = new URLSearchParams(searchParams);
-    if (selectedPlace) next.delete("region");
+    if (selectedProject) next.delete("region");
+    else if (selectedProjectId != null) {
+      const cleared = patchObserverViewState(next, { project: null });
+      setSearchParams(cleared, { replace: true });
+      return;
+    } else if (selectedPlace) next.delete("region");
     else if (selectedPlaceId != null) {
       const cleared = patchObserverViewState(next, { place: null });
       setSearchParams(cleared, { replace: true });
@@ -73,12 +98,22 @@ export function WorldWorkspace() {
     searchParams,
     selectedPlace,
     selectedPlaceId,
+    selectedProject,
+    selectedProjectId,
     selectedRegion,
     selectedRegionId,
     setSearchParams,
   ]);
 
-  const select = (key: "region" | "place", rawValue: string) => {
+  const select = (key: "region" | "place" | "project", rawValue: string) => {
+    if (key === "project") {
+      const next = patchObserverViewState(searchParams, {
+        project: rawValue || null,
+      });
+      next.delete("region");
+      setSearchParams(next);
+      return;
+    }
     const value = validatedSelectedId(rawValue);
     const next = key === "place"
       ? patchObserverViewState(searchParams, { place: value })
@@ -87,6 +122,8 @@ export function WorldWorkspace() {
       if (value == null) next.delete("region");
       else next.set("region", String(value));
       next.delete("place");
+      next.delete("project");
+      next.delete("agent");
     }
     if (key === "place") next.delete("region");
     setSearchParams(next);
@@ -113,6 +150,14 @@ export function WorldWorkspace() {
             {model.places.map(place => <option key={place.id} value={place.id}>{display(place.name, `Place ${place.id}`)}</option>)}
           </select>
         </label>
+        <label>Construction project
+          <select value={selectedProject?.id ?? ""} onChange={event => select("project", event.target.value)}>
+            <option value="">All projects</option>
+            {model.constructionProjects.map(project => <option key={project.id} value={project.id}>
+              {display(project.name, `Project ${project.id}`)} · {display(project.stage || project.status)}
+            </option>)}
+          </select>
+        </label>
       </div>}
     />
     <WorkspaceState loading={projection.loading} error={projection.error}>
@@ -123,6 +168,7 @@ export function WorldWorkspace() {
         <div><dt>Currencies</dt><dd>{model.summary.currencies.join(", ") || "—"}</dd></div>
         <div><dt>Migration flows</dt><dd>{model.summary.migrationCount}</dd></div>
         <div><dt>Trade flows</dt><dd>{model.summary.tradeCount}</dd></div>
+        <div><dt>Construction projects</dt><dd>{model.summary.constructionCount}</dd></div>
       </dl>
 
       <CivicCity
@@ -148,8 +194,18 @@ export function WorldWorkspace() {
 
       <div className="world-os-world-detail-grid">
         <article className="world-os-workspace-card world-os-world-inspector" aria-live="polite">
-          <header><div><p className="world-os-kicker">Selection inspector</p><h3>{selectedPlace ? "Place" : selectedRegion ? "Region" : "World extent"}</h3></div></header>
-          {selectedPlace ? <dl>
+          <header><div><p className="world-os-kicker">Selection inspector</p><h3>{selectedProject ? "Construction project" : selectedPlace ? "Place" : selectedRegion ? "Region" : "World extent"}</h3></div></header>
+          {selectedProject ? <dl>
+            <div><dt>Name</dt><dd>{display(selectedProject.name, `Project ${selectedProject.id}`)}</dd></div>
+            <div><dt>Target</dt><dd>{display(selectedProject.target_place_type)}</dd></div>
+            <div><dt>Status</dt><dd>{display(selectedProject.status)}</dd></div>
+            <div><dt>Stage</dt><dd>{display(selectedProject.stage, selectedProject.status === "completed" ? "completed" : "site")}</dd></div>
+            <div><dt>Region</dt><dd>{display(selectedProject.region?.name, selectedProject.region?.id == null ? undefined : `Region ${selectedProject.region.id}`)}</dd></div>
+            <div><dt>Funding</dt><dd>{Number(selectedProject.contributed?.funding_cents || 0)}/{Number(selectedProject.requirements?.funding_cents || 0)} cents</dd></div>
+            <div><dt>Work</dt><dd>{Number(selectedProject.contributed?.work_units || 0)}/{Number(selectedProject.requirements?.work_units || 0)} units</dd></div>
+            <div><dt>Milestones</dt><dd>{Number(selectedProject.milestone_count || 0)}</dd></div>
+            <div><dt>Privacy</dt><dd>{selectedProject.privacy === "aggregated_private" ? "Private homes aggregated; owners and exact sites withheld" : "Public or policy-authorized site"}</dd></div>
+          </dl> : selectedPlace ? <dl>
             <div><dt>Name</dt><dd>{display(selectedPlace.name, `Place ${selectedPlace.id}`)}</dd></div>
             <div><dt>Kind</dt><dd>{display(selectedPlace.kind)}</dd></div>
             <div><dt>Region</dt><dd>{display(selectedPlace.region_name, selectedPlace.region_id == null ? undefined : `Region ${selectedPlace.region_id}`)}</dd></div>
@@ -159,7 +215,7 @@ export function WorldWorkspace() {
             <div><dt>Currency</dt><dd>{display(selectedRegion.currency_code)}</dd></div>
             <div><dt>Population target</dt><dd>{display(selectedRegion.population_target)}</dd></div>
             <div><dt>Ruleset</dt><dd>{display(selectedRegion.legal_ruleset)}</dd></div>
-          </dl> : <p>Select a validated region or place to inspect its committed public fields.</p>}
+          </dl> : <p>Select a validated region, place, or construction project to inspect its committed public fields.</p>}
         </article>
         <nav className="world-os-workspace-card world-os-world-links" aria-label="Related World workspaces">
           <p className="world-os-kicker">Follow the evidence</p>

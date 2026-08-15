@@ -18,6 +18,15 @@ const BUILDING_COLORS = {
   organization: [126, 142, 162, 225],
 };
 
+const CONSTRUCTION_COLORS = {
+  site: [128, 132, 124, 150],
+  foundation: [171, 109, 72, 220],
+  frame: [220, 145, 69, 225],
+  shell: [219, 177, 92, 230],
+  completed: [103, 155, 126, 225],
+  cancelled: [175, 89, 76, 190],
+};
+
 function numeric(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -48,6 +57,115 @@ function square(x, y, size) {
     [x + half, y + half],
     [x - half, y + half],
   ];
+}
+
+function constructionStage(status, workUnits, requiredWorkUnits) {
+  if (status === "completed" || (requiredWorkUnits > 0 && workUnits >= requiredWorkUnits)) {
+    return "completed";
+  }
+  if (workUnits <= 0 && status !== "building") return "site";
+  const frameThreshold = Math.max(1, Math.ceil(requiredWorkUnits / 3));
+  const shellThreshold = Math.max(frameThreshold, Math.ceil((requiredWorkUnits * 2) / 3));
+  if (workUnits >= shellThreshold) return "shell";
+  if (workUnits >= frameThreshold) return "frame";
+  return "foundation";
+}
+
+function framePathsFor(x, y, size, elevation, item) {
+  const half = size / 2;
+  const corners = [
+    [x - half, y - half],
+    [x + half, y - half],
+    [x + half, y + half],
+    [x - half, y + half],
+  ];
+  const posts = corners.map(([px, py], index) => ({
+    ...item,
+    key: `${item.key}:post:${index}`,
+    path: [[px, py, 0.2], [px, py, elevation]],
+  }));
+  const beams = corners.map(([px, py], index) => {
+    const [nx, ny] = corners[(index + 1) % corners.length];
+    return {
+      ...item,
+      key: `${item.key}:beam:${index}`,
+      path: [[px, py, elevation], [nx, ny, elevation]],
+    };
+  });
+  return [...posts, ...beams];
+}
+
+export function constructionStageGeometry(project = {}) {
+  const status = String(project.status || "proposed").toLowerCase();
+  const workUnits = Math.max(0, numeric(
+    project.contributedWorkUnits ?? project.contributed?.work_units,
+  ));
+  const requiredWorkUnits = Math.max(0, numeric(
+    project.requiredWorkUnits ?? project.requirements?.work_units,
+  ));
+  const fundingCents = Math.max(0, numeric(
+    project.contributedFundingCents ?? project.contributed?.funding_cents,
+  ));
+  const requiredFundingCents = Math.max(0, numeric(
+    project.requiredFundingCents ?? project.requirements?.funding_cents,
+  ));
+  const aggregateCount = Math.max(1, numeric(project.aggregateCount ?? project.aggregate_count, 1));
+  const stage = constructionStage(status, workUnits, requiredWorkUnits);
+  const x = numeric(project.x ?? project.site?.x);
+  const y = numeric(project.y ?? project.site?.y);
+  const size = 2.6 + Math.min(2.4, Math.sqrt(aggregateCount) * 0.45);
+  const cappedWork = requiredWorkUnits > 0
+    ? Math.min(requiredWorkUnits, workUnits)
+    : workUnits;
+  const elevations = {
+    site: 0.12,
+    foundation: 0.45 + Math.min(0.55, cappedWork * 0.08),
+    frame: 2.4 + Math.min(2.4, cappedWork * 0.18),
+    shell: 4.8 + Math.min(3.2, cappedWork * 0.2),
+    completed: 7 + Math.min(5, cappedWork * 0.22),
+  };
+  const elevation = elevations[stage];
+  const privacyAggregate = project.privacy === "aggregated_private";
+  const aggregatePrefix = privacyAggregate && aggregateCount > 1
+    ? `${aggregateCount} HOMES · `
+    : "";
+  const stageLabel = stage === "site" ? humanize(status).toUpperCase() : stage.toUpperCase();
+  const cancelledPrefix = status === "cancelled" ? "CANCELLED · " : "";
+  const label = `${aggregatePrefix}${cancelledPrefix}${stageLabel} · ${workUnits}/${requiredWorkUnits} WORK`;
+  const item = {
+    ...project,
+    entityKind: "construction",
+    id: project.project_id ?? project.id,
+    key: `construction:${project.project_id ?? project.id}`,
+    stage,
+    status,
+    position: [x, y, elevation + 0.45],
+    polygon: square(x, y, size),
+    elevation,
+    color: status === "cancelled"
+      ? CONSTRUCTION_COLORS.cancelled
+      : CONSTRUCTION_COLORS[stage],
+    lineColor: stage === "frame" ? [255, 219, 147, 245] : [72, 52, 42, 225],
+    label,
+    operationalPlace: stage === "completed" && project.place_id != null,
+    privacyAggregate,
+    tooltip: [
+      project.name || `Construction project ${project.project_id ?? project.id}`,
+      `${humanize(status)} · ${humanize(stage)}`,
+      `Work: ${workUnits}/${requiredWorkUnits} units`,
+      `Funding: ${fundingCents}/${requiredFundingCents} cents`,
+      `Milestones: ${numeric(project.milestone_count)}`,
+      privacyAggregate
+        ? `${aggregateCount} private homes aggregated by district; owner and exact sites withheld.`
+        : "Exact public or policy-authorized site.",
+    ].join("\n"),
+  };
+  return {
+    ...item,
+    framePaths: stage === "frame"
+      ? framePathsFor(x, y, size, elevation, item)
+      : [],
+  };
 }
 
 function ownerLabel(place, firms) {
@@ -168,6 +286,12 @@ export function buildDioramaScene(
       });
     });
 
+  const constructions = (Array.isArray(model.constructionProjects)
+    ? model.constructionProjects
+    : [])
+    .map(constructionStageGeometry);
+  const constructionFrames = constructions.flatMap(item => item.framePaths);
+
   const agents = visibleAgents.map(agent => ({
     ...agent,
     entityKind: "agent",
@@ -213,5 +337,14 @@ export function buildDioramaScene(
     return [{ ...item, tooltip: flowTooltip(item) }];
   });
 
-  return { districts, regions, buildings, agents, clusters, flows };
+  return {
+    districts,
+    regions,
+    buildings,
+    constructions,
+    constructionFrames,
+    agents,
+    clusters,
+    flows,
+  };
 }

@@ -4,17 +4,18 @@ The Live City is one evidence surface with two views:
 
 - **Atlas** is the lightweight SVG/DOM projection and the safe fallback.
 - **2.5D Diorama** is a lazy-loaded deck.gl projection with a fixed tilted
-  orthographic camera, extruded buildings, agent marks, peripheral clusters,
-  and migration/trade paths.
+orthographic camera, extruded buildings, exact construction stages, agent
+marks, peripheral clusters, and migration/trade paths.
 
 Both views use the same CivicCity shell, filters, instrumentation, and evidence
 lens. Switching views does not change simulation state.
 
 ## Shareable observer state
 
-The city validates view, agent, place, population, and layer query parameters.
-The default view is Atlas. Agent and place identifiers must be positive
-integers and are mutually exclusive. Invalid values fail closed, and browser
+The city validates view, agent, place, project, population, and layer query
+parameters. The default view is Atlas. Agent and place identifiers must be
+positive integers; project identifiers also accept privacy-safe aggregate IDs.
+The three selections are mutually exclusive. Invalid values fail closed, and browser
 back/forward restores the prior evidence selection.
 
 ## Evidence and privacy contract
@@ -33,6 +34,10 @@ back/forward restores the prior evidence selection.
   reconstructs historical civic queues from creation and terminal timestamps.
   Historical intermediate case stages are labelled terminal_and_open; the
   current tick remains exact.
+- Semantics-13 construction remains separate from operational places until
+  completion. Foundation, frame, shell, and completed geometry derives from
+  stored work units and displays exact counts, never invented percentages.
+  Peripheral private homes remain district-level aggregates.
 
 ## Motion and historical views
 
@@ -45,7 +50,7 @@ consecutive live projections; non-consecutive and historical changes snap.
 ## Accessibility and fallback
 
 The Diorama includes pan, zoom, and reset controls plus a keyboard object
-explorer for agents and places. Tooltip information is duplicated in the shared
+explorer for agents, places, and construction projects. Tooltip information is duplicated in the shared
 evidence lens. If WebGL2 or the lazy renderer is unavailable, the interface
 offers the Atlas without changing the current run.
 
@@ -67,4 +72,4 @@ deck.gl packages are exact-pinned and emitted as a separate lazy chunk.
     npm.cmd --prefix dashboard run licenses:check
     npm.cmd --prefix dashboard run build
     npm.cmd --prefix dashboard run test:e2e -- --project=chromium
-    python -m pytest -q tests/test_semantics12_civic_city.py tests/test_world_os_workspace_projections.py tests/test_civic_city_300.py
+    python -m pytest -q tests/test_semantics12_civic_city.py tests/test_semantics13_construction.py tests/test_world_os_workspace_projections.py tests/test_civic_city_300.py

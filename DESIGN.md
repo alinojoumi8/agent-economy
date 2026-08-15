@@ -279,8 +279,9 @@ flow, and event projections at the requested tick and suppress current runtime
 overlays. Arbitrary historical navigation snaps; only evidence-backed live
 runtime activity may pulse.
 
-`view=atlas|diorama`, `agent=<id>`, and `place=<id>` are observer-only,
-shareable URL state. Agent and place selection are mutually exclusive.
+`view=atlas|diorama`, `agent=<id>`, `place=<id>`, and `project=<id>` are
+observer-only, shareable URL state. Agent, place, and project selection are
+mutually exclusive.
 Peripheral placement stays withheld, and licensing-office presence remains an
 aggregate. The Diorama provides a keyboard object explorer and falls back to
 the Atlas when WebGL2 or its lazy bundle is unavailable.
@@ -298,6 +299,12 @@ navigation destination. It consumes only the v2 observer projections and keeps
 committed, runtime, and derived evidence visibly distinct. Runtime state is
 live-only; historical ticks never inherit it. See the
 [Living Agents review and projection contract](docs/living-agents.md).
+
+Semantics-13 construction appears as a separate project layer until work is
+complete. Foundation, frame, shell, and completed geometry is derived from
+stored work units and labelled with exact numerator/denominator counts. Exact
+public/workplace sites are selectable; peripheral private homes are district
+aggregates. See the [construction economy contract](docs/semantics13-construction-economy.md).
 
 ### Identity Mark
 

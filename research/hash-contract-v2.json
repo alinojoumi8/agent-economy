@@ -1,8 +1,8 @@
 {
   "id": "hash-contract-v2",
-  "schema_version": 18,
+  "schema_version": 19,
   "extends_contract": "hash-contract-v1",
-  "schema_inventory_sha256": "1c67660e71d06adca32d2b040d760180ac554897f74a5d0bf0ac356503594ae0",
+  "schema_inventory_sha256": "f5aec6d6dfd884735b80afe6404b26222e5cc72394d55a83d5bc88c97742d7f4",
   "extension_tables": [
     "external_agent_connections", "external_agent_credentials", "external_oauth_codes",
     "external_oauth_clients",
@@ -14,7 +14,9 @@
     "agent_skill_history", "compute_subscriptions", "llm_attempts",
     "runtime_tick_stats", "places", "occupancy_leases", "effective_presence",
     "agency_staff", "service_cases", "service_appointments", "institution_tasks",
-    "civic_authorizations", "attention_contexts", "attention_context_items"
+    "civic_authorizations", "attention_contexts", "attention_context_items",
+    "construction_projects", "construction_permit_cases",
+    "construction_contributions", "construction_action_receipts"
   ],
   "extension_columns": {
     "run_meta": ["external_agent_influenced"],
@@ -36,7 +38,9 @@
     "commons_follows", "commons_memberships", "commons_moderation_actions",
     "commons_profiles", "commons_reactions", "contract_acceptances", "contract_clauses",
     "compute_subscriptions", "contract_parties", "contracts", "conversations",
-    "civic_authorizations",
+    "civic_authorizations", "construction_action_receipts",
+    "construction_contributions", "construction_permit_cases",
+    "construction_projects",
     "currencies", "dataset_manifests",
     "due_diligence_checks", "effective_presence", "elections", "employments", "events",
     "external_action_submissions", "external_actor_requests", "external_agent_connections",

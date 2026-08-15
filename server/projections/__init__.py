@@ -21,6 +21,14 @@ from .living_agents import (
     build_agent_journey,
     build_living_agents_workspace,
 )
+from .construction import (
+    CONSTRUCTION_KINDS,
+    CONSTRUCTION_STATUSES,
+    build_construction_project_detail,
+    build_construction_projects,
+    construction_projects_as_of,
+    construction_projects_for_agent,
+)
 
 __all__ = [
     "build_causal_projection",
@@ -32,6 +40,10 @@ __all__ = [
     "build_threads",
     "build_agent_journey",
     "build_living_agents_workspace",
+    "build_construction_project_detail",
+    "build_construction_projects",
+    "construction_projects_as_of",
+    "construction_projects_for_agent",
     "build_world_flows",
     "build_world_workspace",
     "build_world_map_organizations",
@@ -44,4 +56,6 @@ __all__ = [
     "SEARCH_KINDS",
     "PROJECT_KINDS",
     "PROJECT_STATUSES",
+    "CONSTRUCTION_KINDS",
+    "CONSTRUCTION_STATUSES",
 ]

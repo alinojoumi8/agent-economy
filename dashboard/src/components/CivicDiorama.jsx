@@ -58,8 +58,10 @@ export function CivicDiorama({
   showClusters,
   selectedAgentId,
   selectedPlaceId,
+  selectedProjectId,
   onSelectAgent,
   onSelectPlace,
+  onSelectProject,
   onShowAllResidents,
   animateLiveActivity,
   tick,
@@ -127,17 +129,20 @@ export function CivicDiorama({
   }, [historical, reducedMotion]);
 
   const selectedLabels = useMemo(() => {
+    const project = scene.constructions.find(
+      item => String(item.id) === String(selectedProjectId),
+    );
     const agent = scene.agents.find(item => String(item.id) === String(selectedAgentId));
     const place = scene.buildings.find(
       item => item.entityKind === "place" && String(item.id) === String(selectedPlaceId),
     );
-    const selected = place || agent;
+    const selected = project || place || agent;
     if (!selected) return [];
     return [{
       text: selected.name || `${humanize(selected.entityKind)} #${selected.id}`,
       position: selected.position,
     }];
-  }, [scene, selectedAgentId, selectedPlaceId]);
+  }, [scene, selectedAgentId, selectedPlaceId, selectedProjectId]);
 
   const layers = useMemo(() => [
     new PolygonLayer({
@@ -163,6 +168,42 @@ export function CivicDiorama({
       widthUnits: "pixels",
       capRounded: true,
       jointRounded: true,
+      pickable: true,
+    }),
+    new PolygonLayer({
+      id: "civic-construction-sites",
+      data: scene.constructions.filter(item => !item.operationalPlace),
+      getPolygon: item => item.polygon,
+      getFillColor: item => item.color,
+      getLineColor: item => String(item.id) === String(selectedProjectId)
+        ? [255, 244, 191, 255]
+        : item.lineColor,
+      getElevation: item => item.elevation,
+      extruded: true,
+      filled: true,
+      stroked: true,
+      wireframe: false,
+      lineWidthUnits: "pixels",
+      getLineWidth: item => String(item.id) === String(selectedProjectId) ? 3 : 1.5,
+      material: {
+        ambient: 0.62,
+        diffuse: 0.58,
+        shininess: 8,
+        specularColor: [52, 44, 38],
+      },
+      pickable: true,
+    }),
+    new PathLayer({
+      id: "civic-construction-frames",
+      data: scene.constructionFrames,
+      getPath: item => item.path,
+      getColor: item => String(item.id) === String(selectedProjectId)
+        ? [255, 244, 191, 255]
+        : item.lineColor,
+      getWidth: item => String(item.id) === String(selectedProjectId) ? 4 : 2.5,
+      widthUnits: "pixels",
+      capRounded: false,
+      jointRounded: false,
       pickable: true,
     }),
     new PolygonLayer({
@@ -252,6 +293,25 @@ export function CivicDiorama({
       pickable: false,
     }),
     new TextLayer({
+      id: "civic-construction-labels",
+      data: scene.constructions.filter(item => !item.operationalPlace),
+      getPosition: item => item.position,
+      getText: item => item.label,
+      getColor: item => String(item.id) === String(selectedProjectId)
+        ? [255, 247, 210, 255]
+        : [240, 219, 178, 235],
+      getBackgroundColor: [31, 29, 26, 205],
+      background: true,
+      backgroundPadding: [4, 2],
+      getSize: 10,
+      sizeUnits: "pixels",
+      getPixelOffset: [0, -10],
+      getTextAnchor: "middle",
+      getAlignmentBaseline: "bottom",
+      billboard: true,
+      pickable: false,
+    }),
+    new TextLayer({
       id: "civic-selection-label",
       data: selectedLabels,
       getPosition: item => item.position,
@@ -274,6 +334,7 @@ export function CivicDiorama({
     selectedAgentId,
     selectedLabels,
     selectedPlaceId,
+    selectedProjectId,
     transitionDuration,
   ]);
 
@@ -298,14 +359,21 @@ export function CivicDiorama({
     if (!object) return;
     if (object.entityKind === "agent") onSelectAgent(object.id);
     if (object.entityKind === "place") onSelectPlace(object.id);
+    if (object.entityKind === "construction") onSelectProject?.(object.id);
     if (object.entityKind === "cluster") onShowAllResidents();
   };
   const selectFromKeyboard = event => {
-    const [kind, id] = event.target.value.split(":");
+    const value = String(event.target.value);
+    const separator = value.indexOf(":");
+    const kind = separator < 0 ? value : value.slice(0, separator);
+    const id = separator < 0 ? "" : value.slice(separator + 1);
     if (kind === "agent") onSelectAgent(id);
     if (kind === "place") onSelectPlace(id);
+    if (kind === "project") onSelectProject?.(id);
   };
-  const selectionValue = selectedPlaceId != null
+  const selectionValue = selectedProjectId != null
+    ? `project:${selectedProjectId}`
+    : selectedPlaceId != null
     ? `place:${selectedPlaceId}`
     : selectedAgentId != null ? `agent:${selectedAgentId}` : "";
 
@@ -339,6 +407,12 @@ export function CivicDiorama({
           {scene.buildings.filter(item => item.entityKind === "place").map(item =>
             <option key={item.key} value={`place:${item.id}`}>{item.name || `Place ${item.id}`}</option>)}
         </optgroup>
+        <optgroup label="Construction projects">
+          {scene.constructions.map(item =>
+            <option key={item.key} value={`project:${item.id}`}>
+              {item.name || `Construction project ${item.id}`} · {item.label}
+            </option>)}
+        </optgroup>
         <optgroup label="Agents">
           {scene.agents.map(item =>
             <option key={item.id} value={`agent:${item.id}`}>{item.name || `Agent ${item.id}`}</option>)}
@@ -355,12 +429,13 @@ export function CivicDiorama({
             : transitionDuration
               ? "Consecutive tick transition"
               : "Committed scene"}</span>
-      <span>{scene.buildings.length} buildings · {scene.agents.length} agents · {scene.flows.length} flows</span>
+      <span>{scene.buildings.length} buildings · {scene.constructions.length} projects · {scene.agents.length} agents · {scene.flows.length} flows</span>
       {firstFrameMs != null && <span>First frame {Math.round(firstFrameMs)}ms</span>}
       {frameP95Ms != null && <span>Frame p95 {Math.round(frameP95Ms)}ms</span>}
     </div>
     <p className="civic-diorama__method">
       Height is a derived visual encoding of exposed capacity, occupancy, queue, or employee counts.
+      Construction geometry uses stored work units and exact foundation, frame, shell, and completed stages.
       Flow curves connect committed public region endpoints; they do not imply a traveled street.
       Position interpolation is limited to consecutive live projections.
     </p>

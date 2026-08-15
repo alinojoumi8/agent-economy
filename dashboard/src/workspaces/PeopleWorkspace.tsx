@@ -168,6 +168,7 @@ const PROJECT_KINDS = [
   ["migration", "Migration"],
   ["residence", "Residences"],
   ["workplace", "Workplaces"],
+  ["construction", "Construction"],
   ["public_output", "Public outputs"],
 ] as const;
 
@@ -264,30 +265,36 @@ export function PeopleWorkspace() {
   const cityUrl = ({
     agent,
     place,
+    project,
     organization,
   }: {
     agent?: number | null;
     place?: number | null;
+    project?: string | null;
     organization?: string | null;
   }) => {
     const params = commonObserverParamsFromState(observerState);
     params.set("view", "diorama");
-    if (agent != null) {
+    if (project) {
+      params.set("project", project);
+    } else if (agent != null) {
       params.set("agent", String(agent));
       params.set("population", "all");
     }
-    if (place != null) params.set("place", String(place));
-    if (organization) {
+    if (!project && place != null) params.set("place", String(place));
+    if (!project && organization) {
       params.set("layer", "organizations");
       params.set("q", organization);
     }
     return `/runs/${encodeURIComponent(runId)}/overview?${params}`;
   };
-  const projectUrl = (project: LivingProject) => cityUrl({
-    agent: project.owner_agent_id,
-    place: project.place?.id,
-    organization: project.organization?.name,
-  });
+  const projectUrl = (project: LivingProject) => project.kind === "construction"
+    ? cityUrl({ project: project.project_id.replace(/^construction:/, "") })
+    : cityUrl({
+      agent: project.owner_agent_id,
+      place: project.place?.id,
+      organization: project.organization?.name,
+    });
 
   if (workspaceQuery.isLoading) {
     return <div className="world-os-loading" aria-label="Loading Living Agents" />;
@@ -514,7 +521,7 @@ export function PeopleWorkspace() {
               <option value="cancelled">Cancelled</option>
             </select>
           </label>
-          <small>{data.summary.projects_total} exact streams match</small>
+          <small>{data.summary.projects_total} progress streams match</small>
         </article>
         <div className="world-os-project-list">
           {data.projects.map(project => <article
@@ -531,13 +538,17 @@ export function PeopleWorkspace() {
               <div><dt>Status</dt><dd>{label(project.status)}</dd></div>
               <div><dt>Milestones</dt><dd>{project.milestone_count}</dd></div>
               <div><dt>Updated</dt><dd>Tick {project.updated_tick}</dd></div>
+              {project.kind === "construction" && <>
+                <div><dt>Funding</dt><dd>{Number(project.metrics.contributed_funding_cents || 0)}/{Number(project.metrics.required_funding_cents || 0)} cents</dd></div>
+                <div><dt>Work</dt><dd>{Number(project.metrics.contributed_work_units || 0)}/{Number(project.metrics.required_work_units || 0)} units</dd></div>
+              </>}
             </dl>
             <p>
-              {project.privacy === "aggregated"
+              {["aggregated", "aggregated_private"].includes(project.privacy)
                 ? "Aggregated to protect peripheral agents."
                 : `${project.evidence_refs.length} evidence reference${project.evidence_refs.length === 1 ? "" : "s"}.`}
             </p>
-            {(project.owner_agent_id || project.place || project.organization) &&
+            {(project.kind === "construction" || project.owner_agent_id || project.place || project.organization) &&
               <Link to={projectUrl(project)}>Focus evidence in Live City</Link>}
           </article>)}
           {!data.projects.length &&

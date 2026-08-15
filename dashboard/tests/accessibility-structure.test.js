@@ -44,11 +44,18 @@ test("city instrumentation keeps supporting copy inside each definition", () => 
 
   assert.ok(instruments, "city instrumentation definition list is present");
   const definitions = [...instruments.matchAll(/<dd(?:\s[^>]*)?>([\s\S]*?)<\/dd>/g)];
-  assert.equal(definitions.length, 8);
+  assert.equal(definitions.length, 9);
   for (const [, content] of definitions) {
     assert.match(content, /<span className="civic-city__instrument-value">[\s\S]*?<small>[\s\S]*?<\/small>/);
   }
   assert.doesNotMatch(instruments, /<\/dd>\s*<small>/);
+});
+
+test("construction marks are selectable and the lens states its observer-only boundary", () => {
+  assert.match(civicCitySource, /aria-label=\{`Select \$\{project\.name\}/);
+  assert.match(civicCitySource, /Stage geometry is derived from stored work units/);
+  assert.match(civicCitySource, /cannot assign work, fund a project, or mutate the simulation/);
+  assert.match(civicCitySource, /Owners and exact sites withheld/);
 });
 
 test("decorative metric sparklines do not duplicate accessible labels and values", () => {

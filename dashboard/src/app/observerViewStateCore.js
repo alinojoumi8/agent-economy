@@ -10,6 +10,12 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function projectIdentifier(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.length > 180) return null;
+  return /^[a-zA-Z0-9:_-]+$/.test(normalized) ? normalized : null;
+}
+
 function normalizedTick(value) {
   if (!value || value === "live") return "live";
   if (!/^\d+$/.test(value)) return "live";
@@ -22,7 +28,8 @@ export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
   const view = params.get("view") || "atlas";
-  const agent = positiveInteger(params.get("agent"));
+  const project = projectIdentifier(params.get("project"));
+  const agent = project ? null : positiveInteger(params.get("agent"));
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -31,7 +38,8 @@ export function parseObserverViewState(params) {
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
     agent,
-    place: agent ? null : positiveInteger(params.get("place")),
+    place: project || agent ? null : positiveInteger(params.get("place")),
+    project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
     view: CITY_VIEW_MODES.has(view) ? view : "atlas",
   };
@@ -69,13 +77,27 @@ export function patchObserverViewState(params, patch) {
     const agent = Number(patch.agent);
     const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
     setOrDelete("agent", selected);
-    if (selected) next.delete("place");
+    if (selected) {
+      next.delete("place");
+      next.delete("project");
+    }
   }
   if ("place" in patch) {
     const place = Number(patch.place);
     const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
     setOrDelete("place", selected);
-    if (selected) next.delete("agent");
+    if (selected) {
+      next.delete("agent");
+      next.delete("project");
+    }
+  }
+  if ("project" in patch) {
+    const project = projectIdentifier(patch.project);
+    setOrDelete("project", project);
+    if (project) {
+      next.delete("agent");
+      next.delete("place");
+    }
   }
   if ("population" in patch) {
     const population = typeof patch.population === "string"

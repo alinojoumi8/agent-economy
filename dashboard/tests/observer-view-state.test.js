@@ -22,6 +22,7 @@ test("observer URL state restores valid city and common selections", () => {
     activeOnly: true,
     agent: 9,
     place: null,
+    project: null,
     population: "all",
     view: "diorama",
   });
@@ -38,6 +39,7 @@ test("malformed observer URL values fail closed to safe defaults", () => {
   assert.equal(state.activeOnly, false);
   assert.equal(state.agent, null);
   assert.equal(state.place, null);
+  assert.equal(state.project, null);
   assert.equal(state.population, "core");
   assert.equal(state.view, "atlas");
 });
@@ -74,12 +76,34 @@ test("agent and place selections remain mutually exclusive", () => {
     activeOnly: false,
     agent: null,
     place: 11,
+    project: null,
     population: "core",
     view: "diorama",
   });
 
   const agent = patchObserverViewState(place, { agent: 7 });
   assert.equal(agent.toString(), "view=diorama&agent=7");
+});
+
+test("project selection is stable, accepts aggregate ids, and is exclusive", () => {
+  const project = patchObserverViewState(
+    new URLSearchParams("agent=9&place=11&view=diorama"),
+    { project: "private-homes:region:3:building:frame" },
+  );
+  assert.equal(
+    project.toString(),
+    "view=diorama&project=private-homes%3Aregion%3A3%3Abuilding%3Aframe",
+  );
+  assert.equal(
+    parseObserverViewState(project).project,
+    "private-homes:region:3:building:frame",
+  );
+  const place = patchObserverViewState(project, { place: 4 });
+  assert.equal(place.toString(), "view=diorama&place=4");
+  assert.equal(
+    parseObserverViewState(new URLSearchParams("project=private%20reasoning")).project,
+    null,
+  );
 });
 
 test("cross-workspace and projection scopes use different fork keys", () => {

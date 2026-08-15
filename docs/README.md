@@ -50,9 +50,10 @@ each audience can find the authoritative level of detail.
 
 These documents define the Semantics 8 communications lake, Semantics 9
 External Agent Gateway, Semantics 10 Agent Commons, Semantics 11 compute
-economy, and Semantics 12 civic permit vertical. Their code is implemented, but
+economy, Semantics 12 civic permits, and the separately approved Semantics 13
+construction economy. Their code is implemented, but
 their release states differ: Semantics 8 is the released deterministic causal
-baseline; Semantics 9–10 remain rollout-gated; Semantics 11–12 are implemented
+baseline; Semantics 9–10 remain rollout-gated; Semantics 11–13 are implemented
 opt-in contracts whose public use inherits those hosted gates. The
 [implementation-status ledger](implementation-status.md) is authoritative for
 current labels. Historical release contracts and receipts remain frozen.
@@ -69,6 +70,7 @@ pairs into one file.
 - [World OS technical specification](world-os/TECH-SPEC.md)
 - [Semantics-11 cognition and provider pools](semantics11-cognition.md)
 - [Semantics-12 civic city and permit workflow](semantics12-civic-city.md)
+- [Semantics-13 agent-built construction economy](semantics13-construction-economy.md)
 - [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
 - [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
 - [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)

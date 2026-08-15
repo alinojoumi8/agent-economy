@@ -151,6 +151,18 @@ def citizen_decision(context: dict) -> dict:
             [],
             "attending my required civic appointment",
         )
+    construction = context.get("construction_work", {})
+    construction_actions = (
+        construction.get("eligible_actions", [])
+        if isinstance(construction, dict) else []
+    )
+    if construction_actions and isinstance(construction_actions[0], dict):
+        return _env(
+            None,
+            [dict(construction_actions[0])],
+            [],
+            "advancing an agent-authored construction project",
+        )
     if "supplier_warning_policy_input" in context:
         return supplier_warning_decision(context["supplier_warning_policy_input"])
     legal_action = _first_legal_action(context)

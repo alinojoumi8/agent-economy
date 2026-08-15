@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from engine.store import load_json
+from .construction import construction_projects_as_of
 
 
 def _dicts(rows) -> list[dict[str, Any]]:
@@ -274,6 +275,8 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
             "occupancy": int(row["occupancy"]),
         })
     organizations = [row for row in _firms_as_of(store, tick) if row["active"]]
+    construction_projects = construction_projects_as_of(
+        store, as_of_tick=tick)
     flows = build_world_flows(store, as_of_tick=tick)
     migration_count = sum(flow["kind"] == "migration" for flow in flows)
     trade_count = sum(flow["kind"] == "trade" for flow in flows)
@@ -281,11 +284,12 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
     return {
         "enabled": bool(regions), "regions": regions, "agents": agents,
         "organizations": organizations, "places": places, "presence": presence,
-        "flows": flows,
+        "flows": flows, "construction_projects": construction_projects,
         "summary": {
             "population": len(agents), "active_organizations": len(organizations),
             "currencies": currencies, "migration_count": migration_count,
             "trade_count": trade_count,
+            "construction_projects": len(construction_projects),
         },
     }
 

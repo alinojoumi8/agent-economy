@@ -48,6 +48,7 @@ type CityMap = {
   agents?: CityAgent[];
   organizations?: CityFirm[];
   places?: Array<Record<string, unknown>>;
+  construction_projects?: Array<Record<string, unknown>>;
   presence?: Array<Record<string, unknown>>;
   regions?: unknown[];
   flows?: unknown[];
@@ -110,7 +111,7 @@ export function OverviewWorkspace() {
     queryKey: ["world-os", runId, observerState.fork, "city", tick, observerState.population],
     queryFn: async ({ signal }) => {
       const mapParams = projectionScopeParams(observerState);
-      mapParams.set("layers", "regions,agents,organizations,places,presence,flows");
+      mapParams.set("layers", "regions,agents,organizations,places,presence,flows,construction_projects");
       mapParams.set("population", observerState.population);
       const civicParams = projectionScopeParams(observerState);
       const [mapEnvelope, civicEnvelope] = await Promise.all([

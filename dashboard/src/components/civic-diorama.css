@@ -142,6 +142,19 @@
   background: rgba(207, 131, 79, .09);
 }
 
+.civic-city__avatar--construction {
+  display: grid;
+  place-items: center;
+  background: #d7a654;
+  color: #11191a;
+  font-size: 1.35rem;
+}
+
+.civic-city__activity--construction {
+  border-color: rgba(215, 166, 84, .52);
+  background: rgba(215, 166, 84, .1);
+}
+
 .civic-diorama {
   position: absolute;
   inset: 0;

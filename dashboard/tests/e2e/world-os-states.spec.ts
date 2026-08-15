@@ -257,7 +257,9 @@ test("Diorama shares place and agent evidence through browser history", async ({
   } }));
 
   await page.goto("/runs/run-demo/overview?view=diorama");
-  await expect(page.getByText(/2 buildings · 2 agents · 1 flows/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(
+    /2 buildings · 0 projects · 2 agents · 1 flows/,
+  )).toBeVisible({ timeout: 15_000 });
 
   const explorer = page.getByLabel("Keyboard explorer");
   await explorer.selectOption("place:4");

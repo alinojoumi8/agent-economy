@@ -154,6 +154,13 @@ exactly. An appointment action is mandatory and consumes the entire turn.
 found_company is valid only when the supplied payload is bound to an active,
 unexpired civic authorization."""
 
+CONSTRUCTION_ACTIONS_SUFFIX = """
+Semantics 13 construction actions are available only as complete objects in
+construction_work.eligible_actions. Copy one supplied object exactly or choose
+do_nothing. Projects progress through proposed, permitting, funding, building,
+and completed. Funding, wages, procurement, and refunds settle through the
+ledger. A project is not an operational place until completion."""
+
 DEFAULT_ENTREPRENEURSHIP_SECTORS = (
     "services", "technology", "manufacturing", "logistics", "healthcare",
     "energy", "agriculture",
@@ -384,6 +391,11 @@ class ContextBuilder:
                 int(agent_row["id"]), tick)
             if required_action is not None:
                 ctx["civic_required_action"] = required_action
+        if self.engine_semantics_version >= 13 and self.e.construction.enabled:
+            construction = self.e.construction.decision_context(
+                int(agent_row["id"]), tick)
+            if construction is not None:
+                ctx["construction_work"] = construction
         entrepreneurship = self.config.get("entrepreneurship", {})
         if (
             bool(entrepreneurship.get("enabled", False))
@@ -2139,6 +2151,15 @@ class ContextBuilder:
                     context["civic_required_action"],
                     separators=(",", ":"),
                 ))
+        if context.get("construction_work"):
+            lines.append(
+                "[CONSTRUCTION WORK - AGENT-AUTHORED, ENGINE-VALIDATED; COPY ONE "
+                "eligible action EXACTLY OR DO NOTHING] "
+                + json.dumps(
+                    context["construction_work"],
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )[:6000])
         beliefs = context.get("beliefs", {})
         if beliefs:
             lines.append("[BELIEFS] " + ", ".join(f"{k}={v}" for k, v in list(beliefs.items())[:8]))
@@ -2401,6 +2422,12 @@ class ContextBuilder:
                 "[TASK] Attend the supplied civic appointment now by copying the required "
                 "action exactly. Attendance consumes this entire turn; submit no other "
                 "action. Reply with the JSON envelope only.")
+        elif context.get("construction_work", {}).get("eligible_actions"):
+            lines[-1] = (
+                "[TASK] Decide whether to advance the supplied construction project. "
+                "If acting, copy one complete eligible action exactly. Living Agents "
+                "is observer-only and cannot assign this work. Reply with the JSON "
+                "envelope only.")
         system = SYSTEM_PREFIX
         if grounding_active:
             memory = getattr(self, "mem", None)
@@ -2434,6 +2461,11 @@ class ContextBuilder:
             )
         ):
             system += CIVIC_ACTIONS_SUFFIX
+        if (
+            getattr(self, "engine_semantics_version", 2) >= 13
+            and context.get("construction_work")
+        ):
+            system += CONSTRUCTION_ACTIONS_SUFFIX
         if context.get("institutional_work"):
             system += (SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX
                        if getattr(self, "engine_semantics_version", 2) >= 7

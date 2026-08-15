@@ -119,6 +119,17 @@ test("world workspace normalizes public map data without inventing coordinates",
       { id: 4, name: "Square", region_id: 1, x: 0.5, y: 0.5 },
       { id: 3, name: "Archives", region_id: 1, x: Number.NaN, y: 0.4 },
     ],
+    construction_projects: [{
+      project_id: "private-homes:region:1:building:frame",
+      name: "Private home construction in South",
+      stage: "frame",
+      site: { x: 0.25, y: 0.35 },
+    }, {
+      project_id: 12,
+      name: "Future Workshop",
+      stage: "foundation",
+      site: { x: "private-coordinate", y: 0.5 },
+    }],
     presence: [{ id: 8, agent_id: 1, place_id: 4 }],
     flows: [
       { id: 9, kind: "migration", origin_region_id: 1, destination_region_id: 2 },
@@ -135,6 +146,12 @@ test("world workspace normalizes public map data without inventing coordinates",
   assert.equal(normalized.regions[1].x, undefined);
   assert.equal(normalized.places[0].x, undefined);
   assert.equal(normalized.agents[1].x, undefined);
+  assert.deepEqual(
+    normalized.constructionProjects.map(project => project.id),
+    [12, "private-homes:region:1:building:frame"],
+  );
+  assert.equal(normalized.constructionProjects[0].x, undefined);
+  assert.equal(normalized.constructionProjects[1].x, 0.25);
   assert.deepEqual(normalized.flows.map(flow => `${flow.kind}:${flow.id}`), ["migration:9", "trade:11"]);
   assert.deepEqual(normalized.summary, {
     population: 2,
@@ -142,6 +159,7 @@ test("world workspace normalizes public map data without inventing coordinates",
     currencies: ["CAD", "USD"],
     migrationCount: 1,
     tradeCount: 1,
+    constructionCount: 2,
   });
   assert.equal("currentTelemetry" in normalized, false);
 });
@@ -153,6 +171,7 @@ test("world workspace has stable empty and historical normalization", () => {
     agents: [],
     organizations: [],
     places: [],
+    constructionProjects: [],
     presence: [],
     flows: [],
     summary: {
@@ -161,6 +180,7 @@ test("world workspace has stable empty and historical normalization", () => {
       currencies: [],
       migrationCount: 0,
       tradeCount: 0,
+      constructionCount: 0,
     },
   });
   const historical = normalizeWorldWorkspace({

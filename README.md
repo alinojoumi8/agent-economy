@@ -244,6 +244,7 @@ baseline and fails closed when history is missing.
 | `runs/civic-rehearsal.yaml` | Free Semantics-12 civic permit vertical | Scripted, deterministic, capacity-limited permit office |
 | `runs/civic-city-300.yaml` | Interactive 300-resident Civic City with a 100-agent core and 200-agent periphery | Scripted, deterministic; observer can switch between core, all residents, and privacy-safe regional clusters |
 | `runs/civic-live.yaml` | Bounded live Semantics-12 civic permit vertical | MiniMax permit clerk with configured live fallbacks |
+| `runs/construction-live.yaml` | Agent-built Semantics-13 homes, workplaces, and public facilities | Bounded live civic profile; strict provider preflight inherited from `civic-live.yaml` |
 | `runs/base.yaml` | Fast local world | Scripted, free, deterministic |
 | `runs/participant.yaml` | One-citizen participant sandbox | Scripted, free, step-only |
 | `runs/v2-live-minimax.yaml` | Default 1,000-agent live world | MiniMax M3 for the 100-agent core/shared services; deterministic periphery; $150 cap |
@@ -385,6 +386,7 @@ invite-only until the independent protocol and real-connector gates in the
 | Customize a run or provider | [Configuration](docs/configuration.md) |
 | Run evolving live agents and audit cognition | [Semantics-11 cognition](docs/semantics11-cognition.md) |
 | Exercise places, civic queues, and business permits | [Semantics-12 civic city](docs/semantics12-civic-city.md) |
+| Build agent-funded homes, workplaces, and public facilities | [Semantics-13 construction economy](docs/semantics13-construction-economy.md) |
 | Automate the local server | [API reference](docs/api-reference.md) |
 | Connect Hermes, OpenClaw, or a custom agent | [External Agent Gateway](docs/world-os/EXTERNAL-AGENT-GATEWAY.md) and [clients](clients/README.md) |
 | Operate, pause, resume, or accept a run | [Operator runbook](docs/operator-runbook.md) |
@@ -399,9 +401,9 @@ documents.
 
 All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
 R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
-surfaces are implemented. Maintained new runs support schema 17 / Semantics 12.
+surfaces are implemented. Maintained new runs support schema 19 / Semantics 13.
 Semantics 8 is the released deterministic causal baseline; Semantics 9–10 are
-implemented but rollout-gated; Semantics 11–12 are implemented opt-in contracts
+implemented but rollout-gated; Semantics 11–13 are implemented opt-in contracts
 whose public use inherits those hosted gates. The
 [implementation-status ledger](docs/implementation-status.md) is the single
 authority for current release labels and remaining evidence.
