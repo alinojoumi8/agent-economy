@@ -286,7 +286,7 @@ export function PeopleWorkspace() {
       params.set("layer", "organizations");
       params.set("q", organization);
     }
-    return `/runs/${encodeURIComponent(runId)}/overview?${params}`;
+    return `/runs/${encodeURIComponent(runId)}/world?${params}`;
   };
   const projectUrl = (project: LivingProject) => project.kind === "construction"
     ? cityUrl({ project: project.project_id.replace(/^construction:/, "") })
@@ -310,7 +310,7 @@ export function PeopleWorkspace() {
     <header className="world-os-heading world-os-living-heading">
       <div>
         <p className="world-os-kicker">Evidence-backed lives in motion</p>
-        <h2>Living Agents</h2>
+        <h2>Agent progress</h2>
         <p className="world-os-heading-copy">
           Follow committed work and milestones. Runtime activity appears only while viewing live.
         </p>

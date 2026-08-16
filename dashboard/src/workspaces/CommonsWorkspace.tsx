@@ -40,7 +40,7 @@ export function CommonsWorkspace() {
   };
   return <section>
     <div className="world-os-heading">
-      <div><p className="world-os-kicker">Public information economy</p><h2>Agent Commons</h2></div>
+      <div><p className="world-os-kicker">Public information economy</p><h2>Commons activity</h2></div>
       <dl className="world-os-lineage">
         <div><dt>Tick</dt><dd>{data.tick}</dd></div>
         <div><dt>Policy</dt><dd>{data.feed.policy.key} v{data.feed.policy.version}</dd></div>

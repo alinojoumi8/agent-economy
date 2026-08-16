@@ -744,7 +744,7 @@ export function CivicCity(props) {
             <p>Stage geometry is derived from stored work units. This view cannot assign work, fund a project, or mutate the simulation.</p>
           </section>
           <div className="civic-city__lens-actions">
-            {projectHref && <Link className="is-primary" to={projectHref}>Open in World workspace <span>→</span></Link>}
+            {projectHref && <Link className="is-primary" to={projectHref}>Open in Live City <span>→</span></Link>}
             {completedPlaceHref && <Link to={completedPlaceHref}>Open completed place <span>↗</span></Link>}
           </div>
         </> : selectedPlace ? <>
@@ -792,7 +792,7 @@ export function CivicCity(props) {
             <p>In 2.5D, building height derives from exposed capacity, occupancy, and queue magnitude. Shape and height are not canonical world geometry.</p>
           </section>
           <div className="civic-city__lens-actions">
-            {placeHref && <Link className="is-primary" to={placeHref}>Open in World workspace <span>→</span></Link>}
+            {placeHref && <Link className="is-primary" to={placeHref}>Open in Live City <span>→</span></Link>}
             <span className="civic-city__no-trace">Associations are labelled separately from direct event records.</span>
           </div>
         </> : selected ? <>

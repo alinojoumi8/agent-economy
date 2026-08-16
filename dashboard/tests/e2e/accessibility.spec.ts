@@ -120,5 +120,5 @@ test("native controls use the color scheme of their visual surface", async ({ pa
     return result;
   });
 
-  expect(schemes).toEqual({ observatory: "light", shell: "light", world: "dark" });
+  expect(schemes).toEqual({ observatory: "light", shell: "dark", world: "dark" });
 });

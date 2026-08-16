@@ -161,17 +161,13 @@ export function WorldWorkspace() {
   useEffect(() => {
     if (projection.loading) return;
     const next = new URLSearchParams(searchParams);
-    if (selectedProject) next.delete("region");
-    else if (selectedProjectId != null) {
-      const cleared = patchObserverViewState(next, { project: null });
-      setSearchParams(cleared, { replace: true });
-      return;
-    } else if (selectedPlace) next.delete("region");
-    else if (selectedPlaceId != null) {
-      const cleared = patchObserverViewState(next, { place: null });
-      setSearchParams(cleared, { replace: true });
-      return;
-    }
+    /*
+     * CivicCity validates place and project selections against the world-map
+     * projection after that request settles. Do not clear them here from the
+     * independently loaded workspace summary: a valid map selection can arrive
+     * before that summary contains the same record.
+     */
+    if (selectedProjectId != null || selectedPlaceId != null) next.delete("region");
     if (selectedRegionId != null && !selectedRegion) next.delete("region");
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
@@ -179,9 +175,7 @@ export function WorldWorkspace() {
   }, [
     projection.loading,
     searchParams,
-    selectedPlace,
     selectedPlaceId,
-    selectedProject,
     selectedProjectId,
     selectedRegion,
     selectedRegionId,
@@ -216,9 +210,9 @@ export function WorldWorkspace() {
 
   return <section className="world-os-world-workspace">
     <WorkspaceHeader
-      title="World"
-      kicker="Bounded geographic projection"
-      sourceLabel="World workspace committed projection"
+      title="City map"
+      kicker="Agents, places, and construction"
+      sourceLabel="Live City committed projection"
       envelope={envelope}
       actions={<div className="world-os-world-controls" aria-label="World selection controls">
         <label>Region

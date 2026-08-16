@@ -208,7 +208,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
 
   await page.goto("/runs/run-demo/world?tick=4");
-  await page.getByRole("link", { name: /World state|World/ }).first().click();
+  await page.getByRole("link", { name: "Live City" }).first().click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
 
@@ -260,6 +260,7 @@ test("Diorama shares place and agent evidence through browser history", async ({
   await expect(page.getByText(
     /2 buildings · 0 projects · 2 agents · 1 flows/,
   )).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/runs/run-demo/world");
 
   const explorer = page.getByLabel("Keyboard explorer");
   await explorer.selectOption("place:4");

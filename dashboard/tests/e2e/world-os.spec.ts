@@ -438,7 +438,7 @@ test("initial projection handshake does not refetch stale backfill", async ({ pa
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await page.waitForTimeout(200);
   expect(snapshotRequests).toBeLessThanOrEqual(2);
 });
@@ -553,7 +553,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   } }));
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   const beforeRecovery = snapshotRequests;
 
   await page.evaluate(() => {
@@ -577,7 +577,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   await page.waitForTimeout(300);
   // Recovery invalidates once; it must not enter a tight refetch loop.
   expect(snapshotRequests - beforeRecovery).toBeLessThanOrEqual(3);
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
 test("cursor gaps request contiguous backfill and return live", async ({ page }) => {
@@ -613,7 +613,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__gapSocket.sent
   ))).toContainEqual({ type: "hello", event_cursor: 0 });
@@ -694,7 +694,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 4");
   const initialConnections = await page.evaluate(() => (
     (window as any).__lineageSockets.length
@@ -913,7 +913,7 @@ test("citizen menu unifies app and onboarding links in the same tab", async ({ p
 
 test("overview enters the exact causal chain", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.getByText("Balanced")).toBeVisible();
   await page.getByRole("link", { name: "Investigate event 9" }).click();
   await expect(page).toHaveURL(/investigations\?event=9/);
@@ -964,7 +964,7 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const pageErrors: string[] = [];
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
@@ -1251,7 +1251,7 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview?fork=fork-a&tick=4");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1298,7 +1298,7 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
   const cityLink = page.getByRole("link", { name: "Focus in Live City" });
   await expect(cityLink).toHaveAttribute(
     "href",
-    "/runs/run-demo/overview?fork=fork-a&tick=4&view=diorama&agent=1&population=all",
+    "/runs/run-demo/world?fork=fork-a&tick=4&view=diorama&agent=1&population=all",
   );
 });
 
@@ -1322,7 +1322,7 @@ test("superseded entity searches never replace the newest result", async ({ page
     } });
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1344,7 +1344,7 @@ test("entity-search failure leaves matching routes operable", async ({ page }) =
     json: { detail: "search unavailable" },
   }));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");

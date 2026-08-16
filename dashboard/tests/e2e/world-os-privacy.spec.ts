@@ -245,7 +245,7 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   }
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Live City" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const responsePromise = page.waitForResponse(response => (

@@ -944,9 +944,9 @@ body::before {
 .world-os-skill-card ul, .world-os-progression-card ol { margin: .75rem 0 0; padding: 0; list-style: none; }
 .world-os-skill-card li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, .42fr); align-items: center; gap: .65rem; padding: .47rem 0; border-bottom: 1px solid var(--ae-border-soft); }
 .world-os-skill-card li:last-child { border-bottom: 0; }
-.world-os-skill-card li div { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.world-os-skill-card li div { display: grid; min-width: 0; gap: .16rem; }
 .world-os-skill-card li strong { overflow: hidden; color: var(--ae-text); font-size: .6rem; text-overflow: ellipsis; white-space: nowrap; }
-.world-os-skill-card li span { color: var(--ae-text-3); font: .5rem var(--font-mono); white-space: nowrap; }
+.world-os-skill-card li span { color: var(--ae-text-3); font: .5rem var(--font-mono); line-height: 1.35; }
 .world-os-skill-card li i { height: 4px; overflow: hidden; border-radius: 8px; background: var(--ae-track); }
 .world-os-skill-card li b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ae-accent), var(--os-mint)); }
 .world-os-progression-card ol li { display: grid; grid-template-columns: 42px minmax(110px, .7fr) 58px minmax(0, 1fr); align-items: center; gap: .55rem; padding: .55rem .2rem; border-bottom: 1px solid var(--ae-border-soft); }
