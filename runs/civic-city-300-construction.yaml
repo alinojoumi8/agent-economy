@@ -1,0 +1,19 @@
+# Zero-cost 300-agent Living Agents and construction showcase.
+#
+# This is a forward-only profile. Existing civic-city-300 runs retain their
+# stored Semantics-12 identity and must never be upgraded in place.
+extends: civic-city-300.yaml
+
+engine_semantics_version: 13
+
+construction:
+  enabled: true
+  agent_initiation: true
+  private_home_funding_cents: 20000
+  workplace_funding_cents: 60000
+  public_facility_funding_cents: 80000
+  private_home_work_units: 4
+  workplace_work_units: 8
+  public_facility_work_units: 10
+  funding_contribution_cents: 10000
+  work_units_per_action: 2

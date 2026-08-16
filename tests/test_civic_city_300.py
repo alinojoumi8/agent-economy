@@ -181,3 +181,28 @@ def test_civic_city_300_profile_and_population_views(tmp_path) -> None:
         ) == authoritative_before
     finally:
         store.close()
+
+
+def test_civic_city_300_construction_profile_is_forward_only_and_zero_cost() -> None:
+    config = load_config("runs/civic-city-300-construction.yaml")
+
+    assert config["engine_semantics_version"] == 13
+    assert config["population"]["target_total"] == 297
+    assert config["living_world"]["core_agents"] == 100
+    assert config["construction"] == {
+        "enabled": True,
+        "agent_initiation": True,
+        "private_home_funding_cents": 20_000,
+        "workplace_funding_cents": 60_000,
+        "public_facility_funding_cents": 80_000,
+        "private_home_work_units": 4,
+        "workplace_work_units": 8,
+        "public_facility_work_units": 10,
+        "funding_contribution_cents": 10_000,
+        "work_units_per_action": 2,
+    }
+    assert config["budget"]["cap_usd"] == 0.0
+    assert config["llm"]["default_route"]["provider"] == "scripted"
+    assert {
+        route["provider"] for route in config["llm"]["routes"].values()
+    } == {"scripted"}

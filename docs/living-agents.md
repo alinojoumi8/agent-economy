@@ -43,3 +43,21 @@ With Semantics 13 enabled, construction is an additional progress stream.
 Cards report the exact lifecycle state, physical stage, funding cents, work
 units, milestone count, and privacy class. The workspace remains read-only; see
 the [construction economy contract](semantics13-construction-economy.md).
+
+## Visual runtime and zero-cost showcase
+
+The runtime workspace uses deterministic decorative portraits and procedural
+construction geometry. Neither surface adds identity claims or progress: agent
+facts come from the journey projection, while foundation, frame, shell, and
+completion are selected only from stored construction stages.
+
+Start a new provider-free 300-agent Semantics-13 showcase with:
+
+```powershell
+python run.py --config runs/civic-city-300-construction.yaml --serve --host 127.0.0.1 --port 8000
+```
+
+Then open `/runs/<run-id>/people`. At tick zero the four-stage storyboard is a
+labelled reference with no claimed current stage. It advances only after agents
+commit proposal, permit, funding, and work evidence. Do not resume a stored
+Semantics-12 run with this profile; stored runs keep their original semantics.
