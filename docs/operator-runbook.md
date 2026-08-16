@@ -21,8 +21,11 @@ intended evidence gate before starting it.
 
 ## Optional R22 hosted deployment
 
-Hosted mode is separate from `run.py --serve`. Copy deployment secrets into an
-ignored environment file or a secret manager; at minimum set strong unique
+Hosted mode is separate from `run.py --serve`. Copy deployment secrets into the
+repository-root ignored `.env` file or an operator-controlled equivalent; the
+commands below pass that file explicitly so Compose does not resolve a different
+project-directory environment. Substitute another ignored `--env-file` path when
+using a secret-manager export. At minimum set strong unique
 `POSTGRES_PASSWORD`, `APP_DATABASE_PASSWORD`,
 `SUPERVISOR_DATABASE_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
 `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` values plus the exact HTTPS
@@ -35,10 +38,10 @@ characters. Never put any populated value in committed YAML.
 Validate and build the reference stack before first start:
 
 ```powershell
-docker compose -f deploy/compose.yaml config --quiet
-docker compose -f deploy/compose.yaml build app migrate
-docker compose -f deploy/compose.yaml up -d postgres minio minio-init migrate app caddy prometheus
-docker compose -f deploy/compose.yaml ps
+docker compose --env-file .env -f deploy/compose.yaml config --quiet
+docker compose --env-file .env -f deploy/compose.yaml build app migrate
+docker compose --env-file .env -f deploy/compose.yaml up -d postgres minio minio-init migrate app caddy prometheus
+docker compose --env-file .env -f deploy/compose.yaml ps
 ```
 
 The migration job must complete successfully before the application starts.
@@ -47,7 +50,7 @@ environment variable or the CLI's hidden prompt:
 
 ```powershell
 $env:AGENT_ECONOMY_BOOTSTRAP_PASSWORD = '<temporary-strong-password>'
-docker compose -f deploy/compose.yaml run --rm `
+docker compose --env-file .env -f deploy/compose.yaml run --rm `
   -e AGENT_ECONOMY_BOOTSTRAP_PASSWORD `
   bootstrap bootstrap --config /app/config/hosted.migrate.docker.yaml `
   --tenant-slug research --tenant-name 'Research' `
@@ -62,11 +65,11 @@ job: keep the current `POSTGRES_PASSWORD`, place new distinct values in
 `AGENT_ECONOMY_NEW_POSTGRES_PASSWORD` to the new administrator password. Then:
 
 ```powershell
-docker compose -f deploy/compose.yaml --profile ops run --rm rotate-database-passwords
+docker compose --env-file .env -f deploy/compose.yaml --profile ops run --rm rotate-database-passwords
 # Replace POSTGRES_PASSWORD with the new administrator value and clear
 # AGENT_ECONOMY_NEW_POSTGRES_PASSWORD in the protected environment file.
-docker compose -f deploy/compose.yaml up -d --force-recreate app caddy
-docker compose -f deploy/compose.yaml ps
+docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate app caddy
+docker compose --env-file .env -f deploy/compose.yaml ps
 ```
 
 Require readiness plus fresh administrator logins before retiring the old
@@ -116,10 +119,10 @@ proves that exact local build only.
 Operational commands use the same image/CLI:
 
 ```powershell
-docker compose -f deploy/compose.yaml run --rm app readiness --config /app/config/hosted.docker.yaml
-docker compose -f deploy/compose.yaml run --rm app snapshot-all --config /app/config/hosted.docker.yaml
-docker compose -f deploy/compose.yaml run --rm app verify-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
-docker compose -f deploy/compose.yaml run --rm app restore-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
+docker compose --env-file .env -f deploy/compose.yaml run --rm app readiness --config /app/config/hosted.docker.yaml
+docker compose --env-file .env -f deploy/compose.yaml run --rm app snapshot-all --config /app/config/hosted.docker.yaml
+docker compose --env-file .env -f deploy/compose.yaml run --rm app verify-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
+docker compose --env-file .env -f deploy/compose.yaml run --rm app restore-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
 ```
 
 Restore refuses to overwrite an existing run unless `--replace` is explicit.
