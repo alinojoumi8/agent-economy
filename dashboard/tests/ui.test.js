@@ -511,6 +511,12 @@ test("every coded kind holds a unique code and every uncoded kind says so", asyn
       business_permit_referred: "PMRF",
       business_permit_case_transferred: "PMTR",
       business_permit_abandoned: "PMAB",
+      construction_project_proposed: "CPRO",
+      construction_permit_submitted: "CPSB",
+      construction_funding_contributed: "CFCT",
+      construction_work_contributed: "CWCT",
+      construction_project_cancelled: "CCAN",
+      construction_project_completed: "CCMP",
     };
     const assigned = [];
     for (const [kind, code] of Object.entries(disambiguated)) {

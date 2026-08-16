@@ -11,8 +11,13 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.external_connector_acceptance import (
+    CONNECTOR_IMPLEMENTATIONS,
+    NATIVE_RESULT_SCHEMA,
     ExternalConnectorReceiptError,
     _public_https_origin,
+    build_external_release_gate_receipt,
+    hosted_origin_sha256,
+    validate_native_connector_result,
     validate_external_connector_receipt,
     write_external_connector_receipt,
 )
@@ -31,16 +36,23 @@ HASH = "3" * 64
 
 def receipt(connector: str = "python") -> dict:
     value = {
-        "schema": "agent-economy-external-connector-v1",
+        "schema": "agent-economy-external-connector-v2",
         "connector": connector,
         "execution_scope": "independent_external",
         "status": "passed",
         "candidate": {"commit": COMMIT, "tree": TREE},
-        "client": {"name": f"outside-{connector}", "version": "1.2.3"},
+        "client": {
+            "implementation": CONNECTOR_IMPLEMENTATIONS[connector],
+            "name": f"outside-{connector}",
+            "version": "1.2.3",
+            "executable_sha256": "a" * 64,
+            "invocation_sha256": "b" * 64,
+            "native_evidence_sha256": "c" * 64,
+        },
         "signer": {"label": "independent-lab", "independent": True},
         "server_operator": "agent-economy-operator",
         "base_url": "https://agents.example.test",
-        "hosted_origin_sha256": "4" * 64,
+        "hosted_origin_sha256": hosted_origin_sha256("https://agents.example.test"),
         "tenant_id": "10000000-0000-4000-8000-000000000001",
         "run_id": "20000000-0000-4000-8000-000000000002",
         "actor_id": "30000000-0000-4000-8000-000000000003",
@@ -64,6 +76,7 @@ def receipt(connector: str = "python") -> dict:
     if connector == "independent_mcp":
         value["discovery"] = {
             "passed": True,
+            "protocol_version": "2025-11-25",
             "authorization_server_sha256": "7" * 64,
             "protected_resource_sha256": "8" * 64,
             "initialize_sha256": "9" * 64,
@@ -88,6 +101,18 @@ def receipt(connector: str = "python") -> dict:
             for index in range(1, 4)
         ]
         del value["flows"]
+    return value
+
+
+def native_result(connector: str = "python") -> dict:
+    value = receipt(connector)
+    value["schema"] = NATIVE_RESULT_SCHEMA
+    value.pop("base_url")
+    value.pop("signer")
+    value.pop("server_operator")
+    value.pop("revocation")
+    value.pop("cross_tenant_isolation")
+    value["client"].pop("native_evidence_sha256")
     return value
 
 
@@ -118,6 +143,10 @@ def test_valid_independent_connector_receipts_pass(connector):
         (lambda value: value.update(base_url="http://127.0.0.1:8000"), "public HTTPS"),
         (lambda value: value.update(base_url="https://intranet"), "public HTTPS"),
         (lambda value: value.update(base_url="https://[not-an-ipv6-address"), "public HTTPS"),
+        (lambda value: value.update(hosted_origin_sha256="4" * 64), "differs from base_url"),
+        (lambda value: value["client"].update(implementation="python_protocol_probe"), "implementation"),
+        (lambda value: value["client"].update(executable_sha256="short"), "executable_sha256"),
+        (lambda value: value["client"].update(unbounded="field"), "unbounded"),
         (lambda value: value.update(access_token="not-allowed"), "sensitive"),
         (lambda value: value.update(private_payload={"body": "hidden"}), "private"),
     ],
@@ -184,6 +213,31 @@ def test_private_embedded_ipv6_origins_are_rejected():
     assert _public_https_origin("https://[2002:7f00:1::]") is False
 
 
+def test_hosted_runner_rejects_mixed_or_private_dns_answers(monkeypatch):
+    monkeypatch.setattr(
+        connector_runner.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (connector_runner.socket.AF_INET, 1, 6, "", ("203.0.113.10", 443)),
+            (connector_runner.socket.AF_INET, 1, 6, "", ("127.0.0.1", 443)),
+        ],
+    )
+    assert connector_runner._resolved_origin_is_public(
+        "https://agents.example.test"
+    ) is False
+
+    monkeypatch.setattr(
+        connector_runner.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (connector_runner.socket.AF_INET, 1, 6, "", ("8.8.8.8", 443)),
+        ],
+    )
+    assert connector_runner._resolved_origin_is_public(
+        "https://agents.example.test"
+    ) is True
+
+
 def test_mcp_requires_discovery_and_protected_resource_proof():
     value = receipt("independent_mcp")
     del value["discovery"]["protected_resource_sha256"]
@@ -222,6 +276,203 @@ def test_writer_is_atomic_idempotent_and_refuses_different_overwrite(tmp_path):
     changed["notes"] = "different public note"
     with pytest.raises(FileExistsError, match="different bytes"):
         write_external_connector_receipt(changed, output)
+
+
+def test_native_result_requires_connector_specific_provenance():
+    value = native_result("typescript")
+
+    assert validate_native_connector_result(
+        value,
+        expected_candidate={"commit": COMMIT, "tree": TREE},
+        expected_connector="typescript",
+    ) == value
+
+    value["client"]["implementation"] = "agent_economy_python_client"
+    with pytest.raises(ExternalConnectorReceiptError, match="implementation"):
+        validate_native_connector_result(
+            value,
+            expected_candidate={"commit": COMMIT, "tree": TREE},
+            expected_connector="typescript",
+        )
+
+    value = receipt("independent_mcp")
+    value["discovery"]["protocol_version"] = "2025-03-26"
+    with pytest.raises(ExternalConnectorReceiptError, match="discovery"):
+        validate_external_connector_receipt(
+            value,
+            expected_candidate={"commit": COMMIT, "tree": TREE},
+            expected_connector="independent_mcp",
+        )
+
+
+def test_release_wrapper_binds_detailed_and_native_artifacts():
+    value = receipt("python")
+    environment = {
+        "os": "linux",
+        "architecture": "x86_64",
+        "tool_versions": {"agent_economy_python_client": "1.2.3"},
+        "hosted_origin_sha256": value["hosted_origin_sha256"],
+    }
+
+    wrapper = build_external_release_gate_receipt(
+        value,
+        detailed_artifact={"path": "artifacts/python-detail.json", "sha256": "d" * 64},
+        native_artifact={"path": "artifacts/python-native.json", "sha256": "c" * 64},
+        environment=environment,
+        verifier={"name": "external-connector-finalizer", "version": "2"},
+        reviewer_notes="Independent native result retained.",
+    )
+
+    assert wrapper["gate_id"] == "python_connector"
+    assert wrapper["candidate"]["dirty"] is False
+    assert wrapper["artifacts"][1]["sha256"] == value["client"]["native_evidence_sha256"]
+
+    value["client"]["native_evidence_sha256"] = "e" * 64
+    with pytest.raises(ExternalConnectorReceiptError, match="native artifact hash"):
+        build_external_release_gate_receipt(
+            value,
+            detailed_artifact={"path": "artifacts/python-detail.json", "sha256": "d" * 64},
+            native_artifact={"path": "artifacts/python-native.json", "sha256": "c" * 64},
+            environment=environment,
+            verifier={"name": "external-connector-finalizer", "version": "2"},
+            reviewer_notes="Independent native result retained.",
+        )
+
+
+def test_native_finalizer_cross_checks_server_receipts(monkeypatch):
+    value = native_result("python")
+    base_url = "https://agents.example.test"
+    value["hosted_origin_sha256"] = connector_runner._hash({"origin": base_url})
+    server_receipt = {
+        "submission_id": "receipt-1",
+        "target_tick": 1,
+        "status": "executed",
+        "resulting_state_hash": None,
+        "event_ids": [],
+    }
+    value["executed_receipts"][0]["sha256"] = connector_runner._hash(
+        _safe_receipt(server_receipt)
+    )
+    identity_reads = 0
+
+    def request(method, url, **_kwargs):
+        nonlocal identity_reads
+        if url.endswith("/.well-known/oauth-authorization-server"):
+            return 200, b"{}"
+        if url.endswith("/.well-known/oauth-protected-resource/mcp"):
+            return 200, b"{}"
+        if url.endswith("/api/v2/agent/me"):
+            identity_reads += 1
+            if identity_reads == 1:
+                return 200, json.dumps({
+                    "actor": {"id": value["actor_id"]},
+                    "tenant_id": value["tenant_id"],
+                    "run_id": value["run_id"],
+                    "scopes": value["scopes"],
+                }).encode("utf-8")
+            return 401, b"{}"
+        if url.endswith("/api/v2/agent/actions/receipt-1"):
+            return 200, json.dumps(server_receipt).encode("utf-8")
+        if url.endswith("/api/v2/tenants/other/run"):
+            return 403, b"{}"
+        if url.endswith("/oauth/revoke") and method == "POST":
+            return 204, b""
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(connector_runner, "_request", request)
+    args = SimpleNamespace(
+        connector="python",
+        base_url=base_url,
+        commit=COMMIT,
+        tree=TREE,
+        timeout=30.0,
+        signer_label="independent-lab",
+        server_operator="agent-economy-operator",
+    )
+    credential = {
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }
+
+    finalized = connector_runner._run_native_acceptance(
+        args,
+        credential,
+        connector_runner._CredentialRevoker(base_url, credential),
+        value,
+        "c" * 64,
+    )
+
+    assert finalized["schema"] == "agent-economy-external-connector-v2"
+    assert finalized["client"]["native_evidence_sha256"] == "c" * 64
+    assert finalized["revocation"] == {"passed": True, "post_revoke_status": 401}
+
+
+def test_urllib_rehearsal_cannot_claim_native_connector_evidence(monkeypatch):
+    identity_reads = 0
+
+    def request(method, url, **_kwargs):
+        nonlocal identity_reads
+        if url.endswith("/.well-known/oauth-authorization-server"):
+            return 200, b"{}"
+        if url.endswith("/.well-known/oauth-protected-resource/mcp"):
+            return 200, b"{}"
+        if url.endswith("/api/v2/agent/me"):
+            identity_reads += 1
+            if identity_reads == 1:
+                return 200, json.dumps({
+                    "actor": {"id": "agent-1"},
+                    "tenant_id": "tenant-1",
+                    "run_id": "run-1",
+                    "scopes": ["world.read", "world.act"],
+                }).encode("utf-8")
+            return 401, b"{}"
+        if url.endswith("/api/v2/tenants/other/run"):
+            return 403, b"{}"
+        if url.endswith("/oauth/revoke") and method == "POST":
+            return 204, b""
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(connector_runner, "_request", request)
+    monkeypatch.setattr(
+        connector_runner,
+        "_execute_wake",
+        lambda *_args, **_kwargs: (
+            {"target_tick": 1, "action": {"type": "do_nothing"}},
+            {"submission_id": "receipt-1", "status": "accepted"},
+            {"receipt_id": "receipt-1", "target_tick": 1, "status": "executed"},
+        ),
+    )
+    args = SimpleNamespace(
+        connector="python",
+        base_url="https://agents.example.test",
+        commit=COMMIT,
+        tree=TREE,
+        client_name="urllib-probe",
+        client_version="1",
+        timeout=30.0,
+        signer_label="independent-lab",
+        server_operator="agent-economy-operator",
+    )
+    credential = {
+        "access_token": "process-only-token",
+        "isolation_probe_path": "/api/v2/tenants/other/run",
+    }
+
+    rehearsal = connector_runner._run_authenticated_acceptance(
+        args,
+        credential,
+        connector_runner._CredentialRevoker(args.base_url, credential),
+    )
+
+    assert rehearsal["execution_scope"] == "local"
+    assert rehearsal["schema"] == "agent-economy-external-connector-rehearsal-v1"
+    assert rehearsal["client"]["implementation"] == "python_protocol_probe"
+    with pytest.raises(ExternalConnectorReceiptError):
+        validate_external_connector_receipt(
+            rehearsal,
+            expected_candidate={"commit": COMMIT, "tree": TREE},
+            expected_connector="python",
+        )
 
 
 def test_credential_loader_requires_private_regular_json_file(tmp_path):
@@ -320,7 +571,12 @@ def test_credential_loader_requires_current_user_ownership(tmp_path, monkeypatch
         "isolation_probe_path": "/api/v2/tenants/other/run",
     }), encoding="utf-8")
     path.chmod(0o600)
-    monkeypatch.setattr(connector_runner.os, "geteuid", lambda: path.stat().st_uid + 1)
+    monkeypatch.setattr(
+        connector_runner.os,
+        "geteuid",
+        lambda: path.stat().st_uid + 1,
+        raising=False,
+    )
 
     with pytest.raises(PermissionError, match="owned by the current user"):
         load_credential_file(path)
@@ -464,6 +720,7 @@ def test_hosted_runner_revokes_credential_when_authenticated_flow_fails(
         raise AssertionError(f"unexpected request: {method} {url}")
 
     monkeypatch.setattr(connector_runner, "_request", request)
+    monkeypatch.setattr(connector_runner, "_resolved_origin_is_public", lambda _url: True)
     monkeypatch.setattr(
         connector_runner,
         "_execute_wake",
@@ -507,6 +764,7 @@ def test_hosted_runner_warns_when_primary_flow_and_revocation_both_fail(
             "isolation_probe_path": "/api/v2/tenants/other/run",
         },
     )
+    monkeypatch.setattr(connector_runner, "_resolved_origin_is_public", lambda _url: True)
 
     def fail_flow(*_args, **_kwargs):
         raise RuntimeError("primary flow failed")

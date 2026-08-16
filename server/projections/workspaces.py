@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from engine.store import load_json
+from .construction import construction_projects_as_of
 
 
 def _dicts(rows) -> list[dict[str, Any]]:
@@ -186,6 +187,38 @@ def _agent_regions_at(
     return result
 
 
+def build_world_flows(store, *, as_of_tick: int) -> list[dict[str, Any]]:
+    """Project bounded migration and trade paths at one historical tick."""
+    tick = int(as_of_tick)
+    migrations = _dicts(store.query(
+        "SELECT id,agent_id,origin_region_id,destination_region_id,tick,completed_tick,status "
+        "FROM (SELECT id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick AS tick,completed_tick,status FROM migrations "
+        "WHERE requested_tick<=? ORDER BY requested_tick DESC,id DESC LIMIT 100) "
+        "ORDER BY tick,id",
+        (tick,)))
+    for migration in migrations:
+        if (migration["completed_tick"] is not None
+                and int(migration["completed_tick"]) > tick):
+            migration.update({"completed_tick": None, "status": "pending"})
+    shipments = _dicts(store.query(
+        "SELECT id,tick,exporter_firm_id,importer_firm_id,origin_region_id,"
+        "destination_region_id,quantity,invoice_cents,invoice_currency,arrival_tick,status "
+        "FROM (SELECT id,created_tick AS tick,exporter_firm_id,importer_firm_id,"
+        "origin_region_id,destination_region_id,quantity,invoice_cents,invoice_currency,"
+        "arrival_tick,status FROM trade_shipments WHERE created_tick<=? "
+        "ORDER BY created_tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
+    for shipment in shipments:
+        if (shipment["arrival_tick"] is None
+                or int(shipment["arrival_tick"]) > tick):
+            shipment.update({"arrival_tick": None, "status": "in_transit"})
+    return [
+        {"kind": "migration", **row} for row in migrations
+    ] + [
+        {"kind": "trade", **row} for row in shipments
+    ]
+
+
 def build_world_workspace(store, *, as_of_tick: int) -> dict:
     tick = int(as_of_tick)
     regions = [_json_fields(row, "specialization_json") for row in _dicts(store.query(
@@ -209,45 +242,54 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
     for place in places:
         _mask_future_ticks(place, tick, "closed_tick")
     presence = _dicts(store.query(
-        "SELECT ep.id,ep.tick,ep.slot,ep.agent_id,ep.place_id,ep.source_type "
-        "FROM effective_presence ep WHERE ep.tick=? ORDER BY ep.slot,ep.agent_id", (tick,)))
+        "SELECT ep.id,ep.tick,ep.slot,ep.agent_id,a.name,a.role,a.occupation,"
+        "ep.place_id,p.name AS place_name,p.kind AS place_kind,p.x,p.y,ep.source_type "
+        "FROM effective_presence ep "
+        "JOIN agents a ON a.id=ep.agent_id "
+        "JOIN places p ON p.id=ep.place_id "
+        "WHERE ep.tick=? AND p.kind<>'licensing_office' "
+        "AND (a.population_tier='core' OR COALESCE(a.pinned_core,0)=1) "
+        "ORDER BY ep.slot,ep.agent_id", (tick,)))
+    for row in store.query(
+            "SELECT ep.slot,ep.place_id,p.name AS place_name,p.kind AS place_kind,"
+            "p.x,p.y,COUNT(*) AS occupancy "
+            "FROM effective_presence ep JOIN places p ON p.id=ep.place_id "
+            "WHERE ep.tick=? AND p.kind='licensing_office' "
+            "GROUP BY ep.slot,ep.place_id,p.name,p.kind,p.x,p.y "
+            "ORDER BY ep.slot,ep.place_id",
+            (tick,)):
+        presence.append({
+            "id": None,
+            "tick": tick,
+            "slot": str(row["slot"]),
+            "agent_id": None,
+            "name": None,
+            "role": None,
+            "occupation": None,
+            "place_id": int(row["place_id"]),
+            "place_name": str(row["place_name"]),
+            "place_kind": str(row["place_kind"]),
+            "x": float(row["x"]),
+            "y": float(row["y"]),
+            "source_type": "privacy_aggregate",
+            "occupancy": int(row["occupancy"]),
+        })
     organizations = [row for row in _firms_as_of(store, tick) if row["active"]]
-    migrations = _dicts(store.query(
-        "SELECT id,agent_id,origin_region_id,destination_region_id,tick,completed_tick,status "
-        "FROM (SELECT id,agent_id,origin_region_id,destination_region_id,"
-        "requested_tick AS tick,completed_tick,status FROM migrations "
-        "WHERE requested_tick<=? ORDER BY requested_tick DESC,id DESC LIMIT 100) "
-        "ORDER BY tick,id",
-        (tick,)))
-    for migration in migrations:
-        if (migration["completed_tick"] is not None
-                and int(migration["completed_tick"]) > tick):
-            migration.update({"completed_tick": None, "status": "pending"})
-    shipments = _dicts(store.query(
-        "SELECT id,tick,exporter_firm_id,importer_firm_id,origin_region_id,"
-        "destination_region_id,quantity,invoice_cents,invoice_currency,arrival_tick,status "
-        "FROM (SELECT id,created_tick AS tick,exporter_firm_id,importer_firm_id,"
-        "origin_region_id,destination_region_id,quantity,invoice_cents,invoice_currency,"
-        "arrival_tick,status FROM trade_shipments WHERE created_tick<=? "
-        "ORDER BY created_tick DESC,id DESC LIMIT 100) ORDER BY tick,id", (tick,)))
-    for shipment in shipments:
-        if (shipment["arrival_tick"] is None
-                or int(shipment["arrival_tick"]) > tick):
-            shipment.update({"arrival_tick": None, "status": "in_transit"})
-    flows = [
-        {"kind": "migration", **row} for row in migrations
-    ] + [
-        {"kind": "trade", **row} for row in shipments
-    ]
+    construction_projects = construction_projects_as_of(
+        store, as_of_tick=tick)
+    flows = build_world_flows(store, as_of_tick=tick)
+    migration_count = sum(flow["kind"] == "migration" for flow in flows)
+    trade_count = sum(flow["kind"] == "trade" for flow in flows)
     currencies = sorted({str(row["currency_code"]) for row in regions if row.get("currency_code")})
     return {
         "enabled": bool(regions), "regions": regions, "agents": agents,
         "organizations": organizations, "places": places, "presence": presence,
-        "flows": flows,
+        "flows": flows, "construction_projects": construction_projects,
         "summary": {
             "population": len(agents), "active_organizations": len(organizations),
-            "currencies": currencies, "migration_count": len(migrations),
-            "trade_count": len(shipments),
+            "currencies": currencies, "migration_count": migration_count,
+            "trade_count": trade_count,
+            "construction_projects": len(construction_projects),
         },
     }
 

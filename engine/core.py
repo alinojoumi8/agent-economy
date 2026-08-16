@@ -12,13 +12,14 @@ from typing import Optional
 from .credit import Bank
 from .city import City
 from .cognition import CognitionEconomy
+from .construction import ConstructionEconomy
 from .exchange import Exchange
 from .firms import Firms
 from .government import Government
 from .information import InformationEconomy
 from .labor import Labor
 from .legal import LegalInstitution
-from .ledger import (Ledger, SYS_COMMODITY, SYS_COMPUTE, SYS_EDUCATION,
+from .ledger import (Ledger, SYS_COMMODITY, SYS_COMPUTE, SYS_CONSTRUCTION, SYS_EDUCATION,
                      SYS_EXTERNAL, SYS_GOV, SYS_INFLOW, SYS_HOUSING, SYS_LOSS,
                      SYS_MEDICAL)
 from .lifecycle import Lifecycle
@@ -81,6 +82,7 @@ class Economy:
             seed=int(config.get("seed", 42)),
         )
         self.city = City(self, config.get("city"))
+        self.construction = ConstructionEconomy(self, config.get("construction"))
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:
@@ -90,6 +92,8 @@ class Economy:
         )
         if self.engine_semantics_version >= 11:
             labels += (SYS_COMPUTE, SYS_EDUCATION)
+        if self.engine_semantics_version >= 13:
+            labels += (SYS_CONSTRUCTION,)
         for label in labels:
             self.ledger.ensure_system_account(label)
 

@@ -191,6 +191,50 @@ def test_capacity_fifo_priority_and_business_presence_override(civic_world) -> N
         (priority_applicant,)) is not None
 
 
+def test_civic_queue_history_does_not_leak_later_case_outcomes(
+        civic_world) -> None:
+    world = civic_world
+    store = world.store
+    city = world.economy.city
+    _allow_direct_applications(world)
+    lawyer_id = _lawyer_id(store)
+    applicant = _same_region_applicants(store, count=1)[0]
+
+    result = city.apply_business_permit(
+        1,
+        int(applicant["id"]),
+        _application(lawyer_id, "Historical Queue"),
+    )
+    assert result["ok"], result
+    case_id = int(result["case_id"])
+    agency_id = int(store.scalar(
+        "SELECT agency_id FROM service_cases WHERE id=?", (case_id,)))
+    office_id = int(store.scalar(
+        "SELECT id FROM places WHERE kind='licensing_office' AND owner_id=?",
+        (agency_id,)))
+    store.execute(
+        "UPDATE service_cases SET status='approved',submitted_tick=3,"
+        "decided_tick=5,updated_tick=5 WHERE id=?",
+        (case_id,),
+    )
+    store.set_meta(tick=10)
+
+    historical = city.public_summary(1)
+    assert historical["queue"]["depth"] == 1
+    assert historical["cases_by_status"] == {"open": 1}
+    assert historical["case_status_resolution"] == "terminal_and_open"
+    assert historical["offices"][0]["queue_depth"] == 1
+    assert city.agency_detail(agency_id, 1)["queue_depth"] == 1
+    historical_place = city.place_detail(office_id, 1)
+    assert historical_place["queue_depth"] == 1
+    assert historical_place["case_status_resolution"] == "terminal_and_open"
+
+    current = city.public_summary(10)
+    assert current["queue"]["depth"] == 0
+    assert current["cases_by_status"] == {"approved": 1}
+    assert current["case_status_resolution"] == "exact"
+
+
 def test_three_no_shows_abandon_case_and_preserve_fee(civic_world) -> None:
     world = civic_world
     store = world.store

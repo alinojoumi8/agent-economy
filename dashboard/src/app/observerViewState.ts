@@ -16,7 +16,10 @@ export type ObserverViewState = {
   q: string;
   activeOnly: boolean;
   agent: number | null;
+  place: number | null;
+  project: string | null;
   population: "core" | "all" | "clusters";
+  view: "atlas" | "diorama";
 };
 
 export type ObserverViewPatch = Partial<{
@@ -27,7 +30,10 @@ export type ObserverViewPatch = Partial<{
   q: string | null;
   activeOnly: boolean;
   agent: number | null;
+  place: number | null;
+  project: string | null;
   population: "core" | "all" | "clusters" | null;
+  view: "atlas" | "diorama" | null;
 }>;
 
 export function parseObserverViewState(params: URLSearchParams): ObserverViewState {

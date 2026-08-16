@@ -345,7 +345,7 @@ export function deriveCityModel({
   const operatingFirms = firmSource.filter(firm =>
     !["bankrupt", "closed", "inactive"].includes(String(firm?.status || "").toLowerCase()),
   );
-  const cityFirms = firmSource.slice(0, 14).map((firm, index, list) => {
+  const cityFirms = operatingFirms.map((firm, index, list) => {
     const layer = classifyFirmLayer(firm);
     const observedX = normalizedCoordinate(firm.x);
     const observedY = normalizedCoordinate(firm.y);
@@ -361,14 +361,56 @@ export function deriveCityModel({
       ? "observed"
       : "mixed";
 
-  const places = asArray(map?.places).map(place => ({
-    ...place,
-    x: normalizedCoordinate(place.x),
-    y: normalizedCoordinate(place.y),
-    businessOccupancy: Number(place?.occupancy?.business || 0),
-    capacity: Number(place?.capacity || 0),
-    queueDepth: Number(place?.queue_depth || 0),
-  })).filter(place => place.x !== null && place.y !== null);
+  const presence = asArray(map?.presence).map(item => ({ ...item }));
+  const places = asArray(map?.places).map(place => {
+    const placePresence = presence.filter(
+      item => String(item?.place_id) === String(place?.id),
+    );
+    return {
+      ...place,
+      x: normalizedCoordinate(place.x),
+      y: normalizedCoordinate(place.y),
+      businessOccupancy: Number(place?.occupancy?.business || 0),
+      capacity: Number(place?.capacity || 0),
+      queueDepth: Number(place?.queue_depth || 0),
+      occupants: placePresence
+        .filter(item => item?.agent_id != null)
+        .map(item => ({
+          agent_id: item.agent_id,
+          name: item.name,
+          role: item.role,
+          slot: item.slot,
+          source_type: item.source_type,
+        })),
+      privacyOccupancy: placePresence
+        .filter(item => item?.agent_id == null)
+        .reduce((total, item) => total + Number(item?.occupancy || 0), 0),
+    };
+  }).filter(place => place.x !== null && place.y !== null);
+  const constructionSource = asArray(map?.constructionProjects).length
+    ? asArray(map?.constructionProjects)
+    : asArray(map?.construction_projects);
+  const constructionProjects = constructionSource.map(project => ({
+    ...project,
+    id: project?.project_id ?? project?.id,
+    x: normalizedCoordinate(project?.x ?? project?.site?.x),
+    y: normalizedCoordinate(project?.y ?? project?.site?.y),
+    requiredFundingCents: Number(project?.requirements?.funding_cents || 0),
+    contributedFundingCents: Number(project?.contributed?.funding_cents || 0),
+    requiredWorkUnits: Number(project?.requirements?.work_units || 0),
+    contributedWorkUnits: Number(project?.contributed?.work_units || 0),
+    aggregateCount: Number(project?.aggregate_count || 1),
+  })).filter(project =>
+    project.id !== null
+    && project.id !== undefined
+    && project.x !== null
+    && project.y !== null);
+  const regions = asArray(map?.regions).map(region => ({
+    ...region,
+    x: normalizedCoordinate(region.x),
+    y: normalizedCoordinate(region.y),
+  })).filter(region => region.x !== null && region.y !== null);
+  const flows = asArray(map?.flows).map(flow => ({ ...flow }));
   const receipts = eventItems
     .filter(event => event?.payload?.semantic_receipt)
     .map(event => ({ eventId: event.id, tick: event.tick, ...event.payload.semantic_receipt }));
@@ -403,11 +445,16 @@ export function deriveCityModel({
     agents: cityAgents.sort((left, right) => Number(left.id) - Number(right.id)),
     firms: cityFirms,
     places,
+    constructionProjects,
+    regions,
+    flows,
+    presence,
     receipts,
     clusters,
     population,
     civic: civic || map?.civic || null,
     events: eventItems,
+    selectedTick,
     coordinateMode,
     counts: {
       agents: cityAgents.length,
@@ -420,6 +467,7 @@ export function deriveCityModel({
       assigned: cityAgents.filter(agent => agent.activityState === "assigned role").length,
       firms: operatingFirms.length,
       places: places.length,
+      construction: constructionProjects.length,
       queue: Number(civic?.queue?.depth || map?.civic?.queue?.depth || 0),
     },
   };

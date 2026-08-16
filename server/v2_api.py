@@ -20,13 +20,23 @@ from server.projections import (
     build_search,
     build_snapshot,
     build_threads,
+    build_agent_journey,
+    build_living_agents_workspace,
+    build_construction_project_detail,
+    build_construction_projects,
+    construction_projects_as_of,
     build_experiments_workspace,
     build_markets_workspace,
     build_organizations_workspace,
     build_politics_law_workspace,
+    build_world_flows,
     build_world_workspace,
     build_world_map_organizations,
     resolve_tick,
+    PROJECT_KINDS,
+    PROJECT_STATUSES,
+    CONSTRUCTION_KINDS,
+    CONSTRUCTION_STATUSES,
     SEARCH_KINDS,
 )
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
@@ -319,7 +329,8 @@ def install_v2_routes(app, world, controller) -> None:
     @router.get("/world-map")
     async def world_map_projection(
         tick: str = Query("live"), fork_id: str | None = None,
-        layers: str = Query("regions,agents,organizations,places,presence"),
+        layers: str = Query(
+            "regions,agents,organizations,places,presence,construction_projects"),
         population: Literal["core", "all", "clusters"] = Query("core"),
     ):
         as_of_tick = projection_tick(tick, fork_id)
@@ -333,8 +344,9 @@ def install_v2_routes(app, world, controller) -> None:
                 "SELECT COUNT(*) AS total,"
                 "SUM(CASE WHEN population_tier='core' OR COALESCE(pinned_core,0)=1 "
                 "THEN 1 ELSE 0 END) AS core "
-                "FROM agents WHERE alive=1 AND arrived_tick<=?",
-                (as_of_tick,),
+                "FROM agents WHERE arrived_tick<=? "
+                "AND (died_tick IS NULL OR died_tick>?)",
+                (as_of_tick, as_of_tick),
             )
             total_population = int(population_row["total"] or 0)
             core_population = int(population_row["core"] or 0)
@@ -377,9 +389,10 @@ def install_v2_routes(app, world, controller) -> None:
                 "LEFT JOIN effective_presence ep ON ep.agent_id=a.id "
                 "AND ep.tick=? AND ep.slot='business' "
                 "LEFT JOIN places p ON p.id=ep.place_id "
-                "WHERE a.alive=1 AND a.arrived_tick<=? "
+                "WHERE a.arrived_tick<=? "
+                "AND (a.died_tick IS NULL OR a.died_tick>?) "
                 f"{agent_scope}ORDER BY a.id",
-                (as_of_tick, as_of_tick, *agent_scope_params))]
+                (as_of_tick, as_of_tick, as_of_tick, *agent_scope_params))]
             clusters = []
             if population == "clusters":
                 cluster_exclusion = ""
@@ -392,12 +405,13 @@ def install_v2_routes(app, world, controller) -> None:
                     "SELECT a.region_id,r.name AS region_name,r.x,r.y,"
                     "COUNT(*) AS resident_count FROM agents a "
                     "LEFT JOIN regions r ON r.id=a.region_id "
-                    "WHERE a.alive=1 AND a.arrived_tick<=? "
+                    "WHERE a.arrived_tick<=? "
+                    "AND (a.died_tick IS NULL OR a.died_tick>?) "
                     "AND NOT (COALESCE(a.population_tier,'periphery')='core' "
                     "OR COALESCE(a.pinned_core,0)=1) "
                     f"{cluster_exclusion}"
                     "GROUP BY a.region_id,r.name,r.x,r.y ORDER BY a.region_id",
-                    (as_of_tick, *cluster_params),
+                    (as_of_tick, as_of_tick, *cluster_params),
                 ):
                     region_id = row["region_id"]
                     clusters.append({
@@ -422,15 +436,19 @@ def install_v2_routes(app, world, controller) -> None:
                 store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
+        if "construction_projects" in selected:
+            data["construction_projects"] = construction_projects_as_of(
+                store, as_of_tick=as_of_tick)
         if "presence" in selected:
             # Presence can carry exact place coordinates. Keep peripheral
             # identities out of every observer mode so `all` can lay them out
             # safely and `clusters` cannot be reversed through a sibling layer.
             core_agent_ids = {
                 int(row["id"]) for row in store.query(
-                    "SELECT id FROM agents WHERE alive=1 AND arrived_tick<=? "
+                    "SELECT id FROM agents WHERE arrived_tick<=? "
+                    "AND (died_tick IS NULL OR died_tick>?) "
                     "AND (population_tier='core' OR COALESCE(pinned_core,0)=1)",
-                    (as_of_tick,),
+                    (as_of_tick, as_of_tick),
                 )
             }
             data["presence"] = [
@@ -439,6 +457,8 @@ def install_v2_routes(app, world, controller) -> None:
                 if item.get("agent_id") is None
                 or int(item["agent_id"]) in core_agent_ids
             ]
+        if "flows" in selected:
+            data["flows"] = build_world_flows(store, as_of_tick=as_of_tick)
         return build_envelope(
             store, principal, "world.map", data, as_of_tick=as_of_tick)
 
@@ -452,6 +472,94 @@ def install_v2_routes(app, world, controller) -> None:
         as_of_tick = projection_tick(tick, fork_id)
         return workspace_envelope(
             "world", build_world_workspace(store, as_of_tick=as_of_tick), as_of_tick)
+
+    def living_runtime(tick: str) -> list[dict[str, Any]]:
+        if tick != "live":
+            return []
+        gateway = getattr(world, "gateway", None)
+        if gateway is None or not hasattr(gateway, "active_agent_status"):
+            return []
+        return list(gateway.active_agent_status())
+
+    @router.get("/workspaces/living-agents")
+    async def living_agents_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+        agent_id: int | None = Query(default=None, gt=0),
+        project_kind: str = Query("all"), status: str = Query("all"),
+        after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200),
+    ):
+        if project_kind != "all" and project_kind not in PROJECT_KINDS:
+            raise HTTPException(
+                status_code=422, detail="unknown Living Agents project kind"
+            )
+        if status != "all" and status not in PROJECT_STATUSES:
+            raise HTTPException(
+                status_code=422, detail="unknown Living Agents project status"
+            )
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_living_agents_workspace(
+            store, as_of_tick=as_of_tick, agent_id=agent_id,
+            project_kind=project_kind, status=status, after=after, limit=limit,
+            runtime=living_runtime(tick),
+        )
+        return workspace_envelope("living_agents", data, as_of_tick)
+
+    @router.get("/agents/{agent_id}/journey")
+    async def agent_journey(
+        agent_id: int, tick: str = Query("live"),
+        fork_id: str | None = None, after: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=200),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        runtime = next(
+            (
+                item for item in living_runtime(tick)
+                if int(item.get("agent_id", -1)) == int(agent_id)
+            ),
+            None,
+        )
+        data = build_agent_journey(
+            store, agent_id=agent_id, as_of_tick=as_of_tick,
+            after=after, limit=limit, runtime=runtime,
+        )
+        if data is None:
+            raise HTTPException(
+                status_code=404, detail="agent not found at the selected tick"
+            )
+        return workspace_envelope("agent_journey", data, as_of_tick)
+
+    @router.get("/construction-projects")
+    async def construction_projects(
+        tick: str = Query("live"), fork_id: str | None = None,
+        project_kind: str = Query("all"), status: str = Query("all"),
+        after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200),
+    ):
+        if project_kind != "all" and project_kind not in CONSTRUCTION_KINDS:
+            raise HTTPException(
+                status_code=422, detail="unknown construction project kind")
+        if status != "all" and status not in CONSTRUCTION_STATUSES:
+            raise HTTPException(
+                status_code=422, detail="unknown construction project status")
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_construction_projects(
+            store, as_of_tick=as_of_tick, project_kind=project_kind,
+            status=status, after=after, limit=limit)
+        return workspace_envelope("construction_projects", data, as_of_tick)
+
+    @router.get("/construction-projects/{project_id}")
+    async def construction_project_detail(
+        project_id: str, tick: str = Query("live"),
+        fork_id: str | None = None,
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_construction_project_detail(
+            store, project_id=project_id, as_of_tick=as_of_tick)
+        if data is None:
+            raise HTTPException(
+                status_code=404,
+                detail="construction project not found at the selected tick")
+        return workspace_envelope(
+            "construction_project_detail", data, as_of_tick)
 
     @router.get("/workspaces/commons")
     async def commons_workspace(

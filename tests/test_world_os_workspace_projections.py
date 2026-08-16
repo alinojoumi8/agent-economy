@@ -39,7 +39,7 @@ def _seed_workspace_history(economy) -> None:
     store.execute(
         "INSERT INTO agents (id,name,kind,occupation,age,alive,arrived_tick,region_id,population_tier) "
         "VALUES (1,'Public Agent','citizen','worker',30,1,0,1,'core')")
-    store.execute("UPDATE agents SET died_tick=9 WHERE id=1")
+    store.execute("UPDATE agents SET alive=0,died_tick=9 WHERE id=1")
     store.execute(
         "INSERT INTO firms (id,name,sector,status,founded_tick,listed_tick,bankrupt_tick,region_id) "
         "VALUES (1,'Past Firm','food','bankrupt',2,8,9,1)")
@@ -272,10 +272,12 @@ def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(econo
             "/api/v2/workspaces/markets", params={"fork_id": "wrong"}).status_code == 409
         map_response = client.get(
             "/api/v2/world-map",
-            params={"tick": 4, "layers": "organizations"},
+            params={"tick": 4, "layers": "organizations,flows"},
         )
         assert map_response.status_code == 200
-        map_organizations = map_response.json()["data"]["organizations"]
+        map_body = map_response.json()
+        assert map_body["projection_version"] == 2
+        map_organizations = map_body["data"]["organizations"]
         assert [row["id"] for row in map_organizations] == [1]
         assert map_organizations[0] == {
             "id": 1,
@@ -288,7 +290,68 @@ def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(econo
             "x": 0.2,
             "y": 0.3,
         }
+        assert map_body["data"]["flows"] == expected["world"]["flows"]
+        historical_agents = client.get(
+            "/api/v2/world-map",
+            params={"tick": 4, "layers": "agents", "population": "core"},
+        ).json()["data"]["agents"]
+        assert [row["id"] for row in historical_agents] == [1]
+        current_agents = client.get(
+            "/api/v2/world-map",
+            params={"tick": 10, "layers": "agents", "population": "core"},
+        ).json()["data"]["agents"]
+        assert current_agents == []
     app.state.operator_workspace.close()
+
+
+def test_world_workspace_presence_preserves_public_privacy_boundaries(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.execute(
+        "INSERT INTO agents "
+        "(id,name,kind,occupation,age,alive,arrived_tick,region_id,population_tier) "
+        "VALUES (2,'Peripheral Agent','citizen','worker',30,1,0,1,'periphery')",
+    )
+    store.execute(
+        "INSERT INTO places "
+        "(id,place_key,region_id,name,kind,owner_type,owner_id,x,y,capacity,"
+        "created_tick,metadata_json) VALUES "
+        "(2,'north-office',1,'North Office','licensing_office','agency',1,.3,.4,8,4,'{}'),"
+        "(3,'north-work',1,'North Work','firm_workplace','firm',1,.4,.5,8,4,'{}')",
+    )
+    store.execute(
+        "INSERT INTO occupancy_leases "
+        "(id,dedupe_key,agent_id,place_id,slot,start_tick,end_tick,priority,"
+        "source_type,source_id,status,created_tick) VALUES "
+        "(1,?,1,2,'business',4,4,10,'appointment',1,'active',4),"
+        "(2,?,2,3,'business',4,4,5,'routine_work',1,'active',4)",
+        ("a" * 64, "b" * 64),
+    )
+    store.execute(
+        "INSERT INTO effective_presence "
+        "(id,tick,slot,agent_id,place_id,lease_id,priority,source_type) VALUES "
+        "(1,4,'business',1,2,1,10,'appointment'),"
+        "(2,4,'business',2,3,2,5,'routine_work')",
+    )
+
+    world = build_world_workspace(store, as_of_tick=4)
+    assert world["presence"] == [{
+        "id": None,
+        "tick": 4,
+        "slot": "business",
+        "agent_id": None,
+        "name": None,
+        "role": None,
+        "occupation": None,
+        "place_id": 2,
+        "place_name": "North Office",
+        "place_kind": "licensing_office",
+        "x": 0.3,
+        "y": 0.4,
+        "source_type": "privacy_aggregate",
+        "occupancy": 1,
+    }]
+    assert any(agent["id"] == 2 for agent in world["agents"])
 
 
 def test_market_workspace_bounds_rows_and_aggregates_fills_without_n_plus_one(economy):

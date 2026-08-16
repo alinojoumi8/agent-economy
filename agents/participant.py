@@ -439,6 +439,19 @@ class ParticipantService:
                     label,
                     f"civic-{founding_action['type']}",
                 ))
+        if self.engine_semantics_version >= 13:
+            construction = ctx.get("construction_work") or {}
+            for index, action in enumerate(
+                    construction.get("eligible_actions", [])):
+                if (
+                    isinstance(action, dict)
+                    and action.get("type") in PARTICIPANT_TYPES
+                ):
+                    items.append(exact_action(
+                        action,
+                        "Advance an authorized construction project",
+                        f"construction-{index}",
+                    ))
         if self.engine_semantics_version >= 7 and bool(agent["retired"]):
             # Retirees do not search for work. Their only liquidity action is a
             # bounded transfer between the two accounts declared on their row.

@@ -6,11 +6,14 @@ from typing import Iterable, Type
 
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
-from .models import (ApplyBusinessPermit, AttendCivicAppointment,
+from .models import (ApplyBusinessPermit, ApplyConstructionPermit,
+                     AttendCivicAppointment,
                      BuyComputePlan, CancelComputePlan,
-                     DecideBusinessPermit, ForwardMessage, LegacyCommand,
-                     ReplyMessage, SendMessage, SetComputeSponsorship,
-                     StudySkill)
+                     CancelConstruction, ContributeConstructionFunding,
+                     DecideBusinessPermit, DecideConstructionPermit,
+                     ForwardMessage, LegacyCommand, PerformConstructionWork,
+                     ProposeConstruction, ReplyMessage, SendMessage,
+                     SetComputeSponsorship, StudySkill)
 
 
 class CommandValidationError(ValueError):
@@ -78,6 +81,15 @@ CIVIC_MODELS = {
     "decide_business_permit": DecideBusinessPermit,
 }
 
+CONSTRUCTION_MODELS = {
+    "propose_construction": ProposeConstruction,
+    "apply_construction_permit": ApplyConstructionPermit,
+    "decide_construction_permit": DecideConstructionPermit,
+    "contribute_construction_funding": ContributeConstructionFunding,
+    "perform_construction_work": PerformConstructionWork,
+    "cancel_construction": CancelConstruction,
+}
+
 
 def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     registry = CommandRegistry()
@@ -85,6 +97,7 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         set(COMMUNICATION_MODELS)
         | set(COGNITION_MODELS)
         | set(CIVIC_MODELS)
+        | set(CONSTRUCTION_MODELS)
     )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
@@ -113,5 +126,12 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
             model=model,
             handler_name=f"_do_{command_type}",
             introduced_in_semantics=12,
+        ))
+    for command_type, model in CONSTRUCTION_MODELS.items():
+        registry.register(CommandDefinition(
+            command_type=command_type,
+            model=model,
+            handler_name=f"_do_{command_type}",
+            introduced_in_semantics=13,
         ))
     return registry

@@ -255,12 +255,15 @@ stamped, folded, or mounted, not inflated.
 
 ### Civic City
 
-The signature component is a code-native operational atlas with named
-districts, firm footprints, keyboard-reachable agent marks, a selected evidence
-transect, layer controls, search, and a contiguous instrumentation rail. Its
-World OS variant uses a dark, full-field command-map treatment while retaining
-the project's survey typography, evidence labels, and deterministic geometry.
-On desktop, the evidence lens is a bounded inspector overlay on the atlas;
+The signature component is a shared operational city shell with two projections:
+the code-native **Atlas** and a lazy-loaded deck.gl **2.5D Diorama**. Both use
+the same named districts, filters, observer URL state, agent/place selection,
+evidence lens, and contiguous instrumentation rail. The Diorama adds extruded
+place and organization marks plus migration and trade paths; its building
+height and curved paths are explicitly labelled derived visual encodings, not
+canonical world geometry. Its World OS variant uses a dark, full-field
+command-map treatment while retaining the project's survey typography and
+evidence labels. On desktop, the evidence lens is a bounded inspector overlay;
 below 980px, the selected mark surfaces in an immediate map action that leads
 to the full lens.
 
@@ -271,14 +274,37 @@ every color with readable state text. Runtime activity is explicitly ephemeral
 observer telemetry. It never substitutes for the proposal, validation, event,
 receipt, or ledger records that settle world state. Runs without coordinates
 use deterministic role-based placement and say **Derived civic layout** in both
-the atlas and evidence lens. Historical views suppress current runtime overlays
-and disclose that events are tick-resolved while entity rosters come from
-current endpoints.
+views and the evidence lens. Historical views resolve roster, place, queue,
+flow, and event projections at the requested tick and suppress current runtime
+overlays. Arbitrary historical navigation snaps; only evidence-backed live
+runtime activity may pulse.
+
+`view=atlas|diorama`, `agent=<id>`, `place=<id>`, and `project=<id>` are
+observer-only, shareable URL state. Agent, place, and project selection are
+mutually exclusive.
+Peripheral placement stays withheld, and licensing-office presence remains an
+aggregate. The Diorama provides a keyboard object explorer and falls back to
+the Atlas when WebGL2 or its lazy bundle is unavailable.
 
 WorldMonitor informed the layout grammar—dominant map, compact layers,
 coordinated activity, and evidence inspection—but no WorldMonitor source,
 assets, or dependencies are imported. Agent Economy remains MIT-licensed while
 the reference project is AGPL-3.0-or-later.
+
+### Living Agents
+
+The People route is presented as **Living Agents** and combines the historical
+agent directory, selected journey, and progress streams without adding a second
+navigation destination. It consumes only the v2 observer projections and keeps
+committed, runtime, and derived evidence visibly distinct. Runtime state is
+live-only; historical ticks never inherit it. See the
+[Living Agents review and projection contract](docs/living-agents.md).
+
+Semantics-13 construction appears as a separate project layer until work is
+complete. Foundation, frame, shell, and completed geometry is derived from
+stored work units and labelled with exact numerator/denominator counts. Exact
+public/workplace sites are selectable; peripheral private homes are district
+aggregates. See the [construction economy contract](docs/semantics13-construction-economy.md).
 
 ### Identity Mark
 

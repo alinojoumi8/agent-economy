@@ -21,8 +21,11 @@ intended evidence gate before starting it.
 
 ## Optional R22 hosted deployment
 
-Hosted mode is separate from `run.py --serve`. Copy deployment secrets into an
-ignored environment file or a secret manager; at minimum set strong unique
+Hosted mode is separate from `run.py --serve`. Copy deployment secrets into the
+repository-root ignored `.env` file or an operator-controlled equivalent; the
+commands below pass that file explicitly so Compose does not resolve a different
+project-directory environment. Substitute another ignored `--env-file` path when
+using a secret-manager export. At minimum set strong unique
 `POSTGRES_PASSWORD`, `APP_DATABASE_PASSWORD`,
 `SUPERVISOR_DATABASE_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
 `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` values plus the exact HTTPS
@@ -35,10 +38,10 @@ characters. Never put any populated value in committed YAML.
 Validate and build the reference stack before first start:
 
 ```powershell
-docker compose -f deploy/compose.yaml config --quiet
-docker compose -f deploy/compose.yaml build app migrate
-docker compose -f deploy/compose.yaml up -d postgres minio minio-init migrate app caddy prometheus
-docker compose -f deploy/compose.yaml ps
+docker compose --env-file .env -f deploy/compose.yaml config --quiet
+docker compose --env-file .env -f deploy/compose.yaml build app migrate
+docker compose --env-file .env -f deploy/compose.yaml up -d postgres minio minio-init migrate app caddy prometheus
+docker compose --env-file .env -f deploy/compose.yaml ps
 ```
 
 The migration job must complete successfully before the application starts.
@@ -47,7 +50,7 @@ environment variable or the CLI's hidden prompt:
 
 ```powershell
 $env:AGENT_ECONOMY_BOOTSTRAP_PASSWORD = '<temporary-strong-password>'
-docker compose -f deploy/compose.yaml run --rm `
+docker compose --env-file .env -f deploy/compose.yaml run --rm `
   -e AGENT_ECONOMY_BOOTSTRAP_PASSWORD `
   bootstrap bootstrap --config /app/config/hosted.migrate.docker.yaml `
   --tenant-slug research --tenant-name 'Research' `
@@ -62,11 +65,11 @@ job: keep the current `POSTGRES_PASSWORD`, place new distinct values in
 `AGENT_ECONOMY_NEW_POSTGRES_PASSWORD` to the new administrator password. Then:
 
 ```powershell
-docker compose -f deploy/compose.yaml --profile ops run --rm rotate-database-passwords
+docker compose --env-file .env -f deploy/compose.yaml --profile ops run --rm rotate-database-passwords
 # Replace POSTGRES_PASSWORD with the new administrator value and clear
 # AGENT_ECONOMY_NEW_POSTGRES_PASSWORD in the protected environment file.
-docker compose -f deploy/compose.yaml up -d --force-recreate app caddy
-docker compose -f deploy/compose.yaml ps
+docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate app caddy
+docker compose --env-file .env -f deploy/compose.yaml ps
 ```
 
 Require readiness plus fresh administrator logins before retiring the old
@@ -116,10 +119,10 @@ proves that exact local build only.
 Operational commands use the same image/CLI:
 
 ```powershell
-docker compose -f deploy/compose.yaml run --rm app readiness --config /app/config/hosted.docker.yaml
-docker compose -f deploy/compose.yaml run --rm app snapshot-all --config /app/config/hosted.docker.yaml
-docker compose -f deploy/compose.yaml run --rm app verify-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
-docker compose -f deploy/compose.yaml run --rm app restore-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
+docker compose --env-file .env -f deploy/compose.yaml run --rm app readiness --config /app/config/hosted.docker.yaml
+docker compose --env-file .env -f deploy/compose.yaml run --rm app snapshot-all --config /app/config/hosted.docker.yaml
+docker compose --env-file .env -f deploy/compose.yaml run --rm app verify-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
+docker compose --env-file .env -f deploy/compose.yaml run --rm app restore-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
 ```
 
 Restore refuses to overwrite an existing run unless `--replace` is explicit.
@@ -629,12 +632,12 @@ an evidence receipt from persisted run data without advancing the simulation.
 
 ## Independent external connector evidence
 
-The external connector harness targets an already deployed HTTPS test tenant.
-It never creates a tenant, deploys infrastructure, or authorizes provider or
-hosting spend. Before each invocation, record the exact candidate commit/tree,
-hosted origin, tenant/run, independent signer, expected infrastructure cost,
-and receipt/source retention period. Approval is per connector; one checked
-line does not authorize any other line:
+The external connector finalizer targets an already deployed HTTPS test tenant.
+It never creates a tenant, deploys infrastructure, invokes a native client, or
+authorizes provider or hosting spend. Before each invocation, record the exact
+candidate commit/tree, hosted origin, tenant/run, independent signer, expected
+infrastructure cost, and receipt/source retention period. Approval is per
+connector; one checked line does not authorize any other line:
 
 - [ ] Independent MCP client, including OAuth and protected-resource discovery.
 - [ ] Hermes, including exactly three completed wakes and executed receipts.
@@ -642,14 +645,31 @@ line does not authorize any other line:
 - [ ] Independent Python client submit/read flow.
 - [ ] Independent TypeScript client submit/read flow.
 
-Put the process-only access credential and a cross-tenant isolation probe path
-in an ignored JSON file. On POSIX, give the file mode `600`; the runner verifies
-that mode and current-user ownership. On Windows, restrict the file ACL to the
-current user before invoking the runner; Python's `st_mode` cannot represent or
-verify that ACL. On both platforms the runner refuses symlinks/reparse points,
-verifies that the opened file is the one it inspected, refuses loopback/private
-targets, revokes the credential after the test, and writes only public hashes
-and sanitized identifiers:
+Run the selected native client first. It must write one sanitized
+`agent-economy-native-connector-result-v1` JSON artifact with the candidate,
+hosted-origin hash, public exchange hashes, executed receipt IDs/hashes, and its
+actual implementation provenance. The accepted implementation identities are
+`official_mcp_conformance`, `hermes_cli`, `openclaw_cli`,
+`agent_economy_python_client`, and `agent_economy_typescript_client`; the
+selected connector determines the only eligible identity. The artifact also
+records the native version plus SHA-256 hashes for its executable and sanitized
+invocation. The independent MCP artifact must pin protocol revision
+`2025-11-25`. Free-form client labels cannot substitute for this provenance.
+
+Put the still-active process-only credential and a cross-tenant isolation probe
+path in an ignored JSON file. On POSIX, give the file mode `600`; the finalizer
+verifies that mode and current-user ownership. On Windows, restrict the file ACL
+to the current user before invoking it; Python's `st_mode` cannot represent or
+verify that ACL. On both platforms it refuses symlinks/reparse points, verifies
+that the opened credential is the one it inspected, refuses loopback/private
+targets, re-reads every native receipt from the server, verifies tenant/run/
+actor/scope identity, runs isolation, revokes the credential, and confirms the
+post-revocation `401`.
+
+The finalizer emits two immutable files: a detailed
+`agent-economy-external-connector-v2` receipt and the generic release-gate
+wrapper consumed by `reports/release_evidence.py`. The release collector then
+revalidates both files and the original native artifact offline:
 
 ```bash
 python scripts/run_external_connector_acceptance.py \
@@ -657,15 +677,20 @@ python scripts/run_external_connector_acceptance.py \
   --base-url https://HOSTED_TEST_ORIGIN \
   --commit <CANDIDATE_COMMIT> --tree <CANDIDATE_TREE> \
   --credential-file <IGNORED_MODE_600_JSON> \
-  --output benchmarks/receipts/release-v1/independent-mcp.json \
+  --native-result benchmarks/receipts/release-v1/independent-mcp-native.json \
+  --output benchmarks/receipts/release-v1/independent-mcp-detail.json \
+  --release-gate-output benchmarks/receipts/release-v1/independent-mcp.json \
+  --repo-root . \
   --signer-label <INDEPENDENT_SIGNER> \
-  --server-operator <SERVER_OPERATOR> \
-  --client-name <CLIENT_NAME> --client-version <CLIENT_VERSION>
+  --server-operator <SERVER_OPERATOR>
 ```
 
 Repeat only after separately approving the selected connector. A local mock,
 same-operator signer, failed revocation/isolation probe, short wake set, or
-receipt that contains credentials or private payloads is ineligible.
+receipt that contains credentials or private payloads is ineligible. The
+`--rehearsal` mode exercises the hosted REST surface with urllib, but always
+writes `execution_scope: local` under a rehearsal-only schema. It cannot satisfy
+any of the five native connector gates, regardless of `--connector`.
 
 ## Evidence retention
 

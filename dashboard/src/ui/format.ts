@@ -142,9 +142,9 @@ export function isSlow(ms: unknown): boolean {
  * Two rules replace it, and between them nothing is ever silently lossy:
  *
  *   1. EVERY KIND THE SYSTEM CAN EMIT HAS A DESIGNED CODE. The registry below is
- *      total over both vocabularies that exist: the 87 distinct kinds committed
- *      by the reference run (read out of its event spine) and the 147 kind
- *      literals the engine and world packages emit — 164 kinds in union. Codes
+ *      total over both vocabularies that exist: the distinct kinds committed by
+ *      the reference run (read out of its event spine) and every kind literal
+ *      the engine and world packages emit. Codes
  *      are hand-assigned, verified unique, and grouped by domain so related
  *      kinds share a stem and can be told apart at a glance rather than guessed:
  *      the six permit outcomes are PMAP/PMOK/PMNO/PMRF/PMTR/PMAB, the two
@@ -298,6 +298,14 @@ const KIND_CODES: Record<string, string> = {
   business_permit_referred: "PMRF",
   business_permit_case_transferred: "PMTR",
   business_permit_abandoned: "PMAB",
+
+  /* -- construction economy -- */
+  construction_project_proposed: "CPRO",
+  construction_permit_submitted: "CPSB",
+  construction_funding_contributed: "CFCT",
+  construction_work_contributed: "CWCT",
+  construction_project_cancelled: "CCAN",
+  construction_project_completed: "CCMP",
 
   /* -- legal -- */
   claim_created: "CLAM",

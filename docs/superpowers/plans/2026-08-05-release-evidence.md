@@ -176,13 +176,20 @@ git commit -m "feat: render release evidence offline"
 - Modify: `docs/operator-runbook.md`
 
 **Interfaces:**
-- Produces: `validate_external_connector_receipt(receipt, *, expected_candidate, expected_connector)` and `write_external_connector_receipt(result, output_path)`.
-- Runner connectors: `independent_mcp`, `hermes`, `openclaw`, `python`, and `typescript`.
-- Receipts contain public hashes and executed receipt identifiers; credentials remain process-only.
+- Produces: native-result validation, detailed receipt validation, generic release-wrapper construction, and immutable receipt writing.
+- Finalizer connectors: `independent_mcp`, `hermes`, `openclaw`, `python`, and `typescript`.
+- Native clients produce their own sanitized artifact. The finalizer verifies the corresponding server receipts and security gates; credentials remain process-only.
+- `--rehearsal` is a local urllib protocol probe and is structurally ineligible for all five external release gates.
 
 - [ ] **Step 1: Write failing receipt-contract tests**
 
-Require client name/version, independent signer, candidate commit/tree, hosted-origin SHA-256, tenant/run/actor/scope IDs, public request/response hashes, executed receipt IDs/hashes, revocation, and cross-tenant isolation. MCP requires discovery and protected-resource proof; Hermes/OpenClaw require exactly three completed wakes; Python/TypeScript require authorized submit/read flows.
+Require an exact connector-specific implementation identity, client name/version,
+executable and invocation hashes, native-result hash, independent signer,
+candidate commit/tree, hosted-origin SHA-256, tenant/run/actor/scope IDs, public
+request/response hashes, executed receipt IDs/hashes, revocation, and
+cross-tenant isolation. MCP requires discovery and protected-resource proof;
+Hermes/OpenClaw require exactly three completed wakes; Python/TypeScript require
+authorized submit/read flows.
 
 Reject loopback/private origins, `execution_scope: local`, signer identity equal to the server operator, short wake sets, missing receipt reads, failed revocation/isolation, tokens, raw private payloads, and candidate mismatches.
 
@@ -192,7 +199,13 @@ Keep validation transport-independent. Normalize timestamps/IDs, hash only expli
 
 - [ ] **Step 3: Implement the explicit hosted runner**
 
-Accept connector type, HTTPS base URL, candidate commit/tree, credential-file path, output path, and signer label. Read the mode-600 credential file without printing it; refuse loopback/private targets; run only the selected connector; verify submit/read/revocation/isolation; sanitize; then call the pure writer. Never create tenants, deploy, or authorize spend implicitly.
+Accept connector type, HTTPS base URL, candidate commit/tree, credential-file
+path, native-result path, detailed output path, release-wrapper output path, and
+signer label. Read the mode-600 credential file without printing it; refuse
+loopback/private targets; validate native provenance; re-read the recorded
+receipts; verify identity/revocation/isolation; sanitize; then write the detailed
+and generic receipts. Never create tenants, invoke a native client, deploy, or
+authorize spend implicitly.
 
 - [ ] **Step 4: Verify locally without claiming independent evidence**
 
@@ -201,7 +214,9 @@ Accept connector type, HTTPS base URL, candidate commit/tree, credential-file pa
 .venv/bin/python -m compileall benchmarks/external_connector_acceptance.py scripts/run_external_connector_acceptance.py
 ```
 
-Expected: tests pass; local smokes remain `execution_scope: local` and are ineligible for the five external gates.
+Expected: tests pass; local rehearsals remain `execution_scope: local` under a
+rehearsal-only schema and are ineligible for the five external gates. Generic
+release wrappers without both native and detailed artifacts fail offline.
 
 - [ ] **Step 5: Document and commit the harness**
 
@@ -216,17 +231,13 @@ git commit -m "feat: verify independent connector receipts"
 ### Task 4: Execute the five independent external connector gates
 
 **Files:**
-- Create: `benchmarks/receipts/release-v1/independent-mcp.json`
-- Create: `benchmarks/receipts/release-v1/hermes.json`
-- Create: `benchmarks/receipts/release-v1/openclaw.json`
-- Create: `benchmarks/receipts/release-v1/python-client.json`
-- Create: `benchmarks/receipts/release-v1/typescript-client.json`
+- Create: one native result, one detailed finalization receipt, and one generic release-gate receipt for each of `independent-mcp`, `hermes`, `openclaw`, `python-client`, and `typescript-client` under `benchmarks/receipts/release-v1/`.
 - Create: `runs/release/manifest-v1.yaml`
 - Modify: `docs/world-os/EXTERNAL-AGENT-ACCEPTANCE.md`
 
 **Interfaces:**
 - Consumes: clean candidate commit/tree, hosted HTTPS test tenant, independent clients/signers, and separately approved credentials.
-- Produces: five `independent_external` receipts, each independently hashed into the candidate manifest.
+- Produces: five `independent_external` release-gate receipts, each binding a native artifact and detailed finalization receipt into the candidate manifest.
 
 - [ ] **Step 1: Freeze the candidate before external execution**
 
@@ -245,7 +256,11 @@ Record hosted target, tenant, connector, signer, retention, and infrastructure c
 
 - [ ] **Step 3: Run all five clients separately**
 
-Invoke `scripts/run_external_connector_acceptance.py` once per connector and store each sanitized result under `benchmarks/receipts/release-v1/`. A failed or blocked client retains its own immutable receipt; a retry uses a new receipt identity.
+Run each selected native client separately and retain its sanitized native-result
+artifact. Then invoke `scripts/run_external_connector_acceptance.py
+--native-result ...` once per connector to verify server state, isolation, and
+revocation and to emit the detailed plus generic receipts. A failed or blocked
+client retains its own immutable artifacts; a retry uses a new receipt identity.
 
 - [ ] **Step 4: Verify offline and update the checklist only after passes**
 

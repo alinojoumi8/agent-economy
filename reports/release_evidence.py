@@ -14,6 +14,16 @@ from typing import Any
 
 import yaml
 
+from benchmarks.external_connector_acceptance import (
+    GATE_CONNECTORS,
+    NATIVE_RESULT_SCHEMA,
+    SCHEMA as EXTERNAL_CONNECTOR_SCHEMA,
+    ExternalConnectorReceiptError,
+    external_configuration_sha256,
+    validate_external_connector_receipt,
+    validate_native_connector_result,
+)
+
 
 MANIFEST_SCHEMA = "agent-economy-release-manifest-v1"
 RECEIPT_SCHEMA = "agent-economy-release-gate-v1"
@@ -177,14 +187,19 @@ def _validate_artifacts(
     *,
     repo_root: Path,
     gate_id: str,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[
+    list[dict[str, str]],
+    list[dict[str, str]],
+    dict[tuple[str, str], bytes],
+]:
     errors: list[dict[str, str]] = []
     collected: list[dict[str, str]] = []
+    verified_bytes: dict[tuple[str, str], bytes] = {}
     artifacts = receipt.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
-        return [], [_error(gate_id, "missing_artifacts", "receipt has no artifacts")]
+        return [], [_error(gate_id, "missing_artifacts", "receipt has no artifacts")], {}
     for index, artifact in enumerate(artifacts):
-        if not isinstance(artifact, dict):
+        if not isinstance(artifact, dict) or set(artifact) != {"path", "sha256"}:
             errors.append(_error(gate_id, "invalid_artifact", f"artifact {index} is invalid"))
             continue
         path_value = artifact.get("path")
@@ -210,8 +225,168 @@ def _validate_artifacts(
         text = raw.decode("utf-8", errors="ignore")
         if text and _contains_secret(text):
             errors.append(_error(gate_id, "secret_detected", f"artifact {index} contains sensitive text"))
-        collected.append({"path": str(path_value), "sha256": actual})
-    return collected, errors
+        record = {"path": str(path_value), "sha256": actual}
+        collected.append(record)
+        verified_bytes[(record["path"], actual)] = raw
+    return collected, errors, verified_bytes
+
+
+def _json_artifact(
+    artifact: dict[str, str],
+    verified_bytes: dict[tuple[str, str], bytes],
+) -> Any:
+    try:
+        raw = verified_bytes[(artifact["path"], artifact["sha256"])]
+        return json.loads(raw.decode("utf-8"), parse_constant=_reject_non_finite)
+    except (KeyError, UnicodeError, ValueError):
+        return None
+
+
+def _validate_external_connector_artifacts(
+    receipt: dict[str, Any],
+    artifacts: list[dict[str, str]],
+    *,
+    verified_bytes: dict[tuple[str, str], bytes],
+    gate_id: str,
+    candidate: dict[str, str],
+) -> list[dict[str, str]]:
+    errors: list[dict[str, str]] = []
+    expected_connector = GATE_CONNECTORS[gate_id]
+    detailed_candidates: list[tuple[dict[str, str], dict[str, Any]]] = []
+    for artifact in artifacts:
+        value = _json_artifact(artifact, verified_bytes)
+        if isinstance(value, dict) and value.get("schema") == EXTERNAL_CONNECTOR_SCHEMA:
+            detailed_candidates.append((artifact, value))
+    if not detailed_candidates:
+        return [_error(
+            gate_id,
+            "missing_external_detail",
+            "passed external gate requires one detailed connector receipt artifact",
+        )]
+    if len(detailed_candidates) != 1:
+        return [_error(
+            gate_id,
+            "duplicate_external_detail",
+            "passed external gate has multiple detailed connector receipt artifacts",
+        )]
+    detailed_artifact, detailed = detailed_candidates[0]
+    try:
+        validate_external_connector_receipt(
+            detailed,
+            expected_candidate=candidate,
+            expected_connector=expected_connector,
+        )
+    except ExternalConnectorReceiptError as exc:
+        return [_error(gate_id, "invalid_external_detail", str(exc))]
+
+    native_hash = detailed["client"]["native_evidence_sha256"]
+    native_candidates = [
+        artifact
+        for artifact in artifacts
+        if artifact["sha256"] == native_hash
+        and artifact["sha256"] != detailed_artifact["sha256"]
+    ]
+    if not native_candidates:
+        return [_error(
+            gate_id,
+            "missing_native_result",
+            "detailed connector receipt does not resolve to a native result artifact",
+        )]
+    if len(native_candidates) != 1:
+        return [_error(
+            gate_id,
+            "duplicate_native_result",
+            "native result hash resolves to multiple release artifacts",
+        )]
+    native = _json_artifact(native_candidates[0], verified_bytes)
+    if not isinstance(native, dict) or native.get("schema") != NATIVE_RESULT_SCHEMA:
+        return [_error(
+            gate_id,
+            "invalid_native_result",
+            "native result artifact schema is unsupported",
+        )]
+    try:
+        validate_native_connector_result(
+            native,
+            expected_candidate=candidate,
+            expected_connector=expected_connector,
+        )
+    except ExternalConnectorReceiptError as exc:
+        return [_error(gate_id, "invalid_native_result", str(exc))]
+
+    native_client = dict(native["client"])
+    detailed_client = dict(detailed["client"])
+    detailed_client.pop("native_evidence_sha256", None)
+    compared_fields = (
+        "connector",
+        "candidate",
+        "hosted_origin_sha256",
+        "tenant_id",
+        "run_id",
+        "actor_id",
+        "scopes",
+        "started_at",
+        "public_exchange",
+        "executed_receipts",
+        "notes",
+    )
+    if native_client != detailed_client or any(
+        native.get(field) != detailed.get(field) for field in compared_fields
+    ):
+        errors.append(_error(
+            gate_id,
+            "external_evidence_mismatch",
+            "detailed connector receipt differs from its native result",
+        ))
+    connector_field = {
+        "independent_mcp": "discovery",
+        "hermes": "wakes",
+        "openclaw": "wakes",
+        "python": "flows",
+        "typescript": "flows",
+    }[expected_connector]
+    if native.get(connector_field) != detailed.get(connector_field):
+        errors.append(_error(
+            gate_id,
+            "external_evidence_mismatch",
+            "connector-specific proof differs from its native result",
+        ))
+    native_ended = _parse_utc(native.get("ended_at"))
+    detailed_ended = _parse_utc(detailed.get("ended_at"))
+    if native_ended is None or detailed_ended is None or detailed_ended < native_ended:
+        errors.append(_error(
+            gate_id,
+            "external_evidence_mismatch",
+            "detailed connector receipt ends before its native result",
+        ))
+    if (
+        receipt.get("started_at") != detailed.get("started_at")
+        or receipt.get("ended_at") != detailed.get("ended_at")
+        or receipt.get("configuration_sha256")
+        != external_configuration_sha256(detailed)
+    ):
+        errors.append(_error(
+            gate_id,
+            "external_wrapper_mismatch",
+            "release wrapper differs from the detailed connector receipt",
+        ))
+    environment = receipt.get("environment")
+    tool_versions = environment.get("tool_versions") if isinstance(environment, dict) else None
+    implementation = detailed["client"]["implementation"]
+    if (
+        not isinstance(environment, dict)
+        or environment.get("hosted_origin_sha256")
+        != detailed.get("hosted_origin_sha256")
+        or not isinstance(tool_versions, dict)
+        or set(tool_versions) != {implementation}
+        or tool_versions.get(implementation) != detailed["client"]["version"]
+    ):
+        errors.append(_error(
+            gate_id,
+            "external_environment_mismatch",
+            "release environment differs from native connector provenance",
+        ))
+    return errors
 
 
 def _validate_receipt(
@@ -274,10 +449,22 @@ def _validate_receipt(
         errors.append(_error(gate_id, "unbounded_environment", "environment contains unsupported fields"))
     if _contains_secret(receipt):
         errors.append(_error(gate_id, "secret_detected", "receipt contains sensitive text"))
-    artifacts, artifact_errors = _validate_artifacts(
+    artifacts, artifact_errors, verified_bytes = _validate_artifacts(
         receipt, repo_root=repo_root, gate_id=gate_id
     )
     errors.extend(artifact_errors)
+    if (
+        gate_id in EXTERNAL_CONNECTOR_GATES
+        and status == "passed"
+        and scope == "independent_external"
+    ):
+        errors.extend(_validate_external_connector_artifacts(
+            receipt,
+            artifacts,
+            verified_bytes=verified_bytes,
+            gate_id=gate_id,
+            candidate=candidate,
+        ))
     result = {
         "gate_id": gate_id,
         "execution_scope": scope if scope in EXECUTION_SCOPES else "local",
@@ -499,7 +686,9 @@ def write_release_evidence_package(
 ) -> tuple[Path, Path]:
     """Collect and publish one atomically selected JSON/Markdown package."""
     result = collect_release_evidence(manifest_path, repo_root=repo_root)
-    target = Path(output_dir)
+    # Resolve once so Windows directory/file symlinks always receive absolute
+    # targets even when the documented CLI invocation uses a relative output.
+    target = Path(output_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
     json_content = canonical_release_json(result)
     markdown_content = render_release_markdown(result)
@@ -540,42 +729,67 @@ def write_release_evidence_package(
         finally:
             os.close(directory)
 
-    public_links = {
-        target / "release-evidence.json": ".release-evidence-current/release-evidence.json",
-        target / "release-evidence.md": ".release-evidence-current/release-evidence.md",
+    current = target / ".release-evidence-current"
+    if os.name == "nt":
+        public_links = {
+            target / "release-evidence.json": str(current / "release-evidence.json"),
+            target / "release-evidence.md": str(current / "release-evidence.md"),
+        }
+    else:
+        public_links = {
+            target / "release-evidence.json": ".release-evidence-current/release-evidence.json",
+            target / "release-evidence.md": ".release-evidence-current/release-evidence.md",
     }
     for public_path, link_target in public_links.items():
         if public_path.is_symlink():
-            if os.readlink(public_path) != link_target:
+            observed_target = os.readlink(public_path)
+            if os.name == "nt":
+                observed_target = observed_target.removeprefix("\\\\?\\")
+            if observed_target != link_target:
                 raise RuntimeError(f"unexpected release evidence link: {public_path}")
         elif public_path.exists():
             raise RuntimeError(
                 f"legacy release evidence output must be moved before atomic publication: {public_path}"
             )
 
-    current = target / ".release-evidence-current"
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".release-evidence-current.", dir=target
+    selected_target = (
+        str(package.resolve()) if os.name == "nt" else f".release-evidence-packages/{digest}"
     )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    temporary.unlink()
-    try:
-        os.symlink(
-            f".release-evidence-packages/{digest}",
-            temporary,
-            target_is_directory=True,
+    select_current = True
+    if current.is_symlink() and os.name == "nt":
+        observed_current = os.readlink(current).removeprefix("\\\\?\\")
+        if observed_current == selected_target:
+            select_current = False
+        else:
+            raise RuntimeError(
+                "Windows cannot atomically replace the selected release package; "
+                "publish the changed package to a new output directory"
+            )
+    elif current.exists() and not current.is_symlink():
+        raise RuntimeError(f"unsafe release evidence selector: {current}")
+    if select_current:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".release-evidence-current.", dir=target
         )
-        os.replace(temporary, current)
-        if os.name != "nt":
-            directory = os.open(target, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    finally:
-        if temporary.exists() or temporary.is_symlink():
-            temporary.unlink()
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        temporary.unlink()
+        try:
+            os.symlink(
+                selected_target,
+                temporary,
+                target_is_directory=True,
+            )
+            os.replace(temporary, current)
+            if os.name != "nt":
+                directory = os.open(target, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
 
     for public_path, link_target in public_links.items():
         if public_path.is_symlink():

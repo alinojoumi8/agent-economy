@@ -11,8 +11,15 @@ import { OrganizationsWorkspace } from "../workspaces/OrganizationsWorkspace";
 import { MarketsWorkspace } from "../workspaces/MarketsWorkspace";
 import { PoliticsLawWorkspace } from "../workspaces/PoliticsLawWorkspace";
 import { ExperimentsWorkspace } from "../workspaces/ExperimentsWorkspace";
-import { workspaceFallbackPath } from "../lib/routes";
+import { legacyCityRedirectPath, workspaceFallbackPath } from "../lib/routes";
 import { worldOSIndexWorkspace } from "./worldOSRouting.js";
+
+function OverviewRoute() {
+  const { runId } = useParams<{ runId?: string }>();
+  const location = useLocation();
+  const cityPath = legacyCityRedirectPath(runId, location.search, location.hash);
+  return cityPath ? <Navigate to={cityPath} replace /> : <OverviewWorkspace />;
+}
 
 function WorkspaceFallback() {
   const { runId } = useParams<{ runId?: string }>();
@@ -37,7 +44,7 @@ export function WorldOSApp() {
     <Route path="live-city" element={<LiveCity />} />
     <Route element={<WorkspaceShell />}>
       <Route index element={<Navigate to="overview" replace />} />
-      <Route path="overview" element={<OverviewWorkspace />} />
+      <Route path="overview" element={<OverviewRoute />} />
       <Route path="news-communications" element={<NewsCommunicationsWorkspace />} />
       <Route path="news-communications/:threadId" element={<NewsCommunicationsWorkspace />} />
       <Route path="investigations" element={<InvestigationsWorkspace />} />

@@ -62,16 +62,14 @@ type CommandGroup = {
 
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Observe", items: [
-    { path: "overview", label: "Live City", caption: "Agents at work, evidence in motion", icon: "overview" },
+    { path: "overview", label: "Overview", caption: "Economy, population, and run health", icon: "overview" },
     /*
-     * Named for what it is rather than for the route, because "Live City" is
-     * already taken by Overview one line above and two identical labels in one
-     * nav is a coin toss for the reader. This one is the map itself: the whole
-     * screen, three hundred people, the recorded day playing across the tick.
+     * Street Level is the full-screen replay renderer. Live City below is the
+     * evidence-rich workspace for agents, places, and construction.
      */
     { path: "live-city", label: "Street Level", caption: "The recorded day, full screen", icon: "street" },
-    { path: "world", label: "World", caption: "Population and environment", icon: "world" },
-    { path: "people", label: "People", caption: "Agents, lives, and memory", icon: "people" },
+    { path: "world", label: "Live City", caption: "Agents, places, and construction", icon: "world" },
+    { path: "people", label: "Living Agents", caption: "Progress, journeys, and evidence", icon: "people" },
     { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
   ] },
   { label: "Flows", items: [
@@ -93,7 +91,7 @@ const entityGroupOrder: Array<{
   label: string;
   icon: GlyphName;
 }> = [
-  { kind: "agent", label: "People", icon: "people" },
+  { kind: "agent", label: "Living Agents", icon: "people" },
   { kind: "firm", label: "Organizations", icon: "organizations" },
   { kind: "event", label: "Events", icon: "investigations" },
   { kind: "communication_thread", label: "Public Communications", icon: "communications" },

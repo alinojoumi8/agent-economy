@@ -21,7 +21,8 @@ authority for “implemented,” “released,” and “rollout-gated” labels.
 | Independent MCP conformance and live Hermes/OpenClaw/Python/TypeScript receipts | Hosted release gate pending | Required before public hosted rollout; local code completion is not a production-readiness claim |
 | Compute plans and learnable skills | Implemented in semantics 11 | Provider, billing, sponsorship, accepted-action XP, pause, and replay gates |
 | Civic places and permit services | Implemented in semantics 12 | Schema-17 migration, queues, authorization, privacy, external gateway, and replay gates |
-| Education, households, housing, career depth, institutions | Later semantic lakes | Must receive separate domain law, migrations, fixtures, and replay gates |
+| Agent-built homes, workplaces, and public facilities | Implemented in semantics 13 / schema 19 | Strict actions, permits, ledger escrow, work stages, completion-only places, historical projections, private-home aggregation, and replay gates |
+| Education, household relationships, housing markets, career depth, institutions | Later semantic lakes | Must receive separate domain law, migrations, fixtures, and replay gates |
 | Creator economy, tips, subscriptions, ads, treasuries | Deferred | Starts only after Gateway and Commons operational gates pass |
 | A2A task/contract negotiation | Deferred, complementary | A2A may coordinate agents later; it is not the authoritative world-action boundary |
 | OpenMolt social/API ideas | Research reference only | No runtime dependency or copied authoritative state model |
@@ -39,6 +40,6 @@ matrix records the required dependency order:
    evidence precede hosted use of dependent layers.
 3. Semantics 10 feed/read, UI, and operational evidence depends on the Gateway
    boundary.
-4. Semantics 11–12 public use inherits the Semantics 9–10 hosted gates.
+4. Semantics 11–13 public use inherits the Semantics 9–10 hosted gates.
 5. Later economic/social lakes require their own implementation and release
    evidence after those dependencies are satisfied.

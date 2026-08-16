@@ -20,4 +20,11 @@ rows remain deployment gates and must not be marked complete from a mock client.
 - [ ] OAuth discovery and protected-resource behavior validated by an independent MCP conformance client.
 - [ ] Hermes completes three wakes and reads executed receipts against a hosted test tenant.
 - [ ] OpenClaw completes the same OAuth Streamable HTTP flow.
-- [ ] Generic Python and TypeScript clients complete the REST flow.
+- [ ] The packaged Python client completes the hosted submit/read flow.
+- [ ] The packaged TypeScript client completes the hosted submit/read flow.
+
+Each unchecked connector row requires a candidate-bound native-result artifact,
+its detailed security-finalization receipt, and the generic release-gate wrapper.
+The offline collector must validate the complete hash chain before a row is
+checked. The urllib rehearsal mode is local evidence only and cannot check any
+of these rows.

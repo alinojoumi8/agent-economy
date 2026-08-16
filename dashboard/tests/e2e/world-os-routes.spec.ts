@@ -150,7 +150,12 @@ async function mockWorkspaceApis(
       }, "world.snapshot");
     } else if (path === "/api/v2/world-map") {
       body = envelope("map", url, {
-        regions: [], agents: [], organizations: [], places: [], presence: [],
+        regions: [], agents: [], organizations: [],
+        places: [{
+          id: 1, name: "North Exchange", kind: "market", region_id: 1,
+          region_name: "North", x: 0.3, y: 0.4, capacity: 20,
+        }],
+        presence: [],
       }, "world.map");
     } else if (path === "/api/v2/civic/summary") {
       body = envelope("civic", url, {
@@ -216,7 +221,7 @@ async function setup(page: Page) {
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
-  await expect(page.getByRole("heading", { name: "World", exact: true }).last()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Live City", exact: true })).toBeVisible();
   await expect(page.getByText("Historical tick 3", { exact: true }).first()).toBeVisible();
 
   for (const [linkName, heading] of [
@@ -269,7 +274,7 @@ test("world selection removes unresolved region and place URL parameters", async
   const diagnostics = await setup(page);
   for (const parameter of ["region", "place"]) {
     await page.goto(`/runs/run-demo/world?${parameter}=999&fork=fork-1&tick=3`);
-    await expect(page.getByRole("heading", { name: "World", exact: true }).last()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Live City", exact: true })).toBeVisible();
     await expect.poll(() => new URL(page.url()).searchParams.has(parameter)).toBe(false);
     const current = new URL(page.url());
     expect(current.searchParams.get("fork")).toBe("fork-1");

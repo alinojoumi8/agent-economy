@@ -32,8 +32,22 @@ def _gitleaks_version() -> str | None:
 
 def _write_executable(path: Path, source: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    path.write_text(source, encoding="utf-8", newline="\n")
     path.chmod(0o755)
+
+
+def _shell_command(path: Path, *args: str) -> list[str]:
+    command = [str(path), *args]
+    if os.name != "nt":
+        return command
+
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git for Windows is required for hook tests")
+    bash = Path(git).resolve().parent.parent / "bin" / "bash.exe"
+    if not bash.is_file():
+        pytest.skip("Git Bash is required for hook tests")
+    return [str(bash), str(path), *args]
 
 
 def _prepared_repo(tmp_path: Path, *, hooks_path: str | None = None):
@@ -63,7 +77,7 @@ def _prepared_repo(tmp_path: Path, *, hooks_path: str | None = None):
 def _run(path: Path, repo: Path, trace: Path, *, check: bool = True):
     env = {**os.environ, "TRACE_FILE": str(trace)}
     return subprocess.run(
-        [str(path)], cwd=repo, env=env, check=check, capture_output=True,
+        _shell_command(path), cwd=repo, env=env, check=check, capture_output=True,
         text=True,
     )
 
@@ -304,7 +318,7 @@ def test_secret_scan_distinguishes_findings_from_runtime_failure(
     }
 
     result = subprocess.run(
-        [str(scanner), "--staged"], cwd=repo, env=env,
+        _shell_command(scanner, "--staged"), cwd=repo, env=env,
         capture_output=True, text=True, check=False,
     )
 

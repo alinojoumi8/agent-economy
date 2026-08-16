@@ -97,6 +97,23 @@ Default macro metrics include `gdp_proxy` (daily final-goods sales),
 `gdp_proxy_30d`, `labor_income`, `cpi`, `inflation_30d`, true `cpi_yoy` after
 tick 365, unemployment, index, policy rate, money supply, Gini, and sentiment.
 
+### Historical-safe observer projections
+
+These read-only endpoints return the canonical envelope and accept `tick` plus
+`fork_id`. List endpoints use bounded `after`/`limit` pagination.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v2/workspaces/living-agents` | `agent_id`, `project_kind`, and `status` filters; committed, runtime-live-only, and derived evidence remain labelled |
+| `GET` | `/api/v2/agents/{agent_id}/journey` | Historical profile, current-at-tick state, milestones, public outputs, and safe evidence references |
+| `GET` | `/api/v2/construction-projects` | Semantics-13 projects; filter by `project_kind=private_home|workplace|public_facility` and exact lifecycle `status` |
+| `GET` | `/api/v2/construction-projects/{project_id}` | One exact public project or privacy-safe aggregate, plus contribution-type totals where authorized |
+| `GET` | `/api/v2/world-map?layers=construction_projects` | Construction layer separate from usable `places`; supports stable project selection in Live City |
+
+Peripheral private-home construction is aggregated by region, status, and
+stage. Owner, contributor, permit, exact-site, place, and reversible evidence
+links are omitted from those aggregates.
+
 ## Oracle and calibration
 
 | Method | Path | Input/notes |

@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
+import "../../../src/design/tokens.css";
 import "../../../src/index.css";
 import "../../../src/civic-weather-room.css";
 import { CivicCity } from "../../../src/components/CivicCity.jsx";

@@ -107,6 +107,21 @@ def test_documented_profiles_exist():
         assert (ROOT / profile).exists(), f"documented profile is missing: {profile}"
 
 
+def test_hosted_compose_commands_pin_the_root_environment_file():
+    runbook = (ROOT / "docs/operator-runbook.md").read_text(encoding="utf-8")
+    compose_lines = [
+        line.strip()
+        for line in runbook.splitlines()
+        if line.strip().startswith("docker compose")
+        and "deploy/compose.yaml" in line
+    ]
+    assert compose_lines
+    assert all(
+        line.startswith("docker compose --env-file .env -f deploy/compose.yaml")
+        for line in compose_lines
+    )
+
+
 def test_semantics_7_closure_status_records_merged_main_and_post_merge_ci():
     for relative_path in CLOSURE_STATUS_DOCS:
         document = ROOT / relative_path
@@ -129,7 +144,7 @@ def test_current_release_status_has_one_authoritative_ledger():
     lowered = status.lower()
     assert "single maintained release-status" in lowered
     assert "ledger" in lowered
-    assert "schema 17 / semantics 12" in lowered
+    assert "schema 19 / semantics 13" in lowered
     assert "semantics 8 / schema 12" in lowered
     assert "**released deterministic causal baseline**" in lowered
     assert "semantics 9 / schema 13" in lowered

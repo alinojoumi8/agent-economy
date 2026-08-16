@@ -44,6 +44,7 @@ SYS_GOV = "sys:gov"                    # government treasury (P1 fiscal)
 SYS_HOUSING = "sys:housing"            # rent/move-in costs paid by households
 SYS_COMPUTE = "sys:compute_service"     # in-world compute subscription revenue
 SYS_EDUCATION = "sys:education_service" # in-world skill-study revenue
+SYS_CONSTRUCTION = "sys:construction_materials"  # construction procurement
 
 
 class Ledger:

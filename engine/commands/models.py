@@ -86,6 +86,77 @@ class DecideBusinessPermit(CommandBase):
     ]
 
 
+class ConstructionCommand(CommandBase):
+    dedupe_key: str = Field(min_length=8, max_length=128)
+
+    @field_validator("dedupe_key")
+    @classmethod
+    def normalized_dedupe_key(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(character.isspace() for character in value):
+            raise ValueError("dedupe_key must be a nonblank token")
+        return value
+
+
+class ProposeConstruction(ConstructionCommand):
+    type: Literal["propose_construction"]
+    owner_type: Literal["agent", "firm", "agency"]
+    owner_id: Annotated[StrictInt, Field(gt=0)]
+    region_id: Annotated[StrictInt, Field(gt=0)]
+    site_key: str = Field(min_length=1, max_length=120)
+    target_place_type: Literal[
+        "private_home", "workplace", "public_facility",
+    ]
+    name: str = Field(min_length=1, max_length=160)
+    required_funding_cents: Annotated[
+        StrictInt, Field(gt=0, le=1_000_000_000_000)]
+    required_work_units: Annotated[StrictInt, Field(gt=0, le=1_000_000)]
+
+    @field_validator("site_key", "name")
+    @classmethod
+    def normalized_construction_label(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+
+class ApplyConstructionPermit(ConstructionCommand):
+    type: Literal["apply_construction_permit"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class DecideConstructionPermit(ConstructionCommand):
+    type: Literal["decide_construction_permit"]
+    case_id: Annotated[StrictInt, Field(gt=0)]
+    decision: Literal["approve", "deny"]
+    reason_code: Literal["requirements_verified", "requirements_failed"]
+
+
+class ContributeConstructionFunding(ConstructionCommand):
+    type: Literal["contribute_construction_funding"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
+    amount_cents: Annotated[StrictInt, Field(gt=0, le=1_000_000_000_000)]
+
+
+class PerformConstructionWork(ConstructionCommand):
+    type: Literal["perform_construction_work"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
+    work_units: Annotated[StrictInt, Field(gt=0, le=1_000_000)]
+    wage_cents: Annotated[
+        StrictInt, Field(ge=0, le=1_000_000_000_000)] = 0
+    procurement_cents: Annotated[
+        StrictInt, Field(ge=0, le=1_000_000_000_000)] = 0
+
+
+class CancelConstruction(ConstructionCommand):
+    type: Literal["cancel_construction"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
+    reason_code: Literal[
+        "owner_cancelled", "site_unavailable", "funding_failed",
+    ]
+
+
 class DirectAudience(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["direct"]

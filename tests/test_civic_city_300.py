@@ -149,6 +149,30 @@ def test_civic_city_300_profile_and_population_views(tmp_path) -> None:
                 params={"layers": "agents", "population": "private"},
             )
             assert invalid.status_code == 422
+
+            living_response = client.get(
+                "/api/v2/workspaces/living-agents",
+                params={"limit": 200},
+            )
+            assert living_response.status_code == 200
+            living_data = living_response.json()["data"]
+            assert living_data["summary"]["living_agents"] == 300
+            assert len(living_data["agents"]) == 300
+            assert living_data["summary"]["runtime_active"] == 0
+            peripheral_profiles = [
+                agent for agent in living_data["agents"]
+                if agent["population_tier"] == "periphery"
+            ]
+            assert len(peripheral_profiles) == 200
+            assert all(
+                place is None or (
+                    place["visibility"] == "region_only"
+                    and "id" not in place
+                    and "name" not in place
+                )
+                for agent in peripheral_profiles
+                for place in (agent["residence"], agent["workplace"])
+            )
         assert (
             int(store.tick),
             int(store.scalar("SELECT COUNT(*) FROM events")),

@@ -2,11 +2,18 @@ import { CITY_LAYERS } from "../lib/civicCity.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
+const CITY_VIEW_MODES = new Set(["atlas", "diorama"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function projectIdentifier(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.length > 180) return null;
+  return /^[a-zA-Z0-9:_-]+$/.test(normalized) ? normalized : null;
 }
 
 function normalizedTick(value) {
@@ -20,6 +27,9 @@ function normalizedTick(value) {
 export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
+  const view = params.get("view") || "atlas";
+  const project = projectIdentifier(params.get("project"));
+  const agent = project ? null : positiveInteger(params.get("agent"));
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -27,8 +37,11 @@ export function parseObserverViewState(params) {
     layer: CITY_LAYER_IDS.has(layer) ? layer : "all",
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
-    agent: positiveInteger(params.get("agent")),
+    agent,
+    place: project || agent ? null : positiveInteger(params.get("place")),
+    project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
+    view: CITY_VIEW_MODES.has(view) ? view : "atlas",
   };
 }
 
@@ -62,7 +75,29 @@ export function patchObserverViewState(params, patch) {
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
   if ("agent" in patch) {
     const agent = Number(patch.agent);
-    setOrDelete("agent", Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null);
+    const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
+    setOrDelete("agent", selected);
+    if (selected) {
+      next.delete("place");
+      next.delete("project");
+    }
+  }
+  if ("place" in patch) {
+    const place = Number(patch.place);
+    const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
+    setOrDelete("place", selected);
+    if (selected) {
+      next.delete("agent");
+      next.delete("project");
+    }
+  }
+  if ("project" in patch) {
+    const project = projectIdentifier(patch.project);
+    setOrDelete("project", project);
+    if (project) {
+      next.delete("agent");
+      next.delete("place");
+    }
   }
   if ("population" in patch) {
     const population = typeof patch.population === "string"
@@ -70,6 +105,12 @@ export function patchObserverViewState(params, patch) {
       ? patch.population
       : "core";
     setOrDelete("population", population === "core" ? null : population);
+  }
+  if ("view" in patch) {
+    const view = typeof patch.view === "string" && CITY_VIEW_MODES.has(patch.view)
+      ? patch.view
+      : "atlas";
+    setOrDelete("view", view === "atlas" ? null : view);
   }
   return next;
 }

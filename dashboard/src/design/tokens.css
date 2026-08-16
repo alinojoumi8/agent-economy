@@ -236,6 +236,8 @@
  * been ported yet keep resolving.
  */
 .world-os-shell {
+  color-scheme: dark;
+
   --os-ink: var(--ae-bg);
   --os-ink-soft: var(--ae-inset);
   --os-surface: var(--ae-surface-1);
@@ -271,6 +273,10 @@
   color: var(--ae-text);
   font-family: var(--ae-font-ui);
   font-size: var(--ae-fs-3);
+}
+
+[data-theme="light"] .world-os-shell {
+  color-scheme: light;
 }
 
 .world-os-shell :focus-visible {
