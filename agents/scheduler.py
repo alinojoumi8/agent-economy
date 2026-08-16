@@ -133,9 +133,21 @@ class Scheduler:
 
     def _civic_wake(self, agent_id: int, role: str, tick: int) -> bool:
         if role == "permit_clerk":
-            return self.store.query_one(
+            if self.store.query_one(
                 "SELECT 1 FROM institution_tasks "
                 "WHERE assigned_agent_id=? AND status='assigned' LIMIT 1",
+                (int(agent_id),),
+            ) is not None:
+                return True
+            if self.engine_semantics_version < 13:
+                return False
+            return self.store.query_one(
+                "SELECT 1 FROM construction_permit_cases c "
+                "JOIN agency_staff s ON s.agency_id=c.agency_id "
+                "WHERE s.agent_id=? AND s.active=1 "
+                "AND s.role_key='permit_clerk' "
+                "AND s.region_id=c.region_id AND c.status='submitted' "
+                "LIMIT 1",
                 (int(agent_id),),
             ) is not None
         if self.store.query_one(

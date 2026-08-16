@@ -1,6 +1,7 @@
 """Semantics-13 construction economy, projection, and replay contracts."""
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agents.policies import institutional_decision
 from engine.actions import ActionExecutor
 from engine.migrations import registry as migration_registry
 from engine.store import Store
@@ -620,6 +622,72 @@ def test_agent_decision_context_supplies_one_exact_construction_action(
         "project_id": int(result["project_id"]),
         "dedupe_key": f"construction-project-{int(result['project_id'])}-permit",
     }]
+
+
+def test_pending_construction_permit_wakes_authorized_clerk(
+    construction_world,
+):
+    world = construction_world
+    owner = _owner(world)
+    proposed = _propose(world, owner, prefix="scheduled-clerk")
+    assert proposed["ok"], proposed
+    project_id = int(proposed["project_id"])
+    applied = world.runtime.executor.execute_action(2, int(owner["id"]), {
+        "type": "apply_construction_permit",
+        "project_id": project_id,
+        "dedupe_key": "scheduled-clerk-permit-0001",
+    })
+    assert applied["ok"], applied
+
+    clerk_id = _permit_clerk(world, int(owner["region_id"]))
+    scheduled_ids = {
+        int(agent["id"])
+        for agent in world.runtime.scheduler.scheduled_agents(3)
+    }
+    assert clerk_id in scheduled_ids
+    context = world.economy.construction.decision_context(clerk_id, 3)
+    expected_action = {
+        "type": "decide_construction_permit",
+        "case_id": int(applied["permit_case_id"]),
+        "decision": "approve",
+        "reason_code": "requirements_verified",
+        "dedupe_key": (
+            f"construction-permit-{int(applied['permit_case_id'])}-approve"
+        ),
+    }
+    assert context["eligible_actions"] == [expected_action]
+
+    clerk = world.store.query_one("SELECT * FROM agents WHERE id=?", (clerk_id,))
+    decision = asyncio.run(world.runtime._decide_one(3, clerk))
+    assert decision["envelope"]["actions"] == [expected_action]
+    approved = world.runtime.executor.execute_action(
+        3, clerk_id, decision["envelope"]["actions"][0])
+    assert approved["ok"], approved
+    assert approved["status"] == "funding"
+
+
+def test_scripted_institutional_policy_fairly_interleaves_construction() -> None:
+    civic_action = {
+        "type": "decide_business_permit",
+        "case_id": 7,
+        "decision": "approve",
+        "reason_code": "requirements_verified",
+    }
+    construction_action = {
+        "type": "decide_construction_permit",
+        "case_id": 11,
+        "decision": "approve",
+        "reason_code": "requirements_verified",
+        "dedupe_key": "construction-permit-11-approve",
+    }
+    context = {
+        "tick": 2,
+        "institutional_work": {"eligible_actions": [civic_action]},
+        "construction_work": {"eligible_actions": [construction_action]},
+    }
+    assert institutional_decision(context)["actions"] == [civic_action]
+    context["tick"] = 3
+    assert institutional_decision(context)["actions"] == [construction_action]
 
 
 def test_same_seed_and_actions_produce_identical_authoritative_construction(
