@@ -686,7 +686,9 @@ def write_release_evidence_package(
 ) -> tuple[Path, Path]:
     """Collect and publish one atomically selected JSON/Markdown package."""
     result = collect_release_evidence(manifest_path, repo_root=repo_root)
-    target = Path(output_dir)
+    # Resolve once so Windows directory/file symlinks always receive absolute
+    # targets even when the documented CLI invocation uses a relative output.
+    target = Path(output_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
     json_content = canonical_release_json(result)
     markdown_content = render_release_markdown(result)

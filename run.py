@@ -1261,12 +1261,16 @@ def _execute_oracle_campaign_run(config: dict, args) -> None:
 
 def main() -> None:
     load_dotenv()
-    read_only_supply_report = any(
-        argument == "--supply-recovery-report"
-        or argument.startswith("--supply-recovery-report=")
-        for argument in sys.argv[1:]
+    read_only_report_flags = (
+        "--supply-recovery-report",
+        "--release-evidence-report",
     )
-    if not read_only_supply_report:
+    read_only_report = any(
+        argument == flag or argument.startswith(f"{flag}=")
+        for argument in sys.argv[1:]
+        for flag in read_only_report_flags
+    )
+    if not read_only_report:
         configure_logging()
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
@@ -1458,8 +1462,6 @@ def main() -> None:
             raise SystemExit(5)
         return
 
-    operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
-
     if args.release_evidence_report:
         from reports.release_evidence import write_release_evidence_package
 
@@ -1477,6 +1479,8 @@ def main() -> None:
         if result["overall_status"] != "passed":
             raise SystemExit(5)
         return
+
+    operational_log(logger, logging.INFO, "cli.command.started", mode=mode)
 
     if args.refresh_datasets:
         from research.datasets import refresh_datasets

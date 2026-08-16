@@ -21,6 +21,7 @@ def test_release_evidence_cli_is_offline_and_writes_failed_package(
 
     monkeypatch.setattr(run, "load_config", forbidden)
     monkeypatch.setattr(run, "provider_preflight", forbidden)
+    monkeypatch.setattr(run, "configure_logging", forbidden)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -60,6 +61,34 @@ def test_release_evidence_cli_is_offline_and_writes_failed_package(
         "typescript_connector",
     }
     assert (tmp_path / "release-evidence.md").is_file()
+
+
+def test_release_evidence_cli_writes_to_a_new_relative_output(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--release-evidence-report",
+            str(TEMPLATE),
+            "--output",
+            "relative-release-report",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+
+    assert exc.value.code == 5
+    output = tmp_path / "relative-release-report"
+    payload = json.loads(
+        (output / "release-evidence.json").read_text(encoding="utf-8")
+    )
+    assert payload["overall_status"] == "failed"
+    assert (output / "release-evidence.md").is_file()
 
 
 @pytest.mark.parametrize(
