@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
 import { projectionApi } from "../app/api";
 import {
   commonObserverParamsFromState,
@@ -11,6 +11,12 @@ import {
   FreshnessBadge,
   useWorkspaceOutletContext,
 } from "../components/FreshnessBadge";
+import {
+  ConstructionStageArt,
+  ConstructionStoryboard,
+  normalizeConstructionStage,
+} from "../components/ConstructionStoryboard";
+import { LivingAgentPortrait } from "../components/LivingAgentPortrait";
 
 type EvidenceRef = { kind: string; id: number | string; tick: number };
 type Region = { id: number; name: string };
@@ -177,10 +183,6 @@ function label(value: string | null | undefined, fallback = "Not recorded") {
   return value.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).map(part => part[0]).join("").slice(0, 2);
-}
-
 function formatCents(value: number) {
   return `${value.toLocaleString()} cents`;
 }
@@ -197,13 +199,48 @@ function sourceClass(source: string) {
   return `world-os-evidence-source world-os-evidence-source--${source}`;
 }
 
+function numberMetric(project: LivingProject | null | undefined, key: string) {
+  const value = Number(project?.metrics[key] || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function ProgressStreamArt({ kind }: { kind: string }) {
+  return <svg className="world-os-progress-art" viewBox="0 0 520 230" aria-hidden="true">
+    <defs>
+      <linearGradient id="progress-sky" x1="0" y1="0" x2="0" y2="1">
+        <stop stopColor="#102b36" /><stop offset="1" stopColor="#07181d" />
+      </linearGradient>
+      <linearGradient id="progress-road" x1="0" y1="0" x2="1" y2="1">
+        <stop stopColor="#1f3638" /><stop offset="1" stopColor="#101f21" />
+      </linearGradient>
+    </defs>
+    <rect width="520" height="230" rx="18" fill="url(#progress-sky)" />
+    <path d="M-20 214L254 57l288 149-279 67z" fill="url(#progress-road)" stroke="#31545a" />
+    <path d="M25 189L254 70l237 123M101 226L330 104M195 241L421 147" fill="none" stroke="#3a5a5c" strokeWidth="4" />
+    {[[55, 138, 72], [139, 107, 86], [348, 116, 78], [414, 151, 62], [278, 141, 95]].map(([x, y, h], index) => <g key={x}>
+      <path d={`M${x} ${y}l34-18 35 18-35 17z`} fill={index === 2 ? "#287d82" : "#53666a"} stroke="#8ca0a1" />
+      <path d={`M${x} ${y}v${h}l34 18v-${h}z`} fill={index === 2 ? "#17575d" : "#34494b"} />
+      <path d={`M${x + 34} ${y + 17}v${h}l35-18v-${h}z`} fill={index === 2 ? "#123e45" : "#263a3d"} />
+      <g fill="#88c7bd" opacity=".62">
+        <rect x={x + 9} y={y + 24} width="7" height="8" /><rect x={x + 21} y={y + 30} width="7" height="8" />
+      </g>
+    </g>)}
+    <path d="M297 167l42-22 43 22-43 21z" fill="#17b8bd" opacity=".2" stroke="#2ee4e7" strokeWidth="3" />
+    <circle cx="339" cy="167" r="8" fill="#2ee4e7" />
+    <path d="M339 159V99" stroke="#2ee4e7" strokeWidth="2" strokeDasharray="5 5" />
+    <text x="24" y="34" fill="#93a7a6" fontSize="13" fontFamily="system-ui" letterSpacing="2">{label(kind).toUpperCase()} EVIDENCE</text>
+  </svg>;
+}
+
 export function PeopleWorkspace() {
   const { runId = "run", agentId } = useParams();
+  const [searchParams] = useSearchParams();
   const [observerState] = useObserverViewState();
   const { transport } = useWorkspaceOutletContext();
   const [filter, setFilter] = useState("");
   const [projectKind, setProjectKind] = useState("all");
   const [projectStatus, setProjectStatus] = useState("all");
+  const [agentPage, setAgentPage] = useState(0);
   const tick = observerState.tick;
 
   const workspaceQuery = useQuery({
@@ -225,9 +262,24 @@ export function PeopleWorkspace() {
   });
   const agents = workspaceQuery.data?.data.agents || [];
   const requestedId = agentId ? Number(agentId) : null;
-  const selectedId = requestedId && Number.isFinite(requestedId)
+  const featuredAgentId = useMemo(() => {
+    const projects = workspaceQuery.data?.data.projects || [];
+    const constructionOwner = projects.find(project =>
+      project.kind === "construction"
+      && project.status === "active"
+      && project.owner_agent_id != null,
+    )?.owner_agent_id;
+    if (constructionOwner != null) return constructionOwner;
+    const runtimeAgent = agents.find(agent => agent.runtime);
+    if (runtimeAgent) return runtimeAgent.id;
+    const progressingOwner = projects.find(project =>
+      project.status === "active" && project.owner_agent_id != null,
+    )?.owner_agent_id;
+    return progressingOwner ?? agents[0]?.id;
+  }, [agents, workspaceQuery.data?.data.projects]);
+  const selectedId = requestedId != null && Number.isFinite(requestedId)
     ? requestedId
-    : agents[0]?.id;
+    : featuredAgentId;
   const journeyQuery = useQuery({
     queryKey: [
       "world-os", runId, observerState.fork, "agent-journey", tick, selectedId,
@@ -257,8 +309,59 @@ export function PeopleWorkspace() {
     ].some(value => String(value || "").toLowerCase().includes(needle)));
   }, [agents, filter]);
 
-  const routeForAgent = (id: number) => {
+  const pageSize = 36;
+  const lastAgentPage = Math.max(0, Math.ceil(visibleAgents.length / pageSize) - 1);
+  useEffect(() => {
+    setAgentPage(current => Math.min(current, lastAgentPage));
+  }, [lastAgentPage]);
+  useEffect(() => {
+    if (selectedId == null) return;
+    const selectedIndex = visibleAgents.findIndex(agent => agent.id === selectedId);
+    if (selectedIndex >= 0) setAgentPage(Math.floor(selectedIndex / pageSize));
+  }, [selectedId, visibleAgents]);
+  useEffect(() => setAgentPage(0), [filter]);
+  const pagedAgents = visibleAgents.slice(agentPage * pageSize, (agentPage + 1) * pageSize);
+
+  const allProjects = useMemo(() => {
+    const byId = new Map<string, LivingProject>();
+    for (const project of workspaceQuery.data?.data.projects || []) {
+      byId.set(project.project_id, project);
+    }
+    for (const project of journeyQuery.data?.data.projects || []) {
+      byId.set(project.project_id, project);
+    }
+    return [...byId.values()];
+  }, [journeyQuery.data?.data.projects, workspaceQuery.data?.data.projects]);
+  const requestedProjectId = searchParams.get("project");
+  const selectedProject = useMemo(() => {
+    const requested = allProjects.find(project => project.project_id === requestedProjectId);
+    if (requested) return requested;
+    const selectedConstruction = allProjects.find(project =>
+      project.kind === "construction"
+      && project.owner_agent_id === selectedId
+      && project.status === "active",
+    );
+    if (selectedConstruction) return selectedConstruction;
+    const activeConstruction = allProjects.find(project =>
+      project.kind === "construction" && project.status === "active",
+    );
+    if (activeConstruction) return activeConstruction;
+    const selectedProgress = allProjects.find(project =>
+      project.owner_agent_id === selectedId && project.status === "active",
+    );
+    return selectedProgress
+      || allProjects.find(project => project.owner_agent_id === selectedId)
+      || allProjects.find(project => project.kind === "construction")
+      || allProjects[0]
+      || null;
+  }, [allProjects, requestedProjectId, selectedId]);
+  const storyboardProject = selectedProject?.kind === "construction"
+    ? selectedProject
+    : allProjects.find(project => project.kind === "construction") || null;
+
+  const routeForAgent = (id: number, projectId?: string | null) => {
     const params = commonObserverParamsFromState(observerState);
+    if (projectId) params.set("project", projectId);
     const suffix = params.toString();
     return `/runs/${encodeURIComponent(runId)}/people/${id}${suffix ? `?${suffix}` : ""}`;
   };
@@ -295,6 +398,10 @@ export function PeopleWorkspace() {
       place: project.place?.id,
       organization: project.organization?.name,
     });
+  const workspaceProjectUrl = (project: LivingProject) => routeForAgent(
+    project.owner_agent_id || selectedId || agents[0]?.id || 1,
+    project.project_id,
+  );
 
   if (workspaceQuery.isLoading) {
     return <div className="world-os-loading" aria-label="Loading Living Agents" />;
@@ -344,35 +451,62 @@ export function PeopleWorkspace() {
 
     <div className="world-os-living-grid">
       <aside className="world-os-panel world-os-people-list">
-        <label>
-          <span>Find an agent</span>
+        <header className="world-os-people-list-heading">
+          <div>
+            <p className="world-os-kicker">Living Agents</p>
+            <h3>Active & recent</h3>
+          </div>
+          <span>{visibleAgents.length.toLocaleString()}</span>
+        </header>
+        <label className="world-os-agent-search">
+          <span aria-hidden="true">⌕</span>
           <input
             type="search"
             value={filter}
             onChange={event => setFilter(event.target.value)}
-            placeholder="Name, work, skill, region..."
+            placeholder="Search agents, skills, firms…"
+            aria-label="Search living agents"
           />
         </label>
         <div className="world-os-people-scroll" aria-label="Active and recent agents">
-          {visibleAgents.map(agent => <Link
+          {pagedAgents.map(agent => <Link
             key={agent.id}
             className={selectedId === agent.id ? "selected" : ""}
             to={routeForAgent(agent.id)}
+            aria-current={selectedId === agent.id ? "page" : undefined}
           >
-            <span className="world-os-person-avatar">{initials(agent.name)}</span>
-            <span>
+            <LivingAgentPortrait agentId={agent.id} name={agent.name} />
+            <span className="world-os-agent-list-copy">
               <strong>{agent.name}</strong>
-              <small>{label(agent.role || agent.occupation || agent.kind)} · {agent.region?.name || "Unplaced"}</small>
+              <small>{label(agent.role || agent.occupation || agent.kind)}</small>
+              <em>{agent.region?.name || "No recorded region"}</em>
             </span>
             <span className="world-os-agent-recency">
-              {agent.runtime
-                ? <i className={sourceClass("runtime")}>{label(agent.runtime.state)}</i>
-                : <i className={sourceClass("committed")}>Committed</i>}
+              <i className={`world-os-agent-status-dot ${agent.runtime ? "is-runtime" : agent.employment ? "is-working" : "is-recent"}`} aria-hidden="true" />
               <small>t{agent.latest_committed_tick}</small>
             </span>
           </Link>)}
           {!visibleAgents.length && <p className="world-os-list-empty">No agents match this filter.</p>}
         </div>
+        <footer className="world-os-agent-pagination" aria-label="Agent list pagination">
+          <button
+            type="button"
+            onClick={() => setAgentPage(page => Math.max(0, page - 1))}
+            disabled={agentPage === 0}
+            aria-label="Previous agents"
+          >‹</button>
+          <span>
+            {visibleAgents.length
+              ? `${agentPage * pageSize + 1}–${Math.min((agentPage + 1) * pageSize, visibleAgents.length)} of ${visibleAgents.length}`
+              : "0 agents"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAgentPage(page => Math.min(lastAgentPage, page + 1))}
+            disabled={agentPage >= lastAgentPage}
+            aria-label="Next agents"
+          >›</button>
+        </footer>
       </aside>
 
       <main className="world-os-person-detail" aria-live="polite">
@@ -382,16 +516,12 @@ export function PeopleWorkspace() {
           <div className="world-os-error" role="alert">{journeyQuery.error.message}</div>}
         {journey && <>
           <article className="world-os-panel world-os-person-identity">
-            <div className="world-os-person-avatar world-os-person-avatar--large">
-              {initials(journey.profile.name)}
-            </div>
-            <div>
-              <p className="world-os-kicker">Agent #{journey.profile.id} · as of tick {envelope.tick}</p>
+            <LivingAgentPortrait agentId={journey.profile.id} name={journey.profile.name} large />
+            <div className="world-os-person-identity-copy">
+              <p className="world-os-kicker">Agent journey · ID {journey.profile.id}</p>
               <h3>{journey.profile.name}</h3>
-              <p>
-                {label(journey.profile.role || journey.profile.occupation || journey.profile.kind)}
-                {" · "}{journey.current_state.region?.name || "No recorded region"}
-              </p>
+              <p>{label(journey.profile.role || journey.profile.occupation || journey.profile.kind)}</p>
+              <small>{journey.current_state.region?.name || "No recorded region"} · as of tick {envelope.tick}</small>
             </div>
             <div className="world-os-journey-actions">
               {journey.runtime
@@ -403,62 +533,28 @@ export function PeopleWorkspace() {
             </div>
           </article>
 
-          <section className="world-os-journey-state" aria-label="Selected agent current state">
-            <article className="world-os-panel">
-              <span>Work</span>
-              <strong>{journey.current_state.employment?.title || "Not employed"}</strong>
-              {journey.current_state.employment
-                ? <Link to={cityUrl({
-                  agent: journey.profile.id,
-                  organization: journey.current_state.employment.firm_name,
-                })}>{journey.current_state.employment.firm_name} · t{journey.current_state.employment.start_tick}</Link>
-                : <small>No active employment at this tick</small>}
-            </article>
-            <article className="world-os-panel">
-              <span>Finances</span>
-              <strong>{formatCents(journey.current_state.balance_cents)}</strong>
-              <small>Ledger balance at tick {envelope.tick}</small>
-            </article>
-            <article className="world-os-panel">
-              <span>Compute</span>
-              <strong>{label(journey.current_state.compute.tier)}</strong>
-              <small>
-                {label(journey.current_state.compute.payer_type)}
-                {journey.current_state.compute.expiry_tick != null
-                  ? ` · through t${journey.current_state.compute.expiry_tick - 1}`
-                  : " · no paid subscription"}
-              </small>
-            </article>
-            <article className="world-os-panel">
-              <span>Residence</span>
-              <strong>{placeLabel(journey.current_state.residence)}</strong>
-              {journey.current_state.residence?.id
-                ? <Link to={cityUrl({ place: journey.current_state.residence.id })}>Open place in Live City</Link>
-                : <small>{journey.current_state.residence?.visibility === "region_only"
-                  ? "Exact peripheral location is protected"
-                  : "No residence evidence at this tick"}</small>}
-            </article>
-            <article className="world-os-panel">
-              <span>Workplace</span>
-              <strong>{placeLabel(journey.current_state.workplace)}</strong>
-              {journey.current_state.workplace?.id
-                ? <Link to={cityUrl({ place: journey.current_state.workplace.id })}>Open place in Live City</Link>
-                : <small>{journey.current_state.workplace?.visibility === "region_only"
-                  ? "Exact peripheral location is protected"
-                  : "No workplace evidence at this tick"}</small>}
-            </article>
-            <article className="world-os-panel">
-              <span>Public outputs</span>
-              <strong>{journey.public_outputs.length}</strong>
-              <small>Published records; private bodies omitted</small>
-            </article>
-          </section>
+          <article className="world-os-panel world-os-journey-milestones">
+            <header>
+              <div><p className="world-os-kicker">Committed progress</p><h3>Journey milestones</h3></div>
+              <span>{journey.milestones.total} records</span>
+            </header>
+            <ol>
+              {journey.milestones.items.slice(0, 6).map(item => <li key={item.activity_id}>
+                <i aria-hidden="true">✓</i>
+                <div><strong>{item.title}</strong><small>{label(item.stage)} · tick {item.tick}</small></div>
+                <span className={sourceClass(item.source)}>{label(item.source)}</span>
+              </li>)}
+              {!journey.milestones.items.length && <li className="world-os-journey-empty">
+                No committed milestones exist at this tick.
+              </li>}
+            </ol>
+          </article>
 
-          <div className="world-os-person-cards">
+          <div className="world-os-journey-dashboard">
             <article className="world-os-panel world-os-skill-card">
               <header>
-                <div><p className="world-os-kicker">Stored progression</p><h3>Skills</h3></div>
-                <span>{journey.skills.length} skills</span>
+                <div><p className="world-os-kicker">Derived from committed practice</p><h3>Skill growth</h3></div>
+                <span>{journey.skills.length} tracked</span>
               </header>
               <ul>
                 {journey.skills.map(skill => <li key={skill.skill_key}>
@@ -475,87 +571,171 @@ export function PeopleWorkspace() {
               </ul>
             </article>
 
-            <article className="world-os-panel world-os-progression-card">
+            <article className="world-os-panel world-os-employment-card">
               <header>
-                <div><p className="world-os-kicker">Committed and derived</p><h3>Journey milestones</h3></div>
-                <span>{journey.milestones.total} records</span>
+                <div><p className="world-os-kicker">Committed state</p><h3>Employment & resources</h3></div>
+                <span className={sourceClass("committed")}>Committed</span>
               </header>
-              <ol>
-                {journey.milestones.items.slice(0, 12).map(item => <li key={item.activity_id}>
-                  <span>t{item.tick}</span>
-                  <strong>{item.title}</strong>
-                  <em>{label(item.stage)}</em>
-                  <small>
-                    <i className={sourceClass(item.source)}>{label(item.source)}</i>
-                    {" · "}{label(item.evidence_ref.kind)} #{item.evidence_ref.id}
-                  </small>
-                </li>)}
-                {!journey.milestones.items.length &&
-                  <li className="world-os-progression-empty">No milestones at this tick.</li>}
-              </ol>
+              <dl>
+                <div><dt>Role</dt><dd>{journey.current_state.employment?.title || "Not employed"}</dd></div>
+                <div><dt>Employer</dt><dd>{journey.current_state.employment?.firm_name || "No active employer"}</dd></div>
+                <div><dt>Ledger balance</dt><dd>{formatCents(journey.current_state.balance_cents)}</dd></div>
+                <div><dt>Compute tier</dt><dd>{label(journey.current_state.compute.tier)}</dd></div>
+                <div><dt>Employment since</dt><dd>{journey.current_state.employment ? `Tick ${journey.current_state.employment.start_tick}` : "Not applicable"}</dd></div>
+                <div><dt>Compute payer</dt><dd>{label(journey.current_state.compute.payer_type)}</dd></div>
+              </dl>
+              {journey.current_state.employment
+                ? <Link to={cityUrl({
+                  agent: journey.profile.id,
+                  organization: journey.current_state.employment.firm_name,
+                })}>Focus {journey.current_state.employment.firm_name} in Live City</Link>
+                : <small>No active employment evidence exists at this tick.</small>}
             </article>
           </div>
+
+          <section className="world-os-journey-locations" aria-label="Residence and workplace">
+            <article className="world-os-panel">
+              <div className="world-os-place-icon" aria-hidden="true">⌂</div>
+              <div><span>Residence</span><strong>{placeLabel(journey.current_state.residence)}</strong></div>
+              {journey.current_state.residence?.id
+                ? <Link to={cityUrl({ place: journey.current_state.residence.id })}>Open in Live City ↗</Link>
+                : <small>{journey.current_state.residence?.visibility === "region_only"
+                  ? "Exact peripheral location is protected"
+                  : "No residence evidence at this tick"}</small>}
+            </article>
+            <article className="world-os-panel">
+              <div className="world-os-place-icon" aria-hidden="true">▥</div>
+              <div><span>Workplace</span><strong>{placeLabel(journey.current_state.workplace)}</strong></div>
+              {journey.current_state.workplace?.id
+                ? <Link to={cityUrl({ place: journey.current_state.workplace.id })}>Open in Live City ↗</Link>
+                : <small>{journey.current_state.workplace?.visibility === "region_only"
+                  ? "Exact peripheral location is protected"
+                  : "No workplace evidence at this tick"}</small>}
+            </article>
+          </section>
+
+          <article className="world-os-panel world-os-public-output-card">
+            <header>
+              <div><p className="world-os-kicker">Authorized public record</p><h3>Public outputs</h3></div>
+              <span className={sourceClass("derived")}>Derived</span>
+            </header>
+            <div className="world-os-public-output-metrics">
+              <span><strong>{journey.public_outputs.length}</strong><small>published outputs</small></span>
+              <span><strong>{journey.projects.length}</strong><small>linked progress streams</small></span>
+              <span><strong>{journey.evidence_refs.length}</strong><small>evidence references</small></span>
+            </div>
+            <p>Private bodies omitted; prompts, reasoning and memory contents are also excluded.</p>
+          </article>
         </>}
       </main>
 
       <aside className="world-os-project-rail" aria-label="Projects and progress streams">
-        <article className="world-os-panel world-os-project-filters">
-          <div>
-            <p className="world-os-kicker">Progress streams</p>
-            <h3>Projects & milestones</h3>
+        <article className="world-os-panel world-os-project-hero">
+          <header>
+            <div><p className="world-os-kicker">Projects</p><h3>{selectedProject ? label(selectedProject.kind) : "No project yet"}</h3></div>
+            {selectedProject && <span className={sourceClass(selectedProject.source)}>{label(selectedProject.source)}</span>}
+          </header>
+          <div className="world-os-project-hero-art">
+            {selectedProject?.kind === "construction"
+              ? <ConstructionStageArt stage={normalizeConstructionStage(selectedProject.stage)} />
+              : <ProgressStreamArt kind={selectedProject?.kind || "progress"} />}
           </div>
-          <label>
-            <span>Kind</span>
-            <select value={projectKind} onChange={event => setProjectKind(event.target.value)}>
-              {PROJECT_KINDS.map(([value, text]) =>
-                <option key={value} value={value}>{text}</option>,
-              )}
-            </select>
-          </label>
-          <label>
-            <span>Status</span>
-            <select value={projectStatus} onChange={event => setProjectStatus(event.target.value)}>
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </label>
-          <small>{data.summary.projects_total} progress streams match</small>
-        </article>
-        <div className="world-os-project-list">
-          {data.projects.map(project => <article
-            className="world-os-panel world-os-project-card"
-            key={project.project_id}
-          >
-            <header>
-              <span>{label(project.kind)}</span>
-              <i className={sourceClass(project.source)}>{label(project.source)}</i>
-            </header>
-            <h4>{project.title}</h4>
-            <dl>
-              <div><dt>Stage</dt><dd>{label(project.stage)}</dd></div>
-              <div><dt>Status</dt><dd>{label(project.status)}</dd></div>
-              <div><dt>Milestones</dt><dd>{project.milestone_count}</dd></div>
-              <div><dt>Updated</dt><dd>Tick {project.updated_tick}</dd></div>
-              {project.kind === "construction" && <>
-                <div><dt>Funding</dt><dd>{Number(project.metrics.contributed_funding_cents || 0)}/{Number(project.metrics.required_funding_cents || 0)} cents</dd></div>
-                <div><dt>Work</dt><dd>{Number(project.metrics.contributed_work_units || 0)}/{Number(project.metrics.required_work_units || 0)} units</dd></div>
-              </>}
-            </dl>
-            <p>
-              {["aggregated", "aggregated_private"].includes(project.privacy)
-                ? "Aggregated to protect peripheral agents."
-                : `${project.evidence_refs.length} evidence reference${project.evidence_refs.length === 1 ? "" : "s"}.`}
+          {selectedProject ? <div className="world-os-project-hero-copy">
+            <div className="world-os-project-title-row">
+              <div>
+                <h3>{selectedProject.title}</h3>
+                <p>{selectedProject.region?.name || "No public region"} · updated tick {selectedProject.updated_tick}</p>
+              </div>
+              <span>{label(selectedProject.stage)}</span>
+            </div>
+            {selectedProject.kind === "construction" ? <div className="world-os-construction-metrics">
+              <div>
+                <span>Funding</span>
+                <strong>{numberMetric(selectedProject, "contributed_funding_cents").toLocaleString()} cents</strong>
+                <small>of {numberMetric(selectedProject, "required_funding_cents").toLocaleString()} committed</small>
+                <progress
+                  aria-label="Construction funding"
+                  max={Math.max(1, numberMetric(selectedProject, "required_funding_cents"))}
+                  value={numberMetric(selectedProject, "contributed_funding_cents")}
+                />
+              </div>
+              <div>
+                <span>Work units</span>
+                <strong>{numberMetric(selectedProject, "contributed_work_units").toLocaleString()}</strong>
+                <small>of {numberMetric(selectedProject, "required_work_units").toLocaleString()} stored</small>
+                <progress
+                  aria-label="Construction work units"
+                  max={Math.max(1, numberMetric(selectedProject, "required_work_units"))}
+                  value={numberMetric(selectedProject, "contributed_work_units")}
+                />
+              </div>
+            </div> : <dl className="world-os-project-evidence-metrics">
+              <div><dt>Status</dt><dd>{label(selectedProject.status)}</dd></div>
+              <div><dt>Milestones</dt><dd>{selectedProject.milestone_count}</dd></div>
+              <div><dt>Started</dt><dd>Tick {selectedProject.started_tick}</dd></div>
+              <div><dt>Evidence</dt><dd>{selectedProject.evidence_refs.length} refs</dd></div>
+            </dl>}
+            <p className="world-os-project-privacy">
+              {["aggregated", "aggregated_private"].includes(selectedProject.privacy)
+                ? "Regional aggregate: private owner and exact location are protected."
+                : `${selectedProject.evidence_refs.length} authorized evidence reference${selectedProject.evidence_refs.length === 1 ? "" : "s"}.`}
             </p>
-            {(project.kind === "construction" || project.owner_agent_id || project.place || project.organization) &&
-              <Link to={projectUrl(project)}>Focus evidence in Live City</Link>}
-          </article>)}
-          {!data.projects.length &&
-            <div className="world-os-panel world-os-project-empty">
+            {(selectedProject.kind === "construction" || selectedProject.owner_agent_id || selectedProject.place || selectedProject.organization) &&
+              <Link className="world-os-project-city-link" to={projectUrl(selectedProject)}>Open in Live City ↗</Link>}
+          </div> : <div className="world-os-project-hero-empty">
+            <strong>No committed project at tick {envelope.tick}</strong>
+            <p>When agents propose, permit, fund and build, their stored progress will appear here.</p>
+          </div>}
+        </article>
+
+        <div className="world-os-panel world-os-storyboard-panel">
+          <ConstructionStoryboard
+            stage={storyboardProject?.stage || ""}
+            lifecycle={storyboardProject ? label(storyboardProject.stage) : "No construction project at this tick"}
+          />
+        </div>
+
+        <details className="world-os-panel world-os-project-browser">
+          <summary>
+            <span><strong>All progress streams</strong><small>{data.summary.projects_total} match this view</small></span>
+            <i aria-hidden="true">⌄</i>
+          </summary>
+          <div className="world-os-project-filters">
+            <label>
+              <span>Kind</span>
+              <select value={projectKind} onChange={event => setProjectKind(event.target.value)}>
+                {PROJECT_KINDS.map(([value, text]) =>
+                  <option key={value} value={value}>{text}</option>,
+                )}
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select value={projectStatus} onChange={event => setProjectStatus(event.target.value)}>
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </label>
+          </div>
+          <div className="world-os-project-list">
+            {data.projects.slice(0, 24).map(project => <article
+              className={`world-os-project-card${selectedProject?.project_id === project.project_id ? " selected" : ""}`}
+              key={project.project_id}
+            >
+              <Link to={workspaceProjectUrl(project)}>
+                <span>{label(project.kind)}</span>
+                <strong>{project.title}</strong>
+                <small>{label(project.stage)} · t{project.updated_tick} · {project.milestone_count} milestones</small>
+              </Link>
+              <i className={sourceClass(project.source)}>{label(project.source)}</i>
+            </article>)}
+            {!data.projects.length && <div className="world-os-project-empty">
               No projects match these filters at tick {envelope.tick}.
             </div>}
-        </div>
+          </div>
+        </details>
       </aside>
     </div>
   </section>;

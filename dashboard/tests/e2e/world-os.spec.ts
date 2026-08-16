@@ -6,6 +6,36 @@ const baseEnvelope = {
   snapshot_version: "s8-p1-t6-e2-demo", event_cursor: 2,
 };
 
+const livingConstructionProject = {
+  project_id: "construction:41",
+  kind: "construction",
+  title: "Harbor Works Studio",
+  owner_agent_id: 1,
+  stage: "frame",
+  status: "active",
+  started_tick: 1,
+  updated_tick: 4,
+  completed_tick: null,
+  milestone_count: 4,
+  source: "committed",
+  evidence_refs: [
+    { kind: "construction_project", id: 41, tick: 1 },
+    { kind: "construction_contribution", id: 8, tick: 4 },
+  ],
+  organization: { id: 3, name: "Atlas Works" },
+  place: null,
+  region: { id: 2, name: "Harbor Ward" },
+  metrics: {
+    target_place_type: "workplace",
+    required_funding_cents: 60000,
+    contributed_funding_cents: 60000,
+    required_work_units: 8,
+    contributed_work_units: 3,
+    aggregate_count: 1,
+  },
+  privacy: "exact",
+};
+
 async function installSocket(page: Page) {
   await page.addInitScript(() => {
     class ScriptedSocket extends EventTarget {
@@ -102,6 +132,7 @@ async function mockApi(page: Page) {
       const projectionTick = Number(url.searchParams.get("tick") || baseEnvelope.tick);
       return route.fulfill({ json: {
         ...baseEnvelope,
+        semantics_version: 13,
         tick: projectionTick,
         fork_id: url.searchParams.get("fork_id"),
         projection: "workspace.living_agents",
@@ -110,12 +141,12 @@ async function mockApi(page: Page) {
             tick: projectionTick,
             living_agents: 2,
             active_employments: 1,
-            active_projects: 2,
+            active_projects: 3,
             completed_projects: 1,
             public_outputs: 1,
             runtime_active: 0,
-            projects_total: 3,
-            projects_shown: 3,
+            projects_total: 4,
+            projects_shown: 4,
           },
           agents: [{
             id: 1,
@@ -219,7 +250,7 @@ async function mockApi(page: Page) {
             region: { id: 2, name: "Harbor Ward" },
             metrics: {},
             privacy: "exact",
-          }],
+          }, livingConstructionProject],
           activity: {
             items: [{
               activity_id: "skill:14",
@@ -253,6 +284,7 @@ async function mockApi(page: Page) {
       const projectionTick = Number(url.searchParams.get("tick") || baseEnvelope.tick);
       return route.fulfill({ json: {
         ...baseEnvelope,
+        semantics_version: 13,
         tick: projectionTick,
         fork_id: url.searchParams.get("fork_id"),
         projection: "workspace.agent_journey",
@@ -304,7 +336,7 @@ async function mockApi(page: Page) {
             source: "committed",
             evidence_ref: { kind: "skill_progress", id: 14, tick: projectionTick },
           }],
-          projects: [],
+          projects: [livingConstructionProject],
           milestones: {
             items: [{
               activity_id: "skill:14",
@@ -1289,6 +1321,14 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
   await expect(page.locator(".world-os-person-identity")
     .getByText("Historical", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Evidence source legend").getByText("Runtime", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Harbor Works Studio" })).toBeVisible();
+  await expect(page.getByText("60,000 cents", { exact: true })).toBeVisible();
+  await expect(page.getByText("of 8 stored", { exact: true })).toBeVisible();
+  const storyboard = page.getByLabel("Construction storyboard");
+  await expect(storyboard.getByRole("heading", { name: "Construction storyboard" })).toBeVisible();
+  await expect(storyboard.locator('[data-stage="foundation"]')).toContainText("Observed");
+  await expect(storyboard.locator('[data-stage="frame"]')).toContainText("Current stage");
+  await expect(storyboard.locator('[data-stage="shell"]')).toContainText("Not reached");
 
   expect(workspaceUrl).toContain("tick=4");
   expect(workspaceUrl).toContain("fork_id=fork-a");
@@ -1300,6 +1340,42 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
     "href",
     "/runs/run-demo/world?fork=fork-a&tick=4&view=diorama&agent=1&population=all",
   );
+  await expect(page.locator(".world-os-project-hero").getByRole("link", { name: /Open in Live City/ })).toHaveAttribute(
+    "href",
+    "/runs/run-demo/world?fork=fork-a&tick=4&view=diorama&project=41",
+  );
+});
+
+test("Living Agents matches the three-column review composition without overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await page.goto("/runs/run-demo/people/1?tick=4");
+  await expect(page.getByRole("heading", { name: "Harbor Works Studio" })).toBeVisible();
+
+  const agentRail = await page.locator(".world-os-people-list").boundingBox();
+  const journey = await page.locator(".world-os-person-detail").boundingBox();
+  const projectRail = await page.locator(".world-os-project-rail").boundingBox();
+  if (!agentRail || !journey || !projectRail) throw new Error("Living Agents columns did not render");
+
+  expect(agentRail.x + agentRail.width).toBeLessThan(journey.x);
+  expect(journey.x + journey.width).toBeLessThan(projectRail.x);
+  expect(Math.abs(agentRail.y - journey.y)).toBeLessThan(4);
+  expect(Math.abs(journey.y - projectRail.y)).toBeLessThan(4);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test("Living Agents stacks into one readable column on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 430, height: 932 });
+  await page.goto("/runs/run-demo/people/1?tick=4");
+  await expect(page.getByRole("heading", { name: "Atlas Builder" })).toBeVisible();
+
+  const agentRail = await page.locator(".world-os-people-list").boundingBox();
+  const journey = await page.locator(".world-os-person-detail").boundingBox();
+  const projectRail = await page.locator(".world-os-project-rail").boundingBox();
+  if (!agentRail || !journey || !projectRail) throw new Error("Living Agents mobile sections did not render");
+
+  expect(journey.y).toBeGreaterThan(agentRail.y + agentRail.height - 2);
+  expect(projectRail.y).toBeGreaterThan(journey.y + journey.height - 2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
 test("superseded entity searches never replace the newest result", async ({ page }) => {

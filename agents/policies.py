@@ -1313,6 +1313,22 @@ def oracle_plan(context: dict) -> dict:
 def institutional_decision(context: dict) -> dict:
     """Execute at most one state-derived institutional work item."""
     eligible = list((context.get("institutional_work") or {}).get("eligible_actions") or [])
+    construction = context.get("construction_work")
+    construction_eligible = list(
+        construction.get("eligible_actions", [])
+        if isinstance(construction, dict) else []
+    )
+    if (
+        construction_eligible
+        and isinstance(construction_eligible[0], dict)
+        and (not eligible or int(context.get("tick", 0)) % 2 == 1)
+    ):
+        return {
+            "reasoning": (
+                "I will perform the first currently eligible construction action."
+            ),
+            "actions": [dict(construction_eligible[0])],
+        }
     if not eligible:
         return {"reasoning": "No valid institutional work is pending.",
                 "actions": [{"type": "do_nothing"}]}
@@ -1352,6 +1368,22 @@ def scripted_decision(purpose: str, context: dict) -> dict:
     """Run one local policy without entering the governed model-call path."""
     if "supplier_warning_policy_input" in context:
         return supplier_warning_decision(context["supplier_warning_policy_input"])
+    construction = context.get("construction_work")
+    construction_actions = (
+        construction.get("eligible_actions", [])
+        if isinstance(construction, dict) else []
+    )
+    if (
+        not isinstance(context.get("civic_required_action"), dict)
+        and construction_actions
+        and isinstance(construction_actions[0], dict)
+    ):
+        return _env(
+            None,
+            [dict(construction_actions[0])],
+            [],
+            "advancing an agent-authored construction project",
+        )
     envelope = POLICIES.get(purpose, citizen_decision)(context)
     communication = context.get("scripted_communication_action")
     if not isinstance(communication, dict) or not isinstance(envelope, dict):
