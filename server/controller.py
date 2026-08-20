@@ -21,6 +21,7 @@ from fastapi import FastAPI, HTTPException, WebSocket
 from engine.ledger import ReconciliationError
 from engine.store import load_json
 from observability import get_logger, log_event as operational_log
+from server.projections.cache import ProjectionSnapshotCache
 from world.loop import World
 
 
@@ -78,6 +79,7 @@ class RunController:
         self.world = world
         self.store = world.store
         self.hub = WebSocketHub()
+        self.projection_cache = ProjectionSnapshotCache()
         self.task: asyncio.Task[None] | None = None
         self._step_active = False
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -161,6 +163,7 @@ class RunController:
         finally:
             if self.loop_watchdog is not None:
                 self.loop_watchdog.stop()
+            self.projection_cache.clear()
             try:
                 replay_reader = getattr(_app.state, "replay_reader", None)
                 if replay_reader is not None:
@@ -188,7 +191,11 @@ class RunController:
         messages = [self.tick_payload(tick, summary)]
         if int(getattr(self.world, "engine_semantics_version", 1)) >= 8:
             from server.projections.transport import projection_delta_message
-            messages.append(projection_delta_message(self.store, tick=tick))
+            messages.append(projection_delta_message(
+                self.store,
+                tick=tick,
+                projection_cache=self.projection_cache,
+            ))
 
         async def broadcast_all() -> None:
             for message in messages:
@@ -552,6 +559,8 @@ class RunController:
             "pause_reason": self.world.last_pause_reason,
             "acceptance_orchestration": orchestration,
             "participant_active": self.participant.active_agent_id() is not None,
+            "projection_cache": self.projection_cache.stats(),
+            "decision_pipeline": self.world.runtime.decision_pipeline_status(),
             # A stalled loop is why a dashboard goes stale while still looking
             # alive, so the figure belongs on the status every client polls.
             "loop_health": (

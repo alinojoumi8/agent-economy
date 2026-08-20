@@ -39,6 +39,7 @@ from server.projections import (
     CONSTRUCTION_STATUSES,
     SEARCH_KINDS,
 )
+from server.projections.cache import ProjectionSnapshotCache
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
 from server.projections.events import build_backfill
 
@@ -91,6 +92,9 @@ def _page(rows, limit: int) -> dict[str, Any]:
 def install_v2_routes(app, world, controller) -> None:
     router = APIRouter(prefix="/api/v2", tags=["legal-political-economy-v2"])
     store = world.store
+    projection_cache = getattr(controller, "projection_cache", None)
+    if projection_cache is None:
+        projection_cache = ProjectionSnapshotCache()
     workspace_config = world.config.get("operator_workspace", {})
     workspace_path = Path(workspace_config.get(
         "path", Path(store.path).parent / "operator-workspace.db"))
@@ -154,7 +158,8 @@ def install_v2_routes(app, world, controller) -> None:
         as_of_tick = projection_tick(tick, fork_id)
         principal, _ = projection_principal(agent_id=agent_id)
         selected = tuple(sorted({item.strip() for item in domains.split(",") if item.strip()}))
-        data = build_snapshot(store, principal, as_of_tick=as_of_tick, domains=selected)
+        data = projection_cache.snapshot(
+            store, principal, as_of_tick=as_of_tick, domains=selected)
         return build_envelope(
             store, principal, "world.snapshot", data, as_of_tick=as_of_tick)
 
@@ -206,7 +211,7 @@ def install_v2_routes(app, world, controller) -> None:
     ):
         as_of_tick = projection_tick(tick, fork_id)
         principal = Principal("ordinary-dashboard")
-        data = build_snapshot(
+        data = projection_cache.snapshot(
             store, principal, as_of_tick=as_of_tick, domains=("communications",))[
                 "communications"]
         return build_envelope(

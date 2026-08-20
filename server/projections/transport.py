@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from communications.policy import Principal
 
+from .cache import ProjectionSnapshotCache
 from .envelope import (
     POLICY_VERSION,
     PROJECTION_VERSION,
@@ -36,7 +37,12 @@ def hello_message(store, *, status: str) -> dict:
     }
 
 
-def projection_delta_message(store, *, tick: int) -> dict:
+def projection_delta_message(
+    store,
+    *,
+    tick: int,
+    projection_cache: ProjectionSnapshotCache | None = None,
+) -> dict:
     cursor = current_cursor(store, tick)
     # `previous_event_cursor` must name the cursor the CLIENT last received, so
     # it can prove the chain is unbroken. One delta is emitted per tick carrying
@@ -50,9 +56,23 @@ def projection_delta_message(store, *, tick: int) -> dict:
     previous = int(store.scalar(
         "SELECT COALESCE(MAX(cursor),0) FROM projection_commits WHERE tick<?",
         (int(tick),), default=0) or 0)
-    data = build_snapshot(
-        store, ORDINARY_PRINCIPAL, as_of_tick=int(tick),
-        domains=("summary", "alerts", "communications", "events"))
+    snapshot_domains = ("summary", "alerts", "communications", "events")
+    data = (
+        projection_cache.snapshot(
+            store,
+            ORDINARY_PRINCIPAL,
+            as_of_tick=int(tick),
+            domains=snapshot_domains,
+            event_cursor=cursor,
+        )
+        if projection_cache is not None
+        else build_snapshot(
+            store,
+            ORDINARY_PRINCIPAL,
+            as_of_tick=int(tick),
+            domains=snapshot_domains,
+        )
+    )
     envelope = build_envelope(
         store, ORDINARY_PRINCIPAL, "world.snapshot", data,
         as_of_tick=int(tick), event_cursor=cursor)
