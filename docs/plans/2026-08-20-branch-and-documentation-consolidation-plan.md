@@ -251,6 +251,8 @@ base commit `1200add` an intentional review/landing decision before normalizing
   build, and 41 critical Chromium scenarios. Vite retained its large-chunk
   warning, and the mocked browser harness logged expected proxy connection
   refusals without failing a scenario.
+- The validated Buzz stack was published for review as PR #64,
+  `feat(runtime): add governed agent boundaries and handbook`.
 - No branch was deleted. The dirty `codex/live-city-diorama` worktree, the
   `codex/reproducibility-release` source commit, and all cleanup candidates
   remain untouched.
