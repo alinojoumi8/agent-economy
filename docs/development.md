@@ -6,6 +6,11 @@ Work on a feature branch or dedicated worktree. Preserve unrelated changes,
 commit cohesive units, push the branch, and open a pull request into `main`.
 The backend and committed dashboard bundle are one release unit.
 
+Before integrating or deleting an older branch, follow
+[branch lifecycle and consolidation](branch-lifecycle.md). Dirty worktrees,
+open pull-request branches, and unique commits are protected until their exact
+disposition is recorded and approved.
+
 ## Backend
 
 ```powershell
@@ -174,6 +179,20 @@ The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate
 hosted control-plane audit migration.
+
+## Documentation changes
+
+Documentation ships with the behavior it describes. Use the
+[documentation maintenance guide](documentation-maintenance.md) to identify
+affected audiences, apply the source-of-truth hierarchy, update ADR status, and
+run the maintained-link contract.
+
+At minimum, a new durable guide must be linked from [the handbook](README.md)
+and added to `HANDBOOK_DOCS` in `tests/test_documentation.py`. A new route,
+profile, semantics version, hosted operation, or security boundary must update
+its specialized guide rather than only the root README. Keep the historical
+printable Semantics-7 status snapshot frozen and update the current
+`implementation-status.md` ledger instead.
 
 ## Logging
 

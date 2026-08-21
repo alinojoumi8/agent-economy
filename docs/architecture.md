@@ -5,6 +5,7 @@
 ```mermaid
 flowchart LR
     UI[React observatory] <-->|REST and WebSocket| API[FastAPI server]
+    API --> PROJ[Read-only projections]
     API --> WORLD[Deterministic world loop]
     WORLD --> ENGINE[Economy engine]
     WORLD --> AGENTS[Agent runtime]
@@ -19,6 +20,7 @@ flowchart LR
     AGENTS --> DB
     INFO --> DB
     ORACLE --> DB
+    PROJ --> DB
 ```
 
 `run.py` is the application entry point. It resolves inherited configuration,
@@ -59,6 +61,44 @@ Every monetary effect uses integer-cent double-entry transactions whose legs
 sum to zero. The world reconciles at tick boundaries; an invariant failure
 halts and checkpoints instead of continuing with corrupted state.
 
+## Evidence and authority layers
+
+Four layers deliberately answer different questions:
+
+| Layer | Authority | Examples |
+|---|---|---|
+| Canonical simulation state | Deterministic engine and ledger | accounts, contracts, actions, events, metrics |
+| Additive decision evidence | Versioned immutable run tables | Semantics 14 external-turn attendance |
+| Read-time projection | No mutation; caller-vetted public facts only | Living Agents and observer activity cards |
+| Ephemeral operations | Current process health only | provider queue/thinking presence and latency |
+
+`server/projections/activity.py` is the single semantic adapter used by Living
+Agents and observer events. It maps safe references into bounded activity
+cards, never copies event payloads, and marks unknown facts with an honest
+generic fallback. Current runtime presence may appear only in a current view;
+historical views drop it. Projection adds no event and changes no replay hash.
+
+Semantics 14 writes one immutable attendance row for every due first-class
+external actor. A submitted `do_nothing` remains authored attendance; an
+absent runtime produces missed attendance while the engine applies
+`safe_do_nothing_v1`. Attendance does not replace submission, execution,
+event, or ledger evidence. See
+[the Semantics 14 guide](semantics14-external-turn-attendance.md).
+
+`builder_workspace/` exposes only a deterministic immutable
+`proposal.create` sink. It validates an allowlisted patch and fixed check
+evidence, stores a tenant-scoped proposal bundle, and returns a receipt. It has
+no apply, Git, deployment, network, secret, engine, ledger, replay, or
+`ActionExecutor` authority. No Civic Builder runtime or mandate facade is
+implemented.
+
+Hosted administrative audit rows use a tenant-local SHA-256 chain after hosted
+migration 003. This detects supplied-row modification, middle deletion,
+reordering, and cross-tenant mixing. Pre-migration rows remain explicitly
+legacy. Tail deletion requires a separately retained chain head, and the chain
+is not externally anchored or non-repudiation. It is separate from the
+simulation event log.
+
 ## Tick lifecycle
 
 One tick is one simulated day, executed in fixed phases:
@@ -95,6 +135,7 @@ if a provider interruption occurs mid-tick.
 | `server/` | REST/WebSocket API and committed production dashboard bundle |
 | `dashboard/` | React/Vite/Tailwind/Recharts observatory source |
 | `hosted/` | PostgreSQL catalog/RLS, auth, supervisor, artifact adapters, hosted API, operations, and CLI |
+| `builder_workspace/` | Deterministic allowlisted proposal bundles; no patch application or deployment authority |
 | `deploy/` | Compose reference stack, Caddy TLS, Prometheus, and PostgreSQL role initialization |
 
 ## Information and belief model
@@ -116,9 +157,13 @@ mechanical intervention.
 Each run is one SQLite WAL database under `data/runs/`. It stores metadata,
 agents, institutions, ledger state, markets, events, memories, beliefs,
 conversations, predictions, metrics, shocks, checkpoints, and LLM calls.
+Schema 20 additively stores external-turn attendance for explicitly selected
+Semantics 14 runs.
 
 Exact replay rebuilds genesis in a new database and re-executes recorded LLM
 responses without a network fallback. Canonical table hashes prove equality.
+Semantics 14 replay copies attendance identifiers, links, reasons, policies, and
+timestamps exactly from the source.
 Legacy semantics-v1/v2 configurations retain their original bank visibility,
 belief-event, and macro-metric behavior so historical runs remain replayable.
 

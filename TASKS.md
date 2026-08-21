@@ -11,11 +11,41 @@ PR #20 is authorized for squash merge after the complete local gate. Do not
 tag, publish, or deploy publicly until the pending live gates and final
 provenance audit pass under separate authorization.
 
-## Current execution backlog — 2026-08-05
+## Current consolidation queue — 2026-08-20
 
-This is the master queue for the remaining integration and release work. Close
-a row only when every acceptance step in its linked implementation plan has
-qualifying evidence. A local pass, partial run, blocked external gate, or
+The active branch/worktree inventory, evidence, and non-destructive execution
+order are in the
+[branch and documentation consolidation plan](docs/plans/2026-08-20-branch-and-documentation-consolidation-plan.md).
+
+- [x] Audit local branches, live remote heads, pull requests, ancestry,
+  patch-equivalence signals, and all worktrees.
+- [x] Protect the dirty `codex/live-city-diorama` worktree and the unique
+  `codex/reproducibility-release` commit; do not merge or delete either.
+- [x] Checkpoint the Buzz-derived activity, Semantics 14 attendance,
+  proposal-only sink, and hosted audit work as `fb129a5`, with 187 focused
+  tests passing in the project virtual environment.
+- [x] Consolidate the research-first README and handbook; add permanent branch
+  and documentation workflows; formalize all ten ADRs; pass maintained-link,
+  documentation/profile, repository smoke, and diff checks.
+- [ ] Give local-only base commit `1200add` an intentional review and landing
+  decision before normalizing `main`.
+- [ ] Finish and review `codex/live-city-diorama` in its existing protected
+  worktree.
+- [ ] Port selected reproducibility work from `f2903db` onto a fresh branch
+  from the eventual canonical base; do not merge its stale tip wholesale.
+- [ ] Resolve open PRs #55 and #57 against the chosen base.
+- [ ] Re-audit and delete only the exact merged/superseded local and remote refs
+  approved in a later cleanup batch.
+
+No unchecked row authorizes deletion, worktree removal, remote mutation,
+publication, deployment, or live inference.
+
+## Historical execution backlog snapshot — 2026-08-05
+
+This preserved queue predates the 2026-08-20 branch audit. Its linked designs
+remain evidence, but branch and pull-request identifiers may be superseded.
+Close a row only when every acceptance step in its linked implementation plan
+has qualifying evidence. A local pass, partial run, blocked external gate, or
 historical receipt cannot substitute for the named boundary.
 
 - [ ] Publish the verified local `main` stack, then integrate dependency PRs 39

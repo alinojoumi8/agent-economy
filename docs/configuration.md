@@ -62,7 +62,7 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | Key | Meaning |
 |---|---|
 | `seed` | World, persona, targeting, and lifecycle reproducibility |
-| `engine_semantics_version` | Runtime compatibility contract; the default evolving-live profile uses `11`, while frozen production/research profiles retain their recorded version |
+| `engine_semantics_version` | Runtime compatibility contract; the implemented maximum is `14`, the default evolving-live profile uses `11`, and frozen production/research profiles retain their recorded version |
 | `population.size` | Sampled citizen count; institutional/founder agents are added |
 | `population.baseline_citizens_core` | Persisted semantics-7 opt-in that pins non-regional baseline citizens and later arrivals to the fully scheduled core tier |
 | `banks`, `firms`, `exchange` | Deterministic banking, production, and market parameters |
@@ -117,6 +117,27 @@ construction:
 
 These values define new runs only. Do not change a stored source run's semantics
 or construction requirements before replay.
+
+### Semantics-14 external-turn attendance
+
+Semantics 14 is opt-in and adds immutable attendance evidence for due
+first-class External Agent Gateway actors:
+
+```yaml
+engine_semantics_version: 14
+```
+
+This version selection does not enable hosted mode, create an external
+connection, or provision a runtime. Configure those through the existing
+gateway/hosted control plane. When an external actor is due, the run records
+either an authored submission or a missed operational reason plus the
+`safe_do_nothing_v1` fallback.
+
+Semantics 1–13 intentionally produce no attendance rows. Never edit a stored
+source run to opt it into Semantics 14; create a new profile/run or an explicit
+fork. See
+[Semantics 14 external-turn attendance](semantics14-external-turn-attendance.md)
+for fields, interpretation, replay, and recovery.
 
 The maintained `runs/v2.yaml` enables
 `llm.local_currency_action_surfaces: true`. Under semantics 7, decision context

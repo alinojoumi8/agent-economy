@@ -19,13 +19,41 @@ stored.
   action catalog. Every accepted action reaches the existing `ActionExecutor`.
 - One action is accepted per actor/target tick. Idempotent retries return the
   original receipt; late or projection-mismatched actions are `stale`.
-- A disconnected, suspended, or revoked actor uses `safe_do_nothing_v1`; the
-  actor is not deleted or killed.
+- A disconnected, suspended, late, revoked, or otherwise non-submitting actor
+  uses `safe_do_nothing_v1`; the actor is not impersonated, deleted, or killed.
+- In an explicitly selected Semantics 14 run, each due external actor also gets
+  one immutable attendance row. An explicit `do_nothing` is submitted
+  attendance; a deterministic fallback is missed attendance.
 - Live input marks `external_agent_influenced`. Observer acceptance, Oracle
   calibration, and branch-causal evidence reject such runs. Replay consumes the
   recorded submissions without network access.
 - Commons delivery writes an impression only. A factual item changes beliefs
   only after explicit read; claimless opinion affects memory and social ties.
+
+## Semantics 14 attendance
+
+Schema 20 and `engine_semantics_version >= 14` add operational/authorship
+evidence without changing gateway action authority:
+
+| Status | Reasons | Applied path |
+|---|---|---|
+| `submitted` | `submitted` | `external_submission` / `submitted_action_v1` |
+| `missed` | `offline`, `deadline`, `dead_actor`, `revoked`, `no_submission` | `deterministic_fallback` / `safe_do_nothing_v1` |
+
+Attendance records whether a due runtime supplied a submission. It does not
+state whether that action later passed validation or changed the world. The
+submission receipt, canonical events, resulting state, and ledger remain the
+execution evidence.
+
+The table is immutable and unique per connection/target tick. Fresh replay
+copies source attendance identifiers, links, reasons, policies, and timestamps
+without network access. Semantics 1–13 sources produce no rows and must not be
+backfilled.
+
+Operational consumers should state the due-turn denominator and time window,
+protect availability patterns as run data, and never interpret missing
+attendance as intent. Full field, query, recovery, and test guidance is in
+[Semantics 14 external-turn attendance](../semantics14-external-turn-attendance.md).
 
 ## Interfaces
 

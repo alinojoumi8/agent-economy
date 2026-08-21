@@ -34,6 +34,12 @@ each audience can find the authoritative level of detail.
   hosted audit chaining.
 - [Development and testing](development.md) — setup, test layers, safe behavior
   changes, compatibility, logs, and CI.
+- [Branch lifecycle and consolidation](branch-lifecycle.md) — protect active
+  work, classify refs, port divergent commits, and gate deletion.
+- [Documentation maintenance](documentation-maintenance.md) — source-of-truth
+  hierarchy, update matrix, writing rules, and verification.
+- [Architecture decision records](adr/README.md) — accepted implementation
+  boundaries and clearly labelled proposed direction.
 - [Contributing](../CONTRIBUTING.md) — contributor contract and PR evidence.
 - [Technical specification](../TECH-SPEC.md) — normative implementation design.
 
@@ -74,6 +80,7 @@ pairs into one file.
 - [Semantics-11 cognition and provider pools](semantics11-cognition.md)
 - [Semantics-12 civic city and permit workflow](semantics12-civic-city.md)
 - [Semantics-13 agent-built construction economy](semantics13-construction-economy.md)
+- [Semantics-14 external-turn attendance](semantics14-external-turn-attendance.md)
 - [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
 - [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
 - [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)

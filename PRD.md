@@ -1,6 +1,6 @@
 # Agent Economy — Product Requirements Document
 
-**Version:** 1.1 · **Date:** 2026-07-16 · **Owner:** Ali · **Status:** Maintained implementation contract
+**Version:** 1.2 · **Date:** 2026-08-20 · **Owner:** Ali · **Status:** Maintained implementation contract
 
 > **Scope — read before comparing with `docs/world-os/`.** This document governs
 > what is *built and maintained today*: the Agent Economy kernel through R22.
@@ -212,6 +212,36 @@ All stories have one user — Ali — in two modes: **Operator** (runs the world
 **R20. Multi-region / trade / FX.** Regional decision context exposes bounded FX quotes, own wallet balances, at most five engine-qualified cross-border trade opportunities, and career-gated migration destinations. A trade opportunity requires an effective contract, distinct regions, exporter inventory, and importer funds, and invoices in the importer's currency. Healthy unemployed non-retirees may migrate only when the numeraire-adjusted wage gain clears the configured threshold; outstanding credit exposure or invalid authorization fails closed. *(Implemented extension; five-tick scripted and MiniMax semantics-7 gates exercised shipment delivery and migration completion with exact replay.)*
 **R21. Real-data calibration mode** — initialize distributions from real US statistical data (income, wealth, firm size). *(Implemented as the explicit `real_us` profile: disclosure-protected 2022 SCF family records supply income, liquid-financial-asset, and total-net-worth draws, while 2022 SUSB national employer-firm classes supply initial headcounts. `LIQ` funds the modeled bank accounts; `NETWORTH` is persisted as an engine-owned, off-ledger calibration baseline visible through agent provenance, so property/business assets and debt are not silently minted as deposits. Fictional names, traits, behavior, and relationships remain synthetic; default profiles remain replay-identical.)*
 **R22. Public/multi-user version** — multiple observers, shared runs, hosted deployment. *(Implemented as an optional hosted control plane. PostgreSQL stores users, tenant membership, sessions, run catalog records, writer leases, audit records, and immutable snapshot pointers under forced row-level security. Each world remains one schema-v11 SQLite database, preserving the local deterministic engine and exact replay contract. Invite-only registration, tenant roles, CSRF protection, request throttling, redacted audit, a lease-based single-writer supervisor, local/S3 snapshot storage, an authenticated hosted dashboard, Docker Compose/Caddy/Prometheus deployment assets, migrations, backup/restore commands, and real PostgreSQL/MinIO integration tests are present. Exact local image/Compose, TLS, tenant-isolation, S3 snapshot/restore, password-rotation, Prometheus, and bounded load evidence passed at `53081f2`; all six PR #19 jobs passed at `1cf1d0a` in run `29409250171`. Public production deployment remains a separate, unclaimed release action.)*
+
+### Maintained additive boundaries
+
+The following implemented contracts extend observability and external-agent
+evidence without granting new economic authority:
+
+- **Semantic activity projection.** Living Agents and observer events use one
+  read-only public-fact adapter. Historical views exclude current provider
+  presence; projection cannot create canonical events or alter replay.
+- **Semantics 14 attendance (schema 20).** Every due first-class external actor
+  in an explicitly selected Semantics 14 run records submitted or missed
+  attendance separately from the applied action policy. Submitted
+  `do_nothing` remains authored; missed turns apply
+  `safe_do_nothing_v1`. Semantics 1–13 sources are not backfilled, and replay
+  copies the source evidence exactly.
+- **Proposal-only Builder seam.** The allowlisted `proposal.create` sink
+  produces a deterministic immutable tenant-scoped bundle and verified
+  receipt. It cannot apply, push, merge, deploy, call the engine, move money, or
+  access secrets. A Civic Builder runtime and mandate remain proposed, not
+  implemented.
+- **Hosted audit chain.** New hosted administrative rows after migration 003
+  form a tenant-local tamper-evident chain. Legacy rows remain unchained; tail
+  detection requires a separately retained head; the chain is not externally
+  anchored or non-repudiation.
+
+These boundaries are specified in
+[Buzz-derived architecture](docs/buzz-derived-architecture.md) and the
+[Semantics 14 guide](docs/semantics14-external-turn-attendance.md). Their
+current release labels remain owned by the
+[implementation-status ledger](docs/implementation-status.md).
 
 After P0/P1 and R18–R22, no additional functional feature gap remains in this
 PRD. The archived v1 seed-7301 Oracle source completed with valid live-provider

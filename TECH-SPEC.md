@@ -315,6 +315,40 @@ Single chokepoint through which every call flows. Responsibilities:
   `python -m hosted.cli` commands. Kubernetes and a
   public managed deployment are not implied by this reference stack.
 
+### 9.5 Projection, attendance, proposal, and audit boundaries
+
+- **Activity projection:** `server/projections/activity.py` accepts only
+  caller-vetted public facts and returns a semantic verb, object, outcome,
+  lifecycle/stage, bounded salience, and safe evidence references. Living
+  Agents and observer events share it. Unknown facts use a labelled generic
+  fallback; event payloads are never copied. Runtime presence is current-view
+  telemetry and is dropped for historical ticks. This read path writes no event
+  and changes no canonical hash.
+- **External attendance:** schema 20 creates immutable
+  `external_turn_attendance`, unique on connection and target tick.
+  Semantics 14 records `submitted/submitted` with
+  `external_submission/submitted_action_v1`, or `missed` with one of
+  `offline|deadline|dead_actor|revoked|no_submission` and
+  `deterministic_fallback/safe_do_nothing_v1`. A submitted no-op remains
+  submitted; execution acceptance is proved by the existing receipt/event/state
+  path. Replay copies IDs, links, reasons, policies, and timestamps exactly.
+  Stored Semantics 1–13 runs produce no rows.
+- **Builder proposals:** `builder_workspace/proposal_sink.py` accepts only
+  `proposal.create`. It validates declared and embedded patch paths, bounded
+  text, and fixed allowlisted check evidence; builds a deterministic ZIP with
+  manifest, patch, rationale, invariants, tests, replay evidence, and policy;
+  writes it to a tenant-scoped immutable artifact key; and reads the bytes back
+  before returning a receipt. The sink has no engine, ledger, action-executor,
+  Git, deploy, network, or secret handle. No Builder runtime or mandate is
+  implied.
+- **Hosted audit:** hosted migration 003 adds tenant sequence, previous hash,
+  and canonical SHA-256 to new control-plane audit rows. Insertion serializes
+  per tenant with a transaction advisory lock plus a unique tenant/sequence
+  index. Verification is single-tenant and ordered. Null pre-migration fields
+  are reported as legacy, not authenticated. Tail truncation needs a retained
+  external head; no external anchor or non-repudiation is claimed. This chain
+  is independent of the SQLite simulation event log.
+
 ## 10. Newsroom + conversations
 
 - Reporters receive only an explicit allowlist of public/reportable event kinds and a bounded public projection of each payload; private beliefs, participant controls, prompts, and provider diagnostics never reach a desk. Within that boundary the digest is ordered by newsworthiness (money size, rarity, entity prominence), reporters draft 2–4 stories, and the editor selects/frames per outlet slant. Stories cite `source_event_ids`; every citation must resolve locally or the complete provider article fails closed to a deterministic grounded brief. The report can later audit how coverage diverged from ground truth (fun metric: *distortion index*).
@@ -396,6 +430,12 @@ discount is excluded from the projection; event-heavy days may spike usage.
   reads and cross-tenant denials and emits sanitized JSON evidence. Its timeout
   is finite and bounded, and any recorded build reference must be a full Git
   object ID.
+- **Additive boundary tests**: activity tests prove public-safe semantic
+  fallback and historical removal of runtime telemetry; gateway tests prove
+  Semantics 14 submitted/missed reasons and exact replay; proposal tests prove
+  deterministic immutable bundles and refusal of non-proposal authority; audit
+  tests prove tenant isolation, concurrency serialization, legacy reporting,
+  and tamper detection.
 - **Cost test**: simulated pricing table + fake responses verify governor thresholds fire at 60/80/95/100%.
 - **Supply-chain/release audit**: Python installs use a universal hash-locked
   `requirements.lock`; dashboard notices include runtime dependencies and emitted
@@ -485,6 +525,7 @@ agent-economy/
   oracle/                 # analyst agent, tools, resolver, scoring
   server/                 # FastAPI app, WebSocket hub, static dashboard
   hosted/                 # optional R22 catalog/auth/supervisor/artifacts/API/CLI
+  builder_workspace/      # immutable allowlisted proposals; no apply authority
   deploy/                 # Compose, Caddy, Prometheus, PostgreSQL role init
   config/hosted*.yaml     # strict hosted config; credentials come from env
   dashboard/              # React app (built → server/static)

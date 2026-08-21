@@ -36,6 +36,19 @@ HANDBOOK_DOCS = (
     "operator-runbook.md", "troubleshooting.md", "development.md",
     "implementation-status.md", "live-provider-validation.md",
     "live-run-f7c6238bf5.md", "v2-guide.md", "implementation-status.html",
+    "buzz-derived-architecture.md", "branch-lifecycle.md",
+    "documentation-maintenance.md",
+    "semantics14-external-turn-attendance.md", "adr/README.md",
+    "adr/0001-owner-run-citizens-use-external-runtimes.md",
+    "adr/0002-offline-owner-run-citizens-are-not-impersonated.md",
+    "adr/0003-owner-run-citizen-profiles-are-generated-per-city.md",
+    "adr/0004-civic-builder-authority-stops-at-the-world-boundary.md",
+    "adr/0005-city-expansion-is-threshold-triggered-and-bounded.md",
+    "adr/0006-city-scale-uses-a-strategic-core-and-deterministic-periphery.md",
+    "adr/0007-builder-code-scope-is-allowlisted.md",
+    "adr/0008-each-city-has-an-isolated-civic-builder.md",
+    "adr/0009-builder-authority-has-independent-safety-and-governance-revocation.md",
+    "adr/0010-cohort-personas-use-deterministic-bases-and-bounded-enrichment.md",
 )
 CLOSURE_STATUS_DOCS = (
     "README.md", "TECH-SPEC.md", "TASKS.md",
@@ -95,6 +108,95 @@ def test_readme_exposes_safe_entrypoint_and_complete_handbook():
         "troubleshooting.md", "development.md",
     ):
         assert f"docs/{filename}" in readme
+
+
+def test_readme_is_concise_and_research_first():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert len(readme.splitlines()) <= 300
+    assert readme.index("## Run one experiment") < readme.index(
+        "## World OS expansion")
+    for target in (
+        "docs/branch-lifecycle.md",
+        "docs/documentation-maintenance.md",
+        "docs/semantics14-external-turn-attendance.md",
+        "docs/adr/README.md",
+    ):
+        assert target in readme
+
+
+def test_branch_and_documentation_workflows_preserve_safety_boundaries():
+    branch = (ROOT / "docs/branch-lifecycle.md").read_text(
+        encoding="utf-8").lower()
+    assert "a dirty worktree is protected" in branch
+    assert "git branch -d" in branch
+    assert "explicit remote-deletion authorization" in branch
+    assert "force deletion" in branch
+
+    maintenance = (ROOT / "docs/documentation-maintenance.md").read_text(
+        encoding="utf-8").lower()
+    assert "source-of-truth hierarchy" in maintenance
+    assert "frozen semantics-7 printable snapshot" in maintenance
+    assert "implementation and release status are not conflated" in maintenance
+
+
+def test_semantics14_guide_preserves_authorship_and_replay_contract():
+    guide = (ROOT / "docs/semantics14-external-turn-attendance.md").read_text(
+        encoding="utf-8").lower()
+    for phrase in (
+        "engine_semantics_version: 14",
+        "explicitly submits",
+        "safe_do_nothing_v1",
+        "semantics 1–13",
+        "no separate public attendance mutation endpoint",
+        "never update, delete, or reconstruct source attendance",
+    ):
+        assert phrase in guide
+    assert "do_nothing" in guide
+
+
+def test_architecture_decisions_have_explicit_status_and_structure():
+    adr_paths = sorted((ROOT / "docs/adr").glob("[0-9][0-9][0-9][0-9]-*.md"))
+    assert len(adr_paths) == 10
+    statuses = []
+    for path in adr_paths:
+        text = path.read_text(encoding="utf-8")
+        assert "## Context" in text
+        assert "## Decision" in text
+        assert "## Consequences" in text
+        match = re.search(r"^- \*\*Status:\*\* (Accepted|Proposed)$", text,
+                          re.MULTILINE)
+        assert match, f"{path.relative_to(ROOT)} lacks a valid ADR status"
+        statuses.append(match.group(1))
+    assert statuses.count("Accepted") == 3
+    assert statuses.count("Proposed") == 7
+
+
+def test_normative_contracts_cover_current_additive_boundaries_and_queue():
+    prd = (ROOT / "PRD.md").read_text(encoding="utf-8").lower()
+    for phrase in (
+        "maintained additive boundaries",
+        "semantics 14 attendance",
+        "proposal-only builder seam",
+        "hosted audit chain",
+    ):
+        assert phrase in prd
+
+    spec = (ROOT / "TECH-SPEC.md").read_text(encoding="utf-8").lower()
+    for phrase in (
+        "projection, attendance, proposal, and audit boundaries",
+        "external_turn_attendance",
+        "builder_workspace/proposal_sink.py",
+        "hosted migration 003",
+    ):
+        assert phrase in spec
+
+    tasks = (ROOT / "TASKS.md").read_text(encoding="utf-8").lower()
+    assert "current consolidation queue — 2026-08-20" in tasks
+    assert "historical execution backlog snapshot — 2026-08-05" in tasks
+    assert (
+        "docs/plans/2026-08-20-branch-and-documentation-consolidation-plan.md"
+        in tasks
+    )
 
 
 def test_documented_profiles_exist():
