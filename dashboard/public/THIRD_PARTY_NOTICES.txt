@@ -3021,7 +3021,7 @@ respective ISC and BSD licenses. Their complete license texts are reproduced
 in this notice under the corresponding d3 package entries.
 
 ==============================================================================
-vite@8.2.0
+vite@8.2.1
 Declared license: MIT
 ==============================================================================
 # Vite core license
@@ -4282,7 +4282,7 @@ Repository: https://github.com/lydell/js-tokens
 
 > The MIT License (MIT)
 >
-> Copyright (c) 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024 Simon Lydell
+> Copyright (c) 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025 Simon Lydell
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy
 > of this software and associated documentation files (the "Software"), to deal
