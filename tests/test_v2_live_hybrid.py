@@ -20,6 +20,9 @@ def test_hybrid_live_profile_is_bounded_and_routes_by_risk(tmp_path, monkeypatch
     assert sum(region["population"] for region in config["living_world"]["regions"]) == 30
     assert config["budget"]["cap_usd"] == 0.25
     assert config["checkpoint_every"] == 1
+    assert config["llm"]["decision_max_tokens"] == 2400
+    minimax_defaults = config["llm"]["providers"]["minimax"]["request_defaults"]
+    assert minimax_defaults["thinking"] == {"type": "disabled"}
     ollama_defaults = config["llm"]["providers"]["ollama"]["request_defaults"]
     assert ollama_defaults["reasoning_effort"] == "none"
     assert ollama_defaults["temperature"] == 0.0

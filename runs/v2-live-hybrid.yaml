@@ -75,7 +75,10 @@ llm:
   concurrency: 2
   provider_retries: 1
   rate_limit_backoff_s: [5, 15, 30]
-  decision_max_tokens: 900
+  # MiniMax-M3 counts private reasoning against this completion budget. Keep
+  # enough room for the bounded JSON envelope even if a provider ignores the
+  # direct-mode hint below.
+  decision_max_tokens: 2400
   providers:
     minimax:
       kind: openai_compat
@@ -87,6 +90,9 @@ llm:
       max_tokens_field: max_completion_tokens
       request_defaults:
         reasoning_split: true
+        # Role decisions are schema-bound JSON, so hidden thinking only burns
+        # the answer budget and can produce length-only empty completions.
+        thinking: {type: disabled}
         max_completion_tokens: 4096
     ollama:
       kind: openai_compat
