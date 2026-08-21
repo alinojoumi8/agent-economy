@@ -192,6 +192,14 @@ worktree, a unique preserved commit, or an explicitly time-bounded safety ref.
   ten structured ADRs (three Accepted, seven Proposed).
 - Final documentation/profile validation passed 26 tests. The repository smoke
   contract passed 138 tests with the same Starlette deprecation warning.
+- The complete Python collection then ran for 55m50s: 1,492 passed, 9 skipped,
+  and 2 failed. It exposed a fixed-count idle-poll race in one served-run test
+  and a stale schema-19 maximum assertion after schema 20 was added.
+- After correcting those two test contracts, the full owning files passed
+  (84 PRD-completion tests and 11 Semantics-13 construction tests), and the two
+  formerly failing nodes passed together. The entire 1,503-test collection was
+  not rerun after the fixes and must not be reported as a post-fix full-suite
+  pass.
 - Link validation covers every new durable guide and ADR. `git diff --check`
   passes; Windows reports only its configured LF-to-CRLF conversion warnings.
 - The historical HTML status snapshot remains frozen by design; the current
