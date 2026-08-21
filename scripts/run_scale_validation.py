@@ -608,13 +608,15 @@ def run_validation(
         genesis_wall_s = time.perf_counter() - genesis_started
         genesis_database = _database_snapshot(source_store)
         original_checkpoint = source_world.checkpoint
+        original_checkpoint_async = source_world.checkpoint_async
 
-        def measured_checkpoint(
-            tick: int, reason: str = "interval",
-        ) -> str | None:
-            before = _database_files(source_path)
-            started = time.perf_counter()
-            result = original_checkpoint(tick, reason=reason)
+        def record_checkpoint(
+            tick: int,
+            reason: str,
+            before: list[dict[str, object]],
+            started: float,
+            result: str | None,
+        ) -> None:
             checkpoint_path = Path(result).resolve() if result else None
             manifest = Path(f"{checkpoint_path}.manifest.json") \
                 if checkpoint_path else None
@@ -633,6 +635,23 @@ def run_validation(
                     _artifact_id(manifest, artifact_root)
                     if manifest and manifest.is_file() else None),
             })
+
+        def measured_checkpoint(
+            tick: int, reason: str = "interval",
+        ) -> str | None:
+            before = _database_files(source_path)
+            started = time.perf_counter()
+            result = original_checkpoint(tick, reason=reason)
+            record_checkpoint(tick, reason, before, started, result)
+            return result
+
+        async def measured_checkpoint_async(
+            tick: int, reason: str = "interval",
+        ) -> str | None:
+            before = _database_files(source_path)
+            started = time.perf_counter()
+            result = await original_checkpoint_async(tick, reason=reason)
+            record_checkpoint(tick, reason, before, started, result)
             return result
 
         def record_tick(tick: int, summary: dict[str, object]) -> None:
@@ -647,6 +666,7 @@ def run_validation(
                 source_world.request_stop()
 
         source_world.checkpoint = measured_checkpoint
+        source_world.checkpoint_async = measured_checkpoint_async
         source_world.on_tick = record_tick
         sampler.stage = "source_run"
         source_started = time.perf_counter()
@@ -737,12 +757,15 @@ def run_validation(
         ),
         "provider_model_exact": actual_pairs == expected_pair,
         "spend_contract": (
-            providers["cost_usd"] > 0
-            and providers["cost_usd"] <= float(config["budget"]["cap_usd"])
-            and float(governor["total_spend_usd"])
-            <= float(config["budget"]["cap_usd"])
-            if live else providers["cost_usd"] == 0.0
-            and float(governor["total_spend_usd"]) == 0.0
+            (
+                providers["cost_usd"] > 0
+                and providers["cost_usd"] <= float(config["budget"]["cap_usd"])
+                and float(governor["total_spend_usd"])
+                <= float(config["budget"]["cap_usd"])
+            ) if live else (
+                providers["cost_usd"] == 0.0
+                and float(governor["total_spend_usd"]) == 0.0
+            )
         ),
         "ledger_reconciles": bool(ledger_ok),
         "sqlite_quick_check": integrity["quick_check"] == ["ok"],
@@ -887,10 +910,8 @@ def main() -> None:
         )
     except ValidationInputError as exc:
         parser.error(str(exc))
-    receipt_path = args.output_dir.resolve() / (
-        f"{args.label}-{receipt['source']['run_id']}.runtime.json")
     print(json.dumps({
-        "receipt": str(receipt_path),
+        "receipt": receipt["artifacts"]["runtime_receipt"],
         "source_run_id": receipt["source"]["run_id"],
         "replay_run_id": receipt["replay"]["run_id"],
         "passed": receipt["passed"],

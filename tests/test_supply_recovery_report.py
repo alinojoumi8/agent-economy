@@ -174,6 +174,31 @@ def _close(store: Store) -> None:
     store.close()
 
 
+def test_checkpoint_failure_evidence_keeps_current_rows_shape(tmp_path: Path):
+    invalid_ok, invalid_evidence = supply_recovery_report._checkpoint_evidence(
+        object(), RUN_ID, {})
+    assert invalid_ok is False
+    assert invalid_evidence["current_rows"] == []
+
+    class BrokenStore:
+        path = str(tmp_path / "broken.db")
+
+        @staticmethod
+        def query(_sql: str):
+            raise sqlite3.DatabaseError("corrupt checkpoint catalog")
+
+    query_ok, query_evidence = supply_recovery_report._checkpoint_evidence(
+        BrokenStore(),
+        RUN_ID,
+        {
+            "checkpoint_keep_last": 2,
+            "checkpoint_dir": str(tmp_path / "checkpoints"),
+        },
+    )
+    assert query_ok is False
+    assert query_evidence["current_rows"] == []
+
+
 def _files_under(directory: Path) -> set[Path]:
     return {
         path.relative_to(directory)

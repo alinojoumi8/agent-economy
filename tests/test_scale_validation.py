@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from run_config import load_config
 from scripts.run_scale_validation import (
     ReceiptSafetyError,
     ValidationInputError,
+    main,
     prepare_validation_config,
     run_validation,
     validate_receipt_safety,
@@ -205,3 +207,30 @@ def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path):
     assert all((tmp_path / artifact).is_file() for artifact in artifact_ids)
     assert all((tmp_path / artifact).resolve().is_relative_to(tmp_path) for artifact in artifact_ids)
     assert any(artifact.endswith(".manifest.json") for artifact in artifact_ids)
+
+
+def test_cli_reports_the_persisted_runtime_artifact(monkeypatch, capsys, tmp_path):
+    receipt = {
+        "artifacts": {"runtime_receipt": "proofs/exact.runtime.json"},
+        "source": {"run_id": "source-run", "tick": 2},
+        "replay": {"run_id": "replay-run", "proof": {"exact": True}},
+        "providers": {"calls": 4, "cost_usd": 0.25},
+        "passed": True,
+    }
+    monkeypatch.setattr(
+        "scripts.run_scale_validation.run_validation",
+        lambda *args, **kwargs: receipt,
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "run_scale_validation.py",
+        "--profile", str(REHEARSAL),
+        "--ticks", "2",
+        "--label", "exact",
+        "--output-dir", str(tmp_path / "different-output"),
+        "--data-dir", str(tmp_path / "runs"),
+    ])
+
+    main()
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["receipt"] == receipt["artifacts"]["runtime_receipt"]

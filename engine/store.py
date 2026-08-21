@@ -162,6 +162,22 @@ class Store:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA synchronous = NORMAL")
 
+    @classmethod
+    def from_read_only_connection(
+            cls, path: str | Path, connection: sqlite3.Connection) -> "Store":
+        """Adopt an existing query-only SQLite connection as a Store."""
+        query_only = connection.execute("PRAGMA query_only").fetchone()
+        if query_only is None or query_only[0] != 1:
+            raise ValueError("connection must have PRAGMA query_only enabled")
+        connection.row_factory = sqlite3.Row
+        assert_schema_compatible(connection)
+        store = cls.__new__(cls)
+        store.path = str(Path(path).resolve())
+        store.read_only = True
+        store._closed = False
+        store.conn = connection
+        return store
+
     # ── raw helpers ──────────────────────────────────────────────────────────
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         return self.conn.execute(sql, tuple(params))

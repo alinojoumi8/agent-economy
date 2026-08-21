@@ -1428,12 +1428,13 @@ def _checkpoint_evidence(
         return False, {
             "configured_keep_last": _json_scalar(keep_last),
             "configured_checkpoint_dir": configured_dir,
+            "current_rows": [],
             "error": "checkpoint retention configuration is missing or invalid",
         }
     try:
         rows = store.query("SELECT id,tick,path FROM checkpoints ORDER BY tick,id")
     except Exception as exc:  # pragma: no cover - defensive corrupted-store path
-        return False, _query_error_evidence(exc)
+        return False, _query_error_evidence(exc, current_rows=[])
 
     invalid_tick_rows = [
         {

@@ -174,12 +174,7 @@ def _immutable_connection(path: Path) -> sqlite3.Connection:
 
 
 def _store_view(path: Path, connection: sqlite3.Connection) -> Store:
-    store = Store.__new__(Store)
-    store.path = str(path.resolve())
-    store.read_only = True
-    store._closed = False
-    store.conn = connection
-    return store
+    return Store.from_read_only_connection(path, connection)
 
 
 def _empty_receipt(error: str) -> dict[str, Any]:
@@ -1393,16 +1388,22 @@ def evaluate_scale_ab(
     baseline_policy = None
     recovery_policy = None
     configs_match = False
-    expected_recovery_policy = load_config(
-        ROOT / "runs/acceptance/scale-270-recovery-120.yaml"
-    ).get("supply_recovery")
+    expected_recovery_policy = None
+    try:
+        expected_config = load_config(
+            ROOT / "runs/acceptance/scale-270-recovery-120.yaml")
+    except (OSError, TypeError, ValueError):
+        expected_config = None
+    if isinstance(expected_config, Mapping):
+        expected_recovery_policy = expected_config.get("supply_recovery")
     if baseline_config is not None and recovery_config is not None:
         baseline_compare = deepcopy(baseline_config)
         recovery_compare = deepcopy(recovery_config)
         baseline_policy = baseline_compare.pop("supply_recovery", None)
         recovery_policy = recovery_compare.pop("supply_recovery", None)
         configs_match = bool(
-            baseline_compare == recovery_compare
+            expected_recovery_policy is not None
+            and baseline_compare == recovery_compare
             and baseline_policy == {"enabled": False}
             and recovery_policy == expected_recovery_policy
         )

@@ -746,7 +746,8 @@ def test_diagnostic_economic_failure_uses_exit_10_but_formal_failure_uses_exit_5
     assert _outcome(formal_checks, diagnostic=False) == "failed"
 
 
-def test_ab_allows_only_exact_recovery_policy_difference_and_baseline_diagnostics(tmp_path: Path):
+def test_ab_allows_only_exact_recovery_policy_difference_and_baseline_diagnostics(
+        tmp_path: Path, monkeypatch):
     baseline_fixture = _seed_fixture(tmp_path / "baseline", profile=BASELINE_PROFILE)
     recovery_fixture = _seed_fixture(tmp_path / "recovery", profile=RECOVERY_PROFILE)
     baseline = evaluate_scale_economic_health(
@@ -773,6 +774,27 @@ def test_ab_allows_only_exact_recovery_policy_difference_and_baseline_diagnostic
     rejected = evaluate_scale_ab(baseline, drifted)
     assert rejected["passed"] is False
     assert rejected["checks"]["configs_differ_only_by_recovery_policy"] is False
+
+    def reject_expected_profile(_path: Path) -> dict:
+        raise ValueError("malformed expected recovery profile")
+
+    monkeypatch.setattr(
+        "reports.scale_economic_health.load_config", reject_expected_profile)
+    missing_expected_policy = evaluate_scale_ab(baseline, recovery)
+    assert missing_expected_policy["passed"] is False
+    assert (
+        missing_expected_policy["checks"]["configs_differ_only_by_recovery_policy"]
+        is False
+    )
+
+
+def test_store_connection_factory_rejects_writable_connections(tmp_path: Path):
+    connection = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(ValueError, match="query_only"):
+            Store.from_read_only_connection(tmp_path / "writable.db", connection)
+    finally:
+        connection.close()
 
 
 def test_ab_writer_emits_atomic_json_and_markdown(tmp_path: Path):
