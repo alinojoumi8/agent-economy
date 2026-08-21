@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import json
 import logging
-from functools import partial
 from typing import NamedTuple, Optional
 
 from engine.actions import ActionExecutor
@@ -62,6 +61,16 @@ class RecoveryHiringState(NamedTuple):
     max_hires: int
     open_vacancies: int
     error: str | None
+
+
+class PreparedDecision(NamedTuple):
+    agent_id: int
+    purpose: str
+    context: dict
+    request: LLMRequest | None
+    scripted_envelope: dict | None
+    attention_context_key: str
+    attention_source_event_ids: list[int]
 
 
 def _decision_output_budget(llm_config: dict, purpose: str) -> int:
@@ -198,6 +207,21 @@ class AgentRuntime:
         self.ctx = ContextBuilder(economy, self.mem, config)
         self.participant = ParticipantService(self.store, self.ctx, config)
         self.external = ExternalAgentService(economy, self.participant, config)
+        gateway_width = max(1, int(getattr(gateway, "max_in_flight", 8)))
+        llm_config = config.get("llm", {})
+        self.decision_preparation_width = max(1, int(
+            llm_config.get("decision_preparation_concurrency", gateway_width)))
+        pipeline_buffer = max(0, int(
+            llm_config.get(
+                "decision_pipeline_buffer",
+                self.decision_preparation_width,
+            )
+        ))
+        self.decision_pipeline_width = gateway_width + pipeline_buffer
+        self._decision_pipeline_active = 0
+        self._decision_pipeline_peak = 0
+        self._decision_preparing = 0
+        self._decision_preparing_peak = 0
         self._recovery_hire_tick: int | None = None
         self._recovery_completed_hires: dict[int, int] = {}
         self._recovery_approved_hires: dict[
@@ -314,12 +338,24 @@ class AgentRuntime:
             agents = [a for a in agents if int(a["id"]) != participant_agent_id]
         if external_agent_ids:
             agents = [a for a in agents if int(a["id"]) not in external_agent_ids]
-        # Bounded at the gateway's own in-flight width: the provider is already
-        # the throughput ceiling, so gating the context build to the same width
-        # costs nothing and keeps the serving loop responsive during MORNING.
-        tasks = _bounded(
-            [partial(self._decide_guarded, tick, a) for a in agents],
-            getattr(self.gw, "max_in_flight", 8))
+        # Context construction is synchronous and SQL-heavy, while provider
+        # completion is remote I/O.  Keep the preparation batch small enough
+        # for the serving loop to poll, but allow one bounded prepared batch to
+        # wait behind the gateway so a provider slot can refill immediately.
+        preparation_gate = asyncio.Semaphore(self.decision_preparation_width)
+        dispatch_gate = asyncio.Semaphore(max(
+            1, int(getattr(self.gw, "max_in_flight", 8))))
+        pipeline_gate = asyncio.Semaphore(self.decision_pipeline_width)
+        tasks = [
+            self._decide_pipelined_guarded(
+                tick,
+                agent,
+                preparation_gate=preparation_gate,
+                dispatch_gate=dispatch_gate,
+                pipeline_gate=pipeline_gate,
+            )
+            for agent in agents
+        ]
         results = await _gather_fail_fast(tasks)
         decisions = []
         errors = 0
@@ -873,13 +909,79 @@ class AgentRuntime:
         except Exception as exc:
             return exc
 
-    async def _decide_one(self, tick: int, a) -> Optional[dict]:
+    async def _decide_pipelined_guarded(
+        self,
+        tick: int,
+        agent,
+        *,
+        preparation_gate: asyncio.Semaphore,
+        dispatch_gate: asyncio.Semaphore,
+        pipeline_gate: asyncio.Semaphore,
+    ):
+        """Prepare ahead of dispatch without creating an unbounded cohort."""
+        try:
+            async with pipeline_gate:
+                self._decision_pipeline_active += 1
+                self._decision_pipeline_peak = max(
+                    self._decision_pipeline_peak,
+                    self._decision_pipeline_active,
+                )
+                try:
+                    # Preserve the long-standing _decide_one override seam used
+                    # by replay fault injection and specialized runtimes.  Only
+                    # the built-in implementation is safe to split in two.
+                    if (
+                        getattr(self._decide_one, "__func__", None)
+                        is not AgentRuntime._decide_one
+                    ):
+                        async with dispatch_gate:
+                            await asyncio.sleep(0)
+                            return await self._decide_one(tick, agent)
+                    async with preparation_gate:
+                        # This unconditional yield is the serving-loop boundary
+                        # retained from _bounded: only one configured batch may
+                        # perform synchronous SQL before I/O is polled again.
+                        await asyncio.sleep(0)
+                        self._decision_preparing += 1
+                        self._decision_preparing_peak = max(
+                            self._decision_preparing_peak,
+                            self._decision_preparing,
+                        )
+                        try:
+                            prepared = self._prepare_decision(tick, agent)
+                        finally:
+                            self._decision_preparing -= 1
+                    # FIFO semaphore admission preserves the old cohort order.
+                    # Gateway gates remain authoritative for provider capacity.
+                    async with dispatch_gate:
+                        return await self._complete_prepared_decision(prepared)
+                finally:
+                    self._decision_pipeline_active -= 1
+        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable):
+            raise
+        except Exception as exc:
+            return exc
+
+    def decision_pipeline_status(self) -> dict[str, int]:
+        """Return content-free scheduling telemetry for the operator view."""
+        return {
+            "preparation_width": self.decision_preparation_width,
+            "pipeline_width": self.decision_pipeline_width,
+            "active": self._decision_pipeline_active,
+            "peak_active": self._decision_pipeline_peak,
+            "preparing": self._decision_preparing,
+            "peak_preparing": self._decision_preparing_peak,
+        }
+
+    def _prepare_decision(self, tick: int, a) -> PreparedDecision:
+        """Build and persist one authoritative prompt context synchronously."""
         context = self.ctx.build(a, tick)
-        self.ctx.persist_inbox_read_context(int(a["id"]), tick, context)
+        agent_id = int(a["id"])
+        self.ctx.persist_inbox_read_context(agent_id, tick, context)
         purpose = context.get("purpose", "decision")
         attention_context_key, attention_source_event_ids = (
             self.e.city.persist_attention_context(
-                int(a["id"]),
+                agent_id,
                 tick,
                 str(purpose),
                 context.get("attention", {}),
@@ -887,30 +989,70 @@ class AgentRuntime:
             if int(self.config.get("engine_semantics_version", 1)) >= 12
             else ("", [])
         )
-        role = a["role"] or "citizen"
         semantics = int(self.config.get("engine_semantics_version", 1))
-        if (7 <= semantics < 11
-                and a["population_tier"] != "core"):
-            env = scripted_decision(purpose, context)
-            return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                    "reasoning": env.get("reasoning", ""), "llm_call_id": None,
-                    "communication_sources": context.get("communication_sources", []),
-                    "communication_read_context_key": context.get(
-                        "communication_read_context_key"),
-                    "attention_context_key": attention_context_key or None,
-                    "attention_source_event_ids": attention_source_event_ids}
+        if 7 <= semantics < 11 and a["population_tier"] != "core":
+            return PreparedDecision(
+                agent_id=agent_id,
+                purpose=str(purpose),
+                context=context,
+                request=None,
+                scripted_envelope=scripted_decision(purpose, context),
+                attention_context_key=attention_context_key,
+                attention_source_event_ids=attention_source_event_ids,
+            )
+
         system, user = self.ctx.render_prompt(context)
         llm_config = self.config.get("llm", {})
-        req = LLMRequest(role=role, purpose=purpose, system=system, user=user, context=context,
-                         agent_id=int(a["id"]), tick=tick,
-                         max_tokens=_decision_output_budget(
-                             llm_config, str(purpose)))
-        resp = await self.gw.complete(req)
+        request = LLMRequest(
+            role=a["role"] or "citizen",
+            purpose=purpose,
+            system=system,
+            user=user,
+            context=context,
+            agent_id=agent_id,
+            tick=tick,
+            max_tokens=_decision_output_budget(llm_config, str(purpose)),
+        )
+        return PreparedDecision(
+            agent_id=agent_id,
+            purpose=str(purpose),
+            context=context,
+            request=request,
+            scripted_envelope=None,
+            attention_context_key=attention_context_key,
+            attention_source_event_ids=attention_source_event_ids,
+        )
+
+    async def _complete_prepared_decision(
+        self,
+        prepared: PreparedDecision,
+    ) -> Optional[dict]:
+        """Dispatch a prepared request and normalize its decision envelope."""
+        context = prepared.context
+        if prepared.scripted_envelope is not None:
+            env = prepared.scripted_envelope
+            return {
+                "agent_id": prepared.agent_id,
+                "purpose": prepared.purpose,
+                "envelope": env,
+                "reasoning": env.get("reasoning", ""),
+                "llm_call_id": None,
+                "communication_sources": context.get("communication_sources", []),
+                "communication_read_context_key": context.get(
+                    "communication_read_context_key"),
+                "attention_context_key": prepared.attention_context_key or None,
+                "attention_source_event_ids": prepared.attention_source_event_ids,
+            }
+
+        if prepared.request is None:
+            raise RuntimeError("prepared model decision has no request")
+        resp = await self.gw.complete(prepared.request)
         env = dict(resp.parsed) if isinstance(resp.parsed, dict) else {}
         raw_reasoning = str(env.get("reasoning", "")).strip()
         public_reasoning = sanitize_model_numeric_narrative(
             raw_reasoning,
-            grounding_enabled=model_grounding_active(self.config, tick),
+            grounding_enabled=model_grounding_active(
+                self.config, prepared.request.tick),
             fallback=(
                 "I used the current structured engine facts to choose this action."
             ),
@@ -918,15 +1060,23 @@ class AgentRuntime:
         )
         if raw_reasoning or public_reasoning:
             env["reasoning"] = public_reasoning
-        return {"agent_id": int(a["id"]), "purpose": purpose, "envelope": env,
-                "reasoning": public_reasoning,
-                "numeric_claims_redacted": public_reasoning != raw_reasoning,
-                "llm_call_id": getattr(resp, "call_id", None),
-                "communication_sources": context.get("communication_sources", []),
-                "communication_read_context_key": context.get(
-                    "communication_read_context_key"),
-                "attention_context_key": attention_context_key or None,
-                "attention_source_event_ids": attention_source_event_ids}
+        return {
+            "agent_id": prepared.agent_id,
+            "purpose": prepared.purpose,
+            "envelope": env,
+            "reasoning": public_reasoning,
+            "numeric_claims_redacted": public_reasoning != raw_reasoning,
+            "llm_call_id": getattr(resp, "call_id", None),
+            "communication_sources": context.get("communication_sources", []),
+            "communication_read_context_key": context.get(
+                "communication_read_context_key"),
+            "attention_context_key": prepared.attention_context_key or None,
+            "attention_source_event_ids": prepared.attention_source_event_ids,
+        }
+
+    async def _decide_one(self, tick: int, a) -> Optional[dict]:
+        prepared = self._prepare_decision(tick, a)
+        return await self._complete_prepared_decision(prepared)
 
     def _recovery_employment_target(
             self, actor_id: int, action: dict, phase: str) -> tuple[int, int, str] | None:
