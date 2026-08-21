@@ -733,6 +733,7 @@ def test_schema_19_migrates_v18_additively_and_reopens_idempotently(
 ):
     path = tmp_path / "v18-construction.db"
     original = migration_registry._MIGRATIONS
+    current_version = max(migration.version for migration in original)
     before_v19 = tuple(
         migration for migration in original if migration.version < 19)
     monkeypatch.setattr(migration_registry, "_MIGRATIONS", before_v19)
@@ -750,7 +751,7 @@ def test_schema_19_migrates_v18_additively_and_reopens_idempotently(
     upgraded = Store(str(path))
     try:
         assert upgraded.scalar(
-            "SELECT MAX(version) FROM schema_migrations") == 19
+            "SELECT MAX(version) FROM schema_migrations") == current_version
         migration = upgraded.query_one(
             "SELECT name,source_schema,status FROM schema_migrations "
             "WHERE version=19")
@@ -773,5 +774,7 @@ def test_schema_19_migrates_v18_additively_and_reopens_idempotently(
     try:
         assert reopened.scalar(
             "SELECT COUNT(*) FROM schema_migrations WHERE version=19") == 1
+        assert reopened.scalar(
+            "SELECT MAX(version) FROM schema_migrations") == current_version
     finally:
         reopened.close()

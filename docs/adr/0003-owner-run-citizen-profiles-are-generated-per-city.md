@@ -1,3 +1,31 @@
-# Owner-run citizen profiles are generated per city
+# ADR 0003: Owner-run citizen profiles are generated per city
 
-Each city receives a newly generated ten-member Launch Cohort before its first decision cycle rather than reusing a fixed cast across cities or admitting the initial ten later. A generated profile becomes the persistent identity of that Owner-Run Citizen within its city. Generation must satisfy a Cohort Diversity Contract across economic circumstances, life stages, occupations, values, and dispositions, but neither background nor launch timing grants an office, privileged action, or exemption from ordinary starting-state and accounting rules. We accept weaker character continuity across cities and constrained sampling in exchange for variety, meaningful resident coverage, reduced hand-authoring, and the ability to test whether city outcomes survive different resident compositions.
+- **Status:** Proposed
+- **Date:** 2026-08-20
+
+## Context
+
+A future city launch needs varied owner-run residents without reusing a fixed
+cast or letting generated biography control economic initialization, rights, or
+authority.
+
+## Decision
+
+For each future city, generate a new ten-member Launch Cohort before its first
+decision cycle. Each validated profile becomes one persistent owner-run citizen
+identity in that city. Generation must satisfy a versioned Cohort Diversity
+Contract across economic circumstances, life stages, occupations, values, and
+dispositions.
+
+Background and launch timing grant no office, privileged action, or exemption
+from ordinary starting-state and accounting rules.
+
+## Consequences
+
+- Cities gain varied resident composition at the cost of cross-city character
+  continuity and constrained sampling.
+- The authoritative engine must assign economic state and civic standing.
+- Manifests, validation, failure behavior, admission, and replay still require
+  implementation and acceptance tests.
+- This ADR makes no claim that cohort generation or automatic launch admission
+  currently exists.

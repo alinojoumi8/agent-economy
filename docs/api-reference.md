@@ -36,6 +36,12 @@ mounts, replay discovery, arbitrary paths, provider configuration, prompt
 payloads, and credentials are not proxied. Service endpoints are
 `/health/live`, `/health/ready`, and `/metrics`.
 
+Hosted administrative writes append tenant-local chained audit rows after
+control-plane migration 003. The HTTP API does not present the hash chain as
+simulation truth or external non-repudiation; authorized operators verify one
+tenant's ordered rows and retain chain heads separately. See the
+[operator runbook](operator-runbook.md#hosted-audit-chain).
+
 The remaining unprefixed routes in this document describe local mode. Local
 mode has no authentication; do not put it behind a public proxy.
 
@@ -114,6 +120,13 @@ Peripheral private-home construction is aggregated by region, status, and
 stage. Owner, contributor, permit, exact-site, place, and reversible evidence
 links are omitted from those aggregates.
 
+Living Agents and observer events use one semantic activity-card projection.
+Cards expose a bounded verb, object, outcome, lifecycle/stage, salience, and
+safe `kind`/`id`/`tick` references. Unknown kinds use a labelled generic
+fallback and never copy raw event payloads. Runtime `queued`/`thinking`
+presence may be included only for a current view; a historical `tick` request
+drops current runtime telemetry.
+
 ## Oracle and calibration
 
 | Method | Path | Input/notes |
@@ -189,6 +202,14 @@ See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
 World observations and Commons content are untrusted data; these endpoints never
 return private messages, prompts, chain-of-thought, provider payloads, or owner
 identity.
+
+When a run explicitly selects Semantics 14, every due first-class external
+actor also receives immutable attendance evidence in the run database.
+Attendance distinguishes an authored submission, including submitted
+`do_nothing`, from a missed turn that applied `safe_do_nothing_v1`. It does
+not add a public mutation endpoint and does not replace the turn, submission,
+receipt, event, or ledger contracts. See the
+[Semantics 14 guide](semantics14-external-turn-attendance.md).
 
 ## WebSocket
 

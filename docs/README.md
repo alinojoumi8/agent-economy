@@ -29,8 +29,17 @@ each audience can find the authoritative level of detail.
 
 - [Architecture](architecture.md) — deterministic ownership, tick phases,
   packages, information model, persistence, and runtime boundaries.
+- [Buzz-derived architecture boundaries](buzz-derived-architecture.md) — shared
+  activity projection, external attendance, proposal-only Builder support, and
+  hosted audit chaining.
 - [Development and testing](development.md) — setup, test layers, safe behavior
   changes, compatibility, logs, and CI.
+- [Branch lifecycle and consolidation](branch-lifecycle.md) — protect active
+  work, classify refs, port divergent commits, and gate deletion.
+- [Documentation maintenance](documentation-maintenance.md) — source-of-truth
+  hierarchy, update matrix, writing rules, and verification.
+- [Architecture decision records](adr/README.md) — accepted implementation
+  boundaries and clearly labelled proposed direction.
 - [Contributing](../CONTRIBUTING.md) — contributor contract and PR evidence.
 - [Technical specification](../TECH-SPEC.md) — normative implementation design.
 
@@ -50,10 +59,10 @@ each audience can find the authoritative level of detail.
 
 These documents define the Semantics 8 communications lake, Semantics 9
 External Agent Gateway, Semantics 10 Agent Commons, Semantics 11 compute
-economy, Semantics 12 civic permits, and the separately approved Semantics 13
-construction economy. Their code is implemented, but
+economy, Semantics 12 civic permits, the separately approved Semantics 13
+construction economy, and Semantics 14 external-turn attendance. Their code is implemented, but
 their release states differ: Semantics 8 is the released deterministic causal
-baseline; Semantics 9–10 remain rollout-gated; Semantics 11–13 are implemented
+baseline; Semantics 9–10 remain rollout-gated; Semantics 11–14 are implemented
 opt-in contracts whose public use inherits those hosted gates. The
 [implementation-status ledger](implementation-status.md) is authoritative for
 current labels. Historical release contracts and receipts remain frozen.
@@ -71,6 +80,7 @@ pairs into one file.
 - [Semantics-11 cognition and provider pools](semantics11-cognition.md)
 - [Semantics-12 civic city and permit workflow](semantics12-civic-city.md)
 - [Semantics-13 agent-built construction economy](semantics13-construction-economy.md)
+- [Semantics-14 external-turn attendance](semantics14-external-turn-attendance.md)
 - [Framework research and build-versus-buy decision](world-os/FRAMEWORK-RESEARCH.md)
 - [External Agent Gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md)
 - [Requirements and disposition matrix](world-os/REQUIREMENTS-MATRIX.md)

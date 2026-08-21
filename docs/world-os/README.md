@@ -21,11 +21,12 @@ not "reconcile" the two sets into one file.
 
 The root PRD tracks the maintained implementation contract through R22. The
 World OS specifications extend through Semantics 12; the separately approved
-runtime construction contract is documented as Semantics 13. Current status is not
+runtime construction contract is documented as Semantics 13, and additive
+external-turn attendance is documented as Semantics 14. Current status is not
 inferred from specification prose: Semantics 8 is the released deterministic
-causal baseline; Semantics 9–10 code is rollout-gated; Semantics 11–13 are
-implemented opt-in contracts whose public use inherits those hosted gates.
-The maintained implementation-status ledger owns those labels.
+causal baseline; Semantics 9–10 code is rollout-gated; Semantics 11–14 are
+implemented opt-in contracts whose public use inherits those hosted gates. The
+maintained implementation-status ledger owns those labels.
 
 ## Contents
 
@@ -45,6 +46,8 @@ The maintained implementation-status ledger owns those labels.
 
 - [EXTERNAL-AGENT-GATEWAY.md](EXTERNAL-AGENT-GATEWAY.md) — how outside agents
   (MCP clients, `/api/v2/agent/*`) connect.
+- [Semantics 14 attendance](../semantics14-external-turn-attendance.md) —
+  submitted versus missed authorship evidence, replay, and operations.
 - [EXTERNAL-AGENT-THREAT-MODEL.md](EXTERNAL-AGENT-THREAT-MODEL.md) — required
   release-gate artifact for Semantics 9 / schema 13.
 - [EXTERNAL-AGENT-ACCEPTANCE.md](EXTERNAL-AGENT-ACCEPTANCE.md) — acceptance

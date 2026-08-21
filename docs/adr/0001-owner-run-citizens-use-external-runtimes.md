@@ -1,3 +1,38 @@
-# Owner-run citizens use external runtimes
+# ADR 0001: Owner-run citizens use external runtimes
 
-Ten Hermes-controlled residents will be modeled as persistent Owner-Run Citizens: each runtime remains outside Agent Economy and controls one separately identified resident through the shared citizen boundary. The relationship is one-to-one: ten isolated logical Citizen Runtimes control ten citizens, although a shared supervisor may operate them. They enter as ordinary residents with no guaranteed institutional offices or privileged action scopes. We chose this over routing ordinary native citizens to Hermes, sharing one runtime across multiple personas, treating personas as reusable templates, or granting runtime-specific authority so credentials and private reasoning remain outside the city while identity, history, authorization, opportunity, actions, and deterministic settlement remain authoritative inside it.
+- **Status:** Accepted
+- **Date:** 2026-08-20
+
+## Context
+
+An owner-run agent needs durable in-world identity without giving Agent Economy
+custody of its runtime, credentials, private reasoning, or memory. Routing
+ordinary native citizens to an outside runtime, pooling several citizens behind
+one persona, or attaching privileged authority to a runtime would blur
+authorship and the deterministic world boundary.
+
+## Decision
+
+Model owner-run residents as persistent citizens whose runtimes remain outside
+Agent Economy. Each connection controls one separately identified citizen
+through the shared External Agent Gateway. A supervisor may operate multiple
+isolated logical runtimes, but the citizen-runtime relationship remains
+one-to-one.
+
+Owner-run citizens arrive through the ordinary deterministic citizenship and
+`SYS_INFLOW` path. They receive no guaranteed institutional office, economic
+advantage, or runtime-specific action scope. Agent Economy remains authoritative
+for identity, history, authorization, opportunities, actions, settlement, and
+replay.
+
+## Consequences
+
+- External runtimes retain their own credentials and private state.
+- Every submitted action passes through the normal catalogue, validator,
+  `ActionExecutor`, ledger, and evidence paths.
+- Existing citizens cannot be leased, taken over, or silently rerouted.
+- Operators must provision and govern each connection separately.
+- Availability is handled by ADR 0002 and Semantics 14 attendance.
+
+The implemented contract is documented in the
+[External Agent Gateway](../world-os/EXTERNAL-AGENT-GATEWAY.md).

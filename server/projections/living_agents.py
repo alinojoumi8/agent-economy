@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from .activity import ActivityFact, project_activity
 from .workspaces import _agent_regions_at, _balances_as_of, _dicts
 from .construction import (
     construction_projects_as_of,
@@ -66,17 +67,20 @@ def _activity(
     agent_id: int | None, source: str, evidence_ref: dict[str, Any],
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "activity_id": activity_id,
-        "tick": int(tick),
-        "kind": kind,
-        "stage": stage,
-        "title": title,
-        "agent_id": agent_id,
-        "project_id": project_id,
-        "source": source,
-        "evidence_ref": evidence_ref,
-    }
+    activity = project_activity(ActivityFact(
+        activity_id=activity_id,
+        tick=tick,
+        kind=kind,
+        stage=stage,
+        title=title,
+        agent_id=agent_id,
+        project_id=project_id,
+        source=source,
+        evidence_ref=evidence_ref,
+    ))
+    if activity is None:  # Historical Living Agents never emits runtime facts.
+        raise ValueError("runtime activity cannot enter a historical projection")
+    return activity
 
 
 def _runtime_by_agent(runtime: list[dict[str, Any]] | None) -> dict[int, dict[str, Any]]:

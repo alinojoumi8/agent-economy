@@ -692,6 +692,46 @@ receipt that contains credentials or private payloads is ineligible. The
 writes `execution_scope: local` under a rehearsal-only schema. It cannot satisfy
 any of the five native connector gates, regardless of `--connector`.
 
+## Hosted audit chain
+
+Hosted migration 003 chains new administrative/control-plane audit rows within
+each tenant. This is separate from the SQLite simulation event log.
+
+For every deployment candidate and after a hosted security incident:
+
+1. Open an authorized read-only PostgreSQL transaction under the exact tenant
+   scope being verified.
+2. Select only that tenant's audit rows, including `tenant_id`,
+   `tenant_sequence`, `previous_entry_hash`, `entry_hash`,
+   `actor_user_id`, `action`, `target_type`, `target_id`,
+   `request_id`, `details_json`, and `created_at`.
+3. Put legacy rows with all three chain fields null before the chained rows;
+   order chained rows by ascending `tenant_sequence`.
+4. Pass the rows to `hosted.audit_chain.verify_audit_chain(rows,
+   tenant_id=...)`.
+5. Require `valid` to be true. Record the legacy count as an explicit
+   pre-migration limitation.
+6. Retain the newest `tenant_sequence` and `entry_hash` in a protected
+   location separate from PostgreSQL, with deployment/backup identity and
+   capture time.
+
+Treat a sequence gap, cross-tenant row, malformed hash, previous-hash mismatch,
+content-hash mismatch, or partially chained row as an incident. Stop sensitive
+administrative changes, preserve the database and separately retained head,
+identify the first failing sequence, and investigate catalog/database access
+before restoring service. Do not rewrite rows to make verification pass.
+
+The chain detects mutation, middle deletion, reordering, or tenant mixing in
+the supplied records. Detecting tail truncation requires comparison with the
+separately retained head. Because the chain is not externally anchored, it is
+tamper-evident rather than non-repudiation; a privileged operator able to
+replace both database and retained heads can construct another consistent
+history.
+
+There is no public audit-chain verification endpoint. Keep raw tenant audit rows
+within the authorized operations boundary and publish only a sanitized
+verification receipt when evidence must be shared.
+
 ## Evidence retention
 
 For a release candidate, retain:
@@ -702,6 +742,11 @@ For a release candidate, retain:
 4. the experiment JSON/Markdown/HTML artifacts;
 5. the reviewed phenomena YAML and shock traces;
 6. the exact Git commit, resolved profile, and provider preflight result.
+
+For a hosted candidate, also retain the sanitized audit-chain verification,
+separate chain head, snapshot verification/restore receipts, and bounded
+multi-tenant isolation/load receipt. Apply the configured audit and run-data
+retention policy; do not publish raw tenant identities or details.
 
 Never call a provider pause, partial report, failed replay, or incomplete
 evidence package a successful acceptance.

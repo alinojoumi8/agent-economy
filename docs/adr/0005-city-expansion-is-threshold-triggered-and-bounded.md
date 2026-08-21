@@ -1,3 +1,32 @@
-# City expansion is threshold-triggered and bounded
+# ADR 0005: City expansion is threshold-triggered and bounded
 
-The Civic Builder will optimize for a City Health Envelope rather than maximum population. It will monitor recorded population, employment, housing, service-queue, civic-capacity, fiscal-resource, and runtime-health signals and may execute an Expansion Plan automatically only after configured thresholds remain breached for a persistence window. Plans must restore or preserve the health envelope, fit pre-approved affordability and infrastructure limits, observe cooldowns, and emit auditable completion evidence. In-world capacity changes may execute directly; provisioning additional external Citizen Runtimes, increasing real inference spend, or deploying Code Proposals still requires human approval before the resulting resources can be admitted through world actions.
+- **Status:** Proposed
+- **Date:** 2026-08-20
+
+## Context
+
+Unbounded growth or one-tick reactions could destabilize housing, services,
+fiscal capacity, and inference spend. A future Builder needs measurable
+conditions and limits rather than a general instruction to maximize population.
+
+## Decision
+
+Optimize for a versioned City Health Envelope. Monitor recorded population,
+employment, housing, service queues, civic capacity, fiscal resources, and
+runtime health. Permit an Expansion Plan only after configured thresholds
+remain breached for a persistence window.
+
+Plans must restore or preserve the envelope, fit pre-approved affordability and
+infrastructure limits, observe cooldowns, and emit auditable completion
+evidence. In-world capacity changes may execute only through validated actions.
+Provisioning external runtimes, increasing real inference spend, or deploying
+code still requires human approval.
+
+## Consequences
+
+- Expansion becomes measurable and reviewable rather than subjective.
+- Persistent thresholds and cooldowns trade responsiveness for stability.
+- Signals, thresholds, affordability rules, plan schema, action execution, and
+  receipts require future implementation.
+- Existing construction mechanics do not imply this autonomous expansion
+  controller.

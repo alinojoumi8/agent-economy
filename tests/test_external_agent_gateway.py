@@ -21,8 +21,15 @@ from world.loop import World
 from world.replay_verify import verify_replay
 
 
-def _world(tmp_path: Path, **gateway_overrides) -> World:
+def _world(
+    tmp_path: Path,
+    *,
+    engine_semantics_version: int | None = None,
+    **gateway_overrides,
+) -> World:
     config = load_config("runs/world-os-external.yaml")
+    if engine_semantics_version is not None:
+        config["engine_semantics_version"] = int(engine_semantics_version)
     config["population"]["size"] = 4
     config["firms"]["count"] = 2
     config["firms"]["listed"] = 1
@@ -51,6 +58,17 @@ def _connection(world: World, *, owner: str = "owner-a", tier: str = "actor"):
     if tier != "observer":
         world._spawn_due_arrivals(1)
     return created
+
+
+def _attendance(world: World, connection_id: str, target_tick: int) -> dict:
+    row = world.store.query_one(
+        "SELECT attendance_status,operational_reason,decision_source,"
+        "decision_policy,turn_id,submission_id FROM external_turn_attendance "
+        "WHERE connection_id=? AND target_tick=?",
+        (str(connection_id), int(target_tick)),
+    )
+    assert row is not None
+    return dict(row)
 
 
 def test_dedicated_actor_and_hash_only_personal_credential(world10: World):
@@ -229,6 +247,339 @@ def test_turn_idempotency_execution_stale_rejection_and_safe_fallback(world10: W
     assert controlled == {auth["actor_id"]}
     assert fallback[0]["purpose"] == "external_safe_policy"
     assert fallback[0]["envelope"]["actions"] == [{"type": "do_nothing"}]
+    assert world10.store.scalar(
+        "SELECT COUNT(*) FROM external_turn_attendance", default=0) == 0
+
+
+def test_semantics14_distinguishes_submitted_do_nothing_from_missing_attendance(
+    tmp_path,
+):
+    world = _world(tmp_path, engine_semantics_version=14)
+    try:
+        created = _connection(world)
+        service = world.runtime.external
+        auth = service.authenticate(
+            created["credential"]["token"], rate_limit=False)
+        turn = service.turn(auth)
+        queued = service.submit_action(auth, {
+            "target_tick": turn["target_tick"],
+            "action": {"type": "do_nothing"},
+            "observed_projection_hash": turn["projection_hash"],
+            "idempotency_key": "explicit-noop-attendance",
+        })
+
+        _controlled, decisions = service.decisions_for_tick(
+            turn["target_tick"])
+
+        assert decisions[0]["purpose"] == "external_agent"
+        assert decisions[0]["envelope"]["actions"] == [{"type": "do_nothing"}]
+        assert _attendance(
+            world, auth["id"], turn["target_tick"]) == {
+                "attendance_status": "submitted",
+                "operational_reason": "submitted",
+                "decision_source": "external_submission",
+                "decision_policy": "submitted_action_v1",
+                "turn_id": turn["turn_id"],
+                "submission_id": queued["submission_id"],
+            }
+        reconciled, diagnostic = world.economy.ledger.reconcile()
+        assert reconciled, diagnostic
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected_reason"),
+    [
+        ("offline", "offline"),
+        ("deadline", "deadline"),
+        ("dead_actor", "dead_actor"),
+        ("revoked", "revoked"),
+        ("no_submission", "no_submission"),
+    ],
+)
+def test_semantics14_records_every_missed_due_turn_with_operational_reason(
+    tmp_path,
+    condition,
+    expected_reason,
+):
+    world = _world(tmp_path, engine_semantics_version=14)
+    try:
+        created = _connection(world)
+        service = world.runtime.external
+        auth = service.authenticate(
+            created["credential"]["token"], rate_limit=False)
+        turn = service.turn(auth)
+        if condition == "offline":
+            world.store.execute(
+                "UPDATE external_agent_connections SET lease_expires_at=? "
+                "WHERE id=?",
+                ("2000-01-01T00:00:00+00:00", auth["id"]),
+            )
+            asyncio.run(service.collect_online_turns(turn["target_tick"]))
+        elif condition == "deadline":
+            world.store.execute(
+                "UPDATE external_agent_turns SET deadline_at=? WHERE id=?",
+                ("2000-01-01T00:00:00+00:00", turn["turn_id"]),
+            )
+            asyncio.run(service.collect_online_turns(turn["target_tick"]))
+        elif condition == "dead_actor":
+            world.store.update(
+                "agents", auth["actor_id"], alive=0, died_tick=1)
+        elif condition == "revoked":
+            service.revoke_credentials(
+                auth["id"], owner_id="owner-a", tenant_id="tenant-a")
+
+        controlled, decisions = service.decisions_for_tick(
+            turn["target_tick"])
+
+        assert controlled == {auth["actor_id"]}
+        assert decisions[0]["purpose"] == "external_safe_policy"
+        assert decisions[0]["envelope"]["actions"] == [
+            {"type": "do_nothing"}]
+        assert _attendance(
+            world, auth["id"], turn["target_tick"]) == {
+                "attendance_status": "missed",
+                "operational_reason": expected_reason,
+                "decision_source": "deterministic_fallback",
+                "decision_policy": "safe_do_nothing_v1",
+                "turn_id": turn["turn_id"],
+                "submission_id": None,
+            }
+        reconciled, diagnostic = world.economy.ledger.reconcile()
+        assert reconciled, diagnostic
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize("submitted", [True, False])
+def test_semantics14_submitted_and_missed_attendance_replay_exactly(
+    tmp_path,
+    submitted,
+):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _world(source_dir, engine_semantics_version=14)
+    replay = None
+    try:
+        created = _connection(source)
+        service = source.runtime.external
+        auth = service.authenticate(
+            created["credential"]["token"], rate_limit=False)
+        replay_path = tmp_path / "replay.db"
+        target_connection = sqlite3.connect(replay_path)
+        try:
+            source.store.conn.backup(target_connection)
+        finally:
+            target_connection.close()
+
+        turn = service.turn(auth)
+        if submitted:
+            service.submit_action(auth, {
+                "target_tick": turn["target_tick"],
+                "action": {"type": "do_nothing"},
+                "observed_projection_hash": turn["projection_hash"],
+                "idempotency_key": "attendance-replay-submitted",
+            })
+        _controlled, source_decisions = service.decisions_for_tick(
+            turn["target_tick"])
+        source.runtime.execute_decisions(
+            turn["target_tick"], source_decisions)
+        source.store.commit()
+
+        replay_store = Store(str(replay_path), create=False)
+        replay_config = deepcopy(source.config)
+        replay_config.update({
+            "replay_source_path": str(Path(source.store.path).resolve()),
+            "checkpoint_every": 0,
+        })
+        replay = World(replay_store, replay_config, replay=True)
+        _controlled, replay_decisions = (
+            replay.runtime.external.decisions_for_tick(turn["target_tick"]))
+        replay.runtime.execute_decisions(
+            turn["target_tick"], replay_decisions)
+        replay.store.commit()
+
+        source_attendance = [
+            dict(row) for row in source.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        replay_attendance = [
+            dict(row) for row in replay.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        assert replay_attendance == source_attendance
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+        assert source.economy.ledger.reconcile()[0]
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
+
+
+def test_semantics14_execution_rejection_replays_as_submitted_attendance(
+    tmp_path,
+):
+    source_dir = tmp_path / "source-rejected"
+    source_dir.mkdir()
+    source = _world(source_dir, engine_semantics_version=14)
+    replay = None
+    rejection = "deterministic test rejection"
+    try:
+        created = _connection(source)
+        service = source.runtime.external
+        auth = service.authenticate(
+            created["credential"]["token"], rate_limit=False)
+        replay_path = tmp_path / "replay-rejected.db"
+        target_connection = sqlite3.connect(replay_path)
+        try:
+            source.store.conn.backup(target_connection)
+        finally:
+            target_connection.close()
+
+        turn = service.turn(auth)
+        queued = service.submit_action(auth, {
+            "target_tick": turn["target_tick"],
+            "action": {"type": "do_nothing"},
+            "observed_projection_hash": turn["projection_hash"],
+            "idempotency_key": "attendance-replay-rejected",
+        })
+        source.runtime.executor.pre_action_hook = (
+            lambda _tick, _actor_id, _action, _phase: rejection)
+        _controlled, source_decisions = service.decisions_for_tick(
+            turn["target_tick"])
+        source.runtime.execute_decisions(
+            turn["target_tick"], source_decisions)
+        source.store.commit()
+        assert service.receipt(auth, queued["submission_id"])["status"] == "rejected"
+
+        replay_store = Store(str(replay_path), create=False)
+        replay_config = deepcopy(source.config)
+        replay_config.update({
+            "replay_source_path": str(Path(source.store.path).resolve()),
+            "checkpoint_every": 0,
+        })
+        replay = World(replay_store, replay_config, replay=True)
+        replay.runtime.executor.pre_action_hook = (
+            lambda _tick, _actor_id, _action, _phase: rejection)
+        controlled, replay_decisions = (
+            replay.runtime.external.decisions_for_tick(turn["target_tick"]))
+        assert controlled == {auth["actor_id"]}
+        assert replay_decisions[0]["purpose"] == "external_agent"
+        assert (
+            replay_decisions[0]["external_submission_id"]
+            == queued["submission_id"]
+        )
+        replay.runtime.execute_decisions(
+            turn["target_tick"], replay_decisions)
+        replay.store.commit()
+
+        source_attendance = [
+            dict(row) for row in source.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        replay_attendance = [
+            dict(row) for row in replay.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        assert replay_attendance == source_attendance
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+        assert source.economy.ledger.reconcile()[0]
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
+
+
+def test_semantics14_mixed_attendance_replay_covers_every_due_actor(
+    tmp_path,
+):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _world(source_dir, engine_semantics_version=14)
+    replay = None
+    try:
+        submitted = _connection(source, owner="owner-submitted")
+        missed = _connection(source, owner="owner-missed")
+        service = source.runtime.external
+        submitted_auth = service.authenticate(
+            submitted["credential"]["token"], rate_limit=False)
+        missed_auth = service.authenticate(
+            missed["credential"]["token"], rate_limit=False)
+
+        replay_path = tmp_path / "replay.db"
+        target_connection = sqlite3.connect(replay_path)
+        try:
+            source.store.conn.backup(target_connection)
+        finally:
+            target_connection.close()
+
+        submitted_turn = service.turn(submitted_auth)
+        missed_turn = service.turn(missed_auth)
+        assert submitted_turn["target_tick"] == missed_turn["target_tick"]
+        target_tick = submitted_turn["target_tick"]
+        service.submit_action(submitted_auth, {
+            "target_tick": target_tick,
+            "action": {"type": "do_nothing"},
+            "observed_projection_hash": submitted_turn["projection_hash"],
+            "idempotency_key": "mixed-attendance-submitted",
+        })
+
+        source_controlled, source_decisions = service.decisions_for_tick(
+            target_tick)
+        assert source_controlled == {
+            submitted_auth["actor_id"], missed_auth["actor_id"]}
+        assert {
+            decision["agent_id"]: decision["purpose"]
+            for decision in source_decisions
+        } == {
+            submitted_auth["actor_id"]: "external_agent",
+            missed_auth["actor_id"]: "external_safe_policy",
+        }
+        source.runtime.execute_decisions(target_tick, source_decisions)
+        source.store.commit()
+
+        replay_store = Store(str(replay_path), create=False)
+        replay_config = deepcopy(source.config)
+        replay_config.update({
+            "replay_source_path": str(Path(source.store.path).resolve()),
+            "checkpoint_every": 0,
+        })
+        replay = World(replay_store, replay_config, replay=True)
+        replay_controlled, replay_decisions = (
+            replay.runtime.external.decisions_for_tick(target_tick))
+
+        assert replay_controlled == source_controlled
+        assert {
+            decision["agent_id"]: decision["purpose"]
+            for decision in replay_decisions
+        } == {
+            submitted_auth["actor_id"]: "external_agent",
+            missed_auth["actor_id"]: "external_safe_policy",
+        }
+        missed_replay = next(
+            decision for decision in replay_decisions
+            if decision["agent_id"] == missed_auth["actor_id"])
+        assert missed_replay["envelope"]["actions"] == [
+            {"type": "do_nothing"}]
+        replay.runtime.execute_decisions(target_tick, replay_decisions)
+        replay.store.commit()
+
+        source_attendance = [
+            dict(row) for row in source.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        replay_attendance = [
+            dict(row) for row in replay.store.query(
+                "SELECT * FROM external_turn_attendance ORDER BY id")]
+        assert replay_attendance == source_attendance
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+        assert source.economy.ledger.reconcile()[0]
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
 
 
 def test_turn_expires_superseded_open_turn_before_creating_next_turn(world10: World):

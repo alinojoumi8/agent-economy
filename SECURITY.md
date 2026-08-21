@@ -18,7 +18,8 @@ R22 adds a separately enabled hosted service. Its security boundary is:
   discovery granted only to the supervisor role;
 - secure same-site `__Host-ae_session` cookies, CSRF checks on mutations,
   authentication throttling, cross-tenant 404 responses, redacted audit events,
-  and restrictive HTTP security headers;
+  tenant-local chained audit rows after migration 003, and restrictive HTTP
+  security headers;
 - one schema-v11 SQLite world per run, one active writer lease per run, and
   immutable checksummed local/S3-compatible snapshots;
 - a non-root read-only application container behind Caddy TLS, with PostgreSQL,
@@ -67,6 +68,29 @@ provider data. HTTPS is mandatory. `--allow-insecure-loopback` may be used only
 for local HTTPS smoke with a development certificate; never use it against a
 remote host or as a reason to expose the local unauthenticated server.
 
+## Audit and proposal boundaries
+
+The hosted audit chain is tamper-evident within each tenant. Verification checks
+sequence continuity, prior-hash linkage, canonical content hashes, and tenant
+isolation. Rows created before migration 003 remain unchained legacy records.
+The chain does not by itself detect tail truncation, so operators must retain
+the latest sequence/hash separately. It is not externally anchored and does not
+provide non-repudiation against an administrator who can replace both the
+database and every retained head. Follow the
+[operator verification procedure](docs/operator-runbook.md#hosted-audit-chain).
+
+The proposal-only Builder sink accepts only `proposal.create`, allowlisted
+paths, and fixed validation evidence, then writes an immutable tenant-scoped
+artifact. It has no Git, merge, deployment, network, credential, engine,
+ledger, replay, or `ActionExecutor` authority. A proposal receipt is not
+approval and must never be treated as executable content. The repository does
+not currently expose a Civic Builder runtime or mandate facade.
+
+Proposal bundles remain untrusted review inputs. Inspect patches without
+executing embedded instructions, run validation in an isolated human-controlled
+environment, protect tenant identifiers and rationale/evidence, and apply the
+ordinary code-review and release process before any later implementation.
+
 ## Secrets and sensitive artifacts
 
 - Put provider credentials only in the ignored `.env` file or process
@@ -88,6 +112,7 @@ reproduction steps, affected commit/profile, impact, and a suggested mitigation.
 Do not publish credentials or sensitive run contents in a public issue.
 
 For hosted incidents, revoke the affected session/invitation records, preserve
-the redacted audit trail and immutable snapshots, rotate relevant credentials,
-and verify tenant scope before restoring service. Never copy a tenant's world
-database, prompt corpus, or audit evidence into a public issue.
+the redacted audit trail, separately retained audit-chain head, and immutable
+snapshots; verify the affected tenant chain; rotate relevant credentials; and
+verify tenant scope before restoring service. Never copy a tenant's world
+database, prompt corpus, proposal bundle, or audit evidence into a public issue.

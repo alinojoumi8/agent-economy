@@ -2790,12 +2790,19 @@ def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
     world = _world(tmp_path, "served-tick-bound.db")
 
     with TestClient(create_app(world, served_ticks=3)) as client:
+        def wait_until_idle_at(expected_tick: int) -> dict:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                status = client.get("/api/run/status").json()
+                if status["tick"] == expected_tick and not status["running"]:
+                    return status
+                time.sleep(0.01)
+            pytest.fail(
+                f"run did not become idle at tick {expected_tick}: {status}")
+
         started = client.post("/api/run/start?max_ticks=1")
         assert started.status_code == 200
-        for _ in range(100):
-            status = client.get("/api/run/status").json()
-            if not status["running"]:
-                break
+        status = wait_until_idle_at(1)
         assert status["tick"] == 1
         assert status["semantics_version"] == world.engine_semantics_version
         assert status["target_tick"] == 3
@@ -2806,10 +2813,7 @@ def test_served_tick_bound_applies_to_dashboard_run_action(tmp_path):
 
         started = client.post("/api/run/start?max_ticks=99")
         assert started.status_code == 200
-        for _ in range(100):
-            status = client.get("/api/run/status").json()
-            if not status["running"]:
-                break
+        status = wait_until_idle_at(3)
         assert status["tick"] == 3
         assert status["status"] == "paused"
         assert status["remaining_ticks"] == 0

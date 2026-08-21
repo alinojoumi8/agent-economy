@@ -1,3 +1,39 @@
-# Builder code scope is allowlisted
+# ADR 0007: Builder code scope is allowlisted
 
-The Civic Builder may author Code Proposals only within an isolated Builder Workspace covering persona and cohort generation, city-expansion commands and policies, configuration, projections, focused tests, documentation, and migration proposals required by those features. The initial allowlist excludes the ledger, checkpoint and replay kernel, authentication and authorization, credential or secret handling, and deployment infrastructure. For each proposal, the builder may create a complete local candidate commit from a pinned base in a disposable worktree and package its patch hash, rationale, affected invariants, tests, and replay evidence as an immutable Proposal Bundle. It cannot push, merge, or deploy. Broader changes require a separately approved human-led task, limiting blast radius while preserving useful builder autonomy.
+- **Status:** Accepted
+- **Date:** 2026-08-20
+
+## Context
+
+Accepting arbitrary patches, commands, or validation output from an agent would
+expose the ledger, replay kernel, authentication, secrets, and deployment
+surfaces. The repository needs a useful proposal artifact without granting code
+application or infrastructure authority.
+
+## Decision
+
+Accept exactly one non-authoritative operation: `proposal.create`. Validate
+declared and patch-embedded paths against the versioned
+`civic-builder-proposal-v1` allowlist. Permit only persona/cohort generation,
+city-expansion policy and commands, configuration, projections, focused tests,
+documentation, and necessary migration proposals. Exclude the ledger,
+checkpoint/replay kernel, authentication/authorization, credential handling,
+and deployment infrastructure.
+
+Build an immutable deterministic proposal ZIP containing the patch, rationale,
+affected invariants, allowlisted check evidence, replay evidence, and policy.
+Store it under a tenant-scoped key and verify the stored bytes before returning
+a receipt. The sink cannot apply, push, merge, deploy, or invoke arbitrary
+commands.
+
+## Consequences
+
+- A proposal is reviewable and content-addressed without becoming authority.
+- Fixed check identifiers and output digests avoid storing arbitrary commands
+  or raw potentially sensitive output.
+- Broader changes require a separately approved human-led task.
+- The implemented sink is a narrow storage seam; authenticated Builder facade,
+  mandate, sandbox execution, independent review, and release integration
+  remain unimplemented.
+
+See [Buzz-derived architecture boundaries](../buzz-derived-architecture.md#proposal-only-civic-builder-support).

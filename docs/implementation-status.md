@@ -1,8 +1,8 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Current assessment date:** 2026-08-15
+> **Current assessment date:** 2026-08-20
 >
-> **Maintained maximum contract for new runs:** schema 19 / semantics 13
+> **Maintained maximum contract for new runs:** schema 20 / semantics 14
 >
 > **Status authority:** this file is the single maintained release-status
 > ledger. Root and World OS specifications define behavior and intended
@@ -11,7 +11,7 @@
 > “released,” “shipped,” or “provider-ready.”
 >
 > **Compatibility boundary:** stored historical runs retain their recorded
-> schema and semantics. Supporting schema 19 / semantics 13 for new runs does
+> schema and semantics. Supporting schema 20 / semantics 14 for new runs does
 > not rewrite or upgrade historical evidence.
 
 ## Status terminology
@@ -33,14 +33,30 @@
 | Semantics 9 / schema 13 | External Agent Gateway, scoped identity, REST/MCP, receipts, and replay implemented | **Rollout-gated** | Independent MCP conformance plus real Hermes, OpenClaw, Python, and TypeScript connector receipts are pending. |
 | Semantics 10 / schema 14 | Agent Commons, deterministic feeds, explicit-read exposure, moderation, and replay implemented | **Rollout-gated** | A fork-based synthetic post/feed/explicit-read acceptance receipt is automated; the frozen multi-arm experiment, hosted UI evidence, and hosted operational gate remain pending. |
 | Semantics 11 / schema 15 | Compute plans, sponsorship, provider pools, operational attempt evidence, and learnable skills implemented and locally verified | Implemented opt-in contract; no separate public-hosting claim | Public use inherits the Semantics 9–10 hosted rollout gates. |
-| Semantics 12 / schema 17 | Civic places, presence, queues, appointments, permits, attention, privacy, gateway, and replay contracts implemented and locally verified | Implemented opt-in contract; current maintained maximum | Public use inherits the Semantics 9–10 hosted rollout gates. |
+| Semantics 12 / schema 17 | Civic places, presence, queues, appointments, permits, attention, privacy, gateway, and replay contracts implemented and locally verified | Implemented opt-in contract; retained compatibility | Public use inherits the Semantics 9–10 hosted rollout gates. |
 | Schema 18 | Additive newsroom redaction provenance; no new engine semantics | Implemented compatibility migration | Does not change historical mechanics. |
-| Semantics 13 / schema 19 | Agent-owned homes, firm workplaces, public facilities, permits, escrow funding, paid work, refunds, exact stages, single-place completion, projections, privacy, and replay implemented and locally verified | Implemented opt-in contract; current maintained maximum | Public/live use inherits the Semantics 9–10 hosted and provider-readiness gates. |
+| Semantics 13 / schema 19 | Agent-owned homes, firm workplaces, public facilities, permits, escrow funding, paid work, refunds, exact stages, single-place completion, projections, privacy, and replay implemented and locally verified | Implemented opt-in contract; retained compatibility | Public/live use inherits the Semantics 9–10 hosted and provider-readiness gates. |
+| Semantics 14 / schema 20 | Explicit submitted/missed external-turn attendance, separate operational reasons and applied decision policy, deterministic fallback, and exact attendance replay implemented and locally verified | Implemented opt-in contract; current maintained maximum | Existing profiles and stored Semantics 1–13 sources remain on their recorded behavior. |
+
+Adjacent implemented boundaries that do not create another engine semantics
+version:
+
+- one read-only semantic activity projection serves Living Agents and observer
+  events; historical views exclude current runtime telemetry;
+- the proposal-only Builder sink creates verified immutable allowlisted bundles
+  but exposes no Civic Builder runtime, mandate, apply, merge, or deploy
+  authority;
+- hosted migration 003 chains new tenant-local administrative audit rows;
+  pre-migration rows remain legacy, tail detection requires a separately
+  retained head, and public deployment remains unclaimed.
+
+See [Buzz-derived architecture boundaries](buzz-derived-architecture.md) for
+the exact authority, privacy, replay, and verification limits.
 
 ## Current executive verdict
 
 The PRD-v1 P0/P1 surfaces and R18–R22 extensions are implemented. The current
-runtime also contains the Semantics 8–13 code summarized above. There is no
+runtime also contains the Semantics 8–14 code summarized above. There is no
 additional functional PRD-v1 feature gap.
 
 What remains is release and product evidence rather than another core economic
