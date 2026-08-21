@@ -1,0 +1,14 @@
+# Same-seed diagnostic arm with the exact maintained supply-recovery-v1 policy.
+extends: scale-270-baseline-120.yaml
+
+supply_recovery:
+  enabled: true
+  policy_version: supply-recovery-v1
+  activation_tick: 0
+  wage_floor_cents: 15000
+  gross_margin_coverage_bps: 12500
+  cash_payroll_coverage_periods: 2
+  max_hires_per_firm_per_period: 1
+  max_headcount_per_firm: 7
+  demand_buffer_ticks: 5
+  sales_observation_ticks: 30

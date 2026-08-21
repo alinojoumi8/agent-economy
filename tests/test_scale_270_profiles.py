@@ -23,6 +23,9 @@ MINIMAX = ROOT / "runs" / "scale-270-minimax-live.yaml"
 DEEPSEEK = ROOT / "runs" / "scale-270-deepseek-live.yaml"
 SCALE_170_MINIMAX = ROOT / "runs" / "scale-170-minimax-live.yaml"
 SCALE_170_DEEPSEEK = ROOT / "runs" / "scale-170-deepseek-live.yaml"
+BASELINE_120 = ROOT / "runs" / "acceptance" / "scale-270-baseline-120.yaml"
+RECOVERY_120 = ROOT / "runs" / "acceptance" / "scale-270-recovery-120.yaml"
+RECOVERY_1000 = ROOT / "runs" / "acceptance" / "scale-270-recovery-1000.yaml"
 SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 EXPECTED_LIVE_PURPOSES = (
     "central_banker",
@@ -68,6 +71,33 @@ LIVE_CASES = (
         0.20,
     ),
 )
+SCALE_HEALTH_120 = {
+    "schema_version": 1,
+    "required_ticks": 120,
+    "warmup_ticks": 60,
+    "trailing_window_ticks": 60,
+    "max_buy_goods_rejection_rate": 0.05,
+    "max_unemployment_rebound": 0.10,
+    "max_pending_applications": 20,
+    "max_pending_job_offers": 20,
+    "max_open_jobs": 20,
+    "max_peak_rss_mb": 2048,
+    "min_available_memory_gb": 8,
+    "max_database_growth_bytes_per_tick": 8_388_608,
+    "max_checkpoint_p95_seconds": 5.0,
+}
+SUPPLY_RECOVERY_V1 = {
+    "enabled": True,
+    "policy_version": "supply-recovery-v1",
+    "activation_tick": 0,
+    "wage_floor_cents": 15_000,
+    "gross_margin_coverage_bps": 12_500,
+    "cash_payroll_coverage_periods": 2,
+    "max_hires_per_firm_per_period": 1,
+    "max_headcount_per_firm": 7,
+    "demand_buffer_ticks": 5,
+    "sales_observation_ticks": 30,
+}
 
 
 def _region_counts(store) -> dict[str, int]:
@@ -244,6 +274,56 @@ def test_scale_270_rehearsal_is_exact():
     assert config["llm"]["routes"] == {}
     assert config["llm"].get("providers", {}) == {}
     assert config["llm"].get("pricing", {}) == {}
+
+
+def test_scale_270_diagnostic_profiles_are_exact_and_differ_only_by_recovery():
+    baseline = load_config(BASELINE_120)
+    recovery = load_config(RECOVERY_120)
+
+    assert baseline["acceptance"]["min_ticks"] == 120
+    assert baseline["acceptance"]["scale_economic_health"] == SCALE_HEALTH_120
+    assert baseline["supply_recovery"] == {"enabled": False}
+    assert recovery["supply_recovery"] == SUPPLY_RECOVERY_V1
+    assert {
+        key: value for key, value in baseline.items()
+        if key != "supply_recovery"
+    } == {
+        key: value for key, value in recovery.items()
+        if key != "supply_recovery"
+    }
+    for config in (baseline, recovery):
+        report = validate_llm_config(config, raise_on_error=False)
+        assert report["ready"], report["errors"]
+        assert report["routed_providers"] == ["scripted"]
+        assert config["population"]["size"] == 270
+        assert config["living_world"]["core_agents"] == 100
+        assert config["budget"]["conversation_pairs"] == 25
+        assert config["checkpoint_every"] == 7
+        assert config["checkpoint_keep_last"] == 4
+
+
+def test_scale_270_formal_profile_changes_only_horizon_and_checkpoint_retention():
+    diagnostic = load_config(RECOVERY_120)
+    formal = load_config(RECOVERY_1000)
+
+    assert formal["acceptance"]["min_ticks"] == 1000
+    assert formal["acceptance"]["scale_economic_health"] == {
+        **SCALE_HEALTH_120,
+        "required_ticks": 1000,
+    }
+    assert formal["checkpoint_every"] == 100
+    assert formal["checkpoint_keep_last"] == 2
+    assert formal["supply_recovery"] == SUPPLY_RECOVERY_V1
+
+    normalized = json.loads(json.dumps(formal))
+    normalized["acceptance"]["min_ticks"] = 120
+    normalized["acceptance"]["scale_economic_health"]["required_ticks"] = 120
+    normalized["checkpoint_every"] = 7
+    normalized["checkpoint_keep_last"] = 4
+    assert normalized == diagnostic
+    report = validate_llm_config(formal, raise_on_error=False)
+    assert report["ready"], report["errors"]
+    assert report["routed_providers"] == ["scripted"]
 
 
 def test_scale_270_rehearsal_builds_exact_population(tmp_path):

@@ -168,6 +168,79 @@ When the bundle changed intentionally, review and commit every generated file.
 6. Add success, rejection, replay, and reconciliation tests.
 7. Update metrics/API/dashboard/docs if the behavior is observable.
 
+## Scale-270 economic acceptance
+
+The maintained scale lane evaluates 270 sampled citizens, which Genesis expands
+to 308 persisted agents after institutional staff and health-economy founders.
+Run the provider-free diagnostic arms in separate ignored directories:
+
+```bash
+python scripts/run_scale_validation.py \
+  --profile runs/acceptance/scale-270-baseline-120.yaml \
+  --ticks 120 --label baseline-120 \
+  --output-dir reports/out/scale-270/baseline/output \
+  --data-dir reports/out/scale-270/baseline/runs
+
+python scripts/run_scale_validation.py \
+  --profile runs/acceptance/scale-270-recovery-120.yaml \
+  --ticks 120 --label recovery-120 \
+  --output-dir reports/out/scale-270/recovery/output \
+  --data-dir reports/out/scale-270/recovery/runs
+```
+
+The harness prints the exact source database, replay database, and runtime
+receipt identities. Evaluate each finalized pair without opening a writer,
+replacing the three `<...>` values with those printed artifact paths:
+
+```bash
+python -m reports.scale_economic_health \
+  --source <source-db> \
+  --replay <replay-db> \
+  --runtime-receipt <runtime-receipt> \
+  --output benchmarks/receipts/scale-270/<arm>-economic-health
+```
+
+Exit `0` is a pass. Exit `10` is reserved for an economic-only failure in a
+120-tick diagnostic arm after every operational, integrity, checkpoint, and
+replay gate passed. Exit `5` is an operational, artifact, replay, unexpected,
+or formal-horizon failure; exit `2` is command misuse. The formal provider-free
+gate uses the same commands with this profile and horizon:
+
+```bash
+python scripts/run_scale_validation.py \
+  --profile runs/acceptance/scale-270-recovery-1000.yaml \
+  --ticks 1000 --label recovery-1000 \
+  --output-dir reports/out/scale-270/formal/output \
+  --data-dir reports/out/scale-270/formal/runs
+```
+
+Provider-free profiles reject `--approve-live-inference`; do not add that flag
+to any command above. Paid profiles require the flag and are limited to their
+maintained two-tick canaries. For example:
+
+```bash
+python scripts/run_scale_validation.py \
+  --profile runs/scale-270-minimax-live.yaml \
+  --ticks 2 --label minimax-two-tick \
+  --output-dir reports/out/scale-270/minimax/output \
+  --data-dir reports/out/scale-270/minimax/runs \
+  --approve-live-inference
+
+python scripts/run_scale_validation.py \
+  --profile runs/scale-270-deepseek-live.yaml \
+  --ticks 2 --label deepseek-two-tick \
+  --output-dir reports/out/scale-270/deepseek/output \
+  --data-dir reports/out/scale-270/deepseek/runs \
+  --approve-live-inference
+```
+
+`reports/out/scale-270/` is ignored raw runtime storage. SQLite databases and
+checkpoint bodies stay local there and are never committed. Only reviewed,
+sanitized JSON/Markdown evidence belongs under
+`benchmarks/receipts/scale-270/`; never copy credentials, private provider
+bodies, reasoning, cookies, environment dumps, or database bytes into a public
+receipt.
+
 ## Schema and compatibility
 
 Run databases are scientific artifacts. Additive columns/tables are preferred.

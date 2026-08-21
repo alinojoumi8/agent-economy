@@ -330,6 +330,31 @@ def test_setup_docs_contain_supported_python_guard_and_uv_prerequisite():
     assert "uv --version" in development
 
 
+def test_scale_270_acceptance_commands_and_artifact_boundaries_are_documented():
+    development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
+    lowered = development.lower()
+
+    for profile in (
+        "runs/acceptance/scale-270-baseline-120.yaml",
+        "runs/acceptance/scale-270-recovery-120.yaml",
+        "runs/acceptance/scale-270-recovery-1000.yaml",
+    ):
+        assert profile in development
+        assert (ROOT / profile).is_file()
+    for command_fragment in (
+        "python scripts/run_scale_validation.py",
+        "python -m reports.scale_economic_health",
+        "--approve-live-inference",
+        "reports/out/scale-270/",
+        "benchmarks/receipts/scale-270/",
+    ):
+        assert command_fragment in development
+    assert "provider-free profiles reject" in lowered
+    assert "paid profiles require" in lowered
+    assert "sqlite databases" in lowered
+    assert "checkpoint bodies stay local" in lowered
+
+
 def _parse_test_case_catalog(text: str) -> dict[str, dict[str, str]]:
     matches = list(ENTRY_HEADING.finditer(text))
     entries: dict[str, dict[str, str]] = {}
