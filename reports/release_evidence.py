@@ -29,6 +29,8 @@ MANIFEST_SCHEMA = "agent-economy-release-manifest-v1"
 RECEIPT_SCHEMA = "agent-economy-release-gate-v1"
 EXECUTION_SCOPES = {"local", "live_provider", "independent_external"}
 STATUSES = {"passed", "failed", "blocked", "not_run"}
+DEFAULT_PROFILE = "production-v1"
+REPRODUCIBILITY_PROFILE = "reproducibility-v1"
 REQUIRED_GATES = {
     "independent_mcp",
     "hermes_connector",
@@ -47,6 +49,22 @@ REQUIRED_GATES = {
     "tenant_isolation_load",
     "deployment_receipt",
 }
+REPRODUCIBILITY_GATES = frozenset({
+    "dashboard_build",
+    "dashboard_regression",
+    "dashboard_typecheck",
+    "documentation_contract",
+    "local_secret_scan",
+    "pinned_dataset_verification",
+    "python_core_regression",
+    "recorded_replay",
+    "scale_profile_contract",
+})
+PROFILE_REQUIRED_GATES = {
+    DEFAULT_PROFILE: frozenset(REQUIRED_GATES),
+    REPRODUCIBILITY_PROFILE: REPRODUCIBILITY_GATES,
+}
+LOCAL_ONLY_PROFILES = frozenset({REPRODUCIBILITY_PROFILE})
 EXTERNAL_CONNECTOR_GATES = {
     "independent_mcp",
     "hermes_connector",
@@ -395,6 +413,7 @@ def _validate_receipt(
     repo_root: Path,
     gate_id: str,
     candidate: dict[str, str],
+    profile: str,
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     errors: list[dict[str, str]] = []
     fallback = {
@@ -430,6 +449,8 @@ def _validate_receipt(
         errors.append(_error(gate_id, "invalid_execution_scope", "execution scope is invalid"))
     elif gate_id in EXTERNAL_CONNECTOR_GATES and scope != "independent_external":
         errors.append(_error(gate_id, "ineligible_scope", "external connector evidence must be independent"))
+    elif profile in LOCAL_ONLY_PROFILES and scope != "local":
+        errors.append(_error(gate_id, "ineligible_scope", "local reproducibility evidence must be local"))
     status = receipt.get("status")
     if status not in STATUSES:
         errors.append(_error(gate_id, "invalid_receipt_status", "receipt status is invalid"))
@@ -486,6 +507,11 @@ def collect_release_evidence(
     root = Path(repo_root).resolve()
     manifest = load_release_manifest(manifest_path)
     errors: list[dict[str, str]] = []
+    profile = manifest.get("profile", DEFAULT_PROFILE)
+    if not isinstance(profile, str) or profile not in PROFILE_REQUIRED_GATES:
+        errors.append(_error("_manifest", "unknown_profile", "manifest profile is unsupported"))
+        profile = DEFAULT_PROFILE
+    required_gates = PROFILE_REQUIRED_GATES[profile]
     candidate = manifest.get("candidate")
     if not _valid_candidate(candidate):
         errors.append(_error("_manifest", "invalid_candidate", "manifest candidate is invalid"))
@@ -513,13 +539,17 @@ def collect_release_evidence(
         if gate_id in by_id:
             errors.append(_error(gate_id, "duplicate_gate", "manifest gate ID is duplicated"))
             continue
-        if gate_id not in REQUIRED_GATES:
-            errors.append(_error(gate_id, "unknown_gate", "manifest gate ID is not required"))
+        if gate_id not in required_gates:
+            errors.append(_error(
+                gate_id,
+                "unknown_gate",
+                "manifest gate ID is not required for this profile",
+            ))
             continue
         by_id[gate_id] = row
 
     gates: list[dict[str, Any]] = []
-    for gate_id in sorted(REQUIRED_GATES):
+    for gate_id in sorted(required_gates):
         row = by_id.get(gate_id)
         if row is None:
             errors.append(_error(gate_id, "missing_gate", "required gate is absent"))
@@ -590,7 +620,11 @@ def collect_release_evidence(
             errors.append(_error(gate_id, "invalid_receipt", "receipt JSON cannot be loaded"))
             receipt = None
         gate, receipt_errors = _validate_receipt(
-            receipt, repo_root=root, gate_id=gate_id, candidate=candidate
+            receipt,
+            repo_root=root,
+            gate_id=gate_id,
+            candidate=candidate,
+            profile=profile,
         )
         gate["receipt"] = row.get("receipt", "")
         gate["receipt_sha256"] = actual_hash
@@ -603,6 +637,7 @@ def collect_release_evidence(
     gates.sort(key=lambda item: item["gate_id"])
     return {
         "schema": MANIFEST_SCHEMA,
+        "profile": profile,
         "generated_at": generated_at,
         "candidate": candidate,
         "overall_status": "passed" if not errors else "failed",
@@ -629,6 +664,7 @@ def render_release_markdown(result: dict[str, Any]) -> str:
         "# Agent Economy release evidence",
         "",
         f"- Overall status: `{result.get('overall_status', 'failed')}`",
+        f"- Profile: `{result.get('profile', DEFAULT_PROFILE)}`",
         f"- Candidate commit: `{candidate.get('commit', '')}`",
         f"- Candidate tree: `{candidate.get('tree', '')}`",
         f"- Generated at: `{result.get('generated_at', '')}`",

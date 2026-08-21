@@ -19,6 +19,10 @@ from benchmarks.external_connector_acceptance import (
 )
 
 from reports.release_evidence import (
+    DEFAULT_PROFILE,
+    PROFILE_REQUIRED_GATES,
+    REPRODUCIBILITY_GATES,
+    REPRODUCIBILITY_PROFILE,
     REQUIRED_GATES,
     canonical_release_json,
     collect_release_evidence,
@@ -142,6 +146,8 @@ def release_fixture(
     *,
     omit: set[str] | None = None,
     status: str = "passed",
+    gate_ids: frozenset[str] | None = None,
+    profile: str | None = None,
 ) -> tuple[Path, Path]:
     repo = root / "repo"
     receipts = repo / "receipts"
@@ -149,8 +155,9 @@ def release_fixture(
     receipts.mkdir(parents=True)
     artifacts.mkdir()
     omitted = omit or set()
+    required_gate_ids = gate_ids if gate_ids is not None else V1_REQUIRED_GATES
     gates = []
-    for gate_id in sorted(V1_REQUIRED_GATES):
+    for gate_id in sorted(required_gate_ids):
         if gate_id in omitted:
             continue
         if gate_id in EXTERNAL_GATE_CONNECTORS:
@@ -232,6 +239,8 @@ def release_fixture(
         "candidate": {"commit": COMMIT, "tree": TREE},
         "gates": gates,
     }
+    if profile is not None:
+        manifest["profile"] = profile
     manifest_path = repo / "manifest.yaml"
     manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
     return repo, manifest_path
@@ -243,6 +252,7 @@ def test_complete_manifest_passes_only_for_exact_candidate(tmp_path):
     result = collect_release_evidence(manifest, repo_root=repo)
 
     assert result["overall_status"] == "passed"
+    assert result["profile"] == DEFAULT_PROFILE
     assert result["candidate"] == {"commit": COMMIT, "tree": TREE}
     assert len(result["gates"]) == len(V1_REQUIRED_GATES)
     assert result["errors"] == []
@@ -339,6 +349,83 @@ def test_published_gate_omits_unbounded_receipt_narrative(tmp_path):
 
 def test_production_required_gates_match_independent_v1_contract():
     assert REQUIRED_GATES == V1_REQUIRED_GATES
+    assert PROFILE_REQUIRED_GATES[DEFAULT_PROFILE] == V1_REQUIRED_GATES
+
+
+def test_reproducibility_profile_is_fixed_and_local_only(tmp_path):
+    repo, manifest = release_fixture(
+        tmp_path,
+        gate_ids=REPRODUCIBILITY_GATES,
+        profile=REPRODUCIBILITY_PROFILE,
+    )
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "passed"
+    assert result["profile"] == REPRODUCIBILITY_PROFILE
+    assert {gate["gate_id"] for gate in result["gates"]} == set(
+        REPRODUCIBILITY_GATES
+    )
+    assert {gate["execution_scope"] for gate in result["gates"]} == {"local"}
+
+
+def test_release_templates_match_their_fixed_profiles():
+    root = Path(__file__).parents[1] / "runs" / "release"
+    production = yaml.safe_load(
+        (root / "manifest-v1.template.yaml").read_text(encoding="utf-8")
+    )
+    reproducibility = yaml.safe_load(
+        (root / "reproducibility-v1.template.yaml").read_text(encoding="utf-8")
+    )
+
+    assert production["profile"] == DEFAULT_PROFILE
+    assert {row["gate_id"] for row in production["gates"]} == set(REQUIRED_GATES)
+    assert reproducibility["profile"] == REPRODUCIBILITY_PROFILE
+    assert {row["gate_id"] for row in reproducibility["gates"]} == set(
+        REPRODUCIBILITY_GATES
+    )
+    for template in (production, reproducibility):
+        assert all(row["status"] == "not_run" for row in template["gates"])
+        assert all(not row["receipt"] and not row["sha256"] for row in template["gates"])
+
+
+def test_reproducibility_profile_rejects_non_local_receipts(tmp_path):
+    repo, manifest = release_fixture(
+        tmp_path,
+        gate_ids=REPRODUCIBILITY_GATES,
+        profile=REPRODUCIBILITY_PROFILE,
+    )
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    row = payload["gates"][0]
+    receipt_path = repo / row["receipt"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["execution_scope"] = "live_provider"
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    row["sha256"] = _sha256(receipt_path)
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "failed"
+    assert (row["gate_id"], "ineligible_scope") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
+
+
+def test_unknown_profile_fails_closed_to_the_production_inventory(tmp_path):
+    repo, manifest = release_fixture(tmp_path)
+    payload = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payload["profile"] = "unapproved-v1"
+    manifest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    result = collect_release_evidence(manifest, repo_root=repo)
+
+    assert result["overall_status"] == "failed"
+    assert result["profile"] == DEFAULT_PROFILE
+    assert {gate["gate_id"] for gate in result["gates"]} == set(REQUIRED_GATES)
+    assert ("_manifest", "unknown_profile") in {
+        (error["gate_id"], error["code"]) for error in result["errors"]
+    }
 
 
 def test_collector_decodes_the_same_bytes_used_for_hashing(tmp_path, monkeypatch):
@@ -577,6 +664,7 @@ def test_canonical_renderers_are_deterministic(tmp_path):
     assert first_json.endswith("\n")
     assert json.loads(first_json)["overall_status"] == "passed"
     assert first_markdown.startswith("# Agent Economy release evidence\n")
+    assert "- Profile: `production-v1`" in first_markdown
     assert "| Gate | Scope | Status |" in first_markdown
     assert first_markdown.endswith("\n")
 

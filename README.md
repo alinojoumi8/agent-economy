@@ -184,6 +184,7 @@ detail. Core guides:
 | Classify and retire branches safely | [Branch lifecycle](docs/branch-lifecycle.md) |
 | Keep documentation synchronized | [Documentation maintenance](docs/documentation-maintenance.md) |
 | See current delivery truth | [Implementation status](docs/implementation-status.md) |
+| Assemble local-only reproducibility evidence | [Reproducibility profile](docs/reproducibility-release-profile.md) |
 
 Normative product and engineering contracts live in [PRD.md](PRD.md),
 [TECH-SPEC.md](TECH-SPEC.md), and [TASKS.md](TASKS.md). Architecture decisions
