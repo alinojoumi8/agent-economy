@@ -365,7 +365,12 @@ cost cap, and a checkpoint after every tick. MiniMax M3 handles strategic,
 legal, financial, regulatory, and political roles; local Ollama
 `gemma4:12b` handles newsroom and background generation. The Ollama route
 disables the private thinking channel and uses deterministic JSON temperature;
-only public response content may enter the event log or replay artifact.
+the MiniMax route likewise sends `thinking: {type: disabled}` because these
+role decisions require a bounded JSON envelope, not a private reasoning stream.
+The profile reserves 2,400 decision tokens so a provider that ignores the
+direct-mode hint still has room to finish that envelope. These are request and
+budget controls, not new live-evidence claims. Only public response content may
+enter the event log or replay artifact.
 The gateway also recursively removes provider fields such as
 `reasoning_content`, `reasoning_details`, and `thinking` before raw response
 metadata is persisted, while retaining token and billing counters.
