@@ -208,7 +208,10 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
 
   await page.goto("/runs/run-demo/world?tick=4");
-  await page.getByRole("link", { name: "Live City" }).first().click();
+  await page.getByRole("button", { name: "Open command menu" }).click();
+  const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+  await command.getByPlaceholder("Search routes, people, firms, events…").fill("City evidence");
+  await command.getByRole("option", { name: /^City evidence/ }).click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
 

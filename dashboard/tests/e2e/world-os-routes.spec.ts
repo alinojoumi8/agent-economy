@@ -195,6 +195,9 @@ async function mockWorkspaceApis(
   });
   await page.route("**/api/agents", route => route.fulfill({ json: [] }));
   await page.route("**/api/firms", route => route.fulfill({ json: [] }));
+  await page.route("**/api/run/status", route => route.fulfill({ json: {
+    status: "paused", running: false,
+  } }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
     live_only: true, global: { capacity: 1, in_flight: 0, queue_depth: 0, peak_in_flight: 0, peak_queue_depth: 0, logical_deadline_s: 90 },
     simulated_days: { samples: 0, p50_wall_ms: null, p95_wall_ms: null }, providers: [],
@@ -221,14 +224,17 @@ async function setup(page: Page) {
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
-  await expect(page.getByRole("heading", { name: "Live City", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
   await expect(page.getByText("Historical tick 3", { exact: true }).first()).toBeVisible();
 
-  for (const [linkName, heading] of [
-    ["Organizations", "Organizations"], ["Markets", "Markets"],
+  for (const [routeName, heading] of [
+    ["Institutions", "Organizations"], ["Markets", "Markets"],
     ["Politics & Law", "Politics & Law"], ["Experiments", "Experiments"],
   ] as const) {
-    await page.getByRole("link", { name: linkName, exact: true }).click();
+    await page.keyboard.press("Control+K");
+    const command = page.getByRole("dialog", { name: "Navigate and inspect" });
+    await command.getByPlaceholder("Search routes, people, firms, events…").fill(routeName);
+    await command.getByRole("option", { name: new RegExp(`^${routeName}`) }).click();
     await expect(page.getByRole("heading", { name: heading, exact: true }).last()).toBeVisible();
     await expect(page).toHaveURL(/fork=fork-1/);
     await expect(page).toHaveURL(/tick=3/);
@@ -274,7 +280,7 @@ test("world selection removes unresolved region and place URL parameters", async
   const diagnostics = await setup(page);
   for (const parameter of ["region", "place"]) {
     await page.goto(`/runs/run-demo/world?${parameter}=999&fork=fork-1&tick=3`);
-    await expect(page.getByRole("heading", { name: "Live City", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
     await expect.poll(() => new URL(page.url()).searchParams.has(parameter)).toBe(false);
     const current = new URL(page.url());
     expect(current.searchParams.get("fork")).toBe("fork-1");
@@ -314,7 +320,7 @@ test("Commons uses the selected run fork and historical tick without polling", a
     await route.fallback();
   });
   await page.goto("/runs/run-demo/commons?fork=fork-1&tick=3&feed=hot");
-  await expect(page.getByRole("heading", { name: "Agent Commons" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Commons", exact: true })).toBeVisible();
   await expect(page.getByText("Bounded historical commons post")).toBeVisible();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
   const first = new URL(requests[0]);

@@ -173,6 +173,7 @@ detail. Core guides:
 | Need | Document |
 |---|---|
 | Install, first run, resume, replay | [Getting started](docs/getting-started.md) |
+| Use the Civic Atlas dashboard | [Civic Atlas guide](docs/civic-atlas.md) |
 | Design a defensible experiment | [Research guide](docs/research-guide.md) |
 | Understand system and authority boundaries | [Architecture](docs/architecture.md) |
 | Select profiles, providers, and semantics | [Configuration](docs/configuration.md) |

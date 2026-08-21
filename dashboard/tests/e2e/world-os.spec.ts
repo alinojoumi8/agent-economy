@@ -947,13 +947,37 @@ test("citizen menu unifies app and onboarding links in the same tab", async ({ p
 });
 
 test("overview enters the exact causal chain", async ({ page }) => {
+  if (process.env.CAPTURE_CIVIC_ATLAS_SCREENSHOT === "1") {
+    await page.setViewportSize({ width: 1536, height: 960 });
+  }
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await expect(page.getByText("Balanced")).toBeVisible();
+  if (process.env.CAPTURE_CIVIC_ATLAS_SCREENSHOT === "1") {
+    await page.screenshot({
+      path: "../docs/images/civic-atlas-world-pulse.png",
+      fullPage: true,
+    });
+  }
   await page.getByRole("link", { name: "Investigate event 9" }).click();
   await expect(page).toHaveURL(/investigations\?event=9/);
   await expect(page.getByRole("heading", { name: "Causal graph" })).toBeVisible();
   await expect(page.locator(".world-os-causal-graph [role=button]")).toHaveCount(6);
+});
+
+test("World Pulse controls fail closed without authoritative run status", async ({ page }) => {
+  await page.route("**/api/run/status", route => route.fulfill({
+    status: 503,
+    json: { detail: "status unavailable" },
+  }));
+
+  await page.goto("/runs/run-demo/overview");
+
+  await expect(page.getByText("Run controls unavailable until authoritative status arrives.")).toBeVisible();
+  const controls = page.getByRole("group", { name: "Run controls" });
+  await expect(controls.getByRole("button", { name: "Run" })).toBeDisabled();
+  await expect(controls.getByRole("button", { name: "Pause" })).toBeDisabled();
+  await expect(controls.getByRole("button", { name: "Step" })).toBeDisabled();
 });
 
 test("World Pulse keeps historical evidence separate from current controls", async ({ page }) => {
@@ -1028,7 +1052,7 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
   await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
-  /* Eleven, not ten: "Street Level" joined the Observe group as its own route. */
+  /* Eleven routes remain searchable even though the permanent rail shows five. */
   await expect(command.getByRole("option")).toHaveCount(11);
   const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");

@@ -8,6 +8,8 @@ each audience can find the authoritative level of detail.
 
 - [Getting started](getting-started.md) — install, first offline run, experiment,
   optional live routes, resume, replay, and verification.
+- [Civic Atlas dashboard](civic-atlas.md) — primary navigation, World Pulse,
+  evidence links, live controls, historical boundaries, and privacy states.
 - [Research guide and use cases](research-guide.md) — causal model, experiment
   discipline, metrics, Oracle evidence, and interpretation limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,

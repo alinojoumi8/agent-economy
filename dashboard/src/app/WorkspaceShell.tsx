@@ -63,10 +63,8 @@ type CommandGroup = {
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Civic Atlas", items: [
     { path: "overview", label: "Pulse", caption: "What changed and why it matters", icon: "overview" },
-    /*
-     * Street Level is the full-screen replay renderer. Live City below is the
-     * evidence-rich workspace for agents, places, and construction.
-     */
+    /* City is the full-screen recorded-world renderer. The deeper world route
+       remains the evidence-rich workspace for agents, places, and construction. */
     { path: "live-city", label: "City", caption: "The recorded world, full screen", icon: "street" },
     { path: "people", label: "People", caption: "Living Agents, projects, and evidence", icon: "people" },
     { path: "commons", label: "Commons", caption: "The public information economy", icon: "commons" },
