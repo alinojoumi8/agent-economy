@@ -297,7 +297,7 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.keyboard.press("Escape");
   await expect(discardDialog).toBeHidden();
   await expect(navigationTrigger).toBeFocused();
-  await pageB.getByRole("link", { name: "Live City" }).click();
+  await pageB.getByRole("link", { name: "City", exact: true }).click();
   await expect(discardDialog).toBeVisible();
   await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
   await discardDialog.getByRole("button", { name: "Stay" }).click();

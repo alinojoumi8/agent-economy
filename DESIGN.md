@@ -180,7 +180,7 @@ wide ledgers, transects, and split views aligned to the same survey grid.
 
 Large surfaces may touch or overlap like chart sheets and acetate layers.
 Spacing follows a compact 4px base with 8px controls, 16px instruments, and
-24px field changes. The World OS rail is 252px wide. The live atlas and evidence
+24px field changes. The Civic Atlas rail is 252px wide. The live atlas and evidence
 lens use a 2.05fr / 0.78fr split with a 650px minimum working height. Dense
 sections earn quiet margins; every heading has more space above it than below.
 
@@ -253,6 +253,28 @@ stamped, folded, or mounted, not inflated.
 - **States:** Loading, error, empty, selected, stale, historical, and disabled
   states retain their own text treatment; color is always paired with wording.
 
+### World Pulse
+
+The default `/runs/:runId/overview` route is the **World Pulse** briefing. It
+pairs a committed regional atlas and a short salience-ranked event briefing
+with an evidence inspector and event timeline. The five primary Civic Atlas
+destinations are Pulse, City, People, Commons, and Evidence Lab; deeper
+workspaces remain available through the command palette without duplicating the
+permanent rail.
+
+World Pulse reads only the observer-scoped world projection and the public
+summary, alerts, and event envelope. It never reads event payloads. Evidence
+links require valid positive event identifiers, region links require valid
+positive region identifiers, and map marks require coordinates supplied by the
+projection. Missing coordinates are disclosed and left unplotted rather than
+replaced with a decorative position.
+
+Historical cursors are visibly read-only and never request or inherit current
+run status. Live Run, Pause, and Step controls fail closed until authoritative
+status is available, during a mutation, and after a terminal state. The
+briefing ranks attention; it does not assert causation without an evidence
+trace.
+
 ### Civic City
 
 The signature component is a shared operational city shell with two projections:
@@ -261,7 +283,7 @@ the same named districts, filters, observer URL state, agent/place selection,
 evidence lens, and contiguous instrumentation rail. The Diorama adds extruded
 place and organization marks plus migration and trade paths; its building
 height and curved paths are explicitly labelled derived visual encodings, not
-canonical world geometry. Its World OS variant uses a dark, full-field
+canonical world geometry. Its City evidence variant uses a dark, full-field
 command-map treatment while retaining the project's survey typography and
 evidence labels. On desktop, the evidence lens is a bounded inspector overlay;
 below 980px, the selected mark surfaces in an immediate map action that leads
@@ -291,13 +313,13 @@ coordinated activity, and evidence inspection—but no WorldMonitor source,
 assets, or dependencies are imported. Agent Economy remains MIT-licensed while
 the reference project is AGPL-3.0-or-later.
 
-### Living Agents
+### People and Living Agents
 
-The People route is presented as **Living Agents** and combines the historical
-agent directory, selected journey, and progress streams without adding a second
-navigation destination. It consumes only the v2 observer projections and keeps
-committed, runtime, and derived evidence visibly distinct. Runtime state is
-live-only; historical ticks never inherit it. See the
+The primary route is presented as **People** and contains the Living Agents
+historical directory, selected journey, and progress streams without adding a
+second navigation destination. It consumes only the v2 observer projections
+and keeps committed, runtime, and derived evidence visibly distinct. Runtime
+state is live-only; historical ticks never inherit it. See the
 [Living Agents review and projection contract](docs/living-agents.md).
 
 Semantics-13 construction appears as a separate project layer until work is
@@ -308,10 +330,10 @@ aggregates. See the [construction economy contract](docs/semantics13-constructio
 
 ### Identity Mark
 
-The generated World OS emblem is a clipped municipal survey plate containing
-the four signal roles. It is rendered from
-`dashboard/src/assets/world-os-emblem.png`; text remains live HTML beside it,
-never rasterized into the asset.
+The generated survey emblem is a clipped municipal plate containing the four
+signal roles. The live wordmark beside it reads **Civic Atlas**. The image is
+rendered from `dashboard/src/assets/world-os-emblem.png`; text remains live HTML
+beside it, never rasterized into the asset.
 
 ## Do's and Don'ts
 

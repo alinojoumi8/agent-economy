@@ -31,7 +31,7 @@ MAINTAINED_ROOT_DOCS = (
     "CONTRIBUTING.md", "SECURITY.md",
 )
 HANDBOOK_DOCS = (
-    "README.md", "getting-started.md", "research-guide.md",
+    "README.md", "getting-started.md", "civic-atlas.md", "research-guide.md",
     "architecture.md", "configuration.md", "api-reference.md",
     "operator-runbook.md", "troubleshooting.md", "development.md",
     "implementation-status.md", "live-provider-validation.md",
@@ -103,11 +103,24 @@ def test_readme_exposes_safe_entrypoint_and_complete_handbook():
     assert "python run.py --config runs/base.yaml" in readme
     assert "without `--config` selects the live production" in readme
     for filename in (
-        "getting-started.md", "research-guide.md", "architecture.md",
+        "getting-started.md", "civic-atlas.md", "research-guide.md", "architecture.md",
         "configuration.md", "api-reference.md", "operator-runbook.md",
         "troubleshooting.md", "development.md",
     ):
         assert f"docs/{filename}" in readme
+
+
+def test_civic_atlas_guide_preserves_projection_and_history_boundaries():
+    guide = (ROOT / "docs/civic-atlas.md").read_text(encoding="utf-8").lower()
+    for phrase in (
+        "the client does not invent them",
+        "event payloads are not read",
+        "a historical world pulse is read-only",
+        "does not request current run status",
+        "cannot enable mutation",
+        "ephemeral runtime activity is live-only",
+    ):
+        assert phrase in guide
 
 
 def test_readme_is_concise_and_research_first():

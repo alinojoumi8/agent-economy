@@ -41,7 +41,7 @@ test("Living Agents exposes evidence classes and privacy-safe states", () => {
 test("Living Agents keeps People URLs and creates stable Live City focus links", () => {
   assert.match(routes, /path="people"/);
   assert.match(routes, /path="people\/:agentId"/);
-  assert.match(shell, /path: "people", label: "Living Agents"/);
+  assert.match(shell, /path: "people", label: "People"/);
   assert.match(workspace, /params\.set\("view", "diorama"\)/);
   assert.match(workspace, /params\.set\("agent", String\(agent\)\)/);
   assert.match(workspace, /params\.set\("place", String\(place\)\)/);

@@ -3,7 +3,7 @@ import { LiveCity } from "../components/LiveCity";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
-import { OverviewWorkspace } from "../workspaces/OverviewWorkspace";
+import { WorldPulseWorkspace } from "../workspaces/WorldPulseWorkspace";
 import { CommonsWorkspace } from "../workspaces/CommonsWorkspace";
 import { PeopleWorkspace } from "../workspaces/PeopleWorkspace";
 import { WorldWorkspace } from "../workspaces/WorldWorkspace";
@@ -18,7 +18,7 @@ function OverviewRoute() {
   const { runId } = useParams<{ runId?: string }>();
   const location = useLocation();
   const cityPath = legacyCityRedirectPath(runId, location.search, location.hash);
-  return cityPath ? <Navigate to={cityPath} replace /> : <OverviewWorkspace />;
+  return cityPath ? <Navigate to={cityPath} replace /> : <WorldPulseWorkspace />;
 }
 
 function WorkspaceFallback() {
