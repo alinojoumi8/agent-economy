@@ -438,8 +438,11 @@ async function mockApi(page: Page) {
     if (path === "/api/v2/operator/investigations") return route.fulfill({ json: { items: [] } });
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
-  /* Overview's event stream is the REST roster endpoint, not the v2 projection,
-     and the trace link is rendered per row — so the row has to exist. */
+  /* Run controls are current-only and mocked separately from observer projections. */
+  await page.route("**/api/run/status", route => route.fulfill({ json: {
+    status: "paused", running: false,
+  } }));
+  /* The evidence link is rendered per row, so the fixture keeps one event. */
   await page.route("**/api/events*", route => route.fulfill({ json: [
     { id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { buyer_id: 1, qty: 5 } },
   ] }));
@@ -470,7 +473,7 @@ test("initial projection handshake does not refetch stale backfill", async ({ pa
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await page.waitForTimeout(200);
   expect(snapshotRequests).toBeLessThanOrEqual(2);
 });
@@ -585,7 +588,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   } }));
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   const beforeRecovery = snapshotRequests;
 
   await page.evaluate(() => {
@@ -609,7 +612,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   await page.waitForTimeout(300);
   // Recovery invalidates once; it must not enter a tight refetch loop.
   expect(snapshotRequests - beforeRecovery).toBeLessThanOrEqual(3);
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
 });
 
 test("cursor gaps request contiguous backfill and return live", async ({ page }) => {
@@ -645,7 +648,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__gapSocket.sent
   ))).toContainEqual({ type: "hello", event_cursor: 0 });
@@ -726,7 +729,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 4");
   const initialConnections = await page.evaluate(() => (
     (window as any).__lineageSockets.length
@@ -945,12 +948,35 @@ test("citizen menu unifies app and onboarding links in the same tab", async ({ p
 
 test("overview enters the exact causal chain", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await expect(page.getByText("Balanced")).toBeVisible();
   await page.getByRole("link", { name: "Investigate event 9" }).click();
   await expect(page).toHaveURL(/investigations\?event=9/);
   await expect(page.getByRole("heading", { name: "Causal graph" })).toBeVisible();
   await expect(page.locator(".world-os-causal-graph [role=button]")).toHaveCount(6);
+});
+
+test("World Pulse keeps historical evidence separate from current controls", async ({ page }) => {
+  let runStatusRequests = 0;
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === "/api/run/status") runStatusRequests += 1;
+  });
+
+  await page.setViewportSize({ width: 1536, height: 960 });
+  await page.goto("/runs/run-demo/overview?tick=4");
+
+  await expect(page.getByRole("heading", { name: "World Pulse", exact: true })).toBeVisible();
+  await expect(page.getByText(/Historical context · read-only/)).toBeVisible();
+  await expect(page.locator(".world-pulse-run-controls")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Return to live" })).toHaveAttribute("href", "/runs/run-demo/overview");
+
+  const main = await page.locator(".world-pulse-main").boundingBox();
+  const inspector = await page.locator(".world-pulse-inspector").boundingBox();
+  if (!main || !inspector) throw new Error("World Pulse review columns did not render");
+  expect(main.x + main.width).toBeLessThanOrEqual(inspector.x + 1);
+  expect(Math.abs(main.y - inspector.y)).toBeLessThan(4);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  expect(runStatusRequests).toBe(0);
 });
 
 test("truth inspection renders authorized fields without browser persistence", async ({ page }) => {
@@ -984,7 +1010,7 @@ test("graph and semantic table share keyboard selection with reduced motion", as
 test("390 pixel workflow keeps navigation, chronology, and evidence usable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/runs/run-demo/news-communications");
-  await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
   await page.getByRole("button", { name: "Truth inspector" }).click();
   await page.getByRole("button", { name: /Shipment notice/ }).click();
   await expect(page.getByText("Untrusted simulated communication")).toBeVisible();
@@ -996,7 +1022,7 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const pageErrors: string[] = [];
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
 
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
@@ -1081,7 +1107,7 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
 
   await page.getByRole("button", { name: "Collapse workspace rail" }).click();
   await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
-  await expect(page.getByRole("navigation", { name: "World OS workspaces" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
 
@@ -1283,7 +1309,7 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview?fork=fork-a&tick=4");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1310,7 +1336,7 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
 
   await page.goto("/runs/run-demo/people/1?fork=fork-a&tick=4");
 
-  await expect(page.getByRole("heading", { name: "Living Agents" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "People", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Atlas Builder" })).toBeVisible();
   await expect(page.getByText("Lead carpenter", { exact: true })).toBeVisible();
   const constructionSkill = page.locator(".world-os-skill-card")
@@ -1398,7 +1424,7 @@ test("superseded entity searches never replace the newest result", async ({ page
     } });
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1420,13 +1446,13 @@ test("entity-search failure leaves matching routes operable", async ({ page }) =
     json: { detail: "search unavailable" },
   }));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
   await input.fill("Living Agents");
   await expect(command.getByText("Entity search is unavailable. Route navigation remains available.")).toBeVisible();
-  await expect(command.getByRole("option", { name: /Living Agents Progress, journeys, and evidence/ })).toBeVisible();
+  await expect(command.getByRole("option", { name: /People Living Agents, projects, and evidence/ })).toBeVisible();
   await input.press("Enter");
   await expect(page).toHaveURL(/\/people$/);
 });

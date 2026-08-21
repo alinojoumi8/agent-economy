@@ -61,38 +61,37 @@ type CommandGroup = {
 };
 
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
-  { label: "Observe", items: [
-    { path: "overview", label: "Overview", caption: "Economy, population, and run health", icon: "overview" },
+  { label: "Civic Atlas", items: [
+    { path: "overview", label: "Pulse", caption: "What changed and why it matters", icon: "overview" },
     /*
      * Street Level is the full-screen replay renderer. Live City below is the
      * evidence-rich workspace for agents, places, and construction.
      */
-    { path: "live-city", label: "Street Level", caption: "The recorded day, full screen", icon: "street" },
-    { path: "world", label: "Live City", caption: "Agents, places, and construction", icon: "world" },
-    { path: "people", label: "Living Agents", caption: "Progress, journeys, and evidence", icon: "people" },
-    { path: "organizations", label: "Organizations", caption: "Firms and institutions", icon: "organizations" },
+    { path: "live-city", label: "City", caption: "The recorded world, full screen", icon: "street" },
+    { path: "people", label: "People", caption: "Living Agents, projects, and evidence", icon: "people" },
+    { path: "commons", label: "Commons", caption: "The public information economy", icon: "commons" },
+    { path: "investigations", label: "Evidence Lab", caption: "Trace cause and inspect proof", icon: "investigations" },
   ] },
-  { label: "Flows", items: [
+  { label: "Deep dives", items: [
+    { path: "world", label: "City evidence", caption: "Agents, places, and construction", icon: "world" },
+    { path: "organizations", label: "Institutions", caption: "Firms and public organizations", icon: "organizations" },
     { path: "markets", label: "Markets", caption: "Goods, capital, and prices", icon: "markets" },
     { path: "politics-law", label: "Politics & Law", caption: "Power and public rules", icon: "politics" },
     { path: "news-communications", label: "Communications", caption: "Authorized information flow", icon: "communications" },
-    { path: "commons", label: "Agent Commons", caption: "Public information economy", icon: "commons" },
-  ] },
-  { label: "Reason", items: [
-    { path: "investigations", label: "Investigations", caption: "Trace cause and evidence", icon: "investigations" },
     { path: "experiments", label: "Experiments", caption: "Fork and compare worlds", icon: "experiments" },
   ] },
 ];
 
 const routes = routeGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.label })));
+const primaryRouteGroups = routeGroups.slice(0, 1);
 
 const entityGroupOrder: Array<{
   kind: SearchResultKind;
   label: string;
   icon: GlyphName;
 }> = [
-  { kind: "agent", label: "Living Agents", icon: "people" },
-  { kind: "firm", label: "Organizations", icon: "organizations" },
+  { kind: "agent", label: "People", icon: "people" },
+  { kind: "firm", label: "Institutions", icon: "organizations" },
   { kind: "event", label: "Events", icon: "investigations" },
   { kind: "communication_thread", label: "Public Communications", icon: "communications" },
 ];
@@ -137,7 +136,7 @@ export function WorkspaceShell() {
   const activeRoute = routes.find(route => location.pathname.includes("/" + route.path)) || routes[0];
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
   const filteredRoutes = useMemo(() => routes.filter(route =>
-    (route.label + " " + route.caption + " " + route.group).toLowerCase().includes(normalizedCommandQuery),
+    (route.label + " " + route.caption).toLowerCase().includes(normalizedCommandQuery),
   ), [normalizedCommandQuery]);
 
   useEffect(() => {
@@ -289,13 +288,13 @@ export function WorkspaceShell() {
     <aside className="world-os-rail">
       <div className="world-os-brand">
         <img src={worldOsEmblem} alt="" />
-        <div className="world-os-brand-copy"><strong>WORLD OS</strong><span>Agent Economy</span></div>
+        <div className="world-os-brand-copy"><strong>CIVIC ATLAS</strong><span>Agent Economy</span></div>
         <button className="world-os-rail-toggle" type="button" onClick={() => setRailCollapsed(value => !value)} aria-label={railCollapsed ? "Expand workspace rail" : "Collapse workspace rail"} aria-pressed={railCollapsed}>
           <Glyph name="panel" />
         </button>
       </div>
-      <nav className="world-os-nav" aria-label="World OS workspaces">
-        {routeGroups.map(group => <div className="world-os-nav-group" key={group.label}>
+      <nav className="world-os-nav" aria-label="Civic Atlas workspaces">
+        {primaryRouteGroups.map(group => <div className="world-os-nav-group" key={group.label}>
           <p className="world-os-nav-group-title">{group.label}</p>
           <div className="world-os-nav-group-items">
             {group.items.map(route => <NavLink
