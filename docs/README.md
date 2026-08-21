@@ -51,6 +51,8 @@ each audience can find the authoritative level of detail.
 - [Delivery tasks](../TASKS.md)
 - [Implementation status](implementation-status.md) — the single maintained
   release-status ledger
+- [Local reproducibility release profile](reproducibility-release-profile.md) —
+  fixed offline gates and the boundary with strict production evidence
 - [Historical printable status snapshot](implementation-status.html)
 - [Emergent phenomena](emergent-phenomena.md)
 - [Live provider validation](live-provider-validation.md)

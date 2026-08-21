@@ -37,7 +37,7 @@ HANDBOOK_DOCS = (
     "implementation-status.md", "live-provider-validation.md",
     "live-run-f7c6238bf5.md", "v2-guide.md", "implementation-status.html",
     "buzz-derived-architecture.md", "branch-lifecycle.md",
-    "documentation-maintenance.md",
+    "documentation-maintenance.md", "reproducibility-release-profile.md",
     "semantics14-external-turn-attendance.md", "adr/README.md",
     "adr/0001-owner-run-citizens-use-external-runtimes.md",
     "adr/0002-offline-owner-run-citizens-are-not-impersonated.md",
@@ -106,8 +106,23 @@ def test_readme_exposes_safe_entrypoint_and_complete_handbook():
         "getting-started.md", "civic-atlas.md", "research-guide.md", "architecture.md",
         "configuration.md", "api-reference.md", "operator-runbook.md",
         "troubleshooting.md", "development.md",
+        "reproducibility-release-profile.md",
     ):
         assert f"docs/{filename}" in readme
+
+
+def test_reproducibility_profile_guide_keeps_local_and_release_claims_separate():
+    guide = (ROOT / "docs/reproducibility-release-profile.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    for phrase in (
+        "local-only evidence profile",
+        "unknown profile fails closed",
+        "every referenced receipt must use `execution_scope: local`",
+        "passing `reproducibility-v1` cannot satisfy or waive any production gate",
+        "does not run tests",
+    ):
+        assert phrase in guide
 
 
 def test_civic_atlas_guide_preserves_projection_and_history_boundaries():

@@ -1,0 +1,43 @@
+schema: agent-economy-release-manifest-v1
+profile: reproducibility-v1
+generated_at: '1970-01-01T00:00:00Z'
+candidate:
+  commit: ''
+  tree: ''
+gates:
+  - gate_id: dashboard_build
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: dashboard_regression
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: dashboard_typecheck
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: documentation_contract
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: local_secret_scan
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: pinned_dataset_verification
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: python_core_regression
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: recorded_replay
+    status: not_run
+    receipt: ''
+    sha256: ''
+  - gate_id: scale_profile_contract
+    status: not_run
+    receipt: ''
+    sha256: ''
