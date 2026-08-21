@@ -233,4 +233,5 @@ def test_cli_reports_the_persisted_runtime_artifact(monkeypatch, capsys, tmp_pat
     main()
 
     result = json.loads(capsys.readouterr().out)
-    assert result["receipt"] == receipt["artifacts"]["runtime_receipt"]
+    assert result["receipt"] == str(
+        (tmp_path / "different-output" / "exact.runtime.json").resolve())

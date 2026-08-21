@@ -910,8 +910,10 @@ def main() -> None:
         )
     except ValidationInputError as exc:
         parser.error(str(exc))
+    receipt_path = args.output_dir.resolve() / Path(
+        str(receipt["artifacts"]["runtime_receipt"])).name
     print(json.dumps({
-        "receipt": receipt["artifacts"]["runtime_receipt"],
+        "receipt": str(receipt_path),
         "source_run_id": receipt["source"]["run_id"],
         "replay_run_id": receipt["replay"]["run_id"],
         "passed": receipt["passed"],
