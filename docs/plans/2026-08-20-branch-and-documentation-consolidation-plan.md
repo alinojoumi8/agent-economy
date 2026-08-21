@@ -207,10 +207,64 @@ worktree, a unique preserved commit, or an explicitly time-bounded safety ref.
 - No branch was merged or deleted, no worktree was removed, and no remote ref
   was pushed or changed.
 
-The next branch action remains Phase 1: give local-only base commit `1200add`
-an intentional review/landing decision before normalizing `main`. The
-live-city-diorama worktree and reproducibility port source remain protected and
-untouched.
+At that checkpoint, the next branch action remained Phase 1: give local-only
+base commit `1200add` an intentional review/landing decision before normalizing
+`main`.
+
+## Progress recorded on 2026-08-21
+
+- Live `origin/main` was refreshed and remained at `78e6a77`; local commit
+  `1200add` was still the single unpublished base commit.
+- `1200add` was reviewed as a seven-file runtime change, verified from a clean
+  detached worktree, and published without moving local `main` as
+  `codex/runtime-throughput-base`.
+- PR #63 provided the focused landing path at exact head
+  `1200adde42f55b2c047487a69b403fa02126c1ce`. Python smoke, the core subset
+  guard, and the dashboard production build passed. The hosted integration
+  jobs were skipped by their workflow gates; CodeRabbit reported that automatic
+  review was unavailable for this repository and required manual review.
+- Isolated local verification passed 216 tests. One supplemental command named
+  a test that exists only on the later Buzz branch, so that attempt stopped
+  before collection; the corrected 42-test scope passed. The existing
+  Starlette/httpx deprecation warning remains visible.
+- A controlled local measurement found 1.40x median improvement for repeated
+  same-identity observer snapshots on a synthetic 1,000-event store. With a
+  gateway width of one, the new pipeline prepared two agents before the first
+  dispatch released versus one on the base scheduling path. These are bounded
+  local measurements, not production-provider throughput claims.
+- The temporary review worktree and PR-body file were removed after
+  verification. The dirty `codex/live-city-diorama` worktree, the
+  `codex/reproducibility-release` source commit, and all cleanup candidates
+  remain untouched.
+- PR #63 was marked ready and merged on 2026-08-21 as merge commit
+  `1b61b22fe30adb6f1c5b18fed36685dd691c6e98`. Local `main` was then
+  fast-forwarded to the same commit without disturbing an attached worktree.
+- Before rebasing the Buzz stack, its old tip was retained as
+  `safety/buzz-agent-patterns-pre-rebase-20260821`. The active
+  `codex/buzz-agent-patterns` branch was rebased cleanly onto the merged base.
+- Post-rebase validation passed the 159-test focused feature/documentation gate,
+  the exact 138-test repository smoke contract, and the complete Python
+  collection: 1,494 passed and 9 skipped in 55m32s. The one known
+  Starlette/httpx deprecation warning remains visible.
+- Dashboard validation passed 184 unit tests, TypeScript checking, the license
+  policy check, a zero-vulnerability high-severity npm audit, the production
+  build, and 41 critical Chromium scenarios. Vite retained its large-chunk
+  warning, and the mocked browser harness logged expected proxy connection
+  refusals without failing a scenario.
+- No branch was deleted. The dirty `codex/live-city-diorama` worktree, the
+  `codex/reproducibility-release` source commit, and all cleanup candidates
+  remain untouched.
+
+The remaining recommended landing order is:
+
+1. Finish full validation of `codex/buzz-agent-patterns`, then give its feature,
+   handbook, and regression-test commits a separate reviewed PR.
+2. Audit and finish `codex/live-city-diorama` in its existing protected
+   worktree; do not mix its uncommitted state into the Buzz PR.
+3. Port the useful `f2903db` reproducibility work selectively onto the then
+   current shared base.
+4. Resolve PR #55 and PR #57, then request explicit approval for a final
+   worktree and merged-branch cleanup batch.
 
 ## Completion record
 
