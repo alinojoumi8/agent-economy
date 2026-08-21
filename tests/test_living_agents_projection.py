@@ -113,6 +113,12 @@ def test_living_agents_projection_is_historical_and_privacy_safe(economy):
     assert data["summary"]["runtime_active"] == 0
     assert len(data["activity"]["items"]) == 2
     assert data["activity"]["next_cursor"] == 2
+    assert all(
+        {"verb", "object", "outcome", "lifecycle", "salience", "raw_ref"}
+        <= item.keys()
+        for item in data["activity"]["items"]
+    )
+    assert all(item["source"] != "runtime" for item in data["activity"]["items"])
     assert data["privacy"]["private_bodies_omitted"] is True
 
     core = next(agent for agent in data["agents"] if agent["id"] == 1)

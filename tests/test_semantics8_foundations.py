@@ -50,7 +50,7 @@ def test_semantics_eight_adds_one_transactional_inbox_boundary() -> None:
     assert inbox.inference is False
 
 
-@pytest.mark.parametrize("version", [0, 14])
+@pytest.mark.parametrize("version", [0, 15])
 def test_phase_lookup_rejects_unsupported_semantics(version: int) -> None:
     with pytest.raises(UnsupportedEngineSemantics):
         phase_specs_for_semantics(version)
@@ -59,7 +59,7 @@ def test_phase_lookup_rejects_unsupported_semantics(version: int) -> None:
 def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
     store = Store(str(tmp_path / "fresh.db"))
     try:
-        assert SCHEMA_VERSION == 19
+        assert SCHEMA_VERSION == 20
         communication_tables = {
             row["name"] for row in store.query(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
@@ -83,6 +83,7 @@ def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
             (17, "civic_city", "applied"),
             (18, "news_redaction_provenance", "applied"),
             (19, "construction_economy", "applied"),
+            (20, "external_turn_attendance", "applied"),
         ]
         news_columns = {
             row["name"] for row in store.query("PRAGMA table_info(news_articles)")
@@ -93,7 +94,7 @@ def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
         assert history[1]["source_schema"] == 11
         assert history[1]["checksum_sha256"] == (
             migration_registry.registered_migrations()[0].checksum_sha256)
-        assert history[-1]["source_schema"] == 18
+        assert history[-1]["source_schema"] == 19
         assert history[-1]["checksum_sha256"] == (
             migration_registry.registered_migrations()[-1].checksum_sha256)
     finally:
@@ -105,7 +106,7 @@ def test_reopen_is_idempotent_and_does_not_reapply_migration(tmp_path) -> None:
     Store(str(path)).close()
     reopened = Store(str(path))
     try:
-        assert reopened.scalar("SELECT COUNT(*) FROM schema_migrations") == 9
+        assert reopened.scalar("SELECT COUNT(*) FROM schema_migrations") == 10
     finally:
         reopened.close()
 
@@ -181,7 +182,7 @@ def test_migration_history_fails_closed_on_unknown_future_row(tmp_path) -> None:
 def test_failed_migration_rolls_back_schema_and_history(tmp_path, monkeypatch) -> None:
     store = Store(str(tmp_path / "rollback.db"))
     broken = Migration.create(
-        20,
+        21,
         "broken_probe",
         "CREATE TABLE migration_probe(id INTEGER);\n"
         "INSERT INTO missing_table(id) VALUES (1);",
@@ -192,13 +193,13 @@ def test_failed_migration_rolls_back_schema_and_history(tmp_path, monkeypatch) -
         (*migration_registry.registered_migrations(), broken),
     )
     try:
-        with pytest.raises(MigrationError, match="failed applying migration v20"):
+        with pytest.raises(MigrationError, match="failed applying migration v21"):
             migration_registry.apply_migrations(
-                store.conn, source_schema=19, target_schema=20)
+                store.conn, source_schema=20, target_schema=21)
         assert store.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE name='migration_probe'") == 0
         assert store.scalar(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version=20") == 0
+            "SELECT COUNT(*) FROM schema_migrations WHERE version=21") == 0
     finally:
         store.close()
 

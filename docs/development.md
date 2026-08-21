@@ -170,6 +170,11 @@ New semantics that would change historical output must be gated by
 `engine_semantics_version`; v1/v2 replay behavior must remain exact. Never
 rewrite a stored source run during replay.
 
+The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
+document the additive schema-20/Semantics-14 attendance contract, read-time
+activity projection, proposal-only Builder support seam, and the separate
+hosted control-plane audit migration.
+
 ## Logging
 
 Use `observability.log_event` for process diagnostics and `Store.log_event` for

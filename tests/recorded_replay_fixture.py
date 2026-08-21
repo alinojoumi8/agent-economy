@@ -102,9 +102,14 @@ def restore_recorded_source(path: Path) -> Path:
     fixture = load_recorded_fixture()
     store = Store(str(path))
     conn = store.conn
-    trigger_names = [str(row[0]) for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='trigger'")]
-    for name in trigger_names:
+    triggers = [
+        (str(row[0]), str(row[1]))
+        for row in conn.execute(
+            "SELECT name,sql FROM sqlite_master "
+            "WHERE type='trigger' AND sql IS NOT NULL ORDER BY name"
+        )
+    ]
+    for name, _sql in triggers:
         conn.execute(f'DROP TRIGGER "{name}"')
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.execute("BEGIN IMMEDIATE")
@@ -120,6 +125,11 @@ def restore_recorded_source(path: Path) -> Path:
                 f'INSERT INTO "{table}" ({quoted}) VALUES ({placeholders})',
                 [[_portable_value(table, column, row.get(column))
                   for column in columns] for row in rows])
+        # Migrations are already journaled, so reopening verifies them rather
+        # than re-executing their DDL. Restore every captured trigger before
+        # commit so migration-owned immutability guards remain present.
+        for _name, sql in triggers:
+            conn.execute(sql)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -127,8 +137,8 @@ def restore_recorded_source(path: Path) -> Path:
     finally:
         store.close()
 
-    # Reopening re-applies the checked-in idempotent schema and recreates the
-    # triggers removed for the data-only restore.
+    # Reopening re-applies the checked-in base schema and verifies every
+    # journaled migration, including its restored triggers.
     Store(str(path)).close()
     with sqlite3.connect(path) as check:
         if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":

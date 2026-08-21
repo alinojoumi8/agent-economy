@@ -1171,6 +1171,17 @@ class ExternalAgentService:
                     (str(row["id"]), actor_id, tick))
             if action_row is not None:
                 action = load_json(action_row["action_json"], {"type": "do_nothing"})
+                self._record_turn_attendance(
+                    connection_id=str(row["id"]),
+                    actor_id=actor_id,
+                    target_tick=int(tick),
+                    turn_id=str(action_row["turn_id"]),
+                    submission_id=str(action_row["id"]),
+                    attendance_status="submitted",
+                    operational_reason="submitted",
+                    decision_source="external_submission",
+                    decision_policy="submitted_action_v1",
+                )
                 decisions.append({"agent_id": actor_id, "purpose": "external_agent",
                                   "envelope": {"actions": [action], "belief_updates": []},
                                   "reasoning": str(action_row["rationale_summary"] or "")[:500],
@@ -1178,12 +1189,14 @@ class ExternalAgentService:
                                   "external_submission_id": str(action_row["id"]),
                                   "external_connection_id": str(row["id"])})
             else:
+                turn = self.store.query_one(
+                    "SELECT id,status,deadline_at FROM external_agent_turns "
+                    "WHERE connection_id=? AND target_tick=?",
+                    (str(row["id"]), tick))
+                operational_reason = self._missed_turn_reason(row, turn)
                 if not bool(row["alive"]):
                     self._close_pending(str(row["id"]), "actor_not_living",
                                         target_tick=int(tick))
-                turn = self.store.query_one(
-                    "SELECT id FROM external_agent_turns WHERE connection_id=? AND target_tick=?",
-                    (str(row["id"]), tick))
                 if turn is not None:
                     self.store.execute(
                         "UPDATE external_agent_turns SET status='fallback',updated_at=? "
@@ -1193,6 +1206,17 @@ class ExternalAgentService:
                     {"connection_id": str(row["id"]), "actor_id": actor_id,
                      "reason": "offline_or_no_submission", "policy": "safe_do_nothing_v1"},
                     phase="MORNING", subject_type="agent", subject_id=actor_id, importance=0.6)
+                self._record_turn_attendance(
+                    connection_id=str(row["id"]),
+                    actor_id=actor_id,
+                    target_tick=int(tick),
+                    turn_id=str(turn["id"]) if turn is not None else None,
+                    submission_id=None,
+                    attendance_status="missed",
+                    operational_reason=operational_reason,
+                    decision_source="deterministic_fallback",
+                    decision_policy="safe_do_nothing_v1",
+                )
                 decisions.append({"agent_id": actor_id, "purpose": "external_safe_policy",
                                   "envelope": {"actions": [{"type": "do_nothing"}],
                                                "belief_updates": []},
@@ -1249,6 +1273,10 @@ class ExternalAgentService:
                 "AND name='external_action_submissions'").fetchone()
             if table is None:
                 return []
+            attendance_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='external_turn_attendance'"
+            ).fetchone()
             source_columns = {
                 str(column[1])
                 for column in conn.execute("PRAGMA table_info(external_agent_connections)")
@@ -1285,6 +1313,17 @@ class ExternalAgentService:
                      str(turn_row["envelope_json"]), int(turn_row["event_cursor"]),
                      str(turn_row["deadline_at"]), str(turn_row["status"]),
                      str(turn_row["created_at"]), _iso()))
+            submission_filter = "s.status='executed'"
+            if self._attendance_enabled() and attendance_table is not None:
+                # Validation-time rejections never attended the wake. A queued
+                # submission that attended can nevertheless end rejected after
+                # deterministic execution, and must still be replayed.
+                submission_filter = (
+                    "s.status IN ('executed','rejected') AND EXISTS ("
+                    "SELECT 1 FROM external_turn_attendance a "
+                    "WHERE a.submission_id=s.id "
+                    "AND a.attendance_status='submitted')"
+                )
             rows = conn.execute(
                 "SELECT s.*,c.tenant_id,c.display_name,c.biography,c.preferred_occupation,c.tier,"
                 "c.scopes_json,c.actor_id,c.created_tick,c.created_at,c.wake_interval_ticks,"
@@ -1299,7 +1338,7 @@ class ExternalAgentService:
                 + passport_select + " "
                 "FROM external_action_submissions s JOIN external_agent_connections c "
                 "ON c.id=s.connection_id JOIN external_agent_turns t ON t.id=s.turn_id "
-                "WHERE s.target_tick=? AND s.status='executed' "
+                "WHERE s.target_tick=? AND " + submission_filter + " "
                 "ORDER BY s.actor_id,s.id", (tick,)).fetchall()
             out = []
             for row in rows:
@@ -1360,11 +1399,187 @@ class ExternalAgentService:
                             "llm_call_id": None, "external_submission_id": str(row["id"]),
                             "external_connection_id": str(row["connection_id"]),
                             "replay_source_submission_id": str(row["id"])})
+            if self._attendance_enabled():
+                if attendance_table is not None:
+                    missed_rows = conn.execute(
+                        "SELECT connection_id,actor_id,decision_policy "
+                        "FROM external_turn_attendance WHERE target_tick=? "
+                        "AND attendance_status='missed' "
+                        "ORDER BY actor_id,connection_id,id",
+                        (int(tick),),
+                    ).fetchall()
+                    for attendance in missed_rows:
+                        actor_id = int(attendance["actor_id"])
+                        connection_id = str(attendance["connection_id"])
+                        policy = str(attendance["decision_policy"])
+                        self.store.log_event(
+                            tick, "external_agent_fallback",
+                            {"connection_id": connection_id, "actor_id": actor_id,
+                             "reason": "offline_or_no_submission", "policy": policy},
+                            phase="MORNING", subject_type="agent",
+                            subject_id=actor_id, importance=0.6)
+                        out.append({
+                            "agent_id": actor_id,
+                            "purpose": "external_safe_policy",
+                            "envelope": {
+                                "actions": [{"type": "do_nothing"}],
+                                "belief_updates": [],
+                            },
+                            "reasoning": "Deterministic external-agent safe policy.",
+                            "llm_call_id": None,
+                            "external_submission_id": None,
+                            "external_connection_id": connection_id,
+                        })
+                    out.sort(key=lambda item: (
+                        int(item["agent_id"]),
+                        str(item["external_connection_id"]),
+                    ))
             if out:
                 self.store.set_meta(external_agent_influenced=1)
+            self._copy_replay_attendance(conn, tick)
             return out
         finally:
             conn.close()
+
+    def _attendance_enabled(self) -> bool:
+        return int(self.config.get("engine_semantics_version", 1)) >= 14
+
+    def _missed_turn_reason(self, connection, turn) -> str:
+        if not bool(connection["alive"]):
+            return "dead_actor"
+        credential_state = self.store.query_one(
+            "SELECT COUNT(*) AS total,"
+            "SUM(CASE WHEN revoked_at IS NULL THEN 1 ELSE 0 END) AS active "
+            "FROM external_agent_credentials WHERE connection_id=?",
+            (str(connection["id"]),),
+        )
+        all_credentials_revoked = (
+            credential_state is not None
+            and int(credential_state["total"] or 0) > 0
+            and int(credential_state["active"] or 0) == 0
+        )
+        if str(connection["status"]) == "revoked" or all_credentials_revoked:
+            return "revoked"
+        if str(connection["status"]) != "active":
+            return "offline"
+        lease_expires_at = connection["lease_expires_at"]
+        if (
+            lease_expires_at is None
+            or _parse_time(lease_expires_at) <= _now()
+        ):
+            return "offline"
+        if (
+            turn is not None
+            and turn["deadline_at"] is not None
+            and _parse_time(turn["deadline_at"]) <= _now()
+        ):
+            return "deadline"
+        return "no_submission"
+
+    def _record_turn_attendance(
+        self,
+        *,
+        connection_id: str,
+        actor_id: int,
+        target_tick: int,
+        turn_id: str | None,
+        submission_id: str | None,
+        attendance_status: str,
+        operational_reason: str,
+        decision_source: str,
+        decision_policy: str,
+        recorded_at: str | None = None,
+        attendance_id: int | None = None,
+    ) -> None:
+        if not self._attendance_enabled():
+            return
+        existing = self.store.query_one(
+            "SELECT attendance_status,operational_reason,decision_source,"
+            "decision_policy,turn_id,submission_id "
+            "FROM external_turn_attendance "
+            "WHERE connection_id=? AND target_tick=?",
+            (str(connection_id), int(target_tick)),
+        )
+        if existing is not None:
+            if self.config.get("replay_source_path"):
+                return
+            expected = (
+                attendance_status,
+                operational_reason,
+                decision_source,
+                decision_policy,
+                turn_id,
+                submission_id,
+            )
+            observed = tuple(existing)
+            if observed != expected:
+                raise RuntimeError(
+                    "conflicting immutable external turn attendance")
+            return
+        columns = (
+            "connection_id,actor_id,target_tick,turn_id,submission_id,"
+            "attendance_status,operational_reason,decision_source,"
+            "decision_policy,recorded_at"
+        )
+        values: tuple[Any, ...] = (
+            str(connection_id),
+            int(actor_id),
+            int(target_tick),
+            str(turn_id) if turn_id is not None else None,
+            str(submission_id) if submission_id is not None else None,
+            str(attendance_status),
+            str(operational_reason),
+            str(decision_source),
+            str(decision_policy),
+            str(recorded_at or _iso()),
+        )
+        if attendance_id is None:
+            self.store.execute(
+                f"INSERT INTO external_turn_attendance({columns}) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                values,
+            )
+        else:
+            self.store.execute(
+                f"INSERT INTO external_turn_attendance(id,{columns}) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (int(attendance_id), *values),
+            )
+
+    def _copy_replay_attendance(self, source_conn, tick: int) -> None:
+        if not self._attendance_enabled():
+            return
+        table = source_conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='external_turn_attendance'"
+        ).fetchone()
+        if table is None:
+            return
+        rows = source_conn.execute(
+            "SELECT * FROM external_turn_attendance "
+            "WHERE target_tick=? ORDER BY id",
+            (int(tick),),
+        ).fetchall()
+        for row in rows:
+            self._record_turn_attendance(
+                attendance_id=int(row["id"]),
+                connection_id=str(row["connection_id"]),
+                actor_id=int(row["actor_id"]),
+                target_tick=int(row["target_tick"]),
+                turn_id=(
+                    str(row["turn_id"])
+                    if row["turn_id"] is not None else None
+                ),
+                submission_id=(
+                    str(row["submission_id"])
+                    if row["submission_id"] is not None else None
+                ),
+                attendance_status=str(row["attendance_status"]),
+                operational_reason=str(row["operational_reason"]),
+                decision_source=str(row["decision_source"]),
+                decision_policy=str(row["decision_policy"]),
+                recorded_at=str(row["recorded_at"]),
+            )
 
     # -- private helpers -----------------------------------------------------
     def _require_enabled(self) -> None:

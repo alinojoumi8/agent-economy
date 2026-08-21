@@ -275,10 +275,15 @@ def _grant_runtime_access(
     _execute(connection, f"GRANT SELECT, INSERT ON TABLE auth_attempts TO {quoted_role}")
     _execute(connection, f"GRANT INSERT ON TABLE audit_log TO {quoted_role}")
     _execute(connection, f"GRANT INSERT ON TABLE external_security_audit_events TO {quoted_role}")
-    # append_auth_audit uses INSERT ... RETURNING id. PostgreSQL requires a
-    # SELECT privilege on every RETURNING column even when INSERT is granted.
-    # Keep that privilege column-scoped so the web role cannot read audit rows.
-    _execute(connection, f"GRANT SELECT (id) ON TABLE audit_log TO {quoted_role}")
+    # The audit append reads the tenant-scoped chain head and uses INSERT ...
+    # RETURNING id. Keep SELECT column-scoped: tenant_id is required by the
+    # head predicate, while sequence/hash form its projection. The advisory
+    # transaction lock serializes writers, so UPDATE is intentionally absent.
+    _execute(
+        connection,
+        "GRANT SELECT (id, tenant_id, tenant_sequence, entry_hash) ON TABLE audit_log "
+        f"TO {quoted_role}",
+    )
     _execute(
         connection,
         "GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq, auth_attempts_id_seq, "

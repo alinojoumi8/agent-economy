@@ -383,6 +383,7 @@ invite-only until the independent protocol and real-connector gates in the
 | Install and run the app | [Getting started](docs/getting-started.md) |
 | Understand the research model and metrics | [Research guide](docs/research-guide.md) |
 | Understand components and data flow | [Architecture](docs/architecture.md) |
+| Review the Buzz-derived activity, attendance, proposal, and audit boundaries | [Buzz-derived architecture](docs/buzz-derived-architecture.md) |
 | Customize a run or provider | [Configuration](docs/configuration.md) |
 | Run evolving live agents and audit cognition | [Semantics-11 cognition](docs/semantics11-cognition.md) |
 | Exercise places, civic queues, and business permits | [Semantics-12 civic city](docs/semantics12-civic-city.md) |
@@ -401,7 +402,9 @@ documents.
 
 All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
 R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
-surfaces are implemented. Maintained new runs support schema 19 / Semantics 13.
+surfaces are implemented. The current additive maximum is schema 20 /
+Semantics 14; maintained profiles stay on their recorded semantics unless they
+explicitly opt in.
 Semantics 8 is the released deterministic causal baseline; Semantics 9–10 are
 implemented but rollout-gated; Semantics 11–13 are implemented opt-in contracts
 whose public use inherits those hosted gates. The

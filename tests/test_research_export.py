@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -15,6 +16,7 @@ from research.hashing import (
     canonical_hashes,
     canonical_projection_hash,
     canonical_value,
+    load_hash_contract,
     verify_hash_contract,
 )
 from research.supplier_warning_experiment import create_common_checkpoint
@@ -77,8 +79,15 @@ def test_hash_contract_rejects_every_unclassified_schema_or_value(tmp_path):
 
 def test_hash_contract_v1_is_frozen_and_v2_covers_current_extensions(tmp_path):
     historical = Store(str(tmp_path / "semantics-8.db"))
-    current = Store(str(tmp_path / "semantics-10.db"))
+    current = Store(str(tmp_path / "semantics-14.db"))
     try:
+        current_contract = load_hash_contract(Path("research/hash-contract-v2.json"))
+        assert current_contract["schema_version"] == 20
+        assert "external_turn_attendance" in current_contract["extension_tables"]
+        assert "external_turn_attendance" in current_contract["authoritative_tables"]
+        assert current_contract["excluded_columns"]["external_turn_attendance"] == [
+            "recorded_at"]
+
         historical.init_run_meta(
             "semantics-8", 8, {"engine_semantics_version": 8})
         historical_hashes = canonical_hashes(historical)
@@ -87,18 +96,19 @@ def test_hash_contract_v1_is_frozen_and_v2_covers_current_extensions(tmp_path):
             "0df8926132314e91b603c6cb2b56c0743fb690347680dd0a3b62b3fbc356c8d0")
 
         current.init_run_meta(
-            "semantics-13", 13, {"engine_semantics_version": 13})
+            "semantics-14", 14, {"engine_semantics_version": 14})
         agent_id = current.insert(
             "agents", name="Commons Citizen", kind="citizen", age=30)
         before = canonical_hashes(current)
         assert before["contract_id"] == "hash-contract-v2"
         assert before["schema_inventory_sha256"] == (
-            "f5aec6d6dfd884735b80afe6404b26222e5cc72394d55a83d5bc88c97742d7f4")
+            "0dd18b3b338f311145f88278d73788edcd0545825ef31af9ed67cbe056942588")
         assert {
             "construction_projects",
             "construction_permit_cases",
             "construction_contributions",
             "construction_action_receipts",
+            "external_turn_attendance",
         } <= set(before["tables"])
         current.insert(
             "commons_profiles", agent_id=agent_id,
@@ -203,9 +213,6 @@ def test_manifest_hash_rejects_rewritten_metadata(economy, tmp_path):
 
 
 def test_hash_contract_v2_redacts_external_action_canaries(tmp_path):
-    from pathlib import Path
-
-    from research.hashing import load_hash_contract
     from run_config import load_config
     from world.loop import World
 

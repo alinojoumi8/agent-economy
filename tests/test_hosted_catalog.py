@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import json
 from uuid import UUID, uuid4
 import threading
 import time
@@ -547,7 +548,11 @@ def test_public_oauth_client_registration_is_canonical_and_retrievable():
 def test_audit_api_only_exposes_append_and_uses_json_parameters():
     tenant_id = uuid4()
     actor_id = uuid4()
-    connection = CatalogConnection([Cursor(one={"id": 41})])
+    connection = CatalogConnection([
+        Cursor(),
+        Cursor(one=None),
+        Cursor(one={"id": 41}),
+    ])
     catalog = HostedCatalog("postgresql://example", connect=Connections(connection))
 
     audit_id = catalog.append_audit(
@@ -560,10 +565,18 @@ def test_audit_api_only_exposes_append_and_uses_json_parameters():
     )
 
     assert audit_id == 41
-    sql, params = connection.calls[1]
+    assert "pg_advisory_xact_lock" in connection.calls[1][0]
+    assert connection.calls[2][0].lstrip().startswith(
+        "SELECT tenant_sequence, entry_hash FROM audit_log")
+    assert "WHERE tenant_id = %s" in connection.calls[2][0]
+    assert "FOR UPDATE" not in connection.calls[2][0]
+    sql, params = connection.calls[3]
     assert sql.lstrip().startswith("INSERT INTO audit_log")
     assert "%s::jsonb" in sql
-    assert params[-1] == '{"safe":true}'
+    assert params[6] == '{"safe":true}'
+    assert params[8] == 1
+    assert params[9] == "0" * 64
+    assert len(params[10]) == 64
     assert not hasattr(catalog, "update_audit")
     assert not hasattr(catalog, "delete_audit")
 
@@ -668,6 +681,66 @@ def test_invitation_registration_links_only_the_verified_existing_user_without_u
         str(expected_user_id),
         str(proposed_user_id),
     )
+
+
+def test_successful_invitation_registration_appends_chain_in_same_transaction():
+    tenant_id = uuid4()
+    user_id = uuid4()
+    token_hash = "e" * 64
+    redeemed_at = datetime.now(timezone.utc)
+    scope = CatalogConnection([Cursor(one={"tenant_id": tenant_id})])
+    result_row = {
+        "id": user_id,
+        "email_normalized": "member@example.test",
+        "display_name": "Member",
+        "password_hash": "encoded-password-hash",
+        "disabled_at": None,
+        "created_at": redeemed_at,
+        "membership_tenant_id": tenant_id,
+        "membership_user_id": user_id,
+        "membership_role": "member",
+        "membership_status": "active",
+    }
+    scoped = CatalogConnection([
+        Cursor(one=result_row),
+        Cursor(),
+        Cursor(one=None),
+        Cursor(one={"id": 91}),
+    ])
+    catalog = HostedCatalog(
+        "postgresql://example", connect=Connections(scope, scoped)
+    )
+
+    result = catalog.redeem_invitation_with_user(
+        token_hash,
+        email="member@example.test",
+        display_name="Member",
+        password_hash="encoded-password-hash",
+        redeemed_at=redeemed_at,
+        audit_details={"method": "invite"},
+        user_id=user_id,
+    )
+
+    assert result is not None
+    assert scoped.commits == 1
+    assert "pg_advisory_xact_lock" in scoped.calls[2][0]
+    assert "ORDER BY tenant_sequence DESC LIMIT 1" in scoped.calls[3][0]
+    assert "FOR UPDATE" not in scoped.calls[3][0]
+    audit_sql, audit_params = scoped.calls[4]
+    assert audit_sql.lstrip().startswith("INSERT INTO audit_log")
+    assert audit_params[:6] == (
+        str(tenant_id),
+        str(user_id),
+        "auth.registration.completed",
+        "user",
+        str(user_id),
+        None,
+    )
+    assert json.loads(audit_params[6]) == {"method": "invite"}
+    assert audit_params[7] == redeemed_at
+    assert audit_params[8] == 1
+    assert audit_params[9] == "0" * 64
+    assert len(audit_params[10]) == 64
 
 
 def test_invitation_issue_locks_active_admin_and_supersedes_pending_token():

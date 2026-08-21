@@ -94,12 +94,15 @@ def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
     migrations = load_migrations()
     migration = migrations[0]
     external = migrations[1]
+    audit_chain = migrations[2]
     combined_sql = "\n".join(item.sql for item in migrations)
 
     assert migration.version == 1
     assert migration.name == "control_plane"
     assert external.version == 2
     assert external.name == "external_agents"
+    assert audit_chain.version == 3
+    assert audit_chain.name == "audit_chain"
     assert len(migration.checksum_sha256) == 64
     for table in TENANT_TABLES:
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in combined_sql
@@ -120,6 +123,12 @@ def test_control_plane_migration_declares_forced_rls_and_append_only_audit():
     assert "inviter_user.disabled_at IS NULL" in migration.sql
     assert "t.status = 'active'" in migration.sql
     assert "m.status = 'active'" in migration.sql
+    assert "ADD COLUMN tenant_sequence bigint" in audit_chain.sql
+    assert "ADD COLUMN previous_entry_hash" in audit_chain.sql
+    assert "ADD COLUMN entry_hash" in audit_chain.sql
+    assert "audit_log_tenant_sequence_key" in audit_chain.sql
+    assert "require_chained_audit_insert" in audit_chain.sql
+    assert "not externally anchored" in audit_chain.sql
 
 
 def test_external_agent_migration_declares_tenant_scoped_run_key_before_fks():
@@ -157,14 +166,14 @@ def test_migration_runner_is_ordered_atomic_and_idempotent():
     connection = MigrationConnection()
 
     first = migrate_connection(connection, runtime_role="agent_economy_app")
-    assert first.current_version == 2
-    assert first.applied_versions == (1, 2)
+    assert first.current_version == 3
+    assert first.applied_versions == (1, 2, 3)
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert "pg_advisory_xact_lock" in connection.calls[0][0]
 
     second = migrate_connection(connection, runtime_role="agent_economy_app")
-    assert second.current_version == 2
+    assert second.current_version == 3
     assert second.applied_versions == ()
     migration_script_calls = [sql for sql, _ in connection.calls if "CREATE TABLE tenants" in sql]
     assert len(migration_script_calls) == 1
@@ -172,7 +181,15 @@ def test_migration_runner_is_ordered_atomic_and_idempotent():
     assert "hosted_active_run_scopes() TO \"agent_economy_supervisor\"" in grants
     assert "hosted_active_run_scopes() TO \"agent_economy_app\"" not in grants
     assert "hosted_active_session_tenant(text)" in grants
-    assert 'SELECT (id) ON TABLE audit_log TO "agent_economy_app"' in grants
+    assert (
+        'SELECT (id, tenant_id, tenant_sequence, entry_hash) ON TABLE audit_log '
+        'TO "agent_economy_app"'
+    ) in grants
+    audit_grants = [
+        sql for sql, _ in connection.calls
+        if sql.startswith("GRANT") and "audit_log" in sql
+    ]
+    assert not any("UPDATE" in sql for sql in audit_grants)
 
 
 def test_database_password_rotation_is_atomic_parameterized_and_redacted():
@@ -231,7 +248,7 @@ def test_migration_runner_rejects_runtime_roles_that_bypass_rls(role):
 
 def test_unknown_or_changed_database_history_fails_closed():
     migration = load_migrations()[0]
-    future = MigrationConnection(initial_history=[(3, "future", "0" * 64)])
+    future = MigrationConnection(initial_history=[(4, "future", "0" * 64)])
     with pytest.raises(MigrationError, match="unknown future"):
         migrate_connection(future, runtime_role="agent_economy_app")
 

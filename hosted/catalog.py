@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
 from typing import Any, Callable, Iterator, Mapping, Sequence
 from uuid import UUID, uuid4
 
+from .audit_chain import GENESIS_AUDIT_HASH, build_chained_audit_entry
 from .migrations import _transaction
 
 
@@ -170,6 +171,86 @@ def _scope_advisory_lock_key(namespace: str, *values: object) -> int:
         "\x00".join((namespace, *(str(value) for value in values))).encode("utf-8")
     ).hexdigest()
     return _advisory_lock_key(digest)
+
+
+def _append_chained_audit(
+    connection,
+    *,
+    tenant_id: UUID,
+    actor_user_id: UUID | None,
+    action: str,
+    target_type: str,
+    target_id: str | None,
+    request_id: str | None,
+    details: Mapping[str, Any] | None,
+    created_at: datetime,
+) -> int:
+    """Append one chain entry while serializing writers for this tenant."""
+
+    # The tenant-scoped transaction advisory lock is the writer lock for this
+    # chain. The head read stays non-locking so the append-only runtime role
+    # needs no UPDATE privilege on audit_log.
+    connection.execute(
+        "SELECT pg_advisory_xact_lock(%s)",
+        (_scope_advisory_lock_key("audit-chain", tenant_id),),
+    )
+    head = _one(connection.execute(
+        "SELECT tenant_sequence, entry_hash FROM audit_log "
+        "WHERE tenant_id = %s AND tenant_sequence IS NOT NULL "
+        "ORDER BY tenant_sequence DESC LIMIT 1",
+        (str(tenant_id),),
+    ))
+    sequence = (
+        int(_row_value(head, "tenant_sequence", 0)) + 1
+        if head is not None else 1
+    )
+    previous_hash = (
+        str(_row_value(head, "entry_hash", 1))
+        if head is not None else GENESIS_AUDIT_HASH
+    )
+    entry = build_chained_audit_entry(
+        tenant_id=str(tenant_id),
+        tenant_sequence=sequence,
+        previous_entry_hash=previous_hash,
+        actor_user_id=(
+            str(actor_user_id) if actor_user_id is not None else None),
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        request_id=request_id,
+        details=details,
+        created_at=created_at,
+    )
+    payload = json.dumps(
+        entry["details_json"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    row = _one(connection.execute(
+        "INSERT INTO audit_log "
+        "(tenant_id, actor_user_id, action, target_type, target_id, "
+        "request_id, details_json, created_at, tenant_sequence, "
+        "previous_entry_hash, entry_hash) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s) "
+        "RETURNING id",
+        (
+            str(tenant_id),
+            str(actor_user_id) if actor_user_id is not None else None,
+            action,
+            target_type,
+            target_id,
+            request_id,
+            payload,
+            created_at,
+            sequence,
+            previous_hash,
+            entry["entry_hash"],
+        ),
+    ))
+    if row is None:
+        raise CatalogError("chained audit insert returned no id")
+    return int(_row_value(row, "id", 0))
 
 
 def _email(value: str) -> str:
@@ -841,7 +922,6 @@ class HostedCatalog:
         normalized_email = _email(email)
         invitation_role = _role(role)
         validated_token_hash = _hash(token_hash, label="invitation token hash")
-        details_json = json.dumps(dict(audit_details), sort_keys=True, separators=(",", ":"))
         with self.tenant_transaction(tenant) as connection:
             connection.execute(
                 "SELECT pg_advisory_xact_lock(%s)",
@@ -866,26 +946,30 @@ class HostedCatalog:
                 (occurred_at, str(tenant), normalized_email),
             )
             row = _one(connection.execute(
-                "WITH invited AS ("
-                " INSERT INTO invitations"
+                "INSERT INTO invitations"
                 " (id, tenant_id, email_normalized, role, token_hash, invited_by_user_id, expires_at)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s)"
                 " RETURNING id, tenant_id, email_normalized, role, token_hash, invited_by_user_id,"
-                " expires_at, accepted_at, revoked_at, created_at"
-                "), audited AS ("
-                " INSERT INTO audit_log"
-                " (tenant_id, actor_user_id, action, target_type, target_id, details_json, created_at)"
-                " SELECT tenant_id, invited_by_user_id, %s, 'invitation', id::text, %s::jsonb, %s"
-                " FROM invited RETURNING id"
-                ") SELECT invited.* FROM invited CROSS JOIN audited",
+                " expires_at, accepted_at, revoked_at, created_at",
                 (
                     str(invitation), str(tenant), normalized_email, invitation_role,
                     validated_token_hash, str(inviter), expires_at,
-                    event, details_json, occurred_at,
                 ),
             ))
-        if row is None:
-            raise CatalogError("invitation and audit insert returned no record")
+            if row is None:
+                raise CatalogError(
+                    "invitation and audit insert returned no record")
+            _append_chained_audit(
+                connection,
+                tenant_id=tenant,
+                actor_user_id=inviter,
+                action=event,
+                target_type="invitation",
+                target_id=str(invitation),
+                request_id=None,
+                details=audit_details,
+                created_at=occurred_at,
+            )
         return _invitation(row)
 
     def lookup_invitation_by_hash(self, token_hash: str) -> InvitationRecord | None:
@@ -1002,7 +1086,6 @@ class HostedCatalog:
         expected_existing_value = (
             str(expected_existing) if expected_existing is not None else None
         )
-        details_json = json.dumps(dict(audit_details or {}), sort_keys=True, separators=(",", ":"))
         with self._connection() as connection:
             with _transaction(connection):
                 scope_row = _one(connection.execute(
@@ -1068,16 +1151,11 @@ class HostedCatalog:
                 " ON CONFLICT (tenant_id, user_id) DO UPDATE"
                 " SET role = EXCLUDED.role, status = 'active', updated_at = clock_timestamp()"
                 " RETURNING tenant_id, user_id, role, status"
-                "), audited AS ("
-                " INSERT INTO audit_log"
-                " (tenant_id, actor_user_id, action, target_type, target_id, details_json, created_at)"
-                " SELECT a.tenant_id, a.user_id, %s, 'user', a.user_id::text, %s::jsonb, %s"
-                " FROM activated AS a RETURNING id"
                 ") SELECT u.id, u.email_normalized, u.display_name, u.password_hash,"
                 " u.disabled_at, u.created_at, a.tenant_id AS membership_tenant_id,"
                 " a.user_id AS membership_user_id, a.role AS membership_role,"
                 " a.status AS membership_status"
-                " FROM resolved_user AS u CROSS JOIN activated AS a CROSS JOIN audited",
+                " FROM resolved_user AS u CROSS JOIN activated AS a",
                 (
                     expected_existing_value,
                     str(tenant), validated_hash, normalized_email, redeemed_at,
@@ -1085,9 +1163,21 @@ class HostedCatalog:
                     expected_existing_value,
                     str(user), display_name.strip(), password_hash,
                     redeemed_at,
-                    audit_event, details_json, redeemed_at,
                 ),
             ))
+            if row is not None:
+                redeemed_user = _uuid(_row_value(row, "id"), label="user id")
+                _append_chained_audit(
+                    connection,
+                    tenant_id=tenant,
+                    actor_user_id=redeemed_user,
+                    action=audit_event,
+                    target_type="user",
+                    target_id=str(redeemed_user),
+                    request_id=None,
+                    details=audit_details,
+                    created_at=redeemed_at,
+                )
         if row is None:
             return None
         return (
@@ -1688,20 +1778,18 @@ class HostedCatalog:
     ) -> int:
         tenant = _uuid(tenant_id, label="tenant id")
         actor = _uuid(actor_user_id, label="actor user id") if actor_user_id is not None else None
-        payload = json.dumps(dict(details or {}), sort_keys=True, separators=(",", ":"))
         with self.tenant_transaction(tenant) as connection:
-            row = _one(connection.execute(
-                "INSERT INTO audit_log "
-                "(tenant_id, actor_user_id, action, target_type, target_id, request_id, details_json) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb) RETURNING id",
-                (
-                    str(tenant), str(actor) if actor else None, action, target_type,
-                    target_id, request_id, payload,
-                ),
-            ))
-        if row is None:
-            raise CatalogError("audit insert returned no id")
-        return int(_row_value(row, "id", 0))
+            return _append_chained_audit(
+                connection,
+                tenant_id=tenant,
+                actor_user_id=actor,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                request_id=request_id,
+                details=details,
+                created_at=datetime.now(timezone.utc),
+            )
 
     def record_auth_attempt(
         self,
@@ -1894,17 +1982,18 @@ class HostedCatalog:
     ) -> int:
         tenant = _uuid(tenant_id, label="tenant id")
         actor = _uuid(actor_user_id, label="actor user id") if actor_user_id is not None else None
-        payload = json.dumps(dict(details or {}), sort_keys=True, separators=(",", ":"))
         with self.tenant_transaction(tenant) as connection:
-            row = _one(connection.execute(
-                "INSERT INTO audit_log "
-                "(tenant_id, actor_user_id, action, target_type, details_json, created_at) "
-                "VALUES (%s, %s, %s, 'auth', %s::jsonb, %s) RETURNING id",
-                (str(tenant), str(actor) if actor else None, event, payload, occurred_at),
-            ))
-        if row is None:
-            raise CatalogError("authentication audit insert returned no id")
-        return int(_row_value(row, "id", 0))
+            return _append_chained_audit(
+                connection,
+                tenant_id=tenant,
+                actor_user_id=actor,
+                action=event,
+                target_type="auth",
+                target_id=None,
+                request_id=None,
+                details=details,
+                created_at=occurred_at,
+            )
 
     def ready(self) -> bool:
         with self._connection() as connection:

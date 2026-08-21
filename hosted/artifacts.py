@@ -1,8 +1,8 @@
 """Immutable artifact storage and consistent SQLite run snapshots.
 
-Artifact keys are intentionally narrow: callers may only address a snapshot
-inside a tenant and run namespace.  Both filesystem and S3 implementations
-validate that logical key before performing any I/O.
+Artifact keys are intentionally narrow.  Snapshot storage remains the default
+namespace; other callers must inject an equally strict key validator.  Both
+filesystem and S3 implementations validate the logical key before any I/O.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Protocol, runtime_checkable
+from typing import BinaryIO, Callable, Protocol, runtime_checkable
 
 from engine.schema import SCHEMA_VERSION
 
@@ -163,14 +163,20 @@ class FilesystemArtifactStore:
     _METADATA_NAME = "metadata.json"
     _COMPLETE_NAME = ".complete"
 
-    def __init__(self, root: str | os.PathLike[str]):
+    def __init__(
+        self,
+        root: str | os.PathLike[str],
+        *,
+        key_validator: Callable[[str], str] = validate_snapshot_artifact_key,
+    ):
         self.root = Path(root).resolve()
+        self._key_validator = key_validator
         self.root.mkdir(parents=True, exist_ok=True)
         if not self.root.is_dir():
             raise ArtifactError(f"artifact root is not a directory: {self.root}")
 
     def _artifact_dir(self, key: str, *, create_parent: bool = False) -> Path:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         path = self.root.joinpath(*valid_key.split("/"))
         if create_parent:
             # Check the deepest existing ancestor before mkdir follows any
@@ -218,7 +224,7 @@ class FilesystemArtifactStore:
     def put_file(
         self, key: str, source: str | os.PathLike[str], *, expected_sha256: str | None = None
     ) -> ArtifactMetadata:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         expected = _validate_sha256(expected_sha256) if expected_sha256 is not None else None
         source_path = Path(source)
         if not source_path.is_file():
@@ -264,7 +270,7 @@ class FilesystemArtifactStore:
             shutil.rmtree(staging, ignore_errors=True)
 
     def _read_metadata(self, key: str) -> tuple[ArtifactMetadata, Path]:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         artifact_dir = self._artifact_dir(valid_key)
         complete_path = artifact_dir / self._COMPLETE_NAME
         if not artifact_dir.is_dir() or not complete_path.is_file():
@@ -334,7 +340,7 @@ class FilesystemArtifactStore:
             temporary.unlink(missing_ok=True)
 
     def delete(self, key: str) -> None:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         artifact_dir = self._artifact_dir(valid_key)
         if not artifact_dir.exists():
             raise ArtifactNotFound(f"artifact not found: {valid_key}")
@@ -353,6 +359,7 @@ class S3ArtifactStore:
         prefix: str = "",
         client=None,
         client_options: dict | None = None,
+        key_validator: Callable[[str], str] = validate_snapshot_artifact_key,
     ):
         if not bucket or not isinstance(bucket, str):
             raise ValueError("bucket is required")
@@ -363,6 +370,7 @@ class S3ArtifactStore:
         self.prefix = normalized_prefix
         self._client_instance = client
         self._client_options = dict(client_options or {})
+        self._key_validator = key_validator
 
     @property
     def _client(self):
@@ -377,7 +385,7 @@ class S3ArtifactStore:
         return self._client_instance
 
     def _object_key(self, key: str) -> str:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         return f"{self.prefix}/{valid_key}" if self.prefix else valid_key
 
     @staticmethod
@@ -391,7 +399,7 @@ class S3ArtifactStore:
     def put_file(
         self, key: str, source: str | os.PathLike[str], *, expected_sha256: str | None = None
     ) -> ArtifactMetadata:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         expected = _validate_sha256(expected_sha256) if expected_sha256 is not None else None
         source_path = Path(source)
         if not source_path.is_file():
@@ -422,7 +430,7 @@ class S3ArtifactStore:
         return metadata
 
     def head(self, key: str) -> ArtifactMetadata:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         try:
             response = self._client.head_object(
                 Bucket=self.bucket, Key=self._object_key(valid_key)
@@ -488,7 +496,7 @@ class S3ArtifactStore:
             temporary.unlink(missing_ok=True)
 
     def delete(self, key: str) -> None:
-        valid_key = validate_snapshot_artifact_key(key)
+        valid_key = self._key_validator(key)
         self.head(valid_key)
         try:
             self._client.delete_object(Bucket=self.bucket, Key=self._object_key(valid_key))
