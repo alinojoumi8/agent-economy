@@ -2,6 +2,8 @@
 
 Created: 2026-08-20
 
+Status: Complete as of 2026-08-21
+
 ## Purpose
 
 Make `main` an understandable, reviewable baseline; preserve every active or
@@ -257,25 +259,55 @@ base commit `1200add` an intentional review/landing decision before normalizing
   `codex/reproducibility-release` source commit, and all cleanup candidates
   remain untouched.
 
-The remaining recommended landing order is:
+## Consolidation completion recorded on 2026-08-21
 
-1. Finish full validation of `codex/buzz-agent-patterns`, then give its feature,
-   handbook, and regression-test commits a separate reviewed PR.
-2. Audit and finish `codex/live-city-diorama` in its existing protected
-   worktree; do not mix its uncommitted state into the Buzz PR.
-3. Port the useful `f2903db` reproducibility work selectively onto the then
-   current shared base.
-4. Resolve PR #55 and PR #57, then request explicit approval for a final
-   worktree and merged-branch cleanup batch.
+The reviewed landing sequence is complete:
+
+| Outcome | Pull request | Merge commit |
+|---|---:|---|
+| Runtime throughput base | #63 | `1b61b22fe30adb6f1c5b18fed36685dd691c6e98` |
+| Governed agent boundaries and consolidated handbook | #64 | `adc2f768d773b05a2b2f20fbccd92b005be2331f` |
+| Scale-validation and economic-health receipts | #55 | `fc0a9d0b96ad53de7487db991c976fdf0d426250` |
+| Vite 8.2.1 replacement for closed Dependabot PR #57 | #65 | `d71851f5f2ddc9a5171eb025d7d06e02d5e20ad4` |
+| Civic Atlas World Pulse | #66 | `20cf4b5c51dd459fcd5e72e8120cbadc24234aee` |
+| MiniMax decision-output hardening | #67 | `5ec91338211cf47fec4b495c73b1e04692f9f01b` |
+| Local reproducibility evidence profile | #68 | `7f0b818c335c0b12da35c868fb95d1c236dabc2e` |
+
+PR #57 was closed as superseded after its package and lockfile changes were
+confirmed identical to the tested PR #65 replacement. No pull request remains
+open or without a disposition.
+
+The useful behavior in source commit
+`f2903db2b52983b9622a2f7e93815626f4d154da` was selectively reimplemented and
+reviewed in PR #68. Its stale generated dashboard bundles, older Windows
+publication behavior, and dated release claims were intentionally excluded.
+The current profile is local-only and cannot waive any production release
+gate.
+
+Before removal, all five auxiliary worktrees were clean and no active process
+referenced their paths. They were removed without `--force`. Eighteen local
+branches were direct ancestors of `main` and were removed with `git branch -d`.
+Six exact non-ancestor refs were removed only after merged-PR,
+patch-equivalence, or selective-port evidence established that they were
+superseded. Thirteen remote heads were deleted after confirming there were no
+open pull requests; Dependabot had already removed its closed Vite branch, and
+the stale tracking ref was pruned.
+
+Immediately before this closeout record, the final inventory was one clean
+worktree, local `main`, and remote `origin/main`, all at
+`7f0b818c335c0b12da35c868fb95d1c236dabc2e`. This documentation branch is
+temporary: after its reviewed merge and deletion, new work starts from the
+then-current `origin/main` on a focused `codex/<purpose>` branch.
 
 ## Completion record
 
-The consolidation is complete only when:
+All completion conditions are satisfied:
 
-- `main` and `origin/main` have an intentional relationship;
-- both active dirty worktrees are clean or intentionally preserved;
-- the reproducibility commit has a current disposition;
-- open PRs have explicit decisions;
-- only approved merged branches/worktrees have been removed;
-- the handbook describes the current branch without overstating release status;
-- all claimed verification was actually run and recorded.
+- `main` was fast-forwarded to the reviewed `origin/main` baseline;
+- every formerly active worktree was cleaned, integrated, and removed;
+- the reproducibility source received a selective-port disposition in PR #68;
+- every pull request has an explicit merged, closed, or superseded state;
+- only audited merged or superseded branches and worktrees were removed;
+- the indexed handbook describes the current application without overstating
+  production or live-provider readiness; and
+- each landing PR records its actual local validation and CI result.
