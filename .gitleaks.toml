@@ -126,6 +126,16 @@ regexes = [
 
 [[allowlists]]
 targetRules = ["generic-api-key"]
+description = "Deterministic dedupe key in the legacy construction rejection fixture"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^tests/test_semantics13_construction\.py$''']
+regexes = [
+  '''^[[:space:]]*"dedupe_key": "legacy-proposal-0001",[[:space:]]*$''',
+]
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
 description = "Ruleset key in the dashboard UI fixture"
 condition = "AND"
 regexTarget = "line"
