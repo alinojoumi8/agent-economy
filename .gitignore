@@ -33,6 +33,7 @@ dist/
 # Generated tooling output and local agent workspaces.
 graphify-out/
 .qoder/
+.claude/settings.local.json
 *.log
 .worktrees/
 logs/

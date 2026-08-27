@@ -29,6 +29,26 @@ and hash every referenced artifact. A live-provider or
 `independent_external` receipt is ineligible for this profile even if its own
 status says `passed`.
 
+Use the maintained command owner below when producing each receipt. Record the
+literal command in the receipt and retain a sanitized, repository-relative log
+as its hashed artifact.
+
+| Gate | Maintained command owner |
+|---|---|
+| `python_core_regression` | The `core-subset` job in [CI](../.github/workflows/ci.yml), including its exact file list and single-shard flags |
+| `recorded_replay` | `python -m pytest -q tests/test_recorded_replay_golden.py tests/test_replay_source_lifecycle.py` |
+| `scale_profile_contract` | `python -m pytest -q tests/test_scale_170_profiles.py tests/test_scale_270_profiles.py tests/test_scale_validation.py tests/test_scale_economic_health.py` |
+| `dashboard_regression` | `npm --prefix dashboard test` |
+| `dashboard_typecheck` | `npm --prefix dashboard run typecheck` |
+| `dashboard_build` | `npm --prefix dashboard run build`, followed by the committed-bundle drift checks in [development](development.md) |
+| `pinned_dataset_verification` | `python run.py --verify-datasets config/data-manifest.yaml` |
+| `documentation_contract` | `python -m pytest -q tests/test_documentation.py` |
+| `local_secret_scan` | Gitleaks `8.30.1` with `.gitleaks.toml` against the candidate Git history/tree, with `--redact` enabled |
+
+Do not substitute a smaller ad hoc test list, an unpinned secret scanner, a
+staged-only scan of an empty index, or a previously generated dashboard bundle.
+If a maintained command changes, the configuration hash and receipt must change.
+
 ## Assemble an offline package
 
 Copy the template rather than editing the template in place:
@@ -41,6 +61,12 @@ Copy-Item runs/release/reproducibility-v1.template.yaml `
 Fill the exact candidate commit/tree plus repository-relative receipt paths and
 SHA-256 values. The collector validates existing bytes; it does not run tests,
 contact providers, deploy infrastructure, or generate missing evidence.
+
+Write receipts, logs, the filled manifest, and the selected package below
+`reports/out/`, which is intentionally ignored. That keeps evidence bound to the
+clean candidate named in the manifest instead of changing that candidate by
+committing its own run output. Preserve or publish the package separately only
+under an explicit evidence-retention decision.
 
 ```powershell
 python run.py `

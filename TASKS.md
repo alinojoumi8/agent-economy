@@ -6,12 +6,12 @@ long-horizon acceptance campaign. Live inference requires explicit operator
 approval; the acceptance profile is uncapped and records actual spend while
 provider rate limits control throughput.
 
-P0/P1 and the R18–R22 functional surfaces are complete. The implementation in
-PR #20 is authorized for squash merge after the complete local gate. Do not
-tag, publish, or deploy publicly until the pending live gates and final
-provenance audit pass under separate authorization.
+P0/P1 and the R18–R22 functional surfaces are complete on `main`. The 2026-08-21
+branch-consolidation sequence is also complete. Do not tag, publish, or deploy
+publicly until the pending external, hosted, live-provider, long-horizon, and
+final-audit gates pass for one exact candidate under separate authorization.
 
-## Current consolidation queue — 2026-08-20
+## Current consolidation outcome and release queue — 2026-08-26
 
 The active branch/worktree inventory, evidence, and non-destructive execution
 order are in the
@@ -27,15 +27,20 @@ order are in the
 - [x] Consolidate the research-first README and handbook; add permanent branch
   and documentation workflows; formalize all ten ADRs; pass maintained-link,
   documentation/profile, repository smoke, and diff checks.
-- [ ] Give local-only base commit `1200add` an intentional review and landing
-  decision before normalizing `main`.
-- [ ] Finish and review `codex/live-city-diorama` in its existing protected
-  worktree.
-- [ ] Port selected reproducibility work from `f2903db` onto a fresh branch
-  from the eventual canonical base; do not merge its stale tip wholesale.
-- [ ] Resolve open PRs #55 and #57 against the chosen base.
-- [ ] Re-audit and delete only the exact merged/superseded local and remote refs
-  approved in a later cleanup batch.
+- [x] Review and land local-only base commit `1200add` through PR #63; the merge
+  commit is `1b61b22`.
+- [x] Finish, review, and integrate the protected Live City work through the
+  reviewed PR #58–#60 sequence and later Civic Atlas PR #66.
+- [x] Selectively port the useful `f2903db` reproducibility behavior through PR
+  #68 without merging its stale generated assets or dated release claims.
+- [x] Resolve PR #55 by merge and close PR #57 as superseded by the identical,
+  tested Vite update in PR #65.
+- [x] Re-audit all refs and worktrees, remove only proven merged or superseded
+  targets, and record the final one-worktree/one-branch inventory in PR #69.
+- [ ] Complete the 16-gate `production-v1` release package for one exact
+  candidate. The current decision, ordering, proof, spend, and authorization
+  boundaries are in the
+  [release-readiness go/no-go sheet](docs/release-readiness-go-no-go.md).
 
 No unchecked row authorizes deletion, worktree removal, remote mutation,
 publication, deployment, or live inference.
@@ -48,39 +53,45 @@ Close a row only when every acceptance step in its linked implementation plan
 has qualifying evidence. A local pass, partial run, blocked external gate, or
 historical receipt cannot substitute for the named boundary.
 
-- [ ] Publish the verified local `main` stack, then integrate dependency PRs 39
-  and 40 independently. Follow the
+- [x] Superseded/completed: publish the verified shared stack and integrate the
+  maintained dependency replacements independently through PRs #41, #42, and
+  #65. Follow the historical
   [design](docs/superpowers/specs/2026-08-05-repository-publication-design.md)
   and [implementation plan](docs/superpowers/plans/2026-08-05-repository-publication.md).
-- [ ] Reconcile `codex/reconcile-release` in an isolated worktree, implement the
-  supply-recovery contract, and produce full-horizon source/integrity/replay
-  evidence. Follow the
+- [x] Completed/superseded: reconcile the living economy, World OS, supply
+  recovery, and release-evidence implementation through PR #43 and subsequent
+  focused fixes. Follow the historical
   [design](docs/superpowers/specs/2026-08-05-recovery-reconciliation-design.md)
   and [implementation plan](docs/superpowers/plans/2026-08-05-recovery-reconciliation.md).
-- [ ] Preserve, classify, and either integrate or explicitly retain every dirty
-  `living-economy-map` worktree artifact without deleting unrelated data.
-  Follow the
+- [x] Completed: preserve, classify, integrate, or explicitly supersede every
+  dirty worktree artifact; PR #69 records the final safe removal and inventory.
+  Follow the historical
   [design](docs/superpowers/specs/2026-08-05-dirty-worktree-salvage-design.md)
   and [implementation plan](docs/superpowers/plans/2026-08-05-dirty-worktree-salvage.md).
-- [ ] Complete the investigation title editor, conflict resolution, export UI,
-  two-context browser coverage, privacy, and accessibility gates. Follow the
+- [x] Completed in PR #43: investigation title editing, conflict resolution,
+  export actions, browser coverage, privacy, and accessibility contracts are in
+  the maintained workspace. Follow the historical
   [design](docs/superpowers/specs/2026-08-05-investigation-workspace-completion-design.md)
   and [implementation plan](docs/superpowers/plans/2026-08-05-investigation-workspace-completion.md).
-- [ ] Replace all five `LegacyWorkspace` World OS routes with tested,
-  tick/fork-aware route-specific workspaces and shared UI primitives. Follow
-  the [design](docs/superpowers/specs/2026-08-05-world-os-route-completion-design.md)
+- [x] Completed in PR #43 and later dashboard work: no `LegacyWorkspace`
+  implementation remains, and the maintained routes use tested, tick/fork-aware
+  workspaces and shared primitives. Follow the historical
+  [design](docs/superpowers/specs/2026-08-05-world-os-route-completion-design.md)
   and [implementation plan](docs/superpowers/plans/2026-08-05-world-os-route-completion.md).
 - [ ] Complete the fail-closed release-evidence campaign: independent clients,
   Semantics 10 hosted evidence, V9 MiniMax Oracle, 30-day pilot, 365-day
   acceptance, final audits, and separately approved deployment. Follow the
   [design](docs/superpowers/specs/2026-08-05-release-evidence-design.md) and
-  [implementation plan](docs/superpowers/plans/2026-08-05-release-evidence.md).
+  [implementation plan](docs/superpowers/plans/2026-08-05-release-evidence.md),
+  with the current decision state in the
+  [go/no-go sheet](docs/release-readiness-go-no-go.md).
 
-Publication is first. Recovery reconciliation and dirty-worktree salvage run
-in isolated worktrees after that baseline is fixed. Investigation and route
-completion start from the reconciled shared baseline. Release evidence starts
-only after accepted code is merged, and every live, external, paid, hosted, or
-deployment stage retains its own explicit approval boundary.
+The snapshot's intended order was publication first, then isolated recovery and
+salvage, then investigation and route completion from the reconciled baseline.
+Those non-release rows are now completed or superseded as recorded above.
+Release evidence still starts only after accepted code is merged, and every
+live, external, paid, hosted, or deployment stage retains its own explicit
+approval boundary.
 
 ## Legal-Economy v2 semantics-7 closure
 
@@ -411,8 +422,9 @@ deployment stage retains its own explicit approval boundary.
   long-horizon acceptance as separate work rather than hidden merge blockers.
 - [x] Confirm that P0/P1 and R18–R22 leave no additional functional PRD feature
   gap; the release-gate tooling and pending live campaigns are evidence work.
-- [x] Authorize PR #20 implementation for squash merge after its complete local
-  test gate and handbook reconciliation.
+- [x] Preserve the historical PR #20 local-gate authorization; its implementation
+  is integrated and the merge decision is superseded by the later reviewed
+  main-line sequence.
 - [ ] Complete the successful V9 Oracle campaign, capped 30-day rumor pilot,
   365-day/$200 acceptance run, and final provenance/license/dependency/secret
   audit before any tag, publication, or public deployment.

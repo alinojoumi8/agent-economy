@@ -53,6 +53,8 @@ each audience can find the authoritative level of detail.
   release-status ledger
 - [Local reproducibility release profile](reproducibility-release-profile.md) —
   fixed offline gates and the boundary with strict production evidence
+- [Release-readiness go/no-go sheet](release-readiness-go-no-go.md) — current
+  decision state, required proof, sequencing, spend, and authorization boundaries
 - [Historical printable status snapshot](implementation-status.html)
 - [Emergent phenomena](emergent-phenomena.md)
 - [Live provider validation](live-provider-validation.md)

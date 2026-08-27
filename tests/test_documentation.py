@@ -125,6 +125,38 @@ def test_reproducibility_profile_guide_keeps_local_and_release_claims_separate()
         assert phrase in guide
 
 
+def test_release_readiness_sheet_is_complete_and_fail_closed():
+    sheet = (ROOT / "docs/release-readiness-go-no-go.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    for gate in (
+        "independent_mcp",
+        "hermes_connector",
+        "openclaw_connector",
+        "python_connector",
+        "typescript_connector",
+        "semantics10_experiment",
+        "semantics10_hosted_ui",
+        "semantics10_hosted_ops",
+        "oracle_v9",
+        "rumor_pilot",
+        "production_acceptance",
+        "provenance_audit",
+        "dependency_license_secret_audit",
+        "hosted_backup_restore",
+        "tenant_isolation_load",
+        "deployment_receipt",
+    ):
+        assert f"`{gate}`" in sheet
+    for phrase in (
+        "no-go — tag or public deployment",
+        "approval for one row never authorizes another row",
+        "this sheet does not make that choice and does not authorize spend",
+        "historical receipts and local passes cannot fill its missing rows",
+    ):
+        assert phrase in sheet
+
+
 def test_civic_atlas_guide_preserves_projection_and_history_boundaries():
     guide = (ROOT / "docs/civic-atlas.md").read_text(encoding="utf-8").lower()
     for phrase in (
@@ -219,7 +251,7 @@ def test_normative_contracts_cover_current_additive_boundaries_and_queue():
         assert phrase in spec
 
     tasks = (ROOT / "TASKS.md").read_text(encoding="utf-8").lower()
-    assert "current consolidation queue — 2026-08-20" in tasks
+    assert "current consolidation outcome and release queue — 2026-08-26" in tasks
     assert "historical execution backlog snapshot — 2026-08-05" in tasks
     assert (
         "docs/plans/2026-08-20-branch-and-documentation-consolidation-plan.md"

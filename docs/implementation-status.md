@@ -1,6 +1,6 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Current assessment date:** 2026-08-20
+> **Current assessment date:** 2026-08-26
 >
 > **Maintained maximum contract for new runs:** schema 20 / semantics 14
 >
@@ -53,6 +53,14 @@ version:
 See [Buzz-derived architecture boundaries](buzz-derived-architecture.md) for
 the exact authority, privacy, replay, and verification limits.
 
+Repository consolidation is complete. The 2026-08-21 landing sequence reviewed
+and integrated the runtime base, governed-agent work, scale receipts, Live City,
+Civic Atlas, MiniMax hardening, and the local reproducibility profile; PR #69
+then recorded a final one-worktree, local-`main`, remote-`main` inventory. The
+2026-08-26 refresh confirmed shared `main` at `b83fc2c` before this documentation
+branch was created. This repository-topology fact is not release evidence for a
+later candidate.
+
 ## Current executive verdict
 
 The PRD-v1 P0/P1 surfaces and R18–R22 extensions are implemented. The current
@@ -64,6 +72,12 @@ subsystem: independent external-connector receipts, the Semantics 10 rollout
 evidence, the fresh V9 Oracle campaign, the corrected live rumor gate, the
 explicitly authorized long live campaign, and a fresh provenance, license,
 dependency, and secret audit before tagging or public deployment.
+
+The maintained [release-readiness go/no-go sheet](release-readiness-go-no-go.md)
+maps those boundaries to the 16 fixed `production-v1` gates, their prerequisites,
+required proof, authorization owner, and stop conditions. The nine-gate
+`reproducibility-v1` profile is a zero-provider local baseline only; a pass can
+support review of its exact candidate but cannot satisfy any production gate.
 
 The remainder of this document preserves the dated closure and campaign
 evidence. Version labels inside those sections describe the run or release
@@ -203,9 +217,10 @@ Four release-quality workstreams remain after the extension closure:
    from preserved deceased rows; and
 4. a fresh release-candidate provenance/license/dependency/secret audit.
 
-The implementation in PR #20 is authorized for squash merge after its complete
-local gate. Tagging, publication, and public deployment require separate
-authorization after the live gates pass.
+The historical PR #20 merge boundary has been superseded by the later reviewed
+main-line landing sequence. Tagging, publication, hosted testing, paid
+inference, and public deployment retain the separate current-candidate
+authorizations in the go/no-go sheet.
 
 The five-tick semantics-7 pilot and scripted 365-tick rehearsal supplement
 those gates; neither replaces live-provider acceptance. R21's SCF/SUSB supports
@@ -269,6 +284,10 @@ public tag.
 
 ## Release constraints and deferred campaigns
 
+- PRs #63–#68 landed the reviewed consolidation sequence, and PR #69 recorded
+  its cleanup closeout. The final audit found one clean worktree, local `main`,
+  and remote `main`; subsequent release work must use a fresh focused branch
+  from the then-current shared baseline.
 - PR #15 merged after its exact-head matrix passed, and post-merge CI run
   `29368193807` passed all five jobs. No tag or publication was performed.
 - R21 real-U.S. calibration merged through five-job-green PR #18, and
@@ -360,10 +379,10 @@ public tag.
   both outcomes, p90 under 60 seconds, Brier under 0.25, and exact replay of
   every finalized source. No V9 live evidence is claimed yet. Engine semantics
   7 and database schema 11 remain unchanged.
-- PR #20 implementation is authorized for squash merge after the reconciled
-  local gate. Do not tag, publish, or deploy publicly until the live gates and a
-  fresh provenance/license/dependency/secret audit pass under separate
-  authorization.
+- The historical PR #20 implementation boundary has been integrated and
+  superseded by the later reviewed main-line sequence. Do not tag, publish, or
+  deploy publicly until the current live gates and a fresh
+  provenance/license/dependency/secret audit pass under separate authorization.
 - Generated databases and reports corroborate findings but do not outrank
   committed code, tests, or locally resolvable provenance.
 - A provider cache miss is telemetry, not a simulation failure; missing required
