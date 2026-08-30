@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from agents.external import ExternalAgentError
 from hosted.app import CSRF_HEADER_NAME, create_hosted_app
 from hosted.auth import AuthFailure
 from hosted.catalog_auth import CatalogAuthService
@@ -35,6 +37,7 @@ RUN_A = UUID("50000000-0000-4000-8000-000000000005")
 RUN_B = UUID("60000000-0000-4000-8000-000000000006")
 EXTERNAL_AGENT_ID = UUID("70000000-0000-4000-8000-000000000007")
 RUN_CONNECTION_ID = UUID("80000000-0000-4000-8000-000000000008")
+NEW_EXTERNAL_AGENT_ID = UUID("90000000-0000-4000-8000-000000000009")
 
 def opaque_token(byte: bytes) -> str:
     return base64.urlsafe_b64encode(byte * 32).decode("ascii").rstrip("=")
@@ -238,6 +241,8 @@ class FakeCatalog:
     def __init__(self) -> None:
         self.create_invitation_calls = 0
         self.consume_invitation_calls = 0
+        self.external_create_calls: list[dict[str, Any]] = []
+        self.external_replace_calls: list[dict[str, Any]] = []
         self.memberships: dict[tuple[UUID, UUID], Membership] = {
             (TENANT_A, ADMIN_ID): Membership(TENANT_A, ADMIN_ID, "admin"),
             (TENANT_A, OBSERVER_ID): Membership(TENANT_A, OBSERVER_ID, "observer"),
@@ -320,6 +325,45 @@ class FakeCatalog:
         if owner_user_id is not None and record.owner_user_id != owner_user_id:
             return None
         return record
+
+    def create_external_agent_with_credential(
+        self,
+        tenant_id: UUID,
+        **kwargs: Any,
+    ):
+        self.external_create_calls.append({"tenant_id": tenant_id, **kwargs})
+        record = SimpleNamespace(
+            id=kwargs["external_agent_id"],
+            tenant_id=tenant_id,
+            owner_user_id=kwargs["owner_user_id"],
+            run_id=kwargs["run_id"],
+            run_connection_id=kwargs["run_connection_id"],
+            external_agent_id=kwargs["external_agent_id"],
+            display_name=kwargs["display_name"],
+            biography=kwargs["biography"],
+            preferred_occupation=kwargs["preferred_occupation"],
+            tier=kwargs["tier"],
+            scopes=tuple(kwargs["scopes"]),
+            status="active" if kwargs["tier"] == "observer" else "pending_actor",
+            actor_id=None,
+            last_seen_at=None,
+            lease_expires_at=None,
+            created_at=NOW,
+        )
+        self.external_agents[record.id] = record
+        credential = SimpleNamespace(token_hash=kwargs["token_hash"])
+        return record, credential
+
+    def replace_external_personal_credential(
+        self,
+        tenant_id: UUID,
+        connection_id: UUID,
+        **kwargs: Any,
+    ):
+        self.external_replace_calls.append(
+            {"tenant_id": tenant_id, "connection_id": connection_id, **kwargs}
+        )
+        return SimpleNamespace(token_hash=kwargs["token_hash"])
 
     def get_membership(self, tenant_id: UUID, user_id: UUID) -> Membership | None:
         return self.memberships.get((UUID(str(tenant_id)), UUID(str(user_id))))
@@ -453,6 +497,35 @@ class FakeController:
 class FakeExternalService:
     def __init__(self) -> None:
         self.authorization_calls: list[dict[str, Any]] = []
+        self.audience = "agent-economy"
+        self.created_token = (
+            f"ae_pat_{NEW_EXTERNAL_AGENT_ID}.test-generated-personal-token-material"
+        )
+        self.rotated_token = (
+            f"ae_pat_{RUN_CONNECTION_ID}.test-rotated-personal-token-material"
+        )
+
+    def create_connection(self, **kwargs: Any):
+        scopes = kwargs.get("scopes") or ["world.read", "commons.read"]
+        return {
+            "connection": {
+                "id": str(NEW_EXTERNAL_AGENT_ID),
+                "scopes": list(scopes),
+            },
+            "credential": {
+                "token": self.created_token,
+                "expires_at": (NOW + timedelta(days=30)).isoformat(),
+            },
+        }
+
+    def rotate_personal_credential(self, _connection_id: str, **_kwargs: Any):
+        return {
+            "token": self.rotated_token,
+            "expires_at": (NOW + timedelta(days=30)).isoformat(),
+        }
+
+    def revoke_credentials(self, _connection_id: str, **_kwargs: Any):
+        return {"revoked": 1}
 
     def create_authorization_code(self, connection_id: str, **kwargs: Any):
         self.authorization_calls.append({"connection_id": connection_id, **kwargs})
@@ -944,6 +1017,85 @@ def test_mutations_require_csrf_and_admin_role(
     login(client, observer=True)
     denied = client.post(endpoint, json=body, headers=csrf_headers(client))
     assert denied.status_code == 403
+
+
+def test_external_connection_reports_incompatible_run_semantics(
+    client: TestClient,
+    services: tuple[FakeCatalog, FakeAuth, FakeSupervisor, dict[str, datetime]],
+):
+    login(client)
+    service = services[2].handles[(TENANT_A, RUN_A)].external
+
+    def reject_incompatible_run(**_kwargs: Any):
+        raise ExternalAgentError(
+            409,
+            "external gateway requires semantics 9",
+            "semantics_not_enabled",
+        )
+
+    service.create_connection = reject_incompatible_run
+    response = client.post(
+        f"/api/v2/tenants/{TENANT_A}/agent-connections",
+        headers=csrf_headers(client),
+        json={
+            "run_id": str(RUN_A),
+            "display_name": "Outside agent",
+            "tier": "observer",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "semantics_not_enabled"}}
+
+
+def test_external_connection_hashes_gateway_structured_credential(
+    client: TestClient,
+    services: tuple[FakeCatalog, FakeAuth, FakeSupervisor, dict[str, datetime]],
+):
+    catalog, _, supervisor, _ = services
+    login(client)
+    service = supervisor.handles[(TENANT_A, RUN_A)].external
+
+    response = client.post(
+        f"/api/v2/tenants/{TENANT_A}/agent-connections",
+        headers=csrf_headers(client),
+        json={
+            "run_id": str(RUN_A),
+            "display_name": "Outside observer",
+            "tier": "observer",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["credential"]["token"] == service.created_token
+    assert catalog.external_create_calls[-1]["token_hash"] == hashlib.sha256(
+        service.created_token.encode("utf-8")
+    ).hexdigest()
+    assert service.created_token not in repr(catalog.external_create_calls)
+    assert service.created_token not in repr(catalog.external_agents)
+
+
+def test_external_credential_rotation_hashes_gateway_structured_credential(
+    client: TestClient,
+    services: tuple[FakeCatalog, FakeAuth, FakeSupervisor, dict[str, datetime]],
+):
+    catalog, _, supervisor, _ = services
+    login(client)
+    service = supervisor.handles[(TENANT_A, RUN_A)].external
+
+    response = client.post(
+        f"/api/v2/tenants/{TENANT_A}/agent-connections/"
+        f"{EXTERNAL_AGENT_ID}/credentials",
+        headers=csrf_headers(client),
+        json={"action": "rotate"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["token"] == service.rotated_token
+    assert catalog.external_replace_calls[-1]["token_hash"] == hashlib.sha256(
+        service.rotated_token.encode("utf-8")
+    ).hexdigest()
+    assert service.rotated_token not in repr(catalog.external_replace_calls)
 
 
 def test_admin_invite_member_run_controls_keep_tokens_and_paths_bounded(

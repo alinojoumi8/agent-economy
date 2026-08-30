@@ -26,6 +26,7 @@ from hosted.config import (
     create_hosted_application,
     load_hosted_config,
 )
+from run_config import load_config
 
 
 class Cursor:
@@ -902,6 +903,102 @@ def test_restart_discovery_returns_scope_only_then_reads_each_run_under_rls():
     assert discovery.calls == [("SELECT tenant_id, run_id FROM hosted_active_run_scopes()", ())]
     assert scoped.calls[0] == (TENANT_CONTEXT_SQL, (str(tenant_id),))
     assert "tenant_id = %s AND id = %s" in scoped.calls[1][0]
+
+
+def test_default_hosted_profiles_include_external_agent_compatible_world():
+    profiles = hosted_config_module.default_hosted_profiles()
+
+    assert "world-os-external" in profiles
+    config = load_config(profiles["world-os-external"])
+    assert int(config["engine_semantics_version"]) >= 9
+    assert config["external_gateway"]["enabled"] is True
+
+    # Existing replay-oriented profiles retain their established semantics.
+    assert int(load_config(profiles["v2"])["engine_semantics_version"]) == 7
+
+
+def test_external_agent_creation_keeps_security_audit_insert_only():
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    tenant_id = UUID("10000000-0000-4000-8000-000000000001")
+    owner_id = UUID("20000000-0000-4000-8000-000000000002")
+    run_id = UUID("30000000-0000-4000-8000-000000000003")
+    connection_id = UUID("40000000-0000-4000-8000-000000000004")
+    credential_id = UUID("50000000-0000-4000-8000-000000000005")
+    agent_row = {
+        "id": connection_id,
+        "tenant_id": tenant_id,
+        "owner_user_id": owner_id,
+        "run_id": run_id,
+        "run_connection_id": connection_id,
+        "display_name": "Outside observer",
+        "biography": "",
+        "preferred_occupation": "",
+        "tier": "observer",
+        "scopes": ["world.read"],
+        "status": "active",
+        "actor_id": None,
+        "last_seen_at": None,
+        "lease_expires_at": None,
+        "created_at": now,
+    }
+    credential_row = {
+        "id": credential_id,
+        "tenant_id": tenant_id,
+        "external_agent_id": connection_id,
+        "kind": "personal",
+        "token_hash": "a" * 64,
+        "scopes": ["world.read"],
+        "audience": "agent-economy",
+        "expires_at": now + timedelta(days=30),
+        "revoked_at": None,
+        "created_at": now,
+    }
+
+    class InsertOnlyAuditConnection(CatalogConnection):
+        def execute(self, sql, params=()):
+            if "external_security_audit_events" in sql:
+                audit_cte = sql.split("external_security_audit_events", 1)[1]
+                if "RETURNING id" in audit_cte:
+                    raise PermissionError("audit INSERT attempted to read a protected column")
+            return super().execute(sql, params)
+
+    connection = InsertOnlyAuditConnection(
+        responses=(
+            Cursor(),
+            Cursor(one={"role": "admin", "max_external_agents_per_run": 100}),
+            Cursor(one={"count": 0}),
+            Cursor(one=agent_row),
+            Cursor(one=credential_row),
+        )
+    )
+    catalog = HostedCatalog(
+        "postgresql://example/control",
+        connect=Connections(connection),
+    )
+
+    created_agent, created_credential = catalog.create_external_agent_with_credential(
+        tenant_id,
+        owner_user_id=owner_id,
+        run_id=run_id,
+        run_connection_id=connection_id,
+        external_agent_id=connection_id,
+        credential_id=credential_id,
+        display_name="Outside observer",
+        biography="",
+        preferred_occupation="",
+        tier="observer",
+        scopes=["world.read"],
+        token_hash="a" * 64,
+        credential_expires_at=now + timedelta(days=30),
+    )
+
+    assert created_agent.id == connection_id
+    assert created_credential.id == credential_id
+    create_sql = next(
+        sql for sql, _params in connection.calls if "WITH created_agent AS" in sql
+    )
+    audit_cte = create_sql.split("external_security_audit_events", 1)[1]
+    assert "FROM created_agent RETURNING 1" in audit_cte
 
 
 def test_hosted_example_resolves_dsn_from_environment_and_enforces_host_cookie():

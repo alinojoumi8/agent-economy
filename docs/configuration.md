@@ -179,6 +179,12 @@ environment variables that contain the PostgreSQL DSN and object-store
 credentials. `enabled: false` in `config/hosted.example.yaml` is the safe
 development default.
 
+The default hosted allowlist contains `v2`, `v2-rehearsal`, `r21-real-us`, and
+`world-os-external`. The first three retain engine semantics 7. Only
+`world-os-external` opts into the semantics-10 External Agent Gateway, so new
+hosted connections must target a run created from that profile. This additive
+profile choice does not rewrite or reinterpret stored semantics-7 runs.
+
 ```yaml
 enabled: true
 public_base_url: ${AGENT_ECONOMY_PUBLIC_BASE_URL}

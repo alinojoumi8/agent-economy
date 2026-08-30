@@ -37,7 +37,7 @@ async function installSocket(page: Page) {
   });
 }
 
-async function mockHostedApi(page: Page) {
+async function mockHostedApi(page: Page, engineSemanticsVersion = 10) {
   const state: {
     connections: Connection[];
     createdPayload: Record<string, unknown> | null;
@@ -90,6 +90,7 @@ async function mockHostedApi(page: Page) {
       runs: [{
         tenant_id: TENANT_ID, run_id: RUN_ID, run_key: "run-hosted-demo",
         display_name: "Hosted Demo", status: "paused",
+        engine_semantics_version: engineSemanticsVersion,
       }],
     } });
     if (path === `${tenantRoot}/members`) return route.fulfill({ json: { members: [] } });
@@ -192,4 +193,21 @@ test("agent owner dashboard creates, copies, rotates, revokes, and reports statu
   await page.getByRole("button", { name: "Save tenant quota" }).click();
   await expect(page.getByRole("status")).toHaveText("Tenant external-agent quota updated.");
   expect(state.quota).toBe(150);
+});
+
+test("legacy hosted runs explain why external connections are unavailable", async ({ page, context }) => {
+  await context.addCookies([{ name: "ae_csrf", value: "test-csrf", url: "http://127.0.0.1:4174" }]);
+  await installSocket(page);
+  const state = await mockHostedApi(page, 7);
+
+  await page.goto("/");
+  await page.getByLabel("Tenant UUID").fill(TENANT_ID);
+  await page.getByLabel("Email").fill("admin@example.test");
+  await page.getByLabel("Password").fill("correct horse battery staple");
+  await page.locator("form").getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: /Hosted Demo/ }).click();
+
+  await expect(page.getByText(/require engine semantics 9/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create dedicated connection" })).toHaveCount(0);
+  expect(state.createdPayload).toBeNull();
 });

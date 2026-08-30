@@ -13,6 +13,7 @@ PostgreSQL server, object store, provider, or live simulation.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from html import escape
 import inspect
 import json
@@ -36,6 +37,7 @@ from prometheus_client import CollectorRegistry, Counter, Histogram, generate_la
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agents.external import ExternalAgentError
 from hosted.auth import AuthFailure
 from hosted.security import (
     CSRF_COOKIE_NAME,
@@ -513,6 +515,11 @@ def _external_connection_id_from_credential(value: str) -> UUID | None:
         return UUID(candidate)
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _hash_external_credential(value: str) -> str:
+    """Mirror the run-local gateway hash for its structured bearer tokens."""
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
 def _oauth_redirect_uris(values: list[str]) -> list[str]:
@@ -1214,11 +1221,13 @@ def create_hosted_app(
                 display_name=body.display_name, biography=body.biography,
                 preferred_occupation=body.preferred_occupation, tier=body.tier,
                 scopes=local_connection["scopes"],
-                token_hash=hash_opaque_token(str(credential["token"])),
+                token_hash=_hash_external_credential(str(credential["token"])),
                 credential_expires_at=expires_at,
                 audience=str(getattr(service, "audience", "agent-economy")))
         except HTTPException:
             raise
+        except ExternalAgentError as exc:
+            raise _generic_error(exc.status_code, exc.code) from None
         except Exception:
             if created is not None:
                 try:
@@ -1303,7 +1312,7 @@ def create_hosted_app(
             await _invoke(
                 catalog.replace_external_personal_credential,
                 tenant_id, connection_id, owner_user_id=principal.user_id,
-                token_hash=hash_opaque_token(str(credential["token"])),
+                token_hash=_hash_external_credential(str(credential["token"])),
                 scopes=list(_attribute(record, "scopes", default=()) or ()),
                 audience=str(getattr(service, "audience", "agent-economy")),
                 expires_at=expires_at)

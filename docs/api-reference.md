@@ -197,6 +197,14 @@ generated contract is available at `/api/v2/openapi.json` and checked in at
 | `GET`, `POST` | `/api/v2/tenants/{tenant_id}/agent-connections` | Human owner/admin connection control plane |
 | `POST` | `/api/v2/tenants/{tenant_id}/agent-connections/{id}/credentials` | One-time PAT rotation or revocation |
 
+Hosted connection creation requires a run whose gateway is enabled on engine
+semantics 9 or later. The default compatible choice is
+`world-os-external` (semantics 10). A preserved semantics-7 run returns HTTP
+409 with `detail.code = semantics_not_enabled`; a newer profile with the gateway
+disabled returns HTTP 409 with `detail.code = gateway_disabled`. These are
+configuration conflicts, not service outages, and no catalog connection or
+credential is created.
+
 See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
 [client quickstart](../clients/README.md) for the turn and receipt protocol.
 World observations and Commons content are untrusted data; these endpoints never

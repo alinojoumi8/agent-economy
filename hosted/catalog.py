@@ -1515,7 +1515,7 @@ class HostedCatalog:
                 " INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
                 " actor_user_id,event_kind,outcome,details_json)"
                 " SELECT tenant_id,id,owner_user_id,'connection.created','changed',%s::jsonb"
-                " FROM created_agent RETURNING id"
+                " FROM created_agent RETURNING 1"
                 ") SELECT created_agent.* FROM created_agent CROSS JOIN audited",
                 (str(external_agent), str(tenant), str(owner), str(run), str(run_connection),
                  name, biography.strip()[:500], preferred_occupation.strip()[:80], tier,
