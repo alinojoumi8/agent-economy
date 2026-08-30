@@ -16,8 +16,12 @@ export function NewsCommunicationsWorkspace() {
   const observerState = useMemo(() => parseObserverViewState(search), [search]);
   const { transport } = useWorkspaceOutletContext();
   const tick = observerState.tick;
-  const [mode, setMode] = useState<ViewMode>("ordinary");
-  const [agentId, setAgentId] = useState("");
+  const requestedMode = search.get("view");
+  const mode: ViewMode = requestedMode === "agent" || requestedMode === "truth"
+    ? requestedMode : "ordinary";
+  const agentId = mode === "agent"
+    ? (search.get("agent_id") || "").replace(/\D/g, "")
+    : "";
   const [threadQuery, setThreadQuery] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const threads = useQuery({
@@ -54,15 +58,29 @@ export function NewsCommunicationsWorkspace() {
     enabled: selectedMessageId !== null,
   });
 
+  const communicationParams = (nextMode: ViewMode, nextAgentId = "") => {
+    const params = commonObserverSearchParams(search);
+    if (nextMode !== "ordinary") params.set("view", nextMode);
+    if (nextMode === "agent" && Number(nextAgentId) > 0) {
+      params.set("agent_id", String(Number(nextAgentId)));
+    }
+    return params;
+  };
+  const communicationRoute = (params: URLSearchParams, id?: number) => {
+    const path = `/runs/${encodeURIComponent(runId)}/news-communications${id ? `/${id}` : ""}`;
+    return `${path}${params.toString() ? `?${params}` : ""}`;
+  };
   const changeMode = (next: ViewMode) => {
-    setMode(next);
     setSelectedMessageId(null);
-    const common = commonObserverSearchParams(search);
-    navigate(`/runs/${encodeURIComponent(runId)}/news-communications${common.toString() ? `?${common}` : ""}`);
+    navigate(communicationRoute(communicationParams(next)));
+  };
+  const changeAgentId = (value: string) => {
+    const nextAgentId = value.replace(/\D/g, "");
+    setSelectedMessageId(null);
+    navigate(communicationRoute(communicationParams("agent", nextAgentId)), { replace: true });
   };
   const openThread = (id: number) => {
-    const common = commonObserverSearchParams(search);
-    navigate(`/runs/${encodeURIComponent(runId)}/news-communications/${id}${common.toString() ? `?${common}` : ""}`);
+    navigate(communicationRoute(communicationParams(mode, agentId), id));
   };
 
   return <section>
@@ -71,14 +89,14 @@ export function NewsCommunicationsWorkspace() {
       <div className="world-os-heading-actions">
         <FreshnessBadge transport={transport} tick={tick} envelope={threads.data} sourceLabel="Authorized communication projection" />
         <div className="world-os-view-switch" role="group" aria-label="Communication access view">
-          <button aria-pressed={mode === "ordinary"} onClick={() => changeMode("ordinary")}>Ordinary</button>
-          <button aria-pressed={mode === "agent"} onClick={() => changeMode("agent")}>Agent view</button>
-          <button aria-pressed={mode === "truth"} onClick={() => changeMode("truth")}>Truth inspector</button>
+          <button type="button" aria-pressed={mode === "ordinary"} onClick={() => changeMode("ordinary")}>Ordinary</button>
+          <button type="button" aria-pressed={mode === "agent"} onClick={() => changeMode("agent")}>Agent view</button>
+          <button type="button" aria-pressed={mode === "truth"} onClick={() => changeMode("truth")}>Truth inspector</button>
         </div>
       </div>
     </div>
     {mode === "agent" && <label className="world-os-agent-input">
-      Agent ID <input inputMode="numeric" value={agentId} onChange={event => setAgentId(event.target.value.replace(/\D/g, ""))} placeholder="e.g. 12" />
+      Agent ID <input inputMode="numeric" value={agentId} onChange={event => changeAgentId(event.target.value)} placeholder="e.g. 12" />
       <span>Only sender, delivered, public, or disclosed fields are returned.</span>
     </label>}
     {mode === "truth" && <div className="world-os-alert world-os-alert--truth" role="status">

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import {
   filterOrganizations,
@@ -48,6 +49,11 @@ export function OrganizationsWorkspace() {
   const { organizationType, organizationId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const searchRevision = searchParams.toString();
+  const pendingSearchParams = useRef(searchRevision);
+  if (pendingSearchParams.current !== searchRevision) {
+    pendingSearchParams.current = searchRevision;
+  }
   const model = normalizeOrganizationsWorkspace(projection.data || {});
   const filters = {
     q: searchParams.get("q") || "",
@@ -73,17 +79,29 @@ export function OrganizationsWorkspace() {
     : [];
   const unique = (key: keyof Organization) => [...new Set(model.organizations.map(item => item[key]).filter(Boolean).map(String))].sort();
   const patchFilter = (key: string, value: string | boolean) => {
-    const next = new URLSearchParams(searchParams);
+    const next = new URLSearchParams(pendingSearchParams.current);
     if (value === "" || value === false) next.delete(key);
     else next.set(key, value === true ? "1" : String(value));
-    setSearchParams(next, { replace: true });
+    pendingSearchParams.current = next.toString();
+    setSearchParams(next, { replace: key === "q" });
   };
-  const detailUrl = (organization: Organization) => organizationWorkspaceUrl(
-    projection.runId,
-    organization.type,
-    organization.id,
-    projection.observerState,
-  ) || workspaceUrl(projection.runId, "organizations", projection.observerState);
+  const detailUrl = (organization: Organization) => {
+    const base = organizationWorkspaceUrl(
+      projection.runId,
+      organization.type,
+      organization.id,
+      projection.observerState,
+    ) || workspaceUrl(projection.runId, "organizations", projection.observerState);
+    const url = new URL(base, "http://civic-atlas.local");
+    for (const [key, value] of [
+      ["q", filters.q], ["type", filters.type], ["sector", filters.sector],
+      ["region", filters.region], ["status", filters.status],
+    ] as const) {
+      if (value) url.searchParams.set(key, value);
+    }
+    if (filters.activeOnly) url.searchParams.set("active", "1");
+    return `${url.pathname}${url.search}`;
+  };
 
   return <section className="world-os-organizations-workspace">
     <WorkspaceHeader title="Organizations" kicker="Authorized organization directory"

@@ -8,8 +8,9 @@ each audience can find the authoritative level of detail.
 
 - [Getting started](getting-started.md) — install, first offline run, experiment,
   optional live routes, resume, replay, and verification.
-- [Civic Atlas dashboard](civic-atlas.md) — primary navigation, World Pulse,
-  evidence links, live controls, historical boundaries, and privacy states.
+- [Civic Atlas dashboard](civic-atlas.md) — every product and workspace menu,
+  shareable URL state, World Pulse, evidence tools, historical boundaries,
+  accessibility, and mocked/real-backend verification.
 - [Research guide and use cases](research-guide.md) — causal model, experiment
   discipline, metrics, Oracle evidence, and interpretation limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
@@ -36,6 +37,8 @@ each audience can find the authoritative level of detail.
   hosted audit chaining.
 - [Development and testing](development.md) — setup, test layers, safe behavior
   changes, compatibility, logs, and CI.
+- [UI menu hardening ledger](plans/2026-08-30-ui-menu-hardening.md) — complete
+  workspace inventory, acceptance contract, and current verification evidence.
 - [Branch lifecycle and consolidation](branch-lifecycle.md) — protect active
   work, classify refs, port divergent commits, and gate deletion.
 - [Documentation maintenance](documentation-maintenance.md) — source-of-truth

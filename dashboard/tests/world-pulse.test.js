@@ -148,7 +148,7 @@ test("ledger invariant never reports balance without projected evidence", () => 
   assert.deepEqual(ledgerInvariantState(0), { state: "balanced", balance: 0 });
   assert.deepEqual(ledgerInvariantState(17), { state: "exceptional", balance: 17 });
 });
-test("World Pulse keeps one observer-safe projection path and five primary destinations", () => {
+test("World Pulse keeps one observer-safe projection path and all workspace destinations", () => {
   assert.match(pulseSource, /"workspace\.world",\s*"\/api\/v2\/workspaces\/world"/);
   assert.match(pulseSource, /params\.set\("domains", "summary,alerts,events"\)/);
   assert.match(pulseSource, /enabled: live/);
@@ -158,10 +158,14 @@ test("World Pulse keeps one observer-safe projection path and five primary desti
   assert.doesNotMatch(pulseSource, /world-pulse-map" role="img"/);
   assert.doesNotMatch(pulseSource, /api\/llm\/runtime/);
   assert.doesNotMatch(pulseSource, /\.payload\b/);
-  assert.match(shellSource, /const primaryRouteGroups = routeGroups\.slice\(0, 1\)/);
+  assert.match(shellSource, /\{routeGroups\.map\(group =>/);
+  assert.doesNotMatch(shellSource, /primaryRouteGroups/);
   for (const route of [
     ["overview", "Pulse"], ["live-city", "City"], ["people", "People"],
     ["commons", "Commons"], ["investigations", "Evidence Lab"],
+    ["world", "City evidence"], ["organizations", "Institutions"],
+    ["markets", "Markets"], ["politics-law", "Politics & Law"],
+    ["news-communications", "Communications"], ["experiments", "Experiments"],
   ]) {
     assert.match(shellSource, new RegExp(`path: "${route[0]}", label: "${route[1]}"`));
   }

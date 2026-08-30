@@ -39,10 +39,12 @@ export function PoliticsLawWorkspace() {
   const fallback: View = model.configuration.politicsEnabled ? "legislation" : model.configuration.legalEnabled ? "legal" : "legislation";
   const view: View = ["legislation", "lobbying", "legal", "mergers"].includes(String(requested)) ? requested as View : fallback;
   const choose = (nextView: View) => {
-    const next = new URLSearchParams(searchParams);
-    if (nextView === fallback) next.delete("view");
-    else next.set("view", nextView);
-    setSearchParams(next, { replace: true });
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      if (nextView === fallback) next.delete("view");
+      else next.set("view", nextView);
+      return next;
+    });
   };
   const organizationUrl = (id: unknown) => organizationWorkspaceUrl(
     projection.runId, "firm", id, projection.observerState,
