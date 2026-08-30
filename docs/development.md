@@ -85,6 +85,28 @@ The Tailwind source scan explicitly excludes `dashboard/public/` and
 `dashboard/scripts/` so generated legal text and notice tooling cannot change
 the application stylesheet or its content hash.
 
+### Provider-free real-backend menu smoke
+
+The normal Playwright suite mocks projection contracts. To exercise the same
+menus against a real deterministic database and FastAPI server, start a bounded
+provider-free run in one terminal:
+
+```powershell
+python run.py --config runs/base.yaml --ticks 3 --serve --host 127.0.0.1 --port 8000
+```
+
+Copy the printed run ID, then run the opt-in smoke from a second terminal:
+
+```powershell
+$env:AE_REAL_RUN_ID = "<run-id>"
+npm --prefix dashboard run test:e2e -- e2e/world-os-real-backend.spec.ts
+```
+
+Without `AE_REAL_RUN_ID`, this one opt-in test is skipped and the mocked suite
+runs normally. The smoke may advance a non-terminal run to tick 3 through the
+ordinary UI controls. Use only a disposable local run. It makes no provider
+calls under `runs/base.yaml` and does not validate hosted-only destinations.
+
 ## Test layers
 
 | Layer | What it proves |

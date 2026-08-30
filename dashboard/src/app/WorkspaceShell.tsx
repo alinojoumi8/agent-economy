@@ -81,7 +81,6 @@ const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
 ];
 
 const routes = routeGroups.flatMap(group => group.items.map(item => ({ ...item, group: group.label })));
-const primaryRouteGroups = routeGroups.slice(0, 1);
 
 const entityGroupOrder: Array<{
   kind: SearchResultKind;
@@ -292,7 +291,7 @@ export function WorkspaceShell() {
         </button>
       </div>
       <nav className="world-os-nav" aria-label="Civic Atlas workspaces">
-        {primaryRouteGroups.map(group => <div className="world-os-nav-group" key={group.label}>
+        {routeGroups.map(group => <div className="world-os-nav-group" key={group.label}>
           <p className="world-os-nav-group-title">{group.label}</p>
           <div className="world-os-nav-group-items">
             {group.items.map(route => <NavLink

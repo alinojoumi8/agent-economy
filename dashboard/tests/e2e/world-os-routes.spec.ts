@@ -221,6 +221,42 @@ async function setup(page: Page) {
   return { consoleErrors, requestFailures, bodies, historicalBodies };
 }
 
+test("workspace rail exposes every canonical destination with observer context", async ({ page }) => {
+  const diagnostics = await setup(page);
+  await page.goto("/runs/run-demo/overview?fork=fork-1&tick=3");
+
+  const navigation = page.getByRole("navigation", { name: "Civic Atlas workspaces" });
+  const destinations = [
+    ["Pulse", "overview"],
+    ["City", "live-city"],
+    ["People", "people"],
+    ["Commons", "commons"],
+    ["Evidence Lab", "investigations"],
+    ["City evidence", "world"],
+    ["Institutions", "organizations"],
+    ["Markets", "markets"],
+    ["Politics & Law", "politics-law"],
+    ["Communications", "news-communications"],
+    ["Experiments", "experiments"],
+  ] as const;
+
+  await expect(navigation).toBeVisible();
+  for (const [label, path] of destinations) {
+    const link = navigation.getByRole("link", { name: label, exact: true });
+    await expect(link).toBeAttached();
+    await expect(link).toHaveAttribute(
+      "href",
+      `/runs/run-demo/${path}?fork=fork-1&tick=3`,
+    );
+  }
+
+  await navigation.getByRole("link", { name: "Institutions", exact: true }).click();
+  await expect(page).toHaveURL(/\/runs\/run-demo\/organizations\?fork=fork-1&tick=3$/);
+  await expect(page.getByRole("heading", { name: "Organizations", exact: true }).last()).toBeVisible();
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
@@ -260,6 +296,124 @@ test("all canonical workspace routes navigate with observer context and validate
   expect(diagnostics.historicalBodies.join("\n")).not.toContain(FUTURE_CANARY);
   await expect(page.locator("body")).not.toContainText(PRIVATE_CANARY);
   await expect(page.locator("body")).not.toContainText(FUTURE_CANARY);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("deep-dive menus expose every view and participate in browser history", async ({ page }) => {
+  const diagnostics = await setup(page);
+
+  await page.goto("/runs/run-demo/markets?fork=fork-1&tick=3");
+  const marketMenu = page.getByRole("group", { name: "Market evidence view" });
+  const orders = marketMenu.getByRole("button", { name: "orders", exact: true });
+  const trades = marketMenu.getByRole("button", { name: "trades", exact: true });
+  const fx = marketMenu.getByRole("button", { name: "fx", exact: true });
+  const circuits = marketMenu.getByRole("button", { name: "Circuit breakers", exact: true });
+  await expect(orders).toHaveAttribute("aria-pressed", "true");
+  await trades.click();
+  await expect(page.getByRole("heading", { name: "Trades", exact: true })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("trades");
+  await page.reload();
+  await expect(trades).toHaveAttribute("aria-pressed", "true");
+  await fx.click();
+  await expect(page.getByRole("heading", { name: "FX orders", exact: true })).toBeVisible();
+  await page.getByLabel("Side").selectOption("buy");
+  await page.getByLabel("Status").selectOption("open");
+  await expect.poll(() => new URL(page.url()).searchParams.get("side")).toBe("buy");
+  await page.goBack();
+  await expect(trades).toHaveAttribute("aria-pressed", "true");
+  await circuits.click();
+  await expect(page.getByRole("heading", { name: "Circuit breakers", exact: true })).toBeVisible();
+  await orders.click();
+  await expect.poll(() => new URL(page.url()).searchParams.has("view")).toBe(false);
+
+  await page.goto("/runs/run-demo/politics-law?fork=fork-1&tick=3");
+  const institutionalMenu = page.getByRole("group", { name: "Institutional evidence view" });
+  for (const [buttonName, view, heading] of [
+    ["lobbying", "lobbying", "Lobbying"],
+    ["legal", "legal", "Contracts"],
+    ["M&A", "mergers", "Mergers & acquisitions"],
+    ["legislation", null, "Bills"],
+  ] as const) {
+    const button = institutionalMenu.getByRole("button", { name: buttonName, exact: true });
+    await button.click();
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("heading", { name: heading, exact: true, level: 3 })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe(view);
+  }
+
+  await page.goto("/runs/run-demo/experiments?fork=fork-1&tick=3");
+  const experimentMenu = page.getByRole("group", { name: "Experiment evidence view" });
+  for (const [buttonName, view, heading] of [
+    ["rehearsals", "rehearsals", "Checkpoints"],
+    ["forecasts", "forecasts", "Predictions"],
+    ["campaigns", "campaigns", "Experiments"],
+    ["inputs", "inputs", "Datasets"],
+    ["evidence", null, "Replay integrity"],
+  ] as const) {
+    const button = experimentMenu.getByRole("button", { name: buttonName, exact: true });
+    await button.click();
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("heading", { name: heading, exact: true, level: 3 })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe(view);
+  }
+
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("Commons feed menu is selected, shareable, and reload-safe", async ({ page }) => {
+  const diagnostics = await setup(page);
+  await page.goto("/runs/run-demo/commons?fork=fork-1&tick=3");
+  const chronological = page.getByRole("button", { name: "Chronological", exact: true });
+  const hot = page.getByRole("button", { name: "Hot", exact: true });
+  await expect(chronological).toHaveAttribute("aria-pressed", "true");
+  await hot.click();
+  await expect(hot).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => new URL(page.url()).searchParams.get("feed")).toBe("hot");
+  await page.reload();
+  await expect(hot).toHaveAttribute("aria-pressed", "true");
+  await chronological.click();
+  await expect(chronological).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => new URL(page.url()).searchParams.has("feed")).toBe(false);
+  await page.goBack();
+  await expect(hot).toHaveAttribute("aria-pressed", "true");
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("organization filters survive selection, reload, and browser history", async ({ page }) => {
+  const diagnostics = await setup(page);
+  await page.goto("/runs/run-demo/organizations?fork=fork-1&tick=3");
+  const filters = page.getByLabel("Organization filters");
+  const type = filters.getByLabel("Type");
+  const status = filters.getByLabel("Status");
+  const activeOnly = filters.getByLabel("Active only");
+
+  await type.selectOption("firm");
+  await expect.poll(() => new URL(page.url()).searchParams.get("type")).toBe("firm");
+  await status.selectOption("listed");
+  await activeOnly.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("active")).toBe("1");
+  await expect(page.getByRole("heading", { name: "1 matching organizations", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(type).toHaveValue("firm");
+  await expect(status).toHaveValue("listed");
+  await expect(activeOnly).toBeChecked();
+
+  const organization = page.getByRole("link", { name: "Northstar Foods", exact: true });
+  await expect(organization).toHaveAttribute(
+    "href",
+    "/runs/run-demo/organizations/firm/1?fork=fork-1&tick=3&type=firm&status=listed&active=1",
+  );
+  await organization.click();
+  await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeVisible();
+  await expect(type).toHaveValue("firm");
+  await page.goBack();
+  await expect(type).toHaveValue("firm");
+  await page.goBack();
+  await expect(activeOnly).not.toBeChecked();
+  await expect(status).toHaveValue("listed");
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
 });

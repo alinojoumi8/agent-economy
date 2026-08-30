@@ -34,9 +34,12 @@ export function CommonsWorkspace() {
   const data = projection.data!;
   const runId = projection.runId;
   const setFeed = (feed: "chronological" | "hot") => {
-    const next = new URLSearchParams(search);
-    next.set("feed", feed);
-    setSearch(next);
+    setSearch(current => {
+      const next = new URLSearchParams(current);
+      if (feed === "chronological") next.delete("feed");
+      else next.set("feed", feed);
+      return next;
+    });
   };
   return <section>
     <div className="world-os-heading">
@@ -49,9 +52,11 @@ export function CommonsWorkspace() {
       </dl>
     </div>
     <div className="world-os-filters" aria-label="Commons feed policy">
-      <button className={`button ${kind === "chronological" ? "button-primary" : ""}`}
+      <button type="button" aria-pressed={kind === "chronological"}
+        className={`button ${kind === "chronological" ? "button-primary" : ""}`}
         onClick={() => setFeed("chronological")}>Chronological</button>
-      <button className={`button ${kind === "hot" ? "button-primary" : ""}`}
+      <button type="button" aria-pressed={kind === "hot"}
+        className={`button ${kind === "hot" ? "button-primary" : ""}`}
         onClick={() => setFeed("hot")}>Hot</button>
       <span className="muted">Candidate set {data.feed.candidate_set_hash.slice(0, 12)}…</span>
     </div>

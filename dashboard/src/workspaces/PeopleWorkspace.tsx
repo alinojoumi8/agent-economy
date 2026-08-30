@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { projectionApi } from "../app/api";
 import {
@@ -234,14 +234,38 @@ function ProgressStreamArt({ kind }: { kind: string }) {
 
 export function PeopleWorkspace() {
   const { runId = "run", agentId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [observerState] = useObserverViewState();
   const { transport } = useWorkspaceOutletContext();
-  const [filter, setFilter] = useState("");
-  const [projectKind, setProjectKind] = useState("all");
-  const [projectStatus, setProjectStatus] = useState("all");
+  const filter = searchParams.get("q") || "";
+  const requestedProjectKind = searchParams.get("project_kind") || "all";
+  const projectKind = PROJECT_KINDS.some(([value]) => value === requestedProjectKind)
+    ? requestedProjectKind : "all";
+  const requestedProjectStatus = searchParams.get("project_status") || "all";
+  const projectStatus = ["all", "active", "completed", "cancelled"].includes(requestedProjectStatus)
+    ? requestedProjectStatus : "all";
+  const searchRevision = searchParams.toString();
+  const pendingSearchParams = useRef(searchRevision);
+  if (pendingSearchParams.current !== searchRevision) {
+    pendingSearchParams.current = searchRevision;
+  }
   const [agentPage, setAgentPage] = useState(0);
   const tick = observerState.tick;
+
+  const patchPeopleFilter = (
+    key: "q" | "project_kind" | "project_status",
+    value: string,
+    replace = false,
+  ) => {
+    const next = new URLSearchParams(pendingSearchParams.current);
+    if (!value || ((key === "project_kind" || key === "project_status") && value === "all")) {
+      next.delete(key);
+    } else {
+      next.set(key, value);
+    }
+    pendingSearchParams.current = next.toString();
+    setSearchParams(next, { replace });
+  };
 
   const workspaceQuery = useQuery({
     queryKey: [
@@ -258,6 +282,7 @@ export function PeopleWorkspace() {
         signal,
       );
     },
+    placeholderData: previousData => previousData,
     refetchInterval: tick === "live" ? 3000 : false,
   });
   const agents = workspaceQuery.data?.data.agents || [];
@@ -319,7 +344,7 @@ export function PeopleWorkspace() {
     const selectedIndex = visibleAgents.findIndex(agent => agent.id === selectedId);
     if (selectedIndex >= 0) setAgentPage(Math.floor(selectedIndex / pageSize));
   }, [selectedId, visibleAgents]);
-  useEffect(() => setAgentPage(0), [filter]);
+  useEffect(() => setAgentPage(0), [filter, projectKind, projectStatus]);
   const pagedAgents = visibleAgents.slice(agentPage * pageSize, (agentPage + 1) * pageSize);
 
   const allProjects = useMemo(() => {
@@ -361,6 +386,9 @@ export function PeopleWorkspace() {
 
   const routeForAgent = (id: number, projectId?: string | null) => {
     const params = commonObserverParamsFromState(observerState);
+    if (filter) params.set("q", filter);
+    if (projectKind !== "all") params.set("project_kind", projectKind);
+    if (projectStatus !== "all") params.set("project_status", projectStatus);
     if (projectId) params.set("project", projectId);
     const suffix = params.toString();
     return `/runs/${encodeURIComponent(runId)}/people/${id}${suffix ? `?${suffix}` : ""}`;
@@ -413,7 +441,8 @@ export function PeopleWorkspace() {
   const data = envelope.data;
   const journey = journeyQuery.data?.data;
 
-  return <section className="world-os-people world-os-living-agents">
+  return <section className="world-os-people world-os-living-agents"
+    aria-busy={workspaceQuery.isPlaceholderData}>
     <header className="world-os-heading world-os-living-heading">
       <div>
         <p className="world-os-kicker">Evidence-backed lives in motion</p>
@@ -449,6 +478,10 @@ export function PeopleWorkspace() {
       )}
     </div>
 
+    {workspaceQuery.isPlaceholderData && <p className="world-os-policy-note" role="status">
+      Refreshing project filters. Previous authorized results remain visible until the canonical projection arrives.
+    </p>}
+
     <div className="world-os-living-grid">
       <aside className="world-os-panel world-os-people-list">
         <header className="world-os-people-list-heading">
@@ -463,7 +496,7 @@ export function PeopleWorkspace() {
           <input
             type="search"
             value={filter}
-            onChange={event => setFilter(event.target.value)}
+            onChange={event => patchPeopleFilter("q", event.target.value, true)}
             placeholder="Search agents, skills, firms…"
             aria-label="Search living agents"
           />
@@ -703,7 +736,7 @@ export function PeopleWorkspace() {
           <div className="world-os-project-filters">
             <label>
               <span>Kind</span>
-              <select value={projectKind} onChange={event => setProjectKind(event.target.value)}>
+              <select value={projectKind} onChange={event => patchPeopleFilter("project_kind", event.target.value)}>
                 {PROJECT_KINDS.map(([value, text]) =>
                   <option key={value} value={value}>{text}</option>,
                 )}
@@ -711,7 +744,7 @@ export function PeopleWorkspace() {
             </label>
             <label>
               <span>Status</span>
-              <select value={projectStatus} onChange={event => setProjectStatus(event.target.value)}>
+              <select value={projectStatus} onChange={event => patchPeopleFilter("project_status", event.target.value)}>
                 <option value="all">All statuses</option>
                 <option value="active">Active</option>
                 <option value="completed">Completed</option>

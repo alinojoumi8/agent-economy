@@ -51,10 +51,12 @@ export function ExperimentsWorkspace() {
   const selectedResults = selected ? model.results.filter(item => Number(item.experiment_id) === Number(selected.id)) : [];
   const actions = experimentActionState(model.run, projection.observerState.tick);
   const choose = (nextView: View) => {
-    const next = new URLSearchParams(searchParams);
-    if (nextView === "evidence") next.delete("view");
-    else next.set("view", nextView);
-    setSearchParams(next, { replace: true });
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      if (nextView === "evidence") next.delete("view");
+      else next.set("view", nextView);
+      return next;
+    });
   };
   const experimentUrl = (id: number) => workspaceUrl(projection.runId, `experiments/${id}`, projection.observerState);
   const operatorUrl = workspaceUrl(projection.runId, "overview", projection.observerState);

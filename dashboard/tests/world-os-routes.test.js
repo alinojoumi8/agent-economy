@@ -82,9 +82,13 @@ test("Commons feed changes preserve the complete observer query state", () => {
   const source = readFileSync(
     new URL("../src/workspaces/CommonsWorkspace.tsx", import.meta.url), "utf8",
   );
-  assert.match(source, /const next = new URLSearchParams\(search\)/);
-  assert.match(source, /next\.set\("feed", feed\)/);
-  assert.match(source, /setSearch\(next\)/);
+  assert.match(source, /setSearch\(current =>/);
+  assert.match(source, /const next = new URLSearchParams\(current\)/);
+  assert.match(source, /feed === "chronological"\) next\.delete\("feed"\)/);
+  assert.match(source, /else next\.set\("feed", feed\)/);
+  assert.match(source, /return next/);
+  assert.match(source, /aria-pressed=\{kind === "chronological"\}/);
+  assert.match(source, /aria-pressed=\{kind === "hot"\}/);
   assert.doesNotMatch(source, /setSearch\(\{ feed:/);
   assert.match(source, /useWorkspaceProjection<CommonsProjection>/);
   assert.match(source, /\/api\/v2\/workspaces\/commons\?kind=/);

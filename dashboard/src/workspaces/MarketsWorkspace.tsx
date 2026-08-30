@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link, useSearchParams } from "react-router";
 import { filterMarketRows, normalizeMarketsWorkspace } from "./marketsWorkspaceModel.js";
 import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
@@ -38,15 +39,21 @@ export function MarketsWorkspace() {
   const view: MarketView = ["orders", "trades", "fx", "circuits"].includes(String(requestedView))
     ? requestedView as MarketView : "orders";
   const filters = { side: searchParams.get("side") || "", status: searchParams.get("status") || "" };
+  const searchRevision = searchParams.toString();
+  const pendingSearchParams = useRef(searchRevision);
+  if (pendingSearchParams.current !== searchRevision) {
+    pendingSearchParams.current = searchRevision;
+  }
   const patch = (key: string, value: string) => {
-    const next = new URLSearchParams(searchParams);
+    const next = new URLSearchParams(pendingSearchParams.current);
     if (!value || (key === "view" && value === "orders")) next.delete(key);
     else next.set(key, value);
     if (key === "view") {
       next.delete("side");
       next.delete("status");
     }
-    setSearchParams(next, { replace: true });
+    pendingSearchParams.current = next.toString();
+    setSearchParams(next, { replace: key !== "view" });
   };
   const organizationUrl = (id: number) => organizationWorkspaceUrl(
     projection.runId, "firm", id, projection.observerState,

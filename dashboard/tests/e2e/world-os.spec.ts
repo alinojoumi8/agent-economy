@@ -1013,6 +1013,46 @@ test("truth inspection renders authorized fields without browser persistence", a
   expect(JSON.stringify(storage)).not.toContain("contaminated");
 });
 
+test("communication access menu survives deep links, reload, and history", async ({ page }) => {
+  await page.goto("/runs/run-demo/news-communications?fork=fork-a&tick=6");
+  const accessMenu = page.getByRole("group", { name: "Communication access view" });
+  const ordinary = accessMenu.getByRole("button", { name: "Ordinary", exact: true });
+  const agent = accessMenu.getByRole("button", { name: "Agent view", exact: true });
+  const truth = accessMenu.getByRole("button", { name: "Truth inspector", exact: true });
+
+  await expect(ordinary).toHaveAttribute("aria-pressed", "true");
+  await truth.click();
+  await expect(truth).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText(/Truth inspection is explicit/)).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBe("truth");
+  await page.reload();
+  await expect(truth).toHaveAttribute("aria-pressed", "true");
+
+  await agent.click();
+  const agentId = page.getByPlaceholder("e.g. 12");
+  await agentId.fill("12");
+  await expect.poll(() => new URL(page.url()).searchParams.get("agent_id")).toBe("12");
+  await expect(page).toHaveURL(/fork=fork-a/);
+  await expect(page).toHaveURL(/tick=6/);
+  await page.reload();
+  await expect(agent).toHaveAttribute("aria-pressed", "true");
+  await expect(agentId).toHaveValue("12");
+
+  await page.getByRole("button", { name: /Shipment notice/ }).click();
+  await expect(page).toHaveURL(/\/news-communications\/4\?/);
+  expect(new URL(page.url()).searchParams.get("view")).toBe("agent");
+  expect(new URL(page.url()).searchParams.get("agent_id")).toBe("12");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Shipment notice", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(agent).toHaveAttribute("aria-pressed", "true");
+
+  await ordinary.click();
+  await expect(ordinary).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => new URL(page.url()).searchParams.has("view")).toBe(false);
+  expect(new URL(page.url()).searchParams.has("agent_id")).toBe(false);
+});
+
 test("graph and semantic table share keyboard selection with reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/runs/run-demo/investigations?event=9");
@@ -1394,6 +1434,50 @@ test("Living Agents reconstructs history and preserves Live City focus", async (
     "href",
     "/runs/run-demo/world?fork=fork-a&tick=4&view=diorama&project=41",
   );
+});
+
+test("Living Agents filters are shareable and persist across person selection", async ({ page }) => {
+  let workspaceUrl = "";
+  await page.route("**/api/v2/workspaces/living-agents?*", async route => {
+    workspaceUrl = route.request().url();
+    await route.fallback();
+  });
+  await page.goto("/runs/run-demo/people/1?fork=fork-a&tick=4");
+
+  const search = page.getByLabel("Search living agents");
+  await search.fill("Atlas");
+  const projectBrowser = page.locator("details.world-os-project-browser");
+  await projectBrowser.locator("summary").click();
+  const kind = projectBrowser.getByLabel("Kind");
+  const status = projectBrowser.getByLabel("Status");
+  await kind.selectOption("construction");
+  await status.selectOption("active");
+
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("Atlas");
+  await expect.poll(() => new URL(page.url()).searchParams.get("project_kind")).toBe("construction");
+  await expect.poll(() => new URL(page.url()).searchParams.get("project_status")).toBe("active");
+  await expect.poll(() => workspaceUrl).toContain("project_kind=construction");
+  await expect.poll(() => workspaceUrl).toContain("status=active");
+  await page.reload();
+  await expect(search).toHaveValue("Atlas");
+  await projectBrowser.locator("summary").click();
+  await expect(kind).toHaveValue("construction");
+  await expect(status).toHaveValue("active");
+  await page.goBack();
+  await expect(status).toHaveValue("all");
+  await expect(kind).toHaveValue("construction");
+  await page.goForward();
+  await expect(status).toHaveValue("active");
+
+  const agentLink = page.locator(".world-os-people-scroll > a").first();
+  await expect(agentLink).toHaveAttribute(
+    "href",
+    /\/people\/1\?fork=fork-a&tick=4&q=Atlas&project_kind=construction&project_status=active$/,
+  );
+  await agentLink.click();
+  await expect(search).toHaveValue("Atlas");
+  await expect(kind).toHaveValue("construction");
+  await expect(status).toHaveValue("active");
 });
 
 test("Living Agents matches the three-column review composition without overflow", async ({ page }) => {
