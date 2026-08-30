@@ -971,7 +971,9 @@ def create_app(world: World, *, served_ticks: int | None = None,
                 raise HTTPException(
                     status_code=403,
                     detail="pooled cross-run calibration is disabled in hosted run apps")
-            return aggregate_calibration()
+            # Pooled calibration opens and scans every run database. Keep that
+            # read-only filesystem/SQLite work off the serving event loop.
+            return await asyncio.to_thread(aggregate_calibration)
         return run_calibration(store)
 
     # ── government / health / VC status strip (P1 R12/R13/R17) ─────────────

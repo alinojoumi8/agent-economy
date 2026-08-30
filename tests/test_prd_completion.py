@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -3240,6 +3241,49 @@ def test_oracle_read_tools_are_bounded_and_prediction_keeps_evidence(tmp_path):
     with TestClient(create_app(world)) as client:
         payload = client.get("/api/oracle/predictions").json()
     assert payload["predictions"][0]["evidence"] == evidence
+
+
+def test_pooled_oracle_calibration_does_not_block_server_loop(
+        tmp_path, monkeypatch):
+    world = _world(tmp_path, "oracle-calibration-loop.db")
+    started = threading.Event()
+    release = threading.Event()
+    responses = []
+    errors = []
+
+    def slow_aggregate():
+        started.set()
+        if not release.wait(timeout=2.0):
+            raise AssertionError("server loop could not release calibration worker")
+        return {"runs": 3, "n": 7}
+
+    monkeypatch.setattr(
+        "oracle.calibration.aggregate_calibration", slow_aggregate)
+
+    with TestClient(create_app(world)) as client:
+        def fetch_calibration():
+            try:
+                responses.append(client.get(
+                    "/api/oracle/calibration?scope=all"))
+            except Exception as exc:  # Preserve worker failure for assertion.
+                errors.append(exc)
+
+        request = threading.Thread(target=fetch_calibration, daemon=True)
+        request.start()
+        assert started.wait(timeout=1.0)
+
+        heartbeat_started = time.monotonic()
+        heartbeat = client.get("/api/run/status")
+        heartbeat_seconds = time.monotonic() - heartbeat_started
+        release.set()
+        request.join(timeout=2.0)
+
+    assert heartbeat.status_code == 200
+    assert heartbeat_seconds < 1.0
+    assert not request.is_alive()
+    assert not errors
+    assert responses[0].status_code == 200
+    assert responses[0].json() == {"runs": 3, "n": 7}
 
 
 def test_oracle_repairs_a_rejected_plan_before_answering(tmp_path):
