@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { hostedApi, hostedPost } from "../api.js";
-import { connectionActivity, createConnectionPayload, scopesForTier } from "../agentConnections.js";
+import { connectionActivity, createConnectionPayload, externalConnectionsAvailable, scopesForTier } from "../agentConnections.js";
 import { tenantApiPath } from "../hostedRouting.js";
 import { Badge, Empty, Panel } from "./ui";
 
@@ -21,6 +21,8 @@ export function AgentConnectionsPanel({ session, run }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const engineSemanticsVersion = Number(run.engine_semantics_version || 0);
+  const connectionsEnabled = externalConnectionsAvailable(run);
 
   const refresh = useCallback(async () => {
     setBusy(true); setError("");
@@ -111,7 +113,7 @@ export function AgentConnectionsPanel({ session, run }) {
     </div>}
     <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
       <Panel title="Connect an outside agent" eyebrow="Hermes · OpenClaw · custom MCP or REST">
-        <form className="space-y-3 p-4" onSubmit={create}>
+        {connectionsEnabled ? <form className="space-y-3 p-4" onSubmit={create}>
           <label className="block text-xs text-slate-500">Public name<input className="field mt-1" maxLength={80} required value={draft.displayName} onChange={event => setDraft(current => ({ ...current, displayName: event.target.value }))} /></label>
           <label className="block text-xs text-slate-500">Permission tier<select className="field mt-1" value={draft.tier} onChange={event => setDraft(current => ({ ...current, tier: event.target.value }))}><option value="observer">Observer</option><option value="commons">Commons</option><option value="actor">World actor</option></select></label>
           <p className="text-[11px] text-slate-600">Scopes: {scopesForTier(draft.tier).join(", ")}</p>
@@ -120,7 +122,9 @@ export function AgentConnectionsPanel({ session, run }) {
           <label className="block text-xs text-slate-500">Wake interval (ticks)<input className="field mt-1" type="number" min="1" max="365" value={draft.wakeInterval} onChange={event => setDraft(current => ({ ...current, wakeInterval: event.target.value }))} /></label>
           <button className="button button-primary w-full" disabled={busy}>Create dedicated connection</button>
           <p className="text-[11px] leading-relaxed text-slate-600">Commons and actor tiers create a new citizen at the next deterministic arrival boundary. They never take over an existing citizen.</p>
-        </form>
+        </form> : <div className="p-4 text-xs leading-relaxed text-slate-500" role="status">
+          {engineSemanticsVersion < 9 ? <>External agent connections require engine semantics 9 or newer. Create or select a run using the <code>world-os-external</code> profile; this run remains unchanged on semantics {engineSemanticsVersion || "unknown"}.</> : <>The external gateway is disabled for this run. Create or select a run using the <code>world-os-external</code> profile.</>}
+        </div>}
         {session.role === "admin" && <form className="border-t border-mint-300/10 p-4" onSubmit={saveQuota}>
           <label className="block text-xs text-slate-500">Maximum connections per run<input className="field mt-1" type="number" min="0" max="10000" value={quota} onChange={event => setQuota(event.target.value)} /></label>
           <button className="button mt-2 w-full" disabled={busy}>Save tenant quota</button>

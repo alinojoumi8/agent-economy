@@ -39,6 +39,7 @@ class FakeRun:
 class FakeCatalog:
     def __init__(self) -> None:
         self.runs: dict[UUID, FakeRun] = {}
+        self.external_agents: list[Any] = []
         self._lease_counter = 0
 
     def create_run(self, tenant_id, **kwargs):
@@ -71,6 +72,14 @@ class FakeCatalog:
         return tuple(
             record for record in self.runs.values()
             if record.status in {"starting", "running", "paused"}
+        )
+
+    def list_external_agents_for_run(self, tenant_id, run_id):
+        tenant = UUID(str(tenant_id))
+        run = UUID(str(run_id))
+        return tuple(
+            record for record in self.external_agents
+            if UUID(str(record.tenant_id)) == tenant and UUID(str(record.run_id)) == run
         )
 
     def acquire_writer_lease(self, tenant_id, run_id, *, owner, ttl_seconds):
@@ -165,12 +174,26 @@ def tiny_profile() -> dict[str, Any]:
     }
 
 
+def tiny_external_profile() -> dict[str, Any]:
+    profile = tiny_profile()
+    profile["engine_semantics_version"] = 10
+    profile["external_gateway"] = {
+        "enabled": True,
+        "scope_sets": {
+            "observer": ["world.read"],
+            "commons": ["commons.read", "commons.write"],
+            "actor": ["world.read", "world.act", "commons.read", "commons.write"],
+        },
+    }
+    return profile
+
+
 def make_supervisor(tmp_path: Path, catalog: FakeCatalog, **kwargs) -> HostedRunSupervisor:
     return HostedRunSupervisor(
         catalog,
         FilesystemArtifactStore(tmp_path / "artifacts"),
         work_root=tmp_path / "work",
-        profiles={"tiny": tiny_profile()},
+        profiles=kwargs.pop("profiles", {"tiny": tiny_profile()}),
         instance_id=kwargs.pop("instance_id", "test-supervisor"),
         snapshot_interval_ticks=kwargs.pop("snapshot_interval_ticks", 1),
         **kwargs,
@@ -407,6 +430,71 @@ def test_one_writer_lease_and_restart_recovery_pauses_active_run(tmp_path):
         assert catalog.runs[record.id].status == "paused"
         assert recovered_handle.world.store.tick == completed_tick
 
+        await restarted.shutdown()
+        await first.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_restart_reconciliation_revokes_orphaned_external_arrival(tmp_path):
+    async def scenario():
+        catalog = FakeCatalog()
+        tenant, owner = uuid4(), uuid4()
+        profiles = {"tiny-external": tiny_external_profile()}
+        first = make_supervisor(
+            tmp_path, catalog, instance_id="first", profiles=profiles
+        )
+        handle = await first.create_run(
+            tenant, owner, "tiny-external", "External recovery"
+        )
+        created = handle.world.runtime.external.create_connection(
+            tenant_id=str(tenant),
+            owner_id=str(owner),
+            display_name="Orphaned arrival",
+            tier="actor",
+        )
+        connection_id = str(created["connection"]["id"])
+        schedule_event_id = int(
+            handle.world.store.scalar(
+                "SELECT actor_schedule_event_id FROM external_agent_connections WHERE id=?",
+                (connection_id,),
+            )
+        )
+        assert schedule_event_id in handle.world.economy.lifecycle.pending_arrivals(1)
+
+        await first.close_run(handle)
+        run_id = UUID(handle.public_run_id)
+        catalog.runs[run_id] = replace(catalog.runs[run_id], status="running")
+
+        restarted = make_supervisor(
+            tmp_path, catalog, instance_id="restart", profiles=profiles
+        )
+        recovered = await restarted.recover_active_runs()
+        assert len(recovered) == 1
+        recovered_handle = recovered[0]
+        local = recovered_handle.world.runtime.external.connection(
+            connection_id,
+            owner_id="hosted-reconciliation",
+            tenant_id=str(tenant),
+            admin=True,
+        )
+        assert local["status"] == "revoked"
+        request = recovered_handle.world.store.query_one(
+            "SELECT status FROM external_actor_requests WHERE connection_id=?",
+            (connection_id,),
+        )
+        assert request is not None and request["status"] == "cancelled"
+        assert schedule_event_id not in (
+            recovered_handle.world.economy.lifecycle.pending_arrivals(1)
+        )
+
+        await recovered_handle.controller.step()
+        arrival = recovered_handle.world.store.query_one(
+            "SELECT id FROM events WHERE kind='arrival' "
+            "AND CAST(json_extract(payload_json,'$.schedule_event_id') AS INTEGER)=?",
+            (schedule_event_id,),
+        )
+        assert arrival is None
         await restarted.shutdown()
         await first.shutdown()
 

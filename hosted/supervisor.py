@@ -78,6 +78,10 @@ class CatalogProtocol(Protocol):
 
     def list_active_runs(self) -> Sequence[Any]: ...
 
+    def list_external_agents_for_run(
+        self, tenant_id: Any, run_id: Any,
+    ) -> Sequence[Any]: ...
+
     def acquire_writer_lease(
         self, tenant_id: Any, run_id: Any, *, owner: str, ttl_seconds: int
     ) -> Any | None: ...
@@ -398,7 +402,12 @@ class HostedRunSupervisor:
                 display_name=name,
                 schema_version=int(meta["schema_version"]),
                 engine_semantics_version=semantics_version(bounded, default=2),
-                catalog={"profile_slug": slug},
+                catalog={
+                    "profile_slug": slug,
+                    "external_gateway_enabled": bool(
+                        bounded.get("external_gateway", {}).get("enabled", False)
+                    ),
+                },
                 run_id=UUID(public_id),
             )
             lease_token = await asyncio.to_thread(
@@ -533,6 +542,47 @@ class HostedRunSupervisor:
             return None
         return await self._open_record(record)
 
+    def _reconcile_external_connections(
+        self, world: Any, tenant_id: str, public_run_id: str,
+    ) -> None:
+        """Fail closed on run-local identities missing from durable hosted state."""
+
+        service = getattr(getattr(world, "runtime", None), "external", None)
+        if service is None:
+            return
+        durable = self.catalog.list_external_agents_for_run(tenant_id, public_run_id)
+        durable_by_local_id = {
+            str(_record_value(record, "run_connection_id")): record
+            for record in durable
+        }
+        reconciliation_owner = "hosted-reconciliation"
+        local_connections = service.list_connections(
+            tenant_id=tenant_id,
+            owner_id=reconciliation_owner,
+            admin=True,
+        )
+        for local in local_connections:
+            local_id = str(local["id"])
+            catalog_record = durable_by_local_id.get(local_id)
+            catalog_status = (
+                str(_record_value(catalog_record, "status", ""))
+                if catalog_record is not None else ""
+            )
+            desired_status = (
+                "revoked"
+                if catalog_record is None or catalog_status == "revoked"
+                else "suspended" if catalog_status == "suspended" else None
+            )
+            if desired_status is None or str(local.get("status")) == desired_status:
+                continue
+            service.update_connection(
+                local_id,
+                owner_id=reconciliation_owner,
+                tenant_id=tenant_id,
+                status=desired_status,
+                admin=True,
+            )
+
     async def _open_record(self, record: Any) -> RunHandle:
         tenant = _tenant_id(_record_value(record, "tenant_id"))
         public_id = _public_run_id(_record_value(record, "id"))
@@ -585,6 +635,9 @@ class HostedRunSupervisor:
             )
             if opened_run_id != world_run_id:
                 raise HostedRunError("resumed simulator run key changed unexpectedly")
+            await asyncio.to_thread(
+                self._reconcile_external_connections, world, tenant, public_id
+            )
             world.status = "paused"
             world._pause_requested = False
             world._stop_requested = False

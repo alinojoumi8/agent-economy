@@ -410,7 +410,7 @@ class Lifecycle:
             "SELECT e.id AS id, e.payload_json AS payload FROM events e "
             "WHERE e.kind='arrival_scheduled' "
             "AND e.id NOT IN (SELECT CAST(json_extract(payload_json,'$.schedule_event_id') AS INTEGER) "
-            "                 FROM events WHERE kind='arrival') "
+            "                 FROM events WHERE kind IN ('arrival','arrival_cancelled')) "
             "ORDER BY e.id")
         due = []
         import json as _json

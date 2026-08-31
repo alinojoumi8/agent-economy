@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   connectionActivity,
   createConnectionPayload,
+  externalConnectionsAvailable,
   scopesForTier,
 } from "../src/agentConnections.js";
 
@@ -36,4 +37,16 @@ test("connection status distinguishes leases and safe-policy fallback", () => {
     lease_expires_at: "2026-07-18T11:59:30Z", last_seen_at: "2026-07-18T11:59:00Z",
   }, now), "offline · safe policy");
   assert.equal(connectionActivity({ status: "revoked", tier: "actor", actor_id: 10 }, now), "revoked");
+});
+
+test("connection creation requires both compatible semantics and an enabled gateway", () => {
+  assert.equal(externalConnectionsAvailable({
+    engine_semantics_version: 10, external_gateway_enabled: true,
+  }), true);
+  assert.equal(externalConnectionsAvailable({
+    engine_semantics_version: 10, external_gateway_enabled: false,
+  }), false);
+  assert.equal(externalConnectionsAvailable({
+    engine_semantics_version: 7, external_gateway_enabled: true,
+  }), false);
 });

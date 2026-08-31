@@ -569,6 +569,7 @@ def default_hosted_profiles() -> dict[str, Path]:
         "v2": root / "runs" / "v2.yaml",
         "v2-rehearsal": root / "runs" / "v2-spec-closure-rehearsal.yaml",
         "r21-real-us": root / "runs" / "r21-real-us.yaml",
+        "world-os-external": root / "runs" / "world-os-external.yaml",
     }
 
 

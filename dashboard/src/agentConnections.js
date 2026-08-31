@@ -8,6 +8,11 @@ export function scopesForTier(tier) {
   return [...(TIER_SCOPES[tier] || [])];
 }
 
+export function externalConnectionsAvailable(run) {
+  return Number(run?.engine_semantics_version || 0) >= 9
+    && run?.external_gateway_enabled === true;
+}
+
 export function connectionActivity(connection, now = Date.now()) {
   if (connection.status === "revoked") return "revoked";
   if (connection.status === "suspended") return "suspended";

@@ -180,6 +180,10 @@ def test_migration_runner_is_ordered_atomic_and_idempotent():
     grants = "\n".join(sql for sql, _ in connection.calls if sql.startswith("GRANT"))
     assert "hosted_active_run_scopes() TO \"agent_economy_supervisor\"" in grants
     assert "hosted_active_run_scopes() TO \"agent_economy_app\"" not in grants
+    assert (
+        'GRANT SELECT ON TABLE external_agents TO "agent_economy_supervisor"'
+        in grants
+    )
     assert "hosted_active_session_tenant(text)" in grants
     assert (
         'SELECT (id, tenant_id, tenant_sequence, entry_hash) ON TABLE audit_log '

@@ -58,6 +58,13 @@ docker compose --env-file .env -f deploy/compose.yaml run --rm `
 Remove-Item Env:AGENT_ECONOMY_BOOTSTRAP_PASSWORD
 ```
 
+The hosted run selector exposes `v2`, `v2-rehearsal`, `r21-real-us`, and
+`world-os-external`. Use `world-os-external` when an agent owner needs the
+External agent connections menu: it explicitly enables the gateway on engine
+semantics 10. The other maintained hosted profiles remain on semantics 7 for
+replay compatibility. Do not upgrade an existing stored run in place; create a
+new `world-os-external` run and attach the outside agent there.
+
 Changing `.env` does not change passwords stored in an existing PostgreSQL
 volume. Rotate all three database identities atomically with the profile-gated
 job: keep the current `POSTGRES_PASSWORD`, place new distinct values in
@@ -79,6 +86,17 @@ recreate the app.
 
 Verify `/health/live`, `/health/ready`, TLS, login, an observer invitation,
 cross-tenant denial, one admin-controlled shared run, and Prometheus scraping.
+For deployments that offer external connections, also create a paused
+`world-os-external` run, issue one observer connection, copy its one-time token,
+and verify that a semantics-7 run explains the incompatibility without sending
+a creation request.
+
+On supervisor recovery, the durable hosted catalog is reconciled before a run
+can resume. A run-local external connection that is absent from the catalog, or
+whose catalog record is revoked, is revoked locally; any still-pending dedicated
+actor arrival is cancelled. A suspended catalog connection is suspended locally.
+Reconciliation failure is fail-closed: the run is not loaded for traffic or
+ticks until the catalog can be read and the local state is made safe.
 Exact local image/Compose evidence at `53081f2` passed those checks plus immutable
 S3 snapshot/cold restore, atomic password rotation, and 200/200 bounded load
 requests with 80 enforced cross-tenant denials. PR #19 head `1cf1d0a` passed all

@@ -1515,7 +1515,7 @@ class HostedCatalog:
                 " INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
                 " actor_user_id,event_kind,outcome,details_json)"
                 " SELECT tenant_id,id,owner_user_id,'connection.created','changed',%s::jsonb"
-                " FROM created_agent RETURNING id"
+                " FROM created_agent RETURNING 1"
                 ") SELECT created_agent.* FROM created_agent CROSS JOIN audited",
                 (str(external_agent), str(tenant), str(owner), str(run), str(run_connection),
                  name, biography.strip()[:500], preferred_occupation.strip()[:80], tier,
@@ -1671,10 +1671,26 @@ class HostedCatalog:
                  str(owner) if owner else None, int(limit))).fetchall()
         return tuple(_external_agent(row) for row in rows)
 
+    def list_external_agents_for_run(
+        self, tenant_id: UUID | str, run_id: UUID | str,
+    ) -> tuple[ExternalAgentRecord, ...]:
+        """Return the durable control-plane identities for one simulator run."""
+
+        tenant = _uuid(tenant_id, label="tenant id")
+        run = _uuid(run_id, label="run id")
+        with self.tenant_transaction(tenant) as connection:
+            rows = connection.execute(
+                "SELECT * FROM external_agents WHERE tenant_id=%s AND run_id=%s "
+                "ORDER BY created_at,id",
+                (str(tenant), str(run)),
+            ).fetchall()
+        return tuple(_external_agent(row) for row in rows)
+
     def replace_external_personal_credential(
         self, tenant_id: UUID | str, external_agent_id: UUID | str, *,
         owner_user_id: UUID | str, token_hash: str, scopes: Sequence[str],
         audience: str, expires_at: datetime, credential_id: UUID | None = None,
+        admin: bool = False,
     ) -> ExternalCredentialRecord:
         tenant = _uuid(tenant_id, label="tenant id")
         agent = _uuid(external_agent_id, label="external agent id")
@@ -1685,8 +1701,8 @@ class HostedCatalog:
         with self.tenant_transaction(tenant) as connection:
             authorized = _one(connection.execute(
                 "SELECT id FROM external_agents WHERE tenant_id=%s AND id=%s "
-                "AND owner_user_id=%s AND status<>'revoked' FOR UPDATE",
-                (str(tenant), str(agent), str(owner))))
+                "AND (%s OR owner_user_id=%s) AND status<>'revoked' FOR UPDATE",
+                (str(tenant), str(agent), bool(admin), str(owner))))
             if authorized is None:
                 raise CatalogConflict("external agent is not owned by this principal")
             prior = _one(connection.execute(
@@ -1702,8 +1718,10 @@ class HostedCatalog:
                  str(_row_value(prior, "id", 0)) if prior else None)))
             connection.execute(
                 "INSERT INTO external_security_audit_events(tenant_id,external_agent_id,"
-                "actor_user_id,event_kind,outcome) VALUES(%s,%s,%s,'credential.rotated','changed')",
-                (str(tenant), str(agent), str(owner)))
+                "actor_user_id,event_kind,outcome,details_json) "
+                "VALUES(%s,%s,%s,'credential.rotated','changed',%s::jsonb)",
+                (str(tenant), str(agent), str(owner),
+                 json.dumps({"admin": bool(admin)}, sort_keys=True)))
         if row is None:
             raise CatalogError("external credential rotation returned no record")
         return _external_credential(row)
@@ -2049,7 +2067,8 @@ class HostedCatalog:
                     " AS has_web_privileges, "
                     "(has_table_privilege(current_user, 'runs', 'SELECT') AND "
                     " has_table_privilege(current_user, 'runs', 'INSERT') AND "
-                    " has_table_privilege(current_user, 'runs', 'UPDATE')) "
+                    " has_table_privilege(current_user, 'runs', 'UPDATE') AND "
+                    " has_table_privilege(current_user, 'external_agents', 'SELECT')) "
                     " AS has_supervisor_privileges "
                     ", CASE WHEN %s::text IS NULL THEN false "
                     "ELSE pg_has_role(current_user, %s::text, 'MEMBER') END AS has_peer_role "
@@ -2058,8 +2077,14 @@ class HostedCatalog:
                     "AS has_create_privilege "
                     "FROM pg_catalog.pg_roles AS r WHERE r.rolname=current_user",
                     (
-                        ["tenants", "memberships", "sessions", "invitations", "runs", "audit_log", "auth_attempts"],
-                        ["tenants", "users", "memberships", "sessions", "invitations", "runs", "audit_log", "auth_attempts"],
+                        [
+                            "tenants", "memberships", "sessions", "invitations", "runs",
+                            "external_agents", "audit_log", "auth_attempts",
+                        ],
+                        [
+                            "tenants", "users", "memberships", "sessions", "invitations",
+                            "runs", "external_agents", "audit_log", "auth_attempts",
+                        ],
                         self.forbidden_role,
                         self.forbidden_role,
                     ),
