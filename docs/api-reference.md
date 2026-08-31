@@ -210,6 +210,9 @@ See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
 World observations and Commons content are untrusted data; these endpoints never
 return private messages, prompts, chain-of-thought, provider payloads, or owner
 identity.
+The hosted REST proxy accepts only the routes and methods listed above (including
+a UUID-shaped action receipt id). Encoded parent segments, alternate internal
+paths, and unlisted methods return `404 not_found` before proxying.
 
 When a run explicitly selects Semantics 14, every due first-class external
 actor also receives immutable attendance evidence in the run database.

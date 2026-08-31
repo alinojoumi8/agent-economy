@@ -760,6 +760,81 @@ def test_rest_mcp_contract_and_scope_filtered_tools(world10: World):
     assert "oauth-protected-resource/mcp" in revoked_challenge
 
 
+def test_mcp_guidance_and_commons_schema_follow_granted_capabilities(world10: World):
+    client = TestClient(create_app(world10))
+
+    def rpc(token: str, request_id: int, method: str):
+        response = client.post(
+            "/mcp",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": {}},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["result"]
+
+    observer = _connection(world10, owner="observer-guidance", tier="observer")
+    observer_instructions = rpc(
+        observer["credential"]["token"], 1, "initialize"
+    )["instructions"]
+    assert "external connection" in observer_instructions
+    assert "Passport-backed citizen" not in observer_instructions
+    assert "ae_world_observe" in observer_instructions
+    assert "ae_action_submit" not in observer_instructions
+    assert "choose exactly one" not in observer_instructions
+
+    commons = _connection(world10, owner="commons-guidance", tier="commons")
+    commons_token = commons["credential"]["token"]
+    commons_instructions = rpc(commons_token, 2, "initialize")["instructions"]
+    assert "ae_commons_read" in commons_instructions
+    assert "ae_commons_act" in commons_instructions
+    assert "ae_turn_wait" not in commons_instructions
+    commons_tools = rpc(commons_token, 3, "tools/list")["tools"]
+    commons_action = next(
+        tool for tool in commons_tools if tool["name"] == "ae_commons_act"
+    )["inputSchema"]["properties"]["action"]
+    action_types = {
+        variant["properties"]["type"]["const"]
+        for variant in commons_action["oneOf"]
+    }
+    assert action_types == {
+        "post", "react", "read", "follow", "join_community",
+        "create_community", "appeal",
+    }
+    post_schema = next(
+        variant for variant in commons_action["oneOf"]
+        if variant["properties"]["type"]["const"] == "post"
+    )
+    assert post_schema["required"] == ["type", "body"]
+    assert post_schema["properties"]["entry_type"]["enum"] == [
+        "post", "comment", "repost", "quote"
+    ]
+    assert post_schema["additionalProperties"] is False
+
+    moderator = world10.runtime.external.create_connection(
+        tenant_id="tenant-a",
+        owner_id="moderator-guidance",
+        display_name="Outside Moderator",
+        tier="actor",
+        scopes=[
+            "world.read", "world.act", "commons.read", "commons.write",
+            "moderation.act",
+        ],
+    )
+    world10._spawn_due_arrivals(1)
+    moderator_token = moderator["credential"]["token"]
+    actor_instructions = rpc(moderator_token, 4, "initialize")["instructions"]
+    assert "choose exactly one" in actor_instructions
+    assert "ae_action_receipt_get" in actor_instructions
+    moderator_tools = rpc(moderator_token, 5, "tools/list")["tools"]
+    moderator_action = next(
+        tool for tool in moderator_tools if tool["name"] == "ae_commons_act"
+    )["inputSchema"]["properties"]["action"]
+    assert "moderate" in {
+        variant["properties"]["type"]["const"]
+        for variant in moderator_action["oneOf"]
+    }
+
+
 def test_oauth_discovery_dynamic_registration_browser_redirect_and_resource_binding(
     world10: World,
 ):

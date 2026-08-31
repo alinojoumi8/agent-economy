@@ -26,81 +26,12 @@ from hosted.config import (
     create_hosted_application,
     load_hosted_config,
 )
-from run_config import load_config
-
-
-class Cursor:
-    def __init__(self, *, rows=(), one=None, rowcount=0):
-        self._rows = list(rows)
-        self._one = one
-        self.rowcount = rowcount
-
-    def fetchall(self):
-        return list(self._rows)
-
-    def fetchone(self):
-        return self._one
-
-
-class CatalogConnection:
-    def __init__(self, responses=()):
-        self.responses = list(responses)
-        self.calls = []
-        self.closed = False
-        self.commits = 0
-        self.rollbacks = 0
-
-    @contextmanager
-    def transaction(self):
-        try:
-            yield
-        except BaseException:
-            self.rollbacks += 1
-            raise
-        else:
-            self.commits += 1
-
-    def execute(self, sql, params=()):
-        self.calls.append((sql, tuple(params)))
-        if sql == TENANT_CONTEXT_SQL:
-            return Cursor()
-        if self.responses:
-            return self.responses.pop(0)
-        return Cursor()
-
-    def close(self):
-        self.closed = True
-
-
-class Connections:
-    def __init__(self, *connections):
-        self.connections = list(connections)
-        self.opened = 0
-
-    def __call__(self, _dsn):
-        connection = self.connections[self.opened]
-        self.opened += 1
-        return connection
-
-
-def run_row(tenant_id, run_id, owner_id, *, status="running"):
-    return {
-        "id": run_id,
-        "tenant_id": tenant_id,
-        "owner_user_id": owner_id,
-        "run_key": "run-one",
-        "display_name": "Run One",
-        "status": status,
-        "schema_version": 11,
-        "engine_semantics_version": 7,
-        "catalog_json": {},
-        "snapshot_object_key": None,
-        "snapshot_sha256": None,
-        "snapshot_size_bytes": None,
-        "writer_lease_owner": None,
-        "writer_lease_token": None,
-        "writer_lease_expires_at": None,
-    }
+from tests.hosted_catalog_test_support import (
+    CatalogConnection,
+    Connections,
+    Cursor,
+    run_row,
+)
 
 
 def test_every_tenant_transaction_sets_local_context_first_and_closes():
@@ -204,13 +135,32 @@ def test_live_dsn_role_and_capability_are_verified_before_startup():
         has_web_privileges=False,
         has_supervisor_privileges=True,
     )
+    supervisor_connection = CatalogConnection([Cursor(one=safe_supervisor)])
     catalog = HostedCatalog(
         "postgresql://example",
-        connect=Connections(CatalogConnection([Cursor(one=safe_supervisor)])),
+        connect=Connections(supervisor_connection),
         expected_role="agent_economy_supervisor",
         capability="supervisor",
     )
     catalog.assert_runtime_security()
+    assert "has_table_privilege(current_user, 'external_agents', 'SELECT')" in (
+        supervisor_connection.calls[0][0]
+    )
+
+    missing_external_agent_read = dict(
+        safe_supervisor,
+        has_supervisor_privileges=False,
+    )
+    catalog = HostedCatalog(
+        "postgresql://example",
+        connect=Connections(
+            CatalogConnection([Cursor(one=missing_external_agent_read)])
+        ),
+        expected_role="agent_economy_supervisor",
+        capability="supervisor",
+    )
+    with pytest.raises(CatalogError, match="missing its exact required privileges"):
+        catalog.assert_runtime_security()
 
 
 def test_catalog_reuses_a_bounded_pool_under_concurrent_pressure():
@@ -903,102 +853,6 @@ def test_restart_discovery_returns_scope_only_then_reads_each_run_under_rls():
     assert discovery.calls == [("SELECT tenant_id, run_id FROM hosted_active_run_scopes()", ())]
     assert scoped.calls[0] == (TENANT_CONTEXT_SQL, (str(tenant_id),))
     assert "tenant_id = %s AND id = %s" in scoped.calls[1][0]
-
-
-def test_default_hosted_profiles_include_external_agent_compatible_world():
-    profiles = hosted_config_module.default_hosted_profiles()
-
-    assert "world-os-external" in profiles
-    config = load_config(profiles["world-os-external"])
-    assert int(config["engine_semantics_version"]) >= 9
-    assert config["external_gateway"]["enabled"] is True
-
-    # Existing replay-oriented profiles retain their established semantics.
-    assert int(load_config(profiles["v2"])["engine_semantics_version"]) == 7
-
-
-def test_external_agent_creation_keeps_security_audit_insert_only():
-    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
-    tenant_id = UUID("10000000-0000-4000-8000-000000000001")
-    owner_id = UUID("20000000-0000-4000-8000-000000000002")
-    run_id = UUID("30000000-0000-4000-8000-000000000003")
-    connection_id = UUID("40000000-0000-4000-8000-000000000004")
-    credential_id = UUID("50000000-0000-4000-8000-000000000005")
-    agent_row = {
-        "id": connection_id,
-        "tenant_id": tenant_id,
-        "owner_user_id": owner_id,
-        "run_id": run_id,
-        "run_connection_id": connection_id,
-        "display_name": "Outside observer",
-        "biography": "",
-        "preferred_occupation": "",
-        "tier": "observer",
-        "scopes": ["world.read"],
-        "status": "active",
-        "actor_id": None,
-        "last_seen_at": None,
-        "lease_expires_at": None,
-        "created_at": now,
-    }
-    credential_row = {
-        "id": credential_id,
-        "tenant_id": tenant_id,
-        "external_agent_id": connection_id,
-        "kind": "personal",
-        "token_hash": "a" * 64,
-        "scopes": ["world.read"],
-        "audience": "agent-economy",
-        "expires_at": now + timedelta(days=30),
-        "revoked_at": None,
-        "created_at": now,
-    }
-
-    class InsertOnlyAuditConnection(CatalogConnection):
-        def execute(self, sql, params=()):
-            if "external_security_audit_events" in sql:
-                audit_cte = sql.split("external_security_audit_events", 1)[1]
-                if "RETURNING id" in audit_cte:
-                    raise PermissionError("audit INSERT attempted to read a protected column")
-            return super().execute(sql, params)
-
-    connection = InsertOnlyAuditConnection(
-        responses=(
-            Cursor(),
-            Cursor(one={"role": "admin", "max_external_agents_per_run": 100}),
-            Cursor(one={"count": 0}),
-            Cursor(one=agent_row),
-            Cursor(one=credential_row),
-        )
-    )
-    catalog = HostedCatalog(
-        "postgresql://example/control",
-        connect=Connections(connection),
-    )
-
-    created_agent, created_credential = catalog.create_external_agent_with_credential(
-        tenant_id,
-        owner_user_id=owner_id,
-        run_id=run_id,
-        run_connection_id=connection_id,
-        external_agent_id=connection_id,
-        credential_id=credential_id,
-        display_name="Outside observer",
-        biography="",
-        preferred_occupation="",
-        tier="observer",
-        scopes=["world.read"],
-        token_hash="a" * 64,
-        credential_expires_at=now + timedelta(days=30),
-    )
-
-    assert created_agent.id == connection_id
-    assert created_credential.id == credential_id
-    create_sql = next(
-        sql for sql, _params in connection.calls if "WITH created_agent AS" in sql
-    )
-    audit_cte = create_sql.split("external_security_audit_events", 1)[1]
-    assert "FROM created_agent RETURNING 1" in audit_cte
 
 
 def test_hosted_example_resolves_dsn_from_environment_and_enforces_host_cookie():

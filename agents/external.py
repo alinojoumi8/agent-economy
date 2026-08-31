@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
@@ -20,6 +19,7 @@ from world.event_visibility import (
     PUBLIC_REPORTABLE_EVENT_KINDS,
     public_event_payload,
 )
+from .external_contract import ExternalAgentError, hash_external_credential
 from .participant import ParticipantError, ParticipantService
 
 
@@ -39,16 +39,6 @@ _PUBLIC_EVENT_KINDS = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS))
 _PUBLIC_EVENT_KIND_PARAMS = ",".join("?" for _ in _PUBLIC_EVENT_KINDS)
 
 
-@dataclass
-class ExternalAgentError(RuntimeError):
-    status_code: int
-    message: str
-    code: str = "external_agent_error"
-
-    def __str__(self) -> str:
-        return self.message
-
-
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -63,7 +53,7 @@ def _parse_time(value: str) -> datetime:
 
 
 def _hash(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return hash_external_credential(value)
 
 
 def _canonical(value: Any) -> str:
@@ -245,6 +235,7 @@ class ExternalAgentService:
             (status, now, connection_id))
         if status in {"suspended", "revoked"}:
             self._close_pending(connection_id, f"connection_{status}")
+            self._cancel_pending_arrival(connection_id, f"connection_{status}")
         if status == "revoked":
             self.store.execute(
                 "UPDATE external_agent_credentials SET revoked_at=? WHERE connection_id=? "
@@ -1656,6 +1647,30 @@ class ExternalAgentService:
             "UPDATE external_agent_turns SET status='fallback',updated_at=? "
             "WHERE connection_id=? AND status IN ('open','submitted')" + clause,
             turn_params)
+
+    def _cancel_pending_arrival(self, connection_id: str, reason: str) -> None:
+        request = self.store.query_one(
+            "SELECT id,schedule_event_id FROM external_actor_requests "
+            "WHERE connection_id=? AND status='scheduled'",
+            (str(connection_id),),
+        )
+        if request is None:
+            return
+        self.store.execute(
+            "UPDATE external_actor_requests SET status='cancelled' WHERE id=?",
+            (int(request["id"]),),
+        )
+        self.store.log_event(
+            self.store.tick,
+            "arrival_cancelled",
+            {
+                "schedule_event_id": int(request["schedule_event_id"]),
+                "connection_id": str(connection_id),
+                "reason": str(reason)[:200],
+            },
+            phase="NIGHT_CLOSE",
+            importance=0.5,
+        )
 
     def _audit(self, connection_id: str | None, kind: str, outcome: str,
                details: dict[str, Any]) -> None:

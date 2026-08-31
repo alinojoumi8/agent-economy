@@ -300,6 +300,7 @@ def _grant_runtime_access(
         f"TO {quoted_role}",
     )
     _execute(connection, f"GRANT SELECT, INSERT, UPDATE ON TABLE runs TO {quoted_supervisor}")
+    _execute(connection, f"GRANT SELECT ON TABLE external_agents TO {quoted_supervisor}")
     _execute(
         connection,
         "GRANT EXECUTE ON FUNCTION hosted_active_run_scopes() "

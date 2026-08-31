@@ -90,6 +90,13 @@ For deployments that offer external connections, also create a paused
 `world-os-external` run, issue one observer connection, copy its one-time token,
 and verify that a semantics-7 run explains the incompatibility without sending
 a creation request.
+
+On supervisor recovery, the durable hosted catalog is reconciled before a run
+can resume. A run-local external connection that is absent from the catalog, or
+whose catalog record is revoked, is revoked locally; any still-pending dedicated
+actor arrival is cancelled. A suspended catalog connection is suspended locally.
+Reconciliation failure is fail-closed: the run is not loaded for traffic or
+ticks until the catalog can be read and the local state is made safe.
 Exact local image/Compose evidence at `53081f2` passed those checks plus immutable
 S3 snapshot/cold restore, atomic password rotation, and 200/200 bounded load
 requests with 80 enforced cross-tenant denials. PR #19 head `1cf1d0a` passed all

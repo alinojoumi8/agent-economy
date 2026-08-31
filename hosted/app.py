@@ -13,7 +13,6 @@ PostgreSQL server, object store, provider, or live simulation.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from html import escape
 import inspect
 import json
@@ -37,7 +36,7 @@ from prometheus_client import CollectorRegistry, Counter, Histogram, generate_la
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agents.external import ExternalAgentError
+from agents.external_contract import ExternalAgentError, hash_external_credential
 from hosted.auth import AuthFailure
 from hosted.security import (
     CSRF_COOKIE_NAME,
@@ -62,7 +61,21 @@ MAX_PROXY_QUERY_BYTES = 4096
 MAX_PROXY_QUERY_FIELDS = 50
 MAX_REQUEST_BODY_BYTES = 64 * 1024
 MAX_CONCURRENT_WORLD_READS = 32
+EXTERNAL_MUTATION_LOCK_COUNT = 64
 DEFAULT_READINESS_TIMEOUT_SECONDS = 2.0
+
+_EXTERNAL_AGENT_STATIC_ROUTES = {
+    ("GET", "me"),
+    ("GET", "turn"),
+    ("POST", "actions"),
+    ("GET", "events"),
+    ("GET", "commons"),
+    ("POST", "commons"),
+}
+_EXTERNAL_ACTION_RECEIPT_PATH = re.compile(
+    r"actions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 class _RequestBodyLimitMiddleware:
@@ -459,6 +472,9 @@ def _public_run(record: Any) -> dict[str, Any]:
 
     snapshot_sha = _attribute(record, "snapshot_sha256")
     snapshot_size = _attribute(record, "snapshot_size_bytes")
+    catalog = _attribute(record, "catalog", default={}) or {}
+    if not isinstance(catalog, Mapping):
+        catalog = {}
     return {
         "run_id": str(_uuid_attribute(record, "id", "run_id", "public_run_id")),
         "tenant_id": str(_uuid_attribute(record, "tenant_id")),
@@ -469,6 +485,9 @@ def _public_run(record: Any) -> dict[str, Any]:
         "schema_version": int(_attribute(record, "schema_version", default=0)),
         "engine_semantics_version": int(
             _attribute(record, "engine_semantics_version", default=0)
+        ),
+        "external_gateway_enabled": bool(
+            catalog.get("external_gateway_enabled", False)
         ),
         "snapshot": {
             "available": bool(snapshot_sha),
@@ -519,7 +538,7 @@ def _external_connection_id_from_credential(value: str) -> UUID | None:
 
 def _hash_external_credential(value: str) -> str:
     """Mirror the run-local gateway hash for its structured bearer tokens."""
-    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+    return hash_external_credential(value)
 
 
 def _oauth_redirect_uris(values: list[str]) -> list[str]:
@@ -574,6 +593,23 @@ def _safe_world_path(path: str) -> str | None:
     return normalized if any(pattern.fullmatch(normalized) for pattern in _SAFE_WORLD_PATHS) else None
 
 
+def _safe_external_agent_path(method: str, path: str) -> str | None:
+    """Return only the explicitly published external-agent REST surface."""
+
+    normalized_method = str(method).upper()
+    value = str(path)
+    if (normalized_method, value) in _EXTERNAL_AGENT_STATIC_ROUTES:
+        return f"/api/v2/agent/{value}"
+    match = _EXTERNAL_ACTION_RECEIPT_PATH.fullmatch(value)
+    if normalized_method != "GET" or match is None:
+        return None
+    try:
+        submission_id = UUID(match.group(1))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return f"/api/v2/agent/actions/{submission_id}"
+
+
 class _SanitizingSocket:
     """WebSocketHub-compatible wrapper that removes internal fields on every send."""
 
@@ -624,6 +660,9 @@ def create_hosted_app(
     app.state.supervisor = supervisor
     app.state.metrics_registry = registry
     app.state.world_proxy_slots = asyncio.Semaphore(MAX_CONCURRENT_WORLD_READS)
+    app.state.external_mutation_locks = tuple(
+        asyncio.Lock() for _ in range(EXTERNAL_MUTATION_LOCK_COUNT)
+    )
     app.state.readiness_tasks = {}
     app.add_middleware(_RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
 
@@ -784,6 +823,10 @@ def create_hosted_app(
         if handle is None:
             raise _generic_error(404, "not_found")
         return handle
+
+    def external_mutation_lock(connection_id: UUID) -> asyncio.Lock:
+        locks: tuple[asyncio.Lock, ...] = app.state.external_mutation_locks
+        return locks[connection_id.int % len(locks)]
 
     @app.get("/health/live")
     async def health_live() -> dict[str, str]:
@@ -1251,29 +1294,30 @@ def create_hosted_app(
         if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
             raise _generic_error(403, "forbidden")
         owner_filter = None if principal.role == ROLE_ADMIN else principal.user_id
-        try:
-            record = await _invoke(
-                catalog.get_external_agent, tenant_id, connection_id,
-                owner_user_id=owner_filter)
-            if record is None:
-                raise _generic_error(404, "not_found")
-            handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
-            service = handle.world.runtime.external
-            await _invoke(
-                service.update_connection,
-                str(_uuid_attribute(record, "run_connection_id", "id")),
-                owner_id=str(principal.user_id), tenant_id=str(tenant_id),
-                status=body.status, admin=principal.role == ROLE_ADMIN)
-            updated = await _invoke(
-                catalog.set_external_agent_status, tenant_id, connection_id,
-                owner_user_id=principal.user_id, status=body.status,
-                admin=principal.role == ROLE_ADMIN)
-            if updated is None:
-                raise _generic_error(404, "not_found")
-        except HTTPException:
-            raise
-        except Exception:
-            raise _generic_error(503, "service_unavailable") from None
+        async with external_mutation_lock(connection_id):
+            try:
+                record = await _invoke(
+                    catalog.get_external_agent, tenant_id, connection_id,
+                    owner_user_id=owner_filter)
+                if record is None:
+                    raise _generic_error(404, "not_found")
+                handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+                service = handle.world.runtime.external
+                await _invoke(
+                    service.update_connection,
+                    str(_uuid_attribute(record, "run_connection_id", "id")),
+                    owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                    status=body.status, admin=principal.role == ROLE_ADMIN)
+                updated = await _invoke(
+                    catalog.set_external_agent_status, tenant_id, connection_id,
+                    owner_user_id=principal.user_id, status=body.status,
+                    admin=principal.role == ROLE_ADMIN)
+                if updated is None:
+                    raise _generic_error(404, "not_found")
+            except HTTPException:
+                raise
+            except Exception:
+                raise _generic_error(503, "service_unavailable") from None
         return _public_external_agent(updated)
 
     @app.post("/api/v2/tenants/{tenant_id}/agent-connections/{connection_id}/credentials")
@@ -1285,50 +1329,51 @@ def create_hosted_app(
         if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
             raise _generic_error(403, "forbidden")
         owner_filter = None if principal.role == ROLE_ADMIN else principal.user_id
-        try:
-            record = await _invoke(
-                catalog.get_external_agent, tenant_id, connection_id,
-                owner_user_id=owner_filter)
-            if record is None:
-                raise _generic_error(404, "not_found")
-            handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
-            service = handle.world.runtime.external
-            local_id = str(_uuid_attribute(record, "run_connection_id", "id"))
-            if body.action == "revoke":
-                local = await _invoke(
-                    service.revoke_credentials, local_id,
+        async with external_mutation_lock(connection_id):
+            try:
+                record = await _invoke(
+                    catalog.get_external_agent, tenant_id, connection_id,
+                    owner_user_id=owner_filter)
+                if record is None:
+                    raise _generic_error(404, "not_found")
+                handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+                service = handle.world.runtime.external
+                local_id = str(_uuid_attribute(record, "run_connection_id", "id"))
+                if body.action == "revoke":
+                    local = await _invoke(
+                        service.revoke_credentials, local_id,
+                        owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                        admin=principal.role == ROLE_ADMIN)
+                    await _invoke(
+                        catalog.revoke_external_credentials, tenant_id, connection_id,
+                        owner_user_id=principal.user_id, admin=principal.role == ROLE_ADMIN)
+                    return {"ok": True, "revoked": int(local.get("revoked", 0))}
+                credential = await _invoke(
+                    service.rotate_personal_credential, local_id,
                     owner_id=str(principal.user_id), tenant_id=str(tenant_id),
                     admin=principal.role == ROLE_ADMIN)
+                expires_at = datetime.fromisoformat(
+                    str(credential["expires_at"]).replace("Z", "+00:00"))
                 await _invoke(
-                    catalog.revoke_external_credentials, tenant_id, connection_id,
-                    owner_user_id=principal.user_id, admin=principal.role == ROLE_ADMIN)
-                return {"ok": True, "revoked": int(local.get("revoked", 0))}
-            credential = await _invoke(
-                service.rotate_personal_credential, local_id,
-                owner_id=str(principal.user_id), tenant_id=str(tenant_id),
-                admin=principal.role == ROLE_ADMIN)
-            expires_at = datetime.fromisoformat(
-                str(credential["expires_at"]).replace("Z", "+00:00"))
-            await _invoke(
-                catalog.replace_external_personal_credential,
-                tenant_id, connection_id, owner_user_id=principal.user_id,
-                token_hash=_hash_external_credential(str(credential["token"])),
-                scopes=list(_attribute(record, "scopes", default=()) or ()),
-                audience=str(getattr(service, "audience", "agent-economy")),
-                expires_at=expires_at)
-        except HTTPException:
-            raise
-        except Exception:
-            # The run-local service is authoritative. If catalog rotation fails,
-            # revoke the just-issued material so no half-created credential lives.
-            try:
-                if 'service' in locals() and 'local_id' in locals():
-                    await _invoke(
-                        service.revoke_credentials, local_id,
-                        owner_id=str(principal.user_id), tenant_id=str(tenant_id), admin=True)
+                    catalog.replace_external_personal_credential,
+                    tenant_id, connection_id, owner_user_id=principal.user_id,
+                    token_hash=_hash_external_credential(str(credential["token"])),
+                    scopes=list(_attribute(record, "scopes", default=()) or ()),
+                    audience=str(getattr(service, "audience", "agent-economy")),
+                    expires_at=expires_at, admin=principal.role == ROLE_ADMIN)
+            except HTTPException:
+                raise
             except Exception:
-                pass
-            raise _generic_error(503, "service_unavailable") from None
+                # The run-local service is authoritative. If catalog rotation fails,
+                # revoke the just-issued material so no half-created credential lives.
+                try:
+                    if 'service' in locals() and 'local_id' in locals():
+                        await _invoke(
+                            service.revoke_credentials, local_id,
+                            owner_id=str(principal.user_id), tenant_id=str(tenant_id), admin=True)
+                except Exception:
+                    pass
+                raise _generic_error(503, "service_unavailable") from None
         return credential
 
     @app.post("/api/v2/tenants/{tenant_id}/runs", status_code=201)
@@ -1835,6 +1880,9 @@ def create_hosted_app(
 
     @app.api_route("/api/v2/agent/{agent_path:path}", methods=["GET", "POST"])
     async def hosted_agent_rest(agent_path: str, request: Request) -> Response:
+        upstream_path = _safe_external_agent_path(request.method, agent_path)
+        if upstream_path is None:
+            raise _generic_error(404, "not_found")
         authorization = request.headers.get("authorization", "")
         scheme, _, raw_token = authorization.partition(" ")
         connection_id = (_external_connection_id_from_credential(raw_token)
@@ -1843,8 +1891,7 @@ def create_hosted_app(
             raise HTTPException(
                 status_code=401, detail={"code": "authentication_required"},
                 headers={"WWW-Authenticate": "Bearer"})
-        return await proxy_external_protocol(
-            request, connection_id, f"/api/v2/agent/{agent_path}")
+        return await proxy_external_protocol(request, connection_id, upstream_path)
 
     @app.websocket("/api/v2/tenants/{tenant_id}/runs/{run_id}/ws")
     async def hosted_websocket(websocket: WebSocket, tenant_id: UUID, run_id: UUID) -> None:

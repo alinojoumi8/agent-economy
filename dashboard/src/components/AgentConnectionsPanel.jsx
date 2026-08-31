@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { hostedApi, hostedPost } from "../api.js";
-import { connectionActivity, createConnectionPayload, scopesForTier } from "../agentConnections.js";
+import { connectionActivity, createConnectionPayload, externalConnectionsAvailable, scopesForTier } from "../agentConnections.js";
 import { tenantApiPath } from "../hostedRouting.js";
 import { Badge, Empty, Panel } from "./ui";
 
@@ -22,7 +22,7 @@ export function AgentConnectionsPanel({ session, run }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const engineSemanticsVersion = Number(run.engine_semantics_version || 0);
-  const connectionsEnabled = engineSemanticsVersion >= 9;
+  const connectionsEnabled = externalConnectionsAvailable(run);
 
   const refresh = useCallback(async () => {
     setBusy(true); setError("");
@@ -123,7 +123,7 @@ export function AgentConnectionsPanel({ session, run }) {
           <button className="button button-primary w-full" disabled={busy}>Create dedicated connection</button>
           <p className="text-[11px] leading-relaxed text-slate-600">Commons and actor tiers create a new citizen at the next deterministic arrival boundary. They never take over an existing citizen.</p>
         </form> : <div className="p-4 text-xs leading-relaxed text-slate-500" role="status">
-          External agent connections require engine semantics 9 or newer. Create or select a run using the <code>world-os-external</code> profile; this run remains unchanged on semantics {engineSemanticsVersion || "unknown"}.
+          {engineSemanticsVersion < 9 ? <>External agent connections require engine semantics 9 or newer. Create or select a run using the <code>world-os-external</code> profile; this run remains unchanged on semantics {engineSemanticsVersion || "unknown"}.</> : <>The external gateway is disabled for this run. Create or select a run using the <code>world-os-external</code> profile.</>}
         </div>}
         {session.role === "admin" && <form className="border-t border-mint-300/10 p-4" onSubmit={saveQuota}>
           <label className="block text-xs text-slate-500">Maximum connections per run<input className="field mt-1" type="number" min="0" max="10000" value={quota} onChange={event => setQuota(event.target.value)} /></label>
