@@ -47,6 +47,7 @@ async function mockHostedApi(
     createdPayload: Record<string, unknown> | null;
     quota: number;
     credentialActions: string[];
+    logoutCount: number;
   } = {
     connections: [{
       id: CONNECTION_ID,
@@ -62,6 +63,7 @@ async function mockHostedApi(
     createdPayload: null,
     quota: 100,
     credentialActions: [],
+    logoutCount: 0,
   };
 
   await page.route("**/auth/**", async route => {
@@ -69,7 +71,10 @@ async function mockHostedApi(
     if (path === "/auth/login") {
       return route.fulfill({ json: { tenant_id: TENANT_ID } });
     }
-    if (path === "/auth/logout") return route.fulfill({ json: { ok: true } });
+    if (path === "/auth/logout") {
+      state.logoutCount += 1;
+      return route.fulfill({ json: { ok: true } });
+    }
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
 
@@ -150,7 +155,7 @@ async function mockHostedApi(
   return state;
 }
 
-test("agent owner dashboard creates, copies, rotates, revokes, and reports status", async ({ page, context }) => {
+test("agent owner dashboard manages connections, returns to runs, and logs out", async ({ page, context }) => {
   await context.addCookies([{ name: "ae_csrf", value: "test-csrf", url: "http://127.0.0.1:4174" }]);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await installSocket(page);
@@ -198,6 +203,16 @@ test("agent owner dashboard creates, copies, rotates, revokes, and reports statu
   await page.getByRole("button", { name: "Save tenant quota" }).click();
   await expect(page.getByRole("status")).toHaveText("Tenant external-agent quota updated.");
   expect(state.quota).toBe(150);
+
+  await page.getByRole("button", { name: "Runs · Hosted Demo", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Choose a simulation run" })).toBeVisible();
+  await page.locator("main").getByRole("button", { name: /Hosted Demo/ }).click();
+  await expect(page.getByRole("heading", { name: "Connect an outside agent" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Log out", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "One deterministic world per tenant run." })).toBeVisible();
+  await expect(page.getByLabel("Tenant UUID")).toBeVisible();
+  expect(state.logoutCount).toBe(1);
 });
 
 test("legacy hosted runs explain why external connections are unavailable", async ({ page, context }) => {
