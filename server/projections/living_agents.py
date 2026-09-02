@@ -302,13 +302,18 @@ def _living_state(
         aid = int(row["agent_id"])
         if aid not in agent_ids:
             continue
-        completed_tick = (
+        raw_status = str(row["status"])
+        # ``completed_tick`` is also stamped on rejected migrations (the tick the
+        # request was refused), so only a ``completed`` row is an arrival.
+        settled_tick = (
             int(row["completed_tick"])
             if row["completed_tick"] is not None and int(row["completed_tick"]) <= tick
             else None
         )
-        raw_status = str(row["status"])
-        cancelled = completed_tick is None and raw_status in {"cancelled", "rejected", "failed"}
+        completed_tick = settled_tick if raw_status == "completed" else None
+        cancelled = raw_status in {"cancelled", "rejected", "failed"} and (
+            row["completed_tick"] is None or settled_tick is not None
+        )
         status = "completed" if completed_tick is not None else "cancelled" if cancelled else "active"
         stage = "arrived" if completed_tick is not None else "cancelled" if cancelled else "requested"
         requested = int(row["requested_tick"])
@@ -323,7 +328,7 @@ def _living_state(
             project_id=pid, kind="migration",
             title=f"Migration to {destination['name'] if destination else 'another region'}",
             owner_agent_id=aid, stage=stage, status=status, started_tick=requested,
-            updated_tick=completed_tick or requested, completed_tick=completed_tick,
+            updated_tick=settled_tick or requested, completed_tick=completed_tick,
             milestone_count=len(refs), evidence_refs=refs, region=destination,
             metrics={"origin_region": origin},
         ))
@@ -438,9 +443,11 @@ def _living_state(
 
     # Civic case records include confidential application details. Ordinary
     # observers receive only region/stage aggregates and no applicant linkage.
+    # A single citizen's journey lists only that citizen's own work; the
+    # region-wide permit aggregates belong to the population view alone.
     case_rows = _dicts(store.query(
         "SELECT region_id,created_tick,submitted_tick,decided_tick FROM service_cases "
-        "WHERE created_tick<=? ORDER BY created_tick,id", (tick,)))
+        "WHERE created_tick<=? ORDER BY created_tick,id", (tick,))) if agent_id is None else []
     case_groups: dict[tuple[int | None, str], list[dict[str, Any]]] = defaultdict(list)
     for row in case_rows:
         decided = row["decided_tick"] is not None and int(row["decided_tick"]) <= tick
