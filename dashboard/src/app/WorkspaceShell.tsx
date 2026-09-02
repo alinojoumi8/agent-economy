@@ -9,6 +9,7 @@ import { projectionApi, workspaceApi } from "./api";
 import { searchResultPath, workspacePath, type SearchResultItem, type SearchResultKind } from "./commandNavigation";
 import { parseObserverViewState, projectionScopeParams } from "./observerViewState";
 import { useProjectionSocket } from "./useProjectionSocket";
+import { workspaceRouteSegment } from "./worldOSRouting.js";
 
 type GlyphName =
   | "overview" | "world" | "people" | "organizations" | "markets"
@@ -114,13 +115,29 @@ function Glyph({ name }: { name: GlyphName }) {
 }
 
 export function WorkspaceShell() {
-  const { runId = "run" } = useParams();
+  const { runId: routeRunId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useSearchParams();
   const observerState = useMemo(() => parseObserverViewState(search), [search]);
   const tick = observerState.tick;
   const transport = useProjectionSocket(tick !== "live") as ProjectionTransport;
+  const modeQuery = useQuery({
+    queryKey: ["world-os", "mode"],
+    queryFn: () => workspaceApi<ModeDocument>("/api/v2/mode"),
+    staleTime: Infinity,
+    retry: false,
+  });
+  /*
+   * Bare `/commons` carries no `:runId`. The run is still knowable: the mode
+   * document's navigation block names it, and so does the server hello on the
+   * projection socket. Until one of them has answered there is no run id at all,
+   * and the rail must say so rather than link to a made-up "run".
+   */
+  const runId = routeRunId
+    ?? modeQuery.data?.navigation?.run_id
+    ?? transport.runId
+    ?? null;
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
@@ -130,7 +147,8 @@ export function WorkspaceShell() {
   const commandInput = useRef<HTMLInputElement>(null);
   const commandTrigger = useRef<HTMLButtonElement>(null);
   const commandReturnFocus = useRef<HTMLElement | null>(null);
-  const activeRoute = routes.find(route => location.pathname.includes("/" + route.path)) || routes[0];
+  const activeSegment = workspaceRouteSegment(location.pathname);
+  const activeRoute = routes.find(route => route.path === activeSegment) || routes[0];
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
   const filteredRoutes = useMemo(() => routes.filter(route =>
     (route.label + " " + route.caption).toLowerCase().includes(normalizedCommandQuery),
@@ -150,7 +168,7 @@ export function WorkspaceShell() {
 
   const entitySearch = useQuery({
     queryKey: [
-      "world-os", runId, "search", observerState.fork, tick,
+      "world-os", runId ?? "", "search", observerState.fork, tick,
       debouncedCommandQuery, "agent,firm,event,communication_thread",
     ],
     queryFn: ({ signal }) => {
@@ -211,13 +229,6 @@ export function WorkspaceShell() {
     ? entitySearch.error
     : null;
 
-  const modeQuery = useQuery({
-    queryKey: ["world-os", "mode"],
-    queryFn: () => workspaceApi<ModeDocument>("/api/v2/mode"),
-    staleTime: Infinity,
-    retry: false,
-  });
-
   const openCommand = useCallback((returnTarget?: HTMLElement | null) => {
     commandReturnFocus.current = returnTarget
       || (document.activeElement instanceof HTMLElement ? document.activeElement : commandTrigger.current);
@@ -252,7 +263,7 @@ export function WorkspaceShell() {
     setActiveCommandIndex(commandChoices.length ? 0 : -1);
   }, [commandChoices]);
 
-  const workspaceUrl = (path: string) => workspacePath(runId, path, search);
+  const workspaceUrl = (path: string) => (runId === null ? null : workspacePath(runId, path, search));
   const setTick = (value: string | null) => {
     const next = new URLSearchParams(search);
     if (value) next.set("tick", value); else next.delete("tick");
@@ -266,7 +277,7 @@ export function WorkspaceShell() {
   const openChoice = (choice: CommandChoice) => {
     const destination = choice.route
       ? workspaceUrl(choice.route.path)
-      : choice.result
+      : choice.result && runId !== null
         ? searchResultPath(runId, choice.result, search)
         : null;
     if (!destination) return;
@@ -294,17 +305,32 @@ export function WorkspaceShell() {
         {routeGroups.map(group => <div className="world-os-nav-group" key={group.label}>
           <p className="world-os-nav-group-title">{group.label}</p>
           <div className="world-os-nav-group-items">
-            {group.items.map(route => <NavLink
-              key={route.path}
-              to={workspaceUrl(route.path)}
-              aria-label={route.label}
-              title={railCollapsed ? route.label : undefined}
-              className={({ isActive }) => "world-os-nav-link" + (isActive ? " active" : "")}
-            >
-              <span className="world-os-nav-icon"><Glyph name={route.icon} /></span>
-              <span className="world-os-nav-copy"><strong>{route.label}</strong><small>{route.caption}</small></span>
-              <span className="world-os-nav-indicator" aria-hidden="true" />
-            </NavLink>)}
+            {group.items.map(route => {
+              const destination = workspaceUrl(route.path);
+              const body = <>
+                <span className="world-os-nav-icon"><Glyph name={route.icon} /></span>
+                <span className="world-os-nav-copy"><strong>{route.label}</strong><small>{route.caption}</small></span>
+                <span className="world-os-nav-indicator" aria-hidden="true" />
+              </>;
+              /* No run id yet: an inert placeholder anchor (no href, so not in the
+                 tab order), never a link to a run that does not exist. */
+              if (destination === null) {
+                return <a
+                  key={route.path}
+                  className={"world-os-nav-link" + (route.path === activeRoute.path ? " active" : "")}
+                  aria-disabled="true"
+                  aria-label={route.label}
+                  title="Waiting for the run to be identified"
+                >{body}</a>;
+              }
+              return <NavLink
+                key={route.path}
+                to={destination}
+                aria-label={route.label}
+                title={railCollapsed ? route.label : undefined}
+                className={({ isActive }) => "world-os-nav-link" + (isActive ? " active" : "")}
+              >{body}</NavLink>;
+            })}
           </div>
         </div>)}
       </nav>
@@ -317,10 +343,12 @@ export function WorkspaceShell() {
       <header className="world-os-topbar">
         <div className="world-os-context">
           <p className="world-os-kicker">{activeRoute.group} workspace</p>
-          <div><h1>{activeRoute.label}</h1><span className="world-os-run-pill" title={runId}>Run {runId}</span></div>
+          <div><h1>{activeRoute.label}</h1>{runId === null
+            ? <span className="world-os-run-pill">{modeQuery.isPending ? "Identifying run…" : "Run not identified"}</span>
+            : <span className="world-os-run-pill" title={runId}>Run {runId}</span>}</div>
         </div>
         <CitizenMenu
-          runId={runId}
+          runId={runId ?? ""}
           navigation={modeQuery.data?.navigation ?? null}
           variant="dropdown"
         />

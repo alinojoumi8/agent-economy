@@ -24,12 +24,6 @@ export function scheduleAgentDirectoryRefresh({
   return schedule(load, 180);
 }
 
-export function handleAgentRowKeyDown(event, inspect, agentId) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  inspect(agentId);
-}
-
 export function applyAgentDetailFailure(
   reason, setDetail, setError, { clearDetail = false } = {},
 ) {
@@ -220,8 +214,10 @@ export function AgentsPanel({ agents = null, initialDirectory = null, participan
           <thead><tr><th>#</th><th>Name</th><th>Occupation</th><th>Execution</th><th>Role</th><th>Region</th><th>Tier</th><th>Age</th><th>Health</th><th>Status</th></tr></thead>
           <tbody>{listed.map(agent => {
             const execution = agentExecutionPresentation(agent.execution);
-            return <tr key={agent.id} className="cursor-pointer" tabIndex="0" onClick={() => inspect(agent.id)} onKeyDown={event => handleAgentRowKeyDown(event, inspect, agent.id)}>
-              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
+            // The row is a pointer convenience only; the named "Inspect" button is
+            // the one keyboard path, so each row costs a single tab stop.
+            return <tr key={agent.id} className="cursor-pointer" onClick={() => inspect(agent.id)}>
+              <td className="tabular text-slate-600">{agent.id}</td><td className="font-semibold"><button className="text-left text-slate-200 underline decoration-mint-300/20 underline-offset-4 hover:text-mint-300" onClick={event => { event.stopPropagation(); inspect(agent.id); }}>Inspect {agent.name}</button></td><td>{agent.occupation || "—"}</td><td title={execution.title}><Badge tone={execution.tone}>{execution.label}</Badge>{execution.route && <div className="mt-1 max-w-36 truncate text-[10px] text-slate-600">{execution.route}</div>}</td><td>{agent.role ? <Badge>{shortKind(agent.role)}</Badge> : <span className="text-slate-600">citizen</span>}</td><td>{shortKind(agent.region_key || "unassigned")}</td><td><Badge tone={agent.population_tier === "core" ? "good" : "neutral"}>{agent.population_tier || "periphery"}</Badge></td><td className="tabular">{agent.age}</td><td><Badge tone={agent.health === "healthy" ? "good" : agent.health === "critical" ? "bad" : "warn"}>{agent.health}</Badge></td><td><Badge tone={!agent.alive ? "bad" : agent.retired ? "warn" : "neutral"}>{!agent.alive ? "deceased" : agent.retired ? "retired" : "active"}</Badge></td>
             </tr>;
           })}</tbody>
         </table> : <Empty>{directoryLoading ? "Loading agents…" : "No agents match this search."}</Empty>}

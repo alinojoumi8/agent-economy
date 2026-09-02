@@ -39,6 +39,9 @@ each audience can find the authoritative level of detail.
   changes, compatibility, logs, and CI.
 - [UI menu hardening ledger](plans/2026-08-30-ui-menu-hardening.md) — complete
   workspace inventory, acceptance contract, and current verification evidence.
+- [Full-stack review remediation ledger](plans/2026-09-01-full-stack-review-remediation.md) —
+  the 2026-09-01 backend and dashboard review: what was fixed, how it was
+  verified, and the design decisions deliberately deferred.
 - [Branch lifecycle and consolidation](branch-lifecycle.md) — protect active
   work, classify refs, port divergent commits, and gate deletion.
 - [Documentation maintenance](documentation-maintenance.md) — source-of-truth

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
+import threading
 from pathlib import Path
 import re
 import socket
@@ -177,15 +179,18 @@ class HostedOperations:
         try:
             stamp = datetime.now(timezone.utc).strftime("d%Y%m%dT%H%M%S%fZ")
             snapshot_id = f"{stamp}-{uuid4().hex[:12]}"
-            metadata = publish_sqlite_snapshot(
-                source,
-                self.artifact_store,
-                tenant_id=str(tenant),
-                run_id=str(run),
-                snapshot_id=snapshot_id,
-                staging_directory=self.config.runtime.snapshot_directory,
-                expected_schema_version=int(_value(record, "schema_version", SCHEMA_VERSION)),
-            )
+            with self._renewing_lease(tenant, run, token):
+                # Backup, integrity check, two full hashes, and the upload can
+                # outlast one lease TTL on a large run database.
+                metadata = publish_sqlite_snapshot(
+                    source,
+                    self.artifact_store,
+                    tenant_id=str(tenant),
+                    run_id=str(run),
+                    snapshot_id=snapshot_id,
+                    staging_directory=self.config.runtime.snapshot_directory,
+                    expected_schema_version=int(_value(record, "schema_version", SCHEMA_VERSION)),
+                )
             updated = self.catalog.update_snapshot_pointer(
                 tenant,
                 run,
@@ -200,12 +205,52 @@ class HostedOperations:
         finally:
             self.catalog.release_writer_lease(tenant, run, token=token)
 
+    @contextmanager
+    def _renewing_lease(self, tenant: UUID, run: UUID, token: Any):
+        """Keep the writer lease alive while a long publish runs."""
+        renew = getattr(self.catalog, "renew_writer_lease", None)
+        ttl = float(self.config.runtime.writer_lease_seconds)
+        stop = threading.Event()
+
+        def heartbeat() -> None:
+            interval = max(1.0, ttl / 3.0)
+            while not stop.wait(interval):
+                try:
+                    if not renew(tenant, run, owner=self.lease_owner, token=token,
+                                 ttl_seconds=ttl):
+                        return
+                except Exception:
+                    return
+
+        worker = threading.Thread(target=heartbeat, name="ops-lease-heartbeat", daemon=True)
+        if callable(renew):
+            worker.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            if worker.is_alive():
+                worker.join(timeout=5.0)
+
     def snapshot_all(self) -> tuple[SnapshotResult, ...]:
+        """Snapshot every active run, attempting all of them before failing.
+
+        A run whose writer lease is held by a live supervisor is skipped and
+        reported at the end together with any other per-run failure, so one
+        busy run never hides the remaining runs from the operator.
+        """
         results: list[SnapshotResult] = []
+        failures: list[str] = []
         for record in self.catalog.list_active_runs():
-            results.append(
-                self.snapshot_run(_value(record, "tenant_id"), _value(record, "id"))
-            )
+            tenant_id, run_id = _value(record, "tenant_id"), _value(record, "id")
+            try:
+                results.append(self.snapshot_run(tenant_id, run_id))
+            except HostedOperationError as exc:
+                failures.append(f"{tenant_id}/{run_id}: {exc}")
+        if failures:
+            raise HostedOperationError(
+                f"snapshot-all completed with failures ({len(results)} succeeded): "
+                + "; ".join(failures))
         return tuple(results)
 
     def _pointer(self, tenant_id: UUID | str, run_id: UUID | str) -> tuple[Any, UUID, UUID, str, str]:

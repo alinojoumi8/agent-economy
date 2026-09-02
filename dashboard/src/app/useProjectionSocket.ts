@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { initialCursorState, reduceCursorState } from "./cursorReducer";
+import { announcedCursor, initialCursorState, reduceCursorState } from "./cursorReducer";
 
 function socketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -30,10 +30,16 @@ export function useProjectionSocket(historical: boolean) {
       socket = new WebSocket(socketUrl());
       socket.addEventListener("open", () => {
         retry = 0;
-        // During lineage recovery the server's mandatory first frame is the
-        // authoritative hello. Wait for it before requesting backfill so an
-        // old-lineage cursor is never sent against the new run or fork.
-        if (!lineageRecovery.current) {
+        // The server's mandatory first frame is the authoritative hello; a
+        // client hello only asks for backfill after a cursor it already holds.
+        // On the very first connection there is no such cursor: a hello with
+        // event_cursor 0 asked the server to replay the whole commit log, and on
+        // any run older than the replay window it answered
+        // projection_invalidated(backfill_truncated), so every fresh load began
+        // stale. Wait for the server hello instead. Reconnects still resume
+        // from the last cursor, and lineage recovery waits for the new hello so
+        // an old-lineage cursor is never sent against the new run or fork.
+        if (projectionProtocol.current && !lineageRecovery.current) {
           socket?.send(JSON.stringify({ type: "hello", event_cursor: cursor.current }));
         }
       });
@@ -109,6 +115,11 @@ export function useProjectionSocket(historical: boolean) {
             queryClient.invalidateQueries({ queryKey: ["world-os"] });
           }
           if (message.type === "projection_invalidated") {
+            // A truncated same-socket recovery names the cursor the server is
+            // at. Adopt it so the next delta is contiguous instead of reopening
+            // the gap the refetch below is already closing.
+            const invalidatedCursor = announcedCursor(message);
+            if (invalidatedCursor !== null) cursor.current = invalidatedCursor;
             queryClient.invalidateQueries({ queryKey: ["world-os"] });
           }
         } catch {

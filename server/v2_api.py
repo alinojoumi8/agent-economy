@@ -172,6 +172,9 @@ def install_v2_routes(app, world, controller) -> None:
         as_of_tick = projection_tick(tick, fork_id)
         principal, _ = projection_principal(agent_id=agent_id)
         kinds = tuple(sorted({item.strip() for item in filters.split(",") if item.strip()}))
+        if len(kinds) > 50:
+            raise HTTPException(
+                status_code=422, detail="at most 50 event kind filters are accepted")
         data = build_events(
             store, as_of_tick=as_of_tick, after_id=after, limit=limit, kinds=kinds)
         return build_envelope(store, principal, "events.page", data, as_of_tick=as_of_tick)

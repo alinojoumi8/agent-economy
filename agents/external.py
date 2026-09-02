@@ -513,8 +513,10 @@ class ExternalAgentService:
                                    "preferred_occupation": auth["preferred_occupation"]}}
 
     def observe(self, auth: dict[str, Any]) -> dict[str, Any]:
-        if SCOPE_WORLD_READ not in auth["scopes"] and SCOPE_COMMONS_READ not in auth["scopes"]:
-            raise ExternalAgentError(403, "read scope required", "insufficient_scope")
+        # The world projection is a world.read capability; the commons tier is
+        # defined without it and its MCP tool list already omits observation.
+        if SCOPE_WORLD_READ not in auth["scopes"]:
+            raise ExternalAgentError(403, "world.read scope required", "insufficient_scope")
         actor_id = int(auth["actor_id"]) if auth.get("actor_id") is not None else None
         actor = None
         accounts: list[dict[str, Any]] = []
@@ -529,10 +531,19 @@ class ExternalAgentService:
             accounts = [dict(row) for row in self.store.query(
                 "SELECT id,kind,label,balance_cents,currency_code FROM accounts "
                 "WHERE owner_type='agent' AND owner_id=? ORDER BY id", (actor_id,))]
+        # Per-bank deposit and reserve-ratio series are private balance-sheet
+        # data unless the run grants citizens the full balance sheet; an
+        # external actor sees exactly what a native citizen would.
+        bank_visibility = str(
+            (self.config.get("information", {}) or {}).get(
+                "citizen_bank_visibility", "full_balance_sheet"))
+        metric_filter = (
+            "" if bank_visibility == "full_balance_sheet"
+            else "WHERE m.name NOT LIKE 'bank\\_%' ESCAPE '\\' ")
         metrics = {str(row["name"]): float(row["value"]) for row in self.store.query(
             "SELECT m.name,m.value FROM metrics m JOIN (SELECT name,MAX(tick) AS tick FROM metrics "
             "GROUP BY name) latest ON latest.name=m.name AND latest.tick=m.tick "
-            "ORDER BY m.name LIMIT 100")}
+            f"{metric_filter}ORDER BY m.name LIMIT 100")}
         prices = [dict(row) for row in self.store.query(
             "SELECT f.id AS firm_id,f.name,f.sector,f.inventory,"
             "json_extract(f.product_json,'$.unit_price_cents') AS unit_price_cents "
@@ -548,21 +559,32 @@ class ExternalAgentService:
         return {"completed_tick": self.store.tick, "actor": actor, "accounts": accounts,
                 "metrics": metrics, "market": prices, "recent_public_events": public_events}
 
+    def _next_wake_tick(self, auth: dict[str, Any], earliest: int) -> int:
+        """First tick at or after ``earliest`` on which this connection decides."""
+        row = self.store.query_one(
+            "SELECT wake_interval_ticks,created_tick FROM external_agent_connections WHERE id=?",
+            (auth["id"],))
+        if row is None:
+            return int(earliest)
+        interval = max(1, int(row["wake_interval_ticks"] or 1))
+        created = int(row["created_tick"] or 0)
+        offset = (int(earliest) - created) % interval
+        return int(earliest) + ((interval - offset) % interval)
+
     def turn(self, auth: dict[str, Any]) -> dict[str, Any]:
-        observations = self.observe(auth)
+        if SCOPE_WORLD_READ not in auth["scopes"]:
+            raise ExternalAgentError(403, "world.read scope required", "insufficient_scope")
         actor_id = int(auth["actor_id"]) if auth.get("actor_id") is not None else None
-        catalog: list[dict[str, Any]] = []
-        if actor_id is not None and SCOPE_WORLD_ACT in auth["scopes"]:
-            agent = self.store.query_one("SELECT alive,kind FROM agents WHERE id=?", (actor_id,))
-            if agent is not None and bool(agent["alive"]) and agent["kind"] == "citizen":
-                catalog = self.participant.action_catalog(actor_id)
-        projection_hash = _canonical_hash(observations)
-        catalog_version = _canonical_hash(catalog)
         completed_tick = self.store.tick
-        target_tick = completed_tick + 1
         meta = self.store.get_meta()
-        cursor = int(self.store.scalar("SELECT COALESCE(MAX(id),0) FROM events", default=0))
-        deadline = _now() + timedelta(seconds=self.decision_seconds)
+        # While a tick is in progress its decision mailbox has already closed
+        # (``collect_online_turns`` ran at the tick's start), so the next turn
+        # that can still be honoured targets the tick after it. Ticks on which
+        # ``decisions_for_tick`` skips this connection (wake interval) are never
+        # offered either; a turn for them could only become stale.
+        base_tick = (
+            int(meta["active_tick"]) if meta["active_tick"] is not None else completed_tick)
+        target_tick = self._next_wake_tick(auth, base_tick + 1)
         self.store.execute(
             "UPDATE external_agent_turns SET status='expired',updated_at=? "
             "WHERE connection_id=? AND target_tick<? AND status='open'",
@@ -574,12 +596,24 @@ class ExternalAgentService:
         if (existing is not None
                 and existing["actor_id"] == actor_id
                 and load_json(existing["envelope_json"], None) is not None):
+            # Answer long-polling clients from the persisted envelope without
+            # rebuilding observations and the action catalog on every poll.
             persisted = load_json(existing["envelope_json"], {}) or {}
             persisted["turn_id"] = str(existing["id"])
             persisted["turn_status"] = str(existing["status"])
             persisted["deadline"] = str(existing["deadline_at"])
             self.store.commit()
             return persisted
+        observations = self.observe(auth)
+        catalog: list[dict[str, Any]] = []
+        if actor_id is not None and SCOPE_WORLD_ACT in auth["scopes"]:
+            agent = self.store.query_one("SELECT alive,kind FROM agents WHERE id=?", (actor_id,))
+            if agent is not None and bool(agent["alive"]) and agent["kind"] == "citizen":
+                catalog = self.participant.action_catalog(actor_id)
+        projection_hash = _canonical_hash(observations)
+        catalog_version = _canonical_hash(catalog)
+        cursor = int(self.store.scalar("SELECT COALESCE(MAX(id),0) FROM events", default=0))
+        deadline = _now() + timedelta(seconds=self.decision_seconds)
         turn_id = str(existing["id"]) if existing is not None else str(uuid4())
         envelope = {
             "version": "ae.turn.v1", "tenant_id": auth["tenant_id"],
@@ -1184,7 +1218,14 @@ class ExternalAgentService:
                     "SELECT id,status,deadline_at FROM external_agent_turns "
                     "WHERE connection_id=? AND target_tick=?",
                     (str(row["id"]), tick))
-                operational_reason = self._missed_turn_reason(row, turn)
+                # MORNING is re-entered after an operator pause. The attendance
+                # row is immutable and the reason is wall-clock dependent, so a
+                # re-entry reuses the recorded reason and must not append a
+                # second fallback event for the same connection and tick.
+                recorded_reason = self._recorded_attendance_reason(str(row["id"]), int(tick))
+                operational_reason = (
+                    recorded_reason if recorded_reason is not None
+                    else self._missed_turn_reason(row, turn))
                 if not bool(row["alive"]):
                     self._close_pending(str(row["id"]), "actor_not_living",
                                         target_tick=int(tick))
@@ -1192,11 +1233,13 @@ class ExternalAgentService:
                     self.store.execute(
                         "UPDATE external_agent_turns SET status='fallback',updated_at=? "
                         "WHERE id=? AND status='open'", (_iso(), str(turn["id"])))
-                self.store.log_event(
-                    tick, "external_agent_fallback",
-                    {"connection_id": str(row["id"]), "actor_id": actor_id,
-                     "reason": "offline_or_no_submission", "policy": "safe_do_nothing_v1"},
-                    phase="MORNING", subject_type="agent", subject_id=actor_id, importance=0.6)
+                if not self._fallback_event_recorded(int(tick), str(row["id"])):
+                    self.store.log_event(
+                        tick, "external_agent_fallback",
+                        {"connection_id": str(row["id"]), "actor_id": actor_id,
+                         "reason": "offline_or_no_submission", "policy": "safe_do_nothing_v1"},
+                        phase="MORNING", subject_type="agent", subject_id=actor_id,
+                        importance=0.6)
                 self._record_turn_attendance(
                     connection_id=str(row["id"]),
                     actor_id=actor_id,
@@ -1435,6 +1478,22 @@ class ExternalAgentService:
     def _attendance_enabled(self) -> bool:
         return int(self.config.get("engine_semantics_version", 1)) >= 14
 
+    def _recorded_attendance_reason(self, connection_id: str, target_tick: int) -> str | None:
+        if not self._attendance_enabled():
+            return None
+        row = self.store.query_one(
+            "SELECT operational_reason FROM external_turn_attendance "
+            "WHERE connection_id=? AND target_tick=?",
+            (str(connection_id), int(target_tick)))
+        return None if row is None else str(row["operational_reason"])
+
+    def _fallback_event_recorded(self, tick: int, connection_id: str) -> bool:
+        row = self.store.query_one(
+            "SELECT 1 FROM events WHERE tick=? AND kind='external_agent_fallback' "
+            "AND json_extract(payload_json,'$.connection_id')=? LIMIT 1",
+            (int(tick), str(connection_id)))
+        return row is not None
+
     def _missed_turn_reason(self, connection, turn) -> str:
         if not bool(connection["alive"]):
             return "dead_actor"
@@ -1611,6 +1670,11 @@ class ExternalAgentService:
 
     def _check_rate_limit(self, connection_id: str, now: datetime) -> None:
         window = now.replace(second=0, microsecond=0).isoformat()
+        # Only the current minute is ever consulted; prune the rest so a
+        # long-running hosted run does not accrete one row per minute forever.
+        self.store.execute(
+            "DELETE FROM external_rate_windows WHERE window_started_at<?",
+            ((now - timedelta(minutes=10)).replace(second=0, microsecond=0).isoformat(),))
         row = self.store.query_one(
             "SELECT request_count FROM external_rate_windows WHERE connection_id=? "
             "AND window_started_at=?", (connection_id, window))

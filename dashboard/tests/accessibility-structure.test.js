@@ -65,3 +65,17 @@ test("decorative metric sparklines do not duplicate accessible labels and values
   assert.match(macroSource, /macroGradientId\(gradientPrefix, key\)/);
   assert.doesNotMatch(macroSource, /aria-label=\{`\$\{label\} history`\}/);
 });
+
+test("the Living Agents search shows keyboard focus on the drawn field", () => {
+  const indexStyles = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+  // The input's own ring is suppressed because the label is the visible field...
+  assert.match(indexStyles, /\.world-os-agent-search input:focus \{ border: 0; outline: 0; \}/);
+  // ...so the label must show focus-within in its place.
+  assert.match(
+    indexStyles,
+    /\.world-os-people-list > label\.world-os-agent-search:focus-within \{[^}]*outline: 2px solid var\(--ae-focus\)/,
+  );
+});

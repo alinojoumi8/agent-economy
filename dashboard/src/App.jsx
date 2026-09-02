@@ -14,6 +14,10 @@ export default function App() {
   // the local shell is correct before the probe answers. `"/"` is ambiguous and
   // waits behind real chrome rather than a blank page.
   if (mode.loading && mode.presumed !== "local") return <BootShell />;
+  // A probe that failed for good (network error, 5xx, an unrecognised document)
+  // proves nothing about "/": mounting the local observatory there would put the
+  // wrong app on a hosted origin, so the boot chrome stays and says why.
+  if (mode.error && mode.presumed !== "local") return <BootShell error={mode.error} />;
   return <Routes>
     <Route path="/runs/:runId/*" element={<WorldOSApp />} />
     <Route path="/commons/*" element={<WorldOSApp />} />

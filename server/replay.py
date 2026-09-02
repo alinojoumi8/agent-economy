@@ -59,6 +59,17 @@ class ReplayReader:
         conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True,
                                check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        try:
+            is_run = conn.execute(
+                "SELECT run_id FROM run_meta WHERE id=1").fetchone() is not None
+        except sqlite3.Error:
+            is_run = False
+        if not is_run:
+            # Sidecar databases (for example the operator workspace) share the
+            # runs directory but are not replayable runs: report "not found"
+            # instead of failing inside every reader.
+            conn.close()
+            return None
         self._conns[run_id] = conn
         while len(self._conns) > self.max_connections:
             _, stale = self._conns.popitem(last=False)
@@ -107,6 +118,7 @@ class ReplayReader:
         if conn is None:
             return None
         wanted = [n.strip() for n in (names or ",".join(HEADLINE_METRICS)).split(",") if n.strip()]
+        wanted = wanted[:50]
         out = {}
         for name in wanted:
             rows = conn.execute(

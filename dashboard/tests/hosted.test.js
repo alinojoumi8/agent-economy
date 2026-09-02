@@ -75,7 +75,7 @@ test("hosted reads and only the five run controls receive scoped routes", () => 
   hosted();
   assert.equal(
     resolveApiRequest("/api/agents?limit=10").path,
-    `/api/v2/tenants/${TENANT}/runs/${RUN}/world/api/agents?limit=10`,
+    `/api/v2/tenants/${TENANT}/runs/${RUN}/world/agents?limit=10`,
   );
   assert.deepEqual(resolveApiRequest("/api/run/start", "POST", { max_ticks: 3 }), {
     path: `/api/v2/tenants/${TENANT}/runs/${RUN}/control`,

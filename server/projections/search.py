@@ -77,11 +77,32 @@ def _firm_group(store, query: str, as_of_tick: int, limit: int) -> dict:
     return _bounded_group("firm", ranked, limit)
 
 
+def _like_pattern(needle: str) -> str:
+    """Escape LIKE wildcards so the needle is matched literally."""
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _event_group(store, query: str, as_of_tick: int, limit: int) -> dict:
     ranked = []
+    params: list[object] = [int(as_of_tick)]
+    where = "tick<=?"
+    if query.isascii():
+        # Events are the one unbounded table searched here. SQLite's LIKE folds
+        # ASCII case exactly like the casefold contract below, so an ASCII
+        # needle can be narrowed in SQL first; ``_match_rank`` still decides
+        # every match, so the result set is unchanged and a non-ASCII needle
+        # keeps the exact Python scan.
+        pattern = _like_pattern(query)
+        where += (
+            " AND (CAST(id AS TEXT)=? OR kind LIKE ? ESCAPE '\\'"
+            " OR COALESCE(subject_type,'') LIKE ? ESCAPE '\\'"
+            " OR CAST(subject_id AS TEXT) LIKE ? ESCAPE '\\')"
+        )
+        params.extend([query, pattern, pattern, pattern])
     for row in store.query(
             "SELECT id,tick,kind,subject_type,subject_id FROM events "
-            "WHERE tick<=? ORDER BY id", (int(as_of_tick),)):
+            f"WHERE {where} ORDER BY id", tuple(params)):
         object_id = int(row["id"])
         subject_id = int(row["subject_id"]) if row["subject_id"] is not None else None
         subject_type = str(row["subject_type"] or "")
@@ -121,9 +142,16 @@ def _communication_group(
     policy = CommunicationPolicy(store, truth_audit=truth_audit)
     ranked = []
     for thread in store.query(
-            "SELECT id,created_tick FROM comm_threads "
+            "SELECT id,created_tick,subject FROM comm_threads "
             "WHERE created_tick<=? ORDER BY id", (int(as_of_tick),)):
         thread_id = int(thread["id"])
+        # Rank the subject first: the per-message authorization gate below
+        # costs several queries per message, so it should only run for
+        # threads that can appear in the result at all.
+        subject = str(thread["subject"])
+        rank = _match_rank(query, thread_id, (subject,))
+        if rank is None:
+            continue
         authorized = False
         for message in store.query(
                 "SELECT id FROM comm_messages WHERE thread_id=? AND created_tick<=? "
@@ -135,14 +163,6 @@ def _communication_group(
                 authorized = True
                 break
         if not authorized:
-            continue
-        subject_row = store.query_one(
-            "SELECT subject FROM comm_threads WHERE id=?", (thread_id,))
-        if subject_row is None:
-            continue
-        subject = str(subject_row["subject"])
-        rank = _match_rank(query, thread_id, (subject,))
-        if rank is None:
             continue
         ranked.append((rank, thread_id, {
             "kind": "communication_thread",

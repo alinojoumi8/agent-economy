@@ -320,8 +320,10 @@ class CatalogAuthService:
             self.throttle_policy.retry_after_seconds(client_failures, current),
         )
         if not bool(getattr(reservation, "reserved", False)):
-            if not retry_after:
-                raise RuntimeError("login throttle refused a reservation without a retry window")
+            # The catalog counts failures on its own clock; a peer instance a
+            # little ahead can leave this instance's window at zero. Fail
+            # closed with a minimal retry window instead of a 500.
+            retry_after = max(1, int(retry_after))
             self._audit(tenant, "auth.login.throttled", current, retry_after_seconds=retry_after)
             raise AuthFailure("login_throttled", retry_after_seconds=retry_after)
 

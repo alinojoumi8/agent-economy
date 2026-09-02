@@ -891,6 +891,24 @@ export function convexHull(points = []) {
 }
 
 /**
+ * Where a territory's name plate sits: outside the hull, on the side that faces
+ * the middle of the canvas, `gap` pixels clear of the boundary. A region that
+ * owns no place with a finite coordinate has no hull and so no edge to clear;
+ * its plate sits on the projected region centre rather than at ±Infinity,
+ * which the browser drops and leaves the plate wherever the container's static
+ * flow put it. A centre that is itself not finite yields no plate at all.
+ */
+export function platePosition(hull = [], centre, { gap = 0, height = 0 } = {}) {
+  if (!centre || !Number.isFinite(centre.x) || !Number.isFinite(centre.y)) return null;
+  const below = centre.y < height / 2;
+  const points = hull.filter(point => Number.isFinite(point?.x) && Number.isFinite(point?.y));
+  if (!points.length) return { x: centre.x, y: centre.y, below };
+  const top = Math.min(...points.map(point => point.y));
+  const bottom = Math.max(...points.map(point => point.y));
+  return { x: centre.x, y: below ? bottom + gap : top - gap, below };
+}
+
+/**
  * A closed path around a hull, pushed `pad` pixels outward from its centroid
  * and rounded at the corners. The pad is why no place mark sits exactly on the
  * boundary line; the rounding is why a 24-vertex hull does not read as a saw.
