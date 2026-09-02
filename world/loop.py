@@ -63,7 +63,7 @@ from .phases import (
     phase_names_for_semantics,
 )
 from oracle.analyst import Oracle
-from observability import get_logger, log_event as operational_log
+from observability import get_logger, log_event as operational_log, scrub_error_text
 
 LEGACY_PHASES = tuple(spec.name for spec in LEGACY_PHASE_SPECS)
 PHASES = tuple(spec.name for spec in STANDARD_PHASE_SPECS)
@@ -102,6 +102,12 @@ class World:
         self.resource_guard = dict(config.get("resource_guard", {}) or {})
         self._pause_requested = False
         self._stop_requested = False
+        # Pause and Stop must be able to wake the world out of its inter-tick
+        # speed delay instead of waiting for the whole delay to elapse.
+        self._wake_event = asyncio.Event()
+        # Tick whose pause checkpoint ``_pause_safely`` already wrote, so the
+        # run loop's teardown does not copy the database a second time.
+        self._pause_checkpoint_tick: Optional[int] = None
         self.last_report_path: Optional[str] = None
         self.last_pause_reason: Optional[dict] = None
         self.on_tick: Optional[Callable[[int, dict], None]] = None  # dashboard hook
@@ -159,7 +165,8 @@ class World:
         self.status = "running"
         self.store.set_meta(status="running")
         start_tick = self.store.tick
-        end_tick = (start_tick + max_ticks) if max_ticks else None
+        # ``--ticks 0`` means "run nothing", not "run unbounded".
+        end_tick = (start_tick + max_ticks) if max_ticks is not None else None
         operational_log(logger, logging.INFO, "world.run.started",
                         run_id=self.gateway.run_id, start_tick=start_tick,
                         max_ticks=max_ticks, replay=self.gateway.replay)
@@ -178,22 +185,26 @@ class World:
                 if summary.get("paused"):
                     break
                 if self.speed_delay_s > 0:
-                    await asyncio.sleep(self.speed_delay_s)
+                    await self._sleep_between_ticks(self.speed_delay_s)
         finally:
             if resource_task is not None:
                 resource_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await resource_task
             new_status = "halted" if self.status == "halted" else "paused"
-            if self._stop_requested:
+            if self._stop_requested and new_status != "halted":
+                # A Stop that raced a reconciliation halt must not relabel the
+                # halted run as finished; the halt is the authoritative state.
                 new_status = "finished"
             self.status = new_status
             self.store.set_meta(status=new_status)
             self._save_prng_state()
             self.store.commit()
-            await self.checkpoint_async(
-                self.store.tick,
-                reason="stop" if self._stop_requested else "pause")
+            if self._stop_requested or self._pause_checkpoint_tick != self.store.tick:
+                await self.checkpoint_async(
+                    self.store.tick,
+                    reason="stop" if self._stop_requested else "pause")
+            self._pause_checkpoint_tick = None
             if self._stop_requested:
                 meta = self.store.get_meta()
                 if meta["active_tick"] is not None:
@@ -224,8 +235,8 @@ class World:
                                         path=self.last_report_path)
                     except Exception as exc:
                         self.store.log_event(
-                            self.store.tick, "report_failed", {"error": str(exc)[:500]},
-                            importance=3.0)
+                            self.store.tick, "report_failed",
+                            {"error": scrub_error_text(exc)}, importance=3.0)
                         self.store.commit()
                         operational_log(logger, logging.ERROR, "world.report.failed",
                                         run_id=self.gateway.run_id, tick=self.store.tick,
@@ -316,15 +327,27 @@ class World:
 
     def request_pause(self) -> None:
         self._pause_requested = True
+        self._wake_event.set()
         self.gateway.interrupt_pending()
         operational_log(logger, logging.INFO, "world.pause.requested",
                         run_id=self.gateway.run_id, tick=self.store.tick)
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        self._wake_event.set()
         self.gateway.interrupt_pending()
         operational_log(logger, logging.INFO, "world.stop.requested",
                         run_id=self.gateway.run_id, tick=self.store.tick)
+
+    async def _sleep_between_ticks(self, seconds: float) -> None:
+        """Honour the speed setting, but return as soon as Pause or Stop is asked."""
+        self._wake_event.clear()
+        if self._pause_requested or self._stop_requested:
+            return
+        try:
+            await asyncio.wait_for(self._wake_event.wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
 
     def _persist_phase(self, tick: int, next_phase: str, state: dict) -> None:
         self.store.set_meta(
@@ -365,6 +388,9 @@ class World:
                         with self.store.savepoint(f"tick_{tick}_night_close"):
                             self._phase_night_close(tick)
                     except ReconciliationError as exc:
+                        # The savepoint rolled NIGHT_CLOSE back; the halt
+                        # checkpoint must carry the matching PRNG state.
+                        self.restore_prng_state()
                         self._record_reconciliation_halt(
                             tick, "NIGHT_CLOSE", getattr(exc, "diagnostic", {}))
                         raise
@@ -438,11 +464,11 @@ class World:
             self._notify_tick(tick, summary)
             return summary
         except BudgetExceeded as exc:
-            return self._pause_safely(
+            return await self._pause_safely(
                 tick, phase, "budget", self.gateway.governor.status(), t0,
                 detail=str(exc))
         except ProviderUnavailable as exc:
-            return self._pause_safely(
+            return await self._pause_safely(
                 tick, phase, "provider", exc.as_dict(), t0,
                 detail=str(exc))
         except GatewayInterrupted as exc:
@@ -456,6 +482,13 @@ class World:
             }
             self._notify_tick(self.store.tick, summary)
             return summary
+        except BaseException:
+            # A transactional phase rolled its database work back to the
+            # phase-start snapshot, but the in-memory PRNGs kept the numbers
+            # they had already drawn. Reload the persisted phase-start state so
+            # a resume and a fresh replay draw the same sequence.
+            self.restore_prng_state()
+            raise
 
     def _record_runtime_tick(self, tick: int, summary: dict) -> None:
         """Persist host/provider timing as non-authoritative acceptance evidence."""
@@ -495,7 +528,7 @@ class World:
                                 run_id=self.gateway.run_id, tick=tick,
                                 error_type=type(exc).__name__, error=str(exc))
 
-    def _pause_safely(self, tick: int, phase: str, reason: str, payload: dict,
+    async def _pause_safely(self, tick: int, phase: str, reason: str, payload: dict,
                       started_at: float, *, detail: str = "") -> dict:
         """Commit a consistent partial tick and a durable, resumable pause record."""
         ok, diag = self.economy.ledger.reconcile()
@@ -506,7 +539,7 @@ class World:
             self.store.set_meta(
                 status="halted", active_tick=tick, next_phase=phase, phase=phase)
             self.store.commit()
-            self.checkpoint(self.store.tick, reason="halt")
+            await self.checkpoint_async(self.store.tick, reason="halt")
             operational_log(logger, logging.CRITICAL, "world.reconciliation.failed",
                             run_id=self.gateway.run_id, tick=tick, phase=phase,
                             pause_reason=reason, diagnostic=diag)
@@ -521,8 +554,12 @@ class World:
         self.store.log_event(tick, event_kind, event_payload, phase=phase, importance=4.5)
         self.store.set_meta(
             status="paused", active_tick=tick, next_phase=phase, phase=phase)
+        self._save_prng_state()
         self.store.commit()
-        self.checkpoint(self.store.tick, reason=event_kind)
+        # Off-loop copy: this pause can happen inside a served run, where a
+        # blocking copy would take every dashboard reader down with it.
+        await self.checkpoint_async(self.store.tick, reason=event_kind)
+        self._pause_checkpoint_tick = self.store.tick
         operational_log(logger, logging.WARNING, "world.pause.completed",
                         run_id=self.gateway.run_id, tick=tick, phase=phase,
                         reason=reason, detail=detail)
@@ -1002,7 +1039,8 @@ class World:
         write_checkpoint_manifest(dest)
 
     def _checkpoint_failed(self, tick: int, reason: str, exc: Exception) -> None:
-        self.store.log_event(tick, "checkpoint_failed", {"error": str(exc)}, importance=2.0)
+        self.store.log_event(
+            tick, "checkpoint_failed", {"error": scrub_error_text(exc)}, importance=2.0)
         operational_log(logger, logging.ERROR, "world.checkpoint.failed",
                         run_id=self.gateway.run_id, tick=tick, reason=reason,
                         error_type=type(exc).__name__, error=str(exc))

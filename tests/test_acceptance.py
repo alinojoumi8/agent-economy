@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 import sys
 
@@ -472,10 +473,18 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
     world.acceptance_target_tick = 2
 
     with TestClient(create_app(world)) as client:
-        for _ in range(100):
+        # Two ticks plus the terminal checkpoint and report take a fixed amount of
+        # simulation work, while a status poll is a millisecond round trip: a
+        # request-count bound therefore fails whenever the machine is busy. Wait
+        # on wall-clock time instead, with room for a loaded CI runner.
+        deadline = time.monotonic() + 120.0
+        while True:
             status = client.get("/api/run/status").json()
             if not status["running"] and status["tick"] >= 2:
                 break
+            assert time.monotonic() < deadline, (
+                f"served acceptance run did not reach tick 2 in time: {status}")
+            time.sleep(0.05)
         assert status["tick"] == 2
         assert status["acceptance_orchestration"]["state"] == "completed"
         assert status["acceptance_orchestration"]["authorized"]
