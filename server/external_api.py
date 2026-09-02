@@ -306,6 +306,17 @@ async def _wait_turn(service, auth: dict[str, Any], *, after_tick: int | None,
 def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -> None:
     service = world.runtime.external
     commons = world.commons
+
+    @app.exception_handler(ExternalAgentError)
+    async def external_agent_error(_request: Request, exc: ExternalAgentError) -> JSONResponse:
+        # Routes that reach the service outside an explicit try/except (for
+        # example the long-polling turn endpoint) must still answer with the
+        # gateway's own status code instead of an opaque 500.
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": {"code": exc.code, "message": exc.message}},
+            headers=headers)
     join_config = (
         service.config.get("external_gateway", {}).get("public_join", {}) or {})
     public_join_enabled = bool(join_config.get("enabled", False)) and not hosted_safe
@@ -525,9 +536,18 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         raw = (await request.body()).decode("utf-8", errors="strict")
         return {key: values[-1] for key, values in parse_qs(raw, keep_blank_values=True).items()}
 
+    def _invalid_request(description: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_request", "error_description": description},
+            headers={"Cache-Control": "no-store"})
+
     @app.post("/oauth/token")
     async def oauth_token(request: Request):
-        fields = await request_fields(request)
+        try:
+            fields = await request_fields(request)
+        except (UnicodeDecodeError, ValueError):
+            return _invalid_request("malformed request body")
         grant_type = str(fields.get("grant_type", ""))
         resource = str(fields.get("resource", ""))
         expected_resource = f"{str(request.base_url).rstrip('/')}/mcp"
@@ -558,10 +578,19 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
             return JSONResponse(status_code=exc.status_code,
                                 content={"error": exc.code, "error_description": exc.message},
                                 headers={"Cache-Control": "no-store"})
+        except UnicodeEncodeError:
+            # PKCE verifiers are ASCII by specification.
+            return JSONResponse(status_code=400,
+                                content={"error": "invalid_grant",
+                                         "error_description": "code_verifier must be ASCII"},
+                                headers={"Cache-Control": "no-store"})
 
     @app.post("/oauth/revoke")
     async def oauth_revoke(request: Request):
-        fields = await request_fields(request)
+        try:
+            fields = await request_fields(request)
+        except (UnicodeDecodeError, ValueError):
+            return _invalid_request("malformed request body")
         return service.revoke_token(str(fields.get("token", "")))
 
     @app.get("/api/v2/agent/me")
@@ -766,6 +795,10 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
             return _jsonrpc_error(request_id, -32000, exc.message, data={"code": exc.code})
         except CommonsError as exc:
             return _jsonrpc_error(request_id, -32001, exc.message, data={"code": "commons_error"})
+        except (TypeError, ValueError):
+            # Tool arguments are untrusted JSON; a wrong type is the caller's
+            # error, not a server fault.
+            return _jsonrpc_error(request_id, -32602, "Invalid params")
 
     @app.get("/mcp")
     async def mcp_stream_not_enabled(request: Request):

@@ -266,6 +266,9 @@ class Memory:
         source_llm_call_id: Optional[int] = None,
     ) -> None:
         for u in updates or []:
+            if not isinstance(u, dict):
+                # Model-authored updates may be malformed; skip, never crash.
+                continue
             key = u.get("key")
             if key is None:
                 continue
