@@ -123,7 +123,10 @@ export function FreshnessBadge({
       ? `as of tick ${tick}`
       : transport.status === "live"
         ? `cursor ${transport.cursor}`
-        : reasonShort(transport.staleReason) || "reconnecting";
+        : transport.status === "connecting"
+          /* Nothing has connected yet, so there is nothing to reconnect to. */
+          ? "waiting for the live feed"
+          : reasonShort(transport.staleReason) || "reconnecting";
   const display = statusShownElsewhere ? "Provenance" : ownStatus;
   const detail = statusShownElsewhere
     ? historical ? `as of tick ${tick}` : sourceLabel.toLowerCase()

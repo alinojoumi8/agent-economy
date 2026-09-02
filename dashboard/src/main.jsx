@@ -7,6 +7,11 @@ import App from "./App";
 import "./index.css";
 import "./civic-weather-room.css";
 import "./ui/ui.css";
+import { applyStoredTheme } from "./ui/useTheme";
+
+// The saved theme must be on <html> before the first paint on every route, not
+// only once a workspace that toggles it has mounted.
+applyStoredTheme();
 
 const queryClient = new QueryClient({
   defaultOptions: {

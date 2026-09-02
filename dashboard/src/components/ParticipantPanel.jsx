@@ -25,12 +25,17 @@ export function ParticipantPanel({ participant, act }) {
     () => catalog.find(item => participantActionKey(item) === selected) || firstEnabled,
     [catalog, selected, firstEnabled],
   );
+  // The catalog is a fresh array on every 10 s poll, so `descriptor` is a new
+  // object each time even when the operator has not changed action. Reset the
+  // form on the action's stable identity, never on the object, or every poll
+  // wipes what has been typed.
+  const descriptorKey = descriptor ? participantActionKey(descriptor) : "";
 
   useEffect(() => {
     if (!descriptor) return;
     setValues(initialParticipantValues(descriptor, queued));
     setReasoning(participant?.queued_action?.reasoning || "");
-  }, [descriptor, participant?.queued_action?.id]);
+  }, [descriptorKey, participant?.queued_action?.id]);
 
   useEffect(() => {
     setError("");

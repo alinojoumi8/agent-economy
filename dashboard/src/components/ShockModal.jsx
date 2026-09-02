@@ -11,8 +11,17 @@ const DEFAULTS = {
   epidemic: { multiplier: 4 },
 };
 
+const DEFAULT_TRIGGER_TYPES = ["shock", "trend", "conditional"];
+
+export function shockTriggerTypes(library) {
+  // The library starts as `{ kinds: [], trigger_types: [] }` until /api/shocks
+  // answers, and an empty array is truthy, so fall back on length like `kinds`.
+  return library?.trigger_types?.length ? library.trigger_types : DEFAULT_TRIGGER_TYPES;
+}
+
 export function ShockModal({ library, tick, act, onClose }) {
   const kinds = library?.kinds?.length ? library.kinds : Object.keys(DEFAULTS);
+  const triggerTypes = shockTriggerTypes(library);
   const [kind, setKind] = useState(kinds[0] || "rumor");
   const [triggerType, setTriggerType] = useState("shock");
   const [when, setWhen] = useState(Number(tick || 0) + 1);
@@ -57,7 +66,7 @@ export function ShockModal({ library, tick, act, onClose }) {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{kinds.map(item => <button type="button" key={item} onClick={() => setKind(item)} className={`rounded-xl border p-3 text-left text-xs font-semibold capitalize transition ${kind === item ? "border-mint-300 bg-mint-300/10 text-mint-300" : "border-mint-300/10 bg-ink-950/40 text-slate-400 hover:border-mint-300/30"}`}>{item.replaceAll("_", " ")}</button>)}</div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs text-slate-500">Trigger mode<select className="field mt-1" value={triggerType} onChange={event => setTriggerType(event.target.value)}>{(library?.trigger_types || ["shock", "trend", "conditional"]).map(item => <option key={item} value={item}>{item === "shock" ? "One-time" : item}</option>)}</select></label>
+        <label className="text-xs text-slate-500">Trigger mode<select className="field mt-1" value={triggerType} onChange={event => setTriggerType(event.target.value)}>{triggerTypes.map(item => <option key={item} value={item}>{item === "shock" ? "One-time" : item}</option>)}</select></label>
         {triggerType !== "conditional" && <label className="text-xs text-slate-500">Start day<input className="field mt-1" type="number" min={Number(tick || 0) + 1} value={when} onChange={event => setWhen(event.target.value)} /></label>}
         {triggerType === "trend" && <label className="text-xs text-slate-500">Duration<input className="field mt-1" type="number" min="1" value={duration} onChange={event => setDuration(event.target.value)} /></label>}
       </div>

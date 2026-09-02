@@ -6,6 +6,11 @@ import {
   LOCAL_ONLY_DOCUMENT_ROUTES,
   presumedDeploymentMode,
 } from "../src/lib/deploymentMode.js";
+import {
+  classifyModeProbe,
+  MODE_PROBE_ATTEMPTS,
+  modeProbeRetryDelay,
+} from "../src/hooks/useHostedMode.js";
 
 const appSource = readFileSync(
   new URL("../src/App.jsx", import.meta.url), "utf8",
@@ -64,4 +69,62 @@ test("the boot shell announces a pending state without inventing data", () => {
   assert.match(bootShellSource, /role="status"/);
   // No numeric placeholders standing in for world values.
   assert.doesNotMatch(bootShellSource, /">\s*(0|—|--)\s*</);
+});
+
+test("only a definite probe answer selects a deployment; failures are inconclusive and retried", () => {
+  const hostedConfig = {
+    hosted: true, mode: "hosted", api_base: "/api/v2",
+    csrf_cookie_name: "__Host-ae_csrf", csrf_header_name: "X-AE-CSRF", profiles: [],
+  };
+  assert.deepEqual(
+    classifyModeProbe({ ok: true, status: 200, body: hostedConfig }),
+    { kind: "hosted", config: hostedConfig },
+  );
+  assert.deepEqual(
+    classifyModeProbe({ ok: true, status: 200, body: {
+      mode: "local", hosted: false, api_base: "/api/v2", navigation: null,
+    } }),
+    { kind: "local" },
+  );
+  // A network error, a 5xx, a 404, an empty or foreign body, or a hosted document
+  // whose config is unusable prove nothing about which server served the page.
+  for (const answer of [
+    { ok: false, status: 502, body: null },
+    { ok: false, status: 404, body: {} },
+    { ok: false, status: 0, body: null },
+    { ok: true, status: 200, body: null },
+    { ok: true, status: 200, body: "<html>" },
+    { ok: true, status: 200, body: { mode: "local" } },
+    { ok: true, status: 200, body: { hosted: true, mode: "hosted", api_base: "/api/v2" } },
+    { ok: true, status: 200, body: { ...hostedConfig, csrf_cookie_name: "bad name" } },
+  ]) {
+    assert.equal(classifyModeProbe(answer).kind, "inconclusive", JSON.stringify(answer));
+  }
+  assert.match(classifyModeProbe({ ok: false, status: 502 }).error, /HTTP 502/);
+  assert.match(classifyModeProbe({ ok: true, status: 200, body: null }).error, /unrecognised/);
+
+  assert.equal(MODE_PROBE_ATTEMPTS, 3);
+  assert.equal(modeProbeRetryDelay(0), 500);
+  assert.equal(modeProbeRetryDelay(1), 1_000);
+  assert.equal(modeProbeRetryDelay(2), 2_000);
+  assert.equal(modeProbeRetryDelay(9), 4_000);
+  assert.equal(modeProbeRetryDelay(-1), 500);
+});
+
+test("an exhausted probe keeps the boot shell with an error instead of mounting the wrong app", () => {
+  // The hook only resets to local routing on a definite "local" verdict and
+  // never swallows a failed fetch into "not hosted".
+  assert.match(hookSource, /verdict\.kind === "local"\) \{\s*resetApiRouting\(\);/);
+  // The old probe swallowed every failure into "not hosted" with this chain.
+  assert.doesNotMatch(hookSource, /\.catch\(\(\) => null\)\.then\(/);
+  assert.match(hookSource, /attempt \+ 1 < MODE_PROBE_ATTEMPTS/);
+  assert.match(hookSource, /error: verdict\.error/);
+  // "/" cannot be resolved by presumption, so a failed probe shows the reason.
+  assert.match(
+    appSource,
+    /if \(mode\.error && mode\.presumed !== "local"\) return <BootShell error=\{mode\.error\} \/>;/,
+  );
+  assert.match(bootShellSource, /export function BootShell\(\{ error = "" \}\)/);
+  assert.match(bootShellSource, /role="alert"/);
+  assert.match(bootShellSource, /Reload to ask again/);
 });
