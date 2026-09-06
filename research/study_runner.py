@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from engine.store import Store
 from research.analysis import paired_summary
-from research.artifacts import code_identity, digest_json, publish_bytes, publish_json
+from research.artifacts import code_identity, digest_json, file_sha256, publish_bytes, publish_json
 from research.attempts import execute_attempt, verify_attempt
 from research.metric_registry import metric_definition, read_metric_observation
 from research.prices import price_observations
@@ -231,6 +231,9 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                              "markdown": str(report_dir / "findings.md")}}
     publish_json(report_dir / "results.json", payload)
     publish_bytes(report_dir / "findings.md", findings_markdown(payload).encode("utf-8"))
+    publish_json(report_dir / "publication.json", {
+        "contract": "study-publication-v1", "manifest_sha256": batch["manifest_sha256"],
+        "files": {name: file_sha256(report_dir / name) for name in ("results.json", "findings.md")}})
     return payload
 
 

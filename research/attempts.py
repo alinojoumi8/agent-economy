@@ -175,19 +175,21 @@ def execution_exclusions(row: dict, *, expected_ticks: int | None) -> list[str]:
     return reasons
 
 
-def verify_attempt(row: dict, *, expected_ticks: int) -> list[str]:
+def verify_attempt(row: dict, *, expected_ticks: int,
+                   resolve_path: Callable[[str], Path] | None = None) -> list[str]:
     """Fail closed if a completed attempt's source, claim, or replay has changed."""
     reasons = execution_exclusions(row, expected_ticks=expected_ticks)
+    locate = resolve_path or Path
     try:
         for field in ("attempt_claim", "source_database", "source_receipt", "replay_receipt"):
-            if file_sha256(row[field]) != row[f"{field}_sha256"]:
+            if file_sha256(locate(row[field])) != row[f"{field}_sha256"]:
                 reasons.append(f"{field}_changed")
-        source_wal = Path(row["source_database"] + "-wal")
+        source_wal = locate(row["source_database"] + "-wal")
         if source_wal.exists() and source_wal.stat().st_size:
             reasons.append("source_database_changed")
-        claim = json.loads(Path(row["attempt_claim"]).read_text(encoding="utf-8"))
-        source = json.loads(Path(row["source_receipt"]).read_text(encoding="utf-8"))
-        replay = json.loads(Path(row["replay_receipt"]).read_text(encoding="utf-8"))
+        claim = json.loads(locate(row["attempt_claim"]).read_text(encoding="utf-8"))
+        source = json.loads(locate(row["source_receipt"]).read_text(encoding="utf-8"))
+        replay = json.loads(locate(row["replay_receipt"]).read_text(encoding="utf-8"))
         if (claim["expected_ticks"] != expected_ticks
                 or claim["config_sha256"] != row["config_sha256"]
                 or digest_json(claim["config"]) != row["config_sha256"]
@@ -203,19 +205,21 @@ def verify_attempt(row: dict, *, expected_ticks: int) -> list[str]:
         if (replay["execution"] != "recorded_replay"
                 or replay["attempt_claim_sha256"] != row["attempt_claim_sha256"]
                 or replay["source_database_sha256"] != row["source_database_sha256"]
-                or Path(replay["source_database"]).resolve() != Path(row["source_database"]).resolve()
-                or file_sha256(replay["replay_database"]) != replay["replay_database_sha256"]):
+                or locate(replay["source_database"]).resolve() != locate(row["source_database"]).resolve()
+                or file_sha256(locate(replay["replay_database"])) != replay["replay_database_sha256"]):
             reasons.append("replay_receipt_mismatch")
-        replay_wal = Path(replay["replay_database"] + "-wal")
+        replay_wal = locate(replay["replay_database"] + "-wal")
         if replay_wal.exists() and replay_wal.stat().st_size:
             reasons.append("replay_receipt_mismatch")
+        if locate(row["source_database"]).samefile(locate(replay["replay_database"])):
+            reasons.append("replay_database_not_independent")
         # Do not accept an 'exact: true' field without comparing the bound DBs.
-        actual = verify_replay(row["source_database"], replay["replay_database"])
+        actual = verify_replay(locate(row["source_database"]), locate(replay["replay_database"]))
         if (not actual["exact"] or actual != replay["comparison"]
                 or actual["source_tick"] != expected_ticks
                 or actual["replay_hash"] != row["replay_hash"]):
             reasons.append("replay_mismatch")
-        store = Store(row["source_database"], create=False, read_only=True)
+        store = Store(str(locate(row["source_database"])), create=False, read_only=True)
         try:
             meta = store.get_meta()
             if (digest_json(json.loads(meta["config_json"])) != row["config_sha256"]

@@ -121,6 +121,35 @@ jobs:
           tests/scenarios/test_supplier_warning_30_tick.py
           tests/stateful/test_communication_model.py
 
+  research-evidence:
+    name: Research evidence and portability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Compile research sources
+        run: python -m compileall -q research experiments
+      - name: Verify studies, portable bundles and both price domains
+        run: >
+          python -m pytest -q
+          tests/test_research_attempt_integrity.py
+          tests/test_study_protocol.py
+          tests/test_study_results.py
+          tests/test_study_bundle.py
+          tests/test_induced_market_benchmarks.py
+          tests/test_price_observations.py
+          tests/test_price_lab_projection.py
+          tests/test_metric_registry.py
+
   dashboard:
     if: >
       github.event_name == 'pull_request' ||

@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies and historical price inspector implemented; study UI/export and live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical price inspector and verified private bundles implemented; study operator UI and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -60,7 +60,7 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Deliver verified study loading/export and the operator study workflow, then
+Deliver the operator study workflow, then
 continue interactive city integration and W5–W9. Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Paused research resume and daily-world keyed randomness
@@ -151,3 +151,38 @@ remain explicit foundation follow-ups before confirmatory studies.
 
 Current commands and limits: [Price Discovery Lab](../research/price-lab.md)
 and [induced-value benchmarks](../research/market-benchmarks.md).
+
+## Saved study evidence
+
+- Checkpoint `bbe10aa` is on draft [PR #82](https://github.com/alinojoumi8/agent-economy/pull/82).
+  GitHub core subset, Python smoke and dashboard build jobs passed. The full
+  matrix and hosted integration jobs were skipped. CodeRabbit's passing check
+  says its review was skipped because the PR is a draft; it is not a substantive
+  review approval. PR #78 remains the preserved prerequisite branch.
+- The study loader confines original paths to configured data/report roots,
+  binds manifests and publication receipts, verifies distinct source/replay
+  files, remeasures outcomes and reconstructs summary coverage. It preserves
+  worker/supervisor exclusions and distinguishes complete provider totals from
+  partial verified subtotals. Invalid cells do not hide valid peer attempts.
+- New preparation saves a hash-verified model description and declared input
+  snapshots before initialization. Existing studies keep an explicit legacy
+  missing-snapshot/publication state; no old run or receipt is rewritten.
+- Private evidence ZIP export/import uses exclusive destinations, streamed
+  checksums, confined extraction, size/file limits and fresh study verification.
+  It preserves failures and never executes bundled code. The complete source
+  checkout/runtime and undeclared transitive inputs are outside its scope.
+- Focused loader, bundle, protocol and research-integrity tests: **55 passed**
+  (34.24 s), then **82 passed** (40.03 s) including exclusion/race regressions,
+  recorded-replay goldens and documentation. Earlier fixture setup error was
+  corrected; no product assertion was weakened.
+- The new PR research-evidence job covers both price domains, protocol,
+  loading/export and integrity. Its exact eight-module command passed locally:
+  **100 passed**, one existing Starlette deprecation warning (55.69 s).
+  The final loader/bundle refinements also passed **31 tests** (24.93 s).
+  Six edited/new research sources and the workflow parsed successfully.
+- Existing G2 and F2 campaigns each exported/imported 72 evidence files and
+  retained **4/4 eligible source/replay pairs**, unchanged summary/result bytes,
+  zero provider calls/spend and explicit legacy context status. ZIP SHA-256:
+  G2 `2e05e110b0792a0b3fb32ec4b1b55227cc4558a4b217d0cdd6b1552da45b8838`;
+  F2 `e0e6bd5eef2677948045f6d8ed24062ef4062515cda436cead0e4e061222bad0`.
+  Artifacts remain ignored local files, not PR attachments.

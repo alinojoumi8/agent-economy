@@ -15,7 +15,7 @@ import yaml
 
 from engine.schema import SCHEMA_VERSION
 from engine.semantics import validate_engine_semantics_version
-from research.artifacts import create_batch, digest_json, file_sha256, safe_key
+from research.artifacts import create_batch, digest_json, file_sha256, publish_copy, safe_key
 from research.metric_registry import metric_definition
 
 PROTOCOL_VERSION = "research-study-v1"
@@ -321,4 +321,19 @@ def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                   data_root: str | Path, out_dir: str | Path) -> dict:
     """Verify declarations, then claim a new immutable, prospective study batch."""
     protocol = validate_study_inputs(spec, config, input_root=input_root)
-    return create_batch(spec.key, protocol, data_root=data_root, out_dir=out_dir)
+    description = Path(__file__).resolve().parents[1] / "docs/research/model-description.md"
+    sources = {"model-description.md": (description, protocol["model_description_sha256"])}
+    for artifact in spec.inputs:
+        sources[f"inputs/{artifact.sha256}.blob"] = (
+            (Path(input_root) / artifact.path).resolve(), artifact.sha256)
+    limit = min(spec.operations.max_disk_bytes, 128 * 1024 * 1024)
+    if sum(path.stat().st_size for path, _ in sources.values()) > limit:
+        raise ValueError("declared study context exceeds the snapshot size limit")
+    protocol["evidence_snapshot_version"] = "declared-inputs-v1"
+    batch = create_batch(spec.key, protocol, data_root=data_root, out_dir=out_dir)
+    remaining = limit
+    for name, (source, digest) in sources.items():
+        target = Path(batch["data_dir"]) / "context" / name
+        publish_copy(target, source, expected_sha256=digest, max_bytes=remaining)
+        remaining -= target.stat().st_size
+    return batch

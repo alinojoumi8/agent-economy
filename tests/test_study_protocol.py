@@ -143,9 +143,13 @@ def test_prepare_verifies_inputs_configuration_and_preserves_prior_manifest(prot
     assert first["manifest_sha256"] == second["manifest_sha256"]
     assert first["manifest"]["creation_provenance"] == "prepared_before_attempt_initialization"
     assert len(first["manifest"]["code"]["source_tree_sha256"]) == 64
+    context = Path(first["data_dir"]) / "context"
+    assert file_sha256(context / "model-description.md") == first["manifest"]["model_description_sha256"]
+    assert (context / "inputs" / f"{artifact['sha256']}.blob").read_bytes() == source.read_bytes()
     with pytest.raises(ValueError, match="configuration differs"):
         prepare_study(spec, {**config, "seed": 5}, **kwargs)
     source.write_text("changed", encoding="utf-8")
+    assert file_sha256(context / "inputs" / f"{artifact['sha256']}.blob") == artifact["sha256"]
     with pytest.raises(ValueError, match="hash mismatch"):
         prepare_study(spec, config, **kwargs)
     assert manifest.read_bytes() == original

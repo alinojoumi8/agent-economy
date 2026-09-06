@@ -52,6 +52,31 @@ def publish_json(path: str | Path, value: object) -> Path:
     return publish_bytes(path, json_bytes(value))
 
 
+def publish_copy(path: str | Path, source: str | Path, *, expected_sha256: str,
+                 max_bytes: int) -> Path:
+    """Stream a bound source into a new artifact; never publish a partial copy."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary, digest, total = Path(name), hashlib.sha256(), 0
+    try:
+        with os.fdopen(descriptor, "wb") as output, Path(source).open("rb") as incoming:
+            while chunk := incoming.read(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("artifact exceeds its copy size limit")
+                digest.update(chunk)
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if digest.hexdigest() != expected_sha256:
+            raise ValueError("artifact changed while being copied")
+        os.link(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
 def safe_key(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,100}", value):
         raise ValueError("study and arm keys must be simple path-safe identifiers")

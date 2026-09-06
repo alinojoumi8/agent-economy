@@ -4,7 +4,7 @@ The price lab provides a historical price inspector and a Python workflow for
 drafting, validating, running and reporting provider-free paired studies.
 Goods and equities share observation, eligibility and analysis contracts.
 [G1/F1 induced-value policy benchmarks](market-benchmarks.md) are also available.
-The full city integration, operator study API, verified bundle export, live-model
+The full city integration, operator study API, live-model
 policy comparisons and empirical validation remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
@@ -80,6 +80,54 @@ reports/out/studies/<key>/<compact-manifest-and-batch-id>/
 Full manifest and batch identities are retained in both `manifest.json` files.
 Compact paths accommodate ordinary Windows path-length limits. Generated data,
 reports and temporary drafts are ignored by Git.
+
+## Verify and move saved studies
+
+`research.study_results` rechecks the source/replay databases, receipts, frozen
+configuration, genesis and outcomes before recomputing the paired summary.
+It retains supervisor/worker exclusions even when a database passes replay.
+Missing or modified attempts cannot silently become usable pairs. Aggregate
+provider costs are marked incomplete when any attempt lacks verified evidence.
+
+```powershell
+$studyResult = 'reports/out/studies/<key>/<batch>/results.json'
+.\.venv\Scripts\python.exe -m research.study_results $studyResult
+.\.venv\Scripts\python.exe -m research.study_bundle export $studyResult tmp/study-evidence.zip
+.\.venv\Scripts\python.exe -m research.study_bundle import tmp/study-evidence.zip C:/research-imports/study-001 --expected-sha256 <hash-printed-by-export>
+```
+
+Use a new bundle filename and import directory each time. After import, load
+the printed result path with `--data-root C:/research-imports/study-001/data`
+and `--out-dir C:/research-imports/study-001/reports`. Keep Windows import roots
+short enough for the nested run filenames. The importer verifies evidence;
+it does not launch agents or execute bundled programs.
+
+The private ZIP preserves original database, manifest and receipt bytes,
+including retained failures. A confined path resolver maps their original
+absolute paths onto the new roots without rewriting source files. Export
+rechecks source identity after copying. Import rejects traversal, duplicate
+paths, links, unlisted members, excessive sizes and checksum/proof changes.
+Failed imports retain their newly created directory and a failure receipt;
+an existing destination is never replaced. Bounds are 8,192 evidence files,
+2 GiB of evidence and an 8 MiB index. Loader work also caps assignment,
+measurement and bootstrap dimensions; unsupported artifacts fail explicitly.
+
+New studies freeze the model description and declared input bytes before
+initialization, up to the smaller of 128 MiB and the declared disk budget.
+Earlier studies report `legacy_missing` for snapshots/publication receipts
+they never produced. They are not retroactively described as having them.
+An internally verified bundle can contain a degraded study: transport
+verification does not remove its exclusions or change its conclusions.
+
+These are **private research evidence bundles**. Databases and receipts can
+contain agent communications and local paths; they are not sanitized public
+exports. The separate public/Parquet export workflow keeps its existing
+disclosure rules. Bundles include declared inputs, but not the complete source
+checkout, Python runtime or transitive undeclared dataset dependencies; they
+support evidence reanalysis, not a claim of self-contained fresh execution.
+An externally recorded SHA-256 binds the bytes received. Local checksums alone
+do not establish the authenticity of an unknown publisher. The current loader
+requires a compatible installed schema, metric and semantics implementation.
 
 ## Protocol and limits
 
