@@ -252,6 +252,15 @@ layer, selected entity, filters, and camera. The public URL retains existing
 household/institution selections get validated discriminated types. Keep the
 existing mutually exclusive selection rule and retain legacy deep-link aliases.
 
+Implemented camera/follow contract: `camera=x,y,zoom` admits x/y 0–100 and
+zoom 1.8–5.4; `follow=<positive person ID>` fixes one identity and implies that
+person's selection. Renderer changes, tick changes, filters and reload preserve
+follow. A missing, hidden, dead or unlocated target pauses it rather than selecting
+a replacement. Atlas/Diorama follow only public observed positions; recorded day
+follows public recorded placement geometry on its display clock. Selecting a
+different object or manually panning stops follow; zoom preserves it. Continuous
+follow motion creates neither observer-history entries nor economic mutations.
+
 Projection cache keys and requests include run, fork, tick, authorization scope,
 and relevant filters. Ignore late responses for another cursor. Navigation
 preserves shared state; cross-run comparison uses two explicit state objects.

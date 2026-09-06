@@ -341,7 +341,9 @@ beside it, never rasterized into the asset.
 ### Do:
 
 - Follow the [city observer interaction contract](docs/research/city-observer.md)
-  for map selection, price inspection, camera bookmarks and historical context.
+  for map selection, price inspection, camera bookmarks, persistent person follow
+  and historical context. Missing public positions pause follow without changing
+  the intended person. Keep camera controls outside the transformed map geometry.
 
 - **Do** let the city or investigative field own the composition.
 - **Do** make every live mark keyboard reachable and connect it to a readable

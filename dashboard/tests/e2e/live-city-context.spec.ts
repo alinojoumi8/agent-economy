@@ -35,6 +35,7 @@ async function mockCity(page: Page, options: {
   liveTick?: () => number;
   empty?: boolean;
   withheld?: boolean;
+  editFrame?: (frame: ReturnType<typeof cityFrame>) => void;
 } = {}) {
   const requests: URL[] = [];
   const mutations: string[] = [];
@@ -65,6 +66,7 @@ async function mockCity(page: Page, options: {
       if (options.empty) frame.data.presence = [];
       if (options.withheld) frame.data.agents.push({ id: 3, name: "Peripheral resident", role: "citizen",
         population_tier: "periphery", region_id: 1, x: 0.2, y: 0.2, alive: true });
+      options.editFrame?.(frame);
       return route.fulfill({ json: frame });
     }
     if (url.pathname === "/api/v2/city/conversations") return route.fulfill({ json: {
@@ -89,6 +91,193 @@ async function mockCity(page: Page, options: {
 async function cityProbe(page: Page) {
   return page.evaluate(() => (window as any).__liveCityProbe?.());
 }
+
+test("Atlas camera centers selections and restores keyboard pan and zoom through history", async ({ page }) => {
+  const evidence = await mockCity(page);
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  const atlas = page.getByTestId("city-atlas-viewport");
+  await expect(atlas).toHaveAttribute("data-camera", "50,50,3.05");
+  await page.getByRole("button", { name: "Focus selection", exact: true }).click();
+  await expect(atlas).toHaveAttribute("data-camera", "20,20,3.05");
+  const centerError = await page.locator(".civic-city__agent[aria-pressed='true']").evaluate(node => {
+    const field = node.closest(".city-atlas-viewport")!.getBoundingClientRect();
+    const mark = node.getBoundingClientRect();
+    return Math.hypot(mark.x + mark.width / 2 - field.x - field.width / 2,
+      mark.y + mark.height / 2 - field.y - field.height / 2);
+  });
+  expect(centerError).toBeLessThan(1);
+  const pan = page.getByRole("button", { name: "Pan city right", exact: true });
+  await pan.focus(); await page.keyboard.press("Enter");
+  await expect(atlas).toHaveAttribute("data-camera", "25,20,3.05");
+  await page.getByRole("button", { name: "Zoom into city", exact: true }).click();
+  await expect(atlas).toHaveAttribute("data-camera", "25,20,3.4");
+  expect((await page.locator(".civic-city__agent[aria-pressed='true']").boundingBox())!.width).toBeLessThan(33);
+  await page.goBack();
+  await expect(atlas).toHaveAttribute("data-camera", "25,20,3.05");
+  await page.reload();
+  await expect(atlas).toHaveAttribute("data-camera", "25,20,3.05");
+  expect(evidence.mutations).toEqual([]);
+});
+
+test("an Atlas background drag pans without changing selection and is one history action", async ({ page }) => {
+  await mockCity(page);
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  const atlas = page.getByTestId("city-atlas-viewport");
+  await expect(atlas).toHaveAttribute("data-camera", "50,50,3.05");
+  await atlas.scrollIntoViewIfNeeded();
+  const box = (await atlas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * .45, box.y + box.height * .5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .55, box.y + box.height * .55, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => Number((await atlas.getAttribute("data-camera"))!.split(",")[0])).toBeCloseTo(40, 1);
+  const camera = (await atlas.getAttribute("data-camera"))!.split(",").map(Number);
+  expect(camera[0]).toBeCloseTo(40, 1); expect(camera[1]).toBeCloseTo(45, 1);
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("agent:1");
+  await page.goBack();
+  await expect(atlas).toHaveAttribute("data-camera", "50,50,3.05");
+});
+
+test("Atlas construction labels appear on selection and keyboard focus without covering the city", async ({ page }) => {
+  await mockCity(page, { editFrame: frame => {
+    (frame.data as any).construction_projects = [1, 2].map(id => ({ project_id: `site-${id}`, name: `Building ${id}`,
+      x: .3 + id * .1, y: .4, status: "building", requirements: { work_units: 10 }, contributed: { work_units: 3 } }));
+  } });
+  await page.goto("/runs/run-demo/world?tick=3&agent=1&camera=40,40,4");
+  const first = page.locator(".civic-city__construction").first();
+  const second = page.locator(".civic-city__construction").nth(1);
+  await expect(first.locator("span")).toBeHidden();
+  await page.getByLabel("Keyboard explorer").selectOption("project:site-1");
+  await expect(first.locator("span")).toBeVisible();
+  await expect(second.locator("span")).toBeHidden();
+  await second.focus();
+  await expect(second.locator("span")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("project:site-2");
+});
+
+test("follow preserves identity across filters and ticks, pausing for absence, death or withheld coordinates", async ({ page }) => {
+  const evidence = await mockCity(page, { editFrame: frame => {
+    if (frame.tick === 4) frame.data.agents = frame.data.agents.filter(agent => agent.id !== 1);
+    if ([4, 6].includes(frame.tick)) frame.data.presence = frame.data.presence.filter(row => row.agent_id !== 1);
+    if (frame.tick === 5) frame.data.agents[0].alive = false;
+    if (frame.tick === 6) { frame.data.agents[0].x = null as any; frame.data.agents[0].y = null as any; }
+    if (frame.tick === 7) { frame.data.agents[0].x = .65; frame.data.agents[0].y = .45; }
+  } });
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  await page.getByRole("button", { name: "Follow person", exact: true }).click();
+  await expect(page).toHaveURL(/follow=1/);
+  await expect(page.getByTestId("city-atlas-viewport")).toHaveAttribute("data-camera", "20,20,3.05");
+  await page.getByText("Layers and agent filters", { exact: true }).click();
+  await page.getByRole("searchbox", { name: "Find an agent" }).fill("Resident 2");
+  await expect(page.locator(".city-follow")).toContainText("hidden by the current filters");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("");
+  await expect(page).toHaveURL(/agent=1/);
+  await expect(page).toHaveURL(/follow=1/);
+  await page.getByRole("searchbox", { name: "Find an agent" }).fill("");
+  await expect(page.getByTestId("city-atlas-viewport")).toHaveAttribute("data-camera", "20,20,3.05");
+  for (const [tick, message] of [[4, "absent"], [5, "no longer alive"], [6, "no public position"]] as const) {
+    await page.evaluate(tick => {
+      history.pushState(null, "", `/runs/run-demo/world?tick=${tick}&agent=1&follow=1`);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, tick);
+    await expect(page.locator(".city-follow")).toContainText(message);
+    await expect(page).toHaveURL(/agent=1&follow=1/);
+  }
+  await page.goto("/runs/run-demo/world?tick=7&agent=1&follow=1");
+  await expect(page.getByTestId("city-atlas-viewport")).toHaveAttribute("data-camera", "65,45,3.05");
+  expect(evidence.mutations).toEqual([]);
+  expect(await page.evaluate(() => (window as any).__citySockets)).toBe(0);
+});
+
+test("follow survives renderer switches and reload; zoom preserves it and selecting another object stops it", async ({ page }) => {
+  await mockCity(page);
+  await page.goto("/runs/run-demo/world?tick=3&agent=1&follow=1");
+  await page.getByRole("button", { name: "Zoom into city", exact: true }).click();
+  await expect(page).toHaveURL(/follow=1/);
+  await page.getByRole("button", { name: "2.5D Diorama", exact: true }).click();
+  await expect(page.getByTestId("civic-diorama")).toHaveAttribute("data-camera", "20,20,3.4");
+  await page.getByTestId("civic-diorama").scrollIntoViewIfNeeded();
+  const field = (await page.getByTestId("civic-diorama").boundingBox())!;
+  await page.mouse.move(field.x + field.width * .4, field.y + field.height * .3);
+  await page.mouse.wheel(0, -80);
+  await expect.poll(async () => Number((await page.getByTestId("civic-diorama").getAttribute("data-camera"))!.split(",")[2])).toBeGreaterThan(3.4);
+  await expect(page).toHaveURL(/follow=1/);
+  await page.getByRole("button", { name: "Recorded day", exact: true }).click();
+  await expect(page.locator(".recorded-day__follow-status")).toContainText("Following person #1");
+  await page.reload();
+  await expect(page.locator(".recorded-day__follow-status")).toContainText("Following person #1");
+  await page.getByLabel("Keyboard explorer").selectOption("firm:1");
+  expect(new URL(page.url()).searchParams.has("follow")).toBe(false);
+  await expect(page.getByRole("button", { name: "Follow person", exact: true })).toBeDisabled();
+  await page.goBack();
+  await expect(page.getByRole("button", { name: "Stop following", exact: true })).toBeEnabled();
+});
+
+test("recorded follow centers the moving chip without altering placement geometry or economic time", async ({ page }) => {
+  const evidence = await mockCity(page);
+  await page.goto("/runs/run-demo/world?tick=3&view=recorded&agent=1&follow=1");
+  await expect(page.getByRole("button", { name: "Play recorded day", exact: true })).toBeEnabled();
+  const first = await cityProbe(page);
+  const originalHistoryLength = await page.evaluate(() => history.length);
+  const firstPerson = first.chips.find((chip: any) => chip.id === 1);
+  expect(firstPerson.screenX).toBeCloseTo(first.viewport.width / 2, 3);
+  expect(firstPerson.screenY).toBeCloseTo(first.viewport.height / 2, 3);
+  await page.getByLabel("Playback speed").selectOption("4");
+  await page.getByRole("button", { name: "Play recorded day", exact: true }).click();
+  await expect.poll(async () => (await cityProbe(page)).chips.find((chip: any) => chip.id === 1).x).toBeGreaterThan(firstPerson.x + 15);
+  await page.getByRole("button", { name: "Pause playback", exact: true }).click();
+  const moved = await cityProbe(page);
+  const person = moved.chips.find((chip: any) => chip.id === 1);
+  expect(person.screenX).toBeCloseTo(moved.viewport.width / 2, 3);
+  expect(person.screenY).toBeCloseTo(moved.viewport.height / 2, 3);
+  expect(person.anchors).toEqual(firstPerson.anchors);
+  expect(moved.tick).toBe(3);
+  expect(await page.evaluate(() => history.length)).toBe(originalHistoryLength);
+  const geometry = await page.locator(".live-city [data-agent-id='1']").evaluate(node => {
+    const stage = node.closest(".live-city")!.getBoundingClientRect();
+    const chip = node.getBoundingClientRect();
+    return { x: chip.x + chip.width / 2 - stage.x, y: chip.y + chip.height / 2 - stage.y };
+  });
+  expect(geometry.x).toBeCloseTo(person.screenX, 0);
+  expect(geometry.y).toBeCloseTo(person.screenY, 0);
+  await page.getByRole("button", { name: "Stop following", exact: true }).click();
+  await expect.poll(async () => (await cityProbe(page)).viewport.trackingId).toBe(null);
+  const stopped = await cityProbe(page);
+  expect(stopped.viewport.trackingId).toBe(null);
+  expect(stopped.chips.find((chip: any) => chip.id === 1).screenX).toBeCloseTo(person.screenX, 0);
+  expect(evidence.mutations).toEqual([]);
+});
+
+test("recorded follow pauses for a withheld person and never substitutes an animated neighbor", async ({ page }) => {
+  await mockCity(page, { withheld: true });
+  await page.goto("/runs/run-demo/world?tick=3&view=recorded&agent=3&follow=3&population=all");
+  await expect(page.locator(".recorded-day__follow-status")).toContainText("Follow paused for person #3");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("agent:3");
+  await expect.poll(async () => (await cityProbe(page))?.viewport.trackingId).toBe(null);
+  await expect(page.locator(".live-city [data-agent-id='3']")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Focus selection", exact: true })).toBeDisabled();
+});
+
+test("camera controls and follow remain reachable on a reduced-motion phone without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockCity(page);
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  const follow = page.getByRole("button", { name: "Follow person", exact: true });
+  await follow.focus(); await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Stop following", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Pan city right", exact: true }).click();
+  expect(new URL(page.url()).searchParams.has("follow")).toBe(false);
+  await page.getByRole("button", { name: "Recorded day", exact: true }).click();
+  await page.getByRole("button", { name: "Follow person", exact: true }).click();
+  await expect(page.locator(".recorded-day__follow-status")).toContainText("Following person #1");
+  for (const width of [390, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.getByRole("button", { name: "Pan city left", exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  }
+});
 
 test("historical city uses the requested fork/tick and independent playback", async ({ page }) => {
   const evidence = await mockCity(page);

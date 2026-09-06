@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { cityEvidenceParams, cityWorkspaceHref } from "../src/app/cityNavigation.js";
 import { commonObserverSearchParams, parseObserverViewState, patchObserverViewState } from "../src/app/observerViewStateCore.js";
-import { normalizeCityCamera, parseCityCamera, serializeCityCamera } from "../src/lib/cityCamera.js";
+import { cityFollowState, normalizeCityCamera, parseCityCamera, serializeCityCamera } from "../src/lib/cityCamera.js";
 
 test("firm selections are exclusive with every older city object type", () => {
   for (const key of ["agent", "place", "project"]) {
@@ -54,4 +54,37 @@ test("camera bookmarks reject malformed values and roundtrip bounded coordinates
   assert.deepEqual(parseObserverViewState(params).camera, { x: 45, y: 55, zoom: 4.125 });
   assert.equal(patchObserverViewState(params, { camera: null }).toString(), "firm=2");
   assert.equal(serializeCityCamera({ x: 50, y: 50, zoom: 3.05 }), "");
+});
+
+test("follow bookmarks keep an explicit identity and stop when another object is selected", () => {
+  const initial = new URLSearchParams("tick=3&follow=8");
+  assert.equal(parseObserverViewState(initial).agent, 8);
+  for (const value of ["0", "-1", "NaN", "1.5", "9007199254740993"]) {
+    assert.equal(parseObserverViewState(new URLSearchParams(`follow=${value}`)).follow, null);
+  }
+  const following = patchObserverViewState(initial, { agent: 8, view: "recorded" });
+  assert.equal(parseObserverViewState(following).follow, 8);
+  for (const selection of [{ agent: 2 }, { agent: null }, { firm: 1 }, { place: 3 }, { project: "site:1" }]) {
+    assert.equal(parseObserverViewState(patchObserverViewState(following, selection)).follow, null);
+  }
+  for (const query of ["agent=2&follow=8", "firm=2&follow=8", "place=2&follow=8", "project=site:1&follow=8"]) {
+    assert.equal(parseObserverViewState(new URLSearchParams(query)).follow, null);
+  }
+  const hint = cityEvidenceParams(parseObserverViewState(following));
+  const returned = new URL(cityWorkspaceHref("run", parseObserverViewState(hint)), "http://local");
+  assert.equal(parseObserverViewState(returned.searchParams).follow, 8);
+  const different = new URL(cityWorkspaceHref("run", parseObserverViewState(hint), { firm: 4 }), "http://local");
+  assert.equal(parseObserverViewState(different.searchParams).follow, null);
+});
+
+test("follow resolves only from a visible living person's public position in this frame", () => {
+  const person = { id: 8, name: "Resident", alive: true, x: 30, y: 40, coordinateSource: "observed" };
+  assert.equal(cityFollowState([person], [person], 8).target, person);
+  const absent = cityFollowState([], [{ ...person, id: 9 }], 8);
+  assert.equal(absent.target, null);
+  assert.match(absent.message, /absent/);
+  assert.match(cityFollowState([person], [], 8).message, /hidden by the current filters/);
+  assert.match(cityFollowState([{ ...person, alive: false }], [person], 8).message, /no longer alive/);
+  assert.match(cityFollowState([{ ...person, coordinateSource: "derived" }], [person], 8).message, /no public position/);
+  assert.equal(cityFollowState([person], [person], 8, true).target, null);
 });

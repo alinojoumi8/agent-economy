@@ -386,10 +386,11 @@ export function CivicDiorama({
     setViewState({ ...FIXED_CAMERA, target: [next.x, next.y, 0], zoom: next.zoom });
     onCameraChange?.(next, options);
   }, [viewState, onCameraChange]);
-  const updateViewState = useCallback(({ viewState: next }) => {
-    commitCamera({ x: next.target[0], y: next.target[1], zoom: next.zoom }, { replace: true });
-  }, [commitCamera]);
-  const zoom = delta => commitCamera({ x: viewState.target[0], y: viewState.target[1], zoom: viewState.zoom + delta });
+  const updateViewState = useCallback(({ viewState: next, interactionState }) => {
+    const zoomOnly = Boolean(interactionState?.isZooming)
+      || (next.target[0] === viewState.target[0] && next.target[1] === viewState.target[1]);
+    commitCamera({ x: next.target[0], y: next.target[1], zoom: next.zoom }, { replace: true, keepFollow: zoomOnly });
+  }, [commitCamera, viewState]);
   const selectObject = info => {
     const object = info?.object;
     if (!object) return;
@@ -418,16 +419,6 @@ export function CivicDiorama({
     />
     <div className="civic-diorama__wash" aria-hidden="true" />
     <div className="civic-diorama__controls">
-      <button type="button" onClick={() => zoom(0.35)} aria-label="Zoom into city">+</button>
-      <button type="button" onClick={() => zoom(-0.35)} aria-label="Zoom out of city">−</button>
-      <button type="button" onClick={() => commitCamera(DEFAULT_CITY_CAMERA)}>Reset camera</button>
-      <button type="button" disabled={!selectedLabels.length} onClick={() => commitCamera({
-        x: selectedLabels[0].position[0], y: selectedLabels[0].position[1], zoom: viewState.zoom,
-      })}>Focus selection</button>
-      <button type="button" aria-label="Pan city left" onClick={() => commitCamera({ x: viewState.target[0] - 5, y: viewState.target[1], zoom: viewState.zoom })}>←</button>
-      <button type="button" aria-label="Pan city right" onClick={() => commitCamera({ x: viewState.target[0] + 5, y: viewState.target[1], zoom: viewState.zoom })}>→</button>
-      <button type="button" aria-label="Pan city up" onClick={() => commitCamera({ x: viewState.target[0], y: viewState.target[1] - 5, zoom: viewState.zoom })}>↑</button>
-      <button type="button" aria-label="Pan city down" onClick={() => commitCamera({ x: viewState.target[0], y: viewState.target[1] + 5, zoom: viewState.zoom })}>↓</button>
       <button type="button" className="civic-diorama__open-evidence" disabled={!selectedLabels.length} onClick={onOpenEvidence}>Open selected evidence ↓</button>
     </div>
     <div className="civic-diorama__footer">

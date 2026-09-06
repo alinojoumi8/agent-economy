@@ -9,6 +9,9 @@ import {
 } from "react";
 import type { ProjectionEnvelope } from "../generated/worldOs";
 import { playbackElapsed, updatePlayback } from "../lib/recordedPlayback.js";
+import { CityCameraControls } from "./CityCameraControls.jsx";
+import { serializeCityCamera } from "../lib/cityCamera.js";
+import { recordedCameraTransform, recordedPointCamera } from "../lib/recordedCamera.js";
 import {
   CROWD_MIN,
   DAY_MS,
@@ -259,10 +262,15 @@ function useReducedMotion(): boolean {
 
 /* ------------------------------------------------------------- surface -- */
 
+type CityCamera = { x: number; y: number; zoom: number };
 type RecordedDayProps = {
   frame: ProjectionEnvelope<Record<string, unknown>> | null;
   visibleAgentIds: number[];
   selectedAgentId: number | null;
+  camera: CityCamera;
+  followId: number | null;
+  cameraPositionRef: RefObject<CityCamera>;
+  onCameraChange: (camera: CityCamera, options?: { replace?: boolean; keepFollow?: boolean }) => void;
   onSelectAgent: (id: number | null) => void;
   onOpenEvidence: () => void;
   onPinDay: () => void;
@@ -276,6 +284,7 @@ type RecordedDayProps = {
 
 /** Presentation only: the workspace owns every request and validated frame. */
 export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSelectAgent,
+  camera: savedCamera, followId, cameraPositionRef, onCameraChange,
   onOpenEvidence, onPinDay, historical, loading, error, conversations,
   conversationsLoading, conversationsError }: RecordedDayProps) {
   const runId = frame?.run_id ?? "";
@@ -329,6 +338,12 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
    * the day loops without a chip changing pixel. See liveCity.js.
    */
   const plan = useMemo<Plan>(() => legPlan(model.agents) as Plan, [model.agents]);
+  const requestedPerson = Array.isArray(frame?.data.agents)
+    ? frame.data.agents.find(agent => Number(agent.id) === followId) : null;
+  const canFollow = followId != null && requestedPerson?.alive !== false && requestedPerson?.alive !== 0
+    && model.agents.some(agent => agent.id === followId);
+  const cameraActive = followId != null || Boolean(serializeCityCamera(savedCamera));
+  const navigationTransform = useRef<ReturnType<typeof recordedCameraTransform> | null>(null);
   const projection = useMemo<Projection | null>(
     () => (size.width > 0 && size.height > 0
       ? (fitProjection(model.bounds, size.width, size.height, CHROME_INSET) as Projection)
@@ -345,7 +360,7 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
    * first clear candidate wins; if none is clear the panel is not drawn.
    */
   const detailSlot = useMemo(() => {
-    if (!projection || !model.places.length || size.width < 1180) return null;
+    if (cameraActive || !projection || !model.places.length || size.width < 1180) return null;
     const points = [
       ...model.places.map(place => projection.project(place.x, place.y)),
       ...model.agents.flatMap(agent => agent.anchors.map(
@@ -375,7 +390,7 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
       if (!busy) return candidate;
     }
     return null;
-  }, [projection, model.places, model.agents, size.width, size.height]);
+  }, [cameraActive, projection, model.places, model.agents, size.width, size.height]);
 
   const detail = useMemo<Detail | null>(() => {
     if (!projection || !detailSlot || !model.crowds.length) return null;
@@ -463,14 +478,16 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
     plan: Plan;
     reducedMotion: boolean;
     focusId: number | null;
+    navigation: { camera: CityCamera; followId: number | null; width: number; height: number };
   }>({
     agents: [], offsets: new Map(), projection: null, detail: null,
     plan: legPlan([]) as Plan, reducedMotion: false, focusId: null,
+    navigation: { camera: savedCamera, followId: null, width: 0, height: 0 },
   });
   const [phase, setPhase] = useState({ legIndex: 0, nearIndex: 0 });
   const clockHand = useRef<HTMLElement | null>(null);
 
-  /* Who the reader is following. Hover proposes; a click pins, so a person can
+  /* Local highlight. Hover proposes; a click pins, so a person can
      be watched across the whole leg without keeping a cursor on a moving dot. */
   const [focus, setFocus] = useState<{ id: number; pinned: boolean } | null>(
     selectedAgentId ? { id: selectedAgentId, pinned: true } : null);
@@ -485,7 +502,7 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
   const paint = useCallback((now: number) => {
     const {
       agents, offsets: layout, projection: camera, detail,
-      plan: legs, reducedMotion: still, focusId,
+      plan: legs, reducedMotion: still, focusId, navigation,
     } = scene.current;
     if (!camera || !agents.length) return;
     /* A readout is only rewritten when its digits actually change, so the
@@ -613,6 +630,15 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
       node.style.opacity = weights[slotIndex].toFixed(3);
     }
 
+    const followedPoint = navigation.followId == null ? null : positions.get(navigation.followId) ?? null;
+    const transform = recordedCameraTransform(camera, navigation.width, navigation.height, navigation.camera, followedPoint);
+    navigationTransform.current = transform;
+    cameraPositionRef.current = transform.camera;
+    if (fieldRef.current) {
+      fieldRef.current.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+      fieldRef.current.style.setProperty("--recorded-camera-inverse", String(1 / transform.scale));
+    }
+
     if (lockRef.current) {
       const held = focusId === null ? null : positions.get(focusId);
       lockRef.current.style.transform = held
@@ -664,7 +690,7 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
         ? current
         : { legIndex: effective.legIndex, nearIndex: effective.nearIndex }
     ));
-  }, []);
+  }, [cameraPositionRef]);
 
   /* Every new committed day starts paused at its first placement. */
   useLayoutEffect(() => {
@@ -683,9 +709,12 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
     scene.current = {
       agents: model.agents, offsets, projection, detail, plan, reducedMotion,
       focusId: focus?.id ?? null,
+      navigation: { camera: savedCamera, followId: canFollow ? followId : null, width: size.width, height: size.height },
     };
+    cameraPositionRef.current = savedCamera;
     paint(performance.now());
-  }, [model.agents, offsets, projection, detail, plan, reducedMotion, focus, paint]);
+  }, [model.agents, offsets, projection, detail, plan, reducedMotion, focus, paint,
+    savedCamera.x, savedCamera.y, savedCamera.zoom, canFollow, followId, size.width, size.height, cameraPositionRef]);
 
   useLayoutEffect(() => {
     const now = performance.now();
@@ -750,6 +779,8 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
           scaleX: camera.scaleX, scaleY: camera.scaleY,
           left: camera.left, top: camera.top,
         },
+        viewport: { ...navigationTransform.current, width: scene.current.navigation.width,
+          height: scene.current.navigation.height, trackingId: scene.current.navigation.followId },
         /* The detail camera, published on the same terms as the wide one: an
            affine map a checker can invert to re-derive every inset pixel. */
         detail: inset ? {
@@ -769,6 +800,8 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
             id: agent.id,
             x: position?.x ?? null,
             y: position?.y ?? null,
+            screenX: position && navigationTransform.current ? position.x * navigationTransform.current.scale + navigationTransform.current.x : null,
+            screenY: position && navigationTransform.current ? position.y * navigationTransform.current.scale + navigationTransform.current.y : null,
             offsetX: position?.offsetX ?? null,
             offsetY: position?.offsetY ?? null,
             detailX: near?.x ?? null,
@@ -1089,13 +1122,22 @@ export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSel
       <div className="live-city__day-track"><i /></div>
     </aside>
 
+    <CityCameraControls getCamera={() => cameraPositionRef.current} onCameraChange={onCameraChange}
+      disabled={unresolved || Boolean(mapError)} canFocus={selectedAgentId != null && model.agents.some(agent => agent.id === selectedAgentId)}
+      onFocus={() => {
+        const point = selectedAgentId == null ? null : lastFrame.current?.positions.get(selectedAgentId);
+        if (projection && point) onCameraChange(recordedPointCamera(projection, point, savedCamera.zoom));
+      }} />
+    {followId != null && <p className="recorded-day__follow-status" role="status">{canFollow
+      ? `Following person #${followId} through recorded placements. Camera motion uses display time.`
+      : `Follow paused for person #${followId}: no visible, living person with public recorded placements in this frame.`}</p>}
     <p className="recorded-day__truth">Movement is interpolated between recorded placements. Playback does not advance the world.
       {!historical && " A newly committed day resets playback to paused. Pin this day to keep watching it."}</p>
     {frame && !error && <p className="recorded-day__coverage">
       <b>{model.counts.agents} of {visibleAgentIds.length}</b> visible residents have recorded placements.
       {visibleAgentIds.length > model.counts.agents && ` ${visibleAgentIds.length - model.counts.agents} unavailable or withheld.`}
     </p>}
-    <div className="live-city live-city--embedded" ref={frameRef}>
+    <div className="live-city live-city--embedded" data-beat={skyBeat} ref={frameRef}>
     <div className="live-city__field" data-beat={skyBeat} ref={fieldRef}>
       {projection && <svg
         className="live-city__terrain"

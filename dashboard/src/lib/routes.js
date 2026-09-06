@@ -3,7 +3,7 @@ export function workspaceFallbackPath(runId) {
 }
 
 const LEGACY_CITY_PARAMS = [
-  "view", "agent", "firm", "place", "project", "camera", "population", "layer", "activeOnly", "q", "region",
+  "view", "agent", "firm", "place", "project", "camera", "follow", "population", "layer", "activeOnly", "q", "region",
 ];
 
 export function legacyCityRedirectPath(runId, search = "", hash = "") {

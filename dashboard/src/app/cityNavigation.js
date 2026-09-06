@@ -3,9 +3,9 @@ import { commonObserverParamsFromState, parseObserverViewState, patchObserverVie
 // A city bookmark contains display state only. A destination keeps its own
 // renderer/view parameter, and the current run/fork/tick always takes precedence.
 function displayParams(state) {
-  const { agent, firm, place, project, view, layer, population, q, activeOnly, camera } = state;
+  const { agent, firm, place, project, view, layer, population, q, activeOnly, camera, follow } = state;
   return patchObserverViewState(new URLSearchParams(), {
-    agent, firm, place, project, view, layer, population, q, activeOnly, camera,
+    agent, firm, place, project, view, layer, population, q, activeOnly, camera, follow,
   });
 }
 

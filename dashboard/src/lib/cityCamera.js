@@ -1,5 +1,23 @@
 export const DEFAULT_CITY_CAMERA = Object.freeze({ x: 50, y: 50, zoom: 3.05 });
 
+export const cityCameraScale = camera => 2 ** ((camera?.zoom ?? DEFAULT_CITY_CAMERA.zoom) - DEFAULT_CITY_CAMERA.zoom);
+
+/** Follow only a public, located person in this frame. Never reuse a prior tick. */
+export function cityFollowState(agents, visibleAgents, id, unavailable = false) {
+  if (id == null) return { target: null, message: "" };
+  const person = agents.find(agent => String(agent.id) === String(id));
+  const visible = visibleAgents.some(agent => String(agent.id) === String(id));
+  const paused = unavailable ? "the selected frame is unavailable"
+    : !person ? "this person is absent from the selected population or tick"
+    : person.alive === false || person.alive === 0 ? "this person is no longer alive at this tick"
+    : !visible ? "this person is hidden by the current filters"
+    : person.coordinateSource !== "observed" ? "no public position is recorded at this tick"
+    : null;
+  return { target: paused ? null : person,
+    message: paused ? `Follow paused for person #${id}: ${paused}.`
+      : `Following ${person.name || `person #${id}`} at the selected tick.` };
+}
+
 /** Validate bookmark values without admitting arbitrary renderer properties. */
 export function parseCityCamera(raw) {
   if (typeof raw !== "string" || raw.length > 80) return null;

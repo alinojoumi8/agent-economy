@@ -10,12 +10,16 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { Link } from "react-router";
 import { cityEvidenceParams } from "../app/cityNavigation.js";
+import { CityCameraControls } from "./CityCameraControls.jsx";
+import { CityAtlasViewport } from "./CityAtlasViewport.jsx";
+import { DEFAULT_CITY_CAMERA, cityFollowState, normalizeCityCamera } from "../lib/cityCamera.js";
 // Shared controls, place buttons and fallback styles must precede any renderer.
 import "./civic-diorama.css";
 import {
@@ -150,6 +154,8 @@ export function CivicCity(props) {
   const [localSelectedProjectId, setLocalSelectedProjectId] = useState(null);
   const [localSelectedFirmId, setLocalSelectedFirmId] = useState(null);
   const [localCamera, setLocalCamera] = useState(null);
+  const [localFollow, setLocalFollow] = useState(null);
+  const cameraPositionRef = useRef(DEFAULT_CITY_CAMERA);
   const [localPopulation, setLocalPopulation] = useState("core");
   const [localView, setLocalView] = useState("atlas");
   const [hasWebGL2, setHasWebGL2] = useState(null);
@@ -162,6 +168,8 @@ export function CivicCity(props) {
   const selectedFirmId = observerState?.firm ?? localSelectedFirmId;
   const populationMode = observerState?.population ?? localPopulation;
   const cityView = observerState?.view ?? localView;
+  const followId = observerState ? observerState.follow : localFollow;
+  const savedCamera = normalizeCityCamera(observerState ? observerState.camera : localCamera);
   const [filtersOpen, setFiltersOpen] = useState(Boolean(query || activeLayer !== "all" || activeOnly));
   const lensRef = useRef(null);
   const model = useMemo(
@@ -187,16 +195,22 @@ export function CivicCity(props) {
   const selectedFirm = model.firms.find(firm => String(firm.id) === String(selectedFirmId)) || null;
   const selected = selectedPlace || selectedProject || selectedFirm ? null : (
     visibleAgents.find(agent => String(agent.id) === String(selectedId))
-      || visibleAgents.find(agent => agent.isActive)
-      || visibleAgents.find(agent => agent.event)
-      || visibleAgents[0]
+      || (!followId && (visibleAgents.find(agent => agent.isActive)
+        || visibleAgents.find(agent => agent.event) || visibleAgents[0]))
       || null
   );
+  const follow = cityFollowState(model.agents, visibleAgents, followId, loading || Boolean(error));
+  const displayCamera = follow.target
+    ? { ...savedCamera, x: follow.target.x, y: follow.target.y } : savedCamera;
+  const cameraSelection = selectedProject || selectedPlace || selectedFirm || selected;
+  useLayoutEffect(() => {
+    if (cityView !== "recorded") cameraPositionRef.current = displayCamera;
+  }, [cityView, displayCamera.x, displayCamera.y, displayCamera.zoom]);
   const selectedIndex = selected
     ? visibleAgents.findIndex(agent => String(agent.id) === String(selected.id))
     : -1;
   useEffect(() => {
-    if (!observerState || !onObserverStateChange || loading || error) return;
+    if (!observerState || !onObserverStateChange || loading || error || followId) return;
     const resolvedId = selected ? Number(selected.id) : null;
     if (observerState.firm != null) {
       if (!selectedFirm) onObserverStateChange({ firm: null, agent: resolvedId }, { replace: true });
@@ -227,6 +241,7 @@ export function CivicCity(props) {
     loading,
     error,
     observerState,
+    followId,
     onObserverStateChange,
     selected,
     selectedPlace,
@@ -257,7 +272,7 @@ export function CivicCity(props) {
      display; pinning it into a link would open the destination workspace as a
      frozen historical view of a run that is still moving. */
   const commonParams = cityEvidenceParams({ ...observerState, tick: historical ? String(tick) : "live",
-    firm: selectedFirm?.id, agent: selected?.id, place: selectedPlace?.id, project: selectedProject?.id,
+    firm: selectedFirm?.id, agent: followId || selected?.id, follow: followId, place: selectedPlace?.id, project: selectedProject?.id,
     view: cityView, layer: activeLayer, q: query, population: populationMode, activeOnly,
     camera: observerState ? observerState.camera : localCamera });
   const commonSuffix = commonParams.toString() ? `?${commonParams}` : "";
@@ -326,6 +341,7 @@ export function CivicCity(props) {
     const nextId = visibleAgents[nextIndex].id;
     if (onObserverStateChange) onObserverStateChange({ agent: nextId });
     else {
+      setLocalFollow(null);
       setLocalSelectedId(nextId);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
@@ -333,12 +349,13 @@ export function CivicCity(props) {
     }
   };
   const changeObserverFilter = (update, options) => {
-    onObserverStateChange(resolveCityFilterPatch(model.agents, {
+    const patch = resolveCityFilterPatch(model.agents, {
       layer: activeLayer,
       q: query,
       activeOnly,
       agent: selectedId,
-    }, update), options);
+    }, update);
+    onObserverStateChange(followId ? { ...patch, agent: followId } : patch, options);
   };
   const changeLayer = value => {
     if (onObserverStateChange) changeObserverFilter({ layer: value });
@@ -347,7 +364,7 @@ export function CivicCity(props) {
   const changeQuery = value => {
     if (onObserverStateChange) {
       if (value && populationMode === "clusters") {
-        onObserverStateChange({ q: value, population: "all", agent: null }, { replace: true });
+        onObserverStateChange({ q: value, population: "all", agent: followId || null }, { replace: true });
       } else {
         changeObserverFilter({ q: value }, { replace: true });
       }
@@ -366,6 +383,7 @@ export function CivicCity(props) {
   const changeSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ agent: value });
     else {
+      if (String(value) !== String(localFollow)) setLocalFollow(null);
       setLocalSelectedId(value);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
@@ -375,6 +393,7 @@ export function CivicCity(props) {
   const changePlaceSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ place: value });
     else {
+      setLocalFollow(null);
       setLocalSelectedPlaceId(value);
       setLocalSelectedId(null);
       setLocalSelectedProjectId(null);
@@ -384,6 +403,7 @@ export function CivicCity(props) {
   const changeProjectSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ project: value });
     else {
+      setLocalFollow(null);
       setLocalSelectedProjectId(value);
       setLocalSelectedPlaceId(null);
       setLocalSelectedId(null);
@@ -393,6 +413,7 @@ export function CivicCity(props) {
   const changeFirmSelection = value => {
     if (onObserverStateChange) onObserverStateChange({ firm: value });
     else {
+      setLocalFollow(null);
       setLocalSelectedFirmId(value);
       setLocalSelectedId(null);
       setLocalSelectedPlaceId(null);
@@ -400,8 +421,16 @@ export function CivicCity(props) {
     }
   };
   const changeCamera = (value, options) => {
-    if (onObserverStateChange) onObserverStateChange({ camera: value }, options);
-    else setLocalCamera(value);
+    const next = normalizeCityCamera(value);
+    if (onObserverStateChange) onObserverStateChange({ camera: next,
+      ...(options?.keepFollow ? {} : { follow: null }) }, { replace: options?.replace });
+    else { setLocalCamera(next); if (!options?.keepFollow) setLocalFollow(null); }
+  };
+  const toggleFollow = () => {
+    if (followId) { changeCamera(cameraPositionRef.current); return; }
+    if (!selected) return;
+    if (onObserverStateChange) onObserverStateChange({ agent: Number(selected.id), follow: Number(selected.id) });
+    else { setLocalSelectedId(selected.id); setLocalFollow(Number(selected.id)); }
   };
   const changeView = value => {
     if (onObserverStateChange) onObserverStateChange({ view: value });
@@ -411,10 +440,10 @@ export function CivicCity(props) {
     const clusterPatch = value === "clusters"
       ? { population: value, q: null, layer: null, activeOnly: false, agent: null, place: null, project: null, firm: null }
       : { population: value, agent: null, place: null, project: null, firm: null };
-    if (onObserverStateChange) onObserverStateChange(clusterPatch);
+    if (onObserverStateChange) onObserverStateChange(followId ? { ...clusterPatch, agent: followId } : clusterPatch);
     else {
       setLocalPopulation(value);
-      setLocalSelectedId(null);
+      setLocalSelectedId(localFollow);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
       setLocalSelectedFirmId(null);
@@ -436,6 +465,7 @@ export function CivicCity(props) {
         project: null,
         firm: null,
         camera: null,
+        follow: null,
         population: null,
       });
       return;
@@ -448,6 +478,7 @@ export function CivicCity(props) {
     setLocalSelectedProjectId(null);
     setLocalSelectedFirmId(null);
     setLocalCamera(null);
+    setLocalFollow(null);
     setLocalPopulation("core");
   };
   const openMobileLens = () => {
@@ -552,6 +583,19 @@ export function CivicCity(props) {
       </select>
       <span>One selection across city views</span>
     </label>
+    <div className="city-follow">
+      <button type="button" aria-pressed={Boolean(followId)}
+        disabled={!followId && (!selected || loading || Boolean(error) || selected.alive === false || selected.alive === 0)}
+        onClick={toggleFollow}>{followId ? "Stop following" : "Follow person"}</button>
+      <p role="status" aria-label="City follow status">{cityView === "recorded"
+        ? (followId ? `Follow enabled for person #${followId}.` : "Select a person to follow their recorded day.")
+        : follow.message || "Select a person to follow across committed ticks. Drag the Atlas background to pan."}</p>
+    </div>
+    {cityView !== "recorded" && <CityCameraControls
+      getCamera={() => cameraPositionRef.current} onCameraChange={changeCamera}
+      canFocus={Boolean(cameraSelection)} disabled={loading || Boolean(error)}
+      onFocus={() => cameraSelection && changeCamera({ ...displayCamera, x: cameraSelection.x, y: cameraSelection.y })}
+    />}
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
         {cityView === "recorded" && <Suspense fallback={<p role="status">Loading recorded-day renderer…</p>}>
@@ -559,6 +603,7 @@ export function CivicCity(props) {
             key={`${frame?.snapshot_version}:${populationMode}:${activeLayer}:${query}:${activeOnly}`}
             frame={frame} visibleAgentIds={visibleAgents.map(agent => Number(agent.id))}
             selectedAgentId={selected?.id ?? null} onSelectAgent={changeSelection}
+            camera={savedCamera} followId={followId} cameraPositionRef={cameraPositionRef} onCameraChange={changeCamera}
             onOpenEvidence={openMobileLens}
             onPinDay={() => frame && onObserverStateChange({ tick: String(frame.tick) })}
             historical={historical} loading={loading} error={error}
@@ -589,7 +634,7 @@ export function CivicCity(props) {
                 selectedPlaceId={selectedPlace?.id ?? null}
                 selectedProjectId={selectedProject?.id ?? null}
                 selectedFirmId={selectedFirm?.id ?? null}
-                camera={observerState ? observerState.camera : localCamera}
+                camera={displayCamera}
                 onCameraChange={changeCamera}
                 onOpenEvidence={openMobileLens}
                 onSelectAgent={changeSelection}
@@ -611,6 +656,7 @@ export function CivicCity(props) {
               ? `${visibleAgents.length} core marks + ${model.population.clusteredAgents} clustered residents`
               : `${visibleAgents.length} of ${model.population.total} residents visible`}</span>
           </div>
+          <CityAtlasViewport camera={displayCamera} onCameraChange={changeCamera} disabled={loading || Boolean(error)}>
           <svg className="civic-city__plot" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <defs>
               <pattern id={`civic-grid-${variant}`} width="5" height="5" patternUnits="userSpaceOnUse">
@@ -746,6 +792,7 @@ export function CivicCity(props) {
           </button>)}
         </div>}
 
+          </CityAtlasViewport>
         {error && <div className="civic-city__empty" role="alert">
           <strong>City evidence is temporarily unavailable.</strong>
           <span>{error}</span>

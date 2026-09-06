@@ -31,7 +31,12 @@ export function parseObserverViewState(params) {
   const view = params.get("view") || "atlas";
   const project = projectIdentifier(params.get("project"));
   const firm = project ? null : positiveInteger(params.get("firm"));
-  const agent = project || firm ? null : positiveInteger(params.get("agent"));
+  const requestedFollow = positiveInteger(params.get("follow"));
+  const requestedAgent = positiveInteger(params.get("agent"));
+  const place = positiveInteger(params.get("place"));
+  const follow = project || firm || (!requestedAgent && place)
+    || (requestedAgent && requestedAgent !== requestedFollow) ? null : requestedFollow;
+  const agent = project || firm ? null : requestedAgent || follow;
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -41,6 +46,7 @@ export function parseObserverViewState(params) {
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
     agent,
+    follow,
     firm,
     camera: parseCityCamera(params.get("camera")),
     place: project || firm || agent ? null : positiveInteger(params.get("place")),
@@ -131,6 +137,12 @@ export function patchObserverViewState(params, patch) {
       : "atlas";
     setOrDelete("view", view === "atlas" ? null : view);
   }
+  if ("follow" in patch) setOrDelete("follow", positiveInteger(String(patch.follow || ""))?.toString());
+  // A selected object never inherits another person's follow identity.
+  const follow = positiveInteger(next.get("follow"));
+  if (follow && (next.has("firm") || next.has("place") || next.has("project")
+    || ("agent" in patch && positiveInteger(next.get("agent")) !== follow))) next.delete("follow");
+  else if (follow) next.set("agent", String(follow));
   return next;
 }
 

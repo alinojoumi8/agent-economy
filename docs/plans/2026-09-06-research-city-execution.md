@@ -8,7 +8,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
-| 3. Unified interactive research city | City portion of W4 | Atlas/Diorama/recorded-day integration, shared selection, independent playback, scoped transcripts, price navigation and camera bookmarks implemented; Atlas camera and persistent follow pending |
+| 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
@@ -395,3 +395,54 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - No economic semantics or scientific schema changed. Atlas pan/zoom, persistent
   camera follow, institutional/household lenses, checkpoint-derived studies,
   paused research resume, daily keyed streams and W5–W9 remain unfinished.
+
+## Shared camera and persistent person follow
+
+- The preceding `892d393` checkpoint passed all four required GitHub jobs in
+  run `34035372933`. Optional full-matrix/hosted jobs and a substantive CodeRabbit
+  review remained skipped. This delivery continues the same draft PR and goal.
+- Atlas now pans by dragging its background and shares zoom, four pan buttons,
+  reset and focus with Diorama and recorded day. Bounded camera bookmarks restore
+  through reload/history and renderer changes. An Atlas drag creates one history
+  entry; pointer updates replace it. Touch keeps vertical page scrolling and
+  exposes camera actions through buttons.
+- `follow=<person ID>` preserves one identity across renderers, filters and
+  historical cursors. Hidden, absent, dead and unlocated people pause follow;
+  a different person is never substituted. Atlas/Diorama require public observed
+  coordinates; a derived district marker is insufficient. Selecting another
+  object, manual pan, focus or reset stops follow; buttons and Diorama wheel zoom
+  preserve it. Stop following saves the current camera.
+- Recorded follow centers the same animated chip used by the placement renderer.
+  One affine camera transforms the whole sheet without altering anchors. The
+  probe exposes both original and screen coordinates; the display clock and
+  camera create no per-frame URL entries or economic effects. An unavailable
+  recording pauses follow, and nondefault cameras hide the auxiliary inset whose
+  original empty-space fit is no longer applicable.
+- Atlas marks/labels retain readable sizes under zoom. Production inspection
+  exposed pre-existing construction-label crowding; labels now appear only on
+  hover, keyboard focus or selection. At coincident business/workplace pixels,
+  the business owns the click and the inspector/explorer reaches the workplace.
+  The recorded background remains fixed while the geographic sheet moves.
+- Initial units passed **239 tests** (6.16 s). The first camera browser pass had
+  **14 passed, 2 failed**: one absence fixture still supplied that person's public
+  presence rows, and one assertion sampled before the observer update completed.
+  After correcting those checks, **16 passed** (13.6 s). Broad runs exposed an
+  unscoped hosted-status assertion and an overlapping workplace click; both were
+  addressed, with an added construction/keyboard regression. The final full
+  critical browser selection passed **91 tests** (58.4 s), including wheel zoom,
+  history, missing targets, reduced motion and 390/768 layouts.
+- The final production UI followed person 1 at historical tick 1 of disposable
+  world `afd8656714`, rendered its **100 public placement histories** from a
+  300-person roster, and kept the moving target centered. Independent screen
+  coordinate reconstruction had maximum residual below **0.001 px**. At widths
+  768 and 390 horizontal overflow was zero; all three renderers and mobile
+  evidence access worked. There were zero writes, current runtime/status reads,
+  live sockets or browser errors. The source world remained paused at tick 3.
+- The production bundle and reviewed synthetic-world follow screenshot are
+  included. No dependency, economic semantics or scientific schema changed.
+  Full viewport-area/usability acceptance, institutional/household lenses,
+  checkpoint-derived/live-policy studies, paused research resume, daily keyed
+  streams and W5–W9 remain outstanding. This checkpoint does not finish the goal.
+- Final unit execution passed **239 tests** (5.57 s); TypeScript and the production
+  build passed. Documentation and legacy recorded replay passed **25 tests**
+  (2.46 s). The existing large-chunk build warning remains.
