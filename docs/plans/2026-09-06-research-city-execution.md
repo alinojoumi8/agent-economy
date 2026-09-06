@@ -228,3 +228,14 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - The new comparison does not implement study launch, checkpoint-derived
   forks, paused research resume, daily keyed streams or live-model comparisons.
   Those remain explicit next deliveries before full city/society/validation work.
+
+## Browser gate follow-up
+
+- Commit `afe5cab` passed GitHub Python smoke, core subset and research-evidence
+  jobs. Its browser job failed because a communication reload assertion matched
+  both the thread heading and the message heading with the same subject. The
+  selector's result depended on whether the message had finished loading.
+- The assertion now verifies both heading levels explicitly. The complete CI
+  browser selection passed locally: **64 passed** (1.3 min), using two workers:
+  `npm run test:e2e -- world-os.spec.ts world-os-states.spec.ts world-os-privacy.spec.ts agent-connections.spec.ts world-os-routes.spec.ts --workers=2`.
+  No product behavior or production bundle changed for this test correction.

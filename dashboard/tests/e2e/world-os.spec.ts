@@ -1049,7 +1049,8 @@ test("communication access menu survives deep links, reload, and history", async
   expect(new URL(page.url()).searchParams.get("view")).toBe("agent");
   expect(new URL(page.url()).searchParams.get("agent_id")).toBe("12");
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Shipment notice", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shipment notice", level: 3, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shipment notice", level: 4, exact: true })).toBeVisible();
   await page.goBack();
   await expect(agent).toHaveAttribute("aria-pressed", "true");
 
