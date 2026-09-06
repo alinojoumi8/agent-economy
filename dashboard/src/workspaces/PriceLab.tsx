@@ -1,4 +1,5 @@
 import { Link, useSearchParams } from "react-router";
+import { cityWorkspaceHref } from "../app/cityNavigation.js";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { priceLabFrameMatches, priceLabSelection, priceNumber } from "./priceLabModel.js";
 import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
@@ -89,7 +90,7 @@ export function PriceLab() {
     <header className="price-lab__intro"><div><p className="world-os-kicker">Price Discovery Lab</p>
       <h3>Follow a business from goods to shares</h3>
       <p>Inspect posted offers and settled transactions at the same world tick.</p></div>
-      <Link to={workspaceUrl(projection.runId, "world", projection.observerState)}>Explore the city ↗</Link>
+      <Link to={cityWorkspaceHref(projection.runId, projection.observerState, data?.selected_firm ? { firm: data.selected_firm.id } : {})}>Explore the city ↗</Link>
     </header>
     <div className="price-lab__controls">
       <label>Business <select aria-label="Business" value={data?.selected_firm?.id ?? ""} onChange={event => patch("price_firm", event.target.value)}>

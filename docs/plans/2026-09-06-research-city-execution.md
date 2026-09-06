@@ -8,7 +8,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
-| 3. Unified interactive research city | City portion of W4 | Pending |
+| 3. Unified interactive research city | City portion of W4 | Coherent Atlas/Diorama frames, shared business selection, price navigation and camera bookmarks implemented; recorded-day integration and follow mode pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
@@ -290,3 +290,56 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - Full city integration, checkpoint-derived studies, live-model policies,
   paused research resume and daily keyed streams remain pending. This checkpoint
   completes the bounded local pilot workflow, not the full five-part goal.
+
+## City observation and price navigation
+
+- Checkpoint `040918f` passed all four required GitHub jobs in run
+  `34030749217`. Optional jobs stayed skipped. CodeRabbit still skips the draft;
+  this is not a substantive review verdict.
+- City map, civic summary and events now form one validated frame pinned to the
+  map's actual tick/fork. Mismatched frames withhold marks and prevent runtime
+  requests. The map layer request also restores construction projects and flows,
+  which the previous explicit layer list omitted.
+- Current runtime responses carry run/fork identity and private/no-store headers.
+  Historical views make no runtime request; terminal runs, failed telemetry
+  refreshes and foreign runtime responses cannot retain active indicators.
+  The API regression verifies the runtime read makes no scientific writes.
+- Businesses are selectable in Atlas and Diorama through a shared keyboard
+  explorer. Workplace/owner and employee/employer links use projected records.
+  The business inspector opens both price domains together, with unavailable
+  map fields and regional anchors explicitly labelled.
+- Bounded camera bookmarks survive reload and view changes. Buttons support
+  zoom, pan, reset and focus; evidence links preserve city display state without
+  replacing the destination's current run/fork/tick or its workspace view.
+- Summary cards moved below the map and agent filters became optional. The
+  production desktop field measured **66.5% map width** beside its inspector;
+  the map begins at y=309 px in a 1440×1000 viewport. This is a field-width
+  measurement, not a claim that 66.5% of the whole viewport is map area.
+  Construction text is shown on selection to avoid overplotting, the footer
+  no longer overlaps frame status, and mobile has a direct evidence button.
+- Initial unit execution after extending observer state: **232 passed, 1 failed**;
+  an existing expected-object fixture lacked the new nullable fields. After its
+  correction, the final unit run passed **233 tests** (6.61 s). TypeScript and
+  the production build passed; the existing large-chunk warning remains.
+- The full critical browser selection passed **74 tests** (1.6 min). After the
+  final label/footer/mobile change, all **16 city-focused tests passed**
+  (25.2 s). Runtime/cognition and documentation passed **40 tests** (11.53 s)
+  before the final cache-header assertion and documentation additions.
+- An actual production roundtrip at tick 1 of paused world `afd8656714` loaded
+  300 residents, six firms and 73 construction records; it returned to firm 2
+  at camera `72,28,3.4`. Request spies recorded **zero writes, zero current
+  runtime/status requests and zero browser errors**. Widths 768 and 390 had
+  **zero horizontal overflow**. The source world stayed paused at tick 3.
+  A representative synthetic-world screenshot and the
+  [observer contract](../research/city-observer.md) are saved in the repository.
+- The separate recorded-day route, Atlas camera controls, persistent follow,
+  institutional/household lenses, checkpoint-derived studies, paused research
+  resume and keyed daily streams remain pending. No economic semantics or
+  scientific schema changed in this checkpoint; W5–W9 remain unfinished.
+- Final runtime cache-header and updated documentation selection: **40 passed**
+  (7.94 s). The existing Starlette deprecation warning remains.
+- Explicit missing/invalid envelope metadata checks passed all **nine** city
+  projection/navigation units (0.10 s); final TypeScript and production build
+  passed. Staged Gitleaks 8.30.1 scanned about **2.05 MB** with no leaks;
+  `git diff --cached --check` passed. Operational logs and private artifacts
+  remain outside the staged change.

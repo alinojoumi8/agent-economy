@@ -1,4 +1,5 @@
 import { CITY_LAYERS } from "../lib/civicCity.js";
+import { parseCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
@@ -29,16 +30,20 @@ export function parseObserverViewState(params) {
   const population = params.get("population") || "core";
   const view = params.get("view") || "atlas";
   const project = projectIdentifier(params.get("project"));
-  const agent = project ? null : positiveInteger(params.get("agent"));
+  const firm = project ? null : positiveInteger(params.get("firm"));
+  const agent = project || firm ? null : positiveInteger(params.get("agent"));
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
     event: positiveInteger(params.get("event")),
+    city: params.get("city")?.slice(0, 2048) || null,
     layer: CITY_LAYER_IDS.has(layer) ? layer : "all",
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
     agent,
-    place: project || agent ? null : positiveInteger(params.get("place")),
+    firm,
+    camera: parseCityCamera(params.get("camera")),
+    place: project || firm || agent ? null : positiveInteger(params.get("place")),
     project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
     view: CITY_VIEW_MODES.has(view) ? view : "atlas",
@@ -73,11 +78,23 @@ export function patchObserverViewState(params, patch) {
     setOrDelete("q", query || null);
   }
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
+  if ("camera" in patch) setOrDelete("camera", serializeCityCamera(patch.camera));
+  if ("firm" in patch) {
+    const firm = Number(patch.firm);
+    const selected = Number.isSafeInteger(firm) && firm > 0 ? String(firm) : null;
+    setOrDelete("firm", selected);
+    if (selected) {
+      next.delete("agent");
+      next.delete("place");
+      next.delete("project");
+    }
+  }
   if ("agent" in patch) {
     const agent = Number(patch.agent);
     const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
     setOrDelete("agent", selected);
     if (selected) {
+      next.delete("firm");
       next.delete("place");
       next.delete("project");
     }
@@ -87,6 +104,7 @@ export function patchObserverViewState(params, patch) {
     const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
     setOrDelete("place", selected);
     if (selected) {
+      next.delete("firm");
       next.delete("agent");
       next.delete("project");
     }
@@ -95,6 +113,7 @@ export function patchObserverViewState(params, patch) {
     const project = projectIdentifier(patch.project);
     setOrDelete("project", project);
     if (project) {
+      next.delete("firm");
       next.delete("agent");
       next.delete("place");
     }
@@ -120,12 +139,13 @@ export function commonObserverSearchParams(params) {
   return commonObserverParamsFromState(parseObserverViewState(params));
 }
 
-/** @param {{fork: string | null, tick: string, event: number | null}} state */
+/** @param {{fork: string | null, tick: string, event: number | null, city?: string|null}} state */
 export function commonObserverParamsFromState(state) {
   const common = new URLSearchParams();
   if (state.fork) common.set("fork", state.fork);
   if (state.tick !== "live") common.set("tick", state.tick);
   if (state.event) common.set("event", String(state.event));
+  if (state.city) common.set("city", state.city.slice(0, 2048));
   return common;
 }
 

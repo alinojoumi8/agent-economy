@@ -12,10 +12,13 @@ export type ObserverViewState = {
   fork: string | null;
   tick: string;
   event: number | null;
+  city: string | null;
   layer: string;
   q: string;
   activeOnly: boolean;
   agent: number | null;
+  firm: number | null;
+  camera: { x: number; y: number; zoom: number } | null;
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters";
@@ -30,6 +33,8 @@ export type ObserverViewPatch = Partial<{
   q: string | null;
   activeOnly: boolean;
   agent: number | null;
+  firm: number | null;
+  camera: { x: number; y: number; zoom: number } | null;
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters" | null;
@@ -52,7 +57,7 @@ export function commonObserverSearchParams(params: URLSearchParams): URLSearchPa
 }
 
 export function commonObserverParamsFromState(
-  state: Pick<ObserverViewState, "fork" | "tick" | "event">,
+  state: Pick<ObserverViewState, "fork" | "tick" | "event"> & Partial<Pick<ObserverViewState, "city">>,
 ): URLSearchParams {
   return commonObserverParamsFromStateCore(state);
 }

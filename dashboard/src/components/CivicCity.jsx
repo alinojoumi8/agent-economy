@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { Link } from "react-router";
+import { cityEvidenceParams } from "../app/cityNavigation.js";
 import {
   CITY_DISTRICTS,
   CITY_LAYERS,
@@ -140,6 +141,8 @@ export function CivicCity(props) {
   const [localSelectedId, setLocalSelectedId] = useState(null);
   const [localSelectedPlaceId, setLocalSelectedPlaceId] = useState(null);
   const [localSelectedProjectId, setLocalSelectedProjectId] = useState(null);
+  const [localSelectedFirmId, setLocalSelectedFirmId] = useState(null);
+  const [localCamera, setLocalCamera] = useState(null);
   const [localPopulation, setLocalPopulation] = useState("core");
   const [localView, setLocalView] = useState("atlas");
   const [hasWebGL2, setHasWebGL2] = useState(null);
@@ -149,8 +152,10 @@ export function CivicCity(props) {
   const selectedId = observerState?.agent ?? localSelectedId;
   const selectedPlaceId = observerState?.place ?? localSelectedPlaceId;
   const selectedProjectId = observerState?.project ?? localSelectedProjectId;
+  const selectedFirmId = observerState?.firm ?? localSelectedFirmId;
   const populationMode = observerState?.population ?? localPopulation;
   const cityView = observerState?.view ?? localView;
+  const [filtersOpen, setFiltersOpen] = useState(Boolean(query || activeLayer !== "all" || activeOnly));
   const lensRef = useRef(null);
   const model = useMemo(
     () => deriveCityModel({ agents, firms, events, map, civic, runtime, tick, historical }),
@@ -172,7 +177,8 @@ export function CivicCity(props) {
   const selectedProject = model.constructionProjects.find(
     project => String(project.id) === String(selectedProjectId),
   ) || null;
-  const selected = selectedPlace || selectedProject ? null : (
+  const selectedFirm = model.firms.find(firm => String(firm.id) === String(selectedFirmId)) || null;
+  const selected = selectedPlace || selectedProject || selectedFirm ? null : (
     visibleAgents.find(agent => String(agent.id) === String(selectedId))
       || visibleAgents.find(agent => agent.isActive)
       || visibleAgents.find(agent => agent.event)
@@ -183,8 +189,12 @@ export function CivicCity(props) {
     ? visibleAgents.findIndex(agent => String(agent.id) === String(selected.id))
     : -1;
   useEffect(() => {
-    if (!observerState || !onObserverStateChange || loading) return;
+    if (!observerState || !onObserverStateChange || loading || error) return;
     const resolvedId = selected ? Number(selected.id) : null;
+    if (observerState.firm != null) {
+      if (!selectedFirm) onObserverStateChange({ firm: null, agent: resolvedId }, { replace: true });
+      return;
+    }
     if (observerState.project != null) {
       if (!selectedProject) {
         onObserverStateChange(
@@ -208,11 +218,13 @@ export function CivicCity(props) {
     }
   }, [
     loading,
+    error,
     observerState,
     onObserverStateChange,
     selected,
     selectedPlace,
     selectedProject,
+    selectedFirm,
   ]);
   useEffect(() => {
     if (cityView === "diorama" && hasWebGL2 === null) {
@@ -233,15 +245,21 @@ export function CivicCity(props) {
   const selectedProjectMetrics = constructionMetrics(selectedProject);
   const busiestOffice = [...(model.civic?.offices || [])]
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
-  const commonParams = new URLSearchParams();
-  if (observerState?.fork) commonParams.set("fork", observerState.fork);
   /* A tick is carried into the lens links only when this view is itself a
      reconstruction. The live Observatory passes the feed's current tick for
      display; pinning it into a link would open the destination workspace as a
      frozen historical view of a run that is still moving. */
-  if (historical && tick !== "live") commonParams.set("tick", tick);
-  if (observerState?.event) commonParams.set("event", String(observerState.event));
+  const commonParams = cityEvidenceParams({ ...observerState, tick: historical ? String(tick) : "live",
+    firm: selectedFirm?.id, agent: selected?.id, place: selectedPlace?.id, project: selectedProject?.id,
+    view: cityView, layer: activeLayer, q: query, population: populationMode, activeOnly,
+    camera: observerState ? observerState.camera : localCamera });
   const commonSuffix = commonParams.toString() ? `?${commonParams}` : "";
+  const firmHref = selectedFirm && runId
+    ? `/runs/${encodeURIComponent(runId)}/organizations/firm/${selectedFirm.id}${commonSuffix}` : null;
+  const priceParams = new URLSearchParams(commonParams);
+  priceParams.set("view", "prices");
+  if (selectedFirm) priceParams.set("price_firm", String(selectedFirm.id));
+  const pricesHref = selectedFirm && runId ? `/runs/${encodeURIComponent(runId)}/markets?${priceParams}` : null;
   const peopleHref = selected && runId
     ? `/runs/${encodeURIComponent(runId)}/people/${selected.id}${commonSuffix}`
     : null;
@@ -304,6 +322,7 @@ export function CivicCity(props) {
       setLocalSelectedId(nextId);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
+      setLocalSelectedFirmId(null);
     }
   };
   const changeObserverFilter = (update, options) => {
@@ -343,6 +362,7 @@ export function CivicCity(props) {
       setLocalSelectedId(value);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
+      setLocalSelectedFirmId(null);
     }
   };
   const changePlaceSelection = value => {
@@ -351,6 +371,7 @@ export function CivicCity(props) {
       setLocalSelectedPlaceId(value);
       setLocalSelectedId(null);
       setLocalSelectedProjectId(null);
+      setLocalSelectedFirmId(null);
     }
   };
   const changeProjectSelection = value => {
@@ -359,7 +380,21 @@ export function CivicCity(props) {
       setLocalSelectedProjectId(value);
       setLocalSelectedPlaceId(null);
       setLocalSelectedId(null);
+      setLocalSelectedFirmId(null);
     }
+  };
+  const changeFirmSelection = value => {
+    if (onObserverStateChange) onObserverStateChange({ firm: value });
+    else {
+      setLocalSelectedFirmId(value);
+      setLocalSelectedId(null);
+      setLocalSelectedPlaceId(null);
+      setLocalSelectedProjectId(null);
+    }
+  };
+  const changeCamera = (value, options) => {
+    if (onObserverStateChange) onObserverStateChange({ camera: value }, options);
+    else setLocalCamera(value);
   };
   const changeView = value => {
     if (onObserverStateChange) onObserverStateChange({ view: value });
@@ -367,14 +402,15 @@ export function CivicCity(props) {
   };
   const changePopulation = value => {
     const clusterPatch = value === "clusters"
-      ? { population: value, q: null, layer: null, activeOnly: false, agent: null, place: null, project: null }
-      : { population: value, agent: null, place: null, project: null };
+      ? { population: value, q: null, layer: null, activeOnly: false, agent: null, place: null, project: null, firm: null }
+      : { population: value, agent: null, place: null, project: null, firm: null };
     if (onObserverStateChange) onObserverStateChange(clusterPatch);
     else {
       setLocalPopulation(value);
       setLocalSelectedId(null);
       setLocalSelectedPlaceId(null);
       setLocalSelectedProjectId(null);
+      setLocalSelectedFirmId(null);
       if (value === "clusters") {
         setLocalQuery("");
         setLocalActiveLayer("all");
@@ -391,6 +427,8 @@ export function CivicCity(props) {
         agent: null,
         place: null,
         project: null,
+        firm: null,
+        camera: null,
         population: null,
       });
       return;
@@ -401,6 +439,8 @@ export function CivicCity(props) {
     setLocalSelectedId(null);
     setLocalSelectedPlaceId(null);
     setLocalSelectedProjectId(null);
+    setLocalSelectedFirmId(null);
+    setLocalCamera(null);
     setLocalPopulation("core");
   };
   const openMobileLens = () => {
@@ -443,6 +483,9 @@ export function CivicCity(props) {
           <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
         </div>
       </div>
+      <details className="civic-city__filter-panel" open={filtersOpen} onToggle={event => setFiltersOpen(event.currentTarget.open)}>
+        <summary>Layers and agent filters</summary>
+        <div className="civic-city__filters">
       <div className="civic-city__layers" role="group" aria-label="City evidence layer">
         {CITY_LAYERS.map(layer => <button
           key={layer.id}
@@ -475,8 +518,32 @@ export function CivicCity(props) {
         <input type="checkbox" checked={activeOnly} onChange={event => changeActiveOnly(event.target.checked)} />
         <span>Live or changed this tick</span>
       </label>
+        </div>
+      </details>
     </div>
 
+    <label className="civic-city__object-explorer">
+      <span>Keyboard explorer</span>
+      <select aria-label="Keyboard explorer" disabled={loading || Boolean(error)}
+        value={selectedProject ? `project:${selectedProject.id}` : selectedPlace ? `place:${selectedPlace.id}`
+          : selectedFirm ? `firm:${selectedFirm.id}` : selected ? `agent:${selected.id}` : ""}
+        onChange={event => {
+          const value = event.target.value;
+          const index = value.indexOf(":");
+          const kind = value.slice(0, index), id = value.slice(index + 1);
+          if (kind === "agent") changeSelection(id);
+          if (kind === "firm") changeFirmSelection(id);
+          if (kind === "place") changePlaceSelection(id);
+          if (kind === "project") changeProjectSelection(id);
+        }}>
+        <option value="">Choose a public object</option>
+        <optgroup label="Businesses">{model.firms.map(firm => <option key={firm.id} value={`firm:${firm.id}`}>{firm.name || `Firm ${firm.id}`}</option>)}</optgroup>
+        <optgroup label="Places">{model.places.map(place => <option key={place.id} value={`place:${place.id}`}>{place.name || `Place ${place.id}`}</option>)}</optgroup>
+        <optgroup label="Construction projects">{model.constructionProjects.map(project => <option key={project.id} value={`project:${project.id}`}>{project.name} · {humanize(constructionStage(project))}</option>)}</optgroup>
+        <optgroup label="Agents">{visibleAgents.map(agent => <option key={agent.id} value={`agent:${agent.id}`}>{agent.name}</option>)}</optgroup>
+      </select>
+      <span>Same selection in Atlas and Diorama</span>
+    </label>
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
         {cityView === "diorama" && <div className="civic-city__diorama-field">
@@ -502,8 +569,13 @@ export function CivicCity(props) {
                 selectedAgentId={selected?.id ?? null}
                 selectedPlaceId={selectedPlace?.id ?? null}
                 selectedProjectId={selectedProject?.id ?? null}
+                selectedFirmId={selectedFirm?.id ?? null}
+                camera={observerState ? observerState.camera : localCamera}
+                onCameraChange={changeCamera}
+                onOpenEvidence={openMobileLens}
                 onSelectAgent={changeSelection}
                 onSelectPlace={changePlaceSelection}
+                onSelectFirm={changeFirmSelection}
                 onSelectProject={changeProjectSelection}
                 onShowAllResidents={() => changePopulation("all")}
                 animateLiveActivity={animateLiveActivity}
@@ -557,15 +629,17 @@ export function CivicCity(props) {
           <strong>{district.name}</strong><span>{district.note}</span>
         </div>)}
 
-        {model.firms.map(firm => <div
+        {model.firms.map(firm => <button type="button"
           key={`firm-${firm.id}`}
-          className={`civic-city__firm civic-city__firm--${firm.layer}`}
+          className={`civic-city__firm civic-city__firm--${firm.layer}${String(firm.id) === String(selectedFirmId) ? " is-selected" : ""}`}
           style={{ left: `${firm.x}%`, top: `${firm.y}%` }}
           title={`${firm.name || "Firm"} · ${humanize(firm.sector || firm.status)}`}
-          aria-hidden="true"
+          onClick={() => changeFirmSelection(firm.id)}
+          aria-label={`Select business ${firm.name || firm.id}`}
+          aria-pressed={String(firm.id) === String(selectedFirmId)}
         >
           <span>{String(firm.name || "Firm").replace(/\s+(co|company|inc)\b.*$/i, "").slice(0, 16)}</span>
-        </div>)}
+        </button>)}
 
         {model.constructionProjects
           .filter(project => !(project.status === "completed" && project.place_id != null))
@@ -680,16 +754,16 @@ export function CivicCity(props) {
         <div className="civic-city__coordinates" aria-hidden="true">
           <span>GRID A-01</span><span>FIELD E-23</span><span>AE / {String(tick).padStart(4, "0")}</span>
         </div>
-          {(selected || selectedPlace || selectedProject) && <button
+          {(selected || selectedPlace || selectedProject || selectedFirm) && <button
             type="button"
             className="civic-city__mobile-peek"
             onClick={openMobileLens}
           >
             <span>
-              <b>{selectedProject?.name || selectedPlace?.name || selected?.name}</b>
+              <b>{selectedFirm?.name || selectedProject?.name || selectedPlace?.name || selected?.name}</b>
               <small>{selectedProject
                 ? `${humanize(constructionStage(selectedProject))} · ${selectedProjectMetrics.work}/${selectedProjectMetrics.requiredWork} work`
-                : selectedPlace ? humanize(selectedPlace.kind) : humanize(selected?.activityState)}</small>
+                : selectedFirm ? humanize(selectedFirm.sector) : selectedPlace ? humanize(selectedPlace.kind) : humanize(selected?.activityState)}</small>
             </span>
             <strong>Open evidence ↓</strong>
           </button>}
@@ -709,7 +783,34 @@ export function CivicCity(props) {
             <button type="button" onClick={() => moveSelection(1)} disabled={visibleAgents.length < 2} aria-label="Next visible agent">→</button>
           </div>
         </header>
-        {selectedProject ? <>
+        {selectedFirm ? <>
+          <div className="civic-city__identity">
+            <span className="civic-city__avatar civic-city__avatar--work" aria-hidden="true">{initials(selectedFirm.name)}</span>
+            <div><p>Business #{selectedFirm.id}</p><h3>{selectedFirm.name}</h3><span>{humanize(selectedFirm.sector)}</span></div>
+          </div>
+          <div className="civic-city__activity civic-city__activity--place">
+            <span>Committed business record</span><strong>{humanize(selectedFirm.status)}</strong>
+            <small>Observed at tick {model.selectedTick}</small>
+          </div>
+          <dl className="civic-city__facts">
+            <div><dt>Sector</dt><dd>{humanize(selectedFirm.sector)}</dd></div>
+            <div><dt>Status</dt><dd>{humanize(selectedFirm.status)}</dd></div>
+            <div><dt>Region</dt><dd>{selectedFirm.region_id == null ? "Not exposed" : `Region #${selectedFirm.region_id}`}</dd></div>
+            <div><dt>Workplace</dt><dd>{selectedFirm.place_name || (selectedFirm.place_id == null ? "Not exposed" : `Place #${selectedFirm.place_id}`)}</dd></div>
+            <div><dt>Employees</dt><dd>{selectedFirm.employees ?? "Not exposed by this map"}</dd></div>
+            <div><dt>Placement</dt><dd>{selectedFirm.coordinateSource === "derived" ? "Derived district layout"
+              : selectedFirm.place_id != null ? "Recorded workplace" : selectedFirm.region_id != null ? "Regional anchor" : "Projected map point"}</dd></div>
+          </dl>
+          <section className="civic-city__record">
+            <header><span>Price discovery</span><b>goods + equity</b></header>
+            <p>Inspect posted offers, actual sale prices, trading volume and execution age for this business at the same observation. Unlisted shares and periods without trades remain explicit.</p>
+          </section>
+          <div className="civic-city__lens-actions">
+            {pricesHref && <Link className="is-primary" to={pricesHref}>Inspect goods and equity prices <span>→</span></Link>}
+            {firmHref && <Link to={firmHref}>Open business dossier <span>↗</span></Link>}
+            {selectedFirm.place_id != null && model.places.some(place => String(place.id) === String(selectedFirm.place_id)) && <button type="button" onClick={() => changePlaceSelection(selectedFirm.place_id)}>Inspect workplace</button>}
+          </div>
+        </> : selectedProject ? <>
           <div className="civic-city__identity">
             <span className="civic-city__avatar civic-city__avatar--construction" aria-hidden="true">▧</span>
             <div>
@@ -797,6 +898,7 @@ export function CivicCity(props) {
           </section>
           <div className="civic-city__lens-actions">
             {placeHref && <Link className="is-primary" to={placeHref}>Open in Live City <span>→</span></Link>}
+            {associatedFirm && <button type="button" onClick={() => changeFirmSelection(associatedFirm.id)}>Inspect owning business</button>}
             <span className="civic-city__no-trace">Associations are labelled separately from direct event records.</span>
           </div>
         </> : selected ? <>
@@ -854,6 +956,7 @@ export function CivicCity(props) {
           </section>}
           <div className="civic-city__lens-actions">
             {peopleHref && <Link to={peopleHref}>Open citizen dossier <span>↗</span></Link>}
+            {employer && <button type="button" onClick={() => changeFirmSelection(employer.id)}>Inspect employer</button>}
             {traceHref
               ? <Link className="is-primary" to={traceHref}>Trace this event <span>→</span></Link>
               : <span className="civic-city__no-trace">Trace unlocks with an actor-linked event.</span>}

@@ -352,7 +352,8 @@ export function deriveCityModel({
     const point = observedX !== null && observedY !== null
       ? { x: observedX, y: observedY }
       : pointInDistrict({ id: `firm-${firm.id}` }, index, list.length, layer);
-    return { ...firm, ...point, layer };
+    return { ...firm, ...point, layer,
+      coordinateSource: observedX !== null && observedY !== null ? "observed" : "derived" };
   });
 
   const coordinateMode = observedCount === 0

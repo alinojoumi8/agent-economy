@@ -966,7 +966,11 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
     @app.get("/api/llm/runtime")
     async def llm_runtime():
-        return world.gateway.runtime_status()
+        from server.projections.envelope import lineage as runtime_lineage
+        context = runtime_lineage(store)
+        return JSONResponse({**world.gateway.runtime_status(), "context": {
+            "run_id": context["run_id"], "fork_id": context["fork_id"], "tick": "live"}},
+            headers={"Cache-Control": "private, no-store"})
 
     # ── Oracle (PRD R6) ──────────────────────────────────────────────────────
     @app.post("/api/oracle/ask")

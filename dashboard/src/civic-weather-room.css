@@ -577,6 +577,7 @@ body::before {
  */
 
 .civic-city__firm {
+  cursor: pointer;
   position: absolute;
   z-index: 3;
   display: flex;
@@ -592,6 +593,52 @@ body::before {
   font: 650 .625rem/1 var(--civic-font-label);
   text-align: center;
   transform: translate(-50%, -50%);
+}
+
+.civic-city__firm.is-selected,
+.civic-city__firm:focus-visible {
+  z-index: 8;
+  clip-path: none;
+  outline: 3px solid var(--civic-amber);
+  outline-offset: 3px;
+}
+
+.civic-city__object-explorer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .6rem;
+  padding: .55rem .8rem;
+  border-bottom: 1px solid var(--civic-rule);
+  background: var(--civic-white);
+  color: var(--civic-navy);
+  font: 600 .75rem var(--civic-font-label);
+}
+.civic-city__object-explorer select {
+  min-width: 0;
+  width: min(100%, 20rem);
+  min-height: 2.25rem;
+  padding: .35rem;
+  color: inherit;
+  background: inherit;
+  border: 1px solid var(--civic-rule);
+}
+.civic-city__object-explorer select:focus-visible {
+  outline: 3px solid var(--civic-amber);
+}
+.civic-city--world-os .civic-city__object-explorer {
+  background: var(--ae-surface-1);
+  color: var(--ae-text);
+  border-color: var(--ae-border);
+}
+.civic-city__lens-actions button {
+  min-height: 2.5rem;
+  border: 1px solid var(--civic-rule);
+  padding: .5rem .7rem;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .civic-city__firm--health {
@@ -3404,4 +3451,31 @@ body::before {
   .civic-city__agent.is-queued::after {
     animation: none;
   }
+}
+
+/* Put the city above supporting tables, with optional agent filters. */
+.world-os-world-workspace .civic-city__mast {
+  min-height: 0;
+  grid-template-columns: minmax(180px, .7fr) minmax(0, 3fr);
+}
+.world-os-world-workspace .civic-city__heading { padding: .65rem .8rem; }
+.world-os-world-workspace .civic-city__heading > p { display: none; }
+.world-os-world-workspace .civic-city__heading h2 { margin: 0; font-size: 1.4rem; line-height: 1.2; }
+.world-os-world-workspace .civic-city__run-state { padding: .3rem; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.world-os-world-workspace .civic-city__run-state > div { padding: .3rem .5rem; }
+.world-os-world-workspace .civic-city__run-state > div:last-child { grid-column: auto; }
+.civic-city .civic-city__controls { display: flex; min-height: 0; flex-wrap: wrap; }
+.civic-city .civic-city__view-toggle { min-width: 220px; }
+.civic-city__filter-panel { flex: 1 1 240px; min-width: 0; }
+.civic-city__filter-panel summary { padding: .9rem .8rem; cursor: pointer; font-size: .8rem; }
+.civic-city__filters { display: flex; flex-wrap: wrap; gap: .4rem; padding: .5rem; }
+.civic-city .civic-city__filters > * { min-width: 0; flex: 1 1 240px; }
+.world-os-world-supplement { margin-top: 1rem; }
+@media (max-width: 1100px) {
+  .world-os-world-workspace .civic-city__mast { grid-template-columns: 1fr; }
+  .world-os-world-workspace .civic-city__run-state dd { white-space: normal; }
+}
+@media (max-width: 600px) {
+  .world-os-world-workspace .civic-city__run-state { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .civic-city__object-explorer > span:last-child { display: none; }
 }

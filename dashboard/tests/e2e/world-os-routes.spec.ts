@@ -224,6 +224,7 @@ async function mockWorkspaceApis(
     status: "paused", running: false,
   } }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    context: { run_id: "run-demo", fork_id: null, tick: "live" },
     live_only: true, global: { capacity: 1, in_flight: 0, queue_depth: 0, peak_in_flight: 0, peak_queue_depth: 0, logical_deadline_s: 90 },
     simulated_days: { samples: 0, p50_wall_ms: null, p95_wall_ms: null }, providers: [],
   } }));
@@ -638,6 +639,57 @@ test("price lab hides a response from another cursor or instrument", async ({ pa
   await expect(page.getByRole("alert")).toHaveText("Price data does not match the selected run, fork, tick or instrument.");
   await expect(page.getByRole("heading", { name: "Goods", exact: true })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("999,999");
+});
+
+test("city business selection and camera survive price inspection and return", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const writes: string[] = [];
+  page.on("request", request => { if (request.method() === "POST") writes.push(request.url()); });
+  await page.route("**/api/v2/world-map?*", route => route.fulfill({ json: envelope("map", new URL(route.request().url()), {
+    regions: [], agents: [{ id: 1, name: "Supplier Officer", x: 0.2, y: 0.3, employer_id: 1 }],
+    organizations: [{ id: 1, name: "Northstar Foods", sector: "food", status: "listed", x: 0.4, y: 0.6,
+      place_id: 1, place_name: "Northstar workplace" }],
+    places: [{ id: 1, name: "Northstar workplace", kind: "workplace", owner_type: "firm", owner_id: 1,
+      x: 0.4, y: 0.6, capacity: 10 }], presence: [],
+  }, "world.map") }));
+  await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
+  await page.getByRole("button", { name: "Select business Northstar Foods" }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "2.5D Diorama", exact: true }).click();
+  const scene = page.getByTestId("civic-diorama");
+  await expect(scene).toBeVisible();
+  await page.getByRole("button", { name: "Focus selection", exact: true }).click();
+  await page.getByRole("button", { name: "Zoom into city", exact: true }).click();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await page.reload();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.getByRole("link", { name: "Inspect goods and equity prices" }).click();
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Equities", exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("tick")).toBe("3");
+  expect(new URL(page.url()).searchParams.get("price_firm")).toBe("1");
+  const businessLink = new URL(await page.getByRole("link", { name: "Inspect business" }).getAttribute("href") || "", page.url());
+  expect(new URLSearchParams(businessLink.searchParams.get("city") || "").get("camera")).toBe("40,60,3.4");
+  await page.getByRole("link", { name: "Explore the city" }).click();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.getByRole("button", { name: "Atlas", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Select business Northstar Foods" })).toHaveAttribute("aria-pressed", "true");
+  await page.goBack();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await page.getByRole("button", { name: "Inspect workplace", exact: true }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("place:1");
+  await page.getByRole("button", { name: "Inspect owning business", exact: true }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByLabel("Keyboard explorer")).toBeVisible();
+  await page.getByRole("button", { name: "Open selected evidence" }).click();
+  await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(writes).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
 });
 
 const studyId = "a".repeat(32);

@@ -339,6 +339,9 @@ beside it, never rasterized into the asset.
 
 ### Do:
 
+- Follow the [city observer interaction contract](docs/research/city-observer.md)
+  for map selection, price inspection, camera bookmarks and historical context.
+
 - **Do** let the city or investigative field own the composition.
 - **Do** make every live mark keyboard reachable and connect it to a readable
   inspector or table row.
@@ -347,12 +350,12 @@ beside it, never rasterized into the asset.
 - **Do** use synchronized transitions that reveal a change in world state.
 - **Do** keep dense data aligned to stable columns, coordinates, and legends.
 
-### Don't:
-
 - Support an original interactive 2.5D research city: pan, zoom, select, follow,
   inspect, time travel, and compare declared interventions. Recorded-day
   playback has its own clock and controls; animation cannot advance the world.
   Preserve evidence labels, keyboard access, and authorized projections.
+
+### Don't:
 - **Don't** add reward loops, invented economic events, or decorative agent
   activity that could be mistaken for recorded behavior.
 - **Don't** use generic dark-SaaS glass panels, decorative neon glows detached

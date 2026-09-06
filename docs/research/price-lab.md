@@ -258,6 +258,10 @@ External/participant-influenced attempts remain ineligible.
 
 ## Reading findings
 
+The [city observer](city-observer.md) opens both domains for a selected map
+business. Its return link preserves the city camera, renderer and filters
+while keeping the selected run, fork and tick authoritative.
+
 Reports retain assignment, execution and eligibility counts plus usable pairs
 for every outcome. A missing price, incomplete window or unmatched seed gives
 a named exclusion and a null estimate when no pair remains. `window_vwap`

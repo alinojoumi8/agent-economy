@@ -2,7 +2,8 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
-import { patchObserverViewState, projectionScopeParams } from "../app/observerViewState";
+import { patchObserverViewState } from "../app/observerViewState";
+import { cityRuntimeMatches, loadCityProjection } from "../app/cityProjection.js";
 import { CivicCity } from "../components/CivicCity";
 import { titleCase } from "../ui";
 import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
@@ -104,50 +105,25 @@ export function WorldWorkspace() {
    */
   const { observerState, runId } = projection;
   const tick = observerState.tick;
-  const overview = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, "world-city-overview", tick],
-    queryFn: ({ signal }) => {
-      const params = projectionScopeParams(observerState);
-      params.set("domains", "summary,events");
-      return projectionApi<{
-        summary?: { status?: string; phase?: string };
-        events?: { items?: unknown[] };
-      }>(`/api/v2/snapshot?${params}`, signal);
-    },
-    retry: false,
-  });
-  const runStatus = String(overview.data?.data.summary?.status || "").toLowerCase();
-  /* A finished or halted run has no more telemetry to poll for. */
-  const pollCurrentRun = tick === "live" && !TERMINAL_RUN_STATUSES.has(runStatus);
-  const runtime = useQuery({
-    queryKey: ["llm-runtime", runId],
-    queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
-    retry: false,
-    refetchInterval: () => (pollCurrentRun ? 2000 : false),
-  });
-  const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
   const city = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "world-city", tick, observerState.population],
-    queryFn: async ({ signal }) => {
-      const mapParams = projectionScopeParams(observerState);
-      mapParams.set("layers", "regions,agents,organizations,places,presence");
-      mapParams.set("population", observerState.population);
-      const civicParams = projectionScopeParams(observerState);
-      const [mapEnvelope, civicEnvelope] = await Promise.all([
-        projectionApi<{ agents?: unknown[]; organizations?: unknown[] }>(
-          `/api/v2/world-map?${mapParams}`, signal),
-        projectionApi<unknown>(`/api/v2/civic/summary?${civicParams}`, signal),
-      ]);
-      return {
-        agents: mapEnvelope.data.agents || [],
-        firms: mapEnvelope.data.organizations || [],
-        map: mapEnvelope.data,
-        civic: civicEnvelope.data,
-      };
-    },
+    queryFn: ({ signal }) => loadCityProjection({ ...observerState, runId }, path => projectionApi(path, signal)),
     retry: false,
-    refetchInterval: () => (pollCurrentRun ? 3000 : false),
+    refetchInterval: query => tick === "live" && !TERMINAL_RUN_STATUSES.has(
+      String(query.state.data?.overview.data.summary?.status || "").toLowerCase()) ? 3000 : false,
   });
+  const overview = { data: city.data?.overview };
+  const runStatus = String(overview.data?.data.summary?.status || "").toLowerCase();
+  const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
+  const pollCurrentRun = tick === "live" && !terminalRun && Boolean(city.data) && !city.error;
+  const runtime = useQuery({
+    queryKey: ["llm-runtime", runId, observerState.fork],
+    queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
+    enabled: pollCurrentRun, retry: false,
+    refetchInterval: pollCurrentRun ? 2000 : false,
+  });
+  const runtimeMatches = cityRuntimeMatches(runtime.data, city.data?.envelope, tick);
+  const currentRuntime = runtimeMatches && !terminalRun && !city.error && !runtime.error ? runtime.data : null;
   const model = normalizeWorldWorkspace(projection.data || {});
   const selectedRegionId = validatedSelectedId(searchParams.get("region"));
   const selectedPlaceId = projection.observerState.place;
@@ -167,7 +143,7 @@ export function WorldWorkspace() {
      * independently loaded workspace summary: a valid map selection can arrive
      * before that summary contains the same record.
      */
-    if (selectedProjectId != null || selectedPlaceId != null) next.delete("region");
+    if (selectedProjectId != null || selectedPlaceId != null || observerState.firm != null) next.delete("region");
     if (selectedRegionId != null && !selectedRegion) next.delete("region");
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
@@ -177,6 +153,7 @@ export function WorldWorkspace() {
     searchParams,
     selectedPlaceId,
     selectedProjectId,
+    observerState.firm,
     selectedRegion,
     selectedRegionId,
     setSearchParams,
@@ -201,6 +178,7 @@ export function WorldWorkspace() {
       next.delete("place");
       next.delete("project");
       next.delete("agent");
+      next.delete("firm");
     }
     if (key === "place") next.delete("region");
     setSearchParams(next);
@@ -209,6 +187,42 @@ export function WorldWorkspace() {
   const envelope = projection.envelope;
 
   return <section className="world-os-world-workspace">
+    <WorkspaceState loading={projection.loading} error={projection.error}>
+      <CivicCity
+        agents={!city.error ? city.data?.agents : []}
+        firms={!city.error ? city.data?.firms : []}
+        events={!city.error ? overview.data?.data.events?.items || [] : []}
+        /* No fallback to the atlas projection: when the city query fails the
+           panel must say so, not quietly draw a different dataset's people. */
+        map={!city.error ? city.data?.map : null}
+        civic={!city.error ? city.data?.civic ?? null : null}
+        runtime={currentRuntime}
+        runId={projection.runId}
+        tick={projection.observerState.tick}
+        phase={overview.data?.data.summary?.phase}
+        status={overview.data?.data.summary?.status}
+        loading={city.isLoading}
+        error={city.error instanceof Error ? city.error.message : ""}
+        connected={projection.transport.status === "live"}
+        historical={projection.observerState.tick !== "live"}
+        lineage={city.data?.envelope ? {
+          semantics: city.data.envelope.semantics_version,
+          projection: city.data.envelope.projection_version,
+          policy: city.data.envelope.policy_version,
+        } : null}
+        /*
+         * "world-os", not "world-os-world". The variant string is what becomes
+         * the modifier class, and civic-weather-room.css only ever defined
+         * .civic-city--world-os. The extra word meant the atlas matched none of
+         * its own dark treatment and fell back to the light civic default, which
+         * is why "Civic Forum" was white-on-paper at 1.25:1 inside a dark app.
+         */
+        variant="world-os"
+        observerState={projection.observerState}
+        onObserverStateChange={projection.setObserverState}
+      />
+
+      <div className="world-os-world-supplement">
     <WorkspaceHeader
       title="City map"
       kicker="Agents, places, and construction"
@@ -237,7 +251,6 @@ export function WorldWorkspace() {
         </label>
       </div>}
     />
-    <WorkspaceState loading={projection.loading} error={projection.error}>
       {!model.enabled && <p className="world-os-disabled-callout">Geographic simulation data is disabled for this run.</p>}
       <dl className="world-os-summary-strip" aria-label="World projection summary">
         <div><dt>Population</dt><dd>{model.summary.population}</dd></div>
@@ -251,39 +264,7 @@ export function WorldWorkspace() {
         Flow counts describe the newest 100 migrations and shipments the projection returns, not the run total.
       </p>}
 
-      <CivicCity
-        agents={city.data?.agents}
-        firms={city.data?.firms}
-        events={overview.data?.data.events?.items || []}
-        /* No fallback to the atlas projection: when the city query fails the
-           panel must say so, not quietly draw a different dataset's people. */
-        map={city.data?.map}
-        civic={city.data?.civic ?? null}
-        runtime={runtime.data ?? null}
-        runId={projection.runId}
-        tick={projection.observerState.tick}
-        phase={overview.data?.data.summary?.phase}
-        status={overview.data?.data.summary?.status}
-        loading={city.isLoading}
-        error={city.error instanceof Error ? city.error.message : ""}
-        connected={projection.transport.status === "live"}
-        historical={projection.observerState.tick !== "live"}
-        lineage={envelope ? {
-          semantics: envelope.semantics_version,
-          projection: envelope.projection_version,
-          policy: envelope.policy_version,
-        } : null}
-        /*
-         * "world-os", not "world-os-world". The variant string is what becomes
-         * the modifier class, and civic-weather-room.css only ever defined
-         * .civic-city--world-os. The extra word meant the atlas matched none of
-         * its own dark treatment and fell back to the light civic default, which
-         * is why "Civic Forum" was white-on-paper at 1.25:1 inside a dark app.
-         */
-        variant="world-os"
-        observerState={projection.observerState}
-        onObserverStateChange={projection.setObserverState}
-      />
+      </div>
 
       {/*
         * Provider lanes — the inference fabric actually answering for this
@@ -294,35 +275,33 @@ export function WorldWorkspace() {
         * Scripted and mock lanes are filtered out on purpose: they are not a
         * provider under load, and showing them as one would overstate the fabric.
         */}
-      <section
+      {tick === "live" && <section
         className="world-os-provider-deck"
-        aria-label={tick === "live" && !terminalRun ? "Live AI provider lanes" : "Current AI provider lanes"}
+        aria-label={terminalRun ? "Ended run provider activity" : "Live AI provider lanes"}
       >
         <header>
           <div>
-            <p className="world-os-kicker">{
-              tick !== "live" ? "Current inference fabric"
-                : terminalRun ? "Final inference fabric" : "Live inference fabric"
-            }</p>
+            <p className="world-os-kicker">{terminalRun ? "Final inference fabric" : "Live inference fabric"}</p>
             <h3>Provider lanes</h3>
           </div>
-          {runtime.data && <div className="world-os-provider-global">
-            <span>{runtime.data.live_only ? "Live only" : "Mixed mode"}</span>
-            <strong>{runtime.data.global.in_flight}/{runtime.data.global.capacity}</strong>
+          {currentRuntime && <div className="world-os-provider-global">
+            <span>{currentRuntime.live_only ? "Live only" : "Mixed mode"}</span>
+            <strong>{currentRuntime.global.in_flight}/{currentRuntime.global.capacity}</strong>
             <small>
-              {runtime.data.global.queue_depth} queued · peak {runtime.data.global.peak_in_flight}
-              {runtime.data.simulated_days?.p50_wall_ms == null
+              {currentRuntime.global.queue_depth} queued · peak {currentRuntime.global.peak_in_flight}
+              {currentRuntime.simulated_days?.p50_wall_ms == null
                 ? ""
-                : ` · day p50 ${(runtime.data.simulated_days.p50_wall_ms / 1000).toFixed(1)}s`}
+                : ` · day p50 ${(currentRuntime.simulated_days.p50_wall_ms / 1000).toFixed(1)}s`}
             </small>
           </div>}
         </header>
-        {runtime.error && <p className="world-os-policy-note">Runtime telemetry is temporarily unavailable.</p>}
-        {tick !== "live" && <p className="world-os-policy-note">
-          Provider capacity is current runtime telemetry, not a historical reconstruction.
+        {terminalRun && <p className="world-os-policy-note">This run has ended. Current provider activity is unavailable.</p>}
+        {!terminalRun && runtime.error && <p className="world-os-policy-note">Runtime telemetry is temporarily unavailable.</p>}
+        {!terminalRun && !runtime.error && runtime.data && !runtimeMatches && !city.error && <p className="world-os-policy-note">
+          Runtime telemetry does not match this city's run and fork context.
         </p>}
         <div className="world-os-provider-lanes">
-          {(runtime.data?.providers || [])
+          {(currentRuntime?.providers || [])
             .filter(lane => !["scripted", "mock"].includes(lane.provider))
             .map(lane => {
               const utilization = Math.min(
@@ -354,7 +333,8 @@ export function WorldWorkspace() {
             })}
           {runtime.isLoading && <div className="world-os-provider-loading">Loading live provider capacity…</div>}
         </div>
-      </section>
+      </section>}
+      {tick !== "live" && <p className="world-os-policy-note">Current provider activity is unavailable in historical city views.</p>}
 
       <div className="world-os-world-detail-grid">
         <article className="world-os-workspace-card world-os-world-inspector" aria-live="polite">
