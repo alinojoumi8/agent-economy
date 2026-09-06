@@ -103,6 +103,8 @@ def install_v2_routes(app, world, controller) -> None:
     operator_workspace = OperatorWorkspace(workspace_path, world_path=store.path)
     app.state.operator_workspace = operator_workspace
     csrf_token = str(workspace_config.get("csrf_token", "local-observatory"))
+    from server.research_api import install_research_routes
+    install_research_routes(app, world, controller, csrf_token=csrf_token, workspace_path=workspace_path)
 
     def projection_principal(
         *, agent_id: int | None = None, disclosure_case_id: int | None = None,

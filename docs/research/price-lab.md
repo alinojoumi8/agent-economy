@@ -4,7 +4,7 @@ The price lab provides a historical price inspector and a Python workflow for
 drafting, validating, running and reporting provider-free paired studies.
 Goods and equities share observation, eligibility and analysis contracts.
 [G1/F1 induced-value policy benchmarks](market-benchmarks.md) are also available.
-The full city integration, operator study API, live-model
+The full city integration, operator study launch, live-model
 policy comparisons and empirical validation remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
@@ -27,6 +27,49 @@ foundings and retain exited businesses. Choices cap at 500 plus an explicitly
 selected existing firm; truncation is visible. The response contains public
 price evidence, not account balances or agent prompts. Observer interactions
 cannot launch a study or advance the world.
+
+## Compare in the local interface
+
+Open **Experiments → Price studies** with the observer cursor at **Live**.
+Choose a saved study to verify its evidence. The library lists local G2/F2
+study batches; catalog labels are unverified until that selection finishes.
+These independent study worlds are not counterfactual children of the world
+currently open. Historical views do not fetch current library artifacts.
+
+Goods and equities receive the same space and treatment selector. The screen
+shows arm coverage, available arm means, matched-seed differences, intervals,
+per-seed values/execution age and excluded attempts. Arm means can use different
+available cohorts; the paired difference uses only matching eligible seeds.
+An unavailable price stays unavailable, and stale executed prices retain their
+ages. Open the protocol details for snapshot status, provider cost coverage,
+source/manifest identities and limitations. Use **Verify again** after local
+evidence changes.
+
+**Download private evidence** rechecks the displayed result and verification
+identities before publishing a private ZIP. Repeating an unchanged export
+returns the same verified artifact. Downloads require operator authority and
+carry a SHA-256. The interface limits source evidence to 128 MiB and exposes
+at most 1,024 attempt/outcome observations; the CLI supports larger bundles.
+Catalog scans are bounded and list at most 100 batches. Drafting/running studies
+from this screen and checkpoint-based study forks remain pending.
+
+The local-only endpoints are under `/api/v2/operator/research`:
+
+| Method and path | Contract |
+|---|---|
+| `GET /studies` | Bounded catalog; no verification claims for listed titles |
+| `GET /studies/{id}?result_sha256=...` | Fresh comparison from verified evidence; no database/config/private path payloads |
+| `POST /studies/{id}/export` | Strict result/verification hash body; create or reuse an exclusively published private bundle |
+| `GET /exports/{token}` | Authorized attachment download with `private, no-store` caching |
+
+All require `run_id`, the current `fork_id` when applicable, `tick=live` and
+the existing operator session's `X-CSRF-Token`. Hosted-safe instances deny
+access. Stale context/evidence gives 409; unavailable evidence gives a sanitized
+422. IDs cannot select arbitrary filesystem paths. Optional local config
+`operator_research` supports `enabled`, `data_root` and `out_dir`; defaults are
+the checkout's `data/studies` and `reports/out`. Export artifacts live beside
+the operator workspace database under `research-exports/`, outside scientific
+world tables. Expensive file verification runs off the HTTP event loop.
 
 ## What can be measured now
 

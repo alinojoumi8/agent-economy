@@ -1,0 +1,17 @@
+.study-library__verdict { padding: 16px; border-left: 4px solid var(--ae-accent); background: var(--ae-surface-1); }
+.study-library__verdict strong, .study-library__verdict span { display: block; line-height: 1.6; }
+.study-library__outcome { padding: 16px; border-top: 1px solid var(--ae-border-soft); }
+.study-library__outcome h4 { margin: 0 0 8px; font-size: .95rem; }
+.study-library__outcome h4 span { display: block; color: var(--ae-text-2); font-size: .72rem; margin-top: 4px; font-weight: 400; }
+.study-library__outcome p { font-size: .8rem; line-height: 1.6; }
+.study-library__outcome .price-lab__measurements { padding: 6px 0; }
+.study-library__metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.study-library__metadata dt { font-size: .78rem; margin-bottom: 4px; }
+.study-library__metadata dd { margin: 0; }
+.study-library code { overflow-wrap: anywhere; white-space: normal; }
+.study-library__export { padding: 16px; border: 1px solid var(--ae-border); }
+.study-library__export h4 { margin: 0 0 8px; }
+.study-library__export p { line-height: 1.6; font-size: .82rem; }
+.study-library__export button { min-height: 44px; border: 1px solid var(--ae-accent); background: var(--ae-accent); color: var(--ae-on-accent, #fff); padding: 8px 12px; border-radius: 3px; }
+.study-library__export button:focus-visible { outline: 2px solid var(--ae-accent); outline-offset: 3px; }
+@media (max-width: 600px) { .study-library__metadata { grid-template-columns: 1fr; } }

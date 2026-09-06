@@ -145,6 +145,7 @@ jobs:
           tests/test_study_protocol.py
           tests/test_study_results.py
           tests/test_study_bundle.py
+          tests/test_study_library.py
           tests/test_induced_market_benchmarks.py
           tests/test_price_observations.py
           tests/test_price_lab_projection.py
@@ -192,6 +193,7 @@ jobs:
           world-os-states.spec.ts
           world-os-privacy.spec.ts
           agent-connections.spec.ts
+          world-os-routes.spec.ts
         working-directory: dashboard
       - name: Build React dashboard
         run: npm run build

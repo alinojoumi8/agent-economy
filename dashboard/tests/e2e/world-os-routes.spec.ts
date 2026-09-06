@@ -639,3 +639,101 @@ test("price lab hides a response from another cursor or instrument", async ({ pa
   await expect(page.getByRole("heading", { name: "Goods", exact: true })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("999,999");
 });
+
+const studyId = "a".repeat(32);
+const studyHash = "b".repeat(64);
+
+function comparisonFixture(fork: string | null = null) {
+  return { contract: "operator-study-comparison-v1", id: studyId,
+    context: { run_id: "run-demo", fork_id: fork, tick: "live" },
+    title: "Goods and equity pilot", hypothesis: "Declared cost intervention", limitations: ["Synthetic small sample"],
+    arms: [{ key: "base", label: "Baseline", role: "baseline" }, { key: "cost", label: "Higher cost", role: "treatment" }],
+    measurement_window: [1, 8], verification_sha256: "c".repeat(64), manifest_sha256: "d".repeat(64),
+    source_identity: { git_commit: "e".repeat(40) },
+    outcomes: [
+      { key: "goods", domain: "goods", label: "Goods execution VWAP", purpose: "primary", unit: "cents_per_unit", currency: "CAD", aggregation: "window_vwap", formula: "Notional / units", missingness: "No sale is unavailable", metric_version: "goods-sales-vwap-v1" },
+      { key: "equity", domain: "equities", label: "Equity execution price", purpose: "exploratory", unit: "cents_per_share", currency: "CAD", aggregation: "terminal", formula: "Last qualified execution", missingness: "No trade is unavailable", metric_version: "qualified-last-execution-v1" },
+    ],
+    summary: { baseline_arm: "base", exclusions: [], coverage: {
+      base: { assigned: 2, started: 2, completed: 2, eligible: 2 },
+      cost: { assigned: 2, started: 2, completed: 1, eligible: 1 },
+    }, metrics: {
+      goods: { base: { mean: 200 }, cost: { mean: 200, paired_effect: { mean_difference: 0, ci95_bootstrap: null, n_pairs: 1, assigned_pairs: 2, pair_exclusions: [{ seed: 2, reason: "incomplete_horizon" }] } } },
+      equity: { base: { mean: null }, cost: { mean: null, paired_effect: { mean_difference: null, ci95_bootstrap: null, n_pairs: 0, assigned_pairs: 2, pair_exclusions: [] } } },
+    } },
+    attempts: [
+      { arm: "base", seed: 1, ticks: 8, expected_ticks: 8, execution_status: "completed", eligibility: { status: "eligible", reasons: [] } },
+      { arm: "cost", seed: 2, ticks: 3, expected_ticks: 8, execution_status: "paused", eligibility: { status: "ineligible", reasons: ["incomplete_horizon"] } },
+    ],
+    measurements: { goods: [{ arm: "base", seed: 1, value: 200, status: "complete", age_ticks: null }],
+      equity: [{ arm: "base", seed: 1, value: 150, status: "complete", age_ticks: 7 }] },
+    verification: { status: "verified", result_sha256: studyHash, declared_context: "verified", issues: [],
+      operations: { status: "partial", provider_calls: null, provider_spend_usd: null } },
+  };
+}
+
+async function mockStudyLibrary(page: Page, mismatch = false) {
+  const requests: Array<{ path: string; method: string }> = [];
+  await page.route("**/api/v2/operator/research/**", route => {
+    const url = new URL(route.request().url());
+    requests.push({ path: url.pathname, method: route.request().method() });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    if (url.pathname.endsWith("/export")) return route.fulfill({ json: { token: "archive", sha256: "f".repeat(64) } });
+    if (url.pathname.includes("/exports/")) return route.fulfill({ contentType: "application/zip", body: "bundle-fixture" });
+    if (url.pathname.endsWith("/studies")) return route.fulfill({ json: {
+      contract: "operator-study-catalog-v1", context: { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" },
+      items: [{ id: studyId, title: "Goods and equity pilot", domains: ["goods", "equities"], result_sha256: studyHash }], truncated: false, omitted: 0,
+    } });
+    const data = comparisonFixture(url.searchParams.get("fork_id"));
+    if (mismatch) { data.context.run_id = "other-run"; data.hypothesis = "WRONG-STUDY-CANARY"; }
+    return route.fulfill({ json: data });
+  });
+  return requests;
+}
+
+test("saved price studies show equal domains, coverage, missing values and private download", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLibrary(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&fork=fork-1");
+  await page.getByLabel("Saved study", { exact: true }).selectOption(studyId);
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  const goods = page.getByRole("article", { name: "Goods study comparison" });
+  const equities = page.getByRole("article", { name: "Equities study comparison" });
+  await expect(goods.getByText("0", { exact: true })).toBeVisible();
+  await expect(equities.getByText("Unavailable", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("table", { name: "Study attempt coverage" })).toBeVisible();
+  await equities.getByText("Values and execution age by seed", { exact: true }).click();
+  await expect(equities.getByRole("table", { name: "Outcome evidence for Equity execution price" })).toContainText("7");
+  await page.getByText("Attempt and exclusion evidence", { exact: true }).click();
+  await expect(page.getByRole("table", { name: "Preserved study attempts" })).toContainText("incomplete horizon");
+  await page.getByText("Protocol, costs and limitations", { exact: true }).click();
+  await expect(page.getByText("partial", { exact: true })).toBeVisible();
+  expect(requests.filter(request => request.method === "POST")).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download private evidence" }).click();
+  expect((await downloaded).suggestedFilename()).toBe(`study-${studyId}.zip`);
+  await expect(page.getByText(/Download ready. SHA-256:/)).toBeVisible();
+  expect(requests.filter(request => request.method === "POST").map(request => request.path)).toEqual([`/api/v2/operator/research/studies/${studyId}/export`]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("historical price-study navigation does not fetch local study artifacts", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLibrary(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&tick=3&study=${studyId}`);
+  await expect(page.getByRole("heading", { name: "Saved studies use the current operator workspace" })).toBeVisible();
+  expect(requests).toEqual([]);
+});
+
+test("study comparison refuses a response for a different run", async ({ page }) => {
+  await setup(page);
+  await mockStudyLibrary(page, true);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("alert")).toContainText("Study evidence does not match");
+  await expect(page.locator("body")).not.toContainText("WRONG-STUDY-CANARY");
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toHaveCount(0);
+});

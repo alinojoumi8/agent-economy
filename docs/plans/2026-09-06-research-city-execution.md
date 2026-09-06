@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical price inspector and verified private bundles implemented; study operator UI and live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, saved-study comparison UI and verified private bundles implemented; operator launch and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -60,7 +60,7 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Deliver the operator study workflow, then
+Deliver operator study drafting/launch, then
 continue interactive city integration and W5–W9. Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Paused research resume and daily-world keyed randomness
@@ -186,3 +186,45 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   G2 `2e05e110b0792a0b3fb32ec4b1b55227cc4558a4b217d0cdd6b1552da45b8838`;
   F2 `e0e6bd5eef2677948045f6d8ed24062ef4062515cda436cead0e4e061222bad0`.
   Artifacts remain ignored local files, not PR attachments.
+
+## Local study comparison interface
+
+- Evidence transport checkpoint `4d18988` is pushed to PR #82. Its Python
+  smoke, core subset, research-evidence and dashboard jobs passed on GitHub.
+  Full-matrix/hosted jobs and substantive CodeRabbit draft review remain skipped.
+- Experiments → Price studies adds an operator-only local catalog, freshly
+  verified goods/equity comparisons, coverage, per-seed values and execution
+  age, exclusions, protocol/cost details and verified private downloads.
+  It labels studies as independent of the currently observed world. Historical
+  cursors make no library requests. Returning old/mismatched data cannot expose
+  another run/fork/study's comparison or start its download.
+- API responses exclude database/config/private-path payloads, enforce current
+  run/fork/CSRF context and reject hosted-safe access. Exports recheck result and
+  verification identities, reuse unchanged artifacts and retain failures.
+  Scientific databases receive no new tables or economic writes. Verification
+  uses a serialized worker thread outside the HTTP event loop.
+- First API/projection checks: **9 passed** (10.90 s). Dashboard unit tests:
+  **222 passed**. New study browser tests: **3 passed** (5.9 s); combined routes,
+  states and historical city: **30 passed** (38.7 s).
+- A concurrent Vite build changed the tracked source tree during a research
+  fixture's launch, correctly preventing eligibility (**60 passed, 5 setup
+  errors**). With the build completed before research execution, the same
+  selection passed **65 tests** (37.87 s), including replay/documentation.
+  No guard was bypassed. Final execution-age refinements passed **40 Python
+  tests** (37.49 s) and **3 browser tests** (5.8 s). TypeScript and production
+  build passed; existing Starlette and large-bundle warnings remain.
+- Production UI verified against both saved G2/F2 campaigns with source world
+  `afd8656714` still paused at tick 3. G2 showed the retained +58.333 goods-price
+  difference; F2 showed zero measured differences and equity execution ages
+  of 7 and 3 ticks. Its private UI download produced SHA-256
+  `4e1dd877f2c618c9e56a15b3fa57979eeea322a729dd32e7c26e5791f7fbc44b`.
+- Final combined research/price/documentation selection: **127 passed**
+  (70.92 s). An export race regression then bound the displayed verification
+  identity through the bundle's own final load: **37 passed** (37.27 s).
+  Private cache headers and documentation: **28 passed** (11.38 s).
+  The final dashboard unit run again passed **222 tests**. Generated private
+  `research-exports/` directories are ignored regardless of workspace location;
+  the production ZIP was verified ignored before staging.
+- The new comparison does not implement study launch, checkpoint-derived
+  forks, paused research resume, daily keyed streams or live-model comparisons.
+  Those remain explicit next deliveries before full city/society/validation work.

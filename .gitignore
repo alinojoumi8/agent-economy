@@ -22,6 +22,8 @@ data/control-plane/
 data/counterfactuals/
 data/experiments/
 data/studies/
+# Private operator evidence bundles, wherever the workspace database is stored.
+research-exports/
 reports/out/
 .venv/
 node_modules/

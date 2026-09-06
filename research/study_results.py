@@ -21,6 +21,15 @@ class StudyArtifactError(ValueError):
     """Malformed or unsupported study artifacts; no raw contents in the error."""
 
 
+class StudyIdentityChanged(StudyArtifactError):
+    """A previously reviewed result no longer has the same verified evidence."""
+
+
+def verification_identity(result: dict) -> str:
+    verification = {k: v for k, v in result["verification"].items() if k not in {"data_dir", "report_dir"}}
+    return digest_json({"verification": verification, "summary": result["summary"], "attempts": result["results"]})
+
+
 def read_json(path: Path) -> dict:
     if path.stat().st_size > 32 * 1024 * 1024:
         raise StudyArtifactError("study JSON exceeds the verification size limit")
@@ -113,7 +122,7 @@ def _verify_cell(row: dict, worker: dict | None, spec: StudySpec, config: dict,
             {k: v for k, v in worker.items() if k != "eligibility"}):
         reasons.append("worker_result_mismatch")
     if row.get("execution_status") != "completed":
-        return sorted(set(reasons + ["execution_not_completed"]))
+        return sorted(set(reasons or ["execution_not_completed"]))
     reasons += verify_attempt(row, expected_ticks=spec.time.horizon, resolve_path=location.locate)
     try:
         claim_path = location.locate(row["attempt_claim"])

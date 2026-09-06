@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 from research.artifacts import digest_json, file_sha256, json_bytes, publish_json
-from research.study_results import StudyArtifactError, load_study_result
+from research.study_results import StudyArtifactError, StudyIdentityChanged, load_study_result, verification_identity
 
 CONTRACT = "study-evidence-bundle-v1"
 CLASSIFICATION = "private_research_evidence"
@@ -77,12 +77,15 @@ def _proof(result: dict) -> dict:
 
 def export_study_bundle(result_path: str | Path, destination: str | Path, *,
                         data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out",
-                        expected_sha256: str | None = None, max_bytes: int = MAX_BYTES) -> dict:
+                        expected_sha256: str | None = None, expected_verification: str | None = None,
+                        max_bytes: int = MAX_BYTES) -> dict:
     """Copy original bytes, including exclusions, into an exclusively published ZIP."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_BYTES:
         raise StudyArtifactError("invalid bundle size limit")
     result = load_study_result(result_path, data_root=data_root, out_dir=out_dir,
                                expected_sha256=expected_sha256)
+    if expected_verification is not None and verification_identity(result) != expected_verification:
+        raise StudyIdentityChanged("Study evidence changed; verify it again before exporting.")
     requested_target = Path(destination)
     if requested_target.exists() or requested_target.is_symlink():
         raise FileExistsError("bundle destination already exists")
