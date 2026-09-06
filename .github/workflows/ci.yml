@@ -146,6 +146,7 @@ jobs:
           tests/test_study_results.py
           tests/test_study_bundle.py
           tests/test_study_library.py
+          tests/test_study_jobs.py
           tests/test_induced_market_benchmarks.py
           tests/test_price_observations.py
           tests/test_price_lab_projection.py

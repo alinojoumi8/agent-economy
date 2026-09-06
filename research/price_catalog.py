@@ -26,7 +26,7 @@ def price_study_catalog() -> dict:
     return {"version": "price-study-catalog-v1", "presets": [dict(item) for item in PRESETS],
             "supported_domains": ["goods", "equities"],
             "status": "exploratory_provider_free_pilots",
-            "limitations": ["Known-value allocation/auction benchmarks are a separate required milestone.",
+            "limitations": ["Known-value allocation/auction fixtures are separate benchmarks; these world pilots have no known fair value.",
                             "The current daily engine cannot evaluate intraday latency or high-frequency price discovery."]}
 
 

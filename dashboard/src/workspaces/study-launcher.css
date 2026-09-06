@@ -1,0 +1,24 @@
+.study-launcher { display: grid; gap: 18px; margin-top: 20px; min-width: 0; }
+.study-launcher h3, .study-launcher h4 { margin: 0 0 8px; }
+.study-launcher p { line-height: 1.55; }
+.study-launcher__scope, .study-launcher__callout { border-left: 3px solid var(--ae-accent); padding: 8px 16px; background: var(--ae-surface-1); }
+.study-launcher fieldset { border: 1px solid var(--ae-border); border-radius: 6px; padding: 16px; min-width: 0; }
+.study-launcher legend { padding: 0 8px; font-weight: 650; }
+.study-launcher__fields, .study-launcher__facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.study-launcher__fields label { display: grid; gap: 6px; align-content: start; }
+.study-launcher__fields input, .study-launcher__fields select { width: 100%; min-width: 0; padding: 8px; border-radius: 4px; color: var(--ae-text); background: var(--ae-surface-1); border: 1px solid var(--ae-border); }
+.study-launcher button { min-height: 40px; padding: 8px 12px; cursor: pointer; }
+.study-launcher button:disabled { cursor: default; opacity: .55; }
+.study-launcher__facts dt { color: var(--ae-text-2); font-size: .82rem; }
+.study-launcher__facts dd { margin: 4px 0 0; font-weight: 600; }
+.study-launcher__arms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.study-launcher__arms article { border: 1px solid var(--ae-border); border-radius: 6px; padding: 16px; }
+.study-launcher__review, .study-launcher__job { min-width: 0; padding: 18px; border: 1px solid var(--ae-border); border-radius: 6px; }
+.study-launcher__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.study-launcher code { overflow-wrap: anywhere; }
+.study-launcher pre { overflow: auto; max-height: 360px; font-size: .78rem; padding: 12px; }
+@media (max-width: 900px) { .study-launcher__fields, .study-launcher__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) {
+  .study-launcher__fields, .study-launcher__facts, .study-launcher__arms { grid-template-columns: minmax(0, 1fr); }
+  .study-launcher__review, .study-launcher__job { padding: 12px; }
+}

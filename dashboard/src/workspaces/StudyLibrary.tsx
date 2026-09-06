@@ -144,7 +144,7 @@ export function StudyLibrary() {
     {error && <p className="world-os-form-error" role="alert">{error instanceof Error ? error.message : "Study library is unavailable."}</p>}
     {currentCatalog?.truncated && <p>The catalog is limited to 100 studies and a bounded directory scan. Use the local research commands for older batches.</p>}
     {Boolean(currentCatalog?.omitted) && <p>{currentCatalog?.omitted} malformed catalog record(s) could not be listed.</p>}
-    {currentCatalog && !currentCatalog.items.length && <div className="world-os-empty"><h3>No saved price studies</h3><p>Create a G2 or F2 study with the local research commands. Study launch from this screen is not yet available.</p></div>}
+    {currentCatalog && !currentCatalog.items.length && <div className="world-os-empty"><h3>No saved price studies</h3><p>Choose Create a study to prepare a G2 or F2 pilot, or use the local research commands.</p></div>}
     {studyId && currentCatalog && !selected && <p role="alert">This study is not in the current local catalog.</p>}
     {study && <>
       <div className="study-library__verdict" aria-live="polite"><strong>{study.verification.status === "verified" ? "Evidence verified" : "Evidence needs attention"}</strong>

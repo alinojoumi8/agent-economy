@@ -1,10 +1,10 @@
 # Price Discovery Lab: inspector and study workflow
 
-The price lab provides a historical price inspector and a Python workflow for
+The price lab provides a historical price inspector and local UI/Python workflows for
 drafting, validating, running and reporting provider-free paired studies.
 Goods and equities share observation, eligibility and analysis contracts.
 [G1/F1 induced-value policy benchmarks](market-benchmarks.md) are also available.
-The full city integration, operator study launch, live-model
+The full city integration, checkpoint-derived studies, live-model
 policy comparisons and empirical validation remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
@@ -50,8 +50,52 @@ identities before publishing a private ZIP. Repeating an unchanged export
 returns the same verified artifact. Downloads require operator authority and
 carry a SHA-256. The interface limits source evidence to 128 MiB and exposes
 at most 1,024 attempt/outcome observations; the CLI supports larger bundles.
-Catalog scans are bounded and list at most 100 batches. Drafting/running studies
-from this screen and checkpoint-based study forks remain pending.
+Catalog scans are bounded and list at most 100 batches. Checkpoint-based study
+forks remain pending.
+
+## Create and monitor a local pilot
+
+Under **Experiments → Price studies → Create a study**, choose G2 (input costs)
+or F2 (public firm information), seeds, horizon and resource limits. Both presets
+measure goods and equities. **Validate draft** preserves an immutable protocol
+with its resolved configuration and source identity; it creates no world or
+provider call. Review the baseline, intervention, measurement window, targets,
+declared primary outcome and limits before choosing **Run independent study**.
+
+These are fresh-genesis pilots using `runs/price-lab-pilot.yaml`: 14 agents,
+three firms, scripted policies, zero external provider calls/spend. They do not
+fork the world currently being observed. The interface permits 1–5 unique seeds,
+3–30 daily ticks, one intervention day, a 10–300 second wall limit and a
+32–128 MiB evidence budget; only one study can occupy the local execution slot.
+The storage allowance is an uncalibrated planning heuristic: 8 MiB per world plus
+256 KiB per world-tick, including replay. A request exceeding its chosen budget
+is rejected before draft publication. Actual disk checks occur every 200 ms;
+a current write and the final diagnostic report can exceed that threshold.
+
+Draft and job IDs remain in the URL. Reloading a validated draft never launches
+it. Launch checks the exact draft digest, run/fork context and source identity.
+A repeated idempotency key returns the existing job, including its failure;
+a different key cannot reuse an already launched draft. **Edit as a new draft**
+creates a new review opportunity. Changing source files after validation
+requires a fresh validation, and changing source during execution excludes
+affected evidence through the ordinary study guards.
+
+A dedicated supervisor continues independently of the browser and HTTP server.
+The UI polls only a selected active job at the Live cursor, shows completed
+cell/replay reports and offers **Open verified comparison** when a result exists.
+Completion is distinct from valid outcomes: exclusions and missing prices remain
+visible in comparison. No automatic retry, resume or provider fallback occurs.
+
+After a supervisor exits without a terminal receipt, the job is marked
+interrupted once it had started or its 30-second startup allowance expires.
+**Release interrupted job slot** first checks the process-owned execution lock,
+then retires only the scheduler pointer. Claims, partial databases and logs are
+retained. A delayed supervisor cannot start after this release. Running jobs
+cannot be released this way; the configured wall/disk limits still apply.
+Each world worker watches its supervisor's process handle and exits if that
+supervisor dies. Its separate execution lock prevents recovery while it is
+still stopping. A hard stop preserves partial evidence without a success receipt.
+Use the originating local run context to inspect or recover its job.
 
 The local-only endpoints are under `/api/v2/operator/research`:
 
@@ -61,6 +105,12 @@ The local-only endpoints are under `/api/v2/operator/research`:
 | `GET /studies/{id}?result_sha256=...` | Fresh comparison from verified evidence; no database/config/private path payloads |
 | `POST /studies/{id}/export` | Strict result/verification hash body; create or reuse an exclusively published private bundle |
 | `GET /exports/{token}` | Authorized attachment download with `private, no-store` caching |
+| `GET /capabilities` | Fixed pilot scope, resource limits and any active job in this run context |
+| `POST /drafts/validate` | Strict preset/seed/time/budget request; save a reviewable immutable draft without execution |
+| `GET /drafts/{id}` | Frozen protocol, digest, planning allowance and existing job reference |
+| `POST /drafts/{id}/launch` | Reviewed `draft_sha256` and a 32-character hexadecimal `idempotency_key`; return 202 with the existing or new job |
+| `GET /jobs/{id}` | Context-bound progress, terminal state and comparison reference; no log bodies or private paths |
+| `POST /jobs/{id}/recover` | Explicitly release an interrupted supervisor's slot without restarting it |
 
 All require `run_id`, the current `fork_id` when applicable, `tick=live` and
 the existing operator session's `X-CSRF-Token`. Hosted-safe instances deny
@@ -69,7 +119,10 @@ access. Stale context/evidence gives 409; unavailable evidence gives a sanitized
 `operator_research` supports `enabled`, `data_root` and `out_dir`; defaults are
 the checkout's `data/studies` and `reports/out`. Export artifacts live beside
 the operator workspace database under `research-exports/`, outside scientific
-world tables. Expensive file verification runs off the HTTP event loop.
+world tables. Drafts, job claims, progress and private supervisor logs live under
+`research-jobs/` beside the workspace database and are ignored by Git. They are
+operational artifacts; run databases receive no schema or economic changes.
+Expensive file verification runs off the HTTP event loop.
 
 ## What can be measured now
 

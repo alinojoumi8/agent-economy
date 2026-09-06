@@ -737,3 +737,118 @@ test("study comparison refuses a response for a different run", async ({ page })
   await expect(page.locator("body")).not.toContainText("WRONG-STUDY-CANARY");
   await expect(page.getByRole("button", { name: "Download private evidence" })).toHaveCount(0);
 });
+
+const draftId = "d".repeat(32);
+const jobId = "e".repeat(32);
+const draftHash = "9".repeat(64);
+
+function launchFixture(fork: string | null, request: any = {}) {
+  return { contract: "operator-study-draft-v1", id: draftId, context: { run_id: "run-demo", fork_id: fork, tick: "live" },
+    draft_sha256: draftHash, origin: "fresh_genesis", executed: false, job_id: null,
+    request: { preset: "G2", seeds: [1, 2], horizon: 8, intervention_tick: 3, goods_firm_id: 2, equity_firm_id: 1, max_wall_seconds: 180, max_disk_mib: 128, ...request },
+    estimate: { worlds: 4, source_and_replay_ticks: 64, disk_bytes: 41943040, disk_bytes_limit: 134217728, wall_seconds_limit: 180, method: "Uncalibrated planning allowance" },
+    source_identity: { source_tree_sha256: "8".repeat(64) },
+    spec: { title: "Dual-domain pilot", hypothesis: "A declared treatment may change observed prices.", time: { measurement_start: 3, measurement_end: 8 },
+      arms: [{ key: "base", role: "baseline", label: "Unchanged baseline", changes: { shocks: [] } },
+        { key: "treatment", role: "treatment", label: "Declared shock", changes: { shocks: [{ tick: 3, kind: "oil", multiplier: 1.5 }] } }],
+      limitations: ["Exploratory only; no empirical fit is established."] } };
+}
+
+async function mockStudyLaunch(page: Page, mode: "complete" | "stale" | "wrong" | "interrupted" = "complete") {
+  const requests: Array<{ path: string; method: string; body?: any }> = [];
+  let draft = launchFixture(null), released = false;
+  await mockStudyLibrary(page);
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (path.includes("/studies") || path.includes("/exports")) return route.fallback();
+    const method = route.request().method();
+    const body = method === "POST" && route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false } });
+    if (path.endsWith("/validate")) { draft = launchFixture(context.fork_id, body); return route.fulfill({ json: draft }); }
+    const job = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
+      context, title: "Dual-domain pilot", status: mode === "interrupted" ? "interrupted" : "completed", origin: "fresh_genesis",
+      expected_cells: 4, finished_cells: 4, eligible_cells: 4, recoverable: mode === "interrupted" && !released,
+      ...(mode !== "interrupted" ? { study_id: studyId, result_sha256: studyHash } : {}),
+      cells: [{ arm: "base", seed: 1, execution_status: "completed", eligibility: { status: "eligible", reasons: [] }, ticks: 8 }] };
+    if (path.endsWith("/launch")) {
+      if (mode === "stale") return route.fulfill({ status: 409, json: { detail: "Source changed after validation; validate a new draft." } });
+      if (mode === "wrong") { job.context.run_id = "wrong-run"; job.title = "WRONG-LAUNCH-CANARY"; }
+      return route.fulfill({ status: 202, json: job });
+    }
+    if (path.endsWith("/recover")) { released = true; return route.fulfill({ json: { ...job, recoverable: false } }); }
+    if (path.includes("/jobs/")) return route.fulfill({ json: job });
+    if (path.includes("/drafts/")) return route.fulfill({ json: { ...draft, context } });
+    return route.fulfill({ status: 404, json: {} });
+  });
+  return requests;
+}
+
+test("operator validates an equity pilot, reviews limits, launches deliberately and opens comparison", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create&fork=fork-1");
+  await page.getByLabel("Research question").selectOption("F2");
+  await page.getByLabel("World seeds").fill("3, 5");
+  await expect(page.getByRole("button", { name: "Run independent study" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("heading", { name: "Review the validated study" })).toBeVisible();
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body).toMatchObject({ preset: "F2", seeds: [3, 5] });
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("40.0 MiB / 128.0 MiB");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Run independent study" })).toBeEnabled();
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+  await page.getByRole("button", { name: "Run independent study" }).click();
+  await expect(page.getByRole("region", { name: "Study job status" })).toContainText("4 / 4 world attempts reported");
+  const starts = requests.filter(row => row.path.endsWith("/launch"));
+  expect(starts).toHaveLength(1);
+  expect(starts[0].body).toEqual({ draft_sha256: draftHash, idempotency_key: draftId });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(1);
+  await page.getByRole("button", { name: "Open verified comparison" }).click();
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("historical study creation makes no operator artifact requests or launches", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&tick=3&study_job=${jobId}`);
+  await expect(page.getByRole("heading", { name: "Study creation needs the Live workspace" })).toBeVisible();
+  expect(requests).toEqual([]);
+  await expect(page.getByRole("button", { name: "Run independent study" })).toHaveCount(0);
+});
+
+for (const mode of ["stale", "wrong"] as const) {
+  test(`study launch rejects ${mode} context without showing another job`, async ({ page }) => {
+    await setup(page);
+    await mockStudyLaunch(page, mode);
+    await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_draft=${draftId}`);
+    await page.getByRole("button", { name: "Run independent study" }).click();
+    await expect(page.getByRole("alert")).toContainText(mode === "stale" ? "Source changed" : "does not match");
+    await expect(page.locator("body")).not.toContainText("WRONG-LAUNCH-CANARY");
+    await expect(page.getByRole("button", { name: "Open verified comparison" })).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.has("study_job")).toBe(false);
+  });
+}
+
+test("interrupted study recovery is explicit and never starts another job", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page, "interrupted");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_job=${jobId}`);
+  await expect(page.getByRole("button", { name: "Release interrupted job slot" })).toBeVisible();
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Release interrupted job slot" }).click();
+  await expect(page.getByRole("button", { name: "Release interrupted job slot" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST").map(row => row.path)).toEqual([`${BASE_LAUNCH}/jobs/${jobId}/recover`]);
+});
+
+const BASE_LAUNCH = "/api/v2/operator/research";

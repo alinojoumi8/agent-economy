@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import statistics
+import threading
 import time
+from typing import Callable
 
 from pydantic import ValidationError
 
@@ -16,6 +20,7 @@ from research.artifacts import code_identity, digest_json, file_sha256, publish_
 from research.attempts import execute_attempt, verify_attempt
 from research.metric_registry import metric_definition, read_metric_observation
 from research.prices import price_observations
+from research.process_lock import process_lock
 from research.studies import StudySpec, load_study, prepare_study, validate_study_inputs
 from run_config import load_config
 
@@ -100,7 +105,28 @@ def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
 
 
 def _worker(spec_data: dict, config: dict, seed: int, arm: str,
-            data_dir: str, result_path: str, input_root: str, expected_code: dict) -> None:
+            data_dir: str, result_path: str, input_root: str, expected_code: dict,
+            worker_guard_path: str | None = None) -> None:
+    parent = multiprocessing.parent_process()
+    if parent is not None:
+        if not parent.is_alive():
+            os._exit(70)
+
+        def stop_if_orphaned():
+            parent.join()
+            # A hard supervisor crash cannot leave an unbudgeted world worker.
+            # No success receipt is fabricated; SQLite/partial artifacts remain.
+            os._exit(70)
+
+        threading.Thread(target=stop_if_orphaned, daemon=True, name="study-parent-guard").start()
+    with process_lock(Path(worker_guard_path), wait_seconds=5) if worker_guard_path else nullcontext():
+        if parent is not None and not parent.is_alive():
+            os._exit(70)
+        _execute_worker(spec_data, config, seed, arm, data_dir, result_path, input_root, expected_code)
+
+
+def _execute_worker(spec_data: dict, config: dict, seed: int, arm: str,
+                    data_dir: str, result_path: str, input_root: str, expected_code: dict) -> None:
     spec = StudySpec.model_validate(spec_data)
     try:
         if code_identity() != expected_code:
@@ -150,11 +176,20 @@ def _disk_bytes(root: Path) -> int:
 
 
 def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
-              data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out") -> dict:
+              data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out",
+              expected_code: dict | None = None,
+              progress: Callable[[dict], None] | None = None,
+              worker_guard_path: Path | None = None) -> dict:
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
     validate_execution(spec, config)
+    if expected_code is not None and code_identity() != expected_code:
+        raise ValueError("source changed after study validation")
     started = time.monotonic()
     batch = prepare_study(spec, config, input_root=input_root, data_root=data_root, out_dir=out_dir)
+    if progress:
+        progress({"stage": "prepared", "batch": batch})
+    if expected_code is not None and batch["manifest"]["code"] != expected_code:
+        raise ValueError("source changed during study preparation")
     data_dir, report_dir = Path(batch["data_dir"]), Path(batch["report_dir"])
     deadline = started + spec.operations.max_wall_seconds
     context = multiprocessing.get_context("spawn")
@@ -172,12 +207,14 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
             exhausted = exhausted or limit_reason()
             if exhausted:
                 results.append(_incomplete_row(spec, seed, arm.key, "planned", exhausted))
+                if progress:
+                    progress({"stage": "cell", "index": len(results), "row": results[-1]})
                 continue
             cell_id = digest_json({"seed": seed, "arm": arm.key})[:12]
             result_path = data_dir / f"worker-{cell_id}.json"
             process = context.Process(target=_worker, args=(spec.model_dump(mode="json"), config,
                 seed, arm.key, str(data_dir), str(result_path), str(Path(input_root).resolve()),
-                batch["manifest"]["code"]), name=f"study-{cell_id}")
+                batch["manifest"]["code"], str(worker_guard_path) if worker_guard_path else None), name=f"study-{cell_id}")
             process.start()
             try:
                 while process.is_alive():
@@ -196,6 +233,9 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                 if process.is_alive():
                     process.terminate()
                     process.join(timeout=5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=5)
                 raise
             exit_code = process.exitcode
             process.close()
@@ -211,6 +251,8 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                 row = _incomplete_row(spec, seed, arm.key, "failed", exhausted or "worker_failed",
                     worker_exit_code=exit_code, artifact_directory=str(data_dir / cell_id))
             results.append(row)
+            if progress:
+                progress({"stage": "cell", "index": len(results), "row": row})
             if row["execution_status"] == "paused":
                 exhausted = "study_stopped_after_paused_attempt"
 

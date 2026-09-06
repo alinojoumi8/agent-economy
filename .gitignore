@@ -24,6 +24,7 @@ data/experiments/
 data/studies/
 # Private operator evidence bundles, wherever the workspace database is stored.
 research-exports/
+research-jobs/
 reports/out/
 .venv/
 node_modules/

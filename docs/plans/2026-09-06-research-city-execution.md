@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, saved-study comparison UI and verified private bundles implemented; operator launch and live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -60,8 +60,8 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Deliver operator study drafting/launch, then
-continue interactive city integration and W5–W9. Maintain equal priority for
+Continue checkpoint-derived studies, interactive city integration and W5–W9.
+Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Paused research resume and daily-world keyed randomness
 remain explicit foundation follow-ups before confirmatory studies.
@@ -239,3 +239,54 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   browser selection passed locally: **64 passed** (1.3 min), using two workers:
   `npm run test:e2e -- world-os.spec.ts world-os-states.spec.ts world-os-privacy.spec.ts agent-connections.spec.ts world-os-routes.spec.ts --workers=2`.
   No product behavior or production bundle changed for this test correction.
+- Checkpoint `637da9a` then passed all four required GitHub jobs, including the
+  full critical browser selection. Optional full-matrix/hosted jobs remained
+  skipped, and the draft still has no substantive CodeRabbit verdict.
+
+## Operator draft and launch workflow
+
+- Added a strictly bounded G2/F2 pilot service and Create a study UI. Validation
+  freezes the protocol, resolved configuration and source identity without world
+  initialization. Both price domains are measured; the UI shows targets, arms,
+  observation window, resource allowance and scientific limits before Run.
+- Launch uses a durable idempotent claim and an independent supervisor. A
+  process-owned lock and persistent active pointer enforce one execution slot;
+  interruption recovery retains evidence and cannot release a running job.
+  Progress, source/replay results and comparison links survive page reloads.
+  No new engine semantics, scientific schema, provider calls or source-world
+  mutations are introduced.
+- Initial backend execution: **18 passed, 1 failed** (16.13 s). The real
+  four-world source/replay workflow passed; the failing privacy assertion
+  incorrectly matched the safe `resolved_config_sha256` key as if it were the
+  private `resolved_config` payload. The assertion now checks the exact key.
+  The combined research/price/documentation selection then passed **147 tests**
+  (89.22 s); dashboard units passed **224**, and all eight study browser tests
+  passed (13.6 s). TypeScript and the production build passed.
+- A hard supervisor crash originally could leave a child worker alive. Workers
+  now watch the multiprocessing parent handle and hold a separate recovery
+  lock. An actual owned-process kill test confirmed the worker stops before
+  recovery releases its slot; partial artifacts remain without a success receipt.
+  Edited local draft files also cannot bypass the fixed profile/resource limits
+  by supplying a recomputed hash.
+- Post-hardening jobs/protocol/result-loader/recorded-replay selection:
+  **48 passed** (43.25 s). The complete critical browser selection passed
+  **69 tests** (1.4 min), and the final eight study checks passed again
+  (11.9 s) after launch-availability refresh controls. Dashboard units again
+  passed **224** (6.88 s); TypeScript, final production build and four backend
+  source parses passed. Existing Starlette and large-chunk warnings remain.
+- Production browser workflow completed new 8-day, 2-seed G2 and F2 pilots,
+  each with **4/4 eligible source/replay pairs** and zero provider calls/spend.
+  G2 job `089eece6718a4cd56582c6d3b293fc84` opened verified comparison
+  `fd07c38750ae16ca99f7b0bbdd436a1d`; F2 job
+  `eb654eebfd7cea360f7d9b85bb9cf4f6` opened
+  `c4ee491ed549b062d016147f5675231d`. The observed 300-resident city
+  `afd8656714` remained paused at tick 3 throughout.
+- The fresh G2 results retained the exploratory +58.333-cent goods-price and
+  −10.5-unit volume differences. F2 retained zero measured differences; neither
+  pilot establishes empirical fit. The F2 UI private evidence download verified
+  successfully (3,851,139 bytes; SHA-256
+  `fea3c69d0444c1b7e64135ee1fe5c7668c19b7972f131c4dbc0b3372ef4fea46`).
+  All operational job files, reports, databases and ZIPs were verified ignored.
+- Full city integration, checkpoint-derived studies, live-model policies,
+  paused research resume and daily keyed streams remain pending. This checkpoint
+  completes the bounded local pilot workflow, not the full five-part goal.

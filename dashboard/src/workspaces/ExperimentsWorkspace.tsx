@@ -1,5 +1,5 @@
 import { Link, useParams, useSearchParams } from "react-router";
-import { StudyLibrary } from "./StudyLibrary";
+import { PriceStudyWorkbench } from "./StudyLauncher";
 import {
   experimentActionState,
   normalizeExperimentsWorkspace,
@@ -85,7 +85,7 @@ export function ExperimentsWorkspace() {
         {(["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies"] as View[]).map(item => <button type="button" key={item} aria-pressed={view === item} onClick={() => choose(item)}>{item === "price-studies" ? "Price studies" : text(item)}</button>)}
       </div>
 
-      {view === "price-studies" && <StudyLibrary />}
+      {view === "price-studies" && <PriceStudyWorkbench />}
 
       {view === "evidence" && <section className="world-os-evidence-cards" aria-label="Acceptance and release evidence">
         {(model.acceptance as unknown as EvidenceRow[]).map(item => <article key={item.id} className={`world-os-evidence-card world-os-evidence-card--${item.classification}`}>

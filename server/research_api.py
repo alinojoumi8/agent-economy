@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from research.study_library import StudyLibrary
+from research.study_jobs import LaunchRequest, PilotInputError, PilotRequest, StudyJobs
 from research.study_results import StudyArtifactError, StudyIdentityChanged
 from server.projections.envelope import lineage, validate_fork, ProjectionRequestError
 
@@ -28,6 +29,8 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         out_dir=Path(config.get("out_dir", root / "reports/out")),
         export_root=workspace_path.parent / "research-exports")
     app.state.study_library = library
+    jobs = StudyJobs(workspace_path.parent / "research-jobs", data_root=library.data_root, out_dir=library.out_dir)
+    app.state.study_jobs = jobs
     lock = threading.Lock()
 
     def authorize(token: str | None, run_id: str, fork_id: str | None, tick: str) -> dict:
@@ -55,6 +58,8 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Study or export not found.") from exc
+        except PilotInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (StudyArtifactError, OSError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail="Study evidence is unavailable, invalid or exceeds this interface's limits.") from exc
 
@@ -67,7 +72,54 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         return {"contract": "operator-study-catalog-v1", "context": context, **catalog,
                 "scope": "Saved studies on this local server; independent of the observed world.",
                 "capabilities": {"verify": True, "compare": True, "private_export": True,
-                                 "launch": False, "checkpoint_fork": False}}
+                                 "launch": True, "checkpoint_fork": False}}
+
+    @router.get("/capabilities")
+    async def capabilities(run_id: str, response: Response, fork_id: str | None = None, tick: str = "live",
+                           x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return {"context": context, **jobs.capabilities(), **await read_work(jobs.active, context)}
+
+    @router.post("/drafts/validate")
+    async def validate(body: PilotRequest, run_id: str, response: Response,
+                       fork_id: str | None = None, tick: str = "live",
+                       x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.validate, body, context)
+
+    @router.get("/drafts/{draft_id}")
+    async def draft(draft_id: str, run_id: str, response: Response,
+                    fork_id: str | None = None, tick: str = "live",
+                    x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.draft, draft_id, context)
+
+    @router.post("/drafts/{draft_id}/launch", status_code=202)
+    async def launch(draft_id: str, body: LaunchRequest, run_id: str, response: Response,
+                     fork_id: str | None = None, tick: str = "live",
+                     x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.launch, draft_id, body, context)
+
+    @router.get("/jobs/{job_id}")
+    async def job(job_id: str, run_id: str, response: Response,
+                  fork_id: str | None = None, tick: str = "live",
+                  x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.status, job_id, context)
+
+    @router.post("/jobs/{job_id}/recover")
+    async def recover(job_id: str, run_id: str, response: Response,
+                      fork_id: str | None = None, tick: str = "live",
+                      x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.recover, job_id, context)
 
     @router.get("/studies/{study_id}")
     async def study(study_id: str, run_id: str, response: Response,
