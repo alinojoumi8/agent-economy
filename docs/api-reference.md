@@ -115,6 +115,17 @@ These read-only endpoints return the canonical envelope and accept `tick` plus
 | `GET` | `/api/v2/construction-projects` | Semantics-13 projects; filter by `project_kind=private_home|workplace|public_facility` and exact lifecycle `status` |
 | `GET` | `/api/v2/construction-projects/{project_id}` | One exact public project or privacy-safe aggregate, plus contribution-type totals where authorized |
 | `GET` | `/api/v2/world-map?layers=construction_projects` | Construction layer separate from usable `places`; supports stable project selection in Live City |
+| `GET` | `/api/v2/city/conversations?tick=3&fork_id=...&limit=60` | `city.conversations` envelope for the exact recorded day; ordinary small-talk transcripts, never private communication or provider stores |
+
+City conversations return `data.items`, `tick`, `source=recorded_small_talk`,
+`has_more` and `content_truncated`. The default is the newest 60 conversations
+(maximum 200), each with up to 64 messages, 4,000 characters per message and
+512 topic characters. Per-item/message truncation flags preserve this boundary.
+Future conversations, messages and participants are withheld; malformed
+participant records are excluded. A wrong fork or unavailable tick returns 409.
+The endpoint performs no scientific writes. The city checks its envelope against
+the already displayed map before releasing any words. See the
+[city observer contract](research/city-observer.md).
 
 Peripheral private-home construction is aggregated by region, status, and
 stage. Owner, contributor, permit, exact-site, place, and reversible evidence

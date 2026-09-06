@@ -44,6 +44,22 @@ export async function loadCityProjection(scope, read) {
     agents: map.data.agents || [], firms: map.data.organizations || [] };
 }
 
+/** Load optional transcripts only after the shared map has resolved its day.
+ * @param {any} map @param {(path: string) => Promise<any>} read */
+export async function loadCityConversations(map, read) {
+  const scope = { runId: map.run_id, fork: map.fork_id, tick: String(map.tick) };
+  requireFrame(map, scope, "world.map");
+  const frame = await read(`/api/v2/city/conversations?${projectionScopeParams(scope)}&limit=60`);
+  requireFrame(frame, scope, "city.conversations");
+  if (frame.fork_id !== map.fork_id || ["view_key", "policy_version", "semantics_version"]
+    .some(key => frame[key] !== map[key]) || frame.data.tick !== map.tick
+    || frame.data.source !== "recorded_small_talk" || !Array.isArray(frame.data.items)
+    || frame.data.items.some(item => item.tick !== map.tick)) {
+    throw new Error("Recorded conversations do not belong to this city frame.");
+  }
+  return { ...frame, mapSnapshot: map.snapshot_version };
+}
+
 /** @param {any} runtime @param {any} frame @param {string} observerTick */
 export function cityRuntimeMatches(runtime, frame, observerTick) {
   return Boolean(observerTick === "live" && frame && runtime?.context?.tick === "live"

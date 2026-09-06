@@ -44,6 +44,7 @@ from server.projections.cache import ProjectionSnapshotCache
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
 from server.projections.events import build_backfill
 from server.projections.price_lab import build_price_lab
+from server.projections.city_conversations import build_city_conversations
 
 
 class GodActionBody(BaseModel):
@@ -643,6 +644,18 @@ def install_v2_routes(app, world, controller) -> None:
         return workspace_envelope(
             "experiments", build_experiments_workspace(store, as_of_tick=as_of_tick),
             as_of_tick)
+
+    @router.get("/city/conversations")
+    async def city_conversations(
+        tick: str = Query("live"), fork_id: str | None = None,
+        limit: int = Query(60, ge=1, le=200),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        return build_envelope(
+            store, Principal("ordinary-dashboard"), "city.conversations",
+            build_city_conversations(store, as_of_tick=as_of_tick, limit=limit),
+            as_of_tick=as_of_tick,
+        )
 
     @router.get("/civic/summary")
     async def civic_summary(

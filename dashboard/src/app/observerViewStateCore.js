@@ -3,7 +3,7 @@ import { parseCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
-const CITY_VIEW_MODES = new Set(["atlas", "diorama"]);
+const CITY_VIEW_MODES = new Set(["atlas", "diorama", "recorded"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;

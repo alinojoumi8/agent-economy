@@ -285,8 +285,8 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await page.goto("/runs/run-demo/world?tick=4");
   await page.getByRole("button", { name: "Open command menu" }).click();
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
-  await command.getByPlaceholder("Search routes, people, firms, events…").fill("City evidence");
-  await command.getByRole("option", { name: /^City evidence/ }).click();
+  await command.getByPlaceholder("Search routes, people, firms, events…").fill("City");
+  await command.getByRole("option", { name: /^City / }).click();
   await expect(page).toHaveURL(/\/runs\/run-demo\/world\?tick=4/);
 });
 

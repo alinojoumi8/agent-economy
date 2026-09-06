@@ -8,7 +8,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
-| 3. Unified interactive research city | City portion of W4 | Coherent Atlas/Diorama frames, shared business selection, price navigation and camera bookmarks implemented; recorded-day integration and follow mode pending |
+| 3. Unified interactive research city | City portion of W4 | Atlas/Diorama/recorded-day integration, shared selection, independent playback, scoped transcripts, price navigation and camera bookmarks implemented; Atlas camera and persistent follow pending |
 | 4. Persistent society and deeper economics | W5–W8 | Pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
@@ -343,3 +343,55 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   passed. Staged Gitleaks 8.30.1 scanned about **2.05 MB** with no leaks;
   `git diff --cached --check` passed. Operational logs and private artifacts
   remain outside the staged change.
+
+
+## Shared recorded-day city
+
+- Checkpoint `87ea4b5` passed all four required GitHub jobs in run
+  `34033077784`. Optional full-matrix/hosted jobs and substantive CodeRabbit
+  review remained skipped; this is a focused checkpoint, not full-goal completion.
+- City now has one `/world` workspace with Atlas, Diorama and Recorded day.
+  Legacy `/live-city` URLs redirect with their fork/tick/selection preserved.
+  Playback consumes the shared validated map without its own fetch/status/socket
+  logic. The common keyboard explorer, filters and inspector remain available.
+- Play, Pause, Restart and four playback speeds affect presentation time only.
+  Speed changes preserve continuity. New frames/filters start paused; Pin this
+  day turns a live observation into an explicit historical cursor. Runtime
+  telemetry is withheld in recorded playback, and historical workspace pages
+  open no live socket. Reduced motion retains stepped recorded placements.
+- The new read-only `city.conversations` projection pins ordinary recorded
+  small-talk to one run/fork/tick. Future messages/participants and malformed
+  records are excluded; response and transcript limits are disclosed. It never
+  reads private communication/provider stores or changes scientific tables.
+  Wrong or failed transcripts cannot replace the frame's words.
+- Production inspection verified 300 roster entries, **100 authorized individual
+  placement histories**, and 200 peripheral residents without exposed individual
+  placements. Playback draws exactly the authorized IDs and states coverage.
+  An initial QA assumption that all 300 should have individual journeys failed;
+  the privacy boundary was preserved rather than bypassed. Recomputed pixel
+  positions agreed to less than 0.001 px, including de-collision offsets.
+- A first-load inspection also found shared controls/place styles were trapped
+  in the lazy Diorama import. Those small shared styles now load with CivicCity;
+  the heavy renderer remains lazy. Playback controls precede the map and the
+  legend/provenance can expand beneath it. Production widths 768 and 390 had
+  zero horizontal overflow and a direct inspector action. At 1440×1000 the
+  recorded map starts at y=494 px and is 746.7 px wide by 520 px high; these
+  measurements do not establish the full first-viewport area/usability target.
+- Initial units: **234 passed, 1 failed** on the retired City route expectation;
+  corrected units: **236 passed** (7.07 s). Initial recorded-day browser checks:
+  **7 passed, 1 failed**, exposing the historical shell socket; corrected:
+  **8 passed** (12.3 s). The first broad browser pass had **81 passed, 1 failed**
+  on the old eleven-destination count. After correcting it and adding placement
+  coverage, the final full critical browser selection passed **83 tests** (1.7 min).
+- Final transcript/price projection, documentation, legacy recorded replay and
+  cognition/runtime selection: **50 passed** (12.85 s). TypeScript and the
+  production build passed. Existing Starlette and large-chunk warnings remain.
+  An editor encoding roundtrip was caught in diff review and corrected before
+  the final build; the changed text files contain no replacement/mojibake markers.
+- Actual production playback, pause, renderer switching and mobile evidence
+  access passed with zero writes, current-runtime/status requests, live sockets
+  or browser errors. World `afd8656714` remained paused at tick 3. The reviewed
+  synthetic-world screenshot is saved in the [city guide](../research/city-observer.md).
+- No economic semantics or scientific schema changed. Atlas pan/zoom, persistent
+  camera follow, institutional/household lenses, checkpoint-derived studies,
+  paused research resume, daily keyed streams and W5–W9 remain unfinished.

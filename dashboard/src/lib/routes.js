@@ -3,7 +3,7 @@ export function workspaceFallbackPath(runId) {
 }
 
 const LEGACY_CITY_PARAMS = [
-  "view", "agent", "place", "project", "population", "layer", "activeOnly", "q", "region",
+  "view", "agent", "firm", "place", "project", "camera", "population", "layer", "activeOnly", "q", "region",
 ];
 
 export function legacyCityRedirectPath(runId, search = "", hash = "") {
@@ -17,4 +17,11 @@ export function legacyCityRedirectPath(runId, search = "", hash = "") {
     ? hash.startsWith("#") ? hash : `#${hash}`
     : "";
   return `/runs/${encodeURIComponent(runId)}/world${normalizedSearch}${normalizedHash}`;
+}
+
+export function recordedCityRedirectPath(runId, search = "", hash = "") {
+  const params = new URLSearchParams(search);
+  params.set("view", "recorded");
+  if (!params.has("population")) params.set("population", "all");
+  return `/runs/${encodeURIComponent(runId)}/world?${params}${hash}`;
 }

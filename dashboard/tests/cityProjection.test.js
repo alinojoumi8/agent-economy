@@ -1,10 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cityRuntimeMatches, loadCityProjection } from "../src/app/cityProjection.js";
+import { cityRuntimeMatches, loadCityConversations, loadCityProjection } from "../src/app/cityProjection.js";
 
 const scope = { runId: "run", fork: "fork-a", tick: "live", population: "all" };
 const frame = (projection, data = {}) => ({ run_id: "run", fork_id: "fork-a", tick: 4,
   projection, view_key: "public", policy_version: 1, projection_version: 2, semantics_version: 13, data });
+
+test("recorded conversations are optional but must share the displayed map's day and visibility", async () => {
+  const map = { ...frame("world.map"), snapshot_version: "map-version" };
+  const transcript = frame("city.conversations", { tick: 4, items: [{ tick: 4 }], source: "recorded_small_talk" });
+  const result = await loadCityConversations(map, async path => {
+    const url = new URL(path, "http://local");
+    assert.equal(url.searchParams.get("tick"), "4");
+    assert.equal(url.searchParams.get("fork_id"), "fork-a");
+    return transcript;
+  });
+  assert.equal(result.mapSnapshot, "map-version");
+  for (const change of [{ tick: 5 }, { fork_id: null }, { run_id: "other" }, { view_key: "private" },
+    { policy_version: 2 }, { semantics_version: 14 }, { projection: "communication.messages" },
+    { data: { ...transcript.data, items: [{ tick: 5 }] } }]) {
+    await assert.rejects(() => loadCityConversations(map, async () => ({ ...transcript, ...change })),
+      /does not match|do not belong/);
+  }
+});
 
 test("city supporting projections are pinned to the map's actual tick and fork", async () => {
   const requests = [];

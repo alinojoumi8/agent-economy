@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
 import { patchObserverViewState } from "../app/observerViewState";
-import { cityRuntimeMatches, loadCityProjection } from "../app/cityProjection.js";
+import { cityRuntimeMatches, loadCityConversations, loadCityProjection } from "../app/cityProjection.js";
 import { CivicCity } from "../components/CivicCity";
 import { titleCase } from "../ui";
 import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
@@ -105,6 +105,7 @@ export function WorldWorkspace() {
    */
   const { observerState, runId } = projection;
   const tick = observerState.tick;
+  const recordedDay = observerState.view === "recorded";
   const city = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "world-city", tick, observerState.population],
     queryFn: ({ signal }) => loadCityProjection({ ...observerState, runId }, path => projectionApi(path, signal)),
@@ -115,7 +116,14 @@ export function WorldWorkspace() {
   const overview = { data: city.data?.overview };
   const runStatus = String(overview.data?.data.summary?.status || "").toLowerCase();
   const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
-  const pollCurrentRun = tick === "live" && !terminalRun && Boolean(city.data) && !city.error;
+  const conversations = useQuery({
+    queryKey: ["world-os", runId, observerState.fork, "city-conversations", tick,
+      city.data?.envelope.snapshot_version],
+    queryFn: ({ signal }) => loadCityConversations(city.data!.envelope, path => projectionApi(path, signal)),
+    enabled: recordedDay && Boolean(city.data) && !city.error,
+    retry: false,
+  });
+  const pollCurrentRun = tick === "live" && !recordedDay && !terminalRun && Boolean(city.data) && !city.error;
   const runtime = useQuery({
     queryKey: ["llm-runtime", runId, observerState.fork],
     queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
@@ -123,7 +131,7 @@ export function WorldWorkspace() {
     refetchInterval: pollCurrentRun ? 2000 : false,
   });
   const runtimeMatches = cityRuntimeMatches(runtime.data, city.data?.envelope, tick);
-  const currentRuntime = runtimeMatches && !terminalRun && !city.error && !runtime.error ? runtime.data : null;
+  const currentRuntime = pollCurrentRun && runtimeMatches && !runtime.error ? runtime.data : null;
   const model = normalizeWorldWorkspace(projection.data || {});
   const selectedRegionId = validatedSelectedId(searchParams.get("region"));
   const selectedPlaceId = projection.observerState.place;
@@ -195,6 +203,11 @@ export function WorldWorkspace() {
         /* No fallback to the atlas projection: when the city query fails the
            panel must say so, not quietly draw a different dataset's people. */
         map={!city.error ? city.data?.map : null}
+        frame={!city.error ? city.data?.envelope : null}
+        conversations={recordedDay && !city.error && !conversations.error
+          && conversations.data?.mapSnapshot === city.data?.envelope.snapshot_version ? conversations.data?.data : null}
+        conversationsLoading={conversations.isLoading}
+        conversationsError={conversations.error instanceof Error ? conversations.error.message : ""}
         civic={!city.error ? city.data?.civic ?? null : null}
         runtime={currentRuntime}
         runId={projection.runId}
@@ -275,7 +288,7 @@ export function WorldWorkspace() {
         * Scripted and mock lanes are filtered out on purpose: they are not a
         * provider under load, and showing them as one would overstate the fabric.
         */}
-      {tick === "live" && <section
+      {tick === "live" && !recordedDay && <section
         className="world-os-provider-deck"
         aria-label={terminalRun ? "Ended run provider activity" : "Live AI provider lanes"}
       >

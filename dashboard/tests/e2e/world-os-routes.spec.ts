@@ -254,11 +254,10 @@ test("workspace rail exposes every canonical destination with observer context",
   const navigation = page.getByRole("navigation", { name: "Civic Atlas workspaces" });
   const destinations = [
     ["Pulse", "overview"],
-    ["City", "live-city"],
+    ["City", "world"],
     ["People", "people"],
     ["Commons", "commons"],
     ["Evidence Lab", "investigations"],
-    ["City evidence", "world"],
     ["Institutions", "organizations"],
     ["Markets", "markets"],
     ["Politics & Law", "politics-law"],
@@ -286,7 +285,7 @@ test("workspace rail exposes every canonical destination with observer context",
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
-  await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await expect(page.getByText("Historical tick 3", { exact: true }).first()).toBeVisible();
 
   for (const [routeName, heading] of [
@@ -460,7 +459,7 @@ test("world selection removes unresolved region and place URL parameters", async
   const diagnostics = await setup(page);
   for (const parameter of ["region", "place"]) {
     await page.goto(`/runs/run-demo/world?${parameter}=999&fork=fork-1&tick=3`);
-    await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
     await expect.poll(() => new URL(page.url()).searchParams.has(parameter)).toBe(false);
     const current = new URL(page.url());
     expect(current.searchParams.get("fork")).toBe("fork-1");

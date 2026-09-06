@@ -1113,8 +1113,8 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
   await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
-  /* Eleven routes remain searchable even though the permanent rail shows five. */
-  await expect(command.getByRole("option")).toHaveCount(11);
+  /* Ten destinations: the city renderers now share one workspace. */
+  await expect(command.getByRole("option")).toHaveCount(10);
   const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");
   await commandSearch.press("Enter");

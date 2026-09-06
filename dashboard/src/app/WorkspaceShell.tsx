@@ -64,15 +64,12 @@ type CommandGroup = {
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Civic Atlas", items: [
     { path: "overview", label: "Pulse", caption: "What changed and why it matters", icon: "overview" },
-    /* City is the full-screen recorded-world renderer. The deeper world route
-       remains the evidence-rich workspace for agents, places, and construction. */
-    { path: "live-city", label: "City", caption: "The recorded world, full screen", icon: "street" },
+    { path: "world", label: "City", caption: "Explore places, recorded days, and evidence", icon: "street" },
     { path: "people", label: "People", caption: "Living Agents, projects, and evidence", icon: "people" },
     { path: "commons", label: "Commons", caption: "The public information economy", icon: "commons" },
     { path: "investigations", label: "Evidence Lab", caption: "Trace cause and inspect proof", icon: "investigations" },
   ] },
   { label: "Deep dives", items: [
-    { path: "world", label: "City evidence", caption: "Agents, places, and construction", icon: "world" },
     { path: "organizations", label: "Institutions", caption: "Firms and public organizations", icon: "organizations" },
     { path: "markets", label: "Markets", caption: "Goods, capital, and prices", icon: "markets" },
     { path: "politics-law", label: "Politics & Law", caption: "Power and public rules", icon: "politics" },
@@ -121,7 +118,7 @@ export function WorkspaceShell() {
   const [search, setSearch] = useSearchParams();
   const observerState = useMemo(() => parseObserverViewState(search), [search]);
   const tick = observerState.tick;
-  const transport = useProjectionSocket(tick !== "live") as ProjectionTransport;
+  const transport = useProjectionSocket(tick !== "live", tick === "live") as ProjectionTransport;
   const modeQuery = useQuery({
     queryKey: ["world-os", "mode"],
     queryFn: () => workspaceApi<ModeDocument>("/api/v2/mode"),

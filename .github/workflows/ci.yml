@@ -150,6 +150,7 @@ jobs:
           tests/test_induced_market_benchmarks.py
           tests/test_price_observations.py
           tests/test_price_lab_projection.py
+          tests/test_city_conversations_projection.py
           tests/test_metric_registry.py
 
   dashboard:
@@ -195,6 +196,7 @@ jobs:
           world-os-privacy.spec.ts
           agent-connections.spec.ts
           world-os-routes.spec.ts
+          live-city-context.spec.ts
         working-directory: dashboard
       - name: Build React dashboard
         run: npm run build

@@ -22,7 +22,7 @@ export type ObserverViewState = {
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters";
-  view: "atlas" | "diorama";
+  view: "atlas" | "diorama" | "recorded";
 };
 
 export type ObserverViewPatch = Partial<{
@@ -38,7 +38,7 @@ export type ObserverViewPatch = Partial<{
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters" | null;
-  view: "atlas" | "diorama" | null;
+  view: "atlas" | "diorama" | "recorded" | null;
 }>;
 
 export function parseObserverViewState(params: URLSearchParams): ObserverViewState {

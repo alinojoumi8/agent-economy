@@ -16,6 +16,8 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { cityEvidenceParams } from "../app/cityNavigation.js";
+// Shared controls, place buttons and fallback styles must precede any renderer.
+import "./civic-diorama.css";
 import {
   CITY_DISTRICTS,
   CITY_LAYERS,
@@ -39,6 +41,7 @@ const ACTIVE_RUN_STATUSES = new Set(["active", "running"]);
 const CivicDiorama = lazy(() => import("./CivicDiorama.jsx").then(module => ({
   default: module.CivicDiorama,
 })));
+const RecordedDayCity = lazy(() => import("./LiveCity").then(module => ({ default: module.RecordedDayCity })));
 
 class DioramaBoundary extends Component {
   constructor(props) {
@@ -103,8 +106,8 @@ function constructionStage(project) {
 }
 
 function statusCopy(status, connected, tick, historical) {
-  if (!connected) return "Connection unavailable";
   if (historical) return `Historical tick ${tick}`;
+  if (!connected) return "Connection unavailable";
   if (["finished", "completed"].includes(status)) return "Run finished";
   if (status === "halted") return "Run halted";
   if (["failed", "error"].includes(status)) return "Run failed";
@@ -120,6 +123,10 @@ export function CivicCity(props) {
     firms = [],
     events = [],
     map = null,
+    frame = null,
+    conversations = null,
+    conversationsLoading = false,
+    conversationsError = "",
     civic = null,
     runtime = null,
     runId = "",
@@ -467,7 +474,7 @@ export function CivicCity(props) {
       <dl className="civic-city__run-state" aria-label="City run state">
         <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>
         <div><dt>Phase</dt><dd>{humanize(phase, "Between phases")}</dd></div>
-        <div><dt>AI live</dt><dd>{historical ? "—" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
+        <div><dt>AI live</dt><dd>{historical || !runtime || cityView === "recorded" ? "Unavailable in this view" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
         <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
         <div><dt>Residents</dt><dd>{model.counts.residents} <small>{model.population.core} core</small></dd></div>
         <div><dt>Construction</dt><dd>{model.counts.construction} <small>stored projects</small></dd></div>
@@ -481,6 +488,7 @@ export function CivicCity(props) {
         <div>
           <button type="button" aria-pressed={cityView === "atlas"} onClick={() => changeView("atlas")}>Atlas</button>
           <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
+          {onObserverStateChange && <button type="button" aria-pressed={cityView === "recorded"} onClick={() => changeView("recorded")}>Recorded day</button>}
         </div>
       </div>
       <details className="civic-city__filter-panel" open={filtersOpen} onToggle={event => setFiltersOpen(event.currentTarget.open)}>
@@ -542,10 +550,21 @@ export function CivicCity(props) {
         <optgroup label="Construction projects">{model.constructionProjects.map(project => <option key={project.id} value={`project:${project.id}`}>{project.name} · {humanize(constructionStage(project))}</option>)}</optgroup>
         <optgroup label="Agents">{visibleAgents.map(agent => <option key={agent.id} value={`agent:${agent.id}`}>{agent.name}</option>)}</optgroup>
       </select>
-      <span>Same selection in Atlas and Diorama</span>
+      <span>One selection across city views</span>
     </label>
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
+        {cityView === "recorded" && <Suspense fallback={<p role="status">Loading recorded-day renderer…</p>}>
+          <RecordedDayCity
+            key={`${frame?.snapshot_version}:${populationMode}:${activeLayer}:${query}:${activeOnly}`}
+            frame={frame} visibleAgentIds={visibleAgents.map(agent => Number(agent.id))}
+            selectedAgentId={selected?.id ?? null} onSelectAgent={changeSelection}
+            onOpenEvidence={openMobileLens}
+            onPinDay={() => frame && onObserverStateChange({ tick: String(frame.tick) })}
+            historical={historical} loading={loading} error={error}
+            conversations={conversations} conversationsLoading={conversationsLoading} conversationsError={conversationsError}
+          />
+        </Suspense>}
         {cityView === "diorama" && <div className="civic-city__diorama-field">
           {hasWebGL2 === false ? <div className="civic-city__diorama-fallback" role="status">
             <strong>2.5D rendering is unavailable in this browser.</strong>
@@ -585,7 +604,7 @@ export function CivicCity(props) {
             </Suspense>
           </DioramaBoundary>}
         </div>}
-        <div className="civic-city__map-field" hidden={cityView === "diorama"}>
+        <div className="civic-city__map-field" hidden={cityView !== "atlas"}>
           <div className="civic-city__atlas-meta">
             <span className={`civic-city__source civic-city__source--${model.coordinateMode}`}>{coordinateCopy(model.coordinateMode)}</span>
             <span>{showClusters

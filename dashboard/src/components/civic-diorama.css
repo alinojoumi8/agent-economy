@@ -22,7 +22,8 @@
 
 .civic-city__view-toggle > div {
   display: grid;
-  grid-template-columns: 1fr 1.35fr;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--civic-navy);
   border-radius: 3px;
@@ -35,6 +36,8 @@
   background: var(--civic-white);
   color: #52647a;
   font: 700 .62rem var(--civic-font-label);
+  padding-inline: .45rem;
+  white-space: nowrap;
   cursor: pointer;
 }
 

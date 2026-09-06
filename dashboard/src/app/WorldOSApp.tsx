@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router";
-import { LiveCity } from "../components/LiveCity";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { InvestigationsWorkspace } from "../workspaces/InvestigationsWorkspace";
 import { NewsCommunicationsWorkspace } from "../workspaces/NewsCommunicationsWorkspace";
@@ -11,7 +10,7 @@ import { OrganizationsWorkspace } from "../workspaces/OrganizationsWorkspace";
 import { MarketsWorkspace } from "../workspaces/MarketsWorkspace";
 import { PoliticsLawWorkspace } from "../workspaces/PoliticsLawWorkspace";
 import { ExperimentsWorkspace } from "../workspaces/ExperimentsWorkspace";
-import { legacyCityRedirectPath, workspaceFallbackPath } from "../lib/routes";
+import { legacyCityRedirectPath, recordedCityRedirectPath, workspaceFallbackPath } from "../lib/routes";
 import { worldOSIndexWorkspace } from "./worldOSRouting.js";
 
 function OverviewRoute() {
@@ -26,6 +25,12 @@ function WorkspaceFallback() {
   return <Navigate to={workspaceFallbackPath(runId)} replace />;
 }
 
+function RecordedCityRedirect() {
+  const { runId = "run" } = useParams();
+  const location = useLocation();
+  return <Navigate to={recordedCityRedirectPath(runId, location.search, location.hash)} replace />;
+}
+
 export function WorldOSApp() {
   const location = useLocation();
   if (worldOSIndexWorkspace(location.pathname) === "commons") {
@@ -34,14 +39,7 @@ export function WorldOSApp() {
     </Route></Routes>;
   }
   return <Routes>
-    {/*
-      * Live City sits OUTSIDE the workspace shell on purpose. The shell's rail
-      * and topbar are the right frame for a workspace and the wrong one for a
-      * map: this route's whole claim is that the city is the screen, so it owns
-      * the viewport and floats its own chrome over the geography. It links back
-      * to the shell rather than living inside it.
-      */}
-    <Route path="live-city" element={<LiveCity />} />
+    <Route path="live-city" element={<RecordedCityRedirect />} />
     <Route element={<WorkspaceShell />}>
       <Route index element={<Navigate to="overview" replace />} />
       <Route path="overview" element={<OverviewRoute />} />

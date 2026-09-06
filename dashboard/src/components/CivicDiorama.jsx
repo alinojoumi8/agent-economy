@@ -11,7 +11,6 @@ import {
 import { buildDioramaScene } from "../lib/civicDiorama.js";
 import { humanize } from "../lib/civicCity.js";
 import { DEFAULT_CITY_CAMERA, normalizeCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
-import "./civic-diorama.css";
 
 const ORBIT_VIEW = new OrbitView({ id: "civic-diorama", orbitAxis: "Z" });
 const FIXED_CAMERA = {
