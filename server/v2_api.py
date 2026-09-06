@@ -32,6 +32,7 @@ from server.projections import (
     build_world_flows,
     build_world_workspace,
     build_world_map_organizations,
+    build_world_map_geography,
     resolve_tick,
     PROJECT_KINDS,
     PROJECT_STATUSES,
@@ -42,6 +43,7 @@ from server.projections import (
 from server.projections.cache import ProjectionSnapshotCache
 from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
 from server.projections.events import build_backfill
+from server.projections.price_lab import build_price_lab
 
 
 class GodActionBody(BaseModel):
@@ -345,8 +347,10 @@ def install_v2_routes(app, world, controller) -> None:
         principal = Principal("ordinary-dashboard")
         selected = {item.strip() for item in layers.split(",") if item.strip()}
         data: dict[str, Any] = {}
+        geography = (build_world_map_geography(store, as_of_tick=as_of_tick)
+                     if selected.intersection({"regions", "agents"}) else None)
         if "regions" in selected:
-            data["regions"] = world.economy.regions.region_state()
+            data["regions"] = geography["regions"]
         if "agents" in selected:
             population_row = store.query_one(
                 "SELECT COUNT(*) AS total,"
@@ -401,6 +405,12 @@ def install_v2_routes(app, world, controller) -> None:
                 "AND (a.died_tick IS NULL OR a.died_tick>?) "
                 f"{agent_scope}ORDER BY a.id",
                 (as_of_tick, as_of_tick, as_of_tick, *agent_scope_params))]
+            region_by_id = {row["id"]: row for row in geography["regions"]}
+            for agent in data["agents"]:
+                agent["region_id"] = geography["agent_regions"].get(int(agent["id"]))
+                if agent["place_id"] is None and agent["x"] is not None:
+                    region = region_by_id.get(agent["region_id"], {})
+                    agent["x"], agent["y"] = region.get("x"), region.get("y")
             clusters = []
             if population == "clusters":
                 cluster_exclusion = ""
@@ -409,26 +419,27 @@ def install_v2_routes(app, world, controller) -> None:
                     placeholders = ",".join("?" for _ in live_active_ids)
                     cluster_exclusion = f"AND a.id NOT IN ({placeholders}) "
                     cluster_params = tuple(live_active_ids)
+                regional_clusters: dict[int | None, int] = {}
                 for row in store.query(
-                    "SELECT a.region_id,r.name AS region_name,r.x,r.y,"
-                    "COUNT(*) AS resident_count FROM agents a "
-                    "LEFT JOIN regions r ON r.id=a.region_id "
+                    "SELECT a.id FROM agents a "
                     "WHERE a.arrived_tick<=? "
                     "AND (a.died_tick IS NULL OR a.died_tick>?) "
                     "AND NOT (COALESCE(a.population_tier,'periphery')='core' "
                     "OR COALESCE(a.pinned_core,0)=1) "
-                    f"{cluster_exclusion}"
-                    "GROUP BY a.region_id,r.name,r.x,r.y ORDER BY a.region_id",
+                    f"{cluster_exclusion}ORDER BY a.id",
                     (as_of_tick, as_of_tick, *cluster_params),
                 ):
-                    region_id = row["region_id"]
+                    region_id = geography["agent_regions"].get(int(row["id"]))
+                    regional_clusters[region_id] = regional_clusters.get(region_id, 0) + 1
+                for region_id in sorted(regional_clusters, key=lambda value: -1 if value is None else value):
+                    region = region_by_id.get(region_id, {})
                     clusters.append({
                         "id": f"region-{region_id if region_id is not None else 'unassigned'}-periphery",
                         "region_id": int(region_id) if region_id is not None else None,
-                        "label": str(row["region_name"] or "Unassigned residents"),
-                        "count": int(row["resident_count"]),
-                        "x": row["x"],
-                        "y": row["y"],
+                        "label": str(region.get("name") or "Unassigned residents"),
+                        "count": regional_clusters[region_id],
+                        "x": region.get("x"),
+                        "y": region.get("y"),
                     })
                 data["population_clusters"] = clusters
             data["population_mode"] = population
@@ -597,6 +608,21 @@ def install_v2_routes(app, world, controller) -> None:
         as_of_tick = projection_tick(tick, fork_id)
         return workspace_envelope(
             "markets", build_markets_workspace(store, as_of_tick=as_of_tick), as_of_tick)
+
+    @router.get("/workspaces/price-lab")
+    async def price_lab_workspace(
+        tick: str = Query("live"), fork_id: str | None = None,
+        firm_id: int | None = Query(default=None, gt=0),
+        window: int = Query(default=30, ge=1, le=90),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        try:
+            data = build_price_lab(store, as_of_tick=as_of_tick, firm_id=firm_id, window=window)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return workspace_envelope("price_lab", data, as_of_tick)
 
     @router.get("/workspaces/politics-law")
     async def politics_law_workspace(

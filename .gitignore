@@ -21,6 +21,7 @@ data/checkpoints/
 data/control-plane/
 data/counterfactuals/
 data/experiments/
+data/studies/
 reports/out/
 .venv/
 node_modules/

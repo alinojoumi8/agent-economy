@@ -14,6 +14,7 @@ from .workspaces import (
     build_world_flows,
     build_world_workspace,
     build_world_map_organizations,
+    build_world_map_geography,
 )
 from .living_agents import (
     PROJECT_KINDS,
@@ -47,6 +48,7 @@ __all__ = [
     "build_world_flows",
     "build_world_workspace",
     "build_world_map_organizations",
+    "build_world_map_geography",
     "build_organizations_workspace",
     "build_markets_workspace",
     "build_politics_law_workspace",

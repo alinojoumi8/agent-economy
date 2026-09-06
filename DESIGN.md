@@ -349,8 +349,12 @@ beside it, never rasterized into the asset.
 
 ### Don't:
 
-- **Don't** turn the world into an isometric game, reward loop, or decorative
-  agent aquarium.
+- Support an original interactive 2.5D research city: pan, zoom, select, follow,
+  inspect, time travel, and compare declared interventions. Recorded-day
+  playback has its own clock and controls; animation cannot advance the world.
+  Preserve evidence labels, keyboard access, and authorized projections.
+- **Don't** add reward loops, invented economic events, or decorative agent
+  activity that could be mistaken for recorded behavior.
 - **Don't** use generic dark-SaaS glass panels, decorative neon glows detached
   from telemetry, or interchangeable metric-card grids.
 - **Don't** imply geographic precision when a run exposes no coordinates;

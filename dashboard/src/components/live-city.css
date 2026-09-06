@@ -982,3 +982,23 @@
   background: var(--ae-accent);
   border-radius: 50% 50% 50% 1px;
 }
+.live-city__playback {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.live-city__playback .button {
+  justify-self: start;
+  color: var(--ae-city-ink);
+  background: var(--ae-city-sky-business);
+  border: 1px solid var(--ae-city-land-edge);
+  min-height: 44px;
+}
+
+.live-city__playback .button:focus-visible {
+  outline: 2px solid var(--ae-city-focus);
+  outline-offset: 3px;
+}

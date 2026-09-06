@@ -111,6 +111,33 @@ def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     return result
 
 
+def build_world_map_geography(store, *, as_of_tick: int) -> dict:
+    """Resolve regional counts and residence from the same historical boundary."""
+    tick = int(as_of_tick)
+    agents = _dicts(store.query(
+        "SELECT id,region_id FROM agents WHERE arrived_tick<=? "
+        "AND (died_tick IS NULL OR died_tick>?) ORDER BY id", (tick, tick)))
+    agent_regions = _agent_regions_at(store, agents, tick)
+    population: dict[int, int] = {}
+    for region_id in agent_regions.values():
+        if region_id is not None:
+            population[region_id] = population.get(region_id, 0) + 1
+    firms = {int(row["region_id"]): int(row["n"]) for row in store.query(
+        "SELECT f.region_id,COUNT(*) AS n FROM firms f WHERE f.region_id IS NOT NULL "
+        "AND f.founded_tick<=? AND (f.bankrupt_tick IS NULL OR f.bankrupt_tick>?) "
+        "AND NOT EXISTS (SELECT 1 FROM mergers m WHERE m.target_firm_id=f.id "
+        "AND m.closed_tick IS NOT NULL AND m.closed_tick<=?) GROUP BY f.region_id",
+        (tick, tick, tick))}
+    regions = []
+    for row in store.query("SELECT * FROM regions ORDER BY id"):
+        region = dict(row)
+        region.update(specialization=load_json(region.get("specialization_json"), []),
+                      population=population.get(int(row["id"]), 0),
+                      firms=firms.get(int(row["id"]), 0))
+        regions.append(region)
+    return {"regions": regions, "agent_regions": agent_regions}
+
+
 def build_world_map_organizations(store, *, as_of_tick: int) -> list[dict[str, Any]]:
     """Project active firms with one bounded historical map location query."""
     tick = int(as_of_tick)

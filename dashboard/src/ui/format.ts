@@ -162,6 +162,13 @@ export function isSlow(ms: unknown): boolean {
  *      reported exact, because that one is not lossy.
  */
 const KIND_CODES: Record<string, string> = {
+  /* -- isolated induced-value market fixtures -- */
+  benchmark_inventory_endowment: "BMIN",
+  benchmark_share_endowment: "BMSH",
+  benchmark_contract: "BMCT",
+  benchmark_purchase_intent: "BMPI",
+  benchmark_book: "BMBK",
+  benchmark_redemption: "BMRD",
   /* -- lifecycle and population -- */
   arrival: "ARIV",
   arrival_scheduled: "ARSC",

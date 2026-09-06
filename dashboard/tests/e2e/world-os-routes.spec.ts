@@ -44,6 +44,29 @@ function envelope(path: string, url: URL, data: unknown, projection = `workspace
   };
 }
 
+function priceLabData(url: URL) {
+  const tick = url.searchParams.get("tick") === "3" ? 3 : 6;
+  const firm = Number(url.searchParams.get("firm_id") || 1);
+  const firms = [{ id: 1, name: "Northstar Foods", sector: "food", currency_code: "CAD" },
+    { id: 2, name: "City Tools", sector: "manufacturing", currency_code: "CAD" }];
+  const observation = (value: number | null, evidence: Array<{ type: string; id: number }> = []) => ({
+    value, reason: value === null ? "no_execution" : null, evidence, observed_tick: value === null ? null : 3,
+    age_ticks: value === null ? null : tick - 3,
+  });
+  const goods = firm === 1 ? 200 : 300;
+  return { contract: "price-lab-projection-v1", firms, firms_truncated: false,
+    selected_firm: firms[firm - 1], tick, start_tick: 0, window_ticks: Number(url.searchParams.get("window") || 30),
+    observation: { firm_id: firm, tick, start_tick: 0, currency: "CAD", limitations: ["Within-firm comparable product units."],
+      goods: { posted_price: observation(goods + 10), executed_price: observation(goods, [{ type: "event", id: 9 }]),
+        last_execution: observation(goods), quantity: 4, sale_count: 1, demand: { reason: "intended_and_unmet_demand_not_recorded" } },
+      equities: { last_execution: observation(null), executed_price: observation(null), quantity: 0, trade_count: 0,
+        excluded_self_trade_ids: [], book: { status: "unavailable", reason: "historical_book_state_not_recorded",
+          best_bid_cents: null, best_ask_cents: null, spread_cents: null, bid_quantity: null, ask_quantity: null } },
+      series: { points: [{ tick: 2, goods_vwap: null, goods_volume: 0, goods_reason: "no_execution", equity_vwap: null, equity_volume: 0 },
+        { tick: 3, goods_vwap: goods, goods_volume: 4, goods_reason: null, equity_vwap: null, equity_volume: 0 }] },
+    } };
+}
+
 async function mockWorkspaceApis(
   page: Page,
   servedBodies: string[] = [],
@@ -108,6 +131,8 @@ async function mockWorkspaceApis(
         contracts: [{ id: 1, title: "Public charter", contract_type: "charter", jurisdiction: "North", offered_tick: 2, status: "executed" }],
         disclosures: [{ id: 1, tick: 3, firm_id: 1, disclosure_type: "earnings", facts: { revenue_cents: 100 } }],
       });
+    } else if (path === "/api/v2/workspaces/price-lab") {
+      body = envelope("price_lab", url, priceLabData(url));
     } else if (path === "/api/v2/workspaces/markets") {
       body = envelope("markets", url, historical ? {
         orders: [], trades: [], fx_orders: [], fx_trades: [], circuit_breakers: [], currencies: [],
@@ -561,4 +586,56 @@ test("command navigation reaches canonical routes and unknown paths redirect onc
   expect(await page.evaluate(() => history.length)).toBe(historyBeforeRedirect + 1);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("price lab gives goods and equities the same historical scope and preserves inspector links", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const priceRequests: URL[] = [];
+  const writes: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("/workspaces/price-lab")) priceRequests.push(new URL(request.url()));
+    if (request.method() === "POST") writes.push(request.url());
+  });
+  await page.goto("/runs/run-demo/markets?view=prices&fork=fork-1&tick=3");
+  await expect(page.getByRole("heading", { name: "Follow a business from goods to shares" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Equities", exact: true })).toBeVisible();
+  await expect(page.getByText("No equity executions to plot in this window.")).toBeVisible();
+  await expect(page.getByText("Historical order-book state is unavailable. Current quotes are not shown here.")).toBeVisible();
+  await page.getByLabel("Measurement window").selectOption("7");
+  await page.getByLabel("Business", { exact: true }).selectOption("2");
+  await expect(page.getByLabel("Business", { exact: true })).toHaveValue("2");
+  await expect(page.getByRole("link", { name: "Inspect business" })).toHaveAttribute("href", "/runs/run-demo/organizations/firm/2?fork=fork-1&tick=3");
+  const last = priceRequests.at(-1)!;
+  expect(last.searchParams.get("tick")).toBe("3");
+  expect(last.searchParams.get("fork_id")).toBe("fork-1");
+  expect(last.searchParams.get("window")).toBe("7");
+  expect(last.searchParams.get("firm_id")).toBe("2");
+  const count = priceRequests.length;
+  await page.waitForTimeout(3200);
+  expect(priceRequests).toHaveLength(count);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByText("Daily execution data and missing observations", { exact: true }).click();
+  await expect(page.getByRole("table", { name: "Daily price observations" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.getByText("1 sale evidence records", { exact: true }).click();
+  await expect(page.getByRole("link", { name: "Sale event #9" })).toHaveAttribute("href", "/runs/run-demo/investigations?fork=fork-1&tick=3&event=9");
+  expect(writes).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("price lab hides a response from another cursor or instrument", async ({ page }) => {
+  await setup(page);
+  await page.route("**/api/v2/workspaces/price-lab?*", route => {
+    const url = new URL(route.request().url());
+    const data = priceLabData(url);
+    data.observation.tick = 99;
+    data.observation.goods.executed_price.value = 999999;
+    return route.fulfill({ json: envelope("price_lab", url, data) });
+  });
+  await page.goto("/runs/run-demo/markets?view=prices&tick=3");
+  await expect(page.getByRole("alert")).toHaveText("Price data does not match the selected run, fork, tick or instrument.");
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("999,999");
 });

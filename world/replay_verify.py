@@ -581,6 +581,38 @@ def _table_digest(
     return len(rows), digest.hexdigest(), references_valid
 
 
+def canonical_state_receipt(database: sqlite3.Connection, *,
+                            excluded_protocol_tables: tuple[str, ...] = ()) -> dict:
+    """Hash deterministic state using the replay comparison's exact row rules.
+
+    This is a state inventory, not evidence that a replay was executed. Paired
+    genesis comparisons may exclude declared shock schedules and scenario
+    descriptors; their separate digests remain in the receipt for inspection.
+    """
+    allowed = {"shocks", "scenario_packs"}
+    if not set(excluded_protocol_tables) <= allowed:
+        raise ValueError("only declared experiment protocol tables may be excluded")
+    llm_references = _logical_llm_call_references(database)
+    event_references = _logical_event_references(database, llm_references)
+    aggregate = hashlib.sha256()
+    tables, protocol_tables = {}, {}
+    valid = True
+    for name in _tables(database):
+        count, digest, references_valid = _table_digest(
+            database, name, llm_references, event_references)
+        row = {"rows": count, "sha256": digest,
+               "references_valid": references_valid}
+        valid = valid and references_valid
+        if name in excluded_protocol_tables:
+            protocol_tables[name] = row
+        else:
+            tables[name] = row
+            aggregate.update(f"{name}:{count}:{digest}\n".encode())
+    return {"contract": "replay-canonical-state-v1", "sha256": aggregate.hexdigest(),
+            "references_valid": valid, "tables": tables,
+            "excluded_protocol_tables": protocol_tables}
+
+
 def verify_replay(source_path: str | Path, replay_path: str | Path) -> dict:
     """Compare every deterministic table and return a machine-readable proof."""
     source = _connect(source_path)
