@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector and local fresh-world workflow implemented; checkpoint-derived execution, day/phase recovery, CLI/operator drafts, explicit source selection, origin comparison and private evidence implemented; live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated live-policy CLI execution, original-budget day/phase recovery and independent verification implemented; saved-world policy deltas, v3 bundles/operator integration and real-provider validation pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -1061,3 +1061,47 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   `.venv/Scripts/python.exe -m pytest -x -q tests/test_policy_studies.py tests/test_provider_budget.py tests/test_study_results.py tests/test_recorded_replay_golden.py tests/test_documentation.py --basetemp <fresh-short-root>`
   passed **130 tests** (77.18 s). CI for the follow-up commit is tracked on the
   same draft PR; these 2,004 full-suite passes belong to `bab0294` specifically.
+
+### W3/W4: preserve original model allowances across day/phase recovery
+
+- At `661de40`, required [CI 34113771268](https://github.com/alinojoumi8/agent-economy/actions/runs/34113771268)
+  passed **322 research, 47 saved-world, 359 core, 144 smoke and 100 Chromium
+  checks**. Full [CI 34113766367](https://github.com/alinojoumi8/agent-economy/actions/runs/34113766367)
+  passed all eight Ubuntu/Python 3.12 shards: **2,005 passed, 10 skipped**.
+- The v3 CLI now accepts prospective day/phase recovery policies. Working claim
+  version 5 binds each model replicate to its original shared allowance. Closed
+  reservation-prefix receipts preserve earlier charges and settlements while
+  later invocations append new calls. `open_run` attaches the completion guard
+  before resumed world construction and continues to reject live guards in replay.
+- The existing supervisor records policy invocation lineage, charges readiness
+  checks on every invocation, skips completed cells and preserves cumulative
+  wall/disk/token/call/spend caps. Resume verifies the original allowance and
+  closed scientific evidence before any new call or writable world open. Clean
+  pauses remain pending; provider/resource failures finalize exclusions, normal
+  interruption seals the allowance, and hard crashes remain unresumable with
+  unresolved charges. No history is erased or replaced.
+- The v3 reader verifies final `policy-study-result-v2` evidence through every
+  supervised preflight, assigned dispatch, accounting interval and closed worker,
+  then independently checks scientific measurements and exact recorded replay.
+  Historical relocated reads need neither current prompt hashes nor provider keys.
+- Initial direct day/phase recovery, existing working-attempt, budget and golden
+  replay checks passed **82 tests** (81.68 s). The first supervisor integration
+  and legacy recovery set passed **22 tests** (180.75 s). Both supervised pause
+  paths then passed with the live policy first and eight assigned worlds. The
+  failure/immutability/relocation subset passed **14 tests** (85.24 s); its earlier
+  negative fixture used the scripted gateway binding and was corrected to test
+  an unexpected reservation on the assigned live binding.
+- Final regression:
+  `.venv/Scripts/python.exe -m pytest -x -q tests/test_policy_recovery.py tests/test_policy_studies.py tests/test_provider_budget.py tests/test_working_attempts.py tests/test_working_studies.py tests/test_phase_working_attempts.py tests/test_phase_working_studies.py tests/test_working_evidence.py tests/test_study_runner.py tests/test_study_results.py tests/test_research_attempt_integrity.py tests/test_recorded_replay_golden.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **243 tests** (622.41 s). All **348 Python sources** compiled in memory,
+  CI YAML parsed and `pip check` passed. The new recovery suite has **20 tests**;
+  CLI drafting/validation covers all three pause policies without provider calls.
+  A separate required CI job runs the recovery suite without provider keys.
+- Disk admission remains 40 GiB free with short, fresh pytest roots. This slice
+  creates no paid provider calls, cleanup, schema migration or UI claim. The
+  [live-policy specification](2026-09-07-live-policy-studies.md) includes the
+  draft, pause, provider-free validation and original-budget resume commands.
+- Next: saved-world policy deltas, private v3 bundles and operator review/launch/
+  comparison, then a separately authorized real-provider rehearsal. The remaining
+  city, household, education, production/housing, banking and validation work
+  remains in the active five-part goal.

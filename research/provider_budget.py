@@ -8,6 +8,7 @@ No prompts, response bodies, credentials or raw provider errors are stored.
 from __future__ import annotations
 
 from contextlib import closing, contextmanager
+import hashlib
 from pathlib import Path
 import os
 import sqlite3
@@ -214,15 +215,23 @@ class ProviderBudget:
                 conn.close()  # Rolls back a failed reservation; no transport ran.
 
     @staticmethod
-    def _totals(conn: sqlite3.Connection, scope: str | None = None) -> dict:
+    def _totals(conn: sqlite3.Connection, scope: str | None = None, through: int | None = None) -> dict:
         totals = dict.fromkeys(("provider_calls", "encumbered_tokens", "encumbered_nano_usd",
             "reported_tokens", "usage_cost_nano_usd", "unresolved_calls", "unknown_usage_calls", "breached_calls"), 0)
         # Python integers preserve exact totals even if multiple in-flight
         # providers simultaneously return extreme usage that breaches the cap.
         # SQLite SUM can overflow before the supervisor can report that evidence.
         query = "SELECT state,reserved_input,reserved_output,reserved_cost,input_tokens,output_tokens,usage_cost FROM reservations"
-        query += " WHERE scope=?" if scope is not None else ""
-        for row in conn.execute(query, (scope,) if scope is not None else ()):
+        conditions, parameters = [], []
+        if scope is not None:
+            conditions.append("scope=?")
+            parameters.append(scope)
+        if through is not None:
+            conditions.append("rowid<=?")
+            parameters.append(through)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        for row in conn.execute(query, parameters):
             tokens = (row["input_tokens"] or 0) + (row["output_tokens"] or 0)
             cost = row["usage_cost"] or 0
             totals["provider_calls"] += 1
@@ -238,20 +247,65 @@ class ProviderBudget:
             totals["encumbered_nano_usd"] += cost
         return totals
 
-    def snapshot(self, *, scope: str | None = None) -> dict:
+    def snapshot(self, *, scope: str | None = None, through: int | None = None) -> dict:
+        if through is not None and (type(through) is not int or not 0 <= through <= self.contract.max_provider_calls):
+            raise ValueError("invalid reservation prefix boundary")
         with self._transaction() as conn:
             return {"contract_sha256": digest_json(self.contract.model_dump(mode="json")),
-                    **self._totals(conn, scope)}
+                    **self._totals(conn, scope, through)}
 
-    def scope_bindings(self) -> dict[str, list[str]]:
+    def _prefix(self, conn: sqlite3.Connection, through: int | None = None) -> dict:
+        if self.contract.gateway_bindings is None:
+            raise ValueError("reservation history requires a supervised v2 budget")
+        if through is None:
+            through = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM reservations").fetchone()[0]
+        if type(through) is not int or not 0 <= through <= self.contract.max_provider_calls:
+            raise ValueError("invalid reservation prefix boundary")
+        digest, count, last = hashlib.sha256(), 0, 0
+        for row in conn.execute("SELECT rowid AS sequence,* FROM reservations WHERE rowid<=? ORDER BY rowid", (through,)):
+            digest.update((digest_json(dict(row)) + "\n").encode("ascii"))
+            count += 1
+            last = row["sequence"]
+        if last != through:
+            raise ValueError("reservation prefix boundary is missing")
+        return {"contract": "provider-budget-prefix-v1",
+            "budget_contract_sha256": digest_json(self.contract.model_dump(mode="json")),
+            "last_sequence": through, "reservations": count, "reservations_sha256": digest.hexdigest(),
+            "usage": self._totals(conn, through=through)}
+
+    def checkpoint(self) -> dict:
+        """Bind the current accounting prefix for a closed worker boundary.
+
+        Later reservations can append, but changing any earlier reservation's
+        ownership, amount or settlement invalidates this checkpoint. No prompt
+        or provider response body is introduced into accounting evidence.
+        """
+        with self._transaction() as conn:
+            return self._prefix(conn)
+
+    def verify_checkpoint(self, checkpoint: dict) -> None:
+        with self._transaction() as conn:
+            if (not isinstance(checkpoint, dict)
+                    or digest_json(self._prefix(conn, checkpoint.get("last_sequence"))) != digest_json(checkpoint)):
+                raise BudgetLedgerError("provider reservation history changed")
+
+    def scope_bindings(self, *, after: int = 0, through: int | None = None) -> dict[str, list[str]]:
         """Expose only opaque accounting ownership for independent verification."""
         if self.contract.gateway_bindings is None:
             raise ValueError("scope bindings require the v2 budget contract")
+        if (type(after) is not int or not 0 <= after <= self.contract.max_provider_calls
+                or through is not None and (type(through) is not int or not after <= through <= self.contract.max_provider_calls)):
+            raise ValueError("invalid reservation scope interval")
         with self._transaction() as conn:
             scopes = {}
             bindings = {binding.key: {(target.provider, target.model) for target in binding.targets}
                         for binding in self.contract.gateway_bindings}
-            for row in conn.execute("SELECT DISTINCT scope,binding_key,provider,model FROM reservations ORDER BY scope,binding_key"):
+            query = "SELECT DISTINCT scope,binding_key,provider,model FROM reservations WHERE rowid>?"
+            parameters = [after]
+            if through is not None:
+                query += " AND rowid<=?"
+                parameters.append(through)
+            for row in conn.execute(query + " ORDER BY scope,binding_key", parameters):
                 if (row["provider"], row["model"]) not in bindings.get(row["binding_key"], set()):
                     raise BudgetLedgerError("provider reservation leaves its gateway binding")
                 keys = scopes.setdefault(row["scope"], [])

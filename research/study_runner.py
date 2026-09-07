@@ -150,8 +150,13 @@ def arm_interventions(spec: StudySpec, arm_key: str) -> list[dict]:
     return shocks
 
 
-def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
-    resolved = json.loads(json.dumps(config))
+def _arm_config(spec: StudySpec, config: dict, arm_key: str, *, verify_policy_source: bool = True) -> dict:
+    if spec.policy_design is not None:
+        from research.policy_studies import policy_configurations
+        policy = next(arm.policy for arm in spec.arms if arm.key == arm_key)
+        resolved = policy_configurations(spec, config, verify_source=verify_policy_source)[policy]
+    else:
+        resolved = json.loads(json.dumps(config))
     inherited = (resolved.get("shocks") or []) if spec.origin else []
     resolved["shocks"] = [*inherited, *arm_interventions(spec, arm_key)]
     return resolved
@@ -179,6 +184,10 @@ def _worker(spec_data: dict, config: dict, seed: int, arm: str,
             _execute_worker(spec_data, config, seed, arm, data_dir, result_path, input_root, expected_code)
         else:
             from research.working_attempts import execute_working_attempt
+            if working.get("policy_cell") is not None:
+                from research.policy_runner import _budget
+                cell = working["policy_cell"]
+                working["completion_guard"] = _budget(working["batch"], scope=cell["cell_key"], binding=cell["policy"])
             # Keep a clean pause pending. Exceptions leave the segment and
             # missing worker receipt visible to the owning supervisor.
             row = execute_working_attempt(spec=StudySpec.model_validate(spec_data),
@@ -257,6 +266,12 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
     validate_execution(spec, config)
     if spec.protocol_version == "research-study-v3":
+        if working_protocol(spec.operations.pause_policy):
+            from research.working_studies import run_working_study
+            return run_working_study(spec, config, input_root=input_root, data_root=data_root,
+                out_dir=out_dir, expected_code=expected_code, progress=progress, worker_guard_path=worker_guard_path,
+                resume_batch=resume_batch, pause_after_ticks=pause_after_ticks, pause_after_phase=pause_after_phase,
+                approve_live_inference=approve_live_inference)
         if any(value is not None for value in (resume_batch, pause_after_ticks, pause_after_phase)):
             raise ValueError("live policy recovery requires the recovery executor")
         from research.policy_runner import run_policy_study

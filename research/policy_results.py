@@ -14,6 +14,7 @@ from research.policy_studies import policy_configurations, provider_budget_contr
 from research.provider_budget import BudgetLedgerError, ProviderBudget, ProviderBudgetContract
 from research.studies import StudySpec
 from research.study_results import StudyArtifactError, _location, _verify_context, read_json
+from research.working_contracts import working_protocol
 
 
 def _sealed_budget(payload: dict, spec: StudySpec, location) -> ProviderBudget:
@@ -41,11 +42,12 @@ def _sealed_budget(payload: dict, spec: StudySpec, location) -> ProviderBudget:
         scope="verification", binding_key=spec.policy_design.policies[0].key, read_only=True)
     if not budget.is_sealed() or digest_json({**budget.snapshot(), "sealed": True}) != digest_json(receipt["usage"]):
         raise StudyArtifactError("provider accounting is not sealed at its published totals")
-    scopes = {f"preflight-{policy.key}": [policy.key] for policy in spec.policy_design.policies
-              if policy.behavior.family == "live_llm"}
-    scopes.update({cell["cell_key"]: [cell["policy"]] for cell in study_cells(spec)})
-    if any(scopes.get(key) != bindings for key, bindings in budget.scope_bindings().items()):
-        raise StudyArtifactError("provider usage leaves the prospective policy assignment")
+    if not working_protocol(spec.operations.pause_policy):
+        scopes = {f"preflight-{policy.key}": [policy.key] for policy in spec.policy_design.policies
+                  if policy.behavior.family == "live_llm"}
+        scopes.update({cell["cell_key"]: [cell["policy"]] for cell in study_cells(spec)})
+        if any(scopes.get(key) != bindings for key, bindings in budget.scope_bindings().items()):
+            raise StudyArtifactError("provider usage leaves the prospective policy assignment")
     return budget
 
 
@@ -124,6 +126,32 @@ def _verified_row(row: dict, cell: dict, payload: dict, spec: StudySpec, locatio
     return result
 
 
+def _verified_working_row(row: dict, cell: dict, payload: dict, location, budget: ProviderBudget) -> dict:
+    from research.policy_studies import cell_directory
+    result = copy.deepcopy(row)
+    reasons = list(row["eligibility"]["reasons"])
+    if row["execution_status"] != "completed":
+        reasons += reasons or ["execution_not_completed"]
+    else:
+        directory = location.data_file(cell_directory(cell))
+        stored = read_json(directory / "result.json")
+        if (read_json(directory / "finalized.json")["result_sha256"] != file_sha256(directory / "result.json")
+                or digest_json({k: v for k, v in stored.items() if k != "eligibility"}) != digest_json(
+                    {k: v for k, v in row.items() if k != "eligibility"})
+                or digest_json(read_json(location.data_file(f"worker-{cell['cell_key']}.json"))) != digest_json(row)):
+            reasons.append("policy_worker_result_mismatch")
+        # Adapt the in-memory verification call; the published working receipt
+        # stays in its original segment/result format.
+        packet = {"contract": "policy-cell-v1", "manifest_sha256": payload["batch"]["manifest_sha256"],
+            "cell": cell, "attempt": row, "provider_usage": row["provider_usage"]}
+        reasons += verify_policy_cell(packet, cell, payload["batch"], resolve_path=location.locate,
+            expected_usage=budget.snapshot(scope=cell["cell_key"]), working_budget=budget)
+    if row["eligibility"]["status"] != "eligible":
+        reasons += reasons or ["stored_attempt_ineligible"]
+    result["eligibility"] = {"status": "ineligible" if reasons else "eligible", "reasons": sorted(set(reasons))}
+    return result
+
+
 def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data/studies",
                        out_dir: str | Path = "reports/out", expected_sha256: str | None = None) -> dict:
     """Read only, with caller-owned roots and independently recomputed outcomes.
@@ -139,11 +167,14 @@ def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data
         if expected_sha256 is not None and file_sha256(path) != expected_sha256:
             raise StudyArtifactError("policy result differs from its externally bound hash")
         payload = read_json(path)
-        if payload["contract"] != "policy-study-result-v1" or payload["batch"]["manifest"]["kind"] != "prospective_study":
+        if payload["contract"] not in {"policy-study-result-v1", "policy-study-result-v2"} or payload["batch"]["manifest"]["kind"] != "prospective_study":
             raise StudyArtifactError("unsupported policy result contract")
         location = _location(payload, path, Path(data_root), Path(out_dir))
         manifest = payload["batch"]["manifest"]
         spec = StudySpec.model_validate(manifest["study"])
+        working = bool(working_protocol(spec.operations.pause_policy))
+        if (payload["contract"] == "policy-study-result-v2") != working:
+            raise StudyArtifactError("policy result differs from its working protocol")
         config = manifest["resolved_config"]
         validate_policy_execution(spec, config, verify_source=False)
         if digest_json(config) != spec.model.resolved_config_sha256 or config.get("engine_semantics_version") != spec.model.engine_semantics_version:
@@ -160,7 +191,14 @@ def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data
                 or any(file_sha256(location.report_file(name)) != digest for name, digest in publication["files"].items())):
             raise StudyArtifactError("published policy result was modified")
         budget = _sealed_budget(payload, spec, location)
-        preflight_ready = _preflights(payload, spec, location, budget)
+        if working:
+            from research.policy_recovery import SUPERVISION, verify_lineage
+            from research.working_studies import _journal, verify_supervised_result
+            verify_supervised_result(payload, data_dir=location.data_dir, report_dir=location.report_dir)
+            records = _journal(location.data_dir, location.report_dir, payload["batch"]["manifest_sha256"], contract=SUPERVISION)
+            preflight_ready = verify_lineage(payload, spec, location, budget, records)
+        else:
+            preflight_ready = _preflights(payload, spec, location, budget)
         reported = {}
         assignments = {cell["cell_key"]: cell for cell in cells}
         for row in payload["results"]:
@@ -178,7 +216,8 @@ def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data
         rows, issues = [], []
         for cell in cells:
             original = reported[cell["cell_key"]]
-            row = _verified_row(original, cell, payload, spec, location, budget, preflight_ready)
+            row = (_verified_working_row(original, cell, payload, location, budget) if working
+                   else _verified_row(original, cell, payload, spec, location, budget, preflight_ready))
             if row["eligibility"] != original["eligibility"]:
                 issues.append({"cell_key": cell["cell_key"], "reason": "eligibility_recomputed", "details": row["eligibility"]["reasons"]})
             rows.append(row)

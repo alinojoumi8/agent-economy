@@ -1,7 +1,8 @@
-"""Supervised, append-only recovery of provider-free research batches."""
+"""Supervised, append-only recovery of research batches."""
 from __future__ import annotations
 
 import copy
+from contextlib import ExitStack
 import multiprocessing
 from pathlib import Path
 import time
@@ -25,13 +26,15 @@ def _assigned(spec: StudySpec):
     return [(seed, arm.key) for seed in spec.randomness.seeds for arm in spec.arms]
 
 
-def _planned(spec: StudySpec, seed: int, arm: str) -> dict:
+def _planned(spec: StudySpec, seed: int, arm: str, *, policy_cell: dict | None = None) -> dict:
     row = _incomplete_row(spec, seed, arm, "planned", "study_waiting_for_resume")
     row["eligibility"]["status"] = "pending"
+    if policy_cell is not None:
+        row.update(policy_cell=policy_cell, **policy_cell)
     return row
 
 
-def _journal(data: Path, report: Path, manifest_sha256: str) -> list[dict]:
+def _journal(data: Path, report: Path, manifest_sha256: str, *, contract: str = CONTRACT) -> list[dict]:
     """Check all completed invocations without opening a scientific database."""
     directory = _member(data, "supervision")
     starts, ends = sorted(directory.glob("invocation-*-start.json")), sorted(directory.glob("invocation-*-end.json"))
@@ -48,7 +51,7 @@ def _journal(data: Path, report: Path, manifest_sha256: str) -> list[dict]:
         if seal.get("end_sha256") != file_sha256(end_path):
             raise ValueError("supervision timing receipt changed")
         start, end = _read(start_path), _read(end_path)
-        if (start.get("contract") != CONTRACT or start.get("manifest_sha256") != manifest_sha256
+        if (start.get("contract") != contract or start.get("manifest_sha256") != manifest_sha256
                 or start.get("previous_end_sha256") != previous
                 or _duration(start["prior_active_wall_seconds"]) != active
                 or end.get("start_sha256") != file_sha256(start_path)
@@ -80,22 +83,32 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict], 
         path = location.locate(value) if location is not None else Path(value)
         return _member(data, str(path.relative_to(data)))
 
-    if [(row["seed"], row["arm"]) for row in rows] != _assigned(spec):
+    budget = None
+    if spec.policy_design is not None:
+        from research.policy_studies import cell_directory, study_cells, verify_budget_history
+        from research.policy_recovery import open_allowance
+        cells = study_cells(spec)
+        if (len(rows) != len(cells) or any(digest_json(row.get("policy_cell")) != digest_json(cell)
+                or digest_json({key: row.get(key) for key in cell}) != digest_json(cell) for row, cell in zip(rows, cells))):
+            raise ValueError("working progress changed the policy assignment")
+        budget = open_allowance(batch, location=location, read_only=True, verify_source=location is None)
+    elif [(row["seed"], row["arm"]) for row in rows] != _assigned(spec):
         raise ValueError("working progress changed the assigned cells")
     for row in rows:
-        cell = digest_json({"seed": row["seed"], "arm": row["arm"]})[:12]
-        directory = _member(data, cell)
+        cell = row["cell_key"] if budget else digest_json({"seed": row["seed"], "arm": row["arm"]})[:12]
+        relative = cell_directory(row["policy_cell"]) if budget else cell
+        directory = _member(data, relative)
         for name in ("source", "replay", "checkpoints", "reports"):
             _member(directory, name)
         if row["execution_status"] == "planned":
-            if directory.exists() or row != _planned(spec, row["seed"], row["arm"]):
+            if directory.exists() or row != _planned(spec, row["seed"], row["arm"], policy_cell=row.get("policy_cell")):
                 raise ValueError("planned cell has unexpected execution evidence")
             continue
         claim_path = _member(directory, "attempt.json")
         claim = _read(claim_path)
-        cfg = _arm_config(spec, config, row["arm"])
+        cfg = _arm_config(spec, config, row["arm"], verify_policy_source=location is None)
         cfg.update(seed=row["seed"], checkpoint_every=0, speed_delay_s=0.0,
-                   checkpoint_dir=str(original / cell / "checkpoints"), report_dir=str(original / cell / "reports"))
+                   checkpoint_dir=str(original / relative / "checkpoints"), report_dir=str(original / relative / "reports"))
         if (owned(row["attempt_claim"]) != claim_path
                 or row["attempt_claim_sha256"] != file_sha256(claim_path)
                 or claim["study_manifest"] != batch["manifest"]
@@ -104,6 +117,11 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict], 
                 or claim["config"] != cfg or claim["config_sha256"] != digest_json(cfg)
                 or any(claim[key] != row[key] for key in ("run_id", "seed", "arm", "expected_ticks", "config_sha256"))):
             raise ValueError("working cell contract changed")
+        if budget:
+            if (digest_json(claim.get("policy_cell")) != digest_json(row["policy_cell"])
+                    or claim.get("provider_budget_contract_sha256") != digest_json(budget.contract.model_dump(mode="json"))):
+                raise ValueError("working policy claim changed")
+            verify_budget_history(row, budget, resolve_path=owned)
         if row["execution_status"] == "paused":
             if any(_member(directory, name).exists() for name in ("source-receipt.json", "result.json", "finalized.json")):
                 raise ValueError("finalized cell cannot resume")
@@ -165,16 +183,27 @@ def _validate_resume(directory: str | Path, spec: StudySpec, config: dict, *,
     batch.update(data_dir=str(requested), report_dir=str(report))
     _location({"batch": batch}, report / "results.json", Path(data_root), Path(out_dir))
     data, report = _contract(batch, spec, config, Path(input_root))
-    records = _journal(data, report, batch["manifest_sha256"])
+    policy = spec.policy_design is not None
+    from research.policy_recovery import PROGRESS, SUPERVISION, open_allowance, verify_lineage
+    records = _journal(data, report, batch["manifest_sha256"], contract=SUPERVISION if policy else CONTRACT)
     last = records[-1]["end"]
     if last["status"] != "paused":
         raise ValueError("finalized supervision cannot resume")
     if len(records) >= 1024:
         raise ValueError("working study reached its supervision history limit")
     payload = _read(_member(report, last["report"]["path"]))
-    if (payload["contract"] != "working-study-progress-v1" or payload["batch"] != batch
-            or payload["operations"]["supervision"] != {"contract": CONTRACT, "invocation": len(records)}):
+    if (payload["contract"] != (PROGRESS if policy else "working-study-progress-v1") or payload["batch"] != batch
+            or payload["operations"]["supervision"] != {"contract": SUPERVISION if policy else CONTRACT, "invocation": len(records)}):
         raise ValueError("working progress contract changed")
+    if policy:
+        budget = open_allowance(batch, read_only=True)
+        location = _location(payload, report / "results.json", Path(data_root), Path(out_dir))
+        verify_lineage(payload, spec, location, budget, records)
+        usage = budget.snapshot()
+        if (usage["breached_calls"] or usage["provider_calls"] >= budget.contract.max_provider_calls
+                or usage["encumbered_tokens"] >= budget.contract.max_tokens
+                or usage["encumbered_nano_usd"] >= budget.contract.max_spend_nano_usd):
+            raise ValueError("working study has exhausted its original provider allowance")
     _checked_rows(batch, spec, config, payload["results"])
     active = _duration(last["active_wall_seconds"])
     if active < _batch_active_seconds(data, spec):
@@ -186,9 +215,11 @@ def _validate_resume(directory: str | Path, spec: StudySpec, config: dict, *,
 
 def verify_supervised_result(payload: dict, *, data_dir: Path, report_dir: Path) -> None:
     """Verify the enclosing execution lineage after local or portable loading."""
-    records = _journal(data_dir, report_dir, payload["batch"]["manifest_sha256"])
+    from research.policy_recovery import RESULT, SUPERVISION
+    contract = SUPERVISION if payload["contract"] == RESULT else CONTRACT
+    records = _journal(data_dir, report_dir, payload["batch"]["manifest_sha256"], contract=contract)
     if (records[-1]["end"]["status"] != "finalized"
-            or payload["operations"].get("supervision") != {"contract": CONTRACT, "invocation": len(records)}
+            or payload["operations"].get("supervision") != {"contract": contract, "invocation": len(records)}
             or _duration(payload["operations"]["elapsed_seconds"]) > records[-1]["end"]["active_wall_seconds"]):
         raise ValueError("finalized supervision contract changed")
 
@@ -209,7 +240,8 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                       expected_code: dict | None = None, progress: Callable[[dict], None] | None = None,
                       worker_guard_path: Path | None = None, resume_batch: str | Path | None = None,
                       pause_after_ticks: int | None = None,
-                      pause_after_phase: str | None = None) -> dict:
+                      pause_after_phase: str | None = None,
+                      approve_live_inference: bool = False) -> dict:
     started = time.monotonic()
     protocol = working_protocol(spec.operations.pause_policy)
     if not protocol:
@@ -218,6 +250,15 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
         raise ValueError("pause tick limit must be a positive integer")
     phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
                    ticks=pause_after_ticks, phase=pause_after_phase)
+    policy = spec.policy_design is not None
+    if policy:
+        from llm.readiness import validate_llm_config
+        from research.policy_studies import cell_directory, policy_configurations, study_cells
+        from research.policy_recovery import PROGRESS, RESULT, SUPERVISION, budget_receipt, create_allowance, open_allowance, run_preflights
+        if approve_live_inference is not True:
+            raise ValueError("live policy studies require explicit approval of their declared provider budget")
+        for configured in policy_configurations(spec, config).values():
+            validate_llm_config(configured, require_secrets=True, raise_on_error=True)
     if expected_code is not None and code_identity() != expected_code:
         raise ValueError("source changed after study validation")
     options = dict(spec=spec, config=config, input_root=input_root, data_root=data_root, out_dir=out_dir)
@@ -229,26 +270,33 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
     data, report = _contract(batch, spec, config, Path(input_root))
     if expected_code is not None and batch["manifest"]["code"] != expected_code:
         raise ValueError("source changed during study preparation")
-    with process_lock(_member(data, "supervisor.lock")):
+    with process_lock(_member(data, "supervisor.lock")), ExitStack() as lifetime:
         # Separate from the worker's batch lock: the parent supervises a child,
         # but never holds the child's writer lock while waiting for it.
         if resume_batch is not None:
             state = validate_resume(resume_batch, **options)
             rows, records, prior = copy.deepcopy(state["results"]), state["records"], state["active_wall_seconds"]
         else:
-            rows, records, prior = [_planned(spec, seed, arm) for seed, arm in _assigned(spec)], [], 0.0
+            rows = ([_planned(spec, cell["seed"], cell["arm"], policy_cell=cell) for cell in study_cells(spec)]
+                    if policy else [_planned(spec, seed, arm) for seed, arm in _assigned(spec)])
+            records, prior = [], 0.0
         _contract(batch, spec, config, Path(input_root))
+        budget = (open_allowance(batch) if resume_batch is not None else create_allowance(batch, spec, config)) if policy else None
+        if budget:
+            # A normal exception seals the original allowance. A successful
+            # clean pause releases this callback only after all receipts close.
+            lifetime.callback(budget.seal)
         number = len(records) + 1
         prefix = f"supervision/invocation-{number:06d}"
         start_path = publish_json(data / (prefix + "-start.json"), {
-            "contract": CONTRACT, "manifest_sha256": batch["manifest_sha256"],
+            "contract": SUPERVISION if policy else CONTRACT, "manifest_sha256": batch["manifest_sha256"],
             "previous_end_sha256": records[-1]["end_sha256"] if records else None,
             "prior_active_wall_seconds": prior, "pause_after_ticks": pause_after_ticks,
             **({"pause_after_phase": pause_after_phase} if protocol == PHASE_PROTOCOL else {})})
         if progress:
             progress({"stage": "prepared", "batch": batch})
         context = multiprocessing.get_context("spawn")
-        exhausted, paused, workers = None, False, []
+        exhausted, paused, workers, attempted_cells, preflights = None, False, [], [], []
 
         def elapsed():
             return prior + time.monotonic() - started
@@ -260,6 +308,11 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                 return "disk_budget_exhausted"
             return None
 
+        if policy:
+            preflights, workers, exhausted = run_preflights(batch, spec, budget, invocation=number,
+                input_root=Path(input_root).resolve(), guard_path=worker_guard_path,
+                deadline=started + spec.operations.max_wall_seconds - prior)
+
         for index, previous in enumerate(rows):
             if previous["execution_status"] not in {"planned", "paused"}:
                 continue
@@ -267,15 +320,18 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
             if exhausted or paused:
                 continue
             seed, arm = previous["seed"], previous["arm"]
-            cell = digest_json({"seed": seed, "arm": arm})[:12]
+            cell = previous["cell_key"] if policy else digest_json({"seed": seed, "arm": arm})[:12]
+            relative = cell_directory(previous["policy_cell"]) if policy else cell
             worker_name = prefix + f"-worker-{cell}.json"
             worker_path = _member(data, worker_name)
             process = context.Process(target=_worker, args=(spec.model_dump(mode="json"), config,
                 seed, arm, str(data), str(worker_path), str(Path(input_root).resolve()), batch["manifest"]["code"],
                 str(worker_guard_path) if worker_guard_path else None,
                 {"batch": batch, "resume": previous["execution_status"] == "paused", "max_ticks": pause_after_ticks,
+                 **({"policy_cell": previous["policy_cell"]} if policy else {}),
                  **({"pause_after_phase": pause_after_phase} if protocol == PHASE_PROTOCOL else {})}),
                 name=f"working-study-{cell}")
+            attempted_cells.append(cell)
             process.start()
             try:
                 while process.is_alive():
@@ -293,11 +349,15 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                 workers.append({"path": worker_name, "sha256": file_sha256(worker_path)})
             else:
                 row = _incomplete_row(spec, seed, arm, "failed", exhausted or "worker_failed",
-                    worker_exit_code=exit_code, artifact_directory=str(data / cell),
+                    worker_exit_code=exit_code, artifact_directory=str(data / relative),
                     last_verified_ticks=previous["ticks"])
                 # An unmatched start or absent seal has unknown crash accounting.
                 # Finalize this batch with exclusions; never spend a reset budget.
                 exhausted = exhausted or "worker_failed"
+                if policy:
+                    row.update(policy_cell=previous["policy_cell"], **previous["policy_cell"])
+            if policy and row["execution_status"] == "failed":
+                exhausted = exhausted or "policy_runtime_stopped"
             exhausted = exhausted or limit_reason()
             if exhausted:
                 row["eligibility"] = {"status": "ineligible", "reasons": sorted(set([
@@ -320,32 +380,48 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
             for index, row in enumerate(rows):
                 if row["eligibility"]["status"] == "pending":
                     rows[index] = {**row, "eligibility": {"status": "ineligible", "reasons": [exhausted]}}
-        summary = paired_summary(rows, next(arm.key for arm in spec.arms if arm.role == "baseline"),
-            expected_ticks=spec.time.horizon, expected_arms=[arm.key for arm in spec.arms],
-            expected_seeds=spec.randomness.seeds, expected_metrics=[item.key for item in spec.analysis.outcomes],
-            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
-            initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
+        if policy:
+            from research.policy_analysis import replicated_summary
+            summary = replicated_summary(rows, spec)
+            receipt = budget_receipt(batch, budget, sealed=not paused)
+            if not paused:
+                publish_json(data / "provider-budget-receipt.json", receipt)
+        else:
+            summary = paired_summary(rows, next(arm.key for arm in spec.arms if arm.role == "baseline"),
+                expected_ticks=spec.time.horizon, expected_arms=[arm.key for arm in spec.arms],
+                expected_seeds=spec.randomness.seeds, expected_metrics=[item.key for item in spec.analysis.outcomes],
+                minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
+                initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
         report_name = f"progress-{number:06d}.json" if paused else "results.json"
-        payload = {"contract": "working-study-progress-v1" if paused else "study-result-v1",
+        payload = {"contract": (PROGRESS if paused else RESULT) if policy else ("working-study-progress-v1" if paused else "study-result-v1"),
             "status": "paused" if paused else "finalized", "batch": batch, "results": rows, "summary": summary,
             "outcomes": [item.model_dump(mode="json") for item in spec.analysis.outcomes],
             "measurement_window": [spec.time.measurement_start, spec.time.measurement_end],
             "operations": {"elapsed_seconds": elapsed(), "stop_reason": "working_attempt_paused" if paused else exhausted,
                 "provider_spend_usd": sum(row.get("spend_usd", 0) for row in rows),
                 "provider_calls": sum(row.get("provider_calls", 0) for row in rows),
-                "supervision": {"contract": CONTRACT, "invocation": number},
+                "supervision": {"contract": SUPERVISION if policy else CONTRACT, "invocation": number},
                 "disk_guard": "200ms sampling; a current write and final diagnostic report can exceed the threshold"},
             "artifacts": {"json": str(report / report_name)}}
+        if policy:
+            usage = receipt["usage"]
+            payload.update(preflight=preflights, provider_budget=receipt)
+            payload["operations"].update(provider_calls=usage["provider_calls"],
+                usage_cost_usd=usage["usage_cost_nano_usd"] / 1e9, encumbered_usd=usage["encumbered_nano_usd"] / 1e9)
         if not paused:
             payload["artifacts"]["markdown"] = str(report / "findings.md")
         publish_json(report / report_name, payload)
         if not paused:
-            publish_bytes(report / "findings.md", findings_markdown(payload).encode("utf-8"))
-            publish_json(report / "publication.json", {"contract": "study-publication-v1",
+            from research.policy_runner import policy_findings
+            publish_bytes(report / "findings.md", (policy_findings(payload) if policy else findings_markdown(payload)).encode("utf-8"))
+            publish_json(report / "publication.json", {"contract": "policy-study-publication-v1" if policy else "study-publication-v1",
                 "manifest_sha256": batch["manifest_sha256"], "files": {
                     name: file_sha256(report / name) for name in ("results.json", "findings.md")}})
         end_path = publish_json(data / (prefix + "-end.json"), {"start_sha256": file_sha256(start_path),
             "status": payload["status"], "active_wall_seconds": elapsed(), "workers": workers,
+            **({"attempted_cells": attempted_cells} if policy else {}),
             "report": {"path": report_name, "sha256": file_sha256(report / report_name)}})
         publish_json(data / (prefix + "-seal.json"), {"end_sha256": file_sha256(end_path)})
+        if paused:
+            lifetime.pop_all()
         return payload

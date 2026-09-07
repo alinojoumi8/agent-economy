@@ -581,7 +581,8 @@ def test_sealed_v2_budget_cannot_dispatch_or_settle_through_an_old_connection(po
     assert {**existing.snapshot(), "sealed": True} == frozen
 
 
-def test_policy_cli_drafts_and_validates_without_calls_or_overwriting(policy_setup, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("pause_policy", ["preserve_and_stop", "preserve_and_resume", "preserve_and_resume_phases"])
+def test_policy_cli_drafts_and_validates_without_calls_or_overwriting(policy_setup, tmp_path, monkeypatch, capsys, pause_policy):
     from research.policy_studies import main as draft_main
     from research.study_runner import main as runner_main
 
@@ -594,10 +595,11 @@ def test_policy_cli_drafts_and_validates_without_calls_or_overwriting(policy_set
     arguments = ["policy_studies", "--config", str(ROOT / "runs/price-lab-pilot.yaml"),
         "--design", str(design_path), "--output", str(study_path), "--seeds", "1", "2",
         "--model-replicates", "draw1", "draw2", "--ticks", "3",
-        "--max-provider-calls", "200", "--max-tokens", "1000000", "--max-spend-usd", ".1"]
+        "--max-provider-calls", "200", "--max-tokens", "1000000", "--max-spend-usd", ".1", "--pause-policy", pause_policy]
     monkeypatch.setattr("sys.argv", arguments)
     assert draft_main() == 0
     assert json.loads(capsys.readouterr().out)["provider_calls"] == 0
+    assert json.loads(study_path.read_text())["operations"]["pause_policy"] == pause_policy
     before = file_sha256(study_path)
     assert draft_main() == 2 and file_sha256(study_path) == before
     capsys.readouterr()

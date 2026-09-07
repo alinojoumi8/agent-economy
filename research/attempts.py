@@ -222,7 +222,7 @@ def verify_attempt(row: dict, *, expected_ticks: int,
         claim = json.loads(locate(row["attempt_claim"]).read_text(encoding="utf-8"))
         working = claim_working_protocol(claim)
         checkpoint = claim.get("protocol_version") == 4
-        if (claim.get("protocol_version") not in {1, 2, 3, 4}
+        if (claim.get("protocol_version") not in {1, 2, 3, 4, 5}
                 or ("working_history" in row) != bool(working)
                 or ("position" in row) != (working == PHASE_PROTOCOL)
                 or working and claim["protocol_version"] != attempt_version(claim["study_manifest"]["study"])):

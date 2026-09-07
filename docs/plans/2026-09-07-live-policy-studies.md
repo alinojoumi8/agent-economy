@@ -2,10 +2,10 @@
 
 This extends W3 with equal goods/equity coverage. The CLI now supports fresh-world,
 fixed-horizon policy comparisons under `research-study-v3`, with explicit launch
-authorization and one shared declared provider allowance. The v1/v2 protocols,
-saved-world rules and existing operator UI retain their previous capabilities.
-Day/phase recovery, saved-world policy changes, operator launch/import and real
-provider readiness remain subsequent work. Controlled fixtures demonstrate the
+authorization and one shared declared provider allowance, including cooperative
+day/phase pause and resume. The v1/v2 protocols, saved-world rules and existing
+operator UI retain their previous capabilities. Saved-world policy changes,
+operator launch/import and real provider readiness remain subsequent work. Controlled fixtures demonstrate the
 execution and evidence path; no paid provider rehearsal is claimed.
 
 ## Implemented: shared completion reservations
@@ -140,8 +140,8 @@ separately from the new study budget.
 
 A hard supervisor failure kills its owned worker through a parent-death guard.
 Unresolved requests remain charged in the original ledger; an interrupted batch
-has no final publication and is not represented as a completed study. The next
-recovery slice must authenticate that original allowance before resuming. A
+has no final publication and is not represented as a completed study. Missing
+supervision or unfinished segments cannot resume. A
 200 ms disk poll bounds ongoing supervision, but an individual write or final
 evidence publication can exceed the disk threshold.
 
@@ -149,6 +149,37 @@ Saved-world policy changes require an explicit prospective configuration delta
 in the new protocol. Do not relax `continuation_config` or silently substitute
 a new model into an old source. The original checkpoint and v1/v2 replay must
 remain byte-for-byte unchanged.
+
+### Implemented: original-allowance day and phase recovery
+
+Declare `preserve_and_resume` or `preserve_and_resume_phases` in the prospective
+v3 study. Its working attempts use claim version 5. A pause freezes its source,
+PRNG/phase position, recorded inputs, scoped usage and a digest of the complete
+reservation prefix. Later invocations append to the same allowance; changing
+earlier reservation ownership, settlement or amounts invalidates that history.
+No previous reservation is refunded because a worker or supervisor disappeared.
+
+The supervisor records contiguous invocation start/end/seal receipts. Each
+invocation performs charged preflight checks in distinct scopes before advancing
+the remaining assigned cells. Completed cells are skipped with their bytes
+unchanged. A clean pause publishes `policy-working-progress-v1` with pending
+eligibility and leaves the original ledger open. Resume validates the complete
+lineage and the last closed allowance's exact bytes before a writable world open
+or a new preflight. The study, code, configuration, input hashes, roots, assignments
+and cumulative wall/disk/call/token/spend caps must still match.
+
+Finalization seals the same allowance and publishes `policy-study-result-v2`.
+The independent reader verifies every invocation's preflight, dispatch order,
+reservation interval and worker receipts, then checks scientific source/replay
+evidence and recomputes both price domains. A later failed preflight preserves
+earlier completed evidence and excludes unfinished cells. Missing workers and
+provider, budget or resource failures finalize with exclusions. A normal operator
+interruption seals the allowance without publishing success; a hard crash retains
+unresolved accounting and an unfinished journal, which cannot resume automatically.
+
+This supports recovery from cooperative closed boundaries. It does not recover
+an unknown interrupted transaction, modify a saved world's policy, or advertise
+v3 capability in the existing operator/bundle workflow.
 
 ### CLI workflow
 
@@ -167,6 +198,22 @@ nanodollars per token. The first policy is the baseline.
 .\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --approve-live-inference
 .\.venv\Scripts\python.exe -m research.policy_results <results.json> --data-root data/studies --out-dir reports/out
 ```
+
+For resumable execution, add `--pause-policy preserve_and_resume` to the draft
+command (or `preserve_and_resume_phases` for phase recovery). Keep that original
+study and configuration for each invocation:
+
+```powershell
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --approve-live-inference --pause-after-ticks 1
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --resume-batch <original-batch-directory> --validate-only
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --resume-batch <original-batch-directory> --approve-live-inference
+```
+
+Phase studies can use `--pause-after-phase MORNING` instead of the tick limit.
+Readiness checks on every invocation consume the original declared allowance;
+resuming never creates a new budget. `--validate-only` makes no provider calls.
+A successful pause prints status `paused` and exits 1 because execution remains
+incomplete; it is not a finalized scientific result.
 
 Draft publication is exclusive and never replaces an existing file. Results are
 local scientific artifacts containing operational paths; they are not a public

@@ -137,6 +137,40 @@ def study_cells(spec: StudySpec) -> list[dict]:
             for replicate in spec.randomness.model_replicates for arm in spec.arms]
 
 
+def cell_directory(cell: dict) -> str:
+    """The same immutable namespace for frozen and resumable policy attempts."""
+    return f"cells/{cell['cell_key']}/" + digest_json({"seed": cell["seed"], "arm": cell["arm"]})[:12]
+
+
+def working_binding(batch: dict, spec: StudySpec, config: dict, cell: dict, budget) -> dict:
+    from research.provider_budget import ProviderBudget
+
+    if (not isinstance(cell, dict) or not any(digest_json(item) == digest_json(cell) for item in study_cells(spec))
+            or not isinstance(budget, ProviderBudget)):
+        raise ValueError("working policy execution requires its assigned cell and original allowance")
+    expected = provider_budget_contract(spec, config, manifest_sha256=batch["manifest_sha256"])
+    if (budget.contract != expected or budget.scope != cell["cell_key"] or budget.binding_key != cell["policy"]
+            or budget.path != Path(batch["data_dir"]) / "provider-budget.db" or budget.is_sealed()):
+        raise ValueError("working policy allowance differs from its prospective assignment")
+    return {"policy_cell": cell, "provider_budget_contract_sha256": digest_json(expected.model_dump(mode="json"))}
+
+
+def verify_budget_history(row: dict, budget, *, resolve_path=Path) -> None:
+    from research.study_results import read_json
+
+    points = [row, *[read_json(resolve_path(ref["path"]))["row"] for ref in row.get("working_history", [])[1::2]]]
+    contract_hash = digest_json(budget.contract.model_dump(mode="json"))
+    for point in points:
+        if (digest_json(point["policy_cell"]) != digest_json(row["policy_cell"])
+                or point["provider_budget_contract_sha256"] != contract_hash):
+            raise ValueError("working accounting changed its policy assignment")
+        checkpoint = point["provider_budget_checkpoint"]
+        budget.verify_checkpoint(checkpoint)
+        if digest_json(point["provider_usage"]) != digest_json(budget.snapshot(
+                scope=row["policy_cell"]["cell_key"], through=checkpoint["last_sequence"])):
+            raise ValueError("working accounting differs from its recorded reservation prefix")
+
+
 def provider_budget_contract(spec: StudySpec, config: dict, *, manifest_sha256: str,
                              verify_source: bool = True) -> ProviderBudgetContract:
     configurations = policy_configurations(spec, config, verify_source=verify_source)
@@ -155,7 +189,8 @@ def provider_budget_contract(spec: StudySpec, config: dict, *, manifest_sha256: 
 def draft_policy_comparison(config: dict, *, policies: list[StudyPolicy], tariffs: list[TokenTariff],
                             seeds: list[int], model_replicates: list[str], horizon: int,
                             max_provider_calls: int, max_tokens: int, max_spend_usd: float,
-                            max_wall_seconds: int = 300, max_disk_bytes: int = 128 * 1024 * 1024) -> StudySpec:
+                            max_wall_seconds: int = 300, max_disk_bytes: int = 128 * 1024 * 1024,
+                            pause_policy: str = "preserve_and_stop") -> StudySpec:
     from research.price_catalog import draft_price_study
 
     if not 2 <= len(policies) <= 16:
@@ -185,7 +220,8 @@ def draft_policy_comparison(config: dict, *, policies: list[StudyPolicy], tariff
         outcome["purpose"] = "primary" if outcome["key"] in {"goods_price", "equity_price"} else "exploratory"
     raw["analysis"]["estimand"] = "Mean policy difference across independent worlds after averaging complete paired model replicates within each world"
     raw["operations"].update(mode="live", max_provider_calls=max_provider_calls, max_tokens=max_tokens,
-        max_spend_usd=max_spend_usd, max_wall_seconds=max_wall_seconds, max_disk_bytes=max_disk_bytes)
+        max_spend_usd=max_spend_usd, max_wall_seconds=max_wall_seconds, max_disk_bytes=max_disk_bytes,
+        pause_policy=pause_policy)
     raw["limitations"] = [item for item in raw["limitations"] if "existing scripted policy" not in item]
     raw["limitations"] += [
         "Model replicate labels identify fresh stochastic draws; they do not assert deterministic provider seeds.",
@@ -213,6 +249,8 @@ def main() -> int:
     parser.add_argument("--max-spend-usd", type=float, required=True)
     parser.add_argument("--max-wall-seconds", type=int, default=300)
     parser.add_argument("--max-disk-bytes", type=int, default=128 * 1024 * 1024)
+    parser.add_argument("--pause-policy", choices=["preserve_and_stop", "preserve_and_resume", "preserve_and_resume_phases"],
+                        default="preserve_and_stop", help="Freeze the recovery policy before any world is prepared")
     args = parser.parse_args()
     try:
         if args.design.stat().st_size > 1024 * 1024:
@@ -226,7 +264,7 @@ def main() -> int:
             seeds=args.seeds, model_replicates=args.model_replicates, horizon=args.ticks,
             max_provider_calls=args.max_provider_calls, max_tokens=args.max_tokens,
             max_spend_usd=args.max_spend_usd, max_wall_seconds=args.max_wall_seconds,
-            max_disk_bytes=args.max_disk_bytes)
+            max_disk_bytes=args.max_disk_bytes, pause_policy=args.pause_policy)
         from research.policy_runner import validate_policy_execution
         validate_policy_execution(spec, load_config(args.config))
         publish_json(args.output, spec.model_dump(mode="json"))

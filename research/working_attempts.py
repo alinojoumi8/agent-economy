@@ -1,4 +1,4 @@
-"""Scripted working attempts that can resume before scientific finalization.
+"""Working attempts that can resume before scientific finalization.
 
 This is the executor seam for the resumable study supervisor. It uses an
 exclusive batch lock and versioned day/phase limits; a supervisor must
@@ -17,6 +17,7 @@ from typing import Callable
 from engine.ledger import Ledger
 from engine.schema import SCHEMA_VERSION
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from research.artifacts import code_identity, digest_json, file_sha256, publish_json
 from research.attempts import finalize_attempt, observe_source
 from research.process_lock import process_lock
@@ -142,24 +143,28 @@ def _history(directory: Path, claim_sha256: str, *,
 
 def _batch_active_seconds(data_dir: Path, spec: StudySpec) -> float:
     total = 0.0
-    for seed in spec.randomness.seeds:
-        for arm in spec.arms:
-            directory = _member(data_dir, digest_json({"seed": seed, "arm": arm.key})[:12])
-            if not directory.exists():
-                continue
-            result = _member(directory, "result.json")
-            if result.exists():
-                seal = _read(_member(directory, "finalized.json"))
-                if seal.get("result_sha256") != file_sha256(result):
-                    raise ValueError("finalized working result changed")
-                row = _read(result)
-                total += _duration(row["active_wall_seconds"]) + _duration(row.get("finalization_wall_seconds", 0))
-            else:
-                claim = _member(directory, "attempt.json")
-                _, row = _history(directory, file_sha256(claim))
-                if row is None:
-                    raise ValueError("unreceipted initialization cannot resume")
-                total += _duration(row["active_wall_seconds"])
+    if spec.policy_design is not None:
+        from research.policy_studies import cell_directory, study_cells
+        directories = [cell_directory(cell) for cell in study_cells(spec)]
+    else:
+        directories = [digest_json({"seed": seed, "arm": arm.key})[:12] for seed in spec.randomness.seeds for arm in spec.arms]
+    for relative in directories:
+        directory = _member(data_dir, relative)
+        if not directory.exists():
+            continue
+        result = _member(directory, "result.json")
+        if result.exists():
+            seal = _read(_member(directory, "finalized.json"))
+            if seal.get("result_sha256") != file_sha256(result):
+                raise ValueError("finalized working result changed")
+            row = _read(result)
+            total += _duration(row["active_wall_seconds"]) + _duration(row.get("finalization_wall_seconds", 0))
+        else:
+            claim = _member(directory, "attempt.json")
+            _, row = _history(directory, file_sha256(claim))
+            if row is None:
+                raise ValueError("unreceipted initialization cannot resume")
+            total += _duration(row["active_wall_seconds"])
     return total
 
 
@@ -231,8 +236,10 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
         observed = collect_working_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]),
                                            origin=claim.get("checkpoint_origin", {}).get("receipt"))
         if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
-                or observed["provider_calls"] or observed["spend_usd"]):
+                or claim["protocol_version"] != 5 and (observed["provider_calls"] or observed["spend_usd"])):
             raise ValueError("paused source observations or provider-free contract changed")
+        if claim["protocol_version"] == 5 and observed["provider_calls"] > row["provider_usage"]["provider_calls"]:
+            raise ValueError("paused policy calls are not accounted for")
     finally:
         store.close()
     if file_sha256(source) != row["source_database_sha256"]:
@@ -311,11 +318,13 @@ def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[st
 def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                             seed: int, arm: str, input_root: str | Path,
                             max_ticks: int | None = None, resume: bool = False,
-                            pause_after_phase: str | None = None) -> dict:
-    """Advance one scripted cell; only an intact receipted pause can resume.
+                            pause_after_phase: str | None = None,
+                            policy_cell: dict | None = None,
+                            completion_guard: CompletionGuard | None = None) -> dict:
+    """Advance one assigned cell; only an intact receipted pause can resume.
 
-    The batch supervisor/CLI/UI integration is separate. This entry point
-    deliberately cannot reopen old finalized attempts or published batches.
+    Policy cells require their original shared allowance. This entry point
+    cannot reopen old finalized attempts or published batches.
     """
     started = time.monotonic()
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
@@ -328,7 +337,18 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
     phase_recovery = working_protocol(spec.operations.pause_policy) == PHASE_PROTOCOL
     data_dir, report_dir = _contract(batch, spec, config, Path(input_root))
     cell = digest_json({"seed": seed, "arm": arm})[:12]
-    directory = _member(data_dir, cell)
+    policy_fields = {}
+    if spec.policy_design is not None:
+        from research.policy_studies import cell_directory, verify_budget_history, working_binding
+        policy_fields = working_binding(batch, spec, config, policy_cell, completion_guard)
+        if policy_cell["seed"] != seed or policy_cell["arm"] != arm:
+            raise ValueError("working policy cell differs from the requested seed/arm")
+        relative = cell_directory(policy_cell)
+    else:
+        if policy_cell is not None or completion_guard is not None:
+            raise ValueError("legacy working attempts cannot attach live policy accounting")
+        relative = cell
+    directory = _member(data_dir, relative)
 
     def check_disposition():
         for name in ("source", "replay", "checkpoints", "reports"):
@@ -346,6 +366,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
         # Resolve and validate again after acquiring ownership, before Store
         # can perform any migration, cache creation, or economic write.
         _contract(batch, spec, config, Path(input_root))
+        if policy_fields:
+            working_binding(batch, spec, config, policy_cell, completion_guard)
         check_disposition()
         prior_batch_time = _batch_active_seconds(data_dir, spec)
 
@@ -359,14 +381,14 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
 
         if limits():
             raise ValueError("working study has exhausted its cumulative budget")
-        run_id = "r-" + digest_json({"batch": data_dir.name, "cell": cell})[:12]
+        run_id = "r-" + digest_json({"batch": policy_cell["cell_key"] if policy_cell else data_dir.name, "cell": cell})[:12]
         cfg = _arm_config(spec, config, arm)
         cfg.update(seed=seed, checkpoint_every=0, speed_delay_s=0.0,
                    checkpoint_dir=str(directory / "checkpoints"), report_dir=str(directory / "reports"))
-        claim = {"protocol_version": 3 if phase_recovery else 2, "run_id": run_id, "seed": seed, "arm": arm,
+        claim = {"protocol_version": attempt_version(spec.model_dump(mode="json")), "run_id": run_id, "seed": seed, "arm": arm,
                  "expected_ticks": spec.time.horizon, "config": cfg,
                  "config_sha256": digest_json(cfg), "execution_status": "planned",
-                 "study_manifest_sha256": batch["manifest_sha256"], "study_manifest": batch["manifest"]}
+                 "study_manifest_sha256": batch["manifest_sha256"], "study_manifest": batch["manifest"], **policy_fields}
         if spec.origin:
             from research.attempt_origins import checkpoint_claim_fields, origin_row_fields
             claim.update(checkpoint_claim_fields(spec, batch["manifest"], data_dir, seed, arm))
@@ -379,9 +401,11 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                 raise ValueError("working attempt has no receipted pause")
             if len(refs) >= 2048:
                 raise ValueError("working attempt reached its segment history limit")
+            if policy_fields:
+                verify_budget_history(row, completion_guard)
             _check_source(directory, row, claim)
         else:
-            directory.mkdir(exist_ok=False)
+            directory.mkdir(parents=True, exist_ok=False)
             (directory / "source").mkdir()
             publish_json(claim_path, claim)
             refs, row = [], {"run_id": run_id, "seed": seed, "arm": arm, "ticks": 0,
@@ -389,7 +413,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                 "events": {}, "spend_usd": 0.0, "replay_hash": None, "genesis_hash": None,
                 "source_database": str(directory / "source" / f"{run_id}.db"),
                 "attempt_claim": str(claim_path), "attempt_claim_sha256": file_sha256(claim_path),
-                "config_sha256": claim["config_sha256"], "active_wall_seconds": 0.0}
+                "config_sha256": claim["config_sha256"], "active_wall_seconds": 0.0,
+                **policy_fields, **(policy_cell or {})}
             if spec.origin:
                 row.update(origin_row_fields(claim), ticks=spec.origin.tick)
         prior_attempt_time = _duration(row["active_wall_seconds"])
@@ -404,7 +429,7 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
         try:
             if resume:
                 from run import open_run
-                store, world, _ = open_run({}, run_id, None, data_dir=directory / "source")
+                store, world, _ = open_run({}, run_id, None, data_dir=directory / "source", completion_guard=completion_guard)
             elif spec.origin:
                 from research.checkpoint_origins import open_continuation
                 binding = claim["checkpoint_origin"]
@@ -415,7 +440,7 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                     pass
                 store = Store(row["source_database"])
                 store.init_run_meta(run_id, seed, cfg)
-                world = World(store, cfg)
+                world = World(store, cfg, completion_guard=completion_guard)
                 world.initialize()
                 genesis = canonical_state_receipt(store.conn, excluded_protocol_tables=("shocks", "scenario_packs"))
                 genesis["prng_state"] = store.get_meta()["prng_state"]
@@ -447,8 +472,10 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                 verify_phase_history(store, row, claim, resolve_path=Path)
             elif not row["final_boundary"]:
                 reasons.append("partial_boundary_not_supported")
-            if row.get("provider_calls", 0) or row.get("spend_usd", 0):
+            if not policy_fields and (row.get("provider_calls", 0) or row.get("spend_usd", 0)):
                 reasons.append("provider_free_contract_violated")
+            if policy_fields and world.last_pause_reason and world.last_pause_reason.get("reason") != "phase_boundary":
+                reasons.append("policy_runtime_stopped")
             if row["external_agent_influenced"] or not row["reconciled"] or not row["database_integrity"]:
                 reasons.append("working_source_integrity_failed")
         except Exception as exc:
@@ -462,6 +489,9 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
             elif store is not None:
                 store.close()
         row["source_database_sha256"] = file_sha256(row["source_database"])
+        if policy_fields:
+            row["provider_usage"] = completion_guard.snapshot(scope=policy_cell["cell_key"])
+            row["provider_budget_checkpoint"] = completion_guard.checkpoint()
         try:
             _contract(batch, spec, config, Path(input_root))
         except (OSError, ValueError, RuntimeError):

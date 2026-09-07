@@ -22,6 +22,7 @@ from research.policy_studies import policy_configurations, provider_budget_contr
 from research.process_lock import process_lock
 from research.provider_budget import BudgetLedgerError, ProviderBudget, ProviderBudgetContract
 from research.studies import StudySpec, prepare_study, validate_study_inputs
+from research.working_contracts import working_protocol
 
 
 def validate_policy_execution(spec: StudySpec, config: dict, *, verify_source: bool = True) -> None:
@@ -31,8 +32,10 @@ def validate_policy_execution(spec: StudySpec, config: dict, *, verify_source: b
         raise ValueError("policy studies require persisted random state")
     if spec.operations.concurrency != 1:
         raise ValueError("policy studies supervise one world at a time")
-    if spec.origin is not None or spec.operations.pause_policy != "preserve_and_stop":
-        raise ValueError("policy continuation and supervised pause/resume require the recovery executor")
+    if spec.origin is not None:
+        raise ValueError("saved-world policy changes require their explicit continuation contract")
+    if spec.operations.pause_policy != "preserve_and_stop" and not working_protocol(spec.operations.pause_policy):
+        raise ValueError("unsupported policy pause contract")
     if config.get("shocks"):
         raise ValueError("declare policy-study economic shocks in the assigned arms")
     if (len(study_cells(spec)) > 512 or len(spec.analysis.outcomes) > 64
@@ -73,7 +76,7 @@ def _preflight(config: dict, budget: ProviderBudget) -> dict:
 
 
 def _worker(batch: dict, cell: dict | None, policy_key: str, input_root: str,
-            result_path: str, guard_path: str | None) -> None:
+            result_path: str, guard_path: str | None, preflight_scope: str | None = None) -> None:
     parent = multiprocessing.parent_process()
     if parent is not None:
         if not parent.is_alive():
@@ -94,7 +97,7 @@ def _worker(batch: dict, cell: dict | None, policy_key: str, input_root: str,
             if any(digest_json(batch["manifest"].get(key)) != digest_json(value) for key, value in declared.items()):
                 raise ValueError("prospective policy study changed")
             configured = declared["policy_configurations"][policy_key]
-            scope = f"preflight-{policy_key}" if cell is None else cell["cell_key"]
+            scope = (preflight_scope or f"preflight-{policy_key}") if cell is None else cell["cell_key"]
             budget = _budget(batch, scope=scope, binding=policy_key)
             if cell is None:
                 packet = {"contract": "policy-preflight-v1", "policy": policy_key,
@@ -132,11 +135,13 @@ def _stop(process) -> None:
 
 
 def _supervise(batch: dict, cell: dict | None, policy: str, *, input_root: Path,
-               guard_path: Path | None, deadline: float, max_disk_bytes: int) -> tuple[dict | None, Path, str | None]:
+               guard_path: Path | None, deadline: float, max_disk_bytes: int,
+               preflight_scope: str | None = None, receipt_relative: str | None = None) -> tuple[dict | None, Path, str | None]:
     from research.study_runner import _disk_bytes
 
     key = f"preflight-{policy}" if cell is None else f"cell-{cell['cell_key']}"
-    path = Path(batch["data_dir"]) / f"{key}.json"
+    from research.working_attempts import _member
+    path = _member(Path(batch["data_dir"]), receipt_relative or f"{key}.json")
 
     def limit():
         if time.monotonic() >= deadline:
@@ -149,7 +154,7 @@ def _supervise(batch: dict, cell: dict | None, policy: str, *, input_root: Path,
     if stopped:
         return None, path, stopped
     process = multiprocessing.get_context("spawn").Process(target=_worker,
-        args=(batch, cell, policy, str(input_root), str(path), str(guard_path) if guard_path else None),
+        args=(batch, cell, policy, str(input_root), str(path), str(guard_path) if guard_path else None, preflight_scope),
         name=f"policy-{key[:32]}")
     process.start()
     try:
@@ -178,7 +183,7 @@ def _missing(spec: StudySpec, cell: dict, reason: str) -> dict:
 
 def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
                        resolve_path: Callable[[str], Path] | None = None,
-                       expected_usage: dict | None = None) -> list[str]:
+                       expected_usage: dict | None = None, working_budget: ProviderBudget | None = None) -> list[str]:
     """Bind the independent scientific receipt to the prospective policy cell."""
     from research.study_runner import arm_interventions, collect_outcomes
     from research.study_results import _logical_path, read_json
@@ -208,9 +213,18 @@ def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
         expected.update(seed=cell["seed"], shocks=arm_interventions(spec, cell["arm"]),
             checkpoint_every=0, speed_delay_s=0.0,
             checkpoint_dir=str(original / "checkpoints"), report_dir=str(original / "reports"))
-        if (claim["protocol_version"] != 1 or digest_json(claim["config"]) != digest_json(expected)
+        working = bool(working_protocol(spec.operations.pause_policy))
+        if (claim["protocol_version"] != (5 if working else 1) or digest_json(claim["config"]) != digest_json(expected)
                 or claim["arm"] != cell["arm"] or type(claim["seed"]) is not int or claim["seed"] != cell["seed"]):
             raise ValueError("attempt differs from the assigned policy configuration")
+        if working:
+            from research.policy_studies import verify_budget_history
+            if (working_budget is None or claim["study_manifest"] != batch["manifest"]
+                    or claim["study_manifest_sha256"] != batch["manifest_sha256"]
+                    or digest_json(claim["policy_cell"]) != digest_json(cell)
+                    or claim["provider_budget_contract_sha256"] != digest_json(working_budget.contract.model_dump(mode="json"))):
+                raise ValueError("working policy claim differs from its prospective study")
+            verify_budget_history(row, working_budget, resolve_path=confined)
         if expected_usage is None:
             expected_usage = _budget(batch, scope=cell["cell_key"], binding=cell["policy"]).snapshot(scope=cell["cell_key"])
         if digest_json(packet["provider_usage"]) != digest_json(expected_usage):
@@ -276,6 +290,8 @@ def _run_policy_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                       expected_code: dict | None, progress: Callable[[dict], None] | None,
                       worker_guard_path: Path | None, lifetime: ExitStack) -> dict:
     validate_policy_execution(spec, config)
+    if working_protocol(spec.operations.pause_policy):
+        raise ValueError("working policy studies require the recovery supervisor")
     if approve_live_inference is not True:
         raise ValueError("live policy studies require explicit approval of their declared provider budget")
     configurations = policy_configurations(spec, config)

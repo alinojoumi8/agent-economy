@@ -7,6 +7,15 @@ for directory configuration, source limits and continuation semantics.
 Focused coverage is in `tests/test_checkpoint_study_jobs.py`; browser coverage
 and synthetic desktop/mobile review captures are in the world-workspace suite.
 
+Fresh-world model-policy studies use the separate v3 CLI and evidence reader.
+Their prospective day/phase recovery policy preserves the original shared
+provider allowance across readiness checks and all model replicates. See the
+[live-policy workflow](plans/2026-09-07-live-policy-studies.md#cli-workflow) for
+drafting, explicit launch authorization, pause and provider-free resume validation.
+`tests/test_policy_recovery.py` exercises controlled loopback HTTP and original
+allowance recovery in its own required CI job. These v3 studies are not yet
+advertised by the existing operator or private bundle workflow.
+
 ## Repository workflow
 
 Work on a feature branch or dedicated worktree. Preserve unrelated changes,

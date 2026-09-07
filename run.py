@@ -35,6 +35,7 @@ from engine.semantics import (
     validate_engine_semantics_version,
 )
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
@@ -625,7 +626,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
              replay_source_dir: Path | None = None,
              new_run_id_override: str | None = None,
              activate_entrepreneurship: bool = False,
-             activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
+             activate_numeric_grounding: bool = False,
+             completion_guard: CompletionGuard | None = None) -> tuple[Store, World, str]:
+    if replay and completion_guard is not None:
+        raise ValueError("recorded replay cannot attach a live completion guard")
     if replay and replay_source_dir is not None:
         source_root = Path(replay_source_dir).resolve()
         output_root = Path(data_dir).resolve()
@@ -673,9 +677,13 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
                 logger, logging.INFO,
                 "run.resume.local_citizenship_enabled",
                 run_id=run_id, changes=local_control_plane)
-        world = World(store, stored_cfg)
-        _hydrate_resumed_world(world, meta, stored_cfg)
-        world.restore_prng_state()
+        try:
+            world = World(store, stored_cfg, completion_guard=completion_guard)
+            _hydrate_resumed_world(world, meta, stored_cfg)
+            world.restore_prng_state()
+        except BaseException:
+            store.close()
+            raise
         return store, world, run_id
     if replay:
         source_db = (source_root / f"{replay}.db").resolve()
@@ -734,7 +742,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     store = Store(str(database))
     try:
         store.init_run_meta(run_id, int(config.get("seed", 42)), config)
-        world = World(store, config)
+        world = World(store, config, completion_guard=completion_guard)
         world.initialize()
         return store, world, run_id
     except BaseException:
