@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from engine.store import Store, load_json
+from engine.store import Store, load_json, open_read_only_connection
 from .citizen_actions import action_spec, citizen_world_action_types
 
 
@@ -820,7 +820,10 @@ class ParticipantService:
         path = Path(str(source_path))
         if not path.exists():
             return None
-        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+        if self.config.get("replay_source_closed") is True:
+            conn = open_read_only_connection(str(path), require_closed=True)
+        else:
+            conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
             exists = conn.execute(

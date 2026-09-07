@@ -23,7 +23,7 @@ from research.process_lock import process_lock
 from research.studies import StudySpec, validate_study_inputs
 from research.study_runner import _arm_config, _disk_bytes, collect_working_outcomes, validate_execution
 from research.working_contracts import (
-    DAY_PROTOCOL, PHASE_PROTOCOL, paused_progress, phase_controls, phase_position,
+    DAY_PROTOCOL, PHASE_PROTOCOL, attempt_version, paused_progress, phase_controls, phase_position,
     position_rank, verify_input_prefixes, working_protocol,
 )
 from world.loop import World
@@ -103,7 +103,7 @@ def _history(directory: Path, claim_sha256: str, *,
     manifest = claim["study_manifest"]
     protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
     if (not protocol or protocol != manifest["attempt_protocol"]
-            or claim["protocol_version"] != (3 if protocol == PHASE_PROTOCOL else 2)):
+            or claim["protocol_version"] != attempt_version(manifest["study"])):
         raise ValueError("working attempt protocol changed")
     if len(starts) > 1024:
         raise ValueError("working attempt reached its segment history limit")
@@ -163,6 +163,20 @@ def _batch_active_seconds(data_dir: Path, spec: StudySpec) -> float:
     return total
 
 
+def _verify_initial_condition(row: dict, claim: dict, *, resolve_path: Callable[[str], Path]) -> None:
+    if claim["protocol_version"] == 4:
+        from research.attempt_origins import verify_origin_identity
+        verify_origin_identity(row, claim, resolve_path=resolve_path)
+        return
+    genesis = resolve_path(row["genesis_receipt"])
+    if (genesis != resolve_path(row["attempt_claim"]).parent / "genesis.json"
+            or file_sha256(genesis) != row["genesis_receipt_sha256"]):
+        raise ValueError("genesis receipt changed")
+    origin = _read(genesis)
+    if digest_json({"state": origin["sha256"], "prng_state": origin["prng_state"]}) != row["genesis_hash"]:
+        raise ValueError("genesis identity changed")
+
+
 def _check_source(directory: Path, row: dict, claim: dict, *,
                   resolve_path: Callable[[str], Path] = Path,
                   expected_schema_version: int = SCHEMA_VERSION) -> None:
@@ -176,12 +190,7 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
     for key in ("run_id", "seed", "arm", "expected_ticks", "config_sha256"):
         if row[key] != claim[key]:
             raise ValueError("paused attempt contract changed")
-    genesis = _member(directory, "genesis.json")
-    if genesis != resolve_path(row["genesis_receipt"]) or file_sha256(genesis) != row["genesis_receipt_sha256"]:
-        raise ValueError("genesis receipt changed")
-    origin = _read(genesis)
-    if digest_json({"state": origin["sha256"], "prng_state": origin["prng_state"]}) != row["genesis_hash"]:
-        raise ValueError("genesis identity changed")
+    _verify_initial_condition(row, claim, resolve_path=resolve_path)
     # Ordinary mode=ro can create WAL/SHM files on Windows. This source is
     # already hash-bound, closed, sidecar-free and protected by our writer
     # lock, so immutable=1 is appropriate here. Never use it for live/WAL data.
@@ -196,6 +205,9 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
         raise
     try:
         meta = store.get_meta()
+        if claim["protocol_version"] == 4:
+            from research.attempt_origins import verify_origin_prefix
+            verify_origin_prefix(store, claim)
         if (meta["schema_version"] != expected_schema_version
                 or digest_json(json.loads(meta["config_json"])) != claim["config_sha256"]
                 or int(meta["seed"]) != claim["seed"] or meta["run_id"] != claim["run_id"]):
@@ -206,7 +218,8 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
             verify_phase_history(store, row, claim, resolve_path=resolve_path)
         elif (meta["status"] != "paused" or meta["active_tick"] is not None
               or meta["next_phase"] not in (None, "NIGHT_CLOSE")
-              or int(meta["tick"]) != row["ticks"] or not 0 < row["ticks"] < claim["expected_ticks"]):
+              or int(meta["tick"]) != row["ticks"]
+              or not claim.get("checkpoint_origin", {}).get("receipt", {}).get("tick", 0) < row["ticks"] < claim["expected_ticks"]):
             raise ValueError("paused source is not a resumable committed day")
         if not meta["prng_state"] or digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
             raise ValueError("paused PRNG state changed")
@@ -215,7 +228,8 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
                 or store.scalar("PRAGMA quick_check") != "ok" or not Ledger(store).reconcile()[0]
                 or meta["external_agent_influenced"]):
             raise ValueError("paused source fails integrity or influence checks")
-        observed = collect_working_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]))
+        observed = collect_working_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]),
+                                           origin=claim.get("checkpoint_origin", {}).get("receipt"))
         if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
                 or observed["provider_calls"] or observed["spend_usd"]):
             raise ValueError("paused source observations or provider-free contract changed")
@@ -249,7 +263,7 @@ def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[st
         protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
         if (digest_json(manifest) != claim["study_manifest_sha256"]
                 or not protocol or manifest["attempt_protocol"] != protocol
-                or claim["protocol_version"] != (3 if protocol == PHASE_PROTOCOL else 2)):
+                or claim["protocol_version"] != attempt_version(manifest["study"])):
             raise ValueError("working manifest mismatch")
         refs = row["working_history"]
         if not refs or len(refs) % 2 != 1 or len(refs) > 2047:
@@ -288,12 +302,7 @@ def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[st
             if (row["position"]["active_tick"] is not None or row["position"]["completed_tick"] != row["ticks"]
                     or previous_row and row["position"]["recorded_inputs"]["count"] < previous_row["position"]["recorded_inputs"]["count"]):
                 raise ValueError("final phase position did not advance")
-        genesis = resolve_path(row["genesis_receipt"])
-        if file_sha256(genesis) != row["genesis_receipt_sha256"]:
-            raise ValueError("genesis receipt changed")
-        origin = _read(genesis)
-        if digest_json({"state": origin["sha256"], "prng_state": origin["prng_state"]}) != row["genesis_hash"]:
-            raise ValueError("genesis identity changed")
+        _verify_initial_condition(row, claim, resolve_path=resolve_path)
     except (KeyError, ValueError, TypeError, OSError):
         return ["working_history_invalid"]
     return []
@@ -358,6 +367,9 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                  "expected_ticks": spec.time.horizon, "config": cfg,
                  "config_sha256": digest_json(cfg), "execution_status": "planned",
                  "study_manifest_sha256": batch["manifest_sha256"], "study_manifest": batch["manifest"]}
+        if spec.origin:
+            from research.attempt_origins import checkpoint_claim_fields, origin_row_fields
+            claim.update(checkpoint_claim_fields(spec, batch["manifest"], data_dir, seed, arm))
         claim_path = _member(directory, "attempt.json")
         if resume:
             if _read(claim_path) != claim:
@@ -378,6 +390,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                 "source_database": str(directory / "source" / f"{run_id}.db"),
                 "attempt_claim": str(claim_path), "attempt_claim_sha256": file_sha256(claim_path),
                 "config_sha256": claim["config_sha256"], "active_wall_seconds": 0.0}
+            if spec.origin:
+                row.update(origin_row_fields(claim), ticks=spec.origin.tick)
         prior_attempt_time = _duration(row["active_wall_seconds"])
         number = len(refs) // 2 + 1
         start_path = publish_json(directory / f"segment-{number:06d}-start.json", {
@@ -391,6 +405,11 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
             if resume:
                 from run import open_run
                 store, world, _ = open_run({}, run_id, None, data_dir=directory / "source")
+            elif spec.origin:
+                from research.checkpoint_origins import open_continuation
+                binding = claim["checkpoint_origin"]
+                store, world = open_continuation(binding["database"], binding["receipt"], row["source_database"],
+                    run_id=run_id, config=cfg, interventions=binding["interventions"], max_bytes=binding["max_bytes"])
             else:
                 with Path(row["source_database"]).open("xb"):
                     pass
@@ -416,8 +435,12 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
             if pause_after_phase is not None:
                 run_options["pause_after_phase"] = pause_after_phase
             asyncio.run(world.run(**run_options))
+            if spec.origin:
+                from research.attempt_origins import verify_origin_prefix
+                verify_origin_prefix(store, claim)
             reasons.extend(observe_source(world, row, ticks=spec.time.horizon,
-                                          collect=lambda current: collect_working_outcomes(current, spec)))
+                collect=lambda current: collect_working_outcomes(current, spec,
+                    origin=claim.get("checkpoint_origin", {}).get("receipt"))))
             row["prng_state_sha256"] = digest_json(store.get_meta()["prng_state"])
             if phase_recovery:
                 row["position"] = phase_position(store, spec.model.engine_semantics_version, spec.time.horizon)

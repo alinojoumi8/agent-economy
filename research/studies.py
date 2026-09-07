@@ -10,7 +10,7 @@ import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 import yaml
 
 from engine.schema import SCHEMA_VERSION
@@ -36,9 +36,21 @@ class InputArtifact(Contract):
     key: Text
     path: Text
     sha256: Digest
-    role: Literal["initialization", "calibration", "holdout", "scenario"]
+    role: Literal["initialization", "calibration", "holdout", "scenario", "checkpoint"]
     vintage: Text
     transform_version: Text
+
+
+class CheckpointSource(Contract):
+    seed: Annotated[int, Field(ge=0)]
+    input_key: Text
+    receipt_sha256: Digest
+
+
+class CheckpointOrigins(Contract):
+    kind: Literal["verified_checkpoints"]
+    tick: Tick
+    sources: list[CheckpointSource]
 
 
 class ModelContract(Contract):
@@ -121,7 +133,7 @@ class Outcome(Contract):
 class AnalysisContract(Contract):
     intent: Literal["exploratory", "confirmatory"]
     estimand: Text
-    treatment_unit: Literal["world_seed_pair"]
+    treatment_unit: Literal["world_seed_pair", "checkpoint_world_pair"]
     outcomes: list[Outcome]
     missing_data: Literal["exclude_pair_report_reason"]
     uncertainty: Literal["paired_world_bootstrap"]
@@ -132,9 +144,9 @@ class AnalysisContract(Contract):
 
 class RandomnessContract(Contract):
     seeds: list[int]
-    seed_role: Literal["initial_world_and_engine_stream", "initial_world_and_keyed_daily_streams"]
+    seed_role: Literal["initial_world_and_engine_stream", "initial_world_and_keyed_daily_streams", "checkpoint_origin_seed"]
     stream_contract: Literal["legacy_shared_rng_v1", "mechanism_day_identity_v1"]
-    pairing: Literal["verified_common_genesis"]
+    pairing: Literal["verified_common_genesis", "verified_common_checkpoint"]
     model_replicates: list[Text]
 
 
@@ -195,7 +207,7 @@ class StudyArm(Contract):
 
 
 class StudySpec(Contract):
-    protocol_version: Literal["research-study-v1"]
+    protocol_version: Literal["research-study-v1", "research-study-v2"]
     key: Text
     title: Text
     hypothesis: Text
@@ -210,6 +222,15 @@ class StudySpec(Contract):
     randomness: RandomnessContract
     analysis: AnalysisContract
     operations: OperationContract
+    origin: CheckpointOrigins | None = None
+
+    @model_serializer(mode="wrap")
+    def serialized_contract(self, handler):
+        value = handler(self)
+        # Existing frozen v1 manifests must not gain even a null/default field.
+        if self.origin is None:
+            value.pop("origin", None)
+        return value
 
     @model_validator(mode="after")
     def consistent_study(self):
@@ -232,9 +253,30 @@ class StudySpec(Contract):
             raise ValueError("seeds must be nonnegative, nonempty and unique")
         if self.randomness.model_replicates:
             raise ValueError("model replicate scheduling is not supported by this protocol version")
+        checkpoint = self.protocol_version == "research-study-v2"
+        if checkpoint != (self.origin is not None):
+            raise ValueError("checkpoint origins require the explicit research-study-v2 protocol")
+        if checkpoint:
+            if self.model.engine_semantics_version < 7:
+                raise ValueError("checkpoint studies require persisted random semantics")
+            if (len(self.origin.sources) != len(seeds)
+                    or {item.seed for item in self.origin.sources} != set(seeds)
+                    or len({item.input_key for item in self.origin.sources}) != len(seeds)):
+                raise ValueError("each initial-world seed needs one distinct checkpoint input")
+            if self.origin.tick + self.time.warmup_ticks >= self.time.intervention_start:
+                raise ValueError("checkpoint intervention must follow origin and warmup")
+            inputs = {item.key: item for item in self.inputs if item.role == "checkpoint"}
+            if set(inputs) != {item.input_key for item in self.origin.sources}:
+                raise ValueError("checkpoint sources and declared checkpoint inputs must agree")
+        elif any(item.role == "checkpoint" for item in self.inputs):
+            raise ValueError("genesis studies cannot declare checkpoint inputs")
+        if (self.randomness.pairing != ("verified_common_checkpoint" if checkpoint else "verified_common_genesis")
+                or self.analysis.treatment_unit != ("checkpoint_world_pair" if checkpoint else "world_seed_pair")):
+            raise ValueError("pairing and treatment unit must match the declared initial conditions")
         keyed = self.model.engine_semantics_version >= 16
         expected_stream = DAILY_STREAM_CONTRACT if keyed else "legacy_shared_rng_v1"
-        expected_role = "initial_world_and_keyed_daily_streams" if keyed else "initial_world_and_engine_stream"
+        expected_role = ("checkpoint_origin_seed" if checkpoint else
+                         "initial_world_and_keyed_daily_streams" if keyed else "initial_world_and_engine_stream")
         if self.randomness.stream_contract != expected_stream or self.randomness.seed_role != expected_role:
             raise ValueError("randomness declaration does not match the engine semantics")
         outcomes = self.analysis.outcomes
@@ -268,7 +310,7 @@ class StudySpec(Contract):
         inputs = self.inputs
         if len({item.key for item in inputs}) != len(inputs):
             raise ValueError("input artifact keys must be unique")
-        fitting = {item.sha256 for item in inputs if item.role in {"initialization", "calibration"}}
+        fitting = {item.sha256 for item in inputs if item.role in {"initialization", "calibration", "checkpoint"}}
         if any(item.sha256 in fitting for item in inputs if item.role == "holdout"):
             raise ValueError("holdout artifacts must be separate from initialization/calibration")
         if self.operations.mode == "live" and self.behavior.family != "live_llm":
@@ -310,6 +352,8 @@ def validate_study_inputs(spec: StudySpec, config: dict, *, input_root: str | Pa
         path = (root / artifact.path).resolve()
         if not path.is_relative_to(root) or not path.is_file():
             raise ValueError(f"input artifact is outside its declared root or missing: {artifact.key}")
+        if artifact.role == "checkpoint" and path.stat().st_size > spec.operations.max_disk_bytes:
+            raise ValueError("checkpoint input exceeds its admission size limit")
         if file_sha256(path) != artifact.sha256:
             raise ValueError(f"input artifact hash mismatch: {artifact.key}")
     if config.get("dataset_manifest"):
@@ -319,9 +363,26 @@ def validate_study_inputs(spec: StudySpec, config: dict, *, input_root: str | Pa
         if dataset_path not in declared:
             raise ValueError("the configured dataset manifest must be a pinned initialization artifact")
     description = Path(__file__).resolve().parents[1] / "docs/research/model-description.md"
-    return {"kind": "prospective_study", "study": spec.model_dump(mode="json"),
+    protocol = {"kind": "prospective_study", "study": spec.model_dump(mode="json"),
                 "resolved_config": config, "model_description_sha256": file_sha256(description),
                 "creation_provenance": "prepared_before_attempt_initialization"}
+    if spec.origin is not None:
+        from research.checkpoint_origins import inspect_checkpoint
+        declared = {item.key: item for item in spec.inputs}
+        origins = {}
+        for item in spec.origin.sources:
+            artifact = declared[item.input_key]
+            receipt = inspect_checkpoint(root / artifact.path, max_bytes=spec.operations.max_disk_bytes,
+                                         config={**config, "seed": item.seed})
+            if (digest_json(receipt) != item.receipt_sha256 or receipt["database_sha256"] != artifact.sha256
+                    or receipt["tick"] != spec.origin.tick or receipt["seed"] != item.seed):
+                raise ValueError("checkpoint origin differs from the study declaration")
+            origins[str(item.seed)] = receipt
+        if len({item["run_id"] for item in origins.values()}) != len(origins):
+            raise ValueError("checkpoint replications must have distinct source-world identities")
+        protocol["checkpoint_origins"] = origins
+        protocol["origin_contract"] = "admitted-state-with-recorded-continuation-v1"
+    return protocol
 
 
 def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
@@ -337,12 +398,17 @@ def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
     for artifact in spec.inputs:
         sources[f"inputs/{artifact.sha256}.blob"] = (
             (Path(input_root) / artifact.path).resolve(), artifact.sha256)
-    limit = min(spec.operations.max_disk_bytes, 128 * 1024 * 1024)
-    if sum(path.stat().st_size for path, _ in sources.values()) > limit:
+    checkpoints = {item.sha256 for item in spec.inputs if item.role == "checkpoint"}
+    ordinary_bytes = sum(path.stat().st_size for path, digest in sources.values() if digest not in checkpoints)
+    checkpoint_bytes = sum(path.stat().st_size for path, digest in sources.values() if digest in checkpoints)
+    if ordinary_bytes > min(spec.operations.max_disk_bytes, 128 * 1024 * 1024):
         raise ValueError("declared study context exceeds the snapshot size limit")
+    # Each source needs a context copy plus source/replay copies for every arm.
+    if ordinary_bytes + checkpoint_bytes * (1 + 2 * len(spec.arms)) > spec.operations.max_disk_bytes:
+        raise ValueError("checkpoint study cannot fit its initial context and independent arm/replay copies")
     protocol["evidence_snapshot_version"] = "declared-inputs-v1"
     batch = create_batch(spec.key, protocol, data_root=data_root, out_dir=out_dir)
-    remaining = limit
+    remaining = spec.operations.max_disk_bytes if checkpoints else min(spec.operations.max_disk_bytes, 128 * 1024 * 1024)
     for name, (source, digest) in sources.items():
         target = Path(batch["data_dir"]) / "context" / name
         publish_copy(target, source, expected_sha256=digest, max_bytes=remaining)

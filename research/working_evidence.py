@@ -104,7 +104,8 @@ def load_working_progress(result_path: str | Path, *, data_root: str | Path = "d
             try:
                 connection.execute("PRAGMA query_only = ON")
                 store = Store.from_read_only_connection(source, connection)
-                observed = collect_outcomes(store, spec)
+                claim = read_json(location.locate(row["attempt_claim"]))
+                observed = collect_outcomes(store, spec, origin=claim.get("checkpoint_origin", {}).get("receipt"))
                 if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
                         or canonical_state_receipt(connection)["sha256"] != row["source_state_hash"]
                         or observed["provider_calls"] or observed["spend_usd"]):
@@ -116,7 +117,8 @@ def load_working_progress(result_path: str | Path, *, data_root: str | Path = "d
         summary = paired_summary(payload["results"], next(arm.key for arm in spec.arms if arm.role == "baseline"),
             expected_ticks=spec.time.horizon, expected_arms=[arm.key for arm in spec.arms],
             expected_seeds=spec.randomness.seeds, expected_metrics=[item.key for item in spec.analysis.outcomes],
-            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples)
+            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
+            initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
         if (digest_json(summary) != digest_json(payload["summary"])
                 or payload["outcomes"] != [item.model_dump(mode="json") for item in spec.analysis.outcomes]
                 or payload["measurement_window"] != [spec.time.measurement_start, spec.time.measurement_end]):

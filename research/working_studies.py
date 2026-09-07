@@ -16,7 +16,7 @@ from research.working_attempts import (
     _batch_active_seconds, _check_source, _contract, _duration, _history, _member, _read,
     verify_working_history,
 )
-from research.working_contracts import PHASE_PROTOCOL, phase_controls, working_protocol
+from research.working_contracts import PHASE_PROTOCOL, attempt_version, phase_controls, working_protocol
 
 CONTRACT = "working-study-supervision-v1"
 
@@ -100,7 +100,7 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict], 
                 or row["attempt_claim_sha256"] != file_sha256(claim_path)
                 or claim["study_manifest"] != batch["manifest"]
                 or claim["study_manifest_sha256"] != batch["manifest_sha256"]
-                or claim["protocol_version"] != (3 if batch["manifest"]["attempt_protocol"] == PHASE_PROTOCOL else 2)
+                or claim["protocol_version"] != attempt_version(batch["manifest"]["study"])
                 or claim["config"] != cfg or claim["config_sha256"] != digest_json(cfg)
                 or any(claim[key] != row[key] for key in ("run_id", "seed", "arm", "expected_ticks", "config_sha256"))):
             raise ValueError("working cell contract changed")
@@ -323,7 +323,8 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
         summary = paired_summary(rows, next(arm.key for arm in spec.arms if arm.role == "baseline"),
             expected_ticks=spec.time.horizon, expected_arms=[arm.key for arm in spec.arms],
             expected_seeds=spec.randomness.seeds, expected_metrics=[item.key for item in spec.analysis.outcomes],
-            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples)
+            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
+            initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
         report_name = f"progress-{number:06d}.json" if paused else "results.json"
         payload = {"contract": "working-study-progress-v1" if paused else "study-result-v1",
             "status": "paused" if paused else "finalized", "batch": batch, "results": rows, "summary": summary,

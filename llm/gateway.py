@@ -718,11 +718,13 @@ class Gateway:
                 # Windows CPython 3.11 can retain the recorded source handle
                 # after close.  Query a private SQLite backup instead so the
                 # source remains immediately rotatable and archivable.
-                self._replay_snapshot = ReadOnlyReplaySnapshot(source)
+                self._replay_snapshot = ReadOnlyReplaySnapshot(
+                    source, require_closed=config.get("replay_source_closed") is True)
                 self.replay_conn = self._replay_snapshot.conn
             else:
                 self.replay_conn = open_read_only_connection(
-                    source, check_same_thread=False)
+                    source, check_same_thread=False,
+                    require_closed=config.get("replay_source_closed") is True)
 
     def close(self) -> None:
         """Release replay resources; safe to call repeatedly during teardown."""

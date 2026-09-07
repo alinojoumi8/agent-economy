@@ -30,7 +30,8 @@ def paired_summary(results: list[dict[str, Any]], baseline_arm: str,
                    expected_ticks: int | None = None,
                    expected_arms: list[str] | None = None,
                    expected_seeds: list[int] | None = None,
-                   expected_metrics: list[str] | None = None) -> dict[str, Any]:
+                   expected_metrics: list[str] | None = None,
+                   initial_state_key: str = "genesis_hash") -> dict[str, Any]:
     """Aggregate already verified attempts, resampling whole seed/world pairs.
 
     Receipt verification belongs to the runner/loader before this pure function.
@@ -39,6 +40,8 @@ def paired_summary(results: list[dict[str, Any]], baseline_arm: str,
     """
     if minimum_pairs < 2 or bootstrap_samples < 1:
         raise ValueError("minimum_pairs must be at least 2 and bootstrap_samples positive")
+    if initial_state_key not in {"genesis_hash", "origin_state_hash"}:
+        raise ValueError("unsupported common initial condition")
     by_arm_seed = {}
     for row in results:
         key = (str(row["arm"]), int(row["seed"]))
@@ -77,6 +80,8 @@ def paired_summary(results: list[dict[str, Any]], baseline_arm: str,
               "minimum_pairs": minimum_pairs, "analysis_kind": "model_conditional_exploratory",
               "exclusions": [{"arm": arm, "seed": seed, "reasons": reasons}
                              for (arm, seed), reasons in exclusions.items() if reasons]}
+    if initial_state_key != "genesis_hash":
+        output["initial_state_key"] = initial_state_key
 
     def finite_value(arm: str, seed: int, metric: str) -> float | None:
         if exclusions[(arm, seed)]:
@@ -108,8 +113,8 @@ def paired_summary(results: list[dict[str, Any]], baseline_arm: str,
                     reasons.append("treatment:missing_or_nonfinite_outcome")
                 if control is None and not exclusions[(baseline_arm, seed)]:
                     reasons.append("baseline:missing_or_nonfinite_outcome")
-                t_genesis = by_arm_seed.get((arm, seed), {}).get("genesis_hash")
-                c_genesis = by_arm_seed.get((baseline_arm, seed), {}).get("genesis_hash")
+                t_genesis = by_arm_seed.get((arm, seed), {}).get(initial_state_key)
+                c_genesis = by_arm_seed.get((baseline_arm, seed), {}).get(initial_state_key)
                 if not t_genesis or t_genesis != c_genesis:
                     reasons.append("common_initial_state_unverified")
                 if reasons:

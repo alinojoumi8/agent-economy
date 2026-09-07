@@ -118,6 +118,14 @@ for the manifest policy, CLI controls and compatibility requirements. On Windows
 use a fresh short `--basetemp` and verify at least 40 GiB of free space before
 pytest. Complete Python coverage belongs in the CI shards, not one local run.
 
+Checkpoint-derived studies use an explicit version 2 study declaration and
+attempt version 4. Their independent recorded replay begins at the admitted
+saved day. Run `tests/test_checkpoint_origins.py` and
+`tests/test_checkpoint_studies.py` for source immutability, both price domains,
+day/phase recovery, inherited-cost separation and private bundle checks. See
+[saved-world studies](plans/2026-09-07-checkpoint-studies.md) for drafting and
+execution commands and the remaining operator interface work.
+
 | Layer | What it proves |
 |---|---|
 | Unit/invariant | Ledger conservation, markets, credit, firms, memory, metrics |

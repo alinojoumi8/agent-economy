@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/pause/resume/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector and local fresh-world workflow implemented; checkpoint-derived execution, day/phase recovery, CLI drafts and private evidence implemented; checkpoint selection/launch in the UI and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -886,3 +886,43 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   including both direct-interaction regressions and the slower navigation case.
   The skip remains the opt-in real-backend menu smoke. Staged Gitleaks and diff
   hygiene passed. Required CI is dispatched after committing this correction.
+
+## Studies from saved worlds (2026-09-07)
+
+- Added closed-source admission, complete state/random/input receipts, exclusive
+  copies and deterministic continuation branches. Original sources remain
+  unchanged. Source/replica seeds, completed day and economic configuration must
+  agree with the prospective declaration; incompatible state, accounting,
+  sidecars or participant/external influence refuses admission.
+- Study protocol 2 and attempt protocol 4 bind checkpoint origins. Both G2 and
+  F2 execute treatment/control continuations from two independently declared
+  source worlds. Recorded replay starts from a separate origin copy and verifies
+  the new interval. Existing genesis study serialization and replay stay intact.
+- Integrated frozen execution, supervised day/phase recovery, independent
+  outcomes, common-origin pairing and private pending/final evidence transport.
+  Inherited recorded calls and costs remain visible but do not consume the new
+  provider-free totals. Flow windows exclude inherited observations; terminal
+  equity prices retain the existing explicit execution-age contract.
+- Added explicit checkpoint drafting to `research.price_catalog`, including
+  source selection, common-day validation and retained source seeds. Large
+  sources refuse before content hashing or batch allocation. The new
+  [saved-world contract](2026-09-07-checkpoint-studies.md) includes commands.
+- Windows checks caught read-only SQLite readers creating sidecars. An explicit
+  closed-source path now covers the gateway, external-agent and participant
+  readers and the same canonical replay comparison. Default readers still
+  include live WAL content. Replay recovery files use their own directories and
+  cannot replace the source attempt's snapshots.
+- First integration set: **38 passed, 6 failed**; the six failures were the
+  source-sidecar rejection. After correction, recovery checks passed **55 tests**
+  (527.85 s). After isolating replay recovery outputs, the expanded study,
+  transport, external/participant and legacy replay checks passed **122 tests**
+  (434.61 s). The final pre-hash size guard plus protocol/documentation checks
+  passed **35 tests** (3.21 s). No paid provider calls were made.
+- Compiled **335 source files** and passed `pip check`. A broad compile walk
+  reported inaccessible old ignored report directories; compiling the actual
+  tracked/unignored Python source set succeeded without changing those artifacts.
+  The existing Starlette test-client deprecation warning remains.
+- Required CI now includes both checkpoint test modules. The operator launcher
+  remains explicitly fresh-world-only; reviewed checkpoint selection/launch and
+  origin details in the interface are the next portion of this deliverable.
+  The broader five-part roadmap is still active.

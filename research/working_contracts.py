@@ -24,6 +24,19 @@ def working_protocol(policy: str) -> str | None:
     return POLICIES.get(policy)
 
 
+def attempt_version(study: dict) -> int:
+    if study.get("origin") is not None:
+        return 4
+    protocol = working_protocol(study["operations"]["pause_policy"])
+    return 3 if protocol == PHASE_PROTOCOL else 2 if protocol else 1
+
+
+def claim_working_protocol(claim: dict) -> str | None:
+    if claim.get("protocol_version") in {2, 3, 4}:
+        return working_protocol(claim["study_manifest"]["study"]["operations"]["pause_policy"])
+    return None
+
+
 def phase_controls(policy: str, semantics: int, *, ticks: int | None, phase: str | None) -> None:
     if phase is not None:
         if working_protocol(policy) != PHASE_PROTOCOL:
@@ -87,6 +100,22 @@ def position_rank(position: dict, semantics: int, horizon: int) -> int:
     return rank
 
 
+def persisted_random_state(meta) -> dict:
+    """Validate every stream restored by World before admitting a saved state."""
+    try:
+        engine = json.loads(meta["prng_state"])
+        lifecycle = json.loads(meta["lifecycle_prng_state"])
+        if not isinstance(engine, dict) or set(engine) != {"engine", "persona"}:
+            raise ValueError("missing engine/persona streams")
+        for value in (engine["engine"], engine["persona"], lifecycle):
+            if not isinstance(value, list) or len(value) != 3:
+                raise ValueError("invalid random state shape")
+            random.Random().setstate((value[0], tuple(value[1]), value[2]))
+    except (ValueError, TypeError, IndexError, KeyError, OverflowError) as exc:
+        raise ValueError("invalid persisted random streams for phase recovery") from exc
+    return {"engine_persona": engine, "lifecycle": lifecycle}
+
+
 def phase_position(store, semantics: int, horizon: int) -> dict:
     """Validate the engine's persisted frontier before any writable reopen."""
     meta = store.get_meta()
@@ -126,23 +155,12 @@ def phase_position(store, semantics: int, horizon: int) -> dict:
             raise ValueError("invalid observation phase marker")
         if index > phases.index("MEMORY") and state.get("observations_captured") is not True:
             raise ValueError("finalization is missing its observation receipt")
-    # Match the exact states restored by World, including the lifecycle stream.
-    try:
-        engine = json.loads(meta["prng_state"])
-        lifecycle = json.loads(meta["lifecycle_prng_state"])
-        if not isinstance(engine, dict) or set(engine) != {"engine", "persona"}:
-            raise ValueError("missing engine/persona streams")
-        for value in (engine["engine"], engine["persona"], lifecycle):
-            if not isinstance(value, list) or len(value) != 3:
-                raise ValueError("invalid random state shape")
-            random.Random().setstate((value[0], tuple(value[1]), value[2]))
-    except (ValueError, TypeError, IndexError, KeyError, OverflowError) as exc:
-        raise ValueError("invalid persisted random streams for phase recovery") from exc
+    streams = persisted_random_state(meta)
     last_id = int(store.scalar("SELECT COALESCE(MAX(id),0) FROM llm_calls", default=0))
     position = {"contract": POSITION_CONTRACT, "completed_tick": _integer(meta["tick"], "completed day"),
                 "active_tick": active, "next_phase": phase,
                 "phase_state_sha256": digest_json(state),
-                "prng_sha256": digest_json({"engine_persona": engine, "lifecycle": lifecycle}),
+                "prng_sha256": digest_json(streams),
                 "recorded_inputs": input_prefixes(store, {last_id})[last_id]}
     position_rank(position, semantics, horizon)
     return position
@@ -161,8 +179,10 @@ def paused_progress(row: dict, previous: dict | None, claim: dict) -> bool:
     protocol = claim["study_manifest"]["attempt_protocol"]
     if type(row["ticks"]) is not int:
         return False
+    origin = claim.get("checkpoint_origin", {}).get("receipt")
+    initial_tick = origin["tick"] if origin else 0
     if protocol == DAY_PROTOCOL:
-        return row["ticks"] > (previous["ticks"] if previous else 0) and "position" not in row
+        return row["ticks"] > (previous["ticks"] if previous else initial_tick) and "position" not in row
     if protocol != PHASE_PROTOCOL:
         raise ValueError("unsupported working attempt protocol")
     semantics = claim["study_manifest"]["study"]["model"]["engine_semantics_version"]
@@ -170,7 +190,9 @@ def paused_progress(row: dict, previous: dict | None, claim: dict) -> bool:
     if row["ticks"] != row["position"]["completed_tick"] or row["ticks"] >= claim["expected_ticks"]:
         return False
     if previous is None:
-        return True
+        return (row["ticks"] >= initial_tick and (not origin or
+            row["position"]["recorded_inputs"]["count"] >= origin["recorded_inputs"]["count"]
+            and row["position"]["recorded_inputs"]["last_id"] >= origin["recorded_inputs"]["last_id"]))
     return (rank >= position_rank(previous["position"], semantics, claim["expected_ticks"])
             and row["position"]["recorded_inputs"]["count"] >= previous["position"]["recorded_inputs"]["count"]
             and row["position"]["recorded_inputs"]["last_id"] >= previous["position"]["recorded_inputs"]["last_id"])

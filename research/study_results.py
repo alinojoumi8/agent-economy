@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -14,7 +15,7 @@ from research.analysis import paired_summary
 from research.artifacts import digest_json, file_sha256, safe_key
 from research.attempts import verify_attempt
 from research.studies import StudySpec
-from research.working_contracts import PHASE_PROTOCOL, working_protocol
+from research.working_contracts import attempt_version, working_protocol
 from research.study_runner import _arm_config, _incomplete_row, collect_outcomes, validate_execution
 
 
@@ -131,10 +132,10 @@ def _verify_cell(row: dict, worker: dict | None, spec: StudySpec, config: dict,
             raise StudyArtifactError("attempt namespace mismatch")
         claim = read_json(claim_path)
         protocol = working_protocol(spec.operations.pause_policy)
-        if protocol and (claim.get("protocol_version") != (3 if protocol == PHASE_PROTOCOL else 2)
+        if (protocol or spec.origin) and (claim.get("protocol_version") != attempt_version(spec.model_dump(mode="json"))
                          or claim.get("study_manifest") != read_json(location.data_file("manifest.json"))["manifest"]):
             reasons.append("study_attempt_protocol_mismatch")
-        if claim.get("protocol_version") in {2, 3}:
+        if protocol:
             finished = location.data_file(f"{cell_id}/result.json")
             seal = read_json(location.data_file(f"{cell_id}/finalized.json"))
             stored = read_json(finished)
@@ -148,16 +149,24 @@ def _verify_cell(row: dict, worker: dict | None, spec: StudySpec, config: dict,
             checkpoint_dir=str(original_attempt / "checkpoints"), report_dir=str(original_attempt / "reports"))
         if digest_json(expected) != row["config_sha256"] or digest_json(claim["config"]) != digest_json(expected):
             reasons.append("study_arm_configuration_mismatch")
-        genesis = read_json(location.data_file(f"{cell_id}/genesis.json"))
-        if digest_json({"state": genesis["sha256"], "prng_state": genesis["prng_state"]}) != row["genesis_hash"]:
-            reasons.append("genesis_receipt_mismatch")
+        if spec.origin:
+            from research.attempt_origins import verify_origin_identity
+            verify_origin_identity(row, claim, resolve_path=location.locate)
+        else:
+            genesis = read_json(location.data_file(f"{cell_id}/genesis.json"))
+            if digest_json({"state": genesis["sha256"], "prng_state": genesis["prng_state"]}) != row["genesis_hash"]:
+                reasons.append("genesis_receipt_mismatch")
         if reasons:
             return sorted(set(reasons))
-        store = Store(str(location.locate(row["source_database"])), create=False, read_only=True)
-        try:
-            actual = collect_outcomes(store, spec)
-        finally:
-            store.close()
+        with ExitStack() as readers:
+            if spec.origin:
+                from research.checkpoint_origins import closed_checkpoint
+                store = readers.enter_context(closed_checkpoint(location.locate(row["source_database"]),
+                                                                max_bytes=spec.operations.max_disk_bytes))
+            else:
+                store = Store(str(location.locate(row["source_database"])), create=False, read_only=True)
+                readers.callback(store.close)
+            actual = collect_outcomes(store, spec, origin=claim.get("checkpoint_origin", {}).get("receipt"))
         if any(digest_json(row.get(key)) != digest_json(value) for key, value in actual.items()):
             reasons.append("independent_measurement_mismatch")
         if actual["provider_calls"] or actual["spend_usd"]:
@@ -180,6 +189,8 @@ def _stored_reasons(row: dict) -> list[str]:
 def _verify_context(manifest: dict, spec: StudySpec, location: StudyLocation) -> str:
     version = manifest.get("evidence_snapshot_version")
     if version is None:
+        if spec.origin:
+            raise StudyArtifactError("checkpoint studies require their frozen initial conditions")
         return "legacy_missing"
     if version != "declared-inputs-v1":
         raise StudyArtifactError("unsupported declared-input snapshot contract")
@@ -189,6 +200,19 @@ def _verify_context(manifest: dict, spec: StudySpec, location: StudyLocation) ->
         path = location.data_file(f"context/{name}")
         if file_sha256(path) != digest:
             raise StudyArtifactError("frozen model description or declared input was modified")
+    if spec.origin:
+        from research.checkpoint_origins import verify_checkpoint
+        if (manifest.get("origin_contract") != "admitted-state-with-recorded-continuation-v1"
+                or set(manifest.get("checkpoint_origins", {})) != {str(seed) for seed in spec.randomness.seeds}):
+            raise StudyArtifactError("checkpoint initial conditions are missing")
+        for declared in spec.origin.sources:
+            artifact = next(item for item in spec.inputs if item.key == declared.input_key)
+            receipt = manifest["checkpoint_origins"][str(declared.seed)]
+            if (digest_json(receipt) != declared.receipt_sha256 or receipt["database_sha256"] != artifact.sha256
+                    or receipt["seed"] != declared.seed or receipt["tick"] != spec.origin.tick):
+                raise StudyArtifactError("checkpoint initial condition differs from its declaration")
+            verify_checkpoint(location.data_file(f"context/inputs/{artifact.sha256}.blob"), receipt,
+                max_bytes=spec.operations.max_disk_bytes, config={**manifest["resolved_config"], "seed": declared.seed})
     return "verified"
 
 
@@ -266,7 +290,8 @@ def load_study_result(result_path: str | Path, *, data_root: str | Path = "data/
         summary = paired_summary(rows, next(arm.key for arm in spec.arms if arm.role == "baseline"),
             expected_ticks=spec.time.horizon, expected_arms=[arm.key for arm in spec.arms],
             expected_seeds=spec.randomness.seeds, expected_metrics=[item.key for item in spec.analysis.outcomes],
-            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples)
+            minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
+            initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
         agrees = digest_json(summary) == digest_json(payload["summary"])
         if not agrees:
             issues.append({"reason": "stored_summary_disagrees_with_verified_evidence"})

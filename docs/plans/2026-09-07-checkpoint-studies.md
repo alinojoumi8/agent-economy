@@ -1,0 +1,128 @@
+# Paired studies from saved worlds
+
+Status: implementation in progress under recommendations 1–2 of the research
+city roadmap. Goods and equity studies have equal scope and acceptance gates.
+
+## Current implementation
+
+The backend now admits explicit closed sources, prepares version 2 study
+manifests, runs paired continuations, and replays their new interval from
+independent origin copies. Frozen, committed-day recovery and saved-phase
+recovery use attempt version 4; existing attempt versions 1–3 retain their
+genesis interpretation. Independent readers and private bundles verify the
+origin, inherited input prefix, continuation outcomes and separate new costs.
+Local recovery checks passed 55 tests; the expanded source, study, transport,
+external-agent, participant and legacy replay regression passed 122 tests.
+Those runs used short temporary paths and the 40 GiB free-space guard. CI and
+the remaining operator interface work are tracked in the execution log.
+
+The operator launcher still advertises fresh worlds only. Reviewed checkpoint
+selection, launch and origin details in the interface remain required work;
+the backend implementation does not complete this entire deliverable.
+
+## Command-line drafting and execution
+
+Use the configuration that produced the saved worlds. The economic settings,
+policy, semantics and source seeds must match; only checkpoint/report output
+paths, checkpoint frequency and delay are operational differences. Sources must
+have the same completed day and distinct original seeds and run identities.
+The current executor requires an explicitly scripted provider-free policy.
+
+For example, replace the two example paths with compatible closed snapshots:
+
+```powershell
+.\.venv\Scripts\python.exe -m research.price_catalog G2 --config runs/price-lab-pilot.yaml --checkpoint checkpoints/research/seed-1.db --checkpoint checkpoints/research/seed-2.db --input-root . --ticks 30 --intervention-tick 12 --warmup-ticks 1 --pause-policy preserve_and_resume_phases --output reports/drafts/checkpoint-g2.json
+.\.venv\Scripts\python.exe -m research.study_runner reports/drafts/checkpoint-g2.json --config runs/price-lab-pilot.yaml --input-root . --validate-only
+.\.venv\Scripts\python.exe -m research.study_runner reports/drafts/checkpoint-g2.json --config runs/price-lab-pilot.yaml --input-root . --pause-after-phase MORNING
+```
+
+`--ticks` and `--intervention-tick` are absolute simulation days. In this
+example each source must precede day 11. `--warmup-ticks` is an additional
+duration after the saved day. The sources retain their seeds; do not supply
+`--seeds` with `--checkpoint`. Drafting creates only the prospective JSON
+declaration and does not execute worlds. It refuses an existing output file.
+Use `F2` in the same command for the equity information treatment; both drafts
+measure goods price/volume and equity price/volume.
+
+To continue a receipted pause, use the same study, configuration and input root
+with `--resume-batch` and the exact data directory returned by the runner. The
+original time/disk budget and source/code declarations remain binding. Public
+reports describe the origin day and recorded continuation interval. Private
+export/import uses the existing `research.study_bundle` commands and includes
+the admitted origin files; the default bundle limit remains 2 GiB.
+
+## Scientific contract
+
+A saved world is an explicit initial condition. Admitting its database proves
+its declared bytes, current schema, completed boundary, references, accounting
+and persisted random states. It does not prove empirical realism or replay the
+history that produced that initial condition.
+
+The experiment and its independent recorded replay each start from a fresh copy
+of that same admitted checkpoint. Continuation replay proves the newly executed
+interval. Inherited history remains in both databases and in private evidence;
+it cannot count as a post-treatment measurement or as new provider expenditure.
+
+Flow totals and goods VWAP use only the declared post-intervention window.
+The existing terminal equity-price contract can carry an older executed price
+with its recorded execution day and age. That is an explicitly stale endpoint,
+not a new execution or evidence of price discovery during the continuation.
+
+Use a new study protocol for checkpoint origins. Preserve the exact serialized
+form, interpretation and replay path of existing genesis study manifests. Bind
+the source file hash, canonical state inventory, complete random-state digest,
+actual simulation tick, source seed/run identity, admitted input prefix and
+economic configuration. Store checkpoints in the study's immutable context.
+
+Each independent initial-world seed supplies one source checkpoint. Both arms
+of that pair use the same source. Repeated copies of one world are not separate
+initial-world replications. The first implementation supports compatible
+provider-free continuations; live policy comparisons remain a separate declared
+execution capability, with no silent policy substitution.
+
+All measurement and intervention ticks are absolute simulation ticks. Warmup
+is a duration after the admitted origin. New interventions must occur after
+that warmup; measurements cannot use pre-origin observations. Preserve inherited
+schedules and append only the declared new interventions through world mechanics.
+Retain the original seed and all three persisted random streams.
+
+## Execution and evidence
+
+1. Verify closed, standalone source files before claiming a batch. Refuse active
+   or partial sources, changed bytes, incompatible schema/semantics/configuration,
+   invalid references/random states, unreconciled accounts or external/participant influence.
+2. Bound snapshot, arm-copy and replay-copy storage before allocation, and keep
+   the existing supervised cumulative time/disk controls during execution.
+3. Allocate every child exclusively. Preserve original source bytes, old study
+   namespaces and earlier recovery receipts. A failed copy or branch remains
+   diagnostic evidence; it must never become an eligible result.
+4. Record the admitted origin separately from the child branch and its newly
+   scheduled interventions. Recreate that branch from the admitted origin for
+   recorded replay, without rebuilding genesis or trusting a copied final state.
+5. Extend independent result verification, day/phase recovery and private bundle
+   transport to verify origin identity as well as the existing source/replay
+   receipts, input-prefix history and outcome measurements.
+6. Expose reviewed source choices in the operator workflow with truthful
+   capability refusals. Comparison shows the origin day, continuation interval,
+   independent initial conditions, assignments, exclusions and measured windows.
+
+## Acceptance
+
+- Real G2 and F2 treatment/control continuations from at least two independent
+  saved worlds, with all four goods/equity outcomes and exact continuation replay.
+- Source files remain byte-identical, without new source-side SQLite sidecars.
+- Changing an origin, inherited input, random state, schedule, accounting state
+  or declared boundary refuses admission or later independent verification.
+- Child initialization is exclusive; a second invocation cannot overwrite it.
+- Day and phase pauses, repeat outages, cumulative budgets and portable evidence
+  retain their current guarantees with checkpoint-derived origins.
+- Pre-origin outcomes and inherited provider calls/spend are not counted as
+  new study observations or execution costs.
+- UI source review, deliberate launch, recovery, comparison and private export
+  work for both domains, including historical/foreign-context refusals and mobile.
+- Existing genesis studies, frozen manifests, historical replay and browser
+  navigation continue to pass their established regression checks.
+
+The first implementation seam is source admission plus independent checkpoint
+branch/replay. Runner, analysis, portable evidence and UI integration follow as
+part of this same deliverable; this document alone is not completion evidence.

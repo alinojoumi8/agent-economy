@@ -714,7 +714,7 @@ class ExternalAgentService:
         completed_tick = int(tick) - 1
         if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
             return False
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             row = conn.execute(
                 "SELECT "
@@ -740,7 +740,7 @@ class ExternalAgentService:
         source_path = self.config.get("replay_source_path")
         if not source_path or not Path(str(source_path)).exists():
             return
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             required = {"external_agent_connections", "external_actor_requests", "events"}
             tables = {
@@ -851,7 +851,7 @@ class ExternalAgentService:
         completed_tick = int(tick) - 1
         if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
             return
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             required = {
                 "commons_entries", "commons_feed_impressions", "commons_reactions",
@@ -1300,7 +1300,7 @@ class ExternalAgentService:
         source_path = self.config.get("replay_source_path")
         if not source_path or not Path(str(source_path)).exists():
             return []
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' "

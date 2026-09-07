@@ -26,7 +26,34 @@ from research.working_contracts import PHASE_PROTOCOL, phase_controls, working_p
 from run_config import load_config
 
 
-def collect_outcomes(store: Store, spec: StudySpec) -> dict:
+def execution_costs(store: Store, spec: StudySpec, origin: dict | None = None) -> dict:
+    """Report newly executed calls separately from a saved world's history."""
+    if (origin is None) != (spec.origin is None):
+        raise ValueError("checkpoint measurements require their admitted input boundary")
+    if origin is None:
+        # Preserve the original unfiltered totals for historical genesis data,
+        # including imported rows whose primary key was explicitly zero.
+        return {"spend_usd": float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0)),
+                "provider_calls": int(store.scalar(
+                    "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
+    boundary = origin["recorded_inputs"]["last_id"]
+
+    def totals(predicate):
+        row = store.conn.execute(
+            "SELECT COALESCE(SUM(cost_usd),0), COALESCE(SUM(CASE WHEN "
+            "provider IS NULL OR provider<>'scripted' THEN 1 ELSE 0 END),0) "
+            f"FROM llm_calls WHERE id{predicate}?", (boundary,)).fetchone()
+        return float(row[0]), int(row[1])
+
+    spend, calls = totals(">")
+    result = {"spend_usd": spend, "provider_calls": calls}
+    if origin:
+        inherited_spend, inherited_calls = totals("<=")
+        result.update(inherited_spend_usd=inherited_spend, inherited_provider_calls=inherited_calls)
+    return result
+
+
+def collect_outcomes(store: Store, spec: StudySpec, *, origin: dict | None = None) -> dict:
     """Require every declared point; never fill gaps or change currency units."""
     metrics, series, observations = {}, {}, {}
     for outcome in spec.analysis.outcomes:
@@ -69,9 +96,7 @@ def collect_outcomes(store: Store, spec: StudySpec) -> dict:
             "required_points": len(points),
             "available_points": sum(point["status"] == "available" for point in points)}
     return {"metrics": metrics, "series": series, "outcome_observations": observations,
-            "spend_usd": float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0)),
-            "provider_calls": int(store.scalar(
-                "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
+            **execution_costs(store, spec, origin)}
 
 
 def validate_execution(spec: StudySpec, config: dict) -> None:
@@ -88,16 +113,16 @@ def validate_execution(spec: StudySpec, config: dict) -> None:
     routes = [llm.get("default_route", {}), *llm.get("routes", {}).values()]
     if any(route.get("provider") != "scripted" or route.get("model") != "scripted" for route in routes):
         raise ValueError("every configured route must explicitly use the scripted policy")
-    if config.get("shocks"):
+    if config.get("shocks") and spec.origin is None:
         raise ValueError("declare all study shocks in arms; the resolved baseline must have none")
     if config.get("dataset_manifest") and not any(item.role == "initialization" for item in spec.inputs):
         raise ValueError("dataset initialization requires pinned input artifacts")
 
 
-def collect_working_outcomes(store: Store, spec: StudySpec) -> dict:
+def collect_working_outcomes(store: Store, spec: StudySpec, *, origin: dict | None = None) -> dict:
     """An active day is execution evidence, never a completed price window."""
     if working_protocol(spec.operations.pause_policy) != PHASE_PROTOCOL or store.active_tick is None:
-        return collect_outcomes(store, spec)
+        return collect_outcomes(store, spec, origin=origin)
     observations = {}
     for outcome in spec.analysis.outcomes:
         required = (1 if outcome.aggregation in {"terminal", "window_vwap"} else
@@ -107,22 +132,24 @@ def collect_working_outcomes(store: Store, spec: StudySpec) -> dict:
             "status": "partial_phase", "reason": "unfinished_day_not_measured",
             "required_points": required, "available_points": 0}
     return {"metrics": {item.key: None for item in spec.analysis.outcomes}, "series": {},
-            "outcome_observations": observations,
-            "spend_usd": float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0)),
-            "provider_calls": int(store.scalar(
-                "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
+            "outcome_observations": observations, **execution_costs(store, spec, origin)}
 
 
-def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
+def arm_interventions(spec: StudySpec, arm_key: str) -> list[dict]:
     arm = next(item for item in spec.arms if item.key == arm_key)
-    resolved = json.loads(json.dumps(config))
     shocks = []
     for shock in arm.changes.shocks:
         values = shock.model_dump(mode="json")
         kind, tick = values.pop("kind"), values.pop("tick")
         shocks.append({"kind": kind, "trigger": "shock", "trigger_params": {"tick": tick},
                        "duration_ticks": 0, "params": values, "label": f"study:{arm.key}:{kind}"})
-    resolved["shocks"] = shocks
+    return shocks
+
+
+def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
+    resolved = json.loads(json.dumps(config))
+    inherited = (resolved.get("shocks") or []) if spec.origin else []
+    resolved["shocks"] = [*inherited, *arm_interventions(spec, arm_key)]
     return resolved
 
 
@@ -161,10 +188,19 @@ def _execute_worker(spec_data: dict, config: dict, seed: int, arm: str,
     try:
         if code_identity() != expected_code:
             raise ValueError("source changed after manifest publication")
-        validate_study_inputs(spec, config, input_root=input_root)
-        row = execute_attempt(run_id=f"{spec.key}-{arm}-s{seed}", seed=seed, arm=arm,
+        declared = validate_study_inputs(spec, config, input_root=input_root)
+        executor, extra, origin = execute_attempt, {}, None
+        if spec.origin:
+            from research.attempt_origins import checkpoint_claim_fields, execute_checkpoint_attempt
+            manifest = json.loads((Path(data_dir) / "manifest.json").read_text(encoding="utf-8"))["manifest"]
+            if any(digest_json(manifest.get(key)) != digest_json(value) for key, value in declared.items()):
+                raise ValueError("checkpoint study manifest changed")
+            fields = checkpoint_claim_fields(spec, manifest, Path(data_dir), seed, arm)
+            executor, extra = execute_checkpoint_attempt, {"origin_fields": fields}
+            origin = fields["checkpoint_origin"]["receipt"]
+        row = executor(run_id=f"{spec.key}-{arm}-s{seed}", seed=seed, arm=arm,
             config=_arm_config(spec, config, arm), ticks=spec.time.horizon,
-            data_dir=Path(data_dir), collect=lambda store: collect_outcomes(store, spec))
+            data_dir=Path(data_dir), collect=lambda store: collect_outcomes(store, spec, origin=origin), **extra)
         problems = list(row["eligibility"]["reasons"])
         if code_identity() != expected_code:
             problems.append("source_changed_during_attempt")
@@ -303,7 +339,8 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
     summary = paired_summary(results, baseline, expected_ticks=spec.time.horizon,
         expected_arms=[arm.key for arm in spec.arms], expected_seeds=spec.randomness.seeds,
         expected_metrics=[item.key for item in spec.analysis.outcomes],
-        minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples)
+        minimum_pairs=spec.analysis.minimum_pairs, bootstrap_samples=spec.analysis.bootstrap_samples,
+        initial_state_key="origin_state_hash" if spec.origin else "genesis_hash")
     payload = {"contract": "study-result-v1", "batch": batch, "results": results,
                "summary": summary, "outcomes": [item.model_dump(mode="json") for item in spec.analysis.outcomes],
                "measurement_window": [spec.time.measurement_start, spec.time.measurement_end],
@@ -327,9 +364,15 @@ def findings_markdown(payload: dict) -> str:
     lines = [f"# {spec['title']}", "", spec["hypothesis"], "",
              "Exploratory, model-conditional paired study. The manifest was prepared before execution.",
              "This is not empirical validation or a confirmatory causal estimate.", "",
-             f"Measurement ticks: {payload['measurement_window']}. Each pair is a whole world/seed.", "",
-             "| Outcome | Arm | Mean paired difference | 95% bootstrap interval | Usable pairs | Status |",
-             "|---|---|---:|---|---:|---|"]
+             f"Measurement ticks: {payload['measurement_window']}. Each pair is a whole world/seed.", ""]
+    if spec.get("origin"):
+        lines += [f"Initial conditions: {len(spec['origin']['sources'])} independent saved worlds at day "
+                  f"{spec['origin']['tick']}. Recorded continuation replay covers days "
+                  f"{spec['origin']['tick'] + 1}–{spec['time']['horizon']}.",
+                  "Admission verifies the saved state; it does not replay the history that produced it. "
+                  "Inherited calls and costs are recorded separately and excluded from new execution totals.", ""]
+    lines += ["| Outcome | Arm | Mean paired difference | 95% bootstrap interval | Usable pairs | Status |",
+              "|---|---|---:|---|---:|---|"]
     for key, arms in payload["summary"]["metrics"].items():
         for arm, observation in arms.items():
             effect = observation.get("paired_effect")

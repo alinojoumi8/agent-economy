@@ -6,6 +6,7 @@ replay uses the ordinary recorded-input runner with a read-only source.
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import sqlite3
@@ -14,6 +15,7 @@ from typing import Callable
 from engine.store import Store
 from engine.semantics import semantics_version
 from research.artifacts import digest_json, file_sha256, publish_json, safe_key
+from research.working_contracts import PHASE_PROTOCOL, attempt_version, claim_working_protocol
 from world.loop import World
 from world.replay_verify import canonical_state_receipt, verify_replay
 
@@ -127,16 +129,25 @@ def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
     if not reasons:
         replay_store, replay_world = None, None
         try:
-            # Lazy import keeps the CLI dispatcher independent of research code.
-            from run import open_run, replay_headless
-            replay_store, replay_world, _ = open_run(
-                {}, None, run_id, data_dir=attempt_dir / "replay",
-                replay_source_dir=source_dir)
-            asyncio.run(replay_headless(replay_world, ticks))
-            replay_path = Path(replay_store.path)
-            replay_world.close()
-            replay_world, replay_store = None, None
-            proof = verify_replay(source_path, replay_path)
+            claim = json.loads(Path(row["attempt_claim"]).read_text(encoding="utf-8"))
+            if claim["protocol_version"] == 4:
+                from research.attempt_origins import replay_checkpoint
+                replay_path = replay_checkpoint(row, claim, attempt_dir)
+            else:
+                # Lazy import keeps the CLI dispatcher independent of research code.
+                from run import open_run, replay_headless
+                replay_store, replay_world, _ = open_run(
+                    {}, None, run_id, data_dir=attempt_dir / "replay",
+                    replay_source_dir=source_dir)
+                asyncio.run(replay_headless(replay_world, ticks))
+                replay_path = Path(replay_store.path)
+                replay_world.close()
+                replay_world, replay_store = None, None
+            if claim["protocol_version"] == 4:
+                from research.checkpoint_origins import verify_closed_replay
+                proof = verify_closed_replay(source_path, replay_path, max_bytes=claim["checkpoint_origin"]["max_bytes"])
+            else:
+                proof = verify_replay(source_path, replay_path)
             receipt = {
                 "protocol_version": 1, "execution": "recorded_replay",
                 "attempt_claim_sha256": row["attempt_claim_sha256"],
@@ -145,6 +156,10 @@ def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
                 "replay_database": str(replay_path),
                 "replay_database_sha256": file_sha256(replay_path), "comparison": proof,
             }
+            if claim["protocol_version"] == 4:
+                receipt.update(protocol_version=2, execution="recorded_checkpoint_replay",
+                    origin_receipt_sha256=row["origin_receipt_sha256"],
+                    continuation_window=[row["origin_tick"] + 1, ticks])
             receipt_path = publish_json(attempt_dir / "replay-receipt.json", receipt)
             row.update({"replay_receipt": str(receipt_path),
                         "replay_receipt_sha256": file_sha256(receipt_path),
@@ -203,8 +218,17 @@ def verify_attempt(row: dict, *, expected_ticks: int,
         if source_wal.exists() and source_wal.stat().st_size:
             reasons.append("source_database_changed")
         claim = json.loads(locate(row["attempt_claim"]).read_text(encoding="utf-8"))
-        if (("working_history" in row and claim.get("protocol_version") not in {2, 3})
-                or ("position" in row and claim.get("protocol_version") != 3)):
+        working = claim_working_protocol(claim)
+        checkpoint = claim.get("protocol_version") == 4
+        if (claim.get("protocol_version") not in {1, 2, 3, 4}
+                or ("working_history" in row) != bool(working)
+                or ("position" in row) != (working == PHASE_PROTOCOL)
+                or working and claim["protocol_version"] != attempt_version(claim["study_manifest"]["study"])):
+            reasons.append("attempt_protocol_mismatch")
+        if checkpoint:
+            from research.attempt_origins import verify_origin_identity
+            verify_origin_identity(row, claim, resolve_path=locate)
+        elif "checkpoint_origin" in claim or any(key in row for key in ("origin_tick", "origin_state_hash", "origin_receipt_sha256")):
             reasons.append("attempt_protocol_mismatch")
         source = json.loads(locate(row["source_receipt"]).read_text(encoding="utf-8"))
         replay = json.loads(locate(row["replay_receipt"]).read_text(encoding="utf-8"))
@@ -218,21 +242,27 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 "source_database_sha256", "execution_status", "final_boundary",
                 "reconciled", "database_integrity", "external_agent_influenced",
                 "source_state_hash", "genesis_hash", "event_hash", "metrics",
-                "series", "events", "spend_usd", "provider_calls", "outcome_observations")):
+                "series", "events", "spend_usd", "provider_calls", "outcome_observations",
+                "origin_tick", "origin_state_hash", "origin_receipt_sha256",
+                "inherited_spend_usd", "inherited_provider_calls")):
             reasons.append("source_receipt_mismatch")
-        if claim.get("protocol_version") in {2, 3}:
+        if working:
             from research.working_attempts import verify_working_history
             reasons.extend(verify_working_history(row, claim, resolve_path=locate))
             for key in ("working_history", "genesis_receipt_sha256", "prng_state_sha256", "active_wall_seconds"):
                 if digest_json(source.get(key)) != digest_json(row.get(key)):
                     reasons.append("working_source_receipt_mismatch")
-            if claim["protocol_version"] == 3 and source.get("position") != row.get("position"):
+            if working == PHASE_PROTOCOL and source.get("position") != row.get("position"):
                 reasons.append("working_source_receipt_mismatch")
-        if (replay["execution"] != "recorded_replay"
+        if (replay["execution"] != ("recorded_checkpoint_replay" if checkpoint else "recorded_replay")
                 or replay["attempt_claim_sha256"] != row["attempt_claim_sha256"]
                 or replay["source_database_sha256"] != row["source_database_sha256"]
                 or locate(replay["source_database"]).resolve() != locate(row["source_database"]).resolve()
                 or file_sha256(locate(replay["replay_database"])) != replay["replay_database_sha256"]):
+            reasons.append("replay_receipt_mismatch")
+        if checkpoint and (replay.get("protocol_version") != 2
+                or replay.get("origin_receipt_sha256") != row["origin_receipt_sha256"]
+                or replay.get("continuation_window") != [row["origin_tick"] + 1, expected_ticks]):
             reasons.append("replay_receipt_mismatch")
         replay_wal = locate(replay["replay_database"] + "-wal")
         if replay_wal.exists() and replay_wal.stat().st_size:
@@ -240,13 +270,28 @@ def verify_attempt(row: dict, *, expected_ticks: int,
         if locate(row["source_database"]).samefile(locate(replay["replay_database"])):
             reasons.append("replay_database_not_independent")
         # Do not accept an 'exact: true' field without comparing the bound DBs.
-        actual = verify_replay(locate(row["source_database"]), locate(replay["replay_database"]))
+        if checkpoint:
+            from research.checkpoint_origins import verify_closed_replay
+            actual = verify_closed_replay(locate(row["source_database"]), locate(replay["replay_database"]),
+                                          max_bytes=claim["checkpoint_origin"]["max_bytes"])
+        else:
+            actual = verify_replay(locate(row["source_database"]), locate(replay["replay_database"]))
         if (not actual["exact"] or actual != replay["comparison"]
                 or actual["source_tick"] != expected_ticks
                 or actual["replay_hash"] != row["replay_hash"]):
             reasons.append("replay_mismatch")
-        store = Store(str(locate(row["source_database"])), create=False, read_only=True)
-        try:
+        with ExitStack() as readers:
+            if checkpoint:
+                from research.checkpoint_origins import closed_checkpoint
+                from research.attempt_origins import verify_origin_prefix
+                limit = claim["checkpoint_origin"]["max_bytes"]
+                store = readers.enter_context(closed_checkpoint(locate(row["source_database"]), max_bytes=limit))
+                replay_store = readers.enter_context(closed_checkpoint(locate(replay["replay_database"]), max_bytes=limit))
+                verify_origin_prefix(store, claim)
+                verify_origin_prefix(replay_store, claim)
+            else:
+                store = Store(str(locate(row["source_database"])), create=False, read_only=True)
+                readers.callback(store.close)
             meta = store.get_meta()
             if (digest_json(json.loads(meta["config_json"])) != row["config_sha256"]
                     or meta["active_tick"] is not None
@@ -254,13 +299,11 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 reasons.append("source_contract_mismatch")
             if canonical_state_receipt(store.conn)["sha256"] != row["source_state_hash"]:
                 reasons.append("source_state_changed")
-            if claim.get("protocol_version") in {2, 3} and digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
+            if working and digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
                 reasons.append("source_prng_state_changed")
-            if claim.get("protocol_version") == 3:
+            if working == PHASE_PROTOCOL:
                 from research.working_attempts import verify_phase_history
                 verify_phase_history(store, row, claim, resolve_path=locate)
-        finally:
-            store.close()
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
         reasons.append("missing_or_invalid_receipt")
     return sorted(set(reasons))

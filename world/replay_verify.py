@@ -616,58 +616,63 @@ def canonical_state_receipt(database: sqlite3.Connection, *,
 def verify_replay(source_path: str | Path, replay_path: str | Path) -> dict:
     """Compare every deterministic table and return a machine-readable proof."""
     source = _connect(source_path)
-    replay = _connect(replay_path)
     try:
-        source_tables = _tables(source)
-        replay_tables = _tables(replay)
-        names = sorted(set(source_tables) | set(replay_tables))
-        results = []
-        source_run = source.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
-        replay_run = replay.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
-        source_llm_call_references = _logical_llm_call_references(source)
-        replay_llm_call_references = _logical_llm_call_references(replay)
-        source_event_references = _logical_event_references(
-            source, source_llm_call_references)
-        replay_event_references = _logical_event_references(
-            replay, replay_llm_call_references)
-        source_total = hashlib.sha256()
-        replay_total = hashlib.sha256()
-        for name in names:
-            if name not in source_tables or name not in replay_tables:
-                results.append({
-                    "table": name, "exact": False,
-                    "source_rows": None if name not in source_tables else 0,
-                    "replay_rows": None if name not in replay_tables else 0,
-                    "source_hash": None, "replay_hash": None,
-                })
-                continue
-            source_rows, source_hash, source_references_valid = _table_digest(
-                source, name, source_llm_call_references, source_event_references)
-            replay_rows, replay_hash, replay_references_valid = _table_digest(
-                replay, name, replay_llm_call_references, replay_event_references)
-            exact = (source_rows == replay_rows and source_hash == replay_hash
-                     and source_references_valid and replay_references_valid)
-            results.append({
-                "table": name, "exact": exact,
-                "source_rows": source_rows, "replay_rows": replay_rows,
-                "source_hash": source_hash, "replay_hash": replay_hash,
-            })
-            source_total.update(f"{name}:{source_rows}:{source_hash}\n".encode())
-            replay_total.update(f"{name}:{replay_rows}:{replay_hash}\n".encode())
-
-        ticks_exact = int(source_run["tick"]) == int(replay_run["tick"])
-        return {
-            "exact": ticks_exact and all(item["exact"] for item in results),
-            "source_run_id": str(source_run["run_id"]),
-            "replay_run_id": str(replay_run["run_id"]),
-            "source_tick": int(source_run["tick"]),
-            "replay_tick": int(replay_run["tick"]),
-            "source_hash": source_total.hexdigest(),
-            "replay_hash": replay_total.hexdigest(),
-            "tables": results,
-            "differences": [item["table"] for item in results if not item["exact"]]
-                           + ([] if ticks_exact else ["run_meta.tick"]),
-        }
+        replay = _connect(replay_path)
+        try:
+            return verify_replay_connections(source, replay)
+        finally:
+            replay.close()
     finally:
         source.close()
-        replay.close()
+
+
+def verify_replay_connections(source: sqlite3.Connection, replay: sqlite3.Connection) -> dict:
+    """Use the same proof rules with caller-owned, consistent read snapshots."""
+    source_tables = _tables(source)
+    replay_tables = _tables(replay)
+    names = sorted(set(source_tables) | set(replay_tables))
+    results = []
+    source_run = source.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
+    replay_run = replay.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
+    source_llm_call_references = _logical_llm_call_references(source)
+    replay_llm_call_references = _logical_llm_call_references(replay)
+    source_event_references = _logical_event_references(source, source_llm_call_references)
+    replay_event_references = _logical_event_references(replay, replay_llm_call_references)
+    source_total = hashlib.sha256()
+    replay_total = hashlib.sha256()
+    for name in names:
+        if name not in source_tables or name not in replay_tables:
+            results.append({
+                "table": name, "exact": False,
+                "source_rows": None if name not in source_tables else 0,
+                "replay_rows": None if name not in replay_tables else 0,
+                "source_hash": None, "replay_hash": None,
+            })
+            continue
+        source_rows, source_hash, source_references_valid = _table_digest(
+            source, name, source_llm_call_references, source_event_references)
+        replay_rows, replay_hash, replay_references_valid = _table_digest(
+            replay, name, replay_llm_call_references, replay_event_references)
+        exact = (source_rows == replay_rows and source_hash == replay_hash
+                 and source_references_valid and replay_references_valid)
+        results.append({
+            "table": name, "exact": exact,
+            "source_rows": source_rows, "replay_rows": replay_rows,
+            "source_hash": source_hash, "replay_hash": replay_hash,
+        })
+        source_total.update(f"{name}:{source_rows}:{source_hash}\n".encode())
+        replay_total.update(f"{name}:{replay_rows}:{replay_hash}\n".encode())
+
+    ticks_exact = int(source_run["tick"]) == int(replay_run["tick"])
+    return {
+        "exact": ticks_exact and all(item["exact"] for item in results),
+        "source_run_id": str(source_run["run_id"]),
+        "replay_run_id": str(replay_run["run_id"]),
+        "source_tick": int(source_run["tick"]),
+        "replay_tick": int(replay_run["tick"]),
+        "source_hash": source_total.hexdigest(),
+        "replay_hash": replay_total.hexdigest(),
+        "tables": results,
+        "differences": [item["table"] for item in results if not item["exact"]]
+                       + ([] if ticks_exact else ["run_meta.tick"]),
+    }

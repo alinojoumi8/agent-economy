@@ -8,7 +8,7 @@ from pathlib import Path
 from engine.schema import SCHEMA_VERSION
 from research.artifacts import digest_json, publish_json
 from research.metric_registry import metric_definition
-from research.studies import StudySpec
+from research.studies import StudySpec, validate_study_inputs
 from research.study_runner import validate_execution
 from run_config import load_config
 
@@ -107,21 +107,81 @@ def draft_price_study(config: dict, preset: str, *, seeds: list[int], horizon: i
     return spec
 
 
+def draft_checkpoint_price_study(config: dict, preset: str, *, checkpoints: list[Path],
+                                 input_root: Path, horizon: int, intervention_tick: int,
+                                 warmup_ticks: int = 0, goods_firm_id: int = 2,
+                                 equity_firm_id: int = 1, currency: str = "USD",
+                                 max_disk_bytes: int = 536870912, max_wall_seconds: int = 300,
+                                 pause_policy: str = "preserve_and_stop") -> StudySpec:
+    """Admit explicit saved-world inputs and draft an unexecuted price study."""
+    from research.checkpoint_origins import inspect_checkpoint
+
+    root = input_root.resolve()
+    if not checkpoints:
+        raise ValueError("declare at least one saved world")
+    sources, artifacts, ticks = [], [], set()
+    for path in checkpoints:
+        path = Path(path).absolute()
+        if not path.is_relative_to(root):
+            raise ValueError("checkpoint is outside the declared input root")
+        receipt = inspect_checkpoint(path, max_bytes=max_disk_bytes)
+        seed = receipt["seed"]
+        key = f"checkpoint-{seed}"
+        ticks.add(receipt["tick"])
+        sources.append({"seed": seed, "input_key": key, "receipt_sha256": digest_json(receipt)})
+        artifacts.append({"key": key, "path": path.relative_to(root).as_posix(),
+            "sha256": receipt["database_sha256"], "role": "checkpoint",
+            "vintage": f"Declared saved world at completed day {receipt['tick']}", "transform_version": "identity"})
+    if len(ticks) != 1:
+        raise ValueError("paired checkpoint studies require one common completed origin day")
+    # Use the shared outcome/intervention template, then restore the full
+    # original configuration declaration, including inherited schedules.
+    template = draft_price_study({**config, "shocks": []}, preset,
+        seeds=[item["seed"] for item in sources], horizon=horizon, intervention_tick=intervention_tick,
+        goods_firm_id=goods_firm_id, equity_firm_id=equity_firm_id, currency=currency)
+    raw = template.model_dump(mode="json")
+    raw.update(protocol_version="research-study-v2", inputs=artifacts,
+               origin={"kind": "verified_checkpoints", "tick": next(iter(ticks)), "sources": sources})
+    raw["model"]["resolved_config_sha256"] = digest_json(config)
+    raw["time"]["warmup_ticks"] = warmup_ticks
+    raw["randomness"].update(seed_role="checkpoint_origin_seed", pairing="verified_common_checkpoint")
+    raw["analysis"].update(treatment_unit="checkpoint_world_pair",
+        estimand="Mean treatment minus control for complete matched continuations from independent saved worlds")
+    raw["operations"].update(max_disk_bytes=max_disk_bytes, max_wall_seconds=max_wall_seconds, pause_policy=pause_policy)
+    raw["limitations"].append("Admission verifies each saved state, not the history that produced it. Replay covers only the declared continuation; inherited calls and costs are excluded from new execution totals.")
+    spec = StudySpec.model_validate(raw)
+    validate_execution(spec, config)
+    validate_study_inputs(spec, config, input_root=root)
+    return spec
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("preset", choices=[item["key"] for item in PRESETS])
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    parser.add_argument("--seeds", type=int, nargs="+")
+    parser.add_argument("--checkpoint", type=Path, action="append", help="Explicit closed source; repeat for independent worlds")
+    parser.add_argument("--input-root", type=Path, default=Path("."))
+    parser.add_argument("--warmup-ticks", type=int, default=0, help="Warmup duration after a checkpoint origin")
+    parser.add_argument("--pause-policy", choices=["preserve_and_stop", "preserve_and_resume", "preserve_and_resume_phases"], default="preserve_and_stop")
     parser.add_argument("--ticks", type=int, default=30)
     parser.add_argument("--intervention-tick", type=int, default=5)
     parser.add_argument("--goods-firm-id", type=int, default=2)
     parser.add_argument("--equity-firm-id", type=int, default=1)
     parser.add_argument("--currency", default="USD")
     args = parser.parse_args()
-    spec = draft_price_study(load_config(args.config), args.preset, seeds=args.seeds,
-        horizon=args.ticks, intervention_tick=args.intervention_tick,
-        goods_firm_id=args.goods_firm_id, equity_firm_id=args.equity_firm_id, currency=args.currency)
+    if not args.checkpoint and (args.warmup_ticks or args.pause_policy != "preserve_and_stop"):
+        parser.error("checkpoint warmup/recovery options require --checkpoint")
+    if args.checkpoint and args.seeds is not None:
+        parser.error("checkpoint studies retain their original seeds; omit --seeds")
+    options = {"checkpoints": args.checkpoint, "input_root": args.input_root,
+               "warmup_ticks": args.warmup_ticks, "pause_policy": args.pause_policy} if args.checkpoint else {
+               "seeds": args.seeds if args.seeds is not None else [1, 2, 3, 4, 5]}
+    builder = draft_checkpoint_price_study if args.checkpoint else draft_price_study
+    spec = builder(load_config(args.config), args.preset, horizon=args.ticks,
+        intervention_tick=args.intervention_tick, goods_firm_id=args.goods_firm_id,
+        equity_firm_id=args.equity_firm_id, currency=args.currency, **options)
     publish_json(args.output, spec.model_dump(mode="json"))
     print(json.dumps({"draft": str(args.output.resolve()), "executed": False}))
     return 0
