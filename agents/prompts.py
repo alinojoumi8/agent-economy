@@ -402,6 +402,10 @@ class ContextBuilder:
         if self.engine_semantics_version >= 17:
             ctx["household_decisions"] = self.e.families.decision_context(
                 int(agent_row["id"]), tick, ctx.get("migration_options", []))
+        if self.engine_semantics_version >= 18:
+            ctx["daily_time"] = self.e.daily_time.decision_context(int(agent_row["id"]), tick)
+            if ctx.get("household"):
+                ctx["household"]["care_time_allocation"] = "recorded_daily_minutes"
         entrepreneurship = self.config.get("entrepreneurship", {})
         if (
             bool(entrepreneurship.get("enabled", False))
@@ -2126,6 +2130,9 @@ class ContextBuilder:
         if context.get("household_decisions"):
             lines.append("[PRIVATE HOUSEHOLD DECISIONS] "
                          + json.dumps(context["household_decisions"], separators=(",", ":")))
+        if context.get("daily_time"):
+            lines.append("[DAILY TIME - COMMITTED AND DELIVERED MINUTES] "
+                         + json.dumps(context["daily_time"], separators=(",", ":")))
         if context.get("compute_plan"):
             lines.append(
                 "[COMPUTE PLAN] "
@@ -2540,4 +2547,10 @@ class ContextBuilder:
             if action_shapes:
                 system += ("\nSemantics 7 regional actions are available only as supplied "
                            "action objects; copy one exactly: " + ", ".join(action_shapes) + ".")
+        if context.get("daily_time"):
+            system += ('\nSemantics 18: set_time_plan{request_key,work_minutes,care_minutes,'
+                       'work_firm_id?,care_child_ids?} changes the following day. Omit care_child_ids '
+                       'to cover current primary wards, or name current minor household members. '
+                       'Work, care, study, construction and journeys share the supplied daily budget. '
+                       'An unpaid wage claim is not spendable cash. Appointment reservations are not attendance.')
         return system, "\n\n".join(lines)

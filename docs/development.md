@@ -349,7 +349,15 @@ adds schema 22 proposals, adult assents, partnerships and atomic joint migration
 Run `tests/test_semantics17_household_decisions.py` for the focused core gate.
 Its rehearsal uses the small city profile with real scripted decisions and no
 provider calls. New state uses hash-contract-v4; older contracts remain frozen.
-Care time, complete estates and long-horizon household validation remain W5 work.
+Complete estates and long-horizon household validation remain W5 work.
+
+The [Semantics 18 daily time contract](plans/2026-09-07-daily-time-and-earned-wages.md)
+adds schema 23 time budgets, delivered care, proportional labor and non-cash wage
+claims. `runs/daily-time-rehearsal.yaml` is the bounded opt-in city profile;
+`tests/test_semantics18_daily_time.py` is part of required core CI. Plans affect
+the following day. Hash-contract-v5 includes the new authoritative journals;
+v1–v4 files remain frozen. Use a fresh short pytest directory and keep at least
+40 GiB free. Full estates, education cohorts and long-horizon validation remain.
 
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time

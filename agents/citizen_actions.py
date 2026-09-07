@@ -67,6 +67,7 @@ _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
     ("respond_household", "household", 17),
     ("cancel_household_proposal", "household", 17),
     ("separate_household", "household", 17),
+    ("set_time_plan", "daily_time", 18),
 )
 
 _COMMONS_ACTIONS: tuple[tuple[str, str, bool], ...] = (

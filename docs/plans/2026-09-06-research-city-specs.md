@@ -439,8 +439,11 @@ eligibility, child food demand, demographic keyed draws and census.
 
 [Semantics 17](2026-09-07-household-decisions.md) adds mutual partnership assent,
 separation with primary minor wards and atomic joint household migration.
-Delivered care/time, full estates and long-horizon validation remain required;
-these checkpoints do not close W5.
+[Semantics 18](2026-09-07-daily-time-and-earned-wages.md) adds delivered care,
+shared daily time, proportional labor/output, non-cash earned wages and recorded
+claim settlement, inheritance and write-off. Full estates, business succession,
+cohort and long-horizon validation remain required; these checkpoints do not
+close W5. Enrollment, attendance, credentials and education capacity remain W6.
 
 Work package: W5. Existing seams: `engine/lifecycle.py`, `world/genesis.py`,
 `World._spawn_due_arrivals`, ledger ownership, social ties, and Living Agents

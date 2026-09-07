@@ -676,7 +676,7 @@ class City:
             "home", region_id, identity) * len(rows)) % len(rows)
         return int(rows[index]["id"])
 
-    def _business_place(self, agent) -> tuple[int, str, int | None] | None:
+    def _business_place(self, agent, tick=None) -> tuple[int, str, int | None] | None:
         agent_id = int(agent["id"])
         if self.engine_semantics_version >= 15 and int(agent["age"]) < 18:
             home = self._home_place(int(agent["region_id"]), agent_id)
@@ -702,6 +702,9 @@ class City:
                 (agent_id,), default=None)
             if founded is not None:
                 firm_id = int(founded)
+        if self.engine_semantics_version >= 18 and tick is not None:
+            work = self.e.daily_time.selected_work(agent_id, tick)
+            firm_id = work["firm_id"] if work else None
         if firm_id is not None:
             workplace = self.store.scalar(
                 "SELECT id FROM places WHERE owner_type='firm' AND owner_id=? "
@@ -746,7 +749,7 @@ class City:
                         source_id=int(agent["region_id"]),
                         created_tick=int(tick),
                     )
-            business = self._business_place(agent)
+            business = self._business_place(agent, tick)
             if business is not None:
                 place_id, source_type, source_id = business
                 self._cancel_routine_except(
@@ -1102,6 +1105,14 @@ class City:
         }
 
     def attend_appointment(
+        self, tick: int, actor_id: int, appointment_id: int,
+    ) -> dict[str, Any]:
+        if self.engine_semantics_version >= 18:
+            return self.e.daily_time.attend(tick, actor_id, appointment_id,
+                lambda: self._attend_appointment(tick, actor_id, appointment_id))
+        return self._attend_appointment(tick, actor_id, appointment_id)
+
+    def _attend_appointment(
         self, tick: int, actor_id: int, appointment_id: int,
     ) -> dict[str, Any]:
         if not self.enabled:

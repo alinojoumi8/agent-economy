@@ -332,6 +332,9 @@ class Lifecycle:
         if not agent or not agent["alive"]:
             return
 
+        if self.engine_semantics_version >= 18:
+            self.earned_wages.collect_before_death(tick, agent_id)
+
         # 1) Settle debts via the creditor waterfall (dead agent's cash first).
         loans = self.store.query(
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=? AND status='active'",
@@ -355,16 +358,19 @@ class Lifecycle:
                               status="paid" if pay >= int(loan["outstanding_cents"]) else "default")
 
         heir_id = self._find_heir(agent_id)
+        cash_filter = " AND kind IN ('checking','savings','fx')" if self.engine_semantics_version >= 18 else ""
+        if self.engine_semantics_version >= 18:
+            self.earned_wages.inherit(tick, agent_id, heir_id)
 
         # 2) Transfer remaining cash to heir (or escheat to government).
         for acct in self.store.query(
                 "SELECT id, balance_cents, bank_id, currency_code FROM accounts "
-                "WHERE owner_type='agent' AND owner_id=? AND balance_cents>0", (agent_id,)):
+                "WHERE owner_type='agent' AND owner_id=? AND balance_cents>0" + cash_filter, (agent_id,)):
             bal = int(acct["balance_cents"])
             if heir_id:
                 heir = self.store.query_one(
                     "SELECT id FROM accounts WHERE owner_type='agent' AND owner_id=? "
-                    "AND currency_code=? ORDER BY CASE kind WHEN 'checking' THEN 0 ELSE 1 END,id LIMIT 1",
+                    "AND currency_code=?" + cash_filter + " ORDER BY CASE kind WHEN 'checking' THEN 0 ELSE 1 END,id LIMIT 1",
                     (heir_id, acct["currency_code"]))
                 heir_acct = int(heir["id"]) if heir else self.ledger.create_account(
                     "agent", heir_id, "fx", label=f"inheritance:{heir_id}:{acct['currency_code']}",

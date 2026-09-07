@@ -720,6 +720,15 @@ class CognitionEconomy:
 
     def study_skill(self, tick: int, agent_id: int, skill_key: str, *,
                     proposal_id: int | None = None) -> dict:
+        if self.engine_semantics_version >= 18:
+            key = f"study:proposal:{proposal_id}" if proposal_id is not None else f"study:{tick}:{skill_key}"
+            return self.daily_time.perform(tick, agent_id, key, "study", self.daily_time.p["study_minutes"],
+                {"skill_key": skill_key, "proposal_id": proposal_id},
+                lambda: self._study_skill(tick, agent_id, skill_key, proposal_id=proposal_id))
+        return self._study_skill(tick, agent_id, skill_key, proposal_id=proposal_id)
+
+    def _study_skill(self, tick: int, agent_id: int, skill_key: str, *,
+                     proposal_id: int | None = None) -> dict:
         if not self.enabled:
             return {"ok": False, "reason": "skills require semantics 11"}
         skill_key = str(skill_key or "").lower().strip()

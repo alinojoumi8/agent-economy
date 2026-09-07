@@ -177,6 +177,8 @@ class Firms:
             self._produce_one(tick, firm)
 
     def _produce_one(self, tick: int, firm) -> None:
+        if self.engine_semantics_version >= 18:
+            return self.daily_time.produce(tick, firm)
         firm_id = int(firm["id"])
         prod = self.product(firm)
         workers = len(self.productive_employees(firm_id, tick))
@@ -240,6 +242,8 @@ class Firms:
 
     # ── payroll (NIGHT_CLOSE on paydays) ─────────────────────────────────────
     def process_payroll(self, tick: int) -> None:
+        if self.engine_semantics_version >= 18:
+            return self.earned_wages.process_due(tick)
         due = self.store.query(
             "SELECT * FROM employments WHERE status='active' AND next_pay_tick <= ?", (tick,))
         distressed: set[int] = set()
@@ -309,6 +313,12 @@ class Firms:
             self.bankrupt_firm(tick, firm_id, reason="insolvency")
 
     def bankrupt_firm(self, tick: int, firm_id: int, reason: str = "insolvency") -> None:
+        if self.engine_semantics_version >= 18:
+            with self.store.savepoint("firm_resolution_with_wages"):
+                return self._bankrupt_firm(tick, firm_id, reason)
+        return self._bankrupt_firm(tick, firm_id, reason)
+
+    def _bankrupt_firm(self, tick: int, firm_id: int, reason: str) -> None:
         """Creditor waterfall: remaining cash pays down bank loans; employees are
         terminated; shares are wiped; the firm delists (PRD R3)."""
         firm = self.get(firm_id)
@@ -342,6 +352,13 @@ class Firms:
             (firm_id,))
         self.store.update("firms", firm_id, status="bankrupt", bankrupt_tick=tick,
                           shares_outstanding=0)
+        if self.engine_semantics_version >= 18:
+            # After senior bank recovery, remaining cash can satisfy wages.
+            for claim in self.store.query("SELECT id FROM wage_claims WHERE firm_id=? AND closed_tick IS NULL ORDER BY id", (firm_id,)):
+                self.earned_wages.settle(tick, claim["id"])
+            self.earned_wages.write_off_firm(tick, firm_id)
+            for claim in self.store.query("SELECT id FROM wage_claims WHERE firm_id=? AND closed_tick IS NULL ORDER BY id", (firm_id,)):
+                self.earned_wages._close_paid_exit(tick, claim["id"])
         self.store.log_event(tick, "bankruptcy", {
             "firm_id": firm_id, "name": firm["name"], "reason": reason},
             phase="NIGHT_CLOSE", subject_type="firm", subject_id=firm_id, importance=4.0)

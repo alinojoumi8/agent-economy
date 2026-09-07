@@ -1,6 +1,16 @@
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const positive = value => nonnegative(value) && value > 0;
 const unique = values => new Set(values).size === values.length;
+function careRecord(need) {
+  if (need.care_delivered_minutes == null && need.care_unmet_minutes == null) {
+    return ["unassigned", "time_allocation_pending", "not_required"].includes(need.care_status);
+  }
+  const delivered = need.care_delivered_minutes;
+  const unmet = need.care_unmet_minutes;
+  if (!nonnegative(delivered) || !nonnegative(unmet) || delivered + unmet !== need.care_required_minutes) return false;
+  const status = need.care_required_minutes === 0 ? "not_required" : unmet === 0 ? "delivered" : delivered === 0 ? "unmet" : "partial";
+  return need.care_status === status;
+}
 function householdRecord(item) {
   return item && positive(item.id) && typeof item.name === "string" && Array.isArray(item.members)
     && item.members.length > 0 && unique(item.members.map(member => member?.agent_id))
@@ -13,7 +23,7 @@ function householdRecord(item) {
       && [need.required_units, need.purchased_units, need.spent_cents, need.care_required_minutes].every(nonnegative)
       && need.purchased_units <= need.required_units && typeof need.goods_sector === "string"
       && (need.currency_code === null || typeof need.currency_code === "string")
-      && ["unassigned", "time_allocation_pending", "not_required"].includes(need.care_status));
+      && careRecord(need));
 }
 
 function institutionRecord(item) {

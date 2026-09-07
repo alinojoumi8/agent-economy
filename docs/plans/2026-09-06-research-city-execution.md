@@ -1477,3 +1477,68 @@ W5 remains open: delivered care with finite work/study/care time, corresponding
 wage and production effects, full multi-currency estates and business succession,
 cohort checks and a real multi-decade run. W6–W9 also remain. This four-day scripted
 rehearsal is not demographic calibration, paid-model validation or scale evidence.
+
+## Semantics 18: daily time, delivered care and earned wages
+
+Implemented the [daily time contract](2026-09-07-daily-time-and-earned-wages.md)
+behind explicit Semantics 18, additive schema 23 and hash-contract-v5. Frozen
+v1–v4 manifests are unchanged. Each living person has a finite daily budget;
+caregivers and children both spend delivered care minutes. Standing work/care
+plans take effect the following day and revalidate their targets. Native/model
+context and the participant catalog share the same plans. Scripted guardians use
+the declared care-first baseline. The city inspector shows recorded delivery and
+shortfall at the selected tick within its existing visible-member boundary.
+
+Work, study, construction, civic appointments and declared travel burdens share
+that budget. Reserved appointment time is distinct from attendance. Study and
+construction failures roll back time, cash and progress; successful receipts
+prevent duplicate effects, including construction retries on another day.
+The initial model uses coarse city slots rather than measured routes.
+
+Actual work minutes determine integer-cent wage accrual and physical output,
+with sub-cent/sub-unit remainders. Wage receivables and payables are balanced
+non-cash ledger claims. Partial payments preserve arrears; a full contractual
+period precedes the existing insolvency rule. Settlement, income tax, inherited
+claims, final write-offs and firm resolution reconcile per currency. An inherited
+claim never creates checking cash. Population/residence changes precede the new
+day's labor, and the liquidity sweep follows opening wage/production settlement.
+
+Validation on Windows/Python 3.11.15:
+
+- The initial 17-file regression ran **344 cases**: **343 passed** and one stale
+  schema-22 assertion failed after the correct upgrade to schema 23. The assertion
+  now checks the supported schema version while retaining its legacy-state and
+  migration-rollback requirements.
+- The final focused command below passed **138 tests**, **47.61 s**, fresh base
+  `ae-e1d946fc`. It covers the corrected assertion, schema-23 rollback, daily care
+  and output, a full contractual wage period, partial/taxed/cross-currency payment,
+  inheritance, grace-period insolvency, whole-resolution rollback, study and real
+  construction, civic attendance, visible/history-scoped care, strict commands,
+  old cognition/credit compatibility, export and exact replay. A real three-day
+  scripted city resumes and replays with an unchanged source; an actual schema-22
+  Semantics-17 recording also replays without source upgrade.
+- `npm --prefix dashboard test`: **257 passed**, **5.84 s**. Typecheck, notices,
+  npm audit and production build passed. The regenerated `server/static/` bundle
+  is included. New event kinds have designed display codes. Existing large-chunk
+  and Starlette deprecation warnings remain.
+- **183** Python files compiled in memory; CI YAML parsed. Four pinned datasets
+  verified, two optional inputs remain unpinned. Python dependency consistency,
+  locked dependency audit and npm vulnerability audit passed with no known
+  vulnerabilities.
+- Every pytest used a fresh short directory and a 40-GiB free-space check. Free
+  space was about **99.42 GiB** after the final focused run. No paid provider
+  calls, long-horizon local campaigns or additional cleanup were performed.
+
+```powershell
+python -m pytest -q tests/test_semantics18_daily_time.py tests/test_semantics17_household_decisions.py tests/test_semantics11_cognition.py tests/test_compatibility_guards.py tests/test_credit_semantics7.py tests/test_documentation.py --basetemp C:/Users/matri/.codex/tmp/ae-e1d946fc
+```
+
+The preceding Semantics-17 commit `2f82e792b28e70e5dd8a39521ab229d0a402ea13`
+passed all nine required jobs in CI `34161641248` and all eight Ubuntu/Python-3.12
+full-suite shards plus seven other applicable Python jobs in `34161732217`.
+Those results are not substituted for the new commit's CI.
+
+W5 still requires complete multi-currency estates, business succession, cohort
+properties and a multi-decade experiment. W6–W9 remain. This change establishes
+testable time/accounting mechanics, not demographic calibration or research-scale
+performance. The two price-discovery domains remain equally primary.

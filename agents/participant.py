@@ -631,6 +631,10 @@ class ParticipantService:
                         f"({option.get('price_cents')}c)",
                         f"study-{option.get('skill_key')}",
                     ))
+        for index, action in enumerate((ctx.get("daily_time") or {}).get("eligible_actions", [])):
+            items.append(exact_action(action,
+                f"Plan tomorrow: {action['work_minutes']} min work, {action['care_minutes']} min care",
+                f"daily-time-{index}"))
         for index, action in enumerate((ctx.get("household_decisions") or {}).get("eligible_actions", [])):
             label = action["type"].replace("_", " ").capitalize()
             if action["type"] == "respond_household":

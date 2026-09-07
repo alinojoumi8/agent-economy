@@ -14,6 +14,8 @@ from .credit import Bank
 from .city import City
 from .cognition import CognitionEconomy
 from .construction import ConstructionEconomy
+from .daily_time import DailyTime
+from .earned_wages import EarnedWages
 from .exchange import Exchange
 from .firms import Firms
 from .families import HouseholdDecisions
@@ -89,6 +91,12 @@ class Economy:
         )
         self.city = City(self, config.get("city"))
         self.construction = ConstructionEconomy(self, config.get("construction"))
+        self.daily_time = DailyTime(self, config.get("daily_time"))
+        self.earned_wages = EarnedWages(self, self.daily_time.p["normal_workday_minutes"])
+        self.firms.daily_time = self.daily_time
+        self.firms.earned_wages = self.earned_wages
+        self.lifecycle.earned_wages = self.earned_wages
+        self.cognition.daily_time = self.daily_time
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

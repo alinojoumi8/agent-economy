@@ -118,12 +118,15 @@ def _connect(path: str | Path) -> sqlite3.Connection:
 
 
 HOUSEHOLD_DECISION_TABLES = {"household_decisions", "household_assents", "partnerships"}
+DAILY_TIME_TABLES = {"time_plans", "time_days", "time_allocations", "child_care_days",
+                     "wage_claims", "wage_claim_holders", "wage_accruals", "wage_settlements", "firm_labor_days"}
+SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_TABLES))
 
 
-def _has_household_decision_semantics(conn: sqlite3.Connection) -> bool:
+def _engine_semantics(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
     config = json.loads(row[0]) if row else {}
-    return int(config.get("engine_semantics_version", 1)) >= 17
+    return int(config.get("engine_semantics_version", 1))
 
 
 def _tables(conn: sqlite3.Connection) -> list[str]:
@@ -132,10 +135,12 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
         "ORDER BY name"
     ).fetchall()
     names = [str(row[0]) for row in rows if str(row[0]) not in EXCLUDED_TABLES]
-    if not _has_household_decision_semantics(conn):
-        # Schema 22 adds these empty tables when replaying an older recording.
-        # Only this declared extension is compatible; populated data is compared.
-        names = [name for name in names if name not in HOUSEHOLD_DECISION_TABLES
+    for semantics, _, tables in SEMANTIC_EXTENSIONS:
+        if _engine_semantics(conn) >= semantics:
+            continue
+        # Only these declared empty extensions are compatible. Populated new
+        # data and every older migration receipt remain part of comparison.
+        names = [name for name in names if name not in tables
                  or conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is not None]
     return names
 
@@ -526,10 +531,11 @@ def _table_digest(
         params = tuple(sorted(OPERATIONAL_LLM_PURPOSES))
     elif table == "external_action_submissions":
         where = " WHERE status='executed'"
-    elif table == "schema_migrations" and not _has_household_decision_semantics(conn):
+    elif table == "schema_migrations":
         # The additive migration receipt is not a historical simulated effect.
         # All pre-existing receipts and all Semantics-17 receipts remain exact.
-        where = " WHERE version<>22"
+        omitted = [str(version) for semantics, version, _ in SEMANTIC_EXTENSIONS if _engine_semantics(conn) < semantics]
+        where = " WHERE version NOT IN (" + ",".join(omitted) + ")" if omitted else ""
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()

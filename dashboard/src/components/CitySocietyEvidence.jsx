@@ -36,10 +36,11 @@ export function CitySocietyEvidence({ household, institution, requested, tick, r
             <span>{need.purchased_units} / {need.required_units} {need.goods_sector} units purchased</span>
             <span>{need.spent_cents} {need.currency_code || "unspecified currency"} cents spent</span>
             <span>{need.care_required_minutes} care minutes required · {humanize(need.care_status)}</span>
+            {need.care_delivered_minutes != null && <span>{need.care_delivered_minutes} care minutes delivered · {need.care_unmet_minutes} unmet</span>}
           </li>)}</ul>
           <dl className="civic-city__facts">{childNeedsByCurrency(household.child_needs).map(([currency, cents]) =>
             <div key={currency}><dt>Child purchases · {currency}</dt><dd>{cents} cents</dd></div>)}</dl>
-          <p>Care requirements do not measure care delivered. These purchases cover visible children for this day, not the household's total budget.</p>
+          <p>Delivered care is shown only when recorded for this day. These purchases cover visible children for this day, not the household's total budget.</p>
         </> : <p>No child-needs record is available for the visible members at this tick. Spending and care delivered are unavailable.</p>}
       </section>
     </> : <>

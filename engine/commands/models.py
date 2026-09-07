@@ -19,6 +19,14 @@ class HouseholdRequest(CommandBase):
     request_key: str = Field(min_length=1, max_length=96, pattern=r"\S")
 
 
+class SetTimePlan(HouseholdRequest):
+    type: Literal["set_time_plan"]
+    work_minutes: Annotated[StrictInt, Field(ge=0, le=1440)]
+    care_minutes: Annotated[StrictInt, Field(ge=0, le=1440)]
+    work_firm_id: Annotated[StrictInt, Field(gt=0)] | None = None
+    care_child_ids: list[Annotated[StrictInt, Field(gt=0)]] | None = Field(default=None, max_length=32)
+
+
 class ProposePartnership(HouseholdRequest):
     type: Literal["propose_partnership"]
     partner_id: Annotated[StrictInt, Field(gt=0)]

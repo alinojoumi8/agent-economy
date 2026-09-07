@@ -57,16 +57,26 @@ def build_city_households(store, *, as_of_tick: int) -> dict:
         child, guardian = int(row["child_agent_id"]), int(row["guardian_agent_id"])
         if child in members and guardian in members:
             members[child]["guardian_agent_id"] = guardian
+    care_days = {int(row["child_id"]): dict(row) for row in store.query(
+        "SELECT * FROM child_care_days WHERE tick=? ORDER BY child_id", (tick,))} if semantics_version(store) >= 18 else {}
     for row in store.query(
             "SELECT household_id,child_agent_id,currency_code,goods_sector,required_units,"
             "purchased_units,spent_cents,care_required_minutes,care_status "
             "FROM child_needs WHERE tick=? ORDER BY household_id,child_agent_id", (tick,)):
         household_id, child = int(row["household_id"]), int(row["child_agent_id"])
         if household_id in groups and membership.get(child) == household_id:
-            groups[household_id]["child_needs"].append({
+            need = {
                 key: row[key] for key in (
                     "child_agent_id", "currency_code", "goods_sector", "required_units",
-                    "purchased_units", "spent_cents", "care_required_minutes", "care_status")})
+                    "purchased_units", "spent_cents", "care_required_minutes", "care_status")}
+            care = care_days.get(child)
+            if care is not None and care["household_id"] == household_id:
+                delivered = int(care["delivered_minutes"])
+                required = int(care["required_minutes"])
+                need.update(care_delivered_minutes=delivered, care_unmet_minutes=required - delivered,
+                            care_status="not_required" if required == 0 else "delivered" if delivered == required
+                            else "partial" if delivered else "unmet")
+            groups[household_id]["child_needs"].append(need)
     result["items"] = list(groups.values())
     return result
 

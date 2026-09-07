@@ -17,6 +17,7 @@ from engine.actions import ActionExecutor
 from engine.core import Economy
 from engine.households import HouseholdError
 from engine.migrations import registry
+from engine.schema import SCHEMA_VERSION
 from engine.store import Store
 from research.hashing import HashContractError, canonical_hashes, load_hash_contract
 from research.export_bundle import export_bundle, validate_bundle
@@ -266,7 +267,7 @@ def test_schema_22_upgrade_preserves_legacy_state_and_is_atomic(tmp_path, monkey
     try:
         assert store.scalar("SELECT COUNT(*) FROM agents") == 1
         assert store.scalar("SELECT COUNT(*) FROM household_decisions") == 0
-        assert store.scalar("SELECT schema_version FROM run_meta") == 22
+        assert store.scalar("SELECT schema_version FROM run_meta") == SCHEMA_VERSION
     finally:
         store.close()
 

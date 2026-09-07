@@ -577,6 +577,18 @@ class ConstructionEconomy:
     def perform_work(
         self, tick: int, actor_id: int, action: Mapping[str, Any],
     ) -> dict[str, Any]:
+        if self.e.engine_semantics_version >= 18:
+            cached = self._start(actor_id, "perform_construction_work", action)
+            if cached is not None:
+                return self._perform_work(tick, actor_id, action)
+            return self.e.daily_time.perform(tick, actor_id, f"construction:{action['dedupe_key']}",
+                "construction", int(action["work_units"]) * self.e.daily_time.p["construction_minutes_per_unit"],
+                dict(action), lambda: self._perform_work(tick, actor_id, action))
+        return self._perform_work(tick, actor_id, action)
+
+    def _perform_work(
+        self, tick: int, actor_id: int, action: Mapping[str, Any],
+    ) -> dict[str, Any]:
         action_type = "perform_construction_work"
         cached = self._start(actor_id, action_type, action)
         if cached is not None:

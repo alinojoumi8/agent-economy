@@ -1,0 +1,11 @@
+extends: household-decisions-rehearsal.yaml
+engine_semantics_version: 18
+checkpoint_every: 0
+daily_time:
+  available_minutes: 960
+  normal_workday_minutes: 480
+households:
+  care_minutes_per_child: 480
+  scheduled_births:
+    - tick: 1
+      parent_agent_id: 11

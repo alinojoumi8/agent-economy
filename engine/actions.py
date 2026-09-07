@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 
 from .core import Economy
 from .credit import LoanTerms
+from .daily_time import TimeBudgetError
 from .firms import DEFAULT_PRODUCT, normalize_business_idea
 from .households import HouseholdError
 from .ledger import Leg
@@ -66,6 +67,7 @@ VALID_TYPES = {
     "perform_construction_work", "cancel_construction",
     "propose_partnership", "propose_household_move", "respond_household",
     "cancel_household_proposal", "separate_household",
+    "set_time_plan",
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
@@ -87,6 +89,12 @@ def _authorization_payload(action: dict) -> str | None:
 
 
 class ActionExecutor:
+    def _do_set_time_plan(self, tick, actor_id, action, phase):
+        try:
+            return self.e.daily_time.submit_plan(tick, actor_id, action)
+        except (TimeBudgetError, HouseholdError) as exc:
+            return self._reject(tick, actor_id, action, str(exc), phase)
+
     def _household_action(self, tick, actor_id, action, phase, operation, *args, **kwargs):
         try:
             return operation(tick, actor_id, *args, **kwargs)
@@ -241,7 +249,8 @@ class ActionExecutor:
                     } and self.engine_semantics_version < 13)
                 or (atype in {"propose_partnership", "propose_household_move", "respond_household",
                               "cancel_household_proposal", "separate_household"}
-                    and self.engine_semantics_version < 17)):
+                    and self.engine_semantics_version < 17)
+                or (atype == "set_time_plan" and self.engine_semantics_version < 18)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))

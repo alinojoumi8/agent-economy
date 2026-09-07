@@ -15,7 +15,7 @@ from .models import (ApplyBusinessPermit, ApplyConstructionPermit,
                      ProposeConstruction, ReplyMessage, SendMessage,
                      SetComputeSponsorship, StudySkill)
 from .models import (CancelHouseholdProposal, ProposeHouseholdMove,
-                     ProposePartnership, RespondHousehold, SeparateHousehold)
+                     ProposePartnership, RespondHousehold, SeparateHousehold, SetTimePlan)
 
 
 class CommandValidationError(ValueError):
@@ -109,6 +109,7 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         | set(CIVIC_MODELS)
         | set(CONSTRUCTION_MODELS)
         | set(HOUSEHOLD_MODELS)
+        | {"set_time_plan"}
     )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
@@ -150,4 +151,6 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
             command_type=command_type, model=model,
             handler_name=f"_do_{command_type}", introduced_in_semantics=17,
         ))
+    registry.register(CommandDefinition(command_type="set_time_plan", model=SetTimePlan,
+        handler_name="_do_set_time_plan", introduced_in_semantics=18))
     return registry

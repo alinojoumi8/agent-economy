@@ -159,6 +159,18 @@ def _household_decision(context: dict) -> dict | None:
     return None
 
 
+def _daily_plan_decision(context: dict) -> dict | None:
+    time = context.get("daily_time") or {}
+    choices = time.get("eligible_actions") or []
+    if not choices or not time.get("primary_ward_ids"):
+        return None
+    desired = choices[0]
+    plan = time.get("tomorrow_plan")
+    if plan is None or (plan["work_minutes"], plan["care_minutes"]) != (desired["work_minutes"], desired["care_minutes"]):
+        return _env(None, [dict(desired)], [], "planning tomorrow's care before work under the declared baseline")
+    return None
+
+
 def citizen_decision(context: dict) -> dict:
     required_civic_action = context.get("civic_required_action")
     if isinstance(required_civic_action, dict):
@@ -188,6 +200,9 @@ def citizen_decision(context: dict) -> dict:
     household_choice = _household_decision(context)
     if household_choice is not None:
         return household_choice
+    time_choice = _daily_plan_decision(context)
+    if time_choice is not None:
+        return time_choice
     family = context.get("household_decisions") or {}
     rng = _rng(context)
     agent = context.get("agent", {})
@@ -728,6 +743,9 @@ def founder_decision(context: dict) -> dict:
     household_choice = _household_decision(context)
     if household_choice is not None:
         return household_choice
+    time_choice = _daily_plan_decision(context)
+    if time_choice is not None:
+        return time_choice
     actions: list[dict] = []
     reasons: list[str] = []
     inv = int(firm.get("inventory", 0))

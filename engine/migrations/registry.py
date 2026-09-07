@@ -17,6 +17,7 @@ from . import (
     v020_external_turn_attendance,
     v021_households,
     v022_household_decisions,
+    v023_daily_time,
 )
 
 
@@ -82,6 +83,9 @@ _MIGRATIONS = (
     Migration.create(
         22, v022_household_decisions.NAME, v022_household_decisions.SQL,
         verify=v022_household_decisions.verify),
+    Migration.create(
+        23, v023_daily_time.NAME, v023_daily_time.SQL,
+        verify=v023_daily_time.verify),
 )
 
 

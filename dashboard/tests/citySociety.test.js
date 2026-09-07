@@ -51,3 +51,18 @@ test("child purchase totals retain currency boundaries and missing records", () 
     { currency_code: "CAD", spent_cents: 40 }, { currency_code: "USD", spent_cents: 30 }]),
   [["CAD", 40], ["USD", 30]]);
 });
+
+test("delivered care must reconcile with the recorded requirement and status", () => {
+  const need = { child_agent_id: 1, required_units: 1, purchased_units: 1, spent_cents: 20,
+    goods_sector: "food", currency_code: "USD", care_required_minutes: 480,
+    care_delivered_minutes: 360, care_unmet_minutes: 120, care_status: "partial" };
+  const households = { available: true, tick: 2, source: "recorded_household_membership", visibility: "core_members_only",
+    items: [{ id: 7, name: "Household #7", members: [{ agent_id: 1, name: "Child", age_years: 2,
+      joined_tick: 0, legacy_dependents: 0, age_band: "child", role: "dependent", guardian_agent_id: null }], child_needs: [need] }] };
+  assert.equal(citySociety({ households }, 2).households.available, true);
+  for (const patch of [{ care_delivered_minutes: "360" }, { care_unmet_minutes: -1 },
+    { care_delivered_minutes: 480 }, { care_status: "delivered" }, { care_unmet_minutes: null }]) {
+    const changed = { ...households, items: [{ ...households.items[0], child_needs: [{ ...need, ...patch }] }] };
+    assert.equal(citySociety({ households: changed }, 2).households.available, false);
+  }
+});

@@ -608,7 +608,7 @@ class World:
         # applied before payroll/production at the configured untouched tick.
         self._apply_supply_recovery_recapitalization(tick)
         self._enforce_workforce_recovery_job_floor(tick)
-        if self.engine_semantics_version >= 12:
+        if 12 <= self.engine_semantics_version < 18:
             # Fixed-slot presence is resolved before production. An office
             # appointment removes a worker from output, but not from payroll.
             e.city.run_nightly(tick)
@@ -617,9 +617,11 @@ class World:
         # Loan payments + defaults.
         e.bank.process_due_loans(tick)
         # Payroll.
-        e.firms.process_payroll(tick)
+        if self.engine_semantics_version < 18:
+            e.firms.process_payroll(tick)
         # Production.
-        e.firms.produce(tick)
+        if self.engine_semantics_version < 18:
+            e.firms.produce(tick)
         # Lifecycle draws (illness, deaths + estates, aging, retirement, births).
         e.lifecycle.run_nightly(tick)
         # Government: unemployment benefits + periodic elections (P1 R12).
@@ -640,13 +642,21 @@ class World:
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
-        self._bank_liquidity_sweep(tick)
+        if self.engine_semantics_version < 18:
+            self._bank_liquidity_sweep(tick)
         # Shock evaluation.
         self.shocks.evaluate(tick)
         if self.engine_semantics_version >= 15:
             e.households.register_new_people(tick)
             e.households.reconcile_residence(tick)
             e.households.reconcile_custody(tick)
+        if self.engine_semantics_version >= 18:
+            # Resolve population and location before allocating this day's time.
+            e.city.run_nightly(tick)
+            e.daily_time.prepare_day(tick)
+            e.firms.process_payroll(tick)
+            e.firms.produce(tick)
+            self._bank_liquidity_sweep(tick)
         if self.engine_semantics_version < 2:
             # Markerless historical databases retain their original tick contract.
             self.metrics.snapshot(tick)
@@ -853,6 +863,14 @@ class World:
             )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
+        if self.engine_semantics_version >= 18:
+            from engine.daily_time import TimeBudgetError
+            from engine.earned_wages import WageClaimError
+            try:
+                self.economy.daily_time.check_invariants()
+                self.economy.earned_wages.check_invariants()
+            except (TimeBudgetError, WageClaimError) as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         if self.engine_semantics_version >= 15:
             from engine.households import HouseholdError
             try:
