@@ -33,20 +33,55 @@ and the SSH template uses [OpenSSH read-only SFTP](https://man.openbsd.org/sftp-
 
 - Reproduction before fixes: all three initial regression tests failed, confirming
   refresh-token acceptance, a pre-authentication storage scan, and the GET limit bypass.
-- Focused credential/storage/API tests after the first fixes: 54 passed.
-- Registration and catalog unit tests after admission changes: 32 passed.
-- Linux tests with pinned Litestream 0.5.17 and optional locked SFTP dependencies:
-  `python -m pytest -q tests/test_security_review.py tests/test_litestream_recovery.py tests/test_catalog_backup_retention.py`
-  — 17 passed. This includes real incremental memory/action recovery through a
-  read-only SFTP identity and rejection of replacement/deletion attempts.
-- `uv tool run --from pip-audit pip-audit -r requirements.lock --disable-pip` and
+- Final Linux credential, replay, compression and real recovery tests:
+  `python -m pytest -q tests/test_security_review.py tests/test_external_agent_gateway.py tests/test_recorded_replay_golden.py tests/test_payload_storage.py tests/test_litestream_recovery.py tests/test_catalog_backup_retention.py`
+  — 57 passed with pinned Litestream 0.5.17 and locked optional SFTP dependencies.
+  The drill restores incremental memory/action history through a read-only SFTP
+  identity; separate tests reject replacement/deletion attempts.
+- `python -m pytest -q tests/test_acceptance.py tests/test_security_review.py`
+  — 58 passed. Two acceptance tests now wait up to ten seconds for the background
+  run/report to finish and assert it stopped before checking the result. Their
+  former 100 immediate status reads could finish before that work completed.
+- [Final CI at `1f3fc11`](https://github.com/alinojoumi8/agent-economy/actions/runs/34115703715)
+  passed all enabled jobs: 82 storage/security tests, one real PostgreSQL 17 dump,
+  SFTP fetch and restore, the core/smoke suites, 194 dashboard unit tests, 47
+  Chromium checks, typechecking, notices and the production build. Compose and
+  both Docker image builds/CLI smokes and all eight hosted PostgreSQL/object-store
+  integration cases also passed.
+- The earlier catalog-role test failed because `pg_read_all_data` exposed
+  `pg_authid`. Explicit grants on the application's schema fixed this. The test
+  now proves that cross-tenant rows survive backup/restore, while table writes,
+  password-hash reads and privilege escalation are denied. All eight real hosted
+  PostgreSQL/object-store cases also passed in the final run's
+  [integration job](https://github.com/alinojoumi8/agent-economy/actions/runs/34115703715/job/101721872497).
+  The earlier catalog-role failure is superseded by the passing corrected test.
+- `uv tool run --from pip-audit pip-audit -r requirements.lock --disable-pip`,
+  the same audit of `tests/requirements-storage.lock`, and
   `npm audit --audit-level=moderate` — no known vulnerabilities reported.
-- `gitleaks git --config .gitleaks.toml --redact --no-banner --log-opts='fe43aa4..HEAD' .`
-  — no secrets found in the two storage implementation commits reviewed.
-- Compose model validation passed without substituting secrets.
+- `bandit -r agents engine hosted server deploy/hostinger -lll -f json -o tmp/security-bandit-final.json` — no
+  high-severity findings. The medium/high-confidence candidates from `-ll -ii`
+  were reviewed: SQL structure comes from internal constants/allowlisted fields,
+  the temporary state file is inside the private backup container, and the
+  installer downloads a fixed official HTTPS release with a pinned checksum.
+- `gitleaks git --config .gitleaks.toml --redact --no-banner .` — no leaks in
+  230 commits (60.37 MB); subsequent changes were also scanned before commit.
+  Both pinned Gitleaks allowlist regression tests passed separately on Windows.
+- Compilation, `python -m pip check`, required dataset verification and diff
+  checks passed. Existing Starlette TestClient deprecation and dashboard chunk
+  size warnings remain; the committed dashboard bundle matches a fresh build.
 
-Final full-suite, staged-secret/static scans, and real PostgreSQL/container CI
-results will be recorded after the current fixes finish validation.
+The final Linux Python 3.12 full suite passed in eight CI shards: **1,618 passed,
+16 skipped, zero failures/errors**. Each shard ran
+`python -m pytest tests/ -q -p scripts.pytest_shard --ci-shard-index N --ci-shard-count 8`
+for `N=0..7`. The skips require optional SFTP dependencies, external services,
+the Litestream binary or pinned Gitleaks; the corresponding cases passed in the
+separate recovery/integration jobs and pinned Windows scanner tests above.
+
+The initial four-shard security run had one acceptance timing failure (1,618
+passed, 13 environment skips). The subsequent acceptance-module run exposed the
+same insufficient polling in a second test. Both waits were fixed before the
+final complete suite; economic mechanics and production run control were unchanged
+by those test corrections.
 
 ## Deployment and review limits
 
