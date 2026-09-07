@@ -274,8 +274,10 @@ usage is sampled every 200 ms; the current write and final diagnostic report
 can exceed that threshold. It is an operational guard, not an OS disk quota.
 Interrupted/failed artifacts are retained, later unstarted cells remain in the
 assigned cohort, and incomplete worlds cannot contribute effects. A paused
-attempt stops the batch. Resuming it as the same research attempt is not yet
-supported; a relaunch creates new attempts.
+attempt stops the batch. A study declaring `preserve_and_resume` can continue
+from a verified committed-day boundary with its original assignments and
+cumulative limits. Partial-phase recovery remains unsupported; an ordinary
+relaunch creates new attempts.
 
 Each completed attempt must reconcile, finish at the declared horizon and
 boundary, and pass an actual recorded replay comparison. Source/replay hashes,
@@ -297,7 +299,12 @@ does not become a fabricated daily price. Sums are allowed only for flows.
 Uncertainty resamples whole world/seed pairs. One pair has no interval;
 zero-variance standardization is undefined. A small number of paired worlds
 does not support a strong empirical claim even when the descriptive bootstrap
-interval is narrow or zero-width. Shared engine randomness may diverge after
-treatment, and scripted agents may not respond to a signal. Preserve those
-negative findings. These studies are prospective exploratory protocols, not
-confirmatory experiments or evidence that the model fits a real economy.
+interval is narrow or zero-width. Legacy shared engine randomness may diverge
+after treatment. The opt-in [Semantics 16 profile](../../runs/price-lab-keyed.yaml)
+uses [daily mechanism/origin keys](../semantics16-randomness.md); common draws
+remain paired while treatment-dependent eligibility and outcomes may diverge.
+Use it explicitly with `research.price_catalog --config runs/price-lab-keyed.yaml`
+for either G2 or F2. Existing operator pilots keep their frozen Semantics 7.
+Scripted agents may not respond to a signal. Preserve those negative findings.
+These studies remain prospective exploratory protocols, not confirmatory
+experiments or evidence that the model fits a real economy.

@@ -19,6 +19,8 @@ each audience can find the authoritative level of detail.
   strict study drafts, provider-free pilots, replay receipts and findings.
 - [Persistent people and household needs](semantics15-households.md) — version-15
   births, age, membership, care gaps, child demand, census and replay boundaries.
+- [Daily random keys](semantics16-randomness.md) — version-16 mechanism/day/origin
+  streams, explicit research declarations and goods/equity pilot limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
   information boundaries, beliefs, routing, budget, and shock targeting.
 - [Local and hosted API reference](api-reference.md) — REST, WebSocket,

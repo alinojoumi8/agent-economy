@@ -94,11 +94,16 @@ targets and records provenance. Scenario packs and dataset manifests identify
 input versions/checksums. Offline replay restores source-owned input rows and
 recorded decisions without re-reading a changed external manifest.
 
-Current semantics use seeded engine/persona streams. Equal seeds and equal
-initial canonical state do not guarantee equal later exogenous draws if an arm
-changes the number of draws. Independent mechanism/entity keyed streams remain
-a future versioned extension. The research runner records excluded shock and
-scenario descriptors separately from its common-state digest.
+Semantics 1–14 use seeded sequential engine/persona/lifecycle streams. Equal
+seeds and initial canonical state do not guarantee equal later draws when an
+arm consumes a different number. Semantics 15 isolates demographic hazards.
+[Semantics 16](../semantics16-randomness.md) isolates daily mechanisms and policy
+calls by world seed, day and person/event origin, preserving common-key draws
+under unrelated cursor advances or record insertions. Genesis retains its
+configured sequential PRNG; policy branches, changed eligible sets and unmatched
+identities can still change outcomes. The research runner records excluded
+shock/scenario descriptors separately from its common-state digest and rejects
+a randomness declaration that does not match the selected semantics.
 
 ## Economic submodels and limitations
 
@@ -123,9 +128,11 @@ identified in the study contract.
 Legacy births increase dependent counts, death can select a social heir, and
 replacement arrivals are sampled adults with external endowments. Adult study
 actions exchange resources for skill gains in opt-in cognition profiles.
-Persistent child identities, households, capacity-constrained schools and
-education-to-work transitions are pending extensions. Legacy arrival housing
-charges are not evidence of a discovered rental market.
+Semantics 15 and later instantiate persistent children, household membership,
+guardianship and an explicit guardian basic-needs policy. Partnership, delivered
+care time, household estates, capacity-constrained schools and education-to-work
+transitions remain pending. Legacy arrival housing charges are not evidence of
+a discovered rental market.
 
 ## Observation and validation
 

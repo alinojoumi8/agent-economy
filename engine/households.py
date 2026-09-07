@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+from .keyed_random import person_key, stable_key
+
 
 ADULT_AGE = 18
 DAYS_PER_YEAR = 365
@@ -77,7 +79,7 @@ class Households:
             "SELECT * FROM household_memberships WHERE agent_id=? AND left_tick IS NULL",
             (agent_id,))
 
-    def register_person(self, tick: int, agent_id: int, origin: str) -> int:
+    def register_person(self, tick: int, agent_id: int, origin: str, *, random_key: str | None = None) -> int:
         """Adopt a newly created adult's age basis, without inventing relatives."""
         if not self.enabled:
             return 0
@@ -87,6 +89,9 @@ class Households:
             if existing:
                 if existing["origin"] != origin or int(existing["origin_tick"]) != tick:
                     raise HouseholdError("person already has a different origin")
+                if (self.e.engine_semantics_version >= 16 and random_key is not None
+                        and person_key(self.store, agent_id) != random_key):
+                    raise HouseholdError("person already has a different random identity")
                 member = self.membership(agent_id)
                 return int(member["household_id"]) if member else 0
             agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
@@ -97,6 +102,9 @@ class Households:
             # A disclosed synthetic within-year age basis. Newborns instead use
             # the exact birth tick and get their first birthday 365 days later.
             day_in_year = (DAYS_PER_YEAR - (int(agent_id) % DAYS_PER_YEAR)) % DAYS_PER_YEAR
+            keyed_age = self.e.engine_semantics_version >= 16 and random_key is not None
+            if keyed_age:
+                day_in_year = int(stable_key("age_offset", random_key).rsplit(":", 1)[1], 16) % DAYS_PER_YEAR
             birth_tick = tick - int(agent["age"]) * DAYS_PER_YEAR - day_in_year
             self.store.insert(
                 "person_lifecycle", agent_id=agent_id, origin=origin, origin_tick=tick,
@@ -108,10 +116,12 @@ class Households:
             self.store.insert(
                 "household_memberships", household_id=household, agent_id=agent_id,
                 role="adult" if int(agent["age"]) >= ADULT_AGE else "dependent", joined_tick=tick)
-            self._event(tick, "person_registered", agent_id,
-                        {"origin": origin, "birth_tick": birth_tick, "household_id": household,
-                         "legacy_dependents": int(agent["dependents"]),
-                         "age_basis": "synthetic_id_offset_v1"})
+            payload = {"origin": origin, "birth_tick": birth_tick, "household_id": household,
+                       "legacy_dependents": int(agent["dependents"]),
+                       "age_basis": "synthetic_origin_offset_v1" if keyed_age else "synthetic_id_offset_v1"}
+            if self.e.engine_semantics_version >= 16:
+                payload["random_key"] = random_key or f"agent:{agent_id}"
+            self._event(tick, "person_registered", agent_id, payload)
             return household
 
     def register_new_people(self, tick: int, *, genesis: bool = False) -> None:
@@ -174,10 +184,12 @@ class Households:
                               checking_account_id=checking)
             # Do not increment agents.dependents: those are uninstantiated legacy
             # dependents and continue to affect only the legacy policy path.
-            self._event(tick, "birth", child_id,
-                        {"agent_id": child_id, "parent_agent_id": parent_id,
-                         "household_id": int(member["household_id"]), "birth_key": key,
-                         "provenance": source, "endowment_cents": 0})
+            payload = {"agent_id": child_id, "parent_agent_id": parent_id,
+                       "household_id": int(member["household_id"]), "birth_key": key,
+                       "provenance": source, "endowment_cents": 0}
+            if self.e.engine_semantics_version >= 16:
+                payload["random_key"] = stable_key("birth", tick, person_key(self.store, parent_id))
+            self._event(tick, "birth", child_id, payload)
             self._event(tick, "parenthood", parent_id,
                         {"child_agent_id": child_id, "household_id": int(member["household_id"])})
             return child_id

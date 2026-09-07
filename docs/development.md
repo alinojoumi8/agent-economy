@@ -274,6 +274,11 @@ The [Semantics 15 household guide](semantics15-households.md) specifies schema 2
 person origins, membership/custody, child needs, demographic keyed draws and
 census reconciliation. Its focused tests are part of the required core CI job.
 
+The [Semantics 16 randomness guide](semantics16-randomness.md) specifies daily
+mechanism/origin keys, unchanged historical draws, and the opt-in goods/equity
+pilot profile. Required research CI covers draw isolation and source/resume/replay
+checks for both domains. It adds no database migration.
+
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate

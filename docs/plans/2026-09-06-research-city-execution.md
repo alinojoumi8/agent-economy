@@ -6,7 +6,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 
 | Recommendation | Packages | Status |
 |---|---|---|
-| 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day supervised resume, working evidence portability and CLI/operator controls implemented; partial-phase recovery and daily keyed streams remain pending |
+| 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented; partial-phase recovery remains pending |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/pause/resume/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
@@ -738,3 +738,56 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   remains in this run. Research/API compilation, dependency check and diff
   whitespace validation passed. Full hosted and Windows/version CI matrices
   remain unrun.
+
+## Semantics 16 daily random keys (2026-09-07)
+
+- The previous operator/library integration at `91176b9` passed required
+  [CI 34082221289](https://github.com/alinojoumi8/agent-economy/actions/runs/34082221289).
+  Its eight Ubuntu/Python 3.12 shards in
+  [run 34082240133](https://github.com/alinojoumi8/agent-economy/actions/runs/34082240133)
+  passed **1,821 tests with 10 skipped**. These receipts precede this slice.
+- Added opt-in [Semantics 16](../semantics16-randomness.md) with SHA-256 keys
+  per mechanism/day/person or event. Birth and arrival origins survive unrelated
+  record insertions; rumor audiences and conversation priorities survive other
+  PRNG consumption and reordered eligible rows. Policy, newsroom, memory,
+  arrival persona/bank/contact/tie and demographic draws are isolated.
+- Source events retain origin keys without a schema migration. Arrival birthday
+  offsets, compute-tier ranks and city home assignment use those origins.
+  Historical Semantics 1–15 paths, demographic vectors and PRNG persistence remain
+  unchanged. Old checkpoints cannot be relabeled as Semantics 16: an explicit
+  upgrade refuses and preserves the source. New runs use fresh genesis.
+- Both price-study presets declare and validate their actual stream contract.
+  Added `runs/price-lab-keyed.yaml`; existing operator pilots retain their frozen
+  Semantics 7. Confirmatory execution stays unavailable. Genesis initialization,
+  within-policy branches, changed eligible sets and unmatched engine-created
+  staff identities retain their documented limits.
+- A death/replacement stress test exposed identical reporter-cache keys when
+  both desk agents had died. Semantics 16 now binds the daily seed in request
+  cache identity; each outlet retains its own recorded response and the stress
+  source replays exactly. No historical source or cache key is rewritten.
+- Initial selection: **104 passed, 3 failed**. Two new study fixtures incorrectly
+  put an undeclared rumor in the baseline; the existing guard correctly refused
+  them. The third check required updating the status ledger's current version.
+  After correction, **56 passed, 1 failed**, exposing the reporter-cache defect.
+  Its fix then passed **21** isolation/study/replay checks (57.66 s).
+- Final focused regressions: **142 passed** (94.48 s), using a fresh short temp
+  root and a 40 GiB free-space preflight. Command: `.venv/Scripts/python.exe -m
+  pytest -q tests/test_keyed_daily_randomness.py tests/test_keyed_price_studies.py
+  tests/test_semantics15_households.py tests/test_compatibility_guards.py
+  tests/test_study_protocol.py tests/test_price_study_catalog.py
+  tests/test_review_gateways.py tests/test_arrival_personas.py
+  tests/test_replay_source_lifecycle.py tests/test_recorded_replay_golden.py
+  tests/test_documentation.py --basetemp <fresh-short-root>`.
+  The G2 and F2 tests each completed four eligible attempts across two seeds,
+  including a preserved pause receipt, resumed source, actual recorded replay
+  and read-only result verification. Both retain all four goods/equity outcomes.
+- Engine/world/agents/LLM/research/runner compilation and dependency checking
+  passed. The existing Starlette test-client deprecation warning remains.
+  No paid provider calls, new UI changes or checkpoint cleanup were performed.
+  Partial-phase recovery, remaining city lenses, W5–W8 economics and W9
+  validation remain active work; this is not completion of the five-part goal.
+- Final documentation checks passed **22 tests** (0.35 s) with an explicit fresh
+  temp root. An initial invocation without that root hit the existing Windows
+  `pytest-of-matri` access denial during fixture setup (21 passed, 1 setup error);
+  no permissions or old temp data were changed. Research CI YAML folding and
+  staged whitespace checks passed; Gitleaks found no staged secrets.

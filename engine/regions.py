@@ -101,10 +101,10 @@ class RegionalEconomy:
             return "USD"
         return str(self.store.scalar("SELECT currency_code FROM regions WHERE id=?", (region_id,), default="USD"))
 
-    def bank_for_region(self, bank_ids: list[int], region_id: int | None) -> int:
+    def bank_for_region(self, bank_ids: list[int], region_id: int | None, *, rng=None) -> int:
         value = self.store.scalar(
             "SELECT id FROM banks WHERE region_id=? AND status='open' ORDER BY id LIMIT 1", (region_id,))
-        return int(value) if value is not None else self.prng.choice(bank_ids)
+        return int(value) if value is not None else (rng if rng is not None else self.prng).choice(bank_ids)
 
     def region_for_new_citizen(self, *, reserved_northstar: int = 0) -> int | None:
         regions = self.store.query("SELECT id, region_key, population_target FROM regions ORDER BY id")

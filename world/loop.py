@@ -43,6 +43,7 @@ from engine.ledger import (
     SYS_INFLOW,
 )
 from engine.semantics import semantics_version
+from engine.keyed_random import daily_draw, daily_seed, person_key
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
@@ -918,12 +919,22 @@ class World:
         if not due_ids:
             return
         banks = [int(r["id"]) for r in self.store.query("SELECT id FROM banks WHERE status='open'")]
+        if self.engine_semantics_version >= 16:
+            banks.sort()
         if not banks:
             return
         outlets = self.config.get("outlets", [{"id": 1}, {"id": 2}])
         outlet_ids = configured_outlet_ids(outlets)
         for sched_id in due_ids:
-            if self.engine_semantics_version >= 7:
+            arrival_key = None
+            if self.engine_semantics_version >= 16:
+                arrival_key = self.store.scalar(
+                    "SELECT json_extract(payload_json,'$.random_key') FROM events WHERE id=?", (sched_id,))
+                if not arrival_key:
+                    raise ValueError("Semantics 16 arrival schedule lacks its random identity")
+                p = sample_arrival_persona(random.Random(daily_seed(
+                    int(self.config.get("seed", 42)), "arrival.persona", tick, arrival_key)), outlet_ids)
+            elif self.engine_semantics_version >= 7:
                 p = sample_arrival_persona(self.persona_prng, outlet_ids)
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
@@ -938,8 +949,10 @@ class World:
                 else p.occupation)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
-            bank_id = self.economy.regions.bank_for_region(banks, region_id) \
-                if self.economy.regions.enabled else self.engine_prng.choice(banks)
+            bank_rng = (random.Random(daily_seed(int(self.config.get("seed", 42)),
+                        "arrival.bank", tick, arrival_key)) if arrival_key else self.engine_prng)
+            bank_id = self.economy.regions.bank_for_region(banks, region_id, rng=bank_rng) \
+                if self.economy.regions.enabled else bank_rng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
             baseline_core = (
                 self.engine_semantics_version >= 7
@@ -977,6 +990,8 @@ class World:
                     savings_account_id=sav)
             else:
                 self.store.update("agents", agent_id, checking_account_id=chk)
+            if arrival_key:
+                self.economy.households.register_person(tick, agent_id, "arrival", random_key=arrival_key)
             self.economy.cognition.seed_agent(agent_id, tick)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
@@ -997,10 +1012,20 @@ class World:
             # Social ties to a few residents + starting beliefs.
             residents = [int(r["id"]) for r in self.store.query(
                 "SELECT id FROM agents WHERE alive=1 AND id<>? ORDER BY id", (agent_id,))]
-            for other in self.engine_prng.sample(residents, min(3, len(residents))):
+            if arrival_key:
+                seed = int(self.config.get("seed", 42))
+                resident_keys = {other: person_key(self.store, other) for other in residents}
+                contacts = sorted(residents, key=lambda other: (
+                    daily_seed(seed, "arrival.contact", tick, arrival_key, resident_keys[other]),
+                    resident_keys[other]))[:3]
+            else:
+                contacts = self.engine_prng.sample(residents, min(3, len(residents)))
+            for other in contacts:
                 lo, hi = min(agent_id, other), max(agent_id, other)
+                weight = (0.2 + 0.5 * daily_draw(seed, "arrival.tie_weight", tick,
+                          arrival_key, resident_keys[other]) if arrival_key else self.engine_prng.uniform(0.2, 0.7))
                 self.store.insert("social_ties", agent_a=lo, agent_b=hi,
-                                  weight=round(self.engine_prng.uniform(0.2, 0.7), 3))
+                                  weight=round(weight, 3))
             for bid in banks:
                 self.store.insert("beliefs", agent_id=agent_id, key=f"trust:bank:{bid}",
                                   value=0.6, updated_tick=tick)

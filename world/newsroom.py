@@ -15,6 +15,7 @@ import re
 from typing import Optional
 
 from engine.core import Economy
+from engine.keyed_random import daily_draw, daily_seed, person_key, policy_seed
 from engine.store import load_json
 from llm.gateway import (
     Gateway,
@@ -482,6 +483,8 @@ class Newsroom:
         """Reporter stage: draft 2–4 candidate stories from the day's true events."""
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "rng_seed": tick * 37 + outlet["id"]}
+        if self.e.engine_semantics_version >= 16:
+            context["rng_seed"] = daily_seed(int(self.config.get("seed", 42)), "policy.reporter", tick, outlet["id"])
         if self.e.engine_semantics_version >= 7:
             context["engine_semantics_version"] = self.e.engine_semantics_version
         system = ("You are a reporter in a simulated economy. From the given TRUE events draft "
@@ -512,6 +515,8 @@ class Newsroom:
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "drafts": drafts or [], "directive": directive,
                    "rng_seed": tick * 31 + outlet["id"]}
+        if self.e.engine_semantics_version >= 16:
+            context["rng_seed"] = daily_seed(int(self.config.get("seed", 42)), "policy.editor", tick, outlet["id"])
         if self.e.engine_semantics_version >= 7:
             context["engine_semantics_version"] = self.e.engine_semantics_version
         user = json.dumps({"outlet": outlet, "drafts": drafts or [], "events": events,
@@ -631,6 +636,18 @@ class Conversations:
         # Deterministic weighted sample without replacement via engine PRNG.
         chosen: list[tuple[int, int]] = []
         pool = weighted[:]
+        keyed = self.e.engine_semantics_version >= 16
+        if keyed:
+            # A fixed exponential priority per edge, then the existing
+            # coverage/disjointness constraints. Weights and eligibility may
+            # change endogenously; the underlying uniform draw does not.
+            pool = [item for item in pool if math.isfinite(item[0]) and item[0] > 0]
+            keys = {aid: person_key(self.store, aid) for aid in sorted({aid for _, a, b in pool for aid in (a, b)})}
+            priorities = {}
+            for weight, a, b in pool:
+                pair_key = tuple(sorted((keys[a], keys[b])))
+                u = daily_draw(int(self.config.get("seed", 42)), "conversation.pair", tick, *pair_key)
+                priorities[(a, b)] = (-math.log1p(-u) / weight, pair_key)
         used: set[int] = set()
         while pool and len(chosen) < k:
             # Without coverage-first pairing the draw stays over the whole
@@ -663,21 +680,24 @@ class Conversations:
                         ),
                     ) == least_covered
                 ]
-            total = sum(w for w, _, _ in candidates)
-            r = self.e.prng.random() * total
-            acc = 0.0
-            pick = candidates[-1]
-            for item in candidates:
-                acc += item[0]
-                if r <= acc:
-                    pick = item
-                    break
+            if keyed:
+                pick = min(candidates, key=lambda item: priorities[(item[1], item[2])])
+            else:
+                total = sum(w for w, _, _ in candidates)
+                r = self.e.prng.random() * total
+                acc = 0.0
+                pick = candidates[-1]
+                for item in candidates:
+                    acc += item[0]
+                    if r <= acc:
+                        pick = item
+                        break
             pool.remove(pick)
             _, a, b = pick
             if a in used or b in used:
                 continue
             used.add(a); used.add(b)
-            chosen.append((a, b))
+            chosen.append(tuple(sorted((a, b), key=lambda aid: keys[aid])) if keyed else (a, b))
             if self.coverage_first:
                 participation[a] = participation.get(a, 0) + 1
                 participation[b] = participation.get(b, 0) + 1
@@ -715,6 +735,8 @@ class Conversations:
                        "recent_utterances": recent_utterances,
                        "avoid_texts": recent_utterances + conversation_so_far,
                        "rng_seed": tick * 1009 + speaker * 13 + turn}
+            context["rng_seed"] = policy_seed(self.e, "policy.conversation", tick, speaker,
+                context["rng_seed"], person_key(self.store, listener), turn)
             schema = '{"text":"brief natural sentence","rumor_bank":null}'
             req = LLMRequest(
                 role="citizen", purpose="conversation",
@@ -792,6 +814,9 @@ class Conversations:
                 for attempt in range(1, 10):
                     fallback_context["rng_seed"] = (
                         int(context["rng_seed"]) + 104729 * attempt)
+                    if self.e.engine_semantics_version >= 16:
+                        fallback_context["rng_seed"] = policy_seed(self.e, "policy.conversation_retry",
+                            tick, speaker, 0, person_key(self.store, listener), turn, attempt)
                     fallback = conversation_turn(fallback_context)
                     candidate = str(fallback.get("text", "")).strip()[:300]
                     if not self._previously_said(candidate, avoid_texts):

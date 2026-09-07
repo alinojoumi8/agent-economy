@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .firms import normalize_business_idea
+from .keyed_random import person_key
 from .ledger import Leg, SYS_EXTERNAL, SYS_GOV
 from .store import load_json
 
@@ -670,8 +671,9 @@ class City:
         )
         if not rows:
             return None
+        identity = person_key(self.store, agent_id) if self.engine_semantics_version >= 16 else agent_id
         index = int(self._stable_fraction(
-            "home", region_id, agent_id) * len(rows)) % len(rows)
+            "home", region_id, identity) * len(rows)) % len(rows)
         return int(rows[index]["id"])
 
     def _business_place(self, agent) -> tuple[int, str, int | None] | None:

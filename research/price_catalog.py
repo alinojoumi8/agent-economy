@@ -55,13 +55,17 @@ def draft_price_study(config: dict, preset: str, *, seeds: list[int], horizon: i
              {"kind": "scandal", "tick": intervention_tick, "firm_id": equity_firm_id,
               "description": "A public laboratory signal reports an investigation into this firm's accounting."})
     information = "Same configured public-news and communication process in both arms. The declared shock is the treatment."
+    keyed = int(config.get("engine_semantics_version", 1)) >= 16
+    randomness_limit = (
+        "Daily draws use mechanism/day/origin keys. Common keys share draws; changed eligibility, weights, policy branches and unmatched engine-created identities can change outcomes. Genesis retains its configured sequential PRNG."
+        if keyed else "Shared mechanism RNG may diverge after treatment; common genesis and seed do not guarantee paired later hazards.")
     spec = StudySpec.model_validate({
         "protocol_version": "research-study-v1", "key": f"{preset.lower()}-price-pilot",
         "title": selected["title"], "hypothesis": selected["hypothesis"],
         "domains": ["goods", "equities"],
         "limitations": [
             "Synthetic exploratory pilot; no empirical-fitness or confirmatory causal claim.",
-            "Shared mechanism RNG may diverge after treatment; common genesis and seed do not guarantee paired later hazards.",
+            randomness_limit,
             "Goods price is volume-weighted over the declared window; a window with no sale yields a missing price.",
             "Equity price carries the last distinct-owner execution with its age; the firm has no known fair value.",
             "Information must pass through the existing scripted policy; a null response is a valid finding.",
@@ -87,8 +91,8 @@ def draft_price_study(config: dict, preset: str, *, seeds: list[int], horizon: i
                  "intervention_start": intervention_tick, "intervention_end": intervention_tick,
                  "measurement_start": intervention_tick, "measurement_end": horizon,
                  "horizon": horizon, "stop_rule": "fixed_horizon"},
-        "randomness": {"seeds": seeds, "seed_role": "initial_world_and_engine_stream",
-                       "stream_contract": "legacy_shared_rng_v1", "pairing": "verified_common_genesis",
+        "randomness": {"seeds": seeds, "seed_role": "initial_world_and_keyed_daily_streams" if keyed else "initial_world_and_engine_stream",
+                       "stream_contract": "mechanism_day_identity_v1" if keyed else "legacy_shared_rng_v1", "pairing": "verified_common_genesis",
                        "model_replicates": []},
         "analysis": {"intent": "exploratory", "estimand": "Mean treatment minus control for complete matched world/seed pairs",
                      "treatment_unit": "world_seed_pair", "outcomes": outcomes,

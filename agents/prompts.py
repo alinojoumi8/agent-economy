@@ -17,6 +17,7 @@ from dataclasses import asdict
 from typing import Optional
 
 from engine.core import Economy
+from engine.keyed_random import policy_seed
 from engine.store import load_json
 from communications.projections import AgentKnowledgeProjection
 from engine.types import positive_integer_id
@@ -414,6 +415,9 @@ class ContextBuilder:
                     ctx["startup_work"]["eligible_actions"], sort_keys=True
                 )
             )
+        if self.engine_semantics_version >= 16:
+            ctx["rng_seed"] = policy_seed(self.e, "policy." + str(ctx.get("purpose") or "decision"),
+                tick, int(agent_row["id"]), 0, (ctx.get("my_firm") or {}).get("id"))
         return ctx
 
     def _goal_driven_communication_action(

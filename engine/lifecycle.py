@@ -3,9 +3,10 @@ health economy built on top of it (P1 R17).
 
 Design rule: **biology is engine-side, reactions are LLM-side.** Illness, death,
 and aging use deterministic engine rules. Semantics 1–14 retain their dedicated
-seeded PRNG; semantics 15 keys each demographic draw by person, day and mechanism
-so cohort changes cannot consume another person's draws. The LLM never decides
-who gets sick or dies; agents react through the normal loop.
+seeded PRNG; semantics 15 keys each demographic draw by person ID, day and
+mechanism. Semantics 16 uses recorded person origins within the daily stream
+contract. Cohort changes cannot consume another person's draw. The LLM never
+decides who gets sick or dies; agents react through the normal loop.
 
 Estate settlement runs as one atomic batch and conserves money exactly: debts
 settle via the creditor waterfall, the remainder transfers to the heir (strongest
@@ -29,7 +30,7 @@ from typing import Optional
 from .credit import Bank
 from .firms import Firms
 from .ledger import Ledger, Leg, SYS_MEDICAL, SYS_GOV
-from .keyed_random import demographic_draw
+from .keyed_random import daily_draw, demographic_draw, person_key, stable_key
 from .store import Store
 
 DEFAULT_HEALTH = {
@@ -97,6 +98,8 @@ class Lifecycle:
             self.households.reconcile_custody(tick)
 
     def _draw(self, tick: int, agent_id: int, mechanism: str) -> float:
+        if self.engine_semantics_version >= 16:
+            return daily_draw(self.seed, "demography." + mechanism, tick, person_key(self.store, agent_id))
         if self.engine_semantics_version >= 15:
             return demographic_draw(self.seed, mechanism, tick, agent_id)
         return self.prng.random()
@@ -399,7 +402,9 @@ class Lifecycle:
                 delay = low + int(self._draw(tick, agent_id, "replacement_delay") * (high - low + 1))
             else:
                 delay = self.prng.randint(self.p["arrival_delay_min"], self.p["arrival_delay_max"])
-            self.schedule_arrival(tick, tick + delay)
+            source = (stable_key("replacement", tick, person_key(self.store, agent_id))
+                      if self.engine_semantics_version >= 16 else None)
+            self.schedule_arrival(tick, tick + delay, source_key=source)
 
     def _estate_repayment_account(self, agent_id: int, bankrow) -> Optional[int]:
         """Return the deceased's primary wallet when it settles the bank's currency."""
@@ -448,8 +453,15 @@ class Lifecycle:
                     self.firms.bankrupt_firm(tick, firm_id, reason="founder_death_no_heir")
 
     # ── arrivals (scheduling only; world layer spawns via persona library) ────
-    def schedule_arrival(self, tick: int, due_tick: int) -> int:
-        return self.store.log_event(tick, "arrival_scheduled", {"due_tick": due_tick},
+    def schedule_arrival(self, tick: int, due_tick: int, *, source_key: str | None = None) -> int:
+        payload = {"due_tick": due_tick}
+        if self.engine_semantics_version >= 16:
+            group = source_key or stable_key("scheduled_arrival", tick, due_tick)
+            ordinal = int(self.store.scalar(
+                "SELECT COUNT(*) FROM events WHERE kind='arrival_scheduled' "
+                "AND json_extract(payload_json,'$.random_group')=?", (group,), default=0))
+            payload.update(random_group=group, random_key=stable_key("arrival", group, ordinal))
+        return self.store.log_event(tick, "arrival_scheduled", payload,
                                     phase="NIGHT_CLOSE", importance=0.5)
 
     def pending_arrivals(self, tick: int) -> list[int]:

@@ -15,6 +15,7 @@ from typing import NamedTuple, Optional
 
 from engine.actions import ActionExecutor
 from engine.core import Economy
+from engine.keyed_random import policy_seed
 from engine.store import load_json
 from engine.types import positive_integer_id
 from causal import CausalLinkService
@@ -1779,6 +1780,7 @@ class AgentRuntime:
             return
         context = {"observations": obs, "tick": tick, "rng_seed": agent_id * 7 + tick,
                    "infl_hint": self.ctx.inflation_signal()}
+        context["rng_seed"] = policy_seed(self.e, "policy.daily_memory", tick, agent_id, context["rng_seed"])
         schema = '{"summary":"concise memory","importance":1.0,"belief_updates":[]}'
         req = LLMRequest(
             role="citizen", purpose="memory",
@@ -1836,6 +1838,7 @@ class AgentRuntime:
         ]
         context = {"weekly_summaries": daily, "tick": tick,
                    "rng_seed": agent_id * 701 + tick}
+        context["rng_seed"] = policy_seed(self.e, "policy.weekly_memory", tick, agent_id, context["rng_seed"])
         schema = '{"summary":"concise weekly memory","importance":1.0}'
         req = LLMRequest(
             role="citizen", purpose="memory",

@@ -15,6 +15,7 @@ import yaml
 
 from engine.schema import SCHEMA_VERSION
 from engine.semantics import validate_engine_semantics_version
+from engine.keyed_random import DAILY_STREAM_CONTRACT
 from research.artifacts import create_batch, digest_json, file_sha256, publish_copy, safe_key
 from research.metric_registry import metric_definition
 
@@ -130,8 +131,8 @@ class AnalysisContract(Contract):
 
 class RandomnessContract(Contract):
     seeds: list[int]
-    seed_role: Literal["initial_world_and_engine_stream"]
-    stream_contract: Literal["legacy_shared_rng_v1"]
+    seed_role: Literal["initial_world_and_engine_stream", "initial_world_and_keyed_daily_streams"]
+    stream_contract: Literal["legacy_shared_rng_v1", "mechanism_day_identity_v1"]
     pairing: Literal["verified_common_genesis"]
     model_replicates: list[Text]
 
@@ -230,6 +231,11 @@ class StudySpec(Contract):
             raise ValueError("seeds must be nonnegative, nonempty and unique")
         if self.randomness.model_replicates:
             raise ValueError("model replicate scheduling is not supported by this protocol version")
+        keyed = self.model.engine_semantics_version >= 16
+        expected_stream = DAILY_STREAM_CONTRACT if keyed else "legacy_shared_rng_v1"
+        expected_role = "initial_world_and_keyed_daily_streams" if keyed else "initial_world_and_engine_stream"
+        if self.randomness.stream_contract != expected_stream or self.randomness.seed_role != expected_role:
+            raise ValueError("randomness declaration does not match the engine semantics")
         outcomes = self.analysis.outcomes
         if not outcomes or len({item.key for item in outcomes}) != len(outcomes):
             raise ValueError("outcome keys must be nonempty and unique")
@@ -238,10 +244,10 @@ class StudySpec(Contract):
             raise ValueError("declare at least one primary outcome")
         if self.analysis.multiple_outcome_policy == "single_primary" and len(primary) != 1:
             raise ValueError("single-primary policy requires exactly one primary outcome")
-        # The shared RNG can diverge across arms; this first protocol makes no
-        # confirmatory causal guarantee. A future stream contract can enable it.
+        # Keyed streams remove cross-mechanism cursor drift, but do not establish
+        # design adequacy, empirical fitness, power or a held-out hypothesis.
         if self.analysis.intent == "confirmatory":
-            raise ValueError("confirmatory execution requires a supported independent-stream contract")
+            raise ValueError("confirmatory execution requires a supported study design beyond its stream contract")
         observed_domains = set()
         for outcome in outcomes:
             definition = metric_definition(outcome.metric)

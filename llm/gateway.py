@@ -2341,8 +2341,14 @@ class Gateway:
         return one_call * 2
 
     def _cache_key(self, req: LLMRequest, provider: str, model: str) -> str:
-        blob = json.dumps({"t": req.tick, "a": req.agent_id, "p": req.purpose,
-                           "m": model, "msgs": req.messages()}, sort_keys=True)
+        identity = {"t": req.tick, "a": req.agent_id, "p": req.purpose,
+                    "m": model, "msgs": req.messages()}
+        if int(self.config.get("engine_semantics_version", 2)) >= 16:
+            # Scripted contexts can have the same rendered text but distinct
+            # random calls (e.g. two outlets after their desk agents die).
+            # Bind that seed so durable reuse cannot collapse their evidence.
+            identity["daily_random_seed"] = (req.context or {}).get("rng_seed")
+        blob = json.dumps(identity, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
     @staticmethod

@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from .ledger import Ledger, SYS_COMPUTE, SYS_EDUCATION, SYS_GOV
+from .keyed_random import person_key
 from .store import Store
 
 
@@ -311,6 +312,8 @@ class CognitionEconomy:
         return assigned
 
     def _stable_rank(self, agent_id: int) -> str:
+        if self.engine_semantics_version >= 16:
+            return hashlib.sha256(f"{self.seed}:compute:{person_key(self.store, agent_id)}".encode("utf-8")).hexdigest()
         return hashlib.sha256(f"{self.seed}:compute:{agent_id}".encode("utf-8")).hexdigest()
 
     def _hashed_initial_tier(self, agent_id: int) -> str:

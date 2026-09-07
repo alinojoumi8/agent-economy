@@ -149,6 +149,8 @@ jobs:
           tests/test_working_studies.py
           tests/test_working_evidence.py
           tests/test_working_study_jobs.py
+          tests/test_keyed_daily_randomness.py
+          tests/test_keyed_price_studies.py
           tests/test_study_results.py
           tests/test_study_bundle.py
           tests/test_study_library.py

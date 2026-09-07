@@ -13,6 +13,7 @@ import math
 from typing import Optional
 
 from engine.core import Economy
+from engine.keyed_random import daily_seed, person_key, stable_key
 from engine.store import load_json
 
 SHOCK_KINDS = ("policy_rate", "policy_rule_change", "oil", "rumor", "slant", "scandal", "epidemic")
@@ -318,9 +319,16 @@ class Shocks:
         else:
             raise ValueError(
                 "rumor audience must be all_citizens or current_depositors")
-        # Deterministic target selection from the engine PRNG.
+        # New semantics rank each eligible person by the unchanged declaration;
+        # inserting an unrelated shock or consuming another draw cannot shift it.
         ids = [int(r["id"]) for r in agents]
-        self.e.prng.shuffle(ids)
+        if self.e.engine_semantics_version >= 16:
+            shock_key = self._random_key(s)
+            keys = {aid: person_key(self.store, aid) for aid in ids}
+            ids.sort(key=lambda aid: (daily_seed(int(self.config.get("seed", 42)),
+                "rumor.audience", tick, shock_key, keys[aid]), keys[aid]))
+        else:
+            self.e.prng.shuffle(ids)
         targets = ids[:n]
         if research_targeting:
             params["resolved_bank_id"] = bank_id
@@ -341,6 +349,22 @@ class Shocks:
             event_payload.update({"bank_selector": selector, "audience": audience})
         self.store.log_event(tick, "rumor", event_payload,
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
+
+    def _random_key(self, shock) -> str:
+        """Immutable definition plus occurrence among identical declarations.
+
+        Runtime-resolved audiences never enter the key. A changed declaration is
+        a different random event; equal draws are promised for common events.
+        """
+        def definition(row):
+            return stable_key("shock_definition", row["kind"], row["trigger_type"],
+                validate_shock_trigger(row["trigger_type"], load_json(row["trigger_json"], {})),
+                int(row["duration_ticks"] or 0), row["label"],
+                validate_shock_params(row["kind"], load_json(row["params_json"], {})))
+        key = definition(shock)
+        ordinal = sum(definition(row) == key for row in self.store.query(
+            "SELECT * FROM shocks WHERE id<? ORDER BY id", (int(shock["id"]),)))
+        return stable_key("shock", key, ordinal)
 
     def _apply_slant(self, tick: int, s, params: dict, initial: bool) -> None:
         """Give one outlet a framing directive for N ticks (read by the newsroom)."""

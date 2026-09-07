@@ -119,6 +119,12 @@ paired while allowing endogenous outcomes to diverge. Preserve historical RNG
 contracts. Fresh live LLM arms can remain stochastic even at temperature zero;
 record their realized decisions and evaluate across independent replications.
 
+Implementation checkpoint: [Semantics 16](../semantics16-randomness.md) supplies
+daily mechanism/origin keys, version-bound study declarations and request-cache
+seed binding. Common-key isolation, G2/F2 pause/resume and replacement-arrival
+replay are verified. Genesis initialization and within-policy branching retain
+their documented limits; confirmatory design remains unsupported.
+
 Attempt failure and economic failure differ. A correctly reconciled bankruptcy,
 market freeze, or societal collapse is an economic outcome. A crash, missing
 response, or truncated horizon is an execution/measurement outcome. Predeclare

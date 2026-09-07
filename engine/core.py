@@ -1,8 +1,9 @@
 """Economy facade — wires the deterministic engine modules over one Store.
 
 This is the object the world loop and the executor talk to. It owns the engine
-PRNG (all engine randomness) and a *separate* lifecycle PRNG (so the lifecycle
-schedule is stable under replay, PRD R11).
+PRNG and a separate lifecycle PRNG for historical runs. Semantics 15 isolates
+demographic draws; Semantics 16 isolates daily mechanisms and policy calls by
+seed, day and semantic identity. Every version retains its replay contract.
 """
 from __future__ import annotations
 

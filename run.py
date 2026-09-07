@@ -789,6 +789,10 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         sys.exit(str(exc))
     config["engine_semantics_version"] = old_semantics
     if upgrade_semantics is not None:
+        if new_semantics >= 16 and old_semantics < 16:
+            store.close()
+            dest.unlink(missing_ok=True)
+            sys.exit("Semantics 16 requires fresh genesis; historical origins and pending arrival keys cannot be inferred during a fork upgrade")
         if new_semantics <= old_semantics:
             store.close()
             dest.unlink(missing_ok=True)
