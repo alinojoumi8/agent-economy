@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import psutil
+from llm.completion_guard import CompletionGuard
 
 from engine.core import Economy
 from engine.checkpoint_manifest import (
@@ -73,7 +74,8 @@ logger = get_logger("world")
 
 
 class World:
-    def __init__(self, store: Store, config: dict, *, replay: bool = False):
+    def __init__(self, store: Store, config: dict, *, replay: bool = False,
+                 completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
         self.engine_semantics_version = semantics_version(config, default=2)
@@ -86,7 +88,7 @@ class World:
         cfg = dict(config)
         cfg["replay"] = replay
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
-        self.gateway = Gateway(store, cfg)
+        self.gateway = Gateway(store, cfg, completion_guard=completion_guard)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
         self.commons = CommonsService(self.economy, self.runtime.mem)
         self.communication_delivery = CommunicationDelivery(store, config)

@@ -1,4 +1,4 @@
-"""Bounded provider-free execution of prospective paired price studies."""
+"""Bounded execution of prospective paired price studies."""
 from __future__ import annotations
 
 import argparse
@@ -101,6 +101,10 @@ def collect_outcomes(store: Store, spec: StudySpec, *, origin: dict | None = Non
 
 def validate_execution(spec: StudySpec, config: dict) -> None:
     """Check this runner's capabilities before creating any study artifacts."""
+    if spec.protocol_version == "research-study-v3":
+        from research.policy_runner import validate_policy_execution
+        validate_policy_execution(spec, config)
+        return
     if working_protocol(spec.operations.pause_policy) and spec.model.engine_semantics_version < 7:
         raise ValueError("working studies require persisted PRNG semantics")
     if spec.operations.mode != "provider_free" or spec.behavior.family != "scripted":
@@ -248,9 +252,17 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
               worker_guard_path: Path | None = None,
               resume_batch: str | Path | None = None,
               pause_after_ticks: int | None = None,
-              pause_after_phase: str | None = None) -> dict:
+              pause_after_phase: str | None = None,
+              approve_live_inference: bool = False) -> dict:
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
     validate_execution(spec, config)
+    if spec.protocol_version == "research-study-v3":
+        if any(value is not None for value in (resume_batch, pause_after_ticks, pause_after_phase)):
+            raise ValueError("live policy recovery requires the recovery executor")
+        from research.policy_runner import run_policy_study
+        return run_policy_study(spec, config, input_root=input_root, data_root=data_root,
+            out_dir=out_dir, expected_code=expected_code, progress=progress,
+            worker_guard_path=worker_guard_path, approve_live_inference=approve_live_inference)
     phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
                    ticks=pause_after_ticks, phase=pause_after_phase)
     if working_protocol(spec.operations.pause_policy):
@@ -411,6 +423,8 @@ def main() -> int:
     parser.add_argument("--data-root", type=Path, default=Path("data/studies"))
     parser.add_argument("--out-dir", type=Path, default=Path("reports/out"))
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--approve-live-inference", action="store_true",
+                        help="Authorize only the provider routes and shared caps in the supplied v3 study")
     parser.add_argument("--resume-batch", type=Path,
                         help="Existing working data directory under --data-root")
     parser.add_argument("--pause-after-ticks", type=int,
@@ -439,10 +453,13 @@ def main() -> int:
             result = run_study(spec, config, input_root=args.input_root,
                                data_root=args.data_root, out_dir=args.out_dir,
                                resume_batch=args.resume_batch, pause_after_ticks=args.pause_after_ticks,
-                               pause_after_phase=args.pause_after_phase)
+                               pause_after_phase=args.pause_after_phase,
+                               approve_live_inference=args.approve_live_inference)
             print(json.dumps({"artifacts": result["artifacts"], "coverage": result["summary"]["coverage"],
                               "status": result.get("status", "finalized"), "batch": result["batch"]["data_dir"]}))
-            if any(row["execution_status"] != "completed" for row in result["results"]):
+            if any(row["execution_status"] != "completed"
+                   or spec.protocol_version == "research-study-v3" and row["eligibility"]["status"] != "eligible"
+                   for row in result["results"]):
                 return 1
         return 0
     except ValidationError as exc:

@@ -10,7 +10,7 @@ import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import Field, model_serializer, model_validator
 import yaml
 
 from engine.schema import SCHEMA_VERSION
@@ -18,18 +18,13 @@ from engine.semantics import validate_engine_semantics_version
 from engine.keyed_random import DAILY_STREAM_CONTRACT
 from research.artifacts import create_batch, digest_json, file_sha256, publish_copy, safe_key
 from research.metric_registry import metric_definition
+from research.contracts import Contract, Digest, Text
+from research.provider_budget import TokenTariff
 from research.working_contracts import working_protocol
 
 PROTOCOL_VERSION = "research-study-v1"
 MODEL_DESCRIPTION_VERSION = "agent-economy-odd-v1"
-Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
-Text = Annotated[str, Field(min_length=1, max_length=4000)]
 Tick = Annotated[int, Field(ge=0)]
-
-
-class Contract(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True,
-                              allow_inf_nan=False)
 
 
 class InputArtifact(Contract):
@@ -136,7 +131,7 @@ class AnalysisContract(Contract):
     treatment_unit: Literal["world_seed_pair", "checkpoint_world_pair"]
     outcomes: list[Outcome]
     missing_data: Literal["exclude_pair_report_reason"]
-    uncertainty: Literal["paired_world_bootstrap"]
+    uncertainty: Literal["paired_world_bootstrap", "paired_replicated_world_bootstrap"]
     minimum_pairs: Annotated[int, Field(ge=2)]
     bootstrap_samples: Annotated[int, Field(ge=100, le=100000)]
     multiple_outcome_policy: Literal["descriptive_only", "single_primary"]
@@ -195,19 +190,64 @@ class StudyArm(Contract):
     role: Literal["baseline", "treatment"]
     changes: ArmChanges
     information_policy: Text
+    policy: Text | None = None
+
+    @model_serializer(mode="wrap")
+    def serialized_arm(self, handler):
+        value = handler(self)
+        if self.policy is None:
+            value.pop("policy", None)
+        return value
 
     @model_validator(mode="after")
     def arm_identity(self):
         safe_key(self.key)
         if self.role == "baseline" and self.changes.shocks:
             raise ValueError("baseline changes must be empty; use the resolved base configuration")
-        if self.role == "treatment" and not self.changes.shocks:
+        if self.role == "treatment" and not self.changes.shocks and self.policy is None:
             raise ValueError("treatment must declare its changes")
         return self
 
 
+class StudyPolicy(Contract):
+    key: Text
+    behavior: BehaviorContract
+    llm: dict[str, Any]
+    sampling_contract: Literal["fixed-primary-and-repair-v1"]
+    repair_temperature: Annotated[float, Field(ge=0, le=2)]
+    preflight_temperature: Annotated[float, Field(ge=0, le=0)]
+    observation_action_contract: Literal["shared-runtime-observation-action-v1"]
+
+    @model_validator(mode="after")
+    def policy_identity(self):
+        safe_key(self.key)
+        reject_inline_secrets(self.llm)
+        if self.behavior.family not in {"scripted", "live_llm"}:
+            raise ValueError("policy studies require executable scripted or live policies")
+        return self
+
+
+class PolicyDesign(Contract):
+    policies: list[StudyPolicy]
+    tariffs: list[TokenTariff]
+    replicate_aggregation: Literal["complete-paired-block-mean-v1"]
+    execution_governor: Literal["fixed-cadence-under-shared-budget-v1"]
+
+    @model_validator(mode="after")
+    def declared_catalog(self):
+        keys = [item.key for item in self.policies]
+        if not 1 <= len(keys) <= 16 or len(set(keys)) != len(keys):
+            raise ValueError("declare one to sixteen distinct decision policies")
+        targets = [(item.provider, item.model) for item in self.tariffs]
+        expected = {(item.behavior.provider_reference, item.behavior.model_reference)
+                    for item in self.policies if item.behavior.family == "live_llm"}
+        if not expected or set(targets) != expected or len(set(targets)) != len(targets):
+            raise ValueError("declare exactly one tariff for every live provider/model")
+        return self
+
+
 class StudySpec(Contract):
-    protocol_version: Literal["research-study-v1", "research-study-v2"]
+    protocol_version: Literal["research-study-v1", "research-study-v2", "research-study-v3"]
     key: Text
     title: Text
     hypothesis: Text
@@ -223,6 +263,7 @@ class StudySpec(Contract):
     analysis: AnalysisContract
     operations: OperationContract
     origin: CheckpointOrigins | None = None
+    policy_design: PolicyDesign | None = None
 
     @model_serializer(mode="wrap")
     def serialized_contract(self, handler):
@@ -230,6 +271,8 @@ class StudySpec(Contract):
         # Existing frozen v1 manifests must not gain even a null/default field.
         if self.origin is None:
             value.pop("origin", None)
+        if self.policy_design is None:
+            value.pop("policy_design", None)
         return value
 
     @model_validator(mode="after")
@@ -251,10 +294,19 @@ class StudySpec(Contract):
         seeds = self.randomness.seeds
         if not seeds or len(seeds) != len(set(seeds)) or any(seed < 0 for seed in seeds):
             raise ValueError("seeds must be nonnegative, nonempty and unique")
-        if self.randomness.model_replicates:
+        policy_study = self.protocol_version == "research-study-v3"
+        if policy_study != (self.policy_design is not None):
+            raise ValueError("policy assignments require research-study-v3")
+        if self.randomness.model_replicates and not policy_study:
             raise ValueError("model replicate scheduling is not supported by this protocol version")
-        checkpoint = self.protocol_version == "research-study-v2"
-        if checkpoint != (self.origin is not None):
+        if not policy_study and any(arm.policy is not None for arm in self.arms):
+            raise ValueError("legacy studies cannot carry per-arm decision policies")
+        if not policy_study and self.analysis.uncertainty != "paired_world_bootstrap":
+            raise ValueError("legacy studies retain their world bootstrap contract")
+        if policy_study:
+            self._validate_policy_assignments()
+        checkpoint = self.origin is not None
+        if not policy_study and checkpoint != (self.protocol_version == "research-study-v2"):
             raise ValueError("checkpoint origins require the explicit research-study-v2 protocol")
         if checkpoint:
             if self.model.engine_semantics_version < 7:
@@ -313,11 +365,39 @@ class StudySpec(Contract):
         fitting = {item.sha256 for item in inputs if item.role in {"initialization", "calibration", "checkpoint"}}
         if any(item.sha256 in fitting for item in inputs if item.role == "holdout"):
             raise ValueError("holdout artifacts must be separate from initialization/calibration")
-        if self.operations.mode == "live" and self.behavior.family != "live_llm":
+        if not policy_study and self.operations.mode == "live" and self.behavior.family != "live_llm":
             raise ValueError("live execution requires a declared live LLM policy")
         if self.behavior.family == "live_llm" and self.operations.mode != "live":
             raise ValueError("live LLM policy cannot run with provider-free limits")
         return self
+
+    def _validate_policy_assignments(self) -> None:
+        policies = {item.key: item for item in self.policy_design.policies}
+        if {arm.policy for arm in self.arms} != set(policies):
+            raise ValueError("every arm must reference a declared policy, with no unused policies")
+        baseline = next(arm for arm in self.arms if arm.role == "baseline")
+        if self.behavior != policies[baseline.policy].behavior:
+            raise ValueError("study behavior must identify the declared baseline policy")
+        if self.operations.mode != "live":
+            raise ValueError("policy studies require one shared live operations budget")
+        replicates = self.randomness.model_replicates
+        if not 1 <= len(replicates) <= 32 or len(set(replicates)) != len(replicates):
+            raise ValueError("declare one to thirty-two distinct model replicate labels")
+        for replicate in replicates:
+            safe_key(replicate)
+        if len(replicates) * len(self.arms) * len(self.randomness.seeds) > 8192:
+            raise ValueError("policy study assignment exceeds 8192 cells")
+        if self.analysis.uncertainty != "paired_replicated_world_bootstrap":
+            raise ValueError("model replicates require world-level replicated uncertainty")
+        first_tick = self.origin.tick + 1 if self.origin else 1
+        for arm in self.arms:
+            if arm.role == "baseline":
+                continue
+            changed = policies[arm.policy].model_dump(exclude={"key"}) != policies[baseline.policy].model_dump(exclude={"key"})
+            if not arm.changes.shocks and not changed:
+                raise ValueError("treatment must change its policy or declare an economic shock")
+            if changed and (self.time.intervention_start != first_tick or self.time.warmup_ticks):
+                raise ValueError("a policy change begins at the first newly executed day")
 
 
 def reject_inline_secrets(value: Any) -> None:
@@ -366,6 +446,10 @@ def validate_study_inputs(spec: StudySpec, config: dict, *, input_root: str | Pa
     protocol = {"kind": "prospective_study", "study": spec.model_dump(mode="json"),
                 "resolved_config": config, "model_description_sha256": file_sha256(description),
                 "creation_provenance": "prepared_before_attempt_initialization"}
+    if spec.policy_design is not None:
+        from research.policy_studies import policy_configurations, study_cells
+        protocol["policy_configurations"] = policy_configurations(spec, config)
+        protocol["assigned_cells"] = study_cells(spec)
     if spec.origin is not None:
         from research.checkpoint_origins import inspect_checkpoint
         declared = {item.key: item for item in spec.inputs}

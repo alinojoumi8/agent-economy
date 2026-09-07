@@ -1,10 +1,12 @@
 # Live decision policies in price studies
 
-This extends W3 with equal goods/equity coverage. The existing study runner
-still admits **scripted, provider-free execution only**. Its v1/v2 protocols,
-saved-world rules, replay behavior and operator capabilities remain unchanged.
-This document records the implementation boundary and the next executable
-slices; it is not a declaration that live comparisons are available.
+This extends W3 with equal goods/equity coverage. The CLI now supports fresh-world,
+fixed-horizon policy comparisons under `research-study-v3`, with explicit launch
+authorization and one shared declared provider allowance. The v1/v2 protocols,
+saved-world rules and existing operator UI retain their previous capabilities.
+Day/phase recovery, saved-world policy changes, operator launch/import and real
+provider readiness remain subsequent work. Controlled fixtures demonstrate the
+execution and evidence path; no paid provider rehearsal is claimed.
 
 ## Implemented: shared completion reservations
 
@@ -72,49 +74,106 @@ the software can stop further requests and retain evidence, but cannot undo
 an already dispatched charge. Provider prices need current verification before
 an actual live study. Tests use synthetic tariffs and local HTTP fixtures.
 
-## Next slice: prospective policy and replication contracts
+## Implemented: prospective policies and model replication
 
-Introduce a new study protocol rather than changing serialized v1/v2 defaults.
-Each arm must bind its policy family/version, observation/action interface,
+The v3 protocol preserves serialized v1/v2 defaults. Each arm binds its policy
+family/version, observation/action interface,
 prompt source hashes, provider/model/endpoint, sampling parameters, wake
 cadence, communication policy and population assignment. A policy-only
 treatment is meaningful and must not require a fictitious economic shock.
 Retain shock treatments for G2/F2. Reject undeclared substitutions, mixed
 request extras, hidden CLI inference and budget-driven changes in cognition.
 
-Declare world seeds and model replicates as different axes. Model replicates
+World seeds and model replicates are different axes. Model replicates
 are stochastic draws, not evidence of a deterministic provider seed. Keep all
 declared cells, including exclusions. Pair arms within their common world;
 aggregate replicates within a world before world-level uncertainty so repeated
 model calls do not masquerade as independent economies. Keep inference
 exploratory until a confirmatory design is separately implemented and checked.
 
-## Next slice: supervisor and evidence integration
+Each policy currently declares one model for all roles that the common runtime
+routes to inference. Peripheral population rules remain common to every arm;
+this does not claim that every resident invokes an LLM. Multiple policy arms
+may select different models or sampling temperatures. Mixed models within a
+single policy, hidden routing overrides and CLI inference are refused.
 
-The study supervisor must exclusively create one ledger from the immutable
-manifest before the first preflight completion. Every worker, preflight and
-resumed segment opens that same ledger with its original contract and an
-opaque cell/segment scope. Retain the existing disk/time worker limits. Never
+Primary, repair and preflight temperatures are explicit and included in the
+recorded cache identity. A live policy requires a response matching the existing
+JSON/schema contract after repair. Failure pauses the affected world, retains
+its calls and excludes the incomplete world block. The runtime's existing
+grounding, narrative and action-feasibility rules still apply in every arm.
+
+The initial executor and reader share limits of 512 assigned cells, 64 outcomes,
+3,661 measurement days, and two million world/arm/outcome/bootstrap operations.
+Model replicates are averaged only after every assigned draw in the arm/world
+block is independently eligible. Missing prices exclude that domain's pair;
+missing executions exclude the entire paired block.
+
+## Implemented: supervised frozen execution and sealed evidence
+
+The study supervisor exclusively creates one v2 ledger from the immutable
+manifest before the first preflight completion. Named configuration bindings
+share global caps and allow each worker only its assigned provider/model.
+Every worker and preflight opens that ledger with the original contract and an
+opaque cell scope. The existing disk/time worker limits remain. Never
 put provider credentials, prompts or operational paths in public results.
 
 Validate declared routes and provider readiness first. A bounded live
 preflight uses the same ledger; its costs stay visible even when no scientific
 world launches. Verify current pricing, request shape, configured model
 availability and complete prompt/observation bindings before accepting a
-paid launch. No paid launch is enabled by this infrastructure change.
+paid launch. `--approve-live-inference` is required for execution; drafting,
+validation and evidence reading make no provider calls.
 
-At settlement, freeze budget snapshots and ledger evidence alongside attempt
-receipts. Authenticate their lineage and contract during recovery/import;
-changing, deleting or substituting the ledger must refuse resume. Exact
+At settlement, the supervisor seals the ledger and freezes its digest, scoped
+usage and contract beside the attempt receipts. Existing connections cannot
+dispatch or settle after sealing. Read-only evidence checks bind publication,
+preflight, every assigned cell and scope, the ledger, source/replay databases,
+initial conditions and independently recomputed prices. Altered reported prices
+cannot enter the verified estimator. Roots come from the caller, and historical
+reads use the original declared prompt identity without requiring current keys.
+Exact
 recorded replay spends zero new provider calls. Report successful logical
 decisions separately from attempted physical completions, actual reported
 usage separately from unresolved encumbrance, and inherited checkpoint costs
 separately from the new study budget.
 
+A hard supervisor failure kills its owned worker through a parent-death guard.
+Unresolved requests remain charged in the original ledger; an interrupted batch
+has no final publication and is not represented as a completed study. The next
+recovery slice must authenticate that original allowance before resuming. A
+200 ms disk poll bounds ongoing supervision, but an individual write or final
+evidence publication can exceed the disk threshold.
+
 Saved-world policy changes require an explicit prospective configuration delta
 in the new protocol. Do not relax `continuation_config` or silently substitute
 a new model into an old source. The original checkpoint and v1/v2 replay must
 remain byte-for-byte unchanged.
+
+### CLI workflow
+
+Create a private JSON design with `policies` and `tariffs`. Each policy entry has
+`key`, `llm`, `temperature` (null for scripted), and optional
+`repair_temperature`. Its `llm` declares the default route and direct HTTP
+provider; every explicit role route must use that same target. Credential
+references use environment-variable names, never inline secrets. Each tariff
+declares `provider`, `model`, maximum input/output tokens and integer input/output
+nanodollars per token. The first policy is the baseline.
+
+```powershell
+.\.venv\Scripts\python.exe -m research.policy_studies --config runs/price-lab-pilot.yaml --design <private-design.json> --output <study.json> --seeds 1 2 --model-replicates draw1 draw2 --ticks 3 --max-provider-calls <calls> --max-tokens <tokens> --max-spend-usd <approved-cap>
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --validate-only
+# After reviewing the concrete policies, tariffs and total allowance:
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config runs/price-lab-pilot.yaml --approve-live-inference
+.\.venv\Scripts\python.exe -m research.policy_results <results.json> --data-root data/studies --out-dir reports/out
+```
+
+Draft publication is exclusive and never replaces an existing file. Results are
+local scientific artifacts containing operational paths; they are not a public
+dashboard projection. `research.policy_results` is the v3 reader. The existing
+operator library/bundle workflow continues to accept its supported v1/v2 formats.
+Manual relocation of both evidence roots is supported by the v3 reader; an
+integrated v3 archive import/export workflow is not yet advertised.
 
 ## Next slice: operator workflow and validation
 

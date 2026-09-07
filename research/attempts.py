@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import sqlite3
 from typing import Callable
+from llm.completion_guard import CompletionGuard
 
 from engine.store import Store
 from engine.semantics import semantics_version
@@ -23,7 +24,8 @@ from world.replay_verify import canonical_state_receipt, verify_replay
 def execute_attempt(*, run_id: str, seed: int, arm: str, config: dict,
                     ticks: int, data_dir: Path,
                     collect: Callable[[Store], dict],
-                    initialize: Callable[[Store], None] | None = None) -> dict:
+                    initialize: Callable[[Store], None] | None = None,
+                    completion_guard: CompletionGuard | None = None) -> dict:
     """Claim, execute, close, replay and receipt one fresh world. Never retry it."""
     safe_key(arm)
     label = run_id
@@ -61,7 +63,7 @@ def execute_attempt(*, run_id: str, seed: int, arm: str, config: dict,
     try:
         store = Store(str(source_path))
         store.init_run_meta(run_id, seed, cfg)
-        world = World(store, cfg)
+        world = World(store, cfg, completion_guard=completion_guard)
         world.initialize()
         if initialize is not None:
             initialize(store)

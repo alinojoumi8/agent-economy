@@ -1003,3 +1003,49 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   remaining policy/replicate contracts, supervisor attachment, recovery/import
   evidence and operator controls. The study runner still accepts only
   explicitly scripted provider-free execution; the five-part goal is active.
+
+## Executable replicated decision-policy studies (2026-09-07)
+
+- Added `research-study-v3`: per-arm scripted/live policies, frozen prompt and
+  runtime identity, explicit primary/repair/preflight sampling, and separate
+  world-seed and model-draw axes. Goods and equity prices are equally primary.
+  Existing v1/v2 serialization, saved-world behavior and default gateway/replay
+  paths remain compatible.
+- Added a provider-free draft CLI and validation path. Explicitly authorized
+  fresh-world execution performs a charged live preflight and supervises each
+  assigned cell under one shared v2 completion ledger. Named gateway bindings
+  prevent a policy from using another policy's target. A failed response after
+  repair pauses/excludes its world; missing model draws cannot inflate precision.
+- Frozen results seal the allowance and preserve scope totals, preflight and
+  scientific receipts. The independent v3 reader confines paths, verifies the
+  sealed budget, rechecks source/replay evidence and recomputes measurements.
+  Edited prices are excluded even if public report checksums are regenerated.
+  Copied evidence is readable without provider credentials or current prompt
+  hashes; reading leaves database bytes unchanged.
+- Controlled HTTP integration completed **eight worlds**: two independent seeds,
+  two model draws and two policy arms, each through day 3 with independent exact
+  recorded replay. Both price domains had two usable world pairs. Tests also
+  cover charged failed preflight, exhausted allowance, invalid responses,
+  cancellation, ordinary interruption, hard supervisor death, worker wall-time
+  stops, sealed-ledger refusal and source/evidence alterations.
+- Initial integration tests exposed an incomplete conversation fixture; its
+  missing fields were corrected without weakening the runtime schema. A later
+  assertion incorrectly equated observed HTTP posts with admitted calls during
+  concurrent cancellation; the test now requires cancelled reservations to
+  remain charged. The resulting focused set passed **106 tests** (67.47 s).
+- After the final interruption and verification checks,
+  `.venv/Scripts/python.exe -m pytest -x -q tests/test_policy_studies.py tests/test_provider_budget.py tests/test_production_hardening.py tests/test_research_attempt_integrity.py tests/test_study_protocol.py tests/test_study_runner.py tests/test_study_results.py tests/test_research_validity.py tests/test_recorded_replay_golden.py tests/test_prd_completion.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **286 tests** (169.28 s). The existing Starlette TestClient deprecation
+  warning remains. All **346 Python sources** compiled, CI YAML parsed and
+  `pip check` passed. Required research CI includes the new policy suite.
+- No paid provider calls or cleanup were performed. Synthetic tariffs and
+  controlled transport do not establish model availability, invoice accuracy,
+  empirical realism or confirmatory inference. New-head CI results are tracked
+  on draft PR #82; no merge is authorized.
+- Next W3/W4 work: authenticate original-budget day/phase recovery, declare the
+  saved-world policy configuration delta, integrate private v3 bundles and the
+  operator review/launch/comparison UI, then conduct a separately authorized,
+  bounded real-provider rehearsal. The remaining city, household, education,
+  production/housing, banking and validation packages remain in the active
+  five-part goal. The [live-policy specification](2026-09-07-live-policy-studies.md)
+  records this implementation boundary and the CLI workflow.

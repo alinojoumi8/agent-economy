@@ -648,6 +648,12 @@ class Gateway:
         self.store = store
         self.config = config
         llm_cfg = config.get("llm", {})
+        sampling = llm_cfg.get("research_sampling")
+        if sampling is not None and (not isinstance(sampling, dict)
+                or set(sampling) != {"primary", "repair", "preflight"}
+                or any(type(value) not in {int, float} or not 0 <= value <= 2 for value in sampling.values())
+                or sampling["preflight"] != 0):
+            raise ValueError("research sampling requires explicit bounded primary, repair and zero-temperature preflight values")
         self.replay = bool(config.get("replay", False))
         if completion_guard is not None:
             if self.replay:
@@ -1116,6 +1122,10 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, attempts=state["attempts"])
 
+    def _sampling_temperature(self, stage: str, default: float) -> float:
+        sampling = self.config.get("llm", {}).get("research_sampling")
+        return float(sampling[stage]) if sampling is not None else default
+
     async def _dispatch_completion(self, provider: str, adapter: Adapter, model: str,
                                    messages: list[dict], **kwargs: Any) -> AdapterResult:
         """Guard every physical completion, including preflight and repairs."""
@@ -1127,7 +1137,7 @@ class Gateway:
             return await adapter.complete(model, messages, **kwargs)
         return await self._completion_guard.complete(provider, adapter, model, messages, **kwargs)
 
-    async def preflight(self, *, live: bool = False) -> dict:
+    async def preflight(self, *, live: bool = False, strict_contract: bool = False) -> dict:
         """Return config readiness and optionally authenticate/list routed models."""
         report = validate_llm_config(
             self.config, require_secrets=not self.replay, raise_on_error=False)
@@ -1148,8 +1158,8 @@ class Gateway:
                     safe_fields(await adapter.healthcheck(model)))
                 if health.get("model_available") is False:
                     result = {
-                        "provider": provider,
                         **health,
+                        "provider": provider, "model": model,
                         "ok": False,
                         "contract_ok": False,
                         "reason": "model_not_in_catalog",
@@ -1179,7 +1189,7 @@ class Gateway:
                          {"role": "user", "content": (
                             "Return {\"ok\":true,\"provider\":\"live\"} now.")}],
                         purpose="preflight", context={"preflight": True},
-                        max_tokens=preflight_max_tokens, temperature=0.0,
+                        max_tokens=preflight_max_tokens, temperature=self._sampling_temperature("preflight", 0.0),
                         cache_key=f"{self.run_id}:preflight:{provider}"),
                     timeout=target.timeout_s,
                 )
@@ -1187,8 +1197,11 @@ class Gateway:
                     smoke_result.text, preserve_root_reasoning=True)
                 smoke_json, smoke_ok = self._parse(smoke_text)
                 contract_ok = bool(smoke_ok and isinstance(smoke_json, dict))
+                if strict_contract:
+                    contract_ok = bool(contract_ok and smoke_json.get("ok") is True
+                                       and smoke_json.get("provider") == "live")
                 result = {
-                    "provider": provider, **health,
+                    **health, "provider": provider, "model": model,
                     "ok": bool(health.get("ok", False) and contract_ok),
                     "contract_ok": contract_ok,
                     "smoke_max_tokens": preflight_max_tokens,
@@ -1313,7 +1326,7 @@ class Gateway:
         try:
             if plan.tiered:
                 result, attempts, selected_target, attempt_ids = await self._call_route_plan(
-                    plan, req, req.messages(), req.temperature,
+                    plan, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key, logical_deadline)
                 provider, model = selected_target.provider, selected_target.model
                 adapter = self.adapters[provider]
@@ -1322,7 +1335,7 @@ class Gateway:
                     model, {"in": 0, "out": 0, "cache": 0})
             else:
                 result, attempts = await self._call_adapter(
-                    provider, adapter, model, req, req.messages(), req.temperature,
+                    provider, adapter, model, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key)
         except (GatewayInterrupted, BudgetExceeded):
             raise
@@ -1422,13 +1435,13 @@ class Gateway:
                 if plan.tiered:
                     (repaired_result, repair_attempts, _repair_target,
                      repair_attempt_ids) = await self._call_route_plan(
-                        plan, repair, repair.messages(), 0.2,
+                        plan, repair, repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key, logical_deadline,
                         targets=(selected_target,))
                     attempt_ids.extend(repair_attempt_ids)
                 else:
                     repaired_result, repair_attempts = await self._call_adapter(
-                        provider, adapter, model, repair, repair.messages(), 0.2,
+                        provider, adapter, model, repair, repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key)
                 repaired_result.text = _sanitize_json_text(
                     repaired_result.text, preserve_root_reasoning=True)
@@ -1509,7 +1522,7 @@ class Gateway:
             try:
                 (fallback_result, fallback_attempts, selected_target,
                  fallback_attempt_ids) = await self._call_route_plan(
-                    plan, req, req.messages(), req.temperature,
+                    plan, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key, logical_deadline,
                     targets=(fallback_target,))
                 attempt_ids.extend(fallback_attempt_ids)
@@ -1590,7 +1603,7 @@ class Gateway:
                 try:
                     (repaired_fallback, repair_attempts, _repair_target,
                      repair_attempt_ids) = await self._call_route_plan(
-                        plan, fallback_repair, fallback_repair.messages(), 0.2,
+                        plan, fallback_repair, fallback_repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key, logical_deadline,
                         targets=(selected_target,))
                     attempt_ids.extend(repair_attempt_ids)
@@ -1738,7 +1751,7 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, valid=ok)
         if not ok:
-            if plan.tiered:
+            if plan.tiered or self.config.get("llm", {}).get("research_response_contract") == "required-json-v1":
                 if cost_override is None:
                     cached, cost = self._price(
                         model, result.in_tokens, result.out_tokens,
@@ -2366,6 +2379,9 @@ class Gateway:
     def _cache_key(self, req: LLMRequest, provider: str, model: str) -> str:
         identity = {"t": req.tick, "a": req.agent_id, "p": req.purpose,
                     "m": model, "msgs": req.messages()}
+        if self.config.get("llm", {}).get("research_sampling") is not None:
+            identity["research_sampling"] = self.config["llm"]["research_sampling"]
+            identity["research_provider"] = provider
         if int(self.config.get("engine_semantics_version", 2)) >= 16:
             # Scripted contexts can have the same rendered text but distinct
             # random calls (e.g. two outlets after their desk agents die).

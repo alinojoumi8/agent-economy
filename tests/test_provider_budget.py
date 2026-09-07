@@ -507,3 +507,39 @@ def test_offline_adapters_need_no_live_reservations(tmp_path, provider):
         gateway.adapters[provider] = FixtureAdapter()
         assert asyncio.run(gateway.complete(LLMRequest(role="citizen", purpose="decision", tick=1))).ok
         assert budget.snapshot()["provider_calls"] == 0
+
+
+@pytest.mark.parametrize("tiered", [False, True])
+def test_research_sampling_is_applied_to_primary_repair_and_preflight(tmp_path, tiered):
+    cfg = config()
+    cfg["llm"]["research_sampling"] = {"primary": .9, "repair": .1, "preflight": 0.0}
+    with gateway_with_budget(tmp_path, cfg=cfg, calls=3) as (gateway, budget):
+        temperatures = []
+
+        class SamplingAdapter:
+            async def healthcheck(self, _model):
+                return {"ok": True, "model_available": True}
+
+            async def complete(self, *_args, **kwargs):
+                temperatures.append(kwargs["temperature"])
+                return AdapterResult(text="invalid" if len(temperatures) == 2 else '{"ok":true}',
+                    in_tokens=10, out_tokens=5, reported_usage=(10, 5))
+
+        gateway.adapters["fixture"] = SamplingAdapter()
+        assert asyncio.run(gateway.preflight(live=True))["live_ready"]
+        if tiered:
+            tiered_plan(gateway)
+        assert asyncio.run(gateway.complete(LLMRequest(role="citizen", purpose="decision", tick=1, temperature=.6))).ok
+        assert temperatures == [0.0, .9, .1]
+        assert budget.snapshot()["provider_calls"] == 3
+
+
+def test_research_sampling_and_provider_are_part_of_the_recorded_cache_identity(tmp_path):
+    cfg = config()
+    cfg["llm"]["research_sampling"] = {"primary": .9, "repair": .1, "preflight": 0.0}
+    with gateway_with_budget(tmp_path, cfg=cfg) as (gateway, _budget):
+        request = LLMRequest(role="citizen", purpose="decision", tick=1)
+        original = gateway._cache_key(request, "fixture", "test-model")
+        assert original != gateway._cache_key(request, "another-provider", "test-model")
+        gateway.config["llm"]["research_sampling"]["primary"] = .7
+        assert original != gateway._cache_key(request, "fixture", "test-model")
