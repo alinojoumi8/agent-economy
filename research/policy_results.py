@@ -17,6 +17,22 @@ from research.study_results import StudyArtifactError, _location, _verify_contex
 from research.working_contracts import working_protocol
 
 
+def _policy_declaration(manifest: dict) -> tuple[StudySpec, dict, list[dict]]:
+    """The same frozen policy assignment for final and pending evidence."""
+    if manifest.get("kind") != "prospective_study":
+        raise StudyArtifactError("policy evidence requires a prospective study")
+    spec = StudySpec.model_validate(manifest["study"])
+    config = manifest["resolved_config"]
+    validate_policy_execution(spec, config, verify_source=False)
+    if digest_json(config) != spec.model.resolved_config_sha256 or config.get("engine_semantics_version") != spec.model.engine_semantics_version:
+        raise StudyArtifactError("policy study configuration differs from its model")
+    cells = study_cells(spec)
+    if (digest_json(manifest["assigned_cells"]) != digest_json(cells)
+            or digest_json(manifest["policy_configurations"]) != digest_json(policy_configurations(spec, config, verify_source=False))):
+        raise StudyArtifactError("resolved policies differ from their prospective assignment")
+    return spec, config, cells
+
+
 def _sealed_budget(payload: dict, spec: StudySpec, location) -> ProviderBudget:
     manifest = payload["batch"]["manifest"]
     receipt = read_json(location.data_file("provider-budget-receipt.json"))
@@ -164,25 +180,18 @@ def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data
     if not path.resolve().is_relative_to(Path(out_dir).resolve()):
         raise StudyArtifactError("policy result is outside the configured report root")
     try:
-        if expected_sha256 is not None and file_sha256(path) != expected_sha256:
+        before = file_sha256(path)
+        if expected_sha256 is not None and before != expected_sha256:
             raise StudyArtifactError("policy result differs from its externally bound hash")
         payload = read_json(path)
         if payload["contract"] not in {"policy-study-result-v1", "policy-study-result-v2"} or payload["batch"]["manifest"]["kind"] != "prospective_study":
             raise StudyArtifactError("unsupported policy result contract")
         location = _location(payload, path, Path(data_root), Path(out_dir))
         manifest = payload["batch"]["manifest"]
-        spec = StudySpec.model_validate(manifest["study"])
+        spec, config, cells = _policy_declaration(manifest)
         working = bool(working_protocol(spec.operations.pause_policy))
         if (payload["contract"] == "policy-study-result-v2") != working:
             raise StudyArtifactError("policy result differs from its working protocol")
-        config = manifest["resolved_config"]
-        validate_policy_execution(spec, config, verify_source=False)
-        if digest_json(config) != spec.model.resolved_config_sha256 or config.get("engine_semantics_version") != spec.model.engine_semantics_version:
-            raise StudyArtifactError("policy study configuration differs from its model")
-        cells = study_cells(spec)
-        if (digest_json(manifest["assigned_cells"]) != digest_json(cells)
-                or digest_json(manifest["policy_configurations"]) != digest_json(policy_configurations(spec, config, verify_source=False))):
-            raise StudyArtifactError("resolved policies differ from their prospective assignment")
         context = _verify_context(manifest, spec, location)
         publication = read_json(location.report_file("publication.json"))
         if (publication["contract"] != "policy-study-publication-v1"
@@ -235,10 +244,12 @@ def load_policy_result(result_path: str | Path, *, data_root: str | Path = "data
             issues.append({"reason": "stored_provider_totals_disagree_with_sealed_accounting"})
         if file_sha256(budget.path) != payload["provider_budget"]["database_sha256"]:
             raise StudyArtifactError("sealed provider accounting changed during verification")
+        if file_sha256(path) != before:
+            raise StudyArtifactError("policy result changed during verification")
         result = copy.deepcopy(payload)
         result.update(results=rows, summary=summary, verification={
             "contract": "policy-study-verification-v1", "status": "verified" if not issues else "degraded",
-            "publication": "verified", "result_sha256": file_sha256(path), "declared_context": context,
+            "publication": "verified", "result_sha256": before, "declared_context": context,
             "provider_budget": usage, "preflight_ready": preflight_ready,
             "stored_summary_matches": agrees, "issues": issues,
             "data_dir": str(location.data_dir), "report_dir": str(location.report_dir)})
@@ -256,7 +267,8 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("reports/out"))
     args = parser.parse_args()
     try:
-        result = load_policy_result(args.result, data_root=args.data_root, out_dir=args.out_dir)
+        from research.policy_evidence import load_policy_evidence
+        result = load_policy_evidence(args.result, data_root=args.data_root, out_dir=args.out_dir)
         print(json.dumps({"verification": result["verification"], "coverage": result["summary"]["coverage"]}))
         return int(result["verification"]["status"] != "verified")
     except StudyArtifactError as exc:

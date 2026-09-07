@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI execution, original-budget day/phase recovery and independent verification implemented; v3 bundles/operator integration and real-provider validation pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI execution, original-budget day/phase recovery, independent verification and private final/paused v3 bundles implemented; v3 operator integration and real-provider validation pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -1152,3 +1152,57 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - Next: private v3 bundles and operator review/launch/comparison, followed by a
   separately authorized real-provider rehearsal. The remaining city, household,
   education, production/housing, banking and scale validation remain active.
+
+### W3/W4: private policy evidence from final and paused studies
+
+- At `2750aa8`, required [CI 34126801041](https://github.com/alinojoumi8/agent-economy/actions/runs/34126801041)
+  passed all six jobs: **42 policy recovery/origin, 324 research, 47 saved-world,
+  359 core, 144 smoke and 100 Chromium checks**. Full
+  [CI 34126862094](https://github.com/alinojoumi8/agent-economy/actions/runs/34126862094)
+  passed all eight Ubuntu/Python 3.12 shards: **2,049 passed, 10 skipped**.
+- The private v3 reader verifies current cooperative pauses against their
+  prospective policy assignment, source/replay evidence, complete supervision
+  journal and original unsealed allowance. Completed cells are independently
+  remeasured; pending cells cannot be promoted, and unfinished invocations or
+  stale original progress are refused. Final reads also bind result bytes before
+  and after verification. Malformed CLI input returns a bounded invalid result.
+- Separate `policy-study-evidence-bundle-v1` and
+  `policy-working-evidence-bundle-v1` archives reuse the existing private size,
+  path, alias, checksum and exclusive publication guards. Working export holds
+  both existing owners while it copies and rechecks the allowance and evidence.
+  Import requires the archive label to match the actual evidence format.
+- Imported pauses remain readable after the original resumes, including their
+  inherited costs and model draws. A copied unsealed allowance cannot grant
+  another resumed execution. Diagnostic exclusions can be transported with
+  degraded scientific verification; successful archive verification alone does
+  not make a study complete or its prices valid. The v1/v2 operator catalog skips
+  unsupported v3 studies until its policy interface is implemented.
+- New suite on Windows/Python 3.11.15:
+  `.venv/Scripts/python.exe -u -m pytest -x -q tests/test_policy_evidence.py --basetemp <fresh-short-root>`
+  passed **32 tests** (375.25 s). It exercises actual loopback HTTP for fresh/saved
+  frozen, day and phase campaigns, both price domains, multiple model draws,
+  phase history, relocation, read-only/provider-free loading, original-budget
+  protection, busy/missing owners, altered evidence, archive relabelling, stale
+  progress, false resealed measurements/accounting, concurrent-copy changes,
+  result replacement and CLI transport/errors. Earlier fresh-phase integration
+  passed **1 test** (50.06 s). All **352 Python sources** compiled in memory;
+  CI YAML parsed and `pip check` passed.
+- Compatibility regression on Windows/Python 3.11.15:
+  `.venv/Scripts/python.exe -u -m pytest -x -q tests/test_policy_studies.py tests/test_policy_recovery.py tests/test_policy_origins.py tests/test_provider_budget.py tests/test_working_evidence.py tests/test_working_studies.py tests/test_phase_working_studies.py tests/test_study_results.py tests/test_study_bundle.py tests/test_study_library.py tests/test_research_attempt_integrity.py tests/test_recorded_replay_golden.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **237 tests** (986.95 s). Review independently reproduced malformed
+  study metadata raising AttributeError in the new catalog exclusion. An explicit
+  metadata type check now omits that record and preserves valid entries.
+- After that catalog fix,
+  `.venv/Scripts/python.exe -u -m pytest -x -q tests/test_study_library.py tests/test_working_evidence.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **37 tests** (34.97 s), including four malformed-metadata cases. All
+  **352 Python sources** compiled again in memory. Both regression selections
+  retain the existing Starlette TestClient deprecation warning.
+- A separate required policy-evidence CI job gives these six world/replay
+  campaigns a 15-minute bound. Committed-head required/full CI results are
+  tracked on draft PR #82. The
+  [private evidence specification](2026-09-07-policy-evidence-bundles.md), policy
+  workflow, checkpoint contract and development guide document these boundaries.
+- No paid inference, cleanup, schema migration or operator UI change belongs
+  to this slice. Tests use fresh short roots with the 40 GiB admission floor.
+  Next: v3 operator review/launch/comparison, then a separately authorized real
+  provider rehearsal and the remaining city/society/validation roadmap.

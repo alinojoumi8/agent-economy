@@ -18,6 +18,14 @@ from research.working_evidence import load_study_evidence as load_study_result, 
 
 CONTRACT = "study-evidence-bundle-v1"
 WORKING_CONTRACT = "study-working-evidence-bundle-v1"
+POLICY_CONTRACT = "policy-study-evidence-bundle-v1"
+POLICY_WORKING_CONTRACT = "policy-working-evidence-bundle-v1"
+BUNDLE_EVIDENCE = {
+    CONTRACT: {"study-result-v1"},
+    WORKING_CONTRACT: {"working-study-progress-v1"},
+    POLICY_CONTRACT: {"policy-study-result-v1", "policy-study-result-v2"},
+    POLICY_WORKING_CONTRACT: {"policy-working-progress-v1"},
+}
 CLASSIFICATION = "private_research_evidence"
 MAX_FILES = 8192
 MAX_BYTES = 2 * 1024 ** 3
@@ -80,6 +88,13 @@ def _proof(result: dict) -> dict:
             "attempts_sha256": digest_json(result["results"])}
 
 
+def _bundle_contract(evidence_contract: str) -> str:
+    for contract, evidence in BUNDLE_EVIDENCE.items():
+        if evidence_contract in evidence:
+            return contract
+    raise StudyArtifactError("unsupported bundled evidence contract")
+
+
 def export_study_bundle(result_path: str | Path, destination: str | Path, *,
                         data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out",
                         expected_sha256: str | None = None, expected_verification: str | None = None,
@@ -110,7 +125,7 @@ def _export_study_bundle(result_path: str | Path, destination: str | Path, *,
             raise StudyArtifactError("bundle destination must be outside its source study")
     entries = _inventory(result, max_bytes=max_bytes, locked_bytes=locked_bytes)
     result_name = next(name for name, item in entries.items() if item["path"].resolve() == Path(result_path).resolve())
-    index = {"contract": WORKING_CONTRACT if result["contract"] == "working-study-progress-v1" else CONTRACT,
+    index = {"contract": _bundle_contract(result["contract"]),
              "classification": CLASSIFICATION,
              "batch_id": result["batch"]["batch_id"], "manifest_sha256": result["batch"]["manifest_sha256"],
              "result_path": result_name, "result_sha256": result["verification"]["result_sha256"],
@@ -177,14 +192,14 @@ def _checked_index(archive: zipfile.ZipFile, *, max_bytes: int) -> tuple[dict, d
     if "bundle.json" not in names or names["bundle.json"].file_size > MAX_INDEX_BYTES:
         raise StudyArtifactError("bundle index is missing or too large")
     index = json.loads(archive.read("bundle.json"))
-    if (not isinstance(index, dict) or index.get("contract") not in {CONTRACT, WORKING_CONTRACT}
+    if (not isinstance(index, dict) or index.get("contract") not in BUNDLE_EVIDENCE
             or index.get("classification") != CLASSIFICATION or not isinstance(index.get("files"), dict)
             or set(index["files"]) != set(names) - {"bundle.json"}):
         raise StudyArtifactError("invalid bundle index or unlisted members")
     result_path = _name(index["result_path"])
     parts = PurePosixPath(result_path).parts
     expected_name = (bool(re.fullmatch(r"progress-[0-9]{6}\.json", parts[-1]))
-                     if index["contract"] == WORKING_CONTRACT else parts[-1] == "results.json")
+                     if index["contract"] in {WORKING_CONTRACT, POLICY_WORKING_CONTRACT} else parts[-1] == "results.json")
     if len(parts) != 5 or parts[:2] != ("reports", "studies") or not expected_name:
         raise StudyArtifactError("invalid bundled study result path")
     prefixes = (f"data/{parts[2]}/{parts[3]}/", f"reports/studies/{parts[2]}/{parts[3]}/")
@@ -245,7 +260,8 @@ def import_study_bundle(bundle_path: str | Path, destination: str | Path, *,
         result_path = target.joinpath(*PurePosixPath(index["result_path"]).parts)
         result = load_study_result(result_path, data_root=target / "data", out_dir=target / "reports",
                                    expected_sha256=index["result_sha256"])
-        if (result["batch"]["batch_id"] != index["batch_id"]
+        if (result["contract"] not in BUNDLE_EVIDENCE[index["contract"]]
+                or result["batch"]["batch_id"] != index["batch_id"]
                 or result["batch"]["manifest_sha256"] != index["manifest_sha256"]
                 or _proof(result) != index["proof"]):
             raise StudyArtifactError("bundled proof differs from freshly verified study evidence")

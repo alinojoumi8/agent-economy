@@ -62,13 +62,19 @@ class StudyLibrary:
                     manifest = frozen.get("manifest", {})
                     if manifest.get("kind") != "prospective_study":
                         continue
+                    study = manifest.get("study")
+                    if not isinstance(study, dict):
+                        raise StudyArtifactError("invalid catalog metadata")
+                    # Policy transport is available through the private CLI.
+                    # The current operator view does not yet support v3 cells.
+                    if study.get("protocol_version") == "research-study-v3":
+                        continue
                     if kind == "finalized" and payload.get("contract") != "study-result-v1":
                         continue
                     if kind == "working":
                         protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
                         if not protocol or manifest.get("attempt_protocol") != protocol:
                             continue
-                    study = manifest["study"]
                     if not isinstance(study["title"], str) or not isinstance(study["domains"], list):
                         raise StudyArtifactError("invalid catalog metadata")
                     # One identity survives progress publication and finalization.

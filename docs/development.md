@@ -15,7 +15,16 @@ drafting, explicit launch authorization, pause and provider-free resume validati
 `tests/test_policy_recovery.py` and `tests/test_policy_origins.py` exercise controlled
 loopback HTTP, original allowance recovery and declared saved-world policy
 transitions in their own required CI job. These v3 studies are not yet
-advertised by the existing operator or private bundle workflow.
+advertised by the existing operator.
+
+Private v3 evidence is readable and portable through `research.policy_results`
+and `research.study_bundle`. Export the current closed pause or sealed final
+result with its reviewed hash; import into a new private directory. See the
+[policy evidence contract](plans/2026-09-07-policy-evidence-bundles.md#cli-workflow)
+for commands, ownership and accounting checks. A verified paused archive remains
+pending, and an imported allowance cannot resume execution in a second namespace.
+`tests/test_policy_evidence.py` covers all six fresh/saved and frozen/day/phase
+paths in a separate required CI job using controlled loopback HTTP.
 
 ## Repository workflow
 

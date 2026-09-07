@@ -1,12 +1,13 @@
 # Live decision policies in price studies
 
-This extends W3 with equal goods/equity coverage. The CLI now supports fresh-world,
-fixed-horizon policy comparisons under `research-study-v3`, with explicit launch
+This extends W3 with equal goods/equity coverage. The CLI supports fresh and saved
+world policy comparisons under `research-study-v3`, with explicit launch
 authorization and one shared declared provider allowance, including cooperative
-day/phase pause and resume. The v1/v2 protocols, saved-world rules and existing
-operator UI retain their previous capabilities. Saved-world policy changes,
-operator launch/import and real provider readiness remain subsequent work. Controlled fixtures demonstrate the
-execution and evidence path; no paid provider rehearsal is claimed.
+day/phase pause and resume. Independent readers and private archives carry both
+current closed pauses and sealed final results. The v1/v2 protocols retain their
+existing interpretation. Operator policy review/launch/comparison and real provider
+readiness remain subsequent work. Controlled fixtures demonstrate the execution
+and evidence path; no paid provider rehearsal is claimed.
 
 ## Implemented: shared completion reservations
 
@@ -177,8 +178,8 @@ interruption seals the allowance without publishing success; a hard crash retain
 unresolved accounting and an unfinished journal, which cannot resume automatically.
 
 This supports recovery from cooperative closed boundaries. An unknown interrupted
-transaction cannot resume automatically. The existing operator/bundle workflow
-does not yet advertise v3 capability.
+transaction cannot resume automatically. Private evidence can be exported at a
+current closed pause. The existing operator does not yet advertise v3 capability.
 
 ### Implemented: declared policies from saved worlds
 
@@ -267,10 +268,15 @@ The draft rejects simultaneous seeds/checkpoints and never replaces an output.
 
 Draft publication is exclusive and never replaces an existing file. Results are
 local scientific artifacts containing operational paths; they are not a public
-dashboard projection. `research.policy_results` is the v3 reader. The existing
-operator library/bundle workflow continues to accept its supported v1/v2 formats.
-Manual relocation of both evidence roots is supported by the v3 reader; an
-integrated v3 archive import/export workflow is not yet advertised.
+dashboard projection. `research.policy_results` reads final results and the latest
+closed `progress-<invocation>.json`. `research.study_bundle export` and `import`
+now support these v3 artifacts through separate final/working archive contracts.
+See [private policy evidence](2026-09-07-policy-evidence-bundles.md) for the exact
+commands and acceptance gates. Export holds both working owners and verifies the
+original allowance before and after copying. Import verifies recorded evidence
+without provider calls, installing a runtime or granting another execution budget.
+A copied pause stays pending after the original study resumes. The existing
+operator library continues to advertise its supported v1/v2 formats only.
 
 ## Next slice: operator workflow and validation
 

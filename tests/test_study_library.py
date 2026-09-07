@@ -126,6 +126,21 @@ def test_library_scan_and_public_catalog_are_bounded(copied_study, tmp_path):
     assert library.public_catalog()["truncated"] is True
 
 
+@pytest.mark.parametrize("metadata", [None, [], 42, "unsupported"])
+def test_invalid_study_metadata_cannot_hide_valid_catalog_entries(copied_study, tmp_path, metadata):
+    _, roots = copied_study
+    library = StudyLibrary(**roots, export_root=tmp_path / "exports")
+    expected = library.public_catalog()["items"]
+    invalid = roots["out_dir"] / "studies" / "invalid" / "batch" / "results.json"
+    invalid.parent.mkdir(parents=True)
+    invalid.write_text(json.dumps({"contract": "study-result-v1",
+        "batch": {"manifest": {"kind": "prospective_study", "study": metadata}}}))
+    before = {path: file_sha256(path) for path in roots["out_dir"].rglob("*") if path.is_file()}
+    catalog = library.public_catalog()
+    assert catalog["items"] == expected and catalog["omitted"] == 1
+    assert {path: file_sha256(path) for path in before} == before
+
+
 def test_evidence_change_between_review_and_packaging_cannot_publish_under_old_identity(copied_study, tmp_path, monkeypatch):
     import research.study_library as library_module
     result, roots = copied_study

@@ -21,14 +21,15 @@ from research.working_studies import CONTRACT, _checked_rows, _journal
 from world.replay_verify import canonical_state_receipt
 
 
-def working_location(path: Path, payload: dict, *, data_root: Path, out_dir: Path):
+def working_location(path: Path, payload: dict, *, data_root: Path, out_dir: Path,
+                     progress_contract: str = "working-study-progress-v1"):
     if not path.resolve().is_relative_to(out_dir.resolve()):
         raise StudyArtifactError("working evidence is outside its configured report root")
     location = _location(payload, path.parent / "results.json", data_root, out_dir)
     number = payload["operations"]["supervision"]["invocation"]
     if (type(number) is not int or not 1 <= number <= 1024
             or path.resolve() != location.report_dir / f"progress-{number:06d}.json"
-            or payload["contract"] != "working-study-progress-v1"
+            or payload["contract"] != progress_contract
             or payload["status"] != "paused"):
         raise StudyArtifactError("unsupported working progress contract")
     return location
@@ -38,10 +39,12 @@ def working_location(path: Path, payload: dict, *, data_root: Path, out_dir: Pat
 def working_export_guard(path: Path, *, data_root: Path, out_dir: Path):
     """Hold both owners while a mutable checkpoint is copied into an archive."""
     payload = read_json(path)
-    if payload.get("contract") != "working-study-progress-v1":
+    from research.policy_recovery import PROGRESS
+    contract = payload.get("contract")
+    if contract not in ("working-study-progress-v1", PROGRESS):
         yield {}
         return
-    location = working_location(path, payload, data_root=data_root, out_dir=out_dir)
+    location = working_location(path, payload, data_root=data_root, out_dir=out_dir, progress_contract=contract)
     with ExitStack() as stack:
         locked_bytes = {}
         for name in ("supervisor.lock", "working.lock"):
@@ -147,6 +150,10 @@ def load_working_progress(result_path: str | Path, *, data_root: str | Path = "d
 
 
 def load_study_evidence(result_path: str | Path, **options) -> dict:
-    if read_json(Path(result_path)).get("contract") == "working-study-progress-v1":
+    contract = read_json(Path(result_path)).get("contract")
+    if contract == "working-study-progress-v1":
         return load_working_progress(result_path, **options)
+    if contract in ("policy-study-result-v1", "policy-study-result-v2", "policy-working-progress-v1"):
+        from research.policy_evidence import load_policy_evidence
+        return load_policy_evidence(result_path, **options)
     return load_study_result(result_path, **options)

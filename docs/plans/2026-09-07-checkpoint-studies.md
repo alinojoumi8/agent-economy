@@ -27,8 +27,10 @@ The separate v3 policy CLI now supports declared decision-policy changes from
 the same admitted sources, model replication and original-allowance day/phase
 recovery. It uses claim version 6 and replay receipt version 3. See the
 [policy transition contract](2026-09-07-live-policy-studies.md#implemented-declared-policies-from-saved-worlds).
-The operator and private bundle commands described here retain their v1/v2
-scope; v3 operator/bundle integration remains pending.
+The same private bundle commands also support v3 final and paused evidence under
+[separate policy archive contracts](2026-09-07-policy-evidence-bundles.md).
+The operator interface retains its v1/v2 scope; v3 operator integration remains
+pending. A copied allowance is evidence and cannot fund another resumed study.
 
 ## Local operator interface
 
