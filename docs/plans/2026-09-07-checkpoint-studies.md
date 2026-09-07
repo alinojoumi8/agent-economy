@@ -23,6 +23,13 @@ regression passed 68 tests; the full browser suite passed 108 tests with one
 opt-in test skipped, and all 242 UI unit tests passed. See the execution log
 and draft PR for exact commands, CI results and the remaining broader roadmap.
 
+The separate v3 policy CLI now supports declared decision-policy changes from
+the same admitted sources, model replication and original-allowance day/phase
+recovery. It uses claim version 6 and replay receipt version 3. See the
+[policy transition contract](2026-09-07-live-policy-studies.md#implemented-declared-policies-from-saved-worlds).
+The operator and private bundle commands described here retain their v1/v2
+scope; v3 operator/bundle integration remains pending.
+
 ## Local operator interface
 
 Choose **Create a study → Initial conditions → Saved worlds**. The local
@@ -57,7 +64,8 @@ Use the configuration that produced the saved worlds. The economic settings,
 policy, semantics and source seeds must match; only checkpoint/report output
 paths, checkpoint frequency and delay are operational differences. Sources must
 have the same completed day and distinct original seeds and run identities.
-The current executor requires an explicitly scripted provider-free policy.
+The v2 price-catalog executor below requires an explicitly scripted provider-free
+policy. Use the separate v3 policy workflow for a declared model change.
 
 For example, replace the two example paths with compatible closed snapshots:
 

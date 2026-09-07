@@ -14,6 +14,7 @@ from engine.ledger import Ledger
 from engine.schema import SCHEMA_VERSION
 from engine.semantics import semantics_version
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from research.artifacts import digest_json, file_sha256, publish_copy, safe_key
 from research.working_contracts import input_prefixes, persisted_random_state
 from world.replay_verify import canonical_state_receipt, verify_replay_connections
@@ -158,19 +159,29 @@ def copy_checkpoint(path: str | Path, receipt: dict, destination: str | Path, *,
 def open_continuation(path: str | Path, receipt: dict, destination: str | Path, *,
                       run_id: str, config: dict, interventions: list[dict], max_bytes: int,
                       replay_source: str | Path | None = None,
-                      replay_source_sha256: str | None = None):
+                      replay_source_sha256: str | None = None,
+                      policy_claim: dict | None = None,
+                      completion_guard: CompletionGuard | None = None):
     """Create an owned world or recorded replay from the same admitted origin."""
     from world.checkpoint_branch import open_checkpoint_branch, validate_checkpoint_interventions
 
     safe_key(run_id)
+    if completion_guard is not None and (replay_source is not None or policy_claim is None):
+        raise ValueError("only a declared non-replay policy origin can attach a completion guard")
     verify_checkpoint(path, receipt, max_bytes=max_bytes)
     validate_checkpoint_interventions(receipt, interventions)
     with closed_checkpoint(path, max_bytes=max_bytes) as origin_store:
         original_config = json.loads(origin_store.get_meta()["config_json"])
-    expected = continuation_config(original_config)
-    expected["shocks"] = [*(original_config.get("shocks") or []), *interventions]
-    if continuation_config(config) != expected:
-        raise ValueError("continuation changes more than its declared interventions")
+    if policy_claim is not None:
+        from research.policy_origins import validate_origin_allowance, validate_policy_continuation
+        validate_policy_continuation(original_config, config, receipt, interventions, policy_claim)
+        if replay_source is None:
+            validate_origin_allowance(policy_claim, completion_guard)
+    else:
+        expected = continuation_config(original_config)
+        expected["shocks"] = [*(original_config.get("shocks") or []), *interventions]
+        if continuation_config(config) != expected:
+            raise ValueError("continuation changes more than its declared interventions")
     cfg = json.loads(json.dumps(config))
     if replay_source is not None:
         source = Path(replay_source).absolute()
@@ -186,7 +197,8 @@ def open_continuation(path: str | Path, receipt: dict, destination: str | Path, 
     world = None
     try:
         world = open_checkpoint_branch(store, cfg, run_id=run_id, origin=receipt,
-            interventions=interventions, replay=replay_source is not None)
+            interventions=interventions, replay=replay_source is not None,
+            completion_guard=completion_guard, policy_change=policy_claim is not None)
         if replay_source is not None and file_sha256(source) != replay_source_sha256:
             world.close()
             raise ValueError("recorded continuation source changed during initialization")

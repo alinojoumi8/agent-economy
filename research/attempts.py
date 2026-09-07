@@ -132,7 +132,7 @@ def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
         replay_store, replay_world = None, None
         try:
             claim = json.loads(Path(row["attempt_claim"]).read_text(encoding="utf-8"))
-            if claim["protocol_version"] == 4:
+            if claim["protocol_version"] in {4, 6}:
                 from research.attempt_origins import replay_checkpoint
                 replay_path = replay_checkpoint(row, claim, attempt_dir)
             else:
@@ -145,7 +145,7 @@ def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
                 replay_path = Path(replay_store.path)
                 replay_world.close()
                 replay_world, replay_store = None, None
-            if claim["protocol_version"] == 4:
+            if claim["protocol_version"] in {4, 6}:
                 from research.checkpoint_origins import verify_closed_replay
                 proof = verify_closed_replay(source_path, replay_path, max_bytes=claim["checkpoint_origin"]["max_bytes"])
             else:
@@ -158,10 +158,12 @@ def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
                 "replay_database": str(replay_path),
                 "replay_database_sha256": file_sha256(replay_path), "comparison": proof,
             }
-            if claim["protocol_version"] == 4:
-                receipt.update(protocol_version=2, execution="recorded_checkpoint_replay",
+            if claim["protocol_version"] in {4, 6}:
+                receipt.update(protocol_version=3 if claim["protocol_version"] == 6 else 2, execution="recorded_checkpoint_replay",
                     origin_receipt_sha256=row["origin_receipt_sha256"],
                     continuation_window=[row["origin_tick"] + 1, ticks])
+                if claim["protocol_version"] == 6:
+                    receipt["policy_transition_sha256"] = digest_json(claim["checkpoint_origin"]["policy_transition"])
             receipt_path = publish_json(attempt_dir / "replay-receipt.json", receipt)
             row.update({"replay_receipt": str(receipt_path),
                         "replay_receipt_sha256": file_sha256(receipt_path),
@@ -221,8 +223,8 @@ def verify_attempt(row: dict, *, expected_ticks: int,
             reasons.append("source_database_changed")
         claim = json.loads(locate(row["attempt_claim"]).read_text(encoding="utf-8"))
         working = claim_working_protocol(claim)
-        checkpoint = claim.get("protocol_version") == 4
-        if (claim.get("protocol_version") not in {1, 2, 3, 4, 5}
+        checkpoint = claim.get("protocol_version") in {4, 6}
+        if (claim.get("protocol_version") not in {1, 2, 3, 4, 5, 6}
                 or ("working_history" in row) != bool(working)
                 or ("position" in row) != (working == PHASE_PROTOCOL)
                 or working and claim["protocol_version"] != attempt_version(claim["study_manifest"]["study"])):
@@ -262,9 +264,11 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 or locate(replay["source_database"]).resolve() != locate(row["source_database"]).resolve()
                 or file_sha256(locate(replay["replay_database"])) != replay["replay_database_sha256"]):
             reasons.append("replay_receipt_mismatch")
-        if checkpoint and (replay.get("protocol_version") != 2
+        if checkpoint and (replay.get("protocol_version") != (3 if claim["protocol_version"] == 6 else 2)
                 or replay.get("origin_receipt_sha256") != row["origin_receipt_sha256"]
                 or replay.get("continuation_window") != [row["origin_tick"] + 1, expected_ticks]):
+            reasons.append("replay_receipt_mismatch")
+        if claim["protocol_version"] == 6 and replay.get("policy_transition_sha256") != digest_json(claim["checkpoint_origin"]["policy_transition"]):
             reasons.append("replay_receipt_mismatch")
         replay_wal = locate(replay["replay_database"] + "-wal")
         if replay_wal.exists() and replay_wal.stat().st_size:

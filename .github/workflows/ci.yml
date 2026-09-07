@@ -180,9 +180,9 @@ jobs:
           cache-dependency-path: requirements.lock
       - name: Install locked dependencies
         run: python -m pip install --require-hashes -r requirements.lock
-      - name: Verify original allowances, policy pauses and recorded replay
+      - name: Verify original allowances, saved policies, pauses and recorded replay
         # Controlled loopback HTTP only; no provider keys or paid completions.
-        run: python -m pytest -q tests/test_policy_recovery.py
+        run: python -m pytest -q tests/test_policy_recovery.py tests/test_policy_origins.py
 
   research-checkpoints:
     name: Saved-world study execution and operator recovery

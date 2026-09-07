@@ -14,7 +14,8 @@ from research.working_contracts import input_prefixes
 
 
 def checkpoint_claim_fields(spec: StudySpec, manifest: dict, data_dir: Path,
-                            seed: int, arm: str) -> dict:
+                            seed: int, arm: str, *, policy_cell: dict | None = None,
+                            completion_guard=None) -> dict:
     """Verify the owned snapshot before allocating an attempt directory."""
     from research.study_runner import arm_interventions
 
@@ -28,11 +29,23 @@ def checkpoint_claim_fields(spec: StudySpec, manifest: dict, data_dir: Path,
         raise ValueError("checkpoint snapshot differs from its declared initial condition")
     verify_checkpoint(path, receipt, max_bytes=spec.operations.max_disk_bytes,
                       config={**manifest["resolved_config"], "seed": seed})
-    return {"protocol_version": 4, "study_manifest": manifest,
+    fields = {"protocol_version": 4, "study_manifest": manifest,
             "study_manifest_sha256": digest_json(manifest),
             "checkpoint_origin": {"database": str(path), "receipt": receipt,
                 "interventions": arm_interventions(spec, arm),
                 "max_bytes": spec.operations.max_disk_bytes}}
+    if spec.policy_design is not None:
+        from research.policy_origins import policy_transition
+        from research.policy_studies import working_binding
+        fields.update(working_binding({"manifest": manifest, "manifest_sha256": digest_json(manifest),
+            "data_dir": str(data_dir)}, spec, manifest["resolved_config"], policy_cell, completion_guard))
+        if policy_cell["seed"] != seed or policy_cell["arm"] != arm:
+            raise ValueError("policy origin differs from the assigned seed/arm")
+        fields["protocol_version"] = 6
+        fields["checkpoint_origin"]["policy_transition"] = policy_transition(manifest, seed, arm, receipt)
+    elif policy_cell is not None or completion_guard is not None:
+        raise ValueError("legacy checkpoint studies cannot change their declared policy")
+    return fields
 
 
 def origin_row_fields(claim: dict) -> dict:
@@ -44,6 +57,9 @@ def origin_row_fields(claim: dict) -> dict:
 def verify_origin_identity(row: dict, claim: dict, *,
                            resolve_path: Callable[[str], Path] = Path) -> dict:
     """Verify the origin even when a private bundle remaps the original paths."""
+    if claim.get("protocol_version") == 6:
+        from research.policy_origins import verify_policy_origin
+        return verify_policy_origin(row, claim, resolve_path=resolve_path)
     from research.study_runner import _arm_config, arm_interventions
 
     manifest = claim["study_manifest"]
@@ -99,7 +115,8 @@ def replay_checkpoint(row: dict, claim: dict, attempt_dir: Path) -> Path:
     store, world = open_continuation(binding["database"], origin, path,
         run_id=row["run_id"], config=config, interventions=binding["interventions"],
         max_bytes=binding["max_bytes"], replay_source=row["source_database"],
-        replay_source_sha256=row["source_database_sha256"])
+        replay_source_sha256=row["source_database_sha256"],
+        policy_claim=claim if claim["protocol_version"] == 6 else None)
     try:
         asyncio.run(world.run(max_ticks=row["expected_ticks"] - origin["tick"]))
         verify_origin_prefix(store, claim)
@@ -110,7 +127,7 @@ def replay_checkpoint(row: dict, claim: dict, attempt_dir: Path) -> Path:
 
 def execute_checkpoint_attempt(*, run_id: str, seed: int, arm: str, config: dict,
                                ticks: int, data_dir: Path, collect: Callable[[Store], dict],
-                               origin_fields: dict) -> dict:
+                               origin_fields: dict, completion_guard=None) -> dict:
     """Claim one frozen continuation; failures remain assigned diagnostic rows."""
     from research.attempts import finalize_attempt, observe_source
 
@@ -131,6 +148,9 @@ def execute_checkpoint_attempt(*, run_id: str, seed: int, arm: str, config: dict
            "genesis_hash": None, "event_hash": None, "replay_hash": None,
            "source_database": str(directory / "source" / f"{run_id}.db"),
            "attempt_claim": str(claim_path), "config_sha256": digest_json(cfg), **origin_row_fields(claim)}
+    if claim["protocol_version"] == 6:
+        row.update(policy_cell=claim["policy_cell"], **claim["policy_cell"],
+            provider_budget_contract_sha256=claim["provider_budget_contract_sha256"])
     verify_origin_identity(row, claim)
     directory.mkdir(parents=True, exist_ok=False)
     publish_json(claim_path, claim)
@@ -139,7 +159,8 @@ def execute_checkpoint_attempt(*, run_id: str, seed: int, arm: str, config: dict
     try:
         binding = claim["checkpoint_origin"]
         store, world = open_continuation(binding["database"], binding["receipt"], row["source_database"],
-            run_id=run_id, config=cfg, interventions=binding["interventions"], max_bytes=binding["max_bytes"])
+            run_id=run_id, config=cfg, interventions=binding["interventions"], max_bytes=binding["max_bytes"],
+            policy_claim=claim if claim["protocol_version"] == 6 else None, completion_guard=completion_guard)
         publish_json(directory / "running.json", {**claim, "execution_status": "running"})
         asyncio.run(world.run(max_ticks=ticks - store.tick))
         verify_origin_prefix(store, claim)
@@ -154,4 +175,7 @@ def execute_checkpoint_attempt(*, run_id: str, seed: int, arm: str, config: dict
             world.close()
         elif store is not None:
             store.close()
+    if claim["protocol_version"] == 6:
+        row["provider_usage"] = completion_guard.snapshot(scope=claim["policy_cell"]["cell_key"])
+        row["provider_budget_checkpoint"] = completion_guard.checkpoint()
     return finalize_attempt(row, attempt_dir=directory, reasons=reasons)

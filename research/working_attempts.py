@@ -169,7 +169,7 @@ def _batch_active_seconds(data_dir: Path, spec: StudySpec) -> float:
 
 
 def _verify_initial_condition(row: dict, claim: dict, *, resolve_path: Callable[[str], Path]) -> None:
-    if claim["protocol_version"] == 4:
+    if claim["protocol_version"] in {4, 6}:
         from research.attempt_origins import verify_origin_identity
         verify_origin_identity(row, claim, resolve_path=resolve_path)
         return
@@ -210,7 +210,7 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
         raise
     try:
         meta = store.get_meta()
-        if claim["protocol_version"] == 4:
+        if claim["protocol_version"] in {4, 6}:
             from research.attempt_origins import verify_origin_prefix
             verify_origin_prefix(store, claim)
         if (meta["schema_version"] != expected_schema_version
@@ -236,9 +236,9 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
         observed = collect_working_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]),
                                            origin=claim.get("checkpoint_origin", {}).get("receipt"))
         if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
-                or claim["protocol_version"] != 5 and (observed["provider_calls"] or observed["spend_usd"])):
+                or claim["protocol_version"] not in {5, 6} and (observed["provider_calls"] or observed["spend_usd"])):
             raise ValueError("paused source observations or provider-free contract changed")
-        if claim["protocol_version"] == 5 and observed["provider_calls"] > row["provider_usage"]["provider_calls"]:
+        if claim["protocol_version"] in {5, 6} and observed["provider_calls"] > row["provider_usage"]["provider_calls"]:
             raise ValueError("paused policy calls are not accounted for")
     finally:
         store.close()
@@ -391,7 +391,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                  "study_manifest_sha256": batch["manifest_sha256"], "study_manifest": batch["manifest"], **policy_fields}
         if spec.origin:
             from research.attempt_origins import checkpoint_claim_fields, origin_row_fields
-            claim.update(checkpoint_claim_fields(spec, batch["manifest"], data_dir, seed, arm))
+            claim.update(checkpoint_claim_fields(spec, batch["manifest"], data_dir, seed, arm,
+                policy_cell=policy_cell, completion_guard=completion_guard))
         claim_path = _member(directory, "attempt.json")
         if resume:
             if _read(claim_path) != claim:
@@ -434,7 +435,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                 from research.checkpoint_origins import open_continuation
                 binding = claim["checkpoint_origin"]
                 store, world = open_continuation(binding["database"], binding["receipt"], row["source_database"],
-                    run_id=run_id, config=cfg, interventions=binding["interventions"], max_bytes=binding["max_bytes"])
+                    run_id=run_id, config=cfg, interventions=binding["interventions"], max_bytes=binding["max_bytes"],
+                    policy_claim=claim if claim["protocol_version"] == 6 else None, completion_guard=completion_guard)
             else:
                 with Path(row["source_database"]).open("xb"):
                     pass

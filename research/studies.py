@@ -488,7 +488,8 @@ def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
     if ordinary_bytes > min(spec.operations.max_disk_bytes, 128 * 1024 * 1024):
         raise ValueError("declared study context exceeds the snapshot size limit")
     # Each source needs a context copy plus source/replay copies for every arm.
-    if ordinary_bytes + checkpoint_bytes * (1 + 2 * len(spec.arms)) > spec.operations.max_disk_bytes:
+    copies_per_source = 1 + 2 * len(spec.arms) * (len(spec.randomness.model_replicates) if spec.policy_design else 1)
+    if ordinary_bytes + checkpoint_bytes * copies_per_source > spec.operations.max_disk_bytes:
         raise ValueError("checkpoint study cannot fit its initial context and independent arm/replay copies")
     protocol["evidence_snapshot_version"] = "declared-inputs-v1"
     batch = create_batch(spec.key, protocol, data_root=data_root, out_dir=out_dir)

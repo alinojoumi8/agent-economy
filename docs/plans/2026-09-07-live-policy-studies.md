@@ -145,10 +145,9 @@ supervision or unfinished segments cannot resume. A
 200 ms disk poll bounds ongoing supervision, but an individual write or final
 evidence publication can exceed the disk threshold.
 
-Saved-world policy changes require an explicit prospective configuration delta
-in the new protocol. Do not relax `continuation_config` or silently substitute
-a new model into an old source. The original checkpoint and v1/v2 replay must
-remain byte-for-byte unchanged.
+Saved-world policy changes use the explicit prospective transition below.
+`continuation_config` continues to retain every economic and decision setting.
+The original checkpoint and v1/v2 replay remain unchanged.
 
 ### Implemented: original-allowance day and phase recovery
 
@@ -177,9 +176,46 @@ provider, budget or resource failures finalize with exclusions. A normal operato
 interruption seals the allowance without publishing success; a hard crash retains
 unresolved accounting and an unfinished journal, which cannot resume automatically.
 
-This supports recovery from cooperative closed boundaries. It does not recover
-an unknown interrupted transaction, modify a saved world's policy, or advertise
-v3 capability in the existing operator/bundle workflow.
+This supports recovery from cooperative closed boundaries. An unknown interrupted
+transaction cannot resume automatically. The existing operator/bundle workflow
+does not yet advertise v3 capability.
+
+### Implemented: declared policies from saved worlds
+
+A v3 study may select admitted closed worlds as its common initial conditions.
+All arms and model draws within a source world inherit the same original seed,
+completed day, accounting, random states, schedules and recorded-input prefix.
+The supplied common configuration must match the original source configuration;
+operational output controls retain their existing exceptions.
+
+Claim version 6 binds a `checkpoint-policy-transition-v1` receipt. It derives
+the source and continuation configuration hashes, declared policy and policy
+definition hash from the immutable study. The transition takes effect on the
+first new day. Only the declared routing, sampling, response/accounting contract
+and future arm interventions can differ. A changed seed, economic parameter,
+transition or policy assignment fails before creating the child. The child must
+use its assigned scope in the original shared allowance; attaching another ledger
+or omitting it is refused. There is no general configuration patch operation.
+
+Ordinary execution, day recovery and phase recovery use independent owned copies.
+Each recorded replay starts from another copy of the admitted origin, reproduces
+the new interval without provider calls, and records replay receipt version 3
+with the transition hash. Verification checks the shared origin as well as the
+cell's source/replay evidence, allowance history and measured prices. Relocated
+evidence can be read without today's prompts or provider access. Old study and
+attempt protocols retain their existing interpretation.
+
+Inherited calls and costs remain visible in separate fields and do not consume
+the new study allowance. Preflight and continuation requests consume that one
+allowance across all invocations. Measurements use the declared new interval;
+the existing equity endpoint may report an older price with its execution age.
+Admission establishes the supplied state, not historical model fidelity or
+economic realism. World-level pairing averages complete model replicates before
+estimating effects for both goods and equities.
+
+Storage admission includes the shared origin and independent source/replay
+copies for every arm and model replicate. Runtime disk and wall limits still
+apply; this estimate does not guarantee a bound on each individual write.
 
 ### CLI workflow
 
@@ -214,6 +250,20 @@ Readiness checks on every invocation consume the original declared allowance;
 resuming never creates a new budget. `--validate-only` makes no provider calls.
 A successful pause prints status `paused` and exits 1 because execution remains
 incomplete; it is not a finalized scientific result.
+
+For saved-world policy comparisons, replace `--seeds` with explicit closed
+checkpoints and use their original common configuration:
+
+```powershell
+.\.venv\Scripts\python.exe -m research.policy_studies --config <original-config.yaml> --design <private-design.json> --output <study.json> --checkpoint <source-1.db> --checkpoint <source-2.db> --input-root <source-root> --model-replicates draw1 draw2 --ticks 30 --pause-policy preserve_and_resume_phases --max-provider-calls <calls> --max-tokens <tokens> --max-spend-usd <approved-cap>
+.\.venv\Scripts\python.exe -m research.study_runner <study.json> --config <original-config.yaml> --input-root <source-root> --validate-only
+```
+
+`--ticks` is the absolute final simulation day. Sources must share a completed
+day and have distinct original seed/run identities. Policy change and measurement
+start on the first new day, with no warmup under the old policy. Keep the same
+input root for launch and resume. The approval and recovery commands above apply.
+The draft rejects simultaneous seeds/checkpoints and never replaces an output.
 
 Draft publication is exclusive and never replaces an existing file. Results are
 local scientific artifacts containing operational paths; they are not a public

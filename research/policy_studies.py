@@ -197,7 +197,7 @@ def draft_policy_comparison(config: dict, *, policies: list[StudyPolicy], tariff
         raise ValueError("a policy comparison requires two to sixteen policies")
     # The template defines economic measurements. Per-policy routing is resolved
     # below; the common world may have originally been used with a live model.
-    template = {**config, "llm": {"default_route": {"provider": "scripted", "model": "scripted"}, "routes": {}}}
+    template = {**config, "shocks": [], "llm": {"default_route": {"provider": "scripted", "model": "scripted"}, "routes": {}}}
     base = draft_price_study(template, "G2", seeds=seeds, horizon=horizon, intervention_tick=1)
     raw = base.model_dump(mode="json")
     raw["model"]["resolved_config_sha256"] = digest_json(config)
@@ -232,6 +232,44 @@ def draft_policy_comparison(config: dict, *, policies: list[StudyPolicy], tariff
     return spec
 
 
+def draft_checkpoint_policy_comparison(config: dict, *, checkpoints: list[Path], input_root: Path,
+                                       horizon: int, **options) -> StudySpec:
+    """Declare original source worlds and new policies without executing either."""
+    from research.checkpoint_origins import inspect_checkpoint
+    from research.policy_runner import validate_policy_execution
+    from research.studies import validate_study_inputs
+    root = input_root.resolve()
+    if not checkpoints or "seeds" in options:
+        raise ValueError("checkpoint policy studies require explicit sources and retain their original seeds")
+    sources, artifacts, ticks = [], [], set()
+    for path in checkpoints:
+        path = Path(path).absolute()
+        if not path.is_relative_to(root):
+            raise ValueError("checkpoint is outside the declared input root")
+        receipt = inspect_checkpoint(path, max_bytes=options.get("max_disk_bytes", 128 * 1024 * 1024))
+        seed, key = receipt["seed"], f"checkpoint-{receipt['seed']}"
+        ticks.add(receipt["tick"])
+        sources.append({"seed": seed, "input_key": key, "receipt_sha256": digest_json(receipt)})
+        artifacts.append({"key": key, "path": path.relative_to(root).as_posix(), "sha256": receipt["database_sha256"],
+            "role": "checkpoint", "vintage": f"Declared saved world at completed day {receipt['tick']}", "transform_version": "identity"})
+    if len(ticks) != 1:
+        raise ValueError("checkpoint policies require a common completed origin day")
+    origin_tick = next(iter(ticks))
+    raw = draft_policy_comparison(config, seeds=[item["seed"] for item in sources],
+        horizon=horizon - origin_tick, **options).model_dump(mode="json")
+    raw.update(inputs=artifacts, origin={"kind": "verified_checkpoints", "tick": origin_tick, "sources": sources})
+    for field in ("horizon", "intervention_start", "intervention_end", "measurement_start", "measurement_end"):
+        raw["time"][field] += origin_tick
+    raw["randomness"].update(seed_role="checkpoint_origin_seed", pairing="verified_common_checkpoint")
+    raw["analysis"].update(treatment_unit="checkpoint_world_pair",
+        estimand="Mean policy difference across independent admitted worlds after averaging complete paired model replicates within each source world")
+    raw["limitations"].append("Admission verifies the saved state, not the model or process that produced it. Recorded replay verifies only the new continuation; inherited provider history is excluded from the new allowance and execution totals.")
+    spec = StudySpec.model_validate(raw)
+    validate_policy_execution(spec, config)
+    validate_study_inputs(spec, config, input_root=root)
+    return spec
+
+
 def main() -> int:
     """Draft an immutable, reviewable study without contacting any provider."""
     from run_config import load_config
@@ -241,7 +279,9 @@ def main() -> int:
     parser.add_argument("--design", type=Path, required=True,
                         help="JSON object with policies (key, llm, temperature, optional repair_temperature) and tariffs")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seeds", type=int, nargs="+", required=True)
+    parser.add_argument("--seeds", type=int, nargs="+")
+    parser.add_argument("--checkpoint", type=Path, action="append", help="Closed original world; repeat for independent source worlds")
+    parser.add_argument("--input-root", type=Path, default=Path("."))
     parser.add_argument("--model-replicates", nargs="+", required=True)
     parser.add_argument("--ticks", type=int, required=True)
     parser.add_argument("--max-provider-calls", type=int, required=True)
@@ -253,15 +293,19 @@ def main() -> int:
                         default="preserve_and_stop", help="Freeze the recovery policy before any world is prepared")
     args = parser.parse_args()
     try:
+        if bool(args.seeds) == bool(args.checkpoint):
+            raise ValueError("choose initial-world seeds or explicit checkpoints")
         if args.design.stat().st_size > 1024 * 1024:
             raise ValueError("policy design exceeds the size limit")
         design = json.loads(args.design.read_text(encoding="utf-8"))
         if not isinstance(design, dict) or set(design) != {"policies", "tariffs"}:
             raise ValueError("design must contain exactly policies and tariffs")
-        spec = draft_policy_comparison(load_config(args.config),
+        builder = draft_checkpoint_policy_comparison if args.checkpoint else draft_policy_comparison
+        source = {"checkpoints": args.checkpoint, "input_root": args.input_root} if args.checkpoint else {"seeds": args.seeds}
+        spec = builder(load_config(args.config),
             policies=[declare_policy(**policy) for policy in design["policies"]],
             tariffs=[TokenTariff.model_validate(tariff) for tariff in design["tariffs"]],
-            seeds=args.seeds, model_replicates=args.model_replicates, horizon=args.ticks,
+            **source, model_replicates=args.model_replicates, horizon=args.ticks,
             max_provider_calls=args.max_provider_calls, max_tokens=args.max_tokens,
             max_spend_usd=args.max_spend_usd, max_wall_seconds=args.max_wall_seconds,
             max_disk_bytes=args.max_disk_bytes, pause_policy=args.pause_policy)

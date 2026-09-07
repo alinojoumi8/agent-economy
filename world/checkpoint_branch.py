@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from world.loop import World
 from world.shocks import SHOCK_KINDS, validate_shock_params, validate_shock_trigger
 
@@ -23,7 +24,8 @@ def validate_checkpoint_interventions(origin: dict, interventions: list[dict]) -
 
 def open_checkpoint_branch(store: Store, config: dict, *, run_id: str,
                            origin: dict, interventions: list[dict],
-                           replay: bool = False) -> World:
+                           replay: bool = False, completion_guard: CompletionGuard | None = None,
+                           policy_change: bool = False) -> World:
     """Preserve the inherited economy and append its declared future interventions.
 
     The caller owns this writable child. Source admission and exclusive copy
@@ -38,7 +40,7 @@ def open_checkpoint_branch(store: Store, config: dict, *, run_id: str,
     validate_checkpoint_interventions(origin, interventions)
     store.set_meta(run_id=run_id, parent_run_id=origin["run_id"], fork_tick=origin["tick"],
                    status="paused", config_json=json.dumps(config, sort_keys=True))
-    world = World(store, config, replay=replay)
+    world = World(store, config, replay=replay, completion_guard=completion_guard)
     try:
         world.restore_prng_state()
         world.status = "paused"
@@ -47,7 +49,7 @@ def open_checkpoint_branch(store: Store, config: dict, *, run_id: str,
                 duration_ticks=int(item.get("duration_ticks", 0)), params=item.get("params", {}),
                 label=item.get("label", item["kind"]))
         store.log_event(origin["tick"], "research_checkpoint_branch", {
-            "contract": "checkpoint-branch-v1", "origin_run_id": origin["run_id"],
+            "contract": "checkpoint-policy-branch-v1" if policy_change else "checkpoint-branch-v1", "origin_run_id": origin["run_id"],
             "origin_tick": origin["tick"], "origin_sha256": origin["database_sha256"],
             "initial_state_sha256": origin["initial_state_sha256"],
         }, phase="NIGHT_CLOSE", importance=2.0)

@@ -25,6 +25,8 @@ def working_protocol(policy: str) -> str | None:
 
 
 def attempt_version(study: dict) -> int:
+    if study.get("protocol_version") == "research-study-v3" and study.get("origin") is not None:
+        return 6
     if study.get("protocol_version") == "research-study-v3" and working_protocol(study["operations"]["pause_policy"]):
         return 5
     if study.get("origin") is not None:
@@ -34,9 +36,9 @@ def attempt_version(study: dict) -> int:
 
 
 def claim_working_protocol(claim: dict) -> str | None:
-    if claim.get("protocol_version") == 5 and claim.get("study_manifest", {}).get("study", {}).get("protocol_version") != "research-study-v3":
+    if claim.get("protocol_version") in {5, 6} and claim.get("study_manifest", {}).get("study", {}).get("protocol_version") != "research-study-v3":
         raise ValueError("policy working claims require a v3 study")
-    if claim.get("protocol_version") in {2, 3, 4, 5}:
+    if claim.get("protocol_version") in {2, 3, 4, 5, 6}:
         return working_protocol(claim["study_manifest"]["study"]["operations"]["pause_policy"])
     return None
 

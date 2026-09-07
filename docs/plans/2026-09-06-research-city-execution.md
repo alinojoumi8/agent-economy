@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated live-policy CLI execution, original-budget day/phase recovery and independent verification implemented; saved-world policy deltas, v3 bundles/operator integration and real-provider validation pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI execution, original-budget day/phase recovery and independent verification implemented; v3 bundles/operator integration and real-provider validation pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -1105,3 +1105,50 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   comparison, then a separately authorized real-provider rehearsal. The remaining
   city, household, education, production/housing, banking and validation work
   remains in the active five-part goal.
+
+### W3/W4: declare saved-world decision-policy transitions
+
+- At `332d167`, required [CI 34119113213](https://github.com/alinojoumi8/agent-economy/actions/runs/34119113213)
+  passed **20 policy recovery, 324 research, 47 saved-world, 359 core, 144 smoke
+  and 100 Chromium checks**. Full [CI 34119137654](https://github.com/alinojoumi8/agent-economy/actions/runs/34119137654)
+  passed all eight Ubuntu/Python 3.12 shards: **2,027 passed, 10 skipped**.
+- The v3 CLI now drafts and executes declared policies from admitted saved
+  worlds. Claim 6 derives the complete permitted transition from the prospective
+  manifest and original source configuration. It preserves original seeds,
+  completed days, economic settings, schedules and recorded history, and requires
+  the assigned scope in the original allowance before allocating a child. Legacy
+  `continuation_config` validation and attempt/replay protocols remain unchanged.
+- Frozen execution, day recovery and phase recovery branch independent copies
+  from the same initial state for every arm and model draw. Replay receipt 3
+  binds the declared transition and new interval. Independent verification checks
+  origin, continuation, reservation history and both price domains, including
+  relocated evidence read without current prompt hashes or provider access.
+  Inherited calls/costs remain separate from new model work and the shared cap.
+- Drafting accepts repeated `--checkpoint` paths with their original common
+  configuration and input root. It retains source seeds, starts the policy on
+  the first new day and treats `--ticks` as an absolute horizon. Storage admission
+  now counts source/replay copies for every model replicate as well as every arm.
+  The existing required policy recovery job also runs the saved-policy suite.
+- Initial end-to-end checks passed all three execution paths (**3 tests**, then
+  **12 tests** after admission/cost/relocation checks). Expanded failure coverage
+  caught a test assumption: cancellation may reserve a call without reaching
+  the HTTP server, and a closed cancellation is recorded with unknown usage.
+  The corrected assertions preserve that encumbrance; the failure/CLI subset
+  passed **5 tests** (30.96 s). All **350 Python sources** compiled in memory,
+  the CI configuration parsed, and `pip check` passed.
+- The Semantics 16 fixture completed eight worlds and replayed exactly, but
+  had no goods sales for its declared firm during the new interval. Coverage now
+  explicitly checks the resulting null price effect and source events, while
+  retaining all three execution paths with observed prices in both domains.
+- Final regression on Windows/Python 3.11.15:
+  `.venv/Scripts/python.exe -u -m pytest -x -q tests/test_policy_origins.py tests/test_policy_recovery.py tests/test_policy_studies.py tests/test_provider_budget.py tests/test_checkpoint_origins.py tests/test_checkpoint_studies.py tests/test_checkpoint_study_jobs.py tests/test_working_attempts.py tests/test_working_studies.py tests/test_phase_working_attempts.py tests/test_phase_working_studies.py tests/test_working_evidence.py tests/test_study_runner.py tests/test_study_results.py tests/test_research_attempt_integrity.py tests/test_recorded_replay_golden.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **312 tests** (1602.28 s), including all **22 saved-policy cases**.
+  The existing Starlette TestClient deprecation warning remains. Committed-head
+  required and full-suite CI results are tracked on draft PR #82.
+- This slice uses controlled loopback HTTP, synthetic historical costs and short
+  temporary roots admitted above the 40 GiB free-space floor. It performs no paid
+  inference, cleanup, schema migration or operator UI change. See the updated
+  [policy workflow](2026-09-07-live-policy-studies.md) for the exact contract.
+- Next: private v3 bundles and operator review/launch/comparison, followed by a
+  separately authorized real-provider rehearsal. The remaining city, household,
+  education, production/housing, banking and scale validation remain active.

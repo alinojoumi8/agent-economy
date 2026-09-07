@@ -105,7 +105,7 @@ def _verified_row(row: dict, cell: dict, payload: dict, spec: StudySpec, locatio
                     {k: v for k, v in expected.items() if k != "eligibility"}):
                 reasons.append("policy_worker_result_mismatch")
             reasons += verify_policy_cell(packet, cell, payload["batch"],
-                resolve_path=location.locate, expected_usage=usage)
+                resolve_path=location.locate, expected_usage=usage, working_budget=budget if spec.origin else None)
             if row.get("worker_stop_reason"):
                 reasons.append(row["worker_stop_reason"])
             if not preflight_ready:

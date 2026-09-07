@@ -7,13 +7,14 @@ for directory configuration, source limits and continuation semantics.
 Focused coverage is in `tests/test_checkpoint_study_jobs.py`; browser coverage
 and synthetic desktop/mobile review captures are in the world-workspace suite.
 
-Fresh-world model-policy studies use the separate v3 CLI and evidence reader.
+Policy studies from fresh and saved worlds use the separate v3 CLI and evidence reader.
 Their prospective day/phase recovery policy preserves the original shared
 provider allowance across readiness checks and all model replicates. See the
 [live-policy workflow](plans/2026-09-07-live-policy-studies.md#cli-workflow) for
 drafting, explicit launch authorization, pause and provider-free resume validation.
-`tests/test_policy_recovery.py` exercises controlled loopback HTTP and original
-allowance recovery in its own required CI job. These v3 studies are not yet
+`tests/test_policy_recovery.py` and `tests/test_policy_origins.py` exercise controlled
+loopback HTTP, original allowance recovery and declared saved-world policy
+transitions in their own required CI job. These v3 studies are not yet
 advertised by the existing operator or private bundle workflow.
 
 ## Repository workflow
@@ -134,7 +135,7 @@ for the manifest policy, CLI controls and compatibility requirements. On Windows
 use a fresh short `--basetemp` and verify at least 40 GiB of free space before
 pytest. Complete Python coverage belongs in the CI shards, not one local run.
 
-Checkpoint-derived studies use an explicit version 2 study declaration and
+Scripted checkpoint-derived studies use an explicit version 2 study declaration and
 attempt version 4. Their independent recorded replay begins at the admitted
 saved day. Run `tests/test_checkpoint_origins.py` and
 `tests/test_checkpoint_studies.py` for source immutability, both price domains,

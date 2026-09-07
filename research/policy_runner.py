@@ -32,11 +32,9 @@ def validate_policy_execution(spec: StudySpec, config: dict, *, verify_source: b
         raise ValueError("policy studies require persisted random state")
     if spec.operations.concurrency != 1:
         raise ValueError("policy studies supervise one world at a time")
-    if spec.origin is not None:
-        raise ValueError("saved-world policy changes require their explicit continuation contract")
     if spec.operations.pause_policy != "preserve_and_stop" and not working_protocol(spec.operations.pause_policy):
         raise ValueError("unsupported policy pause contract")
-    if config.get("shocks"):
+    if config.get("shocks") and spec.origin is None:
         raise ValueError("declare policy-study economic shocks in the assigned arms")
     if (len(study_cells(spec)) > 512 or len(spec.analysis.outcomes) > 64
             or spec.time.measurement_end - spec.time.measurement_start > 3660
@@ -104,15 +102,22 @@ def _worker(batch: dict, cell: dict | None, policy_key: str, input_root: str,
                           "manifest_sha256": batch["manifest_sha256"],
                           **_preflight(configured, budget), "provider_usage": budget.snapshot(scope=scope)}
             else:
-                from research.study_runner import arm_interventions, collect_outcomes
+                from research.study_runner import _arm_config, collect_outcomes
 
                 if cell not in declared["assigned_cells"] or cell["policy"] != policy_key:
                     raise ValueError("worker is outside the prospective policy assignment")
-                configured["shocks"] = arm_interventions(spec, cell["arm"])
-                row = execute_attempt(run_id=f"policy-{cell['cell_key']}", seed=cell["seed"],
+                configured = _arm_config(spec, config, cell["arm"])
+                executor, extra, origin = execute_attempt, {}, None
+                if spec.origin:
+                    from research.attempt_origins import checkpoint_claim_fields, execute_checkpoint_attempt
+                    fields = checkpoint_claim_fields(spec, batch["manifest"], Path(batch["data_dir"]),
+                        cell["seed"], cell["arm"], policy_cell=cell, completion_guard=budget)
+                    executor, extra = execute_checkpoint_attempt, {"origin_fields": fields}
+                    origin = fields["checkpoint_origin"]["receipt"]
+                row = executor(run_id=f"policy-{cell['cell_key']}", seed=cell["seed"],
                     arm=cell["arm"], config=configured, ticks=spec.time.horizon,
                     data_dir=Path(batch["data_dir"]) / "cells" / cell["cell_key"],
-                    collect=lambda store: collect_outcomes(store, spec), completion_guard=budget)
+                    collect=lambda store: collect_outcomes(store, spec, origin=origin), completion_guard=budget, **extra)
                 packet = {"contract": "policy-cell-v1", "manifest_sha256": batch["manifest_sha256"],
                           "cell": cell, "attempt": row, "provider_usage": budget.snapshot(scope=scope)}
             if code_identity() != batch["manifest"]["code"]:
@@ -185,7 +190,7 @@ def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
                        resolve_path: Callable[[str], Path] | None = None,
                        expected_usage: dict | None = None, working_budget: ProviderBudget | None = None) -> list[str]:
     """Bind the independent scientific receipt to the prospective policy cell."""
-    from research.study_runner import arm_interventions, collect_outcomes
+    from research.study_runner import _arm_config, collect_outcomes
     from research.study_results import _logical_path, read_json
 
     spec = StudySpec.model_validate(batch["manifest"]["study"])
@@ -199,27 +204,34 @@ def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
         original = _logical_path(batch["data_dir"]) / "cells" / cell["cell_key"]
         original /= digest_json({"seed": cell["seed"], "arm": cell["arm"]})[:12]
         directory = locate(str(original)).resolve()
+        origin_path = None
+        if spec.origin:
+            source = next(item for item in spec.origin.sources if item.seed == cell["seed"])
+            artifact = next(item for item in spec.inputs if item.key == source.input_key)
+            origin_path = locate(str(_logical_path(batch["data_dir"]) / "context" / "inputs" / f"{artifact.sha256}.blob")).resolve()
 
         def confined(value):
             path = locate(value)
-            if not path.resolve().is_relative_to(directory):
+            if path.resolve() != origin_path and not path.resolve().is_relative_to(directory):
                 raise ValueError("policy evidence leaves its assigned namespace")
             return path
 
         if confined(row["attempt_claim"]).resolve() != directory / "attempt.json":
             raise ValueError("policy claim leaves its assigned namespace")
         claim = read_json(confined(row["attempt_claim"]))
-        expected = json.loads(json.dumps(batch["manifest"]["policy_configurations"][cell["policy"]]))
-        expected.update(seed=cell["seed"], shocks=arm_interventions(spec, cell["arm"]),
+        expected = _arm_config(spec, batch["manifest"]["resolved_config"], cell["arm"], verify_policy_source=False)
+        expected.update(seed=cell["seed"],
             checkpoint_every=0, speed_delay_s=0.0,
             checkpoint_dir=str(original / "checkpoints"), report_dir=str(original / "reports"))
         working = bool(working_protocol(spec.operations.pause_policy))
-        if (claim["protocol_version"] != (5 if working else 1) or digest_json(claim["config"]) != digest_json(expected)
+        if (claim["protocol_version"] != (6 if spec.origin else 5 if working else 1) or digest_json(claim["config"]) != digest_json(expected)
                 or claim["arm"] != cell["arm"] or type(claim["seed"]) is not int or claim["seed"] != cell["seed"]):
             raise ValueError("attempt differs from the assigned policy configuration")
-        if working:
+        if working or spec.origin:
             from research.policy_studies import verify_budget_history
-            if (working_budget is None or claim["study_manifest"] != batch["manifest"]
+            if working_budget is None:
+                working_budget = _budget(batch, scope=cell["cell_key"], binding=cell["policy"])
+            if (claim["study_manifest"] != batch["manifest"]
                     or claim["study_manifest_sha256"] != batch["manifest_sha256"]
                     or digest_json(claim["policy_cell"]) != digest_json(cell)
                     or claim["provider_budget_contract_sha256"] != digest_json(working_budget.contract.model_dump(mode="json"))):
@@ -233,17 +245,26 @@ def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
         if row.get("execution_status") != "completed":
             return sorted(set(reasons + ["execution_not_completed"]))
         reasons += verify_attempt(row, expected_ticks=spec.time.horizon, resolve_path=confined)
-        genesis = read_json(directory / "genesis.json")
-        if digest_json({"state": genesis["sha256"], "prng_state": genesis["prng_state"]}) != row["genesis_hash"]:
-            reasons.append("genesis_receipt_mismatch")
+        origin = None
+        if spec.origin:
+            from research.attempt_origins import verify_origin_identity
+            origin = verify_origin_identity(row, claim, resolve_path=confined)
+        else:
+            genesis = read_json(directory / "genesis.json")
+            if digest_json({"state": genesis["sha256"], "prng_state": genesis["prng_state"]}) != row["genesis_hash"]:
+                reasons.append("genesis_receipt_mismatch")
         if expected_usage["breached_calls"]:
             reasons.append("provider_usage_contract_breached")
         if not reasons:
-            store = Store(str(confined(row["source_database"])), create=False, read_only=True)
-            try:
-                measured = collect_outcomes(store, spec)
-            finally:
-                store.close()
+            with ExitStack() as readers:
+                if spec.origin:
+                    from research.checkpoint_origins import closed_checkpoint
+                    store = readers.enter_context(closed_checkpoint(confined(row["source_database"]),
+                        max_bytes=spec.operations.max_disk_bytes))
+                else:
+                    store = Store(str(confined(row["source_database"])), create=False, read_only=True)
+                    readers.callback(store.close)
+                measured = collect_outcomes(store, spec, origin=origin)
             if any(digest_json(row.get(key)) != digest_json(value) for key, value in measured.items()):
                 reasons.append("independent_measurement_mismatch")
             if measured["provider_calls"] > expected_usage["provider_calls"]:
