@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { studyFrameMatches, studyNumber, studyOutcomeRows } from "../src/workspaces/studyLibraryModel.js";
+import { studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "../src/workspaces/studyLibraryModel.js";
 
 test("study evidence is bound to local live run, fork, study and result identity", () => {
   const frame = { context: { run_id: "run", fork_id: "fork", tick: "live" },
@@ -38,4 +38,16 @@ test("working progress cannot be accepted as a finalized comparison or stale che
     assert.equal(studyFrameMatches(frame, { ...scope, ...change }), false);
   }
   assert.equal(studyFrameMatches({ ...frame, contract: "operator-study-comparison-v1" }, scope), false);
+});
+
+test("only a verified phase can be shown as the next unfinished-day step", () => {
+  const row = { ticks: 0, expected_ticks: 3, execution_status: "paused",
+    position: { completed_tick: 0, active_tick: 1, next_phase: "NEWSROOM" } };
+  assert.equal(studyPhasePosition(row, true), "Day 1 · next: News publication");
+  assert.equal(studyPhasePosition(row, false), "Not verified");
+  for (const change of [{ active_tick: 2 }, { completed_tick: -1 }, { next_phase: "private-value" }, { active_tick: null }]) {
+    assert.equal(studyPhasePosition({ ...row, position: { ...row.position, ...change } }, true), "Unavailable");
+  }
+  assert.equal(studyPhasePosition({ ticks: 1, execution_status: "paused" }, true), "Between days");
+  assert.equal(studyPhasePosition({ execution_status: "planned" }, true), "Not started");
 });

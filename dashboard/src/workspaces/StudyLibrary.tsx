@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from "react-router";
 import { workspaceApi } from "../app/api";
 import { useObserverViewState } from "../app/observerViewState";
 import { WorkspaceTable } from "./workspaceShared";
-import { studyFrameMatches, studyNumber, studyOutcomeRows } from "./studyLibraryModel.js";
+import { studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "./studyLibraryModel.js";
 import { operatorStudyFrameMatches } from "./studyLauncherModel.js";
 import "./price-lab.css";
 import "./study-library.css";
@@ -164,6 +164,7 @@ export function StudyLibrary() {
       <WorkspaceTable caption="Saved study days" rows={working.attempts.map((row, index) => ({ ...row, id: index }))} columns={[
         { key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
         { key: "ticks", label: "Saved day / horizon", render: row => `${row.ticks ?? "Unavailable"} / ${row.expected_ticks}` },
+        { key: "position", label: "Next step", render: row => studyPhasePosition(row, working.verification.status === "verified") },
         { key: "execution", label: "Execution", render: row => words(row.execution_status) },
         { key: "eligibility", label: "Eligibility", render: row => words(row.eligibility.status) },
       ]} />

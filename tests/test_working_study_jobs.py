@@ -25,19 +25,21 @@ def _settled(client, identity):
 
 
 @pytest.mark.parametrize("preset", ["G2", "F2"])
-def test_real_pause_export_resume_keeps_world_identity_budget_and_parent_evidence(launch_api, tmp_path, monkeypatch, preset):
+@pytest.mark.parametrize("pause_kind", ["day", "phase"])
+def test_real_pause_export_resume_keeps_world_identity_budget_and_parent_evidence(launch_api, tmp_path, monkeypatch, preset, pause_kind):
     client, jobs, _, economy = launch_api
     changes = economy.store.conn.total_changes
+    controls = {"pause_after_ticks": 1} if pause_kind == "day" else {"pause_after_phase": "MARKET"}
     draft = client.post(BASE + "/drafts/validate", params=SCOPE, headers=HEADERS,
-                        json={**REQUEST, "preset": preset, "pause_after_ticks": 1}).json()
-    assert draft["spec"]["operations"]["pause_policy"] == "preserve_and_resume"
+                        json={**REQUEST, "preset": preset, **controls}).json()
+    assert draft["spec"]["operations"]["pause_policy"] == ("preserve_and_resume" if pause_kind == "day" else "preserve_and_resume_phases")
     launched = client.post(f"{BASE}/drafts/{draft['id']}/launch", params=SCOPE, headers=HEADERS,
         json={"draft_sha256": draft["draft_sha256"], "idempotency_key": "a" * 32})
     assert launched.status_code == 202, launched.text
     parent = _settled(client, launched.json()["id"])
     assert parent["status"] == "paused" and parent["resumable"], parent
     assert parent["finished_cells"] == parent["eligible_cells"] == 0
-    assert [row["ticks"] for row in parent["cells"]] == [1, 0, 0, 0]
+    assert [row["ticks"] for row in parent["cells"]] == [1 if pause_kind == "day" else 0, 0, 0, 0]
     assert all(row["eligibility"]["status"] == "pending" for row in parent["cells"])
     job = jobs.path("jobs", parent["id"])
     batch = json.loads((job / "batch.json").read_text())
@@ -56,8 +58,11 @@ def test_real_pause_export_resume_keeps_world_identity_budget_and_parent_evidenc
     assert view["operator_job"]["id"] == parent["id"]
     assert view["state"] == "paused" and not view["comparison_available"]
     assert view["verification"]["eligibility"] == "pending"
+    if pause_kind == "phase":
+        position = {"completed_tick": 0, "active_tick": 1, "next_phase": "NEWSROOM"}
+        assert view["attempts"][0]["position"] == parent["cells"][0]["position"] == position
     assert not ({"summary", "metrics", "outcomes", "measurements"} & view.keys())
-    for secret in (str(data), "source_database", "resolved_config"):
+    for secret in (str(data), "source_database", "resolved_config", "phase_state_sha256", "recorded_inputs"):
         assert secret not in view_response.text
     export_body = {"result_sha256": item["result_sha256"], "verification_sha256": view["verification_sha256"]}
     receipt = client.post(f"{BASE}/studies/{item['id']}/export", params=SCOPE, headers=HEADERS, json=export_body)

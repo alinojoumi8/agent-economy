@@ -276,8 +276,15 @@ Interrupted/failed artifacts are retained, later unstarted cells remain in the
 assigned cohort, and incomplete worlds cannot contribute effects. A paused
 attempt stops the batch. A study declaring `preserve_and_resume` can continue
 from a verified committed-day boundary with its original assignments and
-cumulative limits. Partial-phase recovery remains unsupported; an ordinary
-relaunch creates new attempts.
+cumulative limits. New studies may instead declare `preserve_and_resume_phases`
+to retain verified partial-day positions and recorded inputs. Use
+`--pause-after-phase MARKET` for a planned phase pause, or choose **Pause after
+a step** while reviewing an operator draft. Saved-day and step limits are
+mutually exclusive. The library shows the completed day and next unfinished
+step separately; partial-day metrics remain unavailable. Resume retains the
+original budget and verifies every earlier recorded-input prefix. See the
+[phase recovery contract](../plans/2026-09-06-paused-study-resume.md#version-3-phase-recovery)
+for commands and validation. An ordinary relaunch still creates new attempts.
 
 Each completed attempt must reconcile, finish at the declared horizon and
 boundary, and pass an actual recorded replay comparison. Source/replay hashes,

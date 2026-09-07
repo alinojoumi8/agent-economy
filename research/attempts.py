@@ -203,6 +203,9 @@ def verify_attempt(row: dict, *, expected_ticks: int,
         if source_wal.exists() and source_wal.stat().st_size:
             reasons.append("source_database_changed")
         claim = json.loads(locate(row["attempt_claim"]).read_text(encoding="utf-8"))
+        if (("working_history" in row and claim.get("protocol_version") not in {2, 3})
+                or ("position" in row and claim.get("protocol_version") != 3)):
+            reasons.append("attempt_protocol_mismatch")
         source = json.loads(locate(row["source_receipt"]).read_text(encoding="utf-8"))
         replay = json.loads(locate(row["replay_receipt"]).read_text(encoding="utf-8"))
         if (claim["expected_ticks"] != expected_ticks
@@ -217,12 +220,14 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 "source_state_hash", "genesis_hash", "event_hash", "metrics",
                 "series", "events", "spend_usd", "provider_calls", "outcome_observations")):
             reasons.append("source_receipt_mismatch")
-        if claim.get("protocol_version") == 2:
+        if claim.get("protocol_version") in {2, 3}:
             from research.working_attempts import verify_working_history
             reasons.extend(verify_working_history(row, claim, resolve_path=locate))
             for key in ("working_history", "genesis_receipt_sha256", "prng_state_sha256", "active_wall_seconds"):
                 if digest_json(source.get(key)) != digest_json(row.get(key)):
                     reasons.append("working_source_receipt_mismatch")
+            if claim["protocol_version"] == 3 and source.get("position") != row.get("position"):
+                reasons.append("working_source_receipt_mismatch")
         if (replay["execution"] != "recorded_replay"
                 or replay["attempt_claim_sha256"] != row["attempt_claim_sha256"]
                 or replay["source_database_sha256"] != row["source_database_sha256"]
@@ -249,8 +254,11 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 reasons.append("source_contract_mismatch")
             if canonical_state_receipt(store.conn)["sha256"] != row["source_state_hash"]:
                 reasons.append("source_state_changed")
-            if claim.get("protocol_version") == 2 and digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
+            if claim.get("protocol_version") in {2, 3} and digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
                 reasons.append("source_prng_state_changed")
+            if claim.get("protocol_version") == 3:
+                from research.working_attempts import verify_phase_history
+                verify_phase_history(store, row, claim, resolve_path=locate)
         finally:
             store.close()
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):

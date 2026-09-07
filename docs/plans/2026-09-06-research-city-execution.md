@@ -791,3 +791,66 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   `pytest-of-matri` access denial during fixture setup (21 passed, 1 setup error);
   no permissions or old temp data were changed. Research CI YAML folding and
   staged whitespace checks passed; Gitleaks found no staged secrets.
+
+## Saved-phase study recovery (2026-09-07)
+
+- The preceding Semantics 16 commit, `698606b`, passed all four required jobs
+  in [CI 34084832550](https://github.com/alinojoumi8/agent-economy/actions/runs/34084832550).
+  Its eight Ubuntu/Python 3.12 shards in
+  [run 34084843908](https://github.com/alinojoumi8/agent-economy/actions/runs/34084843908)
+  passed **1,837 tests with 10 skipped**. These precede this recovery slice.
+- Added explicit `preserve_and_resume_phases` / `working-attempt-v3`, alongside
+  the unchanged saved-day policy. It binds completed/active day, next phase,
+  private phase-state digest, engine/persona/lifecycle streams and all earlier
+  admitted-input prefixes. Planned phase stops occur after atomic phase commits.
+  Cooperative same-phase retries retain their original time/disk budget and
+  append-only lineage. Missing/crashed receipts still refuse recovery.
+- Active days produce null study outcomes and `partial_phase` observations.
+  Supervised G2/F2 assignments remain pending through pause and private transport;
+  final results still require independent exact replay. Public library/job
+  projections expose only the verified day/next-step summary. A reviewed
+  operator step choice selects the phase contract; existing day choices retain
+  version 2. Historical/foreign context and resume authority remain checked.
+- Initial combined selection: **26 passed, 12 failed** (77.04 s); the new fixture
+  used `baseline` instead of the catalog's `control` arm. The assignment guard
+  correctly refused it. After correction, **11 passed, 5 failed** (67.00 s):
+  normal gateway retries healed the synthetic outage, and a new test reader
+  omitted SQLite's query-only flag. The phase matrix itself passed for semantics
+  7 and 16, including uninterrupted equivalence and exact replay.
+- The expanded run passed **19 tests with 3 failures** (153.44 s), including both
+  four-cell G2/F2 studies, pending/final private bundles and earlier-input mutation
+  refusal. Remaining failures were outage fixtures: quiet news days had no desk
+  requests, and the first model conversation occurred on day 2. Declaring daily
+  news and checking the actual active day corrected those assumptions.
+  Repeated outages in morning, newsroom, evening and memory then passed all
+  **8 checks** for semantics 7/16 (50.24 s), retaining inputs and exact replay.
+- TypeScript and **241 UI unit tests** passed. The phase selector, reviewed draft,
+  saved-progress display, mobile layout, existing day pause/resume and active
+  checkpoint exclusions passed **4 focused Chromium tests** (9.7 s).
+  Final regression and release checks follow below.
+- Final backend selection passed **152 tests** (522.18 s), using a fresh short
+  Windows root and the 40 GiB preflight. It includes both new phase suites,
+  existing working-attempt/batch/evidence/job suites, study results/library/jobs/
+  protocol checks, recorded golden replay and documentation. All four real
+  operator day/phase × G2/F2 cases completed four eligible worlds, with retained
+  parent receipts, original budgets and no mutation of the observed world.
+  Compilation and dependency checks passed; the existing Starlette warning remains.
+- Visual inspection caught mobile clipping that the document-overflow check
+  missed. The library now constrains its grid track and verdict panel; browser
+  acceptance also checks panel bounds and scroll access to the final column.
+- Corrected mobile/working flows passed **2 Chromium tests** (9.1 s). The full
+  browser suite then passed **105 tests with 1 skipped** (2.3 min); the skip is
+  the opt-in real-backend menu smoke. Desktop and scrolled-mobile synthetic
+  captures are retained in `docs/research/assets/study-phase-progress*.png`.
+  Final UI unit checks passed **241 tests**; TypeScript, licenses and production
+  build passed. The existing large-chunk warning remains.
+- The actual `research.study_runner --validate-only --pause-after-phase MARKET`
+  command accepted both G2/F2 three-day, two-seed drafts using
+  `runs/price-lab-keyed.yaml` and the phase policy. These were validation-only
+  CLI checks; actual execution/replay is covered above. The final documentation
+  selection passed **22 tests** (0.55 s). Approximately **125.3 GiB** remained
+  after these checks. CI is dispatched after the commit; hosted integration and
+  the full Windows/version matrix remain unrun locally.
+- This remains progress on the five-part goal. Live policy studies,
+  checkpoint-derived experiments, remaining city lenses, W5–W8 economics and
+  W9 validation remain pending. No paid provider run or cleanup was performed.

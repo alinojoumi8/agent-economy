@@ -6,14 +6,15 @@ import { useObserverViewState } from "../app/observerViewState";
 import { StudyLibrary } from "./StudyLibrary";
 import { operatorStudyFrameMatches, parseStudySeeds, studyJobActive } from "./studyLauncherModel.js";
 import { WorkspaceTable } from "./workspaceShared";
+import { studyPhaseLabel, studyPhasePosition } from "./studyLibraryModel.js";
 import "./study-launcher.css";
 
 const BASE = "/api/v2/operator/research";
 const words = (value: unknown) => String(value ?? "Unavailable").replaceAll("_", " ");
 const mib = (value: number) => `${(value / 1048576).toFixed(1)} MiB`;
 type Form = { preset: string; seeds: string; horizon: number; intervention_tick: number; goods_firm_id: number;
-  max_wall_seconds: number; max_disk_mib: number; pause_after_ticks: number | null };
-const initialForm: Form = { preset: "G2", seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128, pause_after_ticks: null };
+  max_wall_seconds: number; max_disk_mib: number; pause_after_ticks: number | null; pause_after_phase: string | null };
+const initialForm: Form = { preset: "G2", seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128, pause_after_ticks: null, pause_after_phase: null };
 
 export function PriceStudyWorkbench() {
   const [params, setParams] = useSearchParams();
@@ -147,9 +148,13 @@ export function StudyLauncher() {
         <label>Wall-time limit (seconds)<input type="number" min={10} max={300} required value={form.max_wall_seconds} onChange={event => setForm({ ...form, max_wall_seconds: Number(event.target.value) })} /></label>
         <label>Evidence disk budget (MiB)<input type="number" min={32} max={128} required value={form.max_disk_mib} onChange={event => setForm({ ...form, max_disk_mib: Number(event.target.value) })} /></label>
         {caps?.resume && <label>Pause after saved days (optional)<input type="number" min={1} max={form.horizon - 1} value={form.pause_after_ticks ?? ""}
-          onChange={event => setForm({ ...form, pause_after_ticks: event.target.value ? Number(event.target.value) : null })} aria-describedby="study-pause-help" /></label>}
+          onChange={event => setForm({ ...form, pause_after_ticks: event.target.value ? Number(event.target.value) : null, pause_after_phase: null })} aria-describedby="study-pause-help" /></label>}
+        {Array.isArray(caps?.pause_phases) && <label>Pause after a step (optional)<select value={form.pause_after_phase ?? ""}
+          onChange={event => setForm({ ...form, pause_after_phase: event.target.value || null, pause_after_ticks: null })} aria-describedby="study-pause-help">
+          <option value="">No step pause</option>{caps.pause_phases.map((phase: string) => <option key={phase} value={phase}>{studyPhaseLabel(phase)}</option>)}
+        </select></label>}
       </div><p id="study-seed-help">Use one to five unique seeds. At least two usable pairs are required for a bootstrap interval. Equity target: listed firm 1; currency: USD.</p>
-      {caps?.resume && <p id="study-pause-help">Leave blank to run to completion. A planned pause stops the batch at a saved day in its first unfinished world. Resume uses the remaining original budget.</p>}
+      {caps?.resume && <p id="study-pause-help">Leave blank to run to completion. Choose a saved-day limit or a step in the first unfinished world. An unfinished day remains pending and has no price comparison. Resume uses the remaining original budget.</p>}
       <button type="submit">{pending ? "Validating…" : "Validate draft"}</button></fieldset>
       <p>Validation preserves an immutable protocol and estimates storage. It creates no simulated worlds.</p>
     </form>}
@@ -163,6 +168,7 @@ export function StudyLauncher() {
         <div><dt>Wall-time limit</dt><dd>{draft.estimate.wall_seconds_limit} seconds</dd></div>
         <div><dt>Provider calls / spend</dt><dd>0 / $0</dd></div>
         {draft.request.pause_after_ticks != null && <div><dt>Planned pause</dt><dd>After {draft.request.pause_after_ticks} saved days in the first world</dd></div>}
+        {draft.request.pause_after_phase != null && <div><dt>Planned pause</dt><dd>After {studyPhaseLabel(draft.request.pause_after_phase)} in the first world</dd></div>}
       </dl>
       <p>{draft.estimate.method}. Actual disk use is checked every 200 ms; a write or final report can exceed the threshold.</p>
       <div className="study-launcher__arms">{draft.spec.arms.map((arm: any) => <article key={arm.key}><h4>{arm.role === "baseline" ? "Baseline" : "Treatment"}</h4><p>{arm.label}</p>
@@ -184,6 +190,7 @@ export function StudyLauncher() {
         columns={[{ key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
           { key: "execution_status", label: "Execution", render: row => words(row.execution_status) },
           { key: "ticks", label: "Saved day", render: row => row.ticks ?? "Unavailable" },
+          { key: "position", label: "Next step", render: row => studyPhasePosition(row, job.resumable || job.status === "completed") },
           { key: "eligibility", label: "Evidence", render: row => words(row.eligibility.status) },
           { key: "reasons", label: "Exclusions", render: row => row.eligibility.reasons.map(words).join(", ") || "None reported" }]} />
       <div className="study-launcher__actions"><button type="button" disabled={jobQuery.isFetching} onClick={() => { void jobQuery.refetch(); }}>Refresh job status</button>

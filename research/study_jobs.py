@@ -28,6 +28,8 @@ from research.studies import Contract, Digest, StudySpec, validate_study_inputs
 from research.study_results import StudyArtifactError, StudyIdentityChanged, read_json
 from research.study_runner import run_study, validate_execution
 from research.working_studies import validate_resume
+from research.working_contracts import phase_controls
+from world.phases import phase_names_for_semantics
 from run_config import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +51,8 @@ class PilotRequest(Contract):
     max_wall_seconds: Annotated[int, Field(ge=10, le=300)] = 180
     max_disk_mib: Annotated[int, Field(ge=32, le=128)] = 128
     pause_after_ticks: Annotated[int, Field(ge=1, le=30)] | None = None
+    pause_after_phase: Literal["NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+                               "NEWSROOM", "EVENING", "MEMORY", "FINALIZE"] | None = None
 
     @model_validator(mode="after")
     def ordered(self):
@@ -56,6 +60,8 @@ class PilotRequest(Contract):
             raise ValueError("intervention must be within the horizon and seeds must be unique")
         if self.pause_after_ticks is not None and self.pause_after_ticks >= self.horizon:
             raise ValueError("the planned pause must precede the horizon")
+        if self.pause_after_phase is not None and self.pause_after_ticks is not None:
+            raise ValueError("choose a saved-day limit or a phase pause")
         return self
 
 
@@ -106,7 +112,8 @@ class StudyJobs:
             "limits": {"max_seeds": 5, "max_horizon": 30, "max_wall_seconds": 300,
                        "max_disk_mib": 128, "concurrency": 1, "provider_calls": 0, "spend_usd": 0},
             "scope": "New independent worlds; the observed world is not a parent checkpoint.",
-            "checkpoint_fork": False, "live_models": False, "resume": True}
+            "checkpoint_fork": False, "live_models": False, "resume": True,
+            "pause_phases": list(phase_names_for_semantics(7))}
 
     @staticmethod
     def _spec(request: PilotRequest, config: dict) -> StudySpec:
@@ -117,9 +124,12 @@ class StudyJobs:
             goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id)
         values = spec.model_dump(mode="json")
         values["operations"].update(max_wall_seconds=request.max_wall_seconds,
-                                    max_disk_bytes=request.max_disk_mib * MIB, pause_policy="preserve_and_resume")
+            max_disk_bytes=request.max_disk_mib * MIB,
+            pause_policy="preserve_and_resume_phases" if request.pause_after_phase else "preserve_and_resume")
         spec = StudySpec.model_validate(values)
         validate_execution(spec, config)
+        phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
+                       ticks=request.pause_after_ticks, phase=request.pause_after_phase)
         return spec
 
     def validate(self, request: PilotRequest, context: dict) -> dict:
@@ -413,13 +423,16 @@ def execute_job(root: Path, identity: str) -> None:
                     row = event["row"]
                     publish_json(job / f"cell-{event['index']}.json", {
                         "arm": row["arm"], "seed": row["seed"], "execution_status": row["execution_status"],
-                        "eligibility": row["eligibility"], "ticks": row.get("ticks")})
+                        "eligibility": row["eligibility"], "ticks": row.get("ticks"),
+                        **({"position": {key: row["position"][key]
+                            for key in ("completed_tick", "active_tick", "next_phase")}} if "position" in row else {})})
 
             result = run_study(spec, draft["protocol"]["resolved_config"], input_root=ROOT,
                 data_root=service.data_root, out_dir=service.out_dir, expected_code=draft["code"],
                 progress=progress, worker_guard_path=job / "worker.lock",
                 resume_batch=claim.get("resume", {}).get("batch"),
-                pause_after_ticks=None if "resume" in claim else draft["request"].get("pause_after_ticks"))
+                pause_after_ticks=None if "resume" in claim else draft["request"].get("pause_after_ticks"),
+                pause_after_phase=None if "resume" in claim else draft["request"].get("pause_after_phase"))
             path = Path(result["artifacts"]["json"])
             for index, row in enumerate(result["results"], 1):
                 if not (job / f"cell-{index}.json").exists():

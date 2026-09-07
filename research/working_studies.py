@@ -16,6 +16,7 @@ from research.working_attempts import (
     _batch_active_seconds, _check_source, _contract, _duration, _history, _member, _read,
     verify_working_history,
 )
+from research.working_contracts import PHASE_PROTOCOL, phase_controls, working_protocol
 
 CONTRACT = "working-study-supervision-v1"
 
@@ -99,13 +100,14 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict], 
                 or row["attempt_claim_sha256"] != file_sha256(claim_path)
                 or claim["study_manifest"] != batch["manifest"]
                 or claim["study_manifest_sha256"] != batch["manifest_sha256"]
+                or claim["protocol_version"] != (3 if batch["manifest"]["attempt_protocol"] == PHASE_PROTOCOL else 2)
                 or claim["config"] != cfg or claim["config_sha256"] != digest_json(cfg)
                 or any(claim[key] != row[key] for key in ("run_id", "seed", "arm", "expected_ticks", "config_sha256"))):
             raise ValueError("working cell contract changed")
         if row["execution_status"] == "paused":
             if any(_member(directory, name).exists() for name in ("source-receipt.json", "result.json", "finalized.json")):
                 raise ValueError("finalized cell cannot resume")
-            _, paused = _history(directory, file_sha256(claim_path))
+            _, paused = _history(directory, file_sha256(claim_path), resolve_path=owned)
             if paused != row:
                 raise ValueError("working pause differs from supervised progress")
             if location is None:
@@ -206,12 +208,16 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                       data_root: str | Path, out_dir: str | Path,
                       expected_code: dict | None = None, progress: Callable[[dict], None] | None = None,
                       worker_guard_path: Path | None = None, resume_batch: str | Path | None = None,
-                      pause_after_ticks: int | None = None) -> dict:
+                      pause_after_ticks: int | None = None,
+                      pause_after_phase: str | None = None) -> dict:
     started = time.monotonic()
-    if spec.operations.pause_policy != "preserve_and_resume":
+    protocol = working_protocol(spec.operations.pause_policy)
+    if not protocol:
         raise ValueError("working studies require the preserve_and_resume policy")
     if pause_after_ticks is not None and (type(pause_after_ticks) is not int or pause_after_ticks < 1):
         raise ValueError("pause tick limit must be a positive integer")
+    phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
+                   ticks=pause_after_ticks, phase=pause_after_phase)
     if expected_code is not None and code_identity() != expected_code:
         raise ValueError("source changed after study validation")
     options = dict(spec=spec, config=config, input_root=input_root, data_root=data_root, out_dir=out_dir)
@@ -237,7 +243,8 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
         start_path = publish_json(data / (prefix + "-start.json"), {
             "contract": CONTRACT, "manifest_sha256": batch["manifest_sha256"],
             "previous_end_sha256": records[-1]["end_sha256"] if records else None,
-            "prior_active_wall_seconds": prior, "pause_after_ticks": pause_after_ticks})
+            "prior_active_wall_seconds": prior, "pause_after_ticks": pause_after_ticks,
+            **({"pause_after_phase": pause_after_phase} if protocol == PHASE_PROTOCOL else {})})
         if progress:
             progress({"stage": "prepared", "batch": batch})
         context = multiprocessing.get_context("spawn")
@@ -266,7 +273,8 @@ def run_working_study(spec: StudySpec, config: dict, *, input_root: str | Path,
             process = context.Process(target=_worker, args=(spec.model_dump(mode="json"), config,
                 seed, arm, str(data), str(worker_path), str(Path(input_root).resolve()), batch["manifest"]["code"],
                 str(worker_guard_path) if worker_guard_path else None,
-                {"batch": batch, "resume": previous["execution_status"] == "paused", "max_ticks": pause_after_ticks}),
+                {"batch": batch, "resume": previous["execution_status"] == "paused", "max_ticks": pause_after_ticks,
+                 **({"pause_after_phase": pause_after_phase} if protocol == PHASE_PROTOCOL else {})}),
                 name=f"working-study-{cell}")
             process.start()
             try:

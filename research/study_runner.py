@@ -22,6 +22,7 @@ from research.metric_registry import metric_definition, read_metric_observation
 from research.prices import price_observations
 from research.process_lock import process_lock
 from research.studies import StudySpec, load_study, prepare_study, validate_study_inputs
+from research.working_contracts import PHASE_PROTOCOL, phase_controls, working_protocol
 from run_config import load_config
 
 
@@ -75,7 +76,7 @@ def collect_outcomes(store: Store, spec: StudySpec) -> dict:
 
 def validate_execution(spec: StudySpec, config: dict) -> None:
     """Check this runner's capabilities before creating any study artifacts."""
-    if spec.operations.pause_policy == "preserve_and_resume" and spec.model.engine_semantics_version < 7:
+    if working_protocol(spec.operations.pause_policy) and spec.model.engine_semantics_version < 7:
         raise ValueError("working studies require persisted PRNG semantics")
     if spec.operations.mode != "provider_free" or spec.behavior.family != "scripted":
         raise ValueError("this runner supports explicitly scripted provider-free studies only")
@@ -91,6 +92,25 @@ def validate_execution(spec: StudySpec, config: dict) -> None:
         raise ValueError("declare all study shocks in arms; the resolved baseline must have none")
     if config.get("dataset_manifest") and not any(item.role == "initialization" for item in spec.inputs):
         raise ValueError("dataset initialization requires pinned input artifacts")
+
+
+def collect_working_outcomes(store: Store, spec: StudySpec) -> dict:
+    """An active day is execution evidence, never a completed price window."""
+    if working_protocol(spec.operations.pause_policy) != PHASE_PROTOCOL or store.active_tick is None:
+        return collect_outcomes(store, spec)
+    observations = {}
+    for outcome in spec.analysis.outcomes:
+        required = (1 if outcome.aggregation in {"terminal", "window_vwap"} else
+                    spec.time.measurement_end - spec.time.measurement_start + 1)
+        observations[outcome.key] = {
+            "outcome": outcome.model_dump(mode="json"), "points": [],
+            "status": "partial_phase", "reason": "unfinished_day_not_measured",
+            "required_points": required, "available_points": 0}
+    return {"metrics": {item.key: None for item in spec.analysis.outcomes}, "series": {},
+            "outcome_observations": observations,
+            "spend_usd": float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0)),
+            "provider_calls": int(store.scalar(
+                "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
 
 
 def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
@@ -191,15 +211,18 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
               progress: Callable[[dict], None] | None = None,
               worker_guard_path: Path | None = None,
               resume_batch: str | Path | None = None,
-              pause_after_ticks: int | None = None) -> dict:
+              pause_after_ticks: int | None = None,
+              pause_after_phase: str | None = None) -> dict:
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
     validate_execution(spec, config)
-    if spec.operations.pause_policy == "preserve_and_resume":
+    phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
+                   ticks=pause_after_ticks, phase=pause_after_phase)
+    if working_protocol(spec.operations.pause_policy):
         from research.working_studies import run_working_study
         return run_working_study(spec, config, input_root=input_root, data_root=data_root,
             out_dir=out_dir, expected_code=expected_code, progress=progress,
             worker_guard_path=worker_guard_path, resume_batch=resume_batch,
-            pause_after_ticks=pause_after_ticks)
+            pause_after_ticks=pause_after_ticks, pause_after_phase=pause_after_phase)
     if resume_batch is not None or pause_after_ticks is not None:
         raise ValueError("pause and resume controls require the preserve_and_resume policy")
     if expected_code is not None and code_identity() != expected_code:
@@ -349,13 +372,17 @@ def main() -> int:
                         help="Existing working data directory under --data-root")
     parser.add_argument("--pause-after-ticks", type=int,
                         help="Maximum additional days per cell; stop at the first clean pause")
+    parser.add_argument("--pause-after-phase",
+                        help="Stop after the next named phase; requires preserve_and_resume_phases")
     args = parser.parse_args()
     try:
         spec, config = load_study(args.study), load_config(args.config)
         validate_execution(spec, config)
         if args.pause_after_ticks is not None and args.pause_after_ticks < 1:
             raise ValueError("pause tick limit must be positive")
-        if (args.resume_batch is not None or args.pause_after_ticks is not None) and spec.operations.pause_policy != "preserve_and_resume":
+        phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
+                       ticks=args.pause_after_ticks, phase=args.pause_after_phase)
+        if (args.resume_batch is not None or args.pause_after_ticks is not None) and not working_protocol(spec.operations.pause_policy):
             raise ValueError("pause and resume controls require the preserve_and_resume policy")
         if args.validate_only:
             validate_study_inputs(spec, config, input_root=args.input_root)
@@ -368,7 +395,8 @@ def main() -> int:
         else:
             result = run_study(spec, config, input_root=args.input_root,
                                data_root=args.data_root, out_dir=args.out_dir,
-                               resume_batch=args.resume_batch, pause_after_ticks=args.pause_after_ticks)
+                               resume_batch=args.resume_batch, pause_after_ticks=args.pause_after_ticks,
+                               pause_after_phase=args.pause_after_phase)
             print(json.dumps({"artifacts": result["artifacts"], "coverage": result["summary"]["coverage"],
                               "status": result.get("status", "finalized"), "batch": result["batch"]["data_dir"]}))
             if any(row["execution_status"] != "completed" for row in result["results"]):

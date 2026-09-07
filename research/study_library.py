@@ -12,6 +12,7 @@ from research.studies import StudySpec
 from research.study_bundle import export_study_bundle
 from research.study_results import StudyArtifactError, StudyIdentityChanged, _location, read_json, verification_identity
 from research.working_evidence import load_study_evidence, load_working_progress, working_export_guard
+from research.working_contracts import working_protocol
 
 
 class StudyChanged(StudyIdentityChanged):
@@ -62,9 +63,10 @@ class StudyLibrary:
                         continue
                     if kind == "finalized" and payload.get("contract") != "study-result-v1":
                         continue
-                    if kind == "working" and (manifest.get("attempt_protocol") != "working-attempt-v2"
-                            or manifest["study"]["operations"]["pause_policy"] != "preserve_and_resume"):
-                        continue
+                    if kind == "working":
+                        protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
+                        if not protocol or manifest.get("attempt_protocol") != protocol:
+                            continue
                     study = manifest["study"]
                     if not isinstance(study["title"], str) or not isinstance(study["domains"], list):
                         raise StudyArtifactError("invalid catalog metadata")
@@ -171,6 +173,9 @@ class StudyLibrary:
                     "ticks": ticks if type(ticks) is int and 0 <= ticks <= spec.time.horizon else None,
                     "execution_status": status if status in {"planned", "paused", "completed", "failed", "halted"} else "unknown",
                     "eligibility": row.get("eligibility") if checked else {"status": "pending", "reasons": ["working_evidence_not_verified"]}})
+                if checked and "position" in row:
+                    attempts[-1]["position"] = {key: row["position"][key]
+                        for key in ("completed_tick", "active_tick", "next_phase")}
         verification = ({key: value for key, value in checked["verification"].items()
                          if key not in {"data_dir", "report_dir"}} if checked else {
             "status": "not_verified", "publication": "working", "eligibility": "pending",

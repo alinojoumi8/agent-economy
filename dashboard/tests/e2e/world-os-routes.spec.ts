@@ -817,7 +817,8 @@ async function mockStudyLaunch(page: Page, mode: "complete" | "stale" | "wrong" 
     requests.push({ path, method, body });
     expect(route.request().headers()["x-csrf-token"]).toBe("test");
     const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
-    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false, resume: true } });
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false, resume: true,
+      pause_phases: ["NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET", "NEWSROOM", "EVENING", "MEMORY", "FINALIZE"] } });
     if (path.endsWith("/validate")) { draft = launchFixture(context.fork_id, body); return route.fulfill({ json: draft }); }
     const job = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
       context, title: "Dual-domain pilot", status: mode === "interrupted" ? "interrupted" : "completed", origin: "fresh_genesis",
@@ -904,7 +905,7 @@ test("interrupted study recovery is explicit and never starts another job", asyn
 
 const BASE_LAUNCH = "/api/v2/operator/research";
 
-async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wrong-parent" | "running" = "ready") {
+async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wrong-parent" | "running" | "phase" = "ready") {
   const requests = await mockStudyLaunch(page);
   const childId = "f".repeat(32);
   let resumed = false;
@@ -915,8 +916,9 @@ async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wr
     requests.push({ path, method, body });
     expect(route.request().headers()["x-csrf-token"]).toBe("test");
     const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
-    const attempts = [1, 2].flatMap(seed => ["base", "cost"].map(arm => ({ seed, arm, ticks: seed === 1 && arm === "base" ? 1 : 0,
-      expected_ticks: 8, execution_status: seed === 1 && arm === "base" ? "paused" : "planned", eligibility: { status: "pending", reasons: [] } })));
+    const attempts = [1, 2].flatMap(seed => ["base", "cost"].map(arm => ({ seed, arm, ticks: mode !== "phase" && seed === 1 && arm === "base" ? 1 : 0,
+      expected_ticks: 8, execution_status: seed === 1 && arm === "base" ? "paused" : "planned", eligibility: { status: "pending", reasons: [] },
+      ...(mode === "phase" && seed === 1 && arm === "base" ? { position: { completed_tick: 0, active_tick: 1, next_phase: "NEWSROOM" } } : {}) })));
     const parent = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
       context, title: "Dual-domain pilot", status: "paused", expected_cells: 4, finished_cells: 0, eligible_cells: 0,
       study_id: studyId, result_sha256: studyHash, cells: attempts, resumable: !resumed && mode !== "incompatible",
@@ -953,6 +955,38 @@ test("planned study pause is reviewed before any world starts", async ({ page })
   await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("After 2 saved days in the first world");
   expect(requests.filter(row => row.path.endsWith("/validate"))[0].body.pause_after_ticks).toBe(2);
   expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+});
+
+test("phase pause is reviewed and an unfinished day cannot become a price comparison", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Pause after saved days (optional)").fill("2");
+  await page.getByLabel("Pause after a step (optional)").selectOption("MARKET");
+  await expect(page.getByLabel("Pause after saved days (optional)")).toHaveValue("");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("After Market settlement in the first world");
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body).toMatchObject({ pause_after_phase: "MARKET", pause_after_ticks: null });
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+  await mockWorkingStudy(page, "phase");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  const progress = page.getByRole("region", { name: "Working study progress" });
+  await expect(progress).toContainText("Day 1 · next: News publication");
+  await expect(progress.getByRole("cell", { name: "0 / 8", exact: true })).toHaveCount(4);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  if (process.env.AE_CAPTURE_PHASE_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-phase-progress-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const bounds = await progress.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  const scroll = progress.locator(".world-os-workspace-table-wrap");
+  await scroll.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  const lastColumn = await progress.getByRole("columnheader", { name: "Eligibility", exact: true }).boundingBox();
+  expect(lastColumn!.x + lastColumn!.width).toBeLessThanOrEqual(390);
+  if (process.env.AE_CAPTURE_PHASE_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-phase-progress.png" });
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
 });
 
 test("working library keeps unfinished assignments pending and resumes only on explicit action", async ({ page }) => {

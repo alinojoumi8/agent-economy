@@ -162,7 +162,9 @@ class World:
         self.gateway.close()
         self.store.close()
 
-    async def run(self, max_ticks: Optional[int] = None) -> None:
+    async def run(self, max_ticks: Optional[int] = None, *, pause_after_phase: str | None = None) -> None:
+        if pause_after_phase is not None and pause_after_phase not in self.phases:
+            raise ValueError("unknown pause phase")
         self.status = "running"
         self.store.set_meta(status="running")
         start_tick = self.store.tick
@@ -182,7 +184,8 @@ class World:
                     break
                 if self._pause_requested:
                     break
-                summary = await self.step()
+                summary = (await self.step(pause_after_phase=pause_after_phase)
+                           if pause_after_phase is not None else await self.step())
                 if summary.get("paused"):
                     break
                 if self.speed_delay_s > 0:
@@ -358,7 +361,9 @@ class World:
         self.store.commit()
 
     # ── one tick ─────────────────────────────────────────────────────────────
-    async def step(self) -> dict:
+    async def step(self, *, pause_after_phase: str | None = None) -> dict:
+        if pause_after_phase is not None and pause_after_phase not in self.phases:
+            raise ValueError("unknown pause phase")
         meta = self.store.get_meta()
         tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
@@ -452,6 +457,14 @@ class World:
                         phase=self.phases[-1], phase_state_json="{}", legacy_partial=0)
                     self._save_prng_state()
                     self.store.commit()
+
+                if phase == pause_after_phase:
+                    # Pause only after the atomic phase and its next frontier
+                    # are committed. Queued decisions remain owned by that day.
+                    self.request_pause()
+                    if self.store.active_tick is not None:
+                        return {"tick": self.store.tick, "active_tick": tick,
+                                "phase": self.store.next_phase, "paused": "phase_boundary"}
 
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": decisions_count,

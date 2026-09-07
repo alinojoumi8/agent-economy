@@ -1,8 +1,9 @@
 # Paused study recovery: implementation contract
 
-Status: scripted committed-day batch resume, CLI/operator controls, saved working
-studies and portable working evidence are implemented. Partial-phase recovery
-remains pending. Updated 2026-09-07; verification is recorded in the execution log.
+Status: scripted committed-day and opt-in phase recovery, CLI/operator controls,
+saved working studies and portable working evidence are implemented. Updated
+2026-09-07; verification is recorded in the execution log. Hard-crash recovery
+and live-provider research execution remain outside this contract.
 Source checkpoints inspected: `0b454b1` and `88f1e89`. This closes the implementation-design
 gap in [S1](2026-09-06-research-city-specs.md#s1-research-contract-and-experiment-integrity)
 before further household, school, production or banking expansion. It does not
@@ -11,12 +12,14 @@ replace the [five-part roadmap](2026-09-06-research-city-roadmap.md).
 ## Current executor
 
 `research/working_attempts.py::execute_working_attempt` advances one declared
-scripted cell under a process-owned batch lock. It requires the explicit
-`preserve_and_resume` pause policy, a `working-attempt-v2` manifest and semantics
-7 or later with persisted PRNG state. `prepare_study` binds this protocol and
+scripted cell under a process-owned batch lock. The `preserve_and_resume` policy
+uses `working-attempt-v2` for committed days; `preserve_and_resume_phases` uses
+`working-attempt-v3` for saved phases. Both require semantics 7 or later with
+persisted PRNG state. `prepare_study` binds the selected protocol and
 its cumulative-active-time contract before execution. The ordinary study
-runner dispatches that policy through `research/working_studies.py`. New local
-operator pilots use this protocol and advertise `resume: true`; legacy finalized
+runner dispatches both policies through `research/working_studies.py`. Local
+operator pilots opt into version 3 when the reviewed request chooses a step
+pause; ordinary saved-day requests retain version 2. Legacy finalized
 version-1 studies retain their original read-only disposition.
 
 An intact committed-day pause retains pending eligibility and append-only
@@ -60,7 +63,81 @@ working source is expected to advance; prior manifests and segment receipts
 remain unchanged. Finalization reuses the existing independent replay and
 receipt verifier, with added checks for working-segment lineage and PRNG state.
 This cell API alone does not publish batch reports. Use the supervised runner
-below for batch execution. Neither entry point resumes a partial active phase.
+below for batch execution. Version 2 retains its committed-day requirement;
+version 3 uses the explicit phase checks below.
+
+## Version 3 phase recovery
+
+Select `operations.pause_policy: preserve_and_resume_phases` before preparing
+a new study. The phase position receipt (`working-phase-position-v1`) contains:
+
+| Field | Evidence |
+|---|---|
+| `completed_tick`, `active_tick`, `next_phase` | The last completed day and the exact next phase of its successor, within the declared horizon |
+| `phase_state_sha256` | Digest of queued decisions, the saved conversation plan and observation-capture marker |
+| `prng_sha256` | Digest of the engine, persona and lifecycle random streams; all must be restorable |
+| `recorded_inputs` | Count, last ID and SHA-256 of all admitted `llm_calls` through this position |
+
+The input digest streams canonical JSON row digests in ID order, with a newline
+after each digest. It includes the full private recorded-call row. Every earlier
+prefix is checked against the current source in one scan. Each pause binds its
+complete preceding segment history. A later receipt cannot omit an earlier
+prefix to authorize changed inputs. These are consistency checks within the
+bound artifact chain, not authentication of an unknown publisher.
+
+Read-only validation requires a modern paused source, the correct active day,
+a phase from the stored engine semantics and structurally valid phase state.
+Decisions may appear only after morning; a completed conversation phase must
+retain its plan; finalization must retain the observation-capture marker.
+Closed days have empty phase state. A phase or recorded-input count cannot go
+backward. A cooperative repeated outage may leave the same phase and input
+prefix, but still consumes the original cumulative active-time budget. The
+1,024-segment bound applies independently of the supervisor invocation bound.
+
+`World.run(pause_after_phase=...)` pauses after the named phase and its next
+position are committed. `--pause-after-phase` uses the engine phase names:
+`NIGHT_CLOSE`, `MORNING`, `EXECUTION`, `MARKET`, `NEWSROOM`, `EVENING`, `MEMORY`,
+`FINALIZE`, plus `INBOX_DELIVERY` for semantics 8+. It cannot be combined with
+`--pause-after-ticks`. If resuming beyond the requested phase, execution reaches
+its next occurrence, subject to the remaining horizon. Omitting both controls
+finishes the remaining assignment. This changes operational stopping only;
+economic semantics and historical default execution remain unchanged.
+
+```powershell
+# study.yaml must already declare preserve_and_resume_phases and match this config.
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/price-lab-keyed.yaml --pause-after-phase MARKET
+# Set this to the batch directory returned above; retain the original inputs and roots.
+$batchDirectory = 'data/studies/<study-key>/<manifest-and-batch-id>'
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/price-lab-keyed.yaml --resume-batch $batchDirectory --validate-only
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/price-lab-keyed.yaml --resume-batch $batchDirectory
+```
+
+Version 3 also accepts the engine's cooperative provider/interrupt pause after
+some inputs have been admitted. Research execution remains provider-free: tests
+inject outages into the scripted adapter. This does not authorize paid/live
+studies. A missing worker or segment receipt, unclosed SQLite state or exhausted
+budget still refuses resume. No interrupted worker is relabeled as a clean pause.
+
+An active day has null metrics, no measurement series and explicit
+`partial_phase` observations with reason `unfinished_day_not_measured`.
+Recorded inputs, reconciled partial state and completed-day count are recovery
+evidence; they do not establish a completed price window. Finalization still
+requires the full horizon, a closed day, integrity checks and an independently
+executed exact recorded replay.
+
+Private ZIP export/import retains the phase/input evidence and pending
+eligibility. The public operator projection exposes only completed day, active
+day and next phase, after verification. It does not expose queued decisions,
+conversation pairs, private call data or their hashes. The library and job UI
+show the next step separately from saved-day counts. The reviewed operator
+step selector uses the fixed pilot's supported phases; existing resume authority,
+idempotency, code/configuration checks and cumulative budgets are unchanged.
+
+![Synthetic phase checkpoint with unfinished assignments](../research/assets/study-phase-progress-desktop.png)
+
+The desktop capture above and [mobile capture](../research/assets/study-phase-progress.png)
+use mocked UI evidence. Real execution, recovery and replay are checked separately
+by the backend acceptance suites.
 
 ## Supervised runner and CLI
 

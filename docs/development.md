@@ -109,6 +109,15 @@ calls under `runs/base.yaml` and does not validate hosted-only destinations.
 
 ## Test layers
 
+Working research studies now have two explicit pause contracts: version 2 for
+committed days and opt-in version 3 for saved phases. Run the bounded phase
+regressions with `tests/test_phase_working_attempts.py` and
+`tests/test_phase_working_studies.py`; the operator suite also covers planned
+step pauses. See [paused-study recovery](plans/2026-09-06-paused-study-resume.md)
+for the manifest policy, CLI controls and compatibility requirements. On Windows,
+use a fresh short `--basetemp` and verify at least 40 GiB of free space before
+pytest. Complete Python coverage belongs in the CI shards, not one local run.
+
 | Layer | What it proves |
 |---|---|
 | Unit/invariant | Ledger conservation, markets, credit, firms, memory, metrics |

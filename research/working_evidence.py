@@ -16,6 +16,7 @@ from research.study_results import (
 )
 from research.study_runner import collect_outcomes, validate_execution
 from research.working_attempts import _member
+from research.working_contracts import working_protocol
 from research.working_studies import CONTRACT, _checked_rows, _journal
 from world.replay_verify import canonical_state_receipt
 
@@ -73,8 +74,8 @@ def load_working_progress(result_path: str | Path, *, data_root: str | Path = "d
         manifest = payload["batch"]["manifest"]
         spec, config = StudySpec.model_validate(manifest["study"]), manifest["resolved_config"]
         validate_execution(spec, config)
-        if (spec.operations.pause_policy != "preserve_and_resume"
-                or manifest.get("attempt_protocol") != "working-attempt-v2"
+        protocol = working_protocol(spec.operations.pause_policy)
+        if (not protocol or manifest.get("attempt_protocol") != protocol
                 or manifest.get("timing_contract") != "cumulative-active-wall-v1"
                 or digest_json(config) != spec.model.resolved_config_sha256):
             raise StudyArtifactError("working study protocol mismatch")

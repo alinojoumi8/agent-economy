@@ -18,6 +18,7 @@ from engine.semantics import validate_engine_semantics_version
 from engine.keyed_random import DAILY_STREAM_CONTRACT
 from research.artifacts import create_batch, digest_json, file_sha256, publish_copy, safe_key
 from research.metric_registry import metric_definition
+from research.working_contracts import working_protocol
 
 PROTOCOL_VERSION = "research-study-v1"
 MODEL_DESCRIPTION_VERSION = "agent-economy-odd-v1"
@@ -146,7 +147,7 @@ class OperationContract(Contract):
     max_disk_bytes: Annotated[int, Field(ge=1)]
     concurrency: Annotated[int, Field(ge=1, le=32)]
     failure_policy: Literal["preserve_and_exclude"]
-    pause_policy: Literal["preserve_and_stop", "preserve_and_resume"]
+    pause_policy: Literal["preserve_and_stop", "preserve_and_resume", "preserve_and_resume_phases"]
 
     @model_validator(mode="after")
     def bounded_mode(self):
@@ -327,8 +328,9 @@ def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                   data_root: str | Path, out_dir: str | Path) -> dict:
     """Verify declarations, then claim a new immutable, prospective study batch."""
     protocol = validate_study_inputs(spec, config, input_root=input_root)
-    if spec.operations.pause_policy == "preserve_and_resume":
-        protocol["attempt_protocol"] = "working-attempt-v2"
+    attempt_protocol = working_protocol(spec.operations.pause_policy)
+    if attempt_protocol:
+        protocol["attempt_protocol"] = attempt_protocol
         protocol["timing_contract"] = "cumulative-active-wall-v1"
     description = Path(__file__).resolve().parents[1] / "docs/research/model-description.md"
     sources = {"model-description.md": (description, protocol["model_description_sha256"])}

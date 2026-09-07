@@ -95,7 +95,10 @@ resume, a separate working-study library view and portable working evidence.
 Read compatibility is independent of execution compatibility; a changed checkout
 may read a frozen checkpoint but cannot resume it. Operator continuations bind
 the original job/context, progress hash, validation hash and cumulative budget.
-Partial-phase recovery remains pending. The detailed contracts and commands are
+Opt-in phase recovery now verifies the exact saved phase, all three PRNG streams,
+queued-state digest and every earlier admitted-input prefix. Incomplete days
+have no study measurements. CLI and reviewed operator step pauses use the new
+protocol; existing saved-day studies retain their original contract. The detailed contracts and commands are
 in [paused-study recovery](2026-09-06-paused-study-resume.md).
 
 ### Eligibility and causal pairing

@@ -63,6 +63,7 @@ def test_validation_freezes_both_domains_and_creates_no_world(jobs):
     {"horizon": 3, "intervention_tick": 4}, {"seeds": [True]},
     {"max_wall_seconds": 301}, {"max_disk_mib": 129},
     {"equity_firm_id": 2}, {"config": "external.yaml"}, {"preset": "run-python"},
+    {"pause_after_phase": "UNKNOWN"}, {"pause_after_phase": "MORNING", "pause_after_ticks": 1},
 ])
 def test_unbounded_or_executable_requests_are_rejected(change, jobs):
     with pytest.raises(ValueError):

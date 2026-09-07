@@ -1,4 +1,5 @@
-.study-library__verdict { padding: 16px; border-left: 4px solid var(--ae-accent); background: var(--ae-surface-1); }
+.study-library { grid-template-columns: minmax(0, 1fr); }
+.study-library__verdict { min-width: 0; padding: 16px; border-left: 4px solid var(--ae-accent); background: var(--ae-surface-1); }
 .study-library__verdict strong, .study-library__verdict span { display: block; line-height: 1.6; }
 .study-library__verdict p { line-height: 1.6; margin: 8px 0; }
 .study-library__verdict button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ae-accent); color: var(--ae-accent); background: var(--ae-surface-1); border-radius: 4px; cursor: pointer; }

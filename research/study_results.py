@@ -14,6 +14,7 @@ from research.analysis import paired_summary
 from research.artifacts import digest_json, file_sha256, safe_key
 from research.attempts import verify_attempt
 from research.studies import StudySpec
+from research.working_contracts import PHASE_PROTOCOL, working_protocol
 from research.study_runner import _arm_config, _incomplete_row, collect_outcomes, validate_execution
 
 
@@ -129,7 +130,11 @@ def _verify_cell(row: dict, worker: dict | None, spec: StudySpec, config: dict,
         if claim_path != location.data_dir / cell_id / "attempt.json":
             raise StudyArtifactError("attempt namespace mismatch")
         claim = read_json(claim_path)
-        if claim.get("protocol_version") == 2:
+        protocol = working_protocol(spec.operations.pause_policy)
+        if protocol and (claim.get("protocol_version") != (3 if protocol == PHASE_PROTOCOL else 2)
+                         or claim.get("study_manifest") != read_json(location.data_file("manifest.json"))["manifest"]):
+            reasons.append("study_attempt_protocol_mismatch")
+        if claim.get("protocol_version") in {2, 3}:
             finished = location.data_file(f"{cell_id}/result.json")
             seal = read_json(location.data_file(f"{cell_id}/finalized.json"))
             stored = read_json(finished)
@@ -217,7 +222,7 @@ def load_study_result(result_path: str | Path, *, data_root: str | Path = "data/
                    * spec.analysis.bootstrap_samples > 2_000_000):
             raise StudyArtifactError("study exceeds this loader's verification work limit")
         context_status = _verify_context(payload["batch"]["manifest"], spec, location)
-        if spec.operations.pause_policy == "preserve_and_resume":
+        if working_protocol(spec.operations.pause_policy):
             from research.working_studies import verify_supervised_result
             verify_supervised_result(payload, data_dir=location.data_dir, report_dir=location.report_dir)
         publication = location.report_file("publication.json")

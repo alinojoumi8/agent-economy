@@ -1,7 +1,7 @@
 # Agent Economy model description
 
-Model-description ID: **agent-economy-odd-v1**. Written 2026-09-06 against the
-Semantics 1–14 implementation. This describes implemented mechanisms, including
+Model-description ID: **agent-economy-odd-v1**. First written 2026-09-06; updated
+through Semantics 16 and phase recovery on 2026-09-07. This describes implemented mechanisms, including
 opt-ins, rather than asserting that every profile enables them. The
 [implementation-status ledger](../implementation-status.md) remains authoritative
 for release maturity. Study manifests should retain this version and the exact
@@ -31,7 +31,7 @@ relevant submodels, excluded mechanisms and validation patterns.
 | Entity | Implemented state and constraint | Source |
 |---|---|---|
 | Citizen/agent | Stable ID, age, alive/retired status, accounts, work, preferences, beliefs and memories; configured core/periphery policy | [Agents](../../agents), [lifecycle](../../engine/lifecycle.py) |
-| Family/dependents | Legacy dependent count influences demand; births currently increment a count. Separate persistent child/household membership is pending | [Lifecycle](../../engine/lifecycle.py), [planned S4–S5](../plans/2026-09-06-research-city-specs.md) |
+| Family/dependents | Legacy dependent counts influence demand. Semantics 15+ retains persistent people, child births, household membership, guardian intervals and child food settlement; partnership, care and estates remain pending | [Households](../../engine/households.py), [planned S4–S5](../plans/2026-09-06-research-city-specs.md) |
 | Firms | Cash account, employees, product/posted price, inventory, loans, shares, entry/exit and optional startup/legal state | [Firms](../../engine/firms.py), [startups](../../engine/startups.py) |
 | Banks and central bank | Reserves, equity, deposits, loan claims, underwriting, liquidity support and policy decisions | [Banking and credit](../../engine/credit.py) |
 | Labor, equity and FX markets | Employment/contracts, price-time ordered equity orders and executions, optional regional currencies/FX | [Labor](../../engine/labor.py), [exchange](../../engine/exchange.py), [regions](../../engine/regions.py) |
@@ -63,6 +63,13 @@ checks identity, role, ownership, balances and domain rules. Monetary effects
 pass through [the ledger](../../engine/ledger.py); rejected proposals are not
 economic events. Final boundaries reconcile and persist phase/RNG state.
 Provider interruption pauses visibly. It is not a silent substitute-policy arm.
+
+An explicit working-study policy permits recovery from a verified saved phase.
+The operational receipt binds queued state, all three PRNG streams and immutable
+recorded-input prefixes; no economic scheduling changes are introduced.
+An unfinished day remains pending and has no study price measurements. Final
+eligibility still requires the full horizon and independent exact replay. See
+the [phase recovery contract](../plans/2026-09-06-paused-study-resume.md#version-3-phase-recovery).
 
 ## Design concepts and behavior
 

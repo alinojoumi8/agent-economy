@@ -1,7 +1,7 @@
 """Scripted working attempts that can resume before scientific finalization.
 
 This is the executor seam for the resumable study supervisor. It uses an
-exclusive batch lock and cooperative day-boundary limits; a supervisor must
+exclusive batch lock and versioned day/phase limits; a supervisor must
 still impose hard worker deadlines. Legacy attempts remain immutable.
 """
 from __future__ import annotations
@@ -21,11 +21,15 @@ from research.artifacts import code_identity, digest_json, file_sha256, publish_
 from research.attempts import finalize_attempt, observe_source
 from research.process_lock import process_lock
 from research.studies import StudySpec, validate_study_inputs
-from research.study_runner import _arm_config, _disk_bytes, collect_outcomes, validate_execution
+from research.study_runner import _arm_config, _disk_bytes, collect_working_outcomes, validate_execution
+from research.working_contracts import (
+    DAY_PROTOCOL, PHASE_PROTOCOL, paused_progress, phase_controls, phase_position,
+    position_rank, verify_input_prefixes, working_protocol,
+)
 from world.loop import World
 from world.replay_verify import canonical_state_receipt
 
-PROTOCOL = "working-attempt-v2"
+PROTOCOL = DAY_PROTOCOL  # Historical public constant; new claims use their manifest.
 
 
 def _read(path: Path) -> dict:
@@ -54,10 +58,11 @@ def _duration(value) -> float:
 
 def _contract(batch: dict, spec: StudySpec, config: dict, input_root: Path) -> tuple[Path, Path]:
     validate_execution(spec, config)
-    if spec.operations.pause_policy != "preserve_and_resume" or spec.model.engine_semantics_version < 7:
+    protocol = working_protocol(spec.operations.pause_policy)
+    if not protocol or spec.model.engine_semantics_version < 7:
         raise ValueError("working attempts require explicit resume policy and persisted PRNG semantics")
     manifest = batch["manifest"]
-    if (manifest.get("attempt_protocol") != PROTOCOL
+    if (manifest.get("attempt_protocol") != protocol
             or manifest.get("timing_contract") != "cumulative-active-wall-v1"
             or digest_json(manifest) != batch["manifest_sha256"]):
         raise ValueError("working-study manifest mismatch")
@@ -86,10 +91,22 @@ def _contract(batch: dict, spec: StudySpec, config: dict, input_root: Path) -> t
     return roots[0], roots[1]
 
 
-def _history(directory: Path, claim_sha256: str) -> tuple[list[dict], dict | None]:
+def _history(directory: Path, claim_sha256: str, *,
+             resolve_path: Callable[[str], Path] = Path) -> tuple[list[dict], dict | None]:
     """Require a contiguous hash-bound sequence; an unmatched start is a crash."""
     starts = sorted(directory.glob("segment-*-start.json"))
     pauses = sorted(directory.glob("segment-*-pause.json"))
+    claim_path = _member(directory, "attempt.json")
+    if file_sha256(claim_path) != claim_sha256:
+        raise ValueError("working attempt claim changed")
+    claim = _read(claim_path)
+    manifest = claim["study_manifest"]
+    protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
+    if (not protocol or protocol != manifest["attempt_protocol"]
+            or claim["protocol_version"] != (3 if protocol == PHASE_PROTOCOL else 2)):
+        raise ValueError("working attempt protocol changed")
+    if len(starts) > 1024:
+        raise ValueError("working attempt reached its segment history limit")
     if len(starts) != len(pauses):
         raise ValueError("unfinished segment cannot resume")
     refs, previous, row = [], None, None
@@ -105,11 +122,18 @@ def _history(directory: Path, claim_sha256: str) -> tuple[list[dict], dict | Non
                 or pause.get("start_sha256") != file_sha256(start_path)):
             raise ValueError("working segment lineage changed")
         next_row = pause["row"]
+        declared_history = next_row["working_history"]
+        expected_history = [*refs, {"path": str(start_path), "sha256": file_sha256(start_path)}]
+        if (len(declared_history) != len(expected_history)
+                or any(resolve_path(actual["path"]) != Path(expected["path"])
+                       or actual["sha256"] != expected["sha256"]
+                       for actual, expected in zip(declared_history, expected_history))):
+            raise ValueError("paused segment omitted or changed its input history")
         if (next_row["execution_status"] != "paused"
                 or next_row["attempt_claim_sha256"] != claim_sha256
                 or next_row["eligibility"]["status"] != "pending"
                 or _duration(next_row["active_wall_seconds"]) < (_duration(row["active_wall_seconds"]) if row else 0)
-                or next_row["ticks"] <= (row["ticks"] if row else 0)):
+                or not paused_progress(next_row, row, claim)):
             raise ValueError("invalid paused segment")
         row, previous = next_row, file_sha256(pause_path)
         refs.extend({"path": str(path), "sha256": file_sha256(path)} for path in (start_path, pause_path))
@@ -176,9 +200,13 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
                 or digest_json(json.loads(meta["config_json"])) != claim["config_sha256"]
                 or int(meta["seed"]) != claim["seed"] or meta["run_id"] != claim["run_id"]):
             raise ValueError("paused database contract changed")
-        if (meta["status"] != "paused" or meta["active_tick"] is not None
-                or meta["next_phase"] not in (None, "NIGHT_CLOSE")
-                or int(meta["tick"]) != row["ticks"] or not 0 < row["ticks"] < claim["expected_ticks"]):
+        if claim["study_manifest"]["attempt_protocol"] == PHASE_PROTOCOL:
+            if not paused_progress(row, None, claim):
+                raise ValueError("paused source is not a resumable phase")
+            verify_phase_history(store, row, claim, resolve_path=resolve_path)
+        elif (meta["status"] != "paused" or meta["active_tick"] is not None
+              or meta["next_phase"] not in (None, "NIGHT_CLOSE")
+              or int(meta["tick"]) != row["ticks"] or not 0 < row["ticks"] < claim["expected_ticks"]):
             raise ValueError("paused source is not a resumable committed day")
         if not meta["prng_state"] or digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
             raise ValueError("paused PRNG state changed")
@@ -187,7 +215,7 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
                 or store.scalar("PRAGMA quick_check") != "ok" or not Ledger(store).reconcile()[0]
                 or meta["external_agent_influenced"]):
             raise ValueError("paused source fails integrity or influence checks")
-        observed = collect_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]))
+        observed = collect_working_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]))
         if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
                 or observed["provider_calls"] or observed["spend_usd"]):
             raise ValueError("paused source observations or provider-free contract changed")
@@ -197,16 +225,34 @@ def _check_source(directory: Path, row: dict, claim: dict, *,
         raise ValueError("paused source changed during validation")
 
 
+def verify_phase_history(store: Store, row: dict, claim: dict, *, resolve_path: Callable[[str], Path]) -> None:
+    """Bind the present frontier and all earlier accepted-input prefixes."""
+    semantics = claim["study_manifest"]["study"]["model"]["engine_semantics_version"]
+    actual = phase_position(store, semantics, claim["expected_ticks"])
+    if actual != row["position"] or actual["completed_tick"] != row["ticks"]:
+        raise ValueError("saved phase position changed")
+    positions = [actual]
+    for ref in row["working_history"][1::2]:
+        path = resolve_path(ref["path"])
+        if file_sha256(path) != ref["sha256"]:
+            raise ValueError("saved phase history changed")
+        previous = _read(path)["row"]["position"]
+        position_rank(previous, semantics, claim["expected_ticks"])
+        positions.append(previous)
+    verify_input_prefixes(store, positions)
+
+
 def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[str], Path]) -> list[str]:
     """Verify frozen segment provenance, including after portable path mapping."""
     try:
         manifest = claim["study_manifest"]
+        protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
         if (digest_json(manifest) != claim["study_manifest_sha256"]
-                or manifest["attempt_protocol"] != PROTOCOL
-                or manifest["study"]["operations"]["pause_policy"] != "preserve_and_resume"):
+                or not protocol or manifest["attempt_protocol"] != protocol
+                or claim["protocol_version"] != (3 if protocol == PHASE_PROTOCOL else 2)):
             raise ValueError("working manifest mismatch")
         refs = row["working_history"]
-        if not refs or len(refs) % 2 != 1:
+        if not refs or len(refs) % 2 != 1 or len(refs) > 2047:
             raise ValueError("working history must end at its final segment start")
         previous, previous_row = None, None
         for index in range(0, len(refs), 2):
@@ -230,13 +276,18 @@ def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[st
                         or current["execution_status"] != "paused"
                         or current["eligibility"]["status"] != "pending"
                         or current["attempt_claim_sha256"] != row["attempt_claim_sha256"]
-                        or current["ticks"] <= (previous_row["ticks"] if previous_row else 0)
+                        or not paused_progress(current, previous_row, claim)
                         or _duration(current["active_wall_seconds"]) < (_duration(previous_row["active_wall_seconds"]) if previous_row else 0)):
                     raise ValueError("invalid pause history")
                 previous, previous_row = pause_ref["sha256"], current
         if previous_row and (row["ticks"] <= previous_row["ticks"]
                 or _duration(row["active_wall_seconds"]) < _duration(previous_row["active_wall_seconds"])):
             raise ValueError("final segment did not advance")
+        if protocol == PHASE_PROTOCOL:
+            position_rank(row["position"], manifest["study"]["model"]["engine_semantics_version"], claim["expected_ticks"])
+            if (row["position"]["active_tick"] is not None or row["position"]["completed_tick"] != row["ticks"]
+                    or previous_row and row["position"]["recorded_inputs"]["count"] < previous_row["position"]["recorded_inputs"]["count"]):
+                raise ValueError("final phase position did not advance")
         genesis = resolve_path(row["genesis_receipt"])
         if file_sha256(genesis) != row["genesis_receipt_sha256"]:
             raise ValueError("genesis receipt changed")
@@ -250,7 +301,8 @@ def verify_working_history(row: dict, claim: dict, *, resolve_path: Callable[[st
 
 def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
                             seed: int, arm: str, input_root: str | Path,
-                            max_ticks: int | None = None, resume: bool = False) -> dict:
+                            max_ticks: int | None = None, resume: bool = False,
+                            pause_after_phase: str | None = None) -> dict:
     """Advance one scripted cell; only an intact receipted pause can resume.
 
     The batch supervisor/CLI/UI integration is separate. This entry point
@@ -262,6 +314,9 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
         raise ValueError("attempt is outside the declared assignment")
     if max_ticks is not None and (type(max_ticks) is not int or max_ticks < 1):
         raise ValueError("segment tick limit must be a positive integer")
+    phase_controls(spec.operations.pause_policy, spec.model.engine_semantics_version,
+                   ticks=max_ticks, phase=pause_after_phase)
+    phase_recovery = working_protocol(spec.operations.pause_policy) == PHASE_PROTOCOL
     data_dir, report_dir = _contract(batch, spec, config, Path(input_root))
     cell = digest_json({"seed": seed, "arm": arm})[:12]
     directory = _member(data_dir, cell)
@@ -299,7 +354,7 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
         cfg = _arm_config(spec, config, arm)
         cfg.update(seed=seed, checkpoint_every=0, speed_delay_s=0.0,
                    checkpoint_dir=str(directory / "checkpoints"), report_dir=str(directory / "reports"))
-        claim = {"protocol_version": 2, "run_id": run_id, "seed": seed, "arm": arm,
+        claim = {"protocol_version": 3 if phase_recovery else 2, "run_id": run_id, "seed": seed, "arm": arm,
                  "expected_ticks": spec.time.horizon, "config": cfg,
                  "config_sha256": digest_json(cfg), "execution_status": "planned",
                  "study_manifest_sha256": batch["manifest_sha256"], "study_manifest": batch["manifest"]}
@@ -310,6 +365,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
             refs, row = _history(directory, file_sha256(claim_path))
             if row is None:
                 raise ValueError("working attempt has no receipted pause")
+            if len(refs) >= 2048:
+                raise ValueError("working attempt reached its segment history limit")
             _check_source(directory, row, claim)
         else:
             directory.mkdir(exist_ok=False)
@@ -326,7 +383,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
         start_path = publish_json(directory / f"segment-{number:06d}-start.json", {
             "attempt_claim_sha256": file_sha256(claim_path),
             "previous_pause_sha256": refs[-1]["sha256"] if refs else None,
-            "before_source_sha256": row.get("source_database_sha256")})
+            "before_source_sha256": row.get("source_database_sha256"),
+            **({"pause_after_phase": pause_after_phase, "max_ticks": max_ticks} if phase_recovery else {})})
         row["working_history"] = [*refs, {"path": str(start_path), "sha256": file_sha256(start_path)}]
         store, world, reasons = None, None, []
         try:
@@ -354,11 +412,17 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
 
             world.on_tick = guard
             remaining = spec.time.horizon - store.tick
-            asyncio.run(world.run(max_ticks=min(remaining, max_ticks) if max_ticks is not None else remaining))
+            run_options = {"max_ticks": min(remaining, max_ticks) if max_ticks is not None else remaining}
+            if pause_after_phase is not None:
+                run_options["pause_after_phase"] = pause_after_phase
+            asyncio.run(world.run(**run_options))
             reasons.extend(observe_source(world, row, ticks=spec.time.horizon,
-                                          collect=lambda current: collect_outcomes(current, spec)))
+                                          collect=lambda current: collect_working_outcomes(current, spec)))
             row["prng_state_sha256"] = digest_json(store.get_meta()["prng_state"])
-            if not row["final_boundary"]:
+            if phase_recovery:
+                row["position"] = phase_position(store, spec.model.engine_semantics_version, spec.time.horizon)
+                verify_phase_history(store, row, claim, resolve_path=Path)
+            elif not row["final_boundary"]:
                 reasons.append("partial_boundary_not_supported")
             if row.get("provider_calls", 0) or row.get("spend_usd", 0):
                 reasons.append("provider_free_contract_violated")
