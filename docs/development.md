@@ -359,6 +359,13 @@ the following day. Hash-contract-v5 includes the new authoritative journals;
 v1–v4 files remain frozen. Use a fresh short pytest directory and keep at least
 40 GiB free. Full estates, education cohorts and long-horizon validation remain.
 
+Semantics 19 adds the [estate cash and credit checkpoint](plans/2026-09-07-estate-cash-and-credit.md).
+Use `runs/estate-cash-rehearsal.yaml` and `tests/test_semantics19_estate_cash.py`
+for the currency-separated cash inventory, principal recovery, bank losses,
+rollback and replay. Schema 24 is additive; new receipts require hash-contract-v6.
+Frozen v1–v5 files and prior simulation semantics remain unchanged. This is not
+full asset succession or long-horizon validation.
+
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate

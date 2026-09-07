@@ -18,6 +18,7 @@ from . import (
     v021_households,
     v022_household_decisions,
     v023_daily_time,
+    v024_estate_cash,
 )
 
 
@@ -86,6 +87,9 @@ _MIGRATIONS = (
     Migration.create(
         23, v023_daily_time.NAME, v023_daily_time.SQL,
         verify=v023_daily_time.verify),
+    Migration.create(
+        24, v024_estate_cash.NAME, v024_estate_cash.SQL,
+        verify=v024_estate_cash.verify),
 )
 
 

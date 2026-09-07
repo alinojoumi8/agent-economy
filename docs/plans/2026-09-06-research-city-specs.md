@@ -444,6 +444,9 @@ shared daily time, proportional labor/output, non-cash earned wages and recorded
 claim settlement, inheritance and write-off. Full estates, business succession,
 cohort and long-horizon validation remain required; these checkpoints do not
 close W5. Enrollment, attendance, credentials and education capacity remain W6.
+[Semantics 19](2026-09-07-estate-cash-and-credit.md) records the positive-cash and
+bank-principal waterfall per currency, including equity charge-offs. Full asset
+and obligation disposition, late receipts, minor custody and succession remain.
 
 Work package: W5. Existing seams: `engine/lifecycle.py`, `world/genesis.py`,
 `World._spawn_due_arrivals`, ledger ownership, social ties, and Living Agents

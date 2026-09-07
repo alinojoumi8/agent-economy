@@ -863,6 +863,12 @@ class World:
             )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
+        if self.engine_semantics_version >= 19:
+            from engine.estates import EstateError
+            try:
+                self.economy.cash_estates.check_invariants()
+            except EstateError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         if self.engine_semantics_version >= 18:
             from engine.daily_time import TimeBudgetError
             from engine.earned_wages import WageClaimError

@@ -336,7 +336,7 @@ class Lifecycle:
             self.earned_wages.collect_before_death(tick, agent_id)
 
         # 1) Settle debts via the creditor waterfall (dead agent's cash first).
-        loans = self.store.query(
+        loans = [] if self.engine_semantics_version >= 19 else self.store.query(
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=? AND status='active'",
             (agent_id,))
         for loan in loans:
@@ -361,11 +361,14 @@ class Lifecycle:
         cash_filter = " AND kind IN ('checking','savings','fx')" if self.engine_semantics_version >= 18 else ""
         if self.engine_semantics_version >= 18:
             self.earned_wages.inherit(tick, agent_id, heir_id)
+        if self.engine_semantics_version >= 19:
+            self.cash_estates.settle(tick, agent_id, heir_id)
 
-        # 2) Transfer remaining cash to heir (or escheat to government).
-        for acct in self.store.query(
+        # 2) Legacy cash transfer; Semantics 19 records this inside the waterfall.
+        cash_accounts = [] if self.engine_semantics_version >= 19 else self.store.query(
                 "SELECT id, balance_cents, bank_id, currency_code FROM accounts "
-                "WHERE owner_type='agent' AND owner_id=? AND balance_cents>0" + cash_filter, (agent_id,)):
+                "WHERE owner_type='agent' AND owner_id=? AND balance_cents>0" + cash_filter, (agent_id,))
+        for acct in cash_accounts:
             bal = int(acct["balance_cents"])
             if heir_id:
                 heir = self.store.query_one(
@@ -426,10 +429,13 @@ class Lifecycle:
     def _find_heir(self, agent_id: int) -> Optional[int]:
         rows = self.store.query(
             "SELECT CASE WHEN t.agent_a=? THEN t.agent_b ELSE t.agent_a END AS other, t.weight "
-            "FROM social_ties t WHERE (t.agent_a=? OR t.agent_b=?) ORDER BY t.weight DESC",
+            "FROM social_ties t WHERE (t.agent_a=? OR t.agent_b=?) ORDER BY t.weight DESC"
+            + (",other ASC" if self.engine_semantics_version >= 19 else ""),
             (agent_id, agent_id, agent_id))
         for r in rows:
             other = int(r["other"])
+            if self.engine_semantics_version >= 19 and other == agent_id:
+                continue
             alive = self.store.scalar("SELECT alive FROM agents WHERE id=?", (other,))
             if alive:
                 return other

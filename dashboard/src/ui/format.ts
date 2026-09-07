@@ -175,6 +175,7 @@ const KIND_CODES: Record<string, string> = {
   birth: "BRTH",
   birthday: "BDAY",
   death: "DETH",
+  estate_cash_settled: "ECAS",
   retirement: "RETR",
   retirement_job_search_withdrawn: "RJSW",
   retirement_savings_withdrawal: "RSWD",

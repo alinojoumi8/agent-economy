@@ -120,7 +120,9 @@ def _connect(path: str | Path) -> sqlite3.Connection:
 HOUSEHOLD_DECISION_TABLES = {"household_decisions", "household_assents", "partnerships"}
 DAILY_TIME_TABLES = {"time_plans", "time_days", "time_allocations", "child_care_days",
                      "wage_claims", "wage_claim_holders", "wage_accruals", "wage_settlements", "firm_labor_days"}
-SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_TABLES))
+ESTATE_CASH_TABLES = {"cash_estates", "estate_cash_assets", "estate_loan_claims", "estate_cash_transfers"}
+SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_TABLES),
+                       (19, 24, ESTATE_CASH_TABLES))
 
 
 def _engine_semantics(conn: sqlite3.Connection) -> int:

@@ -32,6 +32,9 @@ The [daily time slice](2026-09-07-daily-time-and-earned-wages.md) connects deliv
 care, work, study, construction, appointments and travel to one daily budget,
 with proportional production and earned wage claims. W5 remains open for complete
 estates, business succession and cohort/multi-decade validation; W6–W9 remain.
+The [cash estate checkpoint](2026-09-07-estate-cash-and-credit.md) adds recorded
+same-currency wallet settlement and bank-principal losses. It is one component
+of the remaining estate work, not closure of W5.
 
 ## First deliverable: Price Discovery Lab v1
 

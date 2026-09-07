@@ -1542,3 +1542,66 @@ W5 still requires complete multi-currency estates, business succession, cohort
 properties and a multi-decade experiment. W6–W9 remain. This change establishes
 testable time/accounting mechanics, not demographic calibration or research-scale
 performance. The two price-discovery domains remain equally primary.
+
+## 2026-09-07: recorded estate cash and bank-principal settlement
+
+The Semantics-18 commit `714ef9567237e12519302cca3a6be7d77f10c9a6` passed
+all nine applicable required jobs in CI `34167193360`, plus all eight complete
+Ubuntu/Python-3.12 shards and seven other applicable Python jobs in `34167189582`.
+The draft PR's earlier pending status was updated after verifying those results.
+
+The [estate cash contract](2026-09-07-estate-cash-and-credit.md) implements one
+remaining W5 component. Opt-in Semantics 19 consumes every matching-currency
+personal cash wallet for bank principal before distributing residual cash. It
+records unrecovered principal as a balanced bank-equity/system-loss charge-off
+and closes that principal to zero. Receipt tables distinguish cash from non-cash
+claims, preserve negative-wallet deficits and reconcile payments per currency.
+
+Four additive schema-24 tables record the death-time inventory, creditor claims,
+cash transfers and completion. The entire death transaction includes these
+effects, available wage collection, unpaid wage inheritance and existing social
+effects. Later death failures roll everything back. The source person remains
+the historical account owner; these receipts do not claim to route future refunds.
+
+Hash-contract-v6 classifies the new receipts as authoritative and exports them.
+Frozen v1–v5 manifests and v012–v023 migration payloads remain unchanged. Older
+replay admits only the named empty extension tables and their new migration
+receipt. The public event contains identity/scope/counts rather than bank balances
+or creditor amounts. Its designed event code is included in the dashboard registry.
+
+Validation before commit:
+
+- First focused Windows/Python-3.11 run: **120 passed**, 99.21 s, basetemp
+  `C:/Users/matri/.codex/tmp/ae-a6083adc`, log `tmp/estate-cash-focus.log`.
+- Final focused run after adding explicit cross-bank inheritance and tie-break
+  boundaries: **122 passed**, 98.39 s, basetemp
+  `C:/Users/matri/.codex/tmp/ae-36a89de8`, log `tmp/estate-cash-final-focus.log`.
+  This covers known-answer zero/partial/full recovery, multiple creditors,
+  three currencies, claim/cash separation, bank reserves/equity, rollback,
+  immutable receipts, exports and migration rollback. An injected mortality
+  boundary produces death receipts in a resumed two-day provider-free world
+  and exact replay. A schema-23/Semantics-18 recording also replays exactly
+  without rewriting its source.
+- `npm --prefix dashboard test`: **257 passed**, 5.16 s. Type check, license
+  check and production build passed. Generated `server/static/` output matches
+  the tracked bundle. Existing large-chunk and Starlette deprecation warnings remain.
+- **187 Python files** compiled in memory; CI YAML parsed. Four pinned datasets
+  verified; two optional inputs remain unpinned. `python -m pip check` passed.
+
+```powershell
+python -m pytest -q tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_compatibility_guards.py tests/test_credit_semantics7.py tests/test_documentation.py --basetemp C:/Users/matri/.codex/tmp/ae-36a89de8
+```
+
+The new focused suite is included in required core CI. A stale assertion in the
+foundation migration inventory was updated to include schema 24 while retaining
+the full named history and checksum assertions. The foundation and documentation
+checks run separately after this record is written; their result is reported in
+the draft PR. These focused results are not represented as complete-suite CI.
+
+No paid providers, additional cleanup, merged PRs or long-horizon local campaign
+were used. Fresh short test directories and the 40-GiB reserve bound local runs.
+The cash-only principal priority, single social-tie heir and lack of accrued
+interest are explicit research assumptions. Full disposition of illiquid rights,
+late receipts, negative balances/shared obligations, minor asset custody and
+business control still requires the next estate/succession slice. W5 cohort and
+multi-decade evidence and W6–W9 remain open; both price domains retain equal priority.

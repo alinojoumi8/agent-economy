@@ -20,6 +20,7 @@ from engine.earned_wages import WageClaimError
 from engine.firms import DEFAULT_PRODUCT
 from engine.ledger import SYS_EXTERNAL
 from engine.migrations import registry
+from engine.schema import SCHEMA_VERSION
 from engine.store import Store
 from research.export_bundle import export_bundle, validate_bundle
 from research.hashing import HashContractError, canonical_hashes, load_hash_contract
@@ -548,7 +549,7 @@ def test_daily_time_migration_failure_preserves_the_schema22_source(tmp_path, mo
     monkeypatch.setattr(registry, "_MIGRATIONS", migrations)
     store = Store(str(path))
     try:
-        assert store.scalar("SELECT schema_version FROM run_meta") == 23
+        assert store.scalar("SELECT schema_version FROM run_meta") == SCHEMA_VERSION
         assert store.scalar("SELECT COUNT(*) FROM time_days") == 0
         assert store.scalar("SELECT age FROM agents WHERE id=?", (actor,)) == 42
     finally:

@@ -16,6 +16,7 @@ from .cognition import CognitionEconomy
 from .construction import ConstructionEconomy
 from .daily_time import DailyTime
 from .earned_wages import EarnedWages
+from .estates import CashEstates
 from .exchange import Exchange
 from .firms import Firms
 from .families import HouseholdDecisions
@@ -96,6 +97,8 @@ class Economy:
         self.firms.daily_time = self.daily_time
         self.firms.earned_wages = self.earned_wages
         self.lifecycle.earned_wages = self.earned_wages
+        self.cash_estates = CashEstates(self)
+        self.lifecycle.cash_estates = self.cash_estates
         self.cognition.daily_time = self.daily_time
 
     # ── system accounts (created once at genesis) ────────────────────────────
