@@ -64,6 +64,10 @@ jobs:
         run: |
           docker build -f deploy/hostinger/Dockerfile.catalog-backup -t ae-catalog-backup:ci .
           docker run --rm ae-catalog-backup:ci --help
+      - name: Restore a real PostgreSQL catalog through SFTP
+        env:
+          AE_CATALOG_BACKUP_IMAGE: ae-catalog-backup:ci
+        run: python -m pytest -q tests/test_catalog_backup_integration.py
 
   smoke:
     name: Python smoke test

@@ -162,6 +162,16 @@ restores, archive round trips, replay, quotas and retention failures. No real
 Hostinger account or production data is used. Litestream 0.5.17's native Windows
 binary failed directory fsync in local verification; use Linux for this service.
 
+The storage CI job also builds the catalog backup image and tests a real
+PostgreSQL 17 dump, SFTP upload/download, and restore into a second database,
+including table ownership and grants. To repeat that disposable drill on Linux
+with Docker available:
+
+```bash
+docker build -f deploy/hostinger/Dockerfile.catalog-backup -t ae-catalog-backup:drill .
+AE_CATALOG_BACKUP_IMAGE=ae-catalog-backup:drill python -m pytest -q tests/test_catalog_backup_integration.py
+```
+
 Before public use, repeat the drill with the actual separate backup server and
 restore a real PostgreSQL catalog into an isolated replacement stack. Repository
 tests and rendered Compose configuration do not prove the chosen server's SSH
