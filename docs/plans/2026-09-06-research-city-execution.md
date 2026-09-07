@@ -61,6 +61,9 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 ## Next delivery
 
 Continue live-policy study support, interactive city integration and W5–W9.
+The [live-policy implementation contract](2026-09-07-live-policy-studies.md)
+records shared completion reservations and the remaining policy, supervisor,
+recovery/evidence and operator integration.
 Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Saved-day/phase recovery and daily-world keyed randomness
@@ -964,3 +967,39 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - Free space was **103.28 GiB** after these bounded checks, above the 40 GiB
   reserve. Existing user simulation artifacts and the unrelated cleanup plan
   were preserved. The five-part implementation goal remains active.
+
+## Shared provider completion budgets (2026-09-07)
+
+- Added an exclusively created operational ledger bound to one study manifest,
+  gateway configuration, aggregate call/token/spend caps and declared upper
+  provider/model tariffs. Atomic reservations precede direct HTTP completions;
+  independent workers and later processes share the original allowance.
+- Preflight JSON completions, retries, repairs and configured fallbacks pass
+  through the optional gateway guard. Cancellation, missing usage, failed
+  requests and process death retain their encumbered allowance. Budget stops
+  propagate without another completion or a false provider-failure event;
+  previously completed responses remain recorded when repair is unaffordable.
+- Separated explicit OpenAI/Anthropic usage from historical adapter estimates
+  without changing those estimates or canonical/replay payloads. Cached input
+  uses the declared upper input tariff. Malformed/excessive reported usage
+  stops subsequent dispatch; extreme concurrent breaches remain readable with
+  exact integer totals. Opaque CLI inference, request overrides and network
+  adapters masquerading as built-in offline providers are refused.
+- `.venv/Scripts/python.exe -m pytest -x -q tests/test_provider_budget.py tests/test_production_hardening.py tests/test_recorded_replay_golden.py tests/test_research_validity.py tests/test_prd_completion.py tests/test_study_protocol.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **210 tests** (87.56 s), including **50 new budget tests**. Tests cover
+  actual loopback HTTP preflight/retry paths, legacy and tiered routing,
+  cancellation, abrupt child-process death, concurrent reservations, declared
+  caps, missing/invalid usage, privacy and recorded replay compatibility.
+  Earlier 36/207/208-test passes preceded the final provenance and admission
+  checks; the 210-test run covers the final implementation.
+- Source-only compilation passed for **340 Python files**. CI YAML parsed,
+  `pip check` passed, and diff hygiene was checked. The existing Starlette
+  TestClient deprecation warning remains. Dashboard source/bundle are unchanged
+  in this slice. Required CI now includes the provider-budget tests; new-head
+  required and full-suite results are tracked on draft PR #82 after commit.
+- No paid provider calls or cleanup were performed. These are controlled
+  transport tests, not live-provider readiness or economic validation. The
+  [live-policy specification](2026-09-07-live-policy-studies.md) records the
+  remaining policy/replicate contracts, supervisor attachment, recovery/import
+  evidence and operator controls. The study runner still accepts only
+  explicitly scripted provider-free execution; the five-part goal is active.

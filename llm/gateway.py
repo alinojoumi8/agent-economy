@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
+from .completion_guard import BudgetExceeded, CompletionGuard
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
 
@@ -317,10 +318,6 @@ def _transient_provider_error(exc: BaseException) -> bool:
     if isinstance(exc, (KeyError, TypeError, ValueError, AttributeError)):
         return False
     return True
-
-
-class BudgetExceeded(Exception):
-    """Raised when a call would breach the hard cap — the world pauses cleanly."""
 
 
 class ProviderUnavailable(Exception):
@@ -647,11 +644,16 @@ class Governor:
 
 
 class Gateway:
-    def __init__(self, store, config: dict):
+    def __init__(self, store, config: dict, *, completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
         llm_cfg = config.get("llm", {})
         self.replay = bool(config.get("replay", False))
+        if completion_guard is not None:
+            if self.replay:
+                raise ValueError("recorded replay cannot attach a live completion budget")
+            completion_guard.validate_config(config)
+        self._completion_guard = completion_guard
         self.readiness_report = validate_llm_config(
             config, require_secrets=not self.replay, raise_on_error=True)
         self.routes: dict[str, dict] = llm_cfg.get("routes", {})
@@ -1114,6 +1116,17 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, attempts=state["attempts"])
 
+    async def _dispatch_completion(self, provider: str, adapter: Adapter, model: str,
+                                   messages: list[dict], **kwargs: Any) -> AdapterResult:
+        """Guard every physical completion, including preflight and repairs."""
+        if self._completion_guard is None:
+            return await adapter.complete(model, messages, **kwargs)
+        # Detect accidental in-process routing/config edits before transport.
+        self._completion_guard.validate_config(self.config)
+        if provider in {"scripted", "mock"}:
+            return await adapter.complete(model, messages, **kwargs)
+        return await self._completion_guard.complete(provider, adapter, model, messages, **kwargs)
+
     async def preflight(self, *, live: bool = False) -> dict:
         """Return config readiness and optionally authenticate/list routed models."""
         report = validate_llm_config(
@@ -1159,8 +1172,8 @@ class Gateway:
                     int(provider_config.get("preflight_max_tokens", 256)),
                 )
                 smoke_result = await asyncio.wait_for(
-                    adapter.complete(
-                        model,
+                    self._dispatch_completion(
+                        provider, adapter, model,
                         [{"role": "system", "content": (
                             "Return only valid JSON with keys ok and provider.")},
                          {"role": "user", "content": (
@@ -1186,6 +1199,8 @@ class Gateway:
                 operational_log(logger, logging.INFO, "llm.preflight.provider_completed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 ok=result.get("ok", False))
+            except BudgetExceeded:
+                raise
             except Exception as exc:
                 provider_error = sanitize_provider_error(exc)
                 checks.append({"provider": provider, "model": model, "ok": False,
@@ -1309,7 +1324,7 @@ class Gateway:
                 result, attempts = await self._call_adapter(
                     provider, adapter, model, req, req.messages(), req.temperature,
                     provider_cache_key)
-        except GatewayInterrupted:
+        except (GatewayInterrupted, BudgetExceeded):
             raise
         except _RoutePlanExhausted as exhausted:
             attempt_ids = exhausted.attempt_ids
@@ -1418,8 +1433,8 @@ class Gateway:
                 repaired_result.text = _sanitize_json_text(
                     repaired_result.text, preserve_root_reasoning=True)
                 attempts += repair_attempts
-            except GatewayInterrupted:
-                persist_initial_completion("GatewayInterrupted")
+            except (GatewayInterrupted, BudgetExceeded) as exc:
+                persist_initial_completion(type(exc).__name__)
                 raise
             except asyncio.CancelledError:
                 persist_initial_completion("CancelledError")
@@ -1514,6 +1529,8 @@ class Gateway:
                     self._cache_key(req, failed_provider, failed_model),
                     failed_result, failed_cost, failed_cached, latency_ms)
                 self._link_attempts(call_id, attempt_ids)
+                if isinstance(exc, BudgetExceeded):
+                    raise
                 failure = ProviderUnavailable(
                     fallback_target.provider, fallback_target.model, req.purpose,
                     f"contract fallback {type(exc).__name__}: {exc}",
@@ -1634,6 +1651,8 @@ class Gateway:
                         round(failed_cost + fallback_cost, 8),
                         failed_cached or fallback_cached, latency_ms)
                     self._link_attempts(call_id, attempt_ids)
+                    if isinstance(exc, BudgetExceeded):
+                        raise
                     failure = ProviderUnavailable(
                         provider, model, req.purpose,
                         f"fallback repair {type(exc).__name__}: {exc}",
@@ -1944,8 +1963,8 @@ class Gateway:
             try:
                 self._live_dispatch_count += 1
                 result = await asyncio.wait_for(
-                    adapter.complete(
-                        target.model, messages, purpose=req.purpose,
+                    self._dispatch_completion(
+                        target.provider, adapter, target.model, messages, purpose=req.purpose,
                         context=req.context, max_tokens=req.max_tokens,
                         temperature=temperature, cache_key=provider_cache_key),
                     timeout=timeout_s)
@@ -1985,6 +2004,8 @@ class Gateway:
         except GatewayInterrupted as exc:
             failure = exc
             outcome = "cancelled"
+        except BudgetExceeded:
+            raise
         except Exception as exc:
             failure = exc
             outcome = "provider_error"
@@ -2230,8 +2251,8 @@ class Gateway:
                         self._active_adapter_tasks.add(active_task)
                     try:
                         self._live_dispatch_count += 1
-                        result = await adapter.complete(
-                            model, messages, purpose=req.purpose, context=req.context,
+                        result = await self._dispatch_completion(
+                            provider, adapter, model, messages, purpose=req.purpose, context=req.context,
                             max_tokens=req.max_tokens, temperature=temperature,
                             cache_key=provider_cache_key)
                     finally:
@@ -2254,7 +2275,7 @@ class Gateway:
                     # heal on retry; re-sending would only bill the same error.
                     break
                 transient_attempt += 1
-            except (GatewayInterrupted, ProviderConfigurationError):
+            except (GatewayInterrupted, ProviderConfigurationError, BudgetExceeded):
                 raise
             except Exception as exc:
                 last_error = exc
