@@ -1,5 +1,12 @@
 # Development and testing
 
+Saved-world operator studies use the bounded read-only checkpoint catalog and
+the same explicit review, launch and recovery flow as fresh-world pilots. See
+the [checkpoint study contract](plans/2026-09-07-checkpoint-studies.md#local-operator-interface)
+for directory configuration, source limits and continuation semantics.
+Focused coverage is in `tests/test_checkpoint_study_jobs.py`; browser coverage
+and synthetic desktop/mobile review captures are in the world-workspace suite.
+
 ## Repository workflow
 
 Work on a feature branch or dedicated worktree. Preserve unrelated changes,

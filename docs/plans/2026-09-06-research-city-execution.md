@@ -7,7 +7,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector and local fresh-world workflow implemented; checkpoint-derived execution, day/phase recovery, CLI drafts and private evidence implemented; checkpoint selection/launch in the UI and live-policy comparisons pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector and local fresh-world workflow implemented; checkpoint-derived execution, day/phase recovery, CLI/operator drafts, explicit source selection, origin comparison and private evidence implemented; live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -60,12 +60,12 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Continue checkpoint-derived studies, interactive city integration and W5–W9.
+Continue live-policy study support, interactive city integration and W5–W9.
 Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Saved-day/phase recovery and daily-world keyed randomness
-are implemented; checkpoint-derived sources and live-policy comparisons remain
-next research extensions. Confirmatory studies remain unsupported.
+and checkpoint-derived studies are implemented. Live-policy comparisons remain
+a research extension. Confirmatory studies remain unsupported.
 
 ## Price study backend
 
@@ -922,7 +922,45 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   reported inaccessible old ignored report directories; compiling the actual
   tracked/unignored Python source set succeeded without changing those artifacts.
   The existing Starlette test-client deprecation warning remains.
-- Required CI now includes both checkpoint test modules. The operator launcher
-  remains explicitly fresh-world-only; reviewed checkpoint selection/launch and
-  origin details in the interface are the next portion of this deliverable.
-  The broader five-part roadmap is still active.
+- At backend commit `a758922`, the operator launcher was still fresh-world-only.
+  Required [CI 34098327977](https://github.com/alinojoumi8/agent-economy/actions/runs/34098327977)
+  passed all four jobs: 97 Chromium, 264 research, 359 core and 144 smoke checks.
+  Full [CI 34098443502](https://github.com/alinojoumi8/agent-economy/actions/runs/34098443502)
+  passed eight Ubuntu/Python 3.12 shards: **1,900 passed, 10 skipped**.
+
+## Saved-world operator workflow (2026-09-07)
+
+- Added the local operator checkpoint catalog and deliberate source selection.
+  It reads only immediate files in the configured checkpoint directory, rejects
+  aliases/sidecars/incompatible state, refuses oversized sources before hashing,
+  and bounds entries, source sizes and returned choices. It returns hashes and
+  source identities without paths, configuration or recorded input bodies.
+- Draft review, launch, the supervisor and day/phase resume recheck the selected
+  bytes, admission receipt, source seeds and fixed pilot profile. Validation
+  includes the required initial copies plus an explicit growth allowance.
+  Changed sources and inadequate budgets refuse before creating study worlds.
+- The browser offers fresh or saved initial conditions, clears deliberate
+  selections on refresh/context changes and withholds foreign catalog responses.
+  Draft and comparison views show origin day, independent worlds, retained seeds
+  and the newly executed interval. Existing context, CSRF, idempotency, recovery
+  and private evidence controls remain in the same workflow for both domains.
+- `.venv/Scripts/python.exe -m pytest -x -q tests/test_checkpoint_study_jobs.py tests/test_study_jobs.py tests/test_working_study_jobs.py tests/test_study_library.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **68 tests** (325.29 s). Includes actual G2/F2 × day/phase operator
+  continuations, four eligible worlds per study, recorded replay, private bundle
+  reimport and original-source/observed-world immutability. No paid calls.
+- TypeScript passed; **242 UI unit tests** passed. The focused browser run passed
+  **12 tests**; full `npm --prefix dashboard run test:e2e -- --workers=2` passed
+  **108 tests, 1 skipped** (2.5 min). The skip remains the opt-in backend menu
+  smoke. License notices and the production build passed; bundle regenerated.
+- Synthetic desktop/mobile review captures were inspected at
+  `docs/research/assets/study-checkpoint-review-desktop.png` and
+  `study-checkpoint-review-mobile.png`. These are mocked interface evidence;
+  the Python operator tests above execute actual saved-world studies.
+- Required CI separates saved-world execution/recovery from the broader research
+  evidence job to retain bounded ten-minute jobs. New-commit CI is dispatched
+  after committing this slice and tracked on draft PR #82. The full Windows/
+  Python matrix and hosted integrations are not claimed; the existing Starlette,
+  console-color and large Vite chunk warnings remain.
+- Free space was **103.28 GiB** after these bounded checks, above the 40 GiB
+  reserve. Existing user simulation artifacts and the unrelated cleanup plan
+  were preserved. The five-part implementation goal remains active.

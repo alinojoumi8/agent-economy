@@ -29,7 +29,8 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         out_dir=Path(config.get("out_dir", root / "reports/out")),
         export_root=workspace_path.parent / "research-exports")
     app.state.study_library = library
-    jobs = StudyJobs(workspace_path.parent / "research-jobs", data_root=library.data_root, out_dir=library.out_dir)
+    jobs = StudyJobs(workspace_path.parent / "research-jobs", data_root=library.data_root, out_dir=library.out_dir,
+        checkpoint_root=Path(config.get("checkpoint_root", root / "data/checkpoints")))
     app.state.study_jobs = jobs
     lock = threading.Lock()
 
@@ -72,7 +73,14 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         return {"contract": "operator-study-catalog-v1", "context": context, **catalog,
                 "scope": "Saved studies on this local server; independent of the observed world.",
                 "capabilities": {"verify": True, "compare": True, "private_export": True,
-                                 "launch": True, "checkpoint_fork": False}}
+                                 "launch": True, "checkpoint_fork": True}}
+
+    @router.get("/checkpoints")
+    async def checkpoints(run_id: str, response: Response, fork_id: str | None = None, tick: str = "live",
+                          x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return {"context": context, **await read_work(jobs.checkpoint_catalog)}
 
     @router.get("/capabilities")
     async def capabilities(run_id: str, response: Response, fork_id: str | None = None, tick: str = "live",

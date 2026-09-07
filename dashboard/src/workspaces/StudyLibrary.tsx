@@ -6,6 +6,7 @@ import { useObserverViewState } from "../app/observerViewState";
 import { WorkspaceTable } from "./workspaceShared";
 import { studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "./studyLibraryModel.js";
 import { operatorStudyFrameMatches } from "./studyLauncherModel.js";
+import { StudyOrigin, type OriginDetails } from "./StudyOrigin";
 import "./price-lab.css";
 import "./study-library.css";
 
@@ -15,7 +16,7 @@ type Catalog = { context: any; contract: string; items: CatalogItem[]; truncated
 type Comparison = { context: any; contract: "operator-study-comparison-v1"; id: string; title: string; hypothesis: string; limitations: string[];
   arms: Array<{ key: string; label: string; role: string }>; measurement_window: number[]; outcomes: any[];
   summary: { baseline_arm: string; coverage: Record<string, any>; metrics: any; exclusions: any[] };
-  attempts: any[]; verification: any; verification_sha256: string; manifest_sha256: string; source_identity: any };
+  attempts: any[]; verification: any; verification_sha256: string; manifest_sha256: string; source_identity: any; origin_details?: OriginDetails };
 type Working = Omit<Comparison, "contract" | "outcomes" | "summary"> & {
   contract: "operator-working-study-v1"; state: string; comparison_available: false; export_available: boolean;
   budget: { max_wall_seconds: number; active_wall_seconds: number | null; max_disk_bytes: number }; operator_job?: any };
@@ -37,7 +38,7 @@ function DomainComparison({ study, domain, treatment }: { study: Comparison; dom
         <div><dt>Baseline mean</dt><dd>{studyNumber(row.baseline)}</dd></div>
         <div><dt>Treatment mean</dt><dd>{studyNumber(row.treatment)}</dd></div>
         <div><dt>Mean paired difference</dt><dd><strong>{studyNumber(row.difference)}</strong></dd></div>
-        <div><dt>Usable seed pairs</dt><dd>{row.pairs} / {row.assignedPairs}</dd></div>
+        <div><dt>{study.origin_details?.kind === "verified_checkpoints" ? "Usable saved-world pairs" : "Usable seed pairs"}</dt><dd>{row.pairs} / {row.assignedPairs}</dd></div>
       </dl>
       <p>95% paired bootstrap interval: {row.interval ? `${studyNumber(row.interval[0])} to ${studyNumber(row.interval[1])}` : "Unavailable"}.</p>
       {row.exclusions.length > 0 && <details><summary>{row.exclusions.length} excluded pair{row.exclusions.length === 1 ? "" : "s"}</summary>
@@ -157,6 +158,7 @@ export function StudyLibrary() {
     {Boolean(currentCatalog?.omitted) && <p>{currentCatalog?.omitted} malformed catalog record(s) could not be listed.</p>}
     {currentCatalog && !currentCatalog.items.length && <div className="world-os-empty"><h3>No saved price studies</h3><p>Choose Create a study to prepare a G2 or F2 pilot, or use the local research commands.</p></div>}
     {studyId && currentCatalog && !selected && <p role="alert">This study is not in the current local catalog.</p>}
+    {study && <StudyOrigin origin={study.origin_details} />}
     {working && <section className="study-library__verdict" aria-label="Working study progress">
       <h4>Working study · {words(working.state)}</h4>
       <p>{working.verification.status === "verified" ? "Saved checkpoint verified. Study eligibility is pending." : "This checkpoint has not been verified. Refresh after execution stops or inspect the job status."}</p>

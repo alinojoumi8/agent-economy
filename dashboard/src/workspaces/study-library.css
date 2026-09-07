@@ -19,3 +19,7 @@
 .study-library__export button { min-height: 44px; border: 1px solid var(--ae-accent); background: var(--ae-accent); color: var(--ae-on-accent, #fff); padding: 8px 12px; border-radius: 3px; }
 .study-library__export button:focus-visible { outline: 2px solid var(--ae-accent); outline-offset: 3px; }
 @media (max-width: 600px) { .study-library__metadata { grid-template-columns: 1fr; } }
+.study-origin { min-width: 0; padding: 16px; margin-block: 12px; border-left: 3px solid var(--ae-accent); background: var(--ae-surface-1); }
+.study-origin h4 { margin: 0 0 8px; }
+.study-origin code, .study-origin li { overflow-wrap: anywhere; }
+.study-origin li + li { margin-top: 14px; }

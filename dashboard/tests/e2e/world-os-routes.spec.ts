@@ -905,6 +905,121 @@ test("interrupted study recovery is explicit and never starts another job", asyn
 
 const BASE_LAUNCH = "/api/v2/operator/research";
 
+async function mockCheckpointStudy(page: Page, wrongCatalog = false) {
+  const requests = await mockStudyLaunch(page);
+  const sources = [1, 2].map(seed => ({ id: String(seed).repeat(32), seed, run_id: `saved-world-${seed}`, tick: 2,
+    bytes: 2097152, database_sha256: String(seed).repeat(64), receipt_sha256: String(seed + 2).repeat(64) }));
+  const origin = { kind: "verified_checkpoints", tick: 2, independent_worlds: 2, continuation_window: [3, 5], sources };
+  let reviewed: any = null, resumed = false;
+  const child = "f".repeat(32);
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    const method = route.request().method(), body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context,
+      launch_blocked: false, checkpoint_fork: true, checkpoint_source_mib: 16, resume: true, pause_phases: ["MARKET"] } });
+    if (path.endsWith("/checkpoints")) return route.fulfill({ json: { contract: "operator-checkpoint-catalog-v1",
+      context: wrongCatalog ? { ...context, run_id: "wrong-run" } : context,
+      items: wrongCatalog ? [{ ...sources[0], run_id: "WRONG-CHECKPOINT-CANARY" }] : sources,
+      truncated: false, omitted: { oversized: 2, unavailable_or_incompatible: 0 } } });
+    if (path.endsWith("/validate")) {
+      reviewed = { ...launchFixture(context.fork_id, body), origin: "verified_checkpoints", origin_details: origin };
+      reviewed.spec = { ...reviewed.spec, randomness: { seeds: [1, 2] }, time: { measurement_start: 4, measurement_end: 5 } };
+      reviewed.spec.arms[1].changes.shocks = [body.preset === "F2"
+        ? { tick: body.intervention_tick, kind: "scandal", firm_id: 1 }
+        : { tick: body.intervention_tick, kind: "oil", multiplier: 1.5 }];
+      reviewed.estimate.source_and_replay_ticks = 24;
+      return route.fulfill({ json: reviewed });
+    }
+    if (path.endsWith("/resume")) resumed = true;
+    if (path.endsWith("/launch") || path.includes("/jobs/")) {
+      const phase = reviewed?.request.pause_after_phase;
+      return route.fulfill({ status: method === "POST" ? 202 : 200, json: {
+        contract: "operator-study-job-status-v1", context, id: resumed ? child : jobId, draft_id: draftId, draft_sha256: draftHash,
+        ...(resumed ? { parent_job_id: jobId } : {}), status: resumed ? "completed" : "paused", resumable: !resumed,
+        origin: "verified_checkpoints", origin_details: origin, expected_cells: 4, finished_cells: resumed ? 4 : 0,
+        remaining_wall_seconds: 160, progress_sha256: studyHash, resume_check_sha256: "6".repeat(64),
+        study_id: studyId, result_sha256: studyHash,
+        cells: [{ arm: "base", seed: 1, ticks: resumed ? 5 : phase ? 2 : 3, execution_status: resumed ? "completed" : "paused",
+          eligibility: { status: resumed ? "eligible" : "pending", reasons: [] },
+          ...(!resumed && phase ? { position: { completed_tick: 2, active_tick: 3, next_phase: "NEWSROOM" } } : {}) }],
+      } });
+    }
+    if (path.includes("/drafts/")) return route.fulfill({ json: { ...reviewed, context } });
+    if (path.endsWith(`/studies/${studyId}`)) return route.fulfill({ json: { ...comparisonFixture(context.fork_id), origin_details: origin } });
+    return route.fallback();
+  });
+  return requests;
+}
+
+for (const preset of ["G2", "F2"]) {
+  test(`saved-world ${preset} selection is reviewed, explicitly resumed and shown in comparison`, async ({ page }) => {
+    const diagnostics = await setup(page);
+    const requests = await mockCheckpointStudy(page);
+    await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create&fork=fork-1");
+    await page.getByLabel("Initial conditions").selectOption("verified_checkpoints");
+    await page.getByLabel("Research question").selectOption(preset);
+    await page.getByRole("checkbox", { name: /Seed 1 · saved day 2/ }).check();
+    await page.getByRole("checkbox", { name: /Seed 2 · saved day 2/ }).check();
+    await expect(page.getByLabel("World seeds")).toHaveCount(0);
+    await page.getByLabel("Horizon (days)").fill("5");
+    await page.getByLabel("Intervention day").fill("4");
+    await page.getByLabel("Additional warmup (days)").fill("1");
+    if (preset === "F2") await page.getByLabel("Pause after a step (optional)").selectOption("MARKET");
+    else await page.getByLabel("Pause after saved days (optional)").fill("1");
+    expect(requests.filter(row => row.method === "POST")).toHaveLength(0);
+    await page.getByRole("button", { name: "Validate draft" }).click();
+    const review = page.getByRole("region", { name: "Validated study protocol" });
+    await expect(review).toContainText("2 independent initial worlds · saved day 2 · new execution days 3–5");
+    const submitted = requests.find(row => row.path.endsWith("/validate"))!.body;
+    expect(submitted).toMatchObject({ preset, origin: "verified_checkpoints", seeds: null, warmup_ticks: 1 });
+    expect(submitted.checkpoints).toHaveLength(2);
+    expect(Object.keys(submitted.checkpoints[0]).sort()).toEqual(["database_sha256", "id", "receipt_sha256"]);
+    expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+    await review.getByText("Selected source identities", { exact: true }).click();
+    await expect(review).toContainText("saved-world-1");
+    if (preset === "G2" && process.env.AE_CAPTURE_CHECKPOINT_UI === "1") {
+      await page.setViewportSize({ width: 1280, height: 1400 });
+      await review.screenshot({ path: "../docs/research/assets/study-checkpoint-review-desktop.png" });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    if (preset === "G2" && process.env.AE_CAPTURE_CHECKPOINT_UI === "1") {
+      await page.setViewportSize({ width: 390, height: 2400 });
+      await review.screenshot({ path: "../docs/research/assets/study-checkpoint-review-mobile.png" });
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
+    await page.getByRole("button", { name: "Run saved-world study" }).click();
+    await expect(page.getByRole("button", { name: "Resume saved study" })).toBeEnabled();
+    if (preset === "F2") await expect(page.getByRole("region", { name: "Study job status" })).toContainText("Day 3 · next: News publication");
+    await page.getByRole("button", { name: "Resume saved study" }).click();
+    await page.getByRole("button", { name: "Open verified comparison" }).click();
+    await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Declared initial conditions" })).toContainText("new execution days 3–5");
+    await expect(page.getByRole("article", { name: "Goods study comparison" })).toBeVisible();
+    await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+    expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(1);
+    expect(requests.filter(row => row.path.endsWith("/resume"))).toHaveLength(1);
+    expect(diagnostics.consoleErrors).toEqual([]);
+    expect(diagnostics.requestFailures).toEqual([]);
+  });
+}
+
+test("a foreign checkpoint catalog cannot reveal choices or validate a study", async ({ page }) => {
+  await setup(page);
+  const requests = await mockCheckpointStudy(page, true);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Initial conditions").selectOption("verified_checkpoints");
+  await expect(page.getByRole("alert")).toContainText("does not match");
+  await expect(page.locator("body")).not.toContainText("WRONG-CHECKPOINT-CANARY");
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Validate draft" })).toBeDisabled();
+  expect(requests.filter(row => row.method === "POST")).toHaveLength(0);
+});
+
 async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wrong-parent" | "running" | "phase" = "ready") {
   const requests = await mockStudyLaunch(page);
   const childId = "f".repeat(32);

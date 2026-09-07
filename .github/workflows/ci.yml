@@ -145,8 +145,6 @@ jobs:
           tests/test_research_attempt_integrity.py
           tests/test_study_protocol.py
           tests/test_study_runner.py
-          tests/test_checkpoint_origins.py
-          tests/test_checkpoint_studies.py
           tests/test_working_attempts.py
           tests/test_phase_working_attempts.py
           tests/test_phase_working_studies.py
@@ -164,6 +162,30 @@ jobs:
           tests/test_price_lab_projection.py
           tests/test_city_conversations_projection.py
           tests/test_metric_registry.py
+
+  research-checkpoints:
+    name: Saved-world study execution and operator recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify saved origins, both market continuations and operator recovery
+        # Separate these actual world/replay executions from the broader
+        # research job, which already took eight minutes before operator cases.
+        run: >
+          python -m pytest -q
+          tests/test_checkpoint_origins.py
+          tests/test_checkpoint_studies.py
+          tests/test_checkpoint_study_jobs.py
 
   dashboard:
     if: >

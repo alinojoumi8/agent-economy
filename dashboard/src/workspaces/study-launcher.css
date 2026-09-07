@@ -19,6 +19,11 @@
 .study-launcher__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .study-launcher code { overflow-wrap: anywhere; }
 .study-launcher pre { overflow: auto; max-height: 360px; font-size: .78rem; padding: 12px; }
+.study-launcher__sources { margin: 18px 0; padding: 16px 0; border-block: 1px solid var(--ae-border); }
+.study-launcher__source-list { display: grid; gap: 1px; margin-top: 12px; }
+.study-launcher__source-list label { display: flex; align-items: center; gap: 12px; padding: 10px; min-height: 44px; background: var(--ae-surface-1); overflow-wrap: anywhere; }
+.study-launcher__source-list input { width: 20px; height: 20px; flex-shrink: 0; }
+.study-launcher__source-list small { display: block; margin-top: 4px; color: var(--ae-text-2); }
 @media (max-width: 900px) { .study-launcher__fields, .study-launcher__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) {
   .study-launcher__fields, .study-launcher__facts, .study-launcher__arms { grid-template-columns: minmax(0, 1fr); }

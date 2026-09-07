@@ -7,6 +7,7 @@ import re
 
 from research.artifacts import digest_json, file_sha256, publish_json
 from research.metric_registry import metric_definition
+from research.operator_checkpoints import study_origin_view
 from research.process_lock import ProcessLockBusy
 from research.studies import StudySpec
 from research.study_bundle import export_study_bundle
@@ -129,6 +130,7 @@ class StudyLibrary:
             "measurement_window": result["measurement_window"], "outcomes": outcomes,
             "measurements": measurements,
             "summary": result["summary"], "verification": verification,
+            "origin_details": study_origin_view(result["batch"]["manifest"]),
             "manifest_sha256": result["batch"]["manifest_sha256"],
             "source_identity": {key: result["batch"]["manifest"]["code"].get(key)
                                 for key in ("git_commit", "source_tree_sha256")},
@@ -183,6 +185,7 @@ class StudyLibrary:
         view = {"contract": "operator-working-study-v1", "id": study_id, "state": state,
             "title": spec.title, "hypothesis": spec.hypothesis, "limitations": spec.limitations,
             "domains": spec.domains, "arms": [arm.model_dump(mode="json") for arm in spec.arms],
+            "origin_details": study_origin_view(frozen["manifest"]),
             "measurement_window": [spec.time.measurement_start, spec.time.measurement_end],
             "attempts": attempts, "comparison_available": False, "export_available": bool(checked),
             "verification": verification, "manifest_sha256": frozen["manifest_sha256"],

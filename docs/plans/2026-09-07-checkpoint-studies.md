@@ -16,9 +16,40 @@ external-agent, participant and legacy replay regression passed 122 tests.
 Those runs used short temporary paths and the 40 GiB free-space guard. CI and
 the remaining operator interface work are tracked in the execution log.
 
-The operator launcher still advertises fresh worlds only. Reviewed checkpoint
-selection, launch and origin details in the interface remain required work;
-the backend implementation does not complete this entire deliverable.
+The operator launcher now offers explicit saved-world selection, reviewed
+origin details and the existing deliberate launch/recovery controls. Comparison
+shows initial conditions and the new execution interval. Its operator/API
+regression passed 68 tests; the full browser suite passed 108 tests with one
+opt-in test skipped, and all 242 UI unit tests passed. See the execution log
+and draft PR for exact commands, CI results and the remaining broader roadmap.
+
+## Local operator interface
+
+Choose **Create a study → Initial conditions → Saved worlds**. The local
+operator-only catalog reads immediate `.db` children of
+`operator_research.checkpoint_root` (default `data/checkpoints`). It never
+recursively scans the project, creates a snapshot of the observed world, accepts
+a browser-supplied path or copies a source during catalog/validation reads.
+
+The initial interface retains the fixed `runs/price-lab-pilot.yaml` economic
+profile, original source seeds, at most five initial worlds, a 30-day absolute
+horizon, 300 active seconds and a 128 MiB evidence budget. Individual snapshots
+are limited to 16 MiB. Catalog work is bounded by 500 entries, 128 MiB of source
+sizes examined and 20 compatible choices; omissions/truncation are explicit.
+The CLI remains available for other compatible profiles and explicit budgets.
+
+Choose the same completed day from distinct seed/run identities. Source
+selection binds both database and admission hashes. Validation, launch, the
+supervisor and resume recheck the original sources and fixed configuration.
+Storage planning includes the admitted context plus independent source/replay
+copies for each arm and an explicitly uncalibrated growth allowance. Sources
+and their original directory must remain available for operator recovery.
+
+The reviewed protocol shows source identity, retained seeds, saved day,
+continuation and measurement intervals before launch. Refreshing the source
+catalog clears the selection. Historical/foreign contexts and hosted mode
+cannot read it. Public origin details omit configuration, paths and recorded
+input bodies; full scientific evidence remains in private bundles.
 
 ## Command-line drafting and execution
 

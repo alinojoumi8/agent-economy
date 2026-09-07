@@ -1,4 +1,4 @@
-"""Local, durable operator launches of bounded fresh-genesis price pilots.
+"""Local, durable operator launches of bounded fresh or saved-world pilots.
 
 Only the fixed price-lab profile and declared preset parameters are accepted.
 A dedicated supervisor owns execution, so an HTTP disconnect or server restart
@@ -22,7 +22,8 @@ from uuid import uuid4
 from pydantic import Field, model_validator
 
 from research.artifacts import code_identity, digest_json, file_sha256, publish_json
-from research.price_catalog import draft_price_study, price_study_catalog
+from research.price_catalog import draft_checkpoint_price_study, draft_price_study, price_study_catalog
+from research.operator_checkpoints import OperatorCheckpoints, study_origin_view
 from research.process_lock import process_lock, ProcessLockBusy
 from research.studies import Contract, Digest, StudySpec, validate_study_inputs
 from research.study_results import StudyArtifactError, StudyIdentityChanged, read_json
@@ -41,9 +42,18 @@ class PilotInputError(ValueError):
     """A safe, operator-facing rejection of a bounded pilot request."""
 
 
+class CheckpointSelection(Contract):
+    id: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
+    database_sha256: Digest
+    receipt_sha256: Digest
+
+
 class PilotRequest(Contract):
     preset: Literal["G2", "F2"]
-    seeds: Annotated[list[Annotated[int, Field(ge=0, le=2**31 - 1)]], Field(min_length=1, max_length=5)]
+    origin: Literal["fresh_genesis", "verified_checkpoints"] = "fresh_genesis"
+    seeds: Annotated[list[Annotated[int, Field(ge=0, le=2**31 - 1)]], Field(min_length=1, max_length=5)] | None = None
+    checkpoints: Annotated[list[CheckpointSelection], Field(min_length=1, max_length=5)] | None = None
+    warmup_ticks: Annotated[int, Field(ge=0, le=29)] = 0
     horizon: Annotated[int, Field(ge=3, le=30)]
     intervention_tick: Annotated[int, Field(ge=1, le=30)]
     goods_firm_id: Literal[2, 3] = 2
@@ -56,7 +66,14 @@ class PilotRequest(Contract):
 
     @model_validator(mode="after")
     def ordered(self):
-        if self.intervention_tick > self.horizon or len(set(self.seeds)) != len(self.seeds):
+        if self.origin == "fresh_genesis":
+            if self.seeds is None or self.checkpoints is not None or self.warmup_ticks:
+                raise ValueError("fresh worlds require seeds and cannot declare checkpoints or checkpoint warmup")
+        elif self.seeds is not None or not self.checkpoints:
+            raise ValueError("saved worlds require checkpoint selections and retain their original seeds")
+        if self.checkpoints and len({item.id for item in self.checkpoints}) != len(self.checkpoints):
+            raise ValueError("choose each checkpoint only once")
+        if self.intervention_tick > self.horizon or (self.seeds and len(set(self.seeds)) != len(self.seeds)):
             raise ValueError("intervention must be within the horizon and seeds must be unique")
         if self.pause_after_ticks is not None and self.pause_after_ticks >= self.horizon:
             raise ValueError("the planned pause must precede the horizon")
@@ -87,8 +104,9 @@ def execution_lock(path: Path, *, wait_seconds: float = 0):
 
 
 class StudyJobs:
-    def __init__(self, root: Path, *, data_root: Path, out_dir: Path):
+    def __init__(self, root: Path, *, data_root: Path, out_dir: Path, checkpoint_root: Path | None = None):
         self.root, self.data_root, self.out_dir = root.resolve(), data_root.resolve(), out_dir.resolve()
+        self.checkpoints = OperatorCheckpoints(checkpoint_root or ROOT / "data/checkpoints")
 
     def path(self, kind: str, identity: str) -> Path:
         if kind not in {"drafts", "jobs"} or not re.fullmatch(r"[a-f0-9]{32}", identity):
@@ -111,17 +129,34 @@ class StudyJobs:
             "origin": "fresh_genesis", "profile": "price-lab-pilot", "population": 14,
             "limits": {"max_seeds": 5, "max_horizon": 30, "max_wall_seconds": 300,
                        "max_disk_mib": 128, "concurrency": 1, "provider_calls": 0, "spend_usd": 0},
-            "scope": "New independent worlds; the observed world is not a parent checkpoint.",
-            "checkpoint_fork": False, "live_models": False, "resume": True,
+            "scope": "New worlds or explicitly selected compatible saved worlds; the observed world is never selected automatically.",
+            "origins": ["fresh_genesis", "verified_checkpoints"],
+            "checkpoint_source_mib": OperatorCheckpoints.MAX_SOURCE_BYTES // MIB,
+            "checkpoint_fork": True, "live_models": False, "resume": True,
             "pause_phases": list(phase_names_for_semantics(7))}
 
-    @staticmethod
-    def _spec(request: PilotRequest, config: dict) -> StudySpec:
+    def checkpoint_catalog(self) -> dict:
+        return self.checkpoints.catalog(load_config(ROOT / "runs/price-lab-pilot.yaml"))
+
+    def input_root(self, request: PilotRequest) -> Path:
+        return self.checkpoints.root if request.origin == "verified_checkpoints" else ROOT
+
+    def _spec(self, request: PilotRequest, config: dict) -> StudySpec:
         if config.get("population", {}).get("size") != 14 or config.get("firms", {}).get("count") != 3:
             raise PilotInputError("The local interface requires the 14-agent, 3-firm pilot profile.")
-        spec = draft_price_study(config, request.preset, seeds=request.seeds,
-            horizon=request.horizon, intervention_tick=request.intervention_tick,
-            goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id)
+        if request.origin == "verified_checkpoints":
+            paths = self.checkpoints.resolve(request.checkpoints, config)
+            spec = draft_checkpoint_price_study(config, request.preset, checkpoints=paths,
+                input_root=self.checkpoints.root, horizon=request.horizon,
+                intervention_tick=request.intervention_tick, warmup_ticks=request.warmup_ticks,
+                goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id,
+                max_disk_bytes=request.max_disk_mib * MIB, max_wall_seconds=request.max_wall_seconds)
+            if request.pause_after_ticks is not None and request.pause_after_ticks >= request.horizon - spec.origin.tick:
+                raise PilotInputError("The planned pause must precede the remaining continuation horizon.")
+        else:
+            spec = draft_price_study(config, request.preset, seeds=request.seeds,
+                horizon=request.horizon, intervention_tick=request.intervention_tick,
+                goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id)
         values = spec.model_dump(mode="json")
         values["operations"].update(max_wall_seconds=request.max_wall_seconds,
             max_disk_bytes=request.max_disk_mib * MIB,
@@ -136,10 +171,12 @@ class StudyJobs:
         before = code_identity()
         config = load_config(ROOT / "runs/price-lab-pilot.yaml")
         spec = self._spec(request, config)
-        protocol = validate_study_inputs(spec, config, input_root=ROOT)
+        protocol = validate_study_inputs(spec, config, input_root=self.input_root(request))
         # Explicit planning heuristic, including source and replay; not a measured forecast.
-        cells = len(request.seeds) * len(spec.arms)
-        estimate = cells * (8 * MIB + request.horizon * 256 * 1024)
+        cells = len(spec.randomness.seeds) * len(spec.arms)
+        remaining = request.horizon - (spec.origin.tick if spec.origin else 0)
+        copy_bytes = sum(row["byte_size"] for row in protocol.get("checkpoint_origins", {}).values()) * (1 + 2 * len(spec.arms))
+        estimate = copy_bytes + cells * (8 * MIB + remaining * 256 * 1024)
         if estimate > request.max_disk_mib * MIB:
             raise PilotInputError("The planning storage estimate exceeds the disk budget. Reduce seeds or horizon, or increase the budget.")
         if code_identity() != before:
@@ -147,8 +184,9 @@ class StudyJobs:
         identity = uuid4().hex
         draft = {"contract": "operator-study-draft-v1", "id": identity, "context": context,
             "request": request.model_dump(mode="json"), "code": before, "protocol": protocol,
-            "estimate": {"worlds": cells, "source_and_replay_ticks": cells * request.horizon * 2,
-                "disk_bytes": estimate, "method": "planning allowance: 8 MiB/world plus 256 KiB/world-tick, including replay; uncalibrated",
+            "estimate": {"worlds": cells, "source_and_replay_ticks": cells * remaining * 2,
+                "disk_bytes": estimate, "origin_copy_bytes": copy_bytes,
+                "method": "planning allowance: initial saved-world copies plus 8 MiB/world and 256 KiB/new world-tick, including replay; uncalibrated",
                 "wall_seconds_limit": request.max_wall_seconds, "disk_bytes_limit": request.max_disk_mib * MIB,
                 "provider_calls": 0, "spend_usd": 0}}
         publish_json(self.path("drafts", identity) / "draft.json", draft)
@@ -168,7 +206,8 @@ class StudyJobs:
         launched = self.path("drafts", identity) / "launch.json"
         job_id = self._read(launched)["job_id"] if launched.is_file() else None
         return {"contract": draft["contract"], "id": identity, "context": context,
-            "draft_sha256": digest_json(draft), "origin": "fresh_genesis", "request": draft["request"],
+            "draft_sha256": digest_json(draft), "origin": study_origin_view(draft["protocol"])["kind"],
+            "origin_details": study_origin_view(draft["protocol"]), "request": draft["request"],
             "estimate": draft["estimate"], "source_identity": draft["code"],
             "spec": draft["protocol"]["study"], "executed": False if job_id is None else None, "job_id": job_id}
 
@@ -218,14 +257,15 @@ class StudyJobs:
             # or resource bounds, even if its caller supplies the edited digest.
             request = PilotRequest.model_validate(draft["request"])
             config = load_config(ROOT / "runs/price-lab-pilot.yaml")
-            expected = validate_study_inputs(self._spec(request, config), config, input_root=ROOT)
+            expected = validate_study_inputs(self._spec(request, config), config, input_root=self.input_root(request))
             if draft["protocol"] != expected:
                 raise StudyIdentityChanged("Saved protocol no longer matches the bounded pilot request. Validate a new draft.")
             job_id = digest_json({"draft": identity, "key": body.idempotency_key})[:32]
             job = self.path("jobs", job_id)
             claim = {"contract": "operator-study-job-v1", "job_id": job_id, "draft_id": identity,
                 "request": body.model_dump(mode="json"), "context": context, "created_at": time.time(),
-                "data_root": str(self.data_root), "out_dir": str(self.out_dir)}
+                "data_root": str(self.data_root), "out_dir": str(self.out_dir),
+                "checkpoint_root": str(self.checkpoints.root)}
             publish_json(job / "claim.json", claim)
             publish_json(launched, claim)
             publish_json(self.root / "active.json", {"job_id": job_id})
@@ -237,9 +277,9 @@ class StudyJobs:
         config = load_config(ROOT / "runs/price-lab-pilot.yaml")
         request = PilotRequest.model_validate(draft["request"])
         spec = self._spec(request, config)
-        if draft["protocol"] != validate_study_inputs(spec, config, input_root=ROOT):
+        if draft["protocol"] != validate_study_inputs(spec, config, input_root=self.input_root(request)):
             raise StudyIdentityChanged("The saved pilot no longer matches its original profile.")
-        state = validate_resume(batch["data_dir"], spec, config, input_root=ROOT,
+        state = validate_resume(batch["data_dir"], spec, config, input_root=self.input_root(request),
                                 data_root=self.data_root, out_dir=self.out_dir)
         if state["batch"] != batch:
             raise StudyIdentityChanged("Saved job and working batch identities disagree.")
@@ -320,7 +360,7 @@ class StudyJobs:
                         state = {"status": "interrupted_worker_active", "reason": "supervisor_lost_worker_stopping"}
             except StudyIdentityChanged:
                 state = {"status": "running", "reason": None}
-        cells = len(draft["protocol"]["study"]["arms"]) * len(draft["request"]["seeds"])
+        cells = len(draft["protocol"]["study"]["arms"]) * len(draft["protocol"]["study"]["randomness"]["seeds"])
         progress = [self._read(job / f"cell-{index}.json") for index in range(1, cells + 1)
                     if (job / f"cell-{index}.json").is_file()]
         resume = {"resumable": False}
@@ -343,7 +383,8 @@ class StudyJobs:
                 resume["resume_unavailable_reason"] = reason
         return {"contract": "operator-study-job-status-v1", "id": identity, "context": context,
             "draft_id": claim["draft_id"], "draft_sha256": claim["request"]["draft_sha256"],
-            "title": draft["protocol"]["study"]["title"], "origin": "fresh_genesis",
+            "title": draft["protocol"]["study"]["title"], "origin": study_origin_view(draft["protocol"])["kind"],
+            "origin_details": study_origin_view(draft["protocol"]),
             "created_at": claim["created_at"], "expected_cells": cells,
             "finished_cells": sum(row.get("eligibility", {}).get("status", "pending") != "pending" for row in progress),
             "cells": progress, "recoverable": state["status"] == "interrupted" and not terminal.is_file(),
@@ -404,7 +445,8 @@ def execute_job(root: Path, identity: str) -> None:
     provisional = StudyJobs(root, data_root=root, out_dir=root)
     job = provisional.path("jobs", identity)
     claim = provisional._read(job / "claim.json")
-    service = StudyJobs(root, data_root=Path(claim["data_root"]), out_dir=Path(claim["out_dir"]))
+    service = StudyJobs(root, data_root=Path(claim["data_root"]), out_dir=Path(claim["out_dir"]),
+                        checkpoint_root=Path(claim["checkpoint_root"]) if claim.get("checkpoint_root") else None)
     with execution_lock(job / "execution.lock", wait_seconds=5):
         with execution_lock(service.root / "scheduler.lock", wait_seconds=5):
             if (job / "terminal.json").exists() or service._read(service.root / "active.json").get("job_id") != identity:
@@ -414,7 +456,11 @@ def execute_job(root: Path, identity: str) -> None:
             draft = service._draft(claim["draft_id"], claim["context"])
             if digest_json(draft) != claim["request"]["draft_sha256"]:
                 raise StudyIdentityChanged("validated draft changed")
-            spec = StudySpec.model_validate(draft["protocol"]["study"])
+            request = PilotRequest.model_validate(draft["request"])
+            config = load_config(ROOT / "runs/price-lab-pilot.yaml")
+            spec = service._spec(request, config)
+            if validate_study_inputs(spec, config, input_root=service.input_root(request)) != draft["protocol"]:
+                raise StudyIdentityChanged("saved protocol differs from the bounded pilot request")
 
             def progress(event: dict):
                 if event["stage"] == "prepared":
@@ -427,7 +473,7 @@ def execute_job(root: Path, identity: str) -> None:
                         **({"position": {key: row["position"][key]
                             for key in ("completed_tick", "active_tick", "next_phase")}} if "position" in row else {})})
 
-            result = run_study(spec, draft["protocol"]["resolved_config"], input_root=ROOT,
+            result = run_study(spec, config, input_root=service.input_root(request),
                 data_root=service.data_root, out_dir=service.out_dir, expected_code=draft["code"],
                 progress=progress, worker_guard_path=job / "worker.lock",
                 resume_batch=claim.get("resume", {}).get("batch"),
