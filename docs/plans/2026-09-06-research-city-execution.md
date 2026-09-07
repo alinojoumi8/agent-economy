@@ -6,7 +6,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 
 | Recommendation | Packages | Status |
 |---|---|---|
-| 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented; partial-phase recovery remains pending |
+| 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/pause/resume/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
@@ -63,8 +63,9 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 Continue checkpoint-derived studies, interactive city integration and W5–W9.
 Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
-the five-part goal. Paused research resume and daily-world keyed randomness
-remain explicit foundation follow-ups before confirmatory studies.
+the five-part goal. Saved-day/phase recovery and daily-world keyed randomness
+are implemented; checkpoint-derived sources and live-policy comparisons remain
+next research extensions. Confirmatory studies remain unsupported.
 
 ## Price study backend
 
