@@ -61,8 +61,11 @@ reader can restore a newly written replica and cannot create, replace, rename or
 delete files. The app must not have access to the catalog tree.
 
 The catalog service now uses `agent_economy_backup` and its independent
-`CATALOG_BACKUP_PASSWORD`. This role has `pg_read_all_data` and `BYPASSRLS` so dumps
-include every tenant, with no superuser, table-write or role-management privileges.
+`CATALOG_BACKUP_PASSWORD`. This role has SELECT on the application's `public`
+schema and `BYPASSRLS` so dumps include every tenant, with no superuser, table-write
+or role-management privileges. Default privileges cover future tables created by
+the migration administrator. It is deliberately not a member of `pg_read_all_data`,
+which would also expose protected system catalogs, including database password hashes.
 The initialization script runs automatically for a new PostgreSQL volume. When
 upgrading an existing installation, load the new environment/container definition,
 then run `exec postgres /bin/sh /docker-entrypoint-initdb.d/002_backup_role.sh` with
@@ -70,7 +73,7 @@ the Compose options below before starting `catalog-backup`. No data migration or
 memory deletion is involved. Changing environment values alone does not rotate an
 existing database role's password.
 
-These permissions follow PostgreSQL's [predefined role guidance](https://www.postgresql.org/docs/17/predefined-roles.html)
+These permissions use PostgreSQL's [schema grants](https://www.postgresql.org/docs/17/sql-grant.html)
 and OpenSSH's [read-only SFTP option](https://man.openbsd.org/sftp-server.8).
 
 ## Start the services

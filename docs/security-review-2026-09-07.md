@@ -26,7 +26,7 @@ controls deterministic simulation variation. It is now explicitly marked
 The refresh-token boundary follows [OAuth 2.0 section 1.5](https://datatracker.ietf.org/doc/html/rfc6749#section-1.5).
 The anonymous-registration controls address the resource-exhaustion risk described
 in [dynamic registration security considerations](https://datatracker.ietf.org/doc/html/rfc7591#section-5).
-The backup role follows [PostgreSQL's predefined role guidance](https://www.postgresql.org/docs/17/predefined-roles.html),
+The backup role uses [PostgreSQL schema grants](https://www.postgresql.org/docs/17/sql-grant.html),
 and the SSH template uses [OpenSSH read-only SFTP](https://man.openbsd.org/sftp-server.8).
 
 ## Validation
