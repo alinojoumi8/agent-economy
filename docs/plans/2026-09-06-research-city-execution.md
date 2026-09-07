@@ -9,7 +9,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
-| 4. Persistent society and deeper economics | W5–W8 | Pending |
+| 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
 Implementation starts from `534323ea458cd410e246b2358e36c42680e9928f` on the
@@ -446,3 +446,102 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - Final unit execution passed **239 tests** (5.57 s); TypeScript and the production
   build passed. Documentation and legacy recorded replay passed **25 tests**
   (2.46 s). The existing large-chunk build warning remains.
+
+## Persistent people and first household mechanics
+
+- The preceding camera checkpoint `1aa6ed0` passed all four required jobs in
+  GitHub run `34037389203`. The same draft PR and five-part goal remain active.
+- Semantics 15 / additive schema 21 introduces immutable person origins,
+  permanent child IDs, zero-endowment births, household membership intervals,
+  parent/child relations and explicit primary guardianship. Historical
+  dependent counts remain uninstantiated and are not incremented for new
+  children. Old profiles and their replay mechanics retain their version.
+- Birth, child purchases and death/custody settlement have rollback boundaries.
+  Age derives from birth/entry time. At 18 a child becomes eligible for ordinary
+  actions without a job, house, compute grant or wealth. Independent minor
+  actions and employment are rejected; newborns do not enter adult persona,
+  conversation or model-reflection paths. Caretakers can see their own support
+  requirements and previous-day costs in decision context and memory.
+- The declared basic-needs policy buys available local food in posted-price/ID
+  order from real firms, using guardian cash. It records purchases, shortages
+  and currency without borrowing, FX netting or invented supply. Care minutes
+  remain requirements with an explicit pending allocator, not measured care.
+- Death and adult separation retain dependent histories. Existing same-household
+  adults can become guardians; absent guardians produce recorded care gaps.
+  Individual regional migration separates the moving adult's household. Civic
+  child routines use the household's original home anchor; no school or housing
+  title is granted. Joint family migration remains pending.
+- Demographic draws are keyed by seed/person/day/mechanism, with actual health
+  outcome isolation checked against an extra-child cohort. Other world RNG
+  streams and paused research-attempt resume remain foundation follow-ups.
+  Completed-day censuses reconcile births, deaths, arrivals, other institutional
+  entries and population, and check membership, age, residence and custody.
+- The first household run had **16 passed, 1 failed** because the migration
+  test incorrectly assumed Store supports a context manager. After correcting
+  that test, the selected household/legacy compatibility suite passed **81
+  tests** (12.52 s), and expanded household checks passed **22** (3.73 s).
+- The initial 39-module CI core/smoke selection had **487 passed, 14 failed**
+  (258.09 s). Five failures were stale version/probe assumptions; nine correctly
+  rejected unclassified new tables in research hashing/export. A new
+  `hash-contract-v3` now includes all seven household tables. The v1/v2 manifests
+  and inventory contracts remain unchanged; old contracts cannot omit populated
+  household state or a Semantics-15 run. Migration/hash/export/documentation
+  checks then passed **83 tests** (52.35 s), and household/hash branch checks
+  passed **32** (45.11 s), before the final actor-context addition.
+- A first separate provider-free 30-day source and recorded replay were exactly
+  equal, with one child, 30 child-days/food units, no child model calls and a
+  reconciled ledger/census. That pilot preceded the actor-context addition; the
+  final verification below records the complete checkpoint. Raw databases and
+  export bundles remain ignored.
+- Full W5 is unfinished: partnership assent, care delivery/time commitments,
+  full estate inventory/creditor/heir/custody accounting, joint migration,
+  household inspector and multi-decade validation remain. W6–W9 also remain,
+  with goods and equity price discovery retaining equal priority. This delivery
+  does not close the goal.
+- The combined 51-module core/smoke/research selection completed with **638
+  passed, 1 failed** (414.35 s). The remaining assertion treated the prompt's
+  `(system, user)` pair as one string; it now checks the rendered user prompt.
+  The child-needs hash mutation check now takes its baseline after context
+  construction, isolating the mutated table. A final inspection also corrected
+  a newborn's birth observation to "I was born" while preserving the historical
+  parent-oriented birth description for versions 1–14.
+- Final household, hash/export, arrival, retirement, cognition, documentation
+  and legacy recorded replay selection: **105 passed** (84.13 s). The combined
+  command above was not rerun locally in full after its single assertion fix;
+  the corrected affected selection passed, and the pushed CI runs the required
+  complete job selections. The existing Starlette warning remains.
+- Final isolated source and replay both reached day **30** with canonical hash
+  `15dcb74d41bbb05f02c7e3563905e87e1117685677af23a42da56dc8cf32261c`,
+  `exact: true`, and no differences. There were **25 living actors**, **24
+  households**, one permanent child, **30 food units purchased for 10,352
+  cents**, no unmet food units and **zero child model calls**. All 564 provider
+  records were scripted at **$0**, and the ledger and daily censuses reconciled.
+  Source plus replay took 8.44 s; this is a bounded mechanics observation, not
+  scale or multi-decade validation. Care time remains unallocated. Detailed
+  synthetic databases/receipts are retained only in ignored local pilot files.
+
+## Household verification after storage recovery
+
+- The later full local Python run exhausted C: during the suite. Its retained
+  log has no reliable final pass count or successful completion; this is an
+  inconclusive validation attempt, not a green full gate. The goal resumed
+  after a fresh storage check found about 142 GB free. Subsequent local checks
+  use short isolated roots and a 40 GiB free-space preflight; full coverage is
+  assigned to bounded CI shards instead of another serial local run.
+- Newborn public names now use the permanent person ID, without embedding a
+  parent ID or a label that becomes false at adulthood. Parentage remains in
+  explicit relationship records and recorded birth evidence.
+- The resumed household/hash/export/arrival/retirement/cognition/documentation/
+  legacy replay selection passed **105 tests** (102.10 s). The existing
+  Starlette deprecation warning remains.
+- A fresh isolated 30-day source and recorded replay were exactly equal at
+  canonical hash
+  `12c50a53596c50242acfba0cfbed6b66f4286886769c621398fd8a4f9cfd723e`.
+  Both retained the same 25 living actors, 24 households, one child, 30 food
+  units purchased for 10,352 cents, reconciled census/ledger and zero child
+  model calls. All 564 provider records were scripted at $0; source plus replay
+  took 8.94 s. This verifies the final public-name correction in a short
+  mechanics run, not multi-decade, scale or empirical validity.
+- The earlier five-part scope remains open. After preserving this first W5
+  checkpoint, close paused-study resume and the other research foundation
+  gaps before expanding household time/estate mechanics and W6–W9.

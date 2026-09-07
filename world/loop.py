@@ -625,6 +625,10 @@ class World:
         self._bank_liquidity_sweep(tick)
         # Shock evaluation.
         self.shocks.evaluate(tick)
+        if self.engine_semantics_version >= 15:
+            e.households.register_new_people(tick)
+            e.households.reconcile_residence(tick)
+            e.households.reconcile_custody(tick)
         if self.engine_semantics_version < 2:
             # Markerless historical databases retain their original tick contract.
             self.metrics.snapshot(tick)
@@ -800,6 +804,15 @@ class World:
         if self.engine_semantics_version >= 12:
             # Civic maintenance stays inside the existing single-writer phase.
             self.economy.city.finalize(tick)
+        if self.engine_semantics_version >= 15:
+            self.economy.households.register_new_people(tick)
+            self.economy.households.reconcile_residence(tick)
+            self.economy.households.reconcile_custody(tick)
+            from engine.households import HouseholdError
+            try:
+                self.economy.households.record_census(tick)
+            except HouseholdError as error:
+                raise ReconciliationError(f"tick {tick} FINALIZE: {error}") from error
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.
@@ -822,6 +835,12 @@ class World:
             )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
+        if self.engine_semantics_version >= 15:
+            from engine.households import HouseholdError
+            try:
+                self.economy.households.check_invariants(tick)
+            except HouseholdError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
             dump_path = Path(self.store.path).with_suffix(f".halt_t{tick}.json")
@@ -873,6 +892,7 @@ class World:
                     self.economy.bank.fail_bank(tick, bid)
 
     def _phase_market(self, tick: int) -> None:
+        self.economy.households.provision_children(tick)
         for f in self.store.query("SELECT id FROM firms WHERE status='listed'"):
             self.economy.exchange.match_firm(tick, int(f["id"]))
         self.economy.exchange.expire_session(tick)
@@ -1003,6 +1023,7 @@ class World:
                 })
             self.store.log_event(tick, "arrival", arrival_payload, phase="NIGHT_CLOSE",
                 subject_type="agent", subject_id=agent_id, importance=2.0)
+            self.economy.households.register_person(tick, agent_id, "arrival")
 
     # ── checkpoints (SQLite backup + PRNG state, TECH-SPEC §13) ──────────────
     def _checkpoint_prepare(self, tick: int) -> tuple[Path, str]:

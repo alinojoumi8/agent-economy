@@ -270,6 +270,10 @@ New semantics that would change historical output must be gated by
 `engine_semantics_version`; v1/v2 replay behavior must remain exact. Never
 rewrite a stored source run during replay.
 
+The [Semantics 15 household guide](semantics15-households.md) specifies schema 21
+person origins, membership/custody, child needs, demographic keyed draws and
+census reconciliation. Its focused tests are part of the required core CI job.
+
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate

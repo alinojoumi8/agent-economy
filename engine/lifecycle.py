@@ -2,9 +2,10 @@
 health economy built on top of it (P1 R17).
 
 Design rule: **biology is engine-side, reactions are LLM-side.** Illness, death,
-and aging are drawn from a dedicated seeded PRNG so the lifecycle schedule replays
-identically (acceptance: identical seed ⇒ identical lifecycle event schedule). The
-LLM never decides who gets sick or dies; agents react through the normal loop.
+and aging use deterministic engine rules. Semantics 1–14 retain their dedicated
+seeded PRNG; semantics 15 keys each demographic draw by person, day and mechanism
+so cohort changes cannot consume another person's draws. The LLM never decides
+who gets sick or dies; agents react through the normal loop.
 
 Estate settlement runs as one atomic batch and conserves money exactly: debts
 settle via the creditor waterfall, the remainder transfers to the heir (strongest
@@ -28,6 +29,7 @@ from typing import Optional
 from .credit import Bank
 from .firms import Firms
 from .ledger import Ledger, Leg, SYS_MEDICAL, SYS_GOV
+from .keyed_random import demographic_draw
 from .store import Store
 
 DEFAULT_HEALTH = {
@@ -64,7 +66,7 @@ class Lifecycle:
     def __init__(self, store: Store, ledger: Ledger, bank: Bank, firms: Firms,
                  prng: random.Random, params: Optional[dict] = None,
                  health_cfg: Optional[dict] = None,
-                 engine_semantics_version: int = 2):
+                 engine_semantics_version: int = 2, *, households=None, seed: int = 42):
         self.store = store
         self.ledger = ledger
         self.bank = bank
@@ -73,21 +75,40 @@ class Lifecycle:
         self.p = {**DEFAULT_PARAMS, **(params or {})}
         self.h = {**DEFAULT_HEALTH, **(health_cfg or {})}
         self.engine_semantics_version = int(engine_semantics_version)
+        self.households = households
+        self.seed = int(seed)
 
     # ── nightly driver ───────────────────────────────────────────────────────
     def run_nightly(self, tick: int) -> None:
+        if self.engine_semantics_version >= 15:
+            self.households.register_new_people(tick)
         self._collect_premiums(tick)
         agents = self.store.query(
-            "SELECT id, age, health, alive, retired, dependents, sick_since_tick, arrived_tick "
+            "SELECT * "
             "FROM agents WHERE alive=1 ORDER BY id")
         for a in agents:
             self._age_and_retire(tick, a)
+            if self.engine_semantics_version >= 15:
+                a = self.store.query_one("SELECT * FROM agents WHERE id=?", (a["id"],))
             self._health_transition(tick, a)
             self._maybe_birth(tick, a)
+        if self.engine_semantics_version >= 15:
+            self.households.scheduled_births(tick)
+            self.households.reconcile_custody(tick)
+
+    def _draw(self, tick: int, agent_id: int, mechanism: str) -> float:
+        if self.engine_semantics_version >= 15:
+            return demographic_draw(self.seed, mechanism, tick, agent_id)
+        return self.prng.random()
 
     # ── aging / retirement ───────────────────────────────────────────────────
     def _age_and_retire(self, tick: int, a) -> None:
         agent_id = int(a["id"])
+        if self.engine_semantics_version >= 15:
+            new_age = self.households.advance_age(tick, a)
+            if new_age >= self.p["retirement_age"] and not a["retired"]:
+                self._retire(tick, agent_id)
+            return
         # Birthday offset is deterministic from id so aging replays identically.
         offset = agent_id % 365
         if tick > 0 and tick % 365 == offset:
@@ -130,6 +151,8 @@ class Lifecycle:
                     }, phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id,
                     importance=1.0)
         self.store.update("agents", agent_id, **updates)
+        if self.engine_semantics_version >= 15:
+            self.store.execute("UPDATE person_lifecycle SET life_stage='retired' WHERE agent_id=?", (agent_id,))
         self.store.execute(
             "UPDATE employments SET status='ended', end_tick=? WHERE agent_id=? AND status='active'",
             (tick, agent_id))
@@ -158,7 +181,7 @@ class Lifecycle:
         health = a["health"]
 
         # Baseline mortality (all living agents).
-        if self.prng.random() < self._mortality_annual(age) / 365.0:
+        if self._draw(tick, agent_id, "mortality") < self._mortality_annual(age) / 365.0:
             self.settle_death(tick, agent_id, cause="natural")
             return
 
@@ -167,7 +190,7 @@ class Lifecycle:
             # sequence is untouched, so schedules stay comparable across arms).
             epidemic = self.store.metric_latest("epidemic_multiplier", 1.0) or 1.0
             hazard = min(0.9, self._illness_onset_annual(age) / 365.0 * epidemic)
-            if self.prng.random() < hazard:
+            if self._draw(tick, agent_id, "illness_onset") < hazard:
                 self.store.update("agents", agent_id, health="sick", sick_since_tick=tick)
                 self.store.log_event(tick, "illness_onset", {"agent_id": agent_id},
                                      phase="NIGHT_CLOSE", subject_type="agent",
@@ -175,7 +198,7 @@ class Lifecycle:
                 self._charge_medical(tick, agent_id)
         elif health == "sick":
             self._charge_medical(tick, agent_id)
-            roll = self.prng.random()
+            roll = self._draw(tick, agent_id, "sick_transition")
             if roll < self.p["sick_to_critical_per_tick"]:
                 self.store.update("agents", agent_id, health="critical")
                 self.store.log_event(tick, "illness_critical", {"agent_id": agent_id},
@@ -187,7 +210,7 @@ class Lifecycle:
                                      phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id)
         elif health == "critical":
             self._charge_medical(tick, agent_id, multiplier=3)
-            roll = self.prng.random()
+            roll = self._draw(tick, agent_id, "critical_transition")
             if roll < self.p["critical_death_per_tick"]:
                 self.settle_death(tick, agent_id, cause="illness")
             elif roll < self.p["critical_death_per_tick"] + self.p["critical_recovery_per_tick"]:
@@ -272,10 +295,21 @@ class Lifecycle:
 
     # ── births (household events) ────────────────────────────────────────────
     def _maybe_birth(self, tick: int, a) -> None:
+        if self.engine_semantics_version >= 15:
+            # A health transition may have killed this parent earlier tonight.
+            a = self.store.query_one("SELECT * FROM agents WHERE id=? AND alive=1", (a["id"],))
+            if a is None:
+                return
+            if any(item["tick"] == tick and item["parent_agent_id"] == int(a["id"])
+                   for item in self.households.p["scheduled_births"]):
+                return
         age = int(a["age"])
         if not (self.p["birth_min_age"] <= age <= self.p["birth_max_age"]):
             return
-        if self.prng.random() < self.p["birth_annual_prob"] / 365.0:
+        if self._draw(tick, int(a["id"]), "birth") < self.p["birth_annual_prob"] / 365.0:
+            if self.engine_semantics_version >= 15:
+                self.households.birth(tick, int(a["id"]))
+                return
             new_dep = int(a["dependents"]) + 1
             self.store.update("agents", int(a["id"]), dependents=new_dep)
             self.store.log_event(tick, "birth", {"agent_id": int(a["id"]), "dependents": new_dep},
@@ -284,6 +318,13 @@ class Lifecycle:
 
     # ── death + estate settlement ────────────────────────────────────────────
     def settle_death(self, tick: int, agent_id: int, cause: str = "natural") -> None:
+        if self.engine_semantics_version >= 15:
+            with self.store.savepoint("death_and_household"):
+                self._settle_death(tick, agent_id, cause)
+            return
+        self._settle_death(tick, agent_id, cause)
+
+    def _settle_death(self, tick: int, agent_id: int, cause: str) -> None:
         agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
         if not agent or not agent["alive"]:
             return
@@ -345,12 +386,19 @@ class Lifecycle:
         # 5) Mark dead + schedule replacement arrival (stable population).
         self.store.update("agents", agent_id, alive=0, died_tick=tick, health="healthy",
                           employer_id=None)
+        if self.engine_semantics_version >= 15:
+            self.households.close_person(tick, agent_id)
         self.store.log_event(tick, "death", {
             "agent_id": agent_id, "name": agent["name"], "cause": cause,
             "occupation": agent["occupation"], "heir_id": heir_id}, phase="NIGHT_CLOSE",
             subject_type="agent", subject_id=agent_id, importance=4.0)
-        if self.p["population_mode"] == "stable":
-            delay = self.prng.randint(self.p["arrival_delay_min"], self.p["arrival_delay_max"])
+        if (self.p["population_mode"] == "stable"
+                and (self.engine_semantics_version < 15 or int(agent["age"]) >= 18)):
+            if self.engine_semantics_version >= 15:
+                low, high = int(self.p["arrival_delay_min"]), int(self.p["arrival_delay_max"])
+                delay = low + int(self._draw(tick, agent_id, "replacement_delay") * (high - low + 1))
+            else:
+                delay = self.prng.randint(self.p["arrival_delay_min"], self.p["arrival_delay_max"])
             self.schedule_arrival(tick, tick + delay)
 
     def _estate_repayment_account(self, agent_id: int, bankrow) -> Optional[int]:

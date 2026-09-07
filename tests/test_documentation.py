@@ -41,7 +41,7 @@ HANDBOOK_DOCS = (
     "research/price-lab.md",
     "research/market-benchmarks.md",
     "documentation-maintenance.md", "reproducibility-release-profile.md",
-    "semantics14-external-turn-attendance.md", "adr/README.md",
+    "semantics14-external-turn-attendance.md", "semantics15-households.md", "adr/README.md",
     "adr/0001-owner-run-citizens-use-external-runtimes.md",
     "adr/0002-offline-owner-run-citizens-are-not-impersonated.md",
     "adr/0003-owner-run-citizen-profiles-are-generated-per-city.md",
@@ -309,7 +309,7 @@ def test_current_release_status_has_one_authoritative_ledger():
     lowered = status.lower()
     assert "single maintained release-status" in lowered
     assert "ledger" in lowered
-    assert "schema 20 / semantics 14" in lowered
+    assert "schema 21 / semantics 15" in lowered
     assert "semantics 8 / schema 12" in lowered
     assert "**released deterministic causal baseline**" in lowered
     assert "semantics 9 / schema 13" in lowered
@@ -318,6 +318,7 @@ def test_current_release_status_has_one_authoritative_ledger():
     assert "semantics 11 / schema 15" in lowered
     assert "semantics 12 / schema 17" in lowered
     assert "semantics 14 / schema 20" in lowered
+    assert "semantics 15 / schema 21" in lowered
     assert "historical semantics-7 closure matrix" in lowered
 
     status_indexes = {

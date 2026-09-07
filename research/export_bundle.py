@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .hashing import (
+    _contract_for_database,
     canonical_hashes,
     classified_tables,
     load_hash_contract,
@@ -161,6 +162,10 @@ def export_bundle(
     """Stage every Parquet table and publish a deterministic manifest last."""
     sqlite_connection = _connection(database)
     contract = load_hash_contract(contract_path)
+    if contract_path is None:
+        selected = _contract_for_database(sqlite_connection)
+        if selected["id"] == "hash-contract-v3":
+            contract = selected
     verify_hash_contract(sqlite_connection, contract)
     hashes = canonical_hashes(sqlite_connection, contract)
     output_root = Path(output_root).resolve()

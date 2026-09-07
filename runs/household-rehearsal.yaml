@@ -1,0 +1,15 @@
+# Provider-free mechanics rehearsal, not a calibrated population forecast.
+extends: price-lab-pilot.yaml
+engine_semantics_version: 15
+checkpoint_every: 0
+lifecycle:
+  population_mode: drift
+  birth_annual_prob: 0
+households:
+  child_goods_units: 1
+  goods_sector: food
+  care_minutes_per_child: 120
+  # This fixed genesis has 10 institutional actors; person 11 is a citizen.
+  # A declared intervention makes the child path reproducible in a short run.
+  scheduled_births:
+    - {tick: 1, parent_agent_id: 11}

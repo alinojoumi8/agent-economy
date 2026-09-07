@@ -225,6 +225,11 @@ class ActionExecutor:
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
+        if self.engine_semantics_version >= 15 and int(actor["age"]) < 18 and atype != "do_nothing":
+            result = self._reject(tick, actor_id, action, "minor is not eligible for independent actions", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         handler_name = definition.handler_name if definition is not None else f"_do_{atype}"
         handler = getattr(self, handler_name, None)
         if handler is None:

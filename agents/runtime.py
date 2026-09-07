@@ -262,6 +262,10 @@ class AgentRuntime:
             self.config.get("outlets", [{"id": 1}, {"id": 2}]))
         for agent in arrivals:
             agent_id = int(agent["id"])
+            if int(self.config.get("engine_semantics_version", 1)) >= 15:
+                origin = self.store.scalar("SELECT origin FROM person_lifecycle WHERE agent_id=?", (agent_id,))
+                if origin != "arrival" or int(agent["age"]) < 18:
+                    continue
             system, user, context = persona_request(agent, outlet_ids)
             request = LLMRequest(
                 role="persona",
@@ -1630,7 +1634,12 @@ class AgentRuntime:
             "goods_sale": "I bought goods.",
             "deposit_move": f"I moved my deposits to bank {payload.get('to_bank')}.",
             "retirement": "I retired.",
-            "birth": "A new dependent joined my household.",
+            "birth": ("I was born." if int(self.config.get("engine_semantics_version", 1)) >= 15
+                      and "birth_key" in payload else "A new dependent joined my household."),
+            "parenthood": f"I became responsible for child {payload.get('child_agent_id')}'s household needs.",
+            "household_child_support": f"Child {payload.get('child_agent_id')} received {payload.get('purchased_units', 0)} food units "
+                f"from my budget for {payload.get('spent_cents', 0)} {payload.get('currency_code', '')} minor units; "
+                f"{payload.get('unmet_units', 0)} units remain unmet.",
             "benefit_paid": "I received an unemployment benefit payment.",
             "policy_bought": "I took out health insurance.",
             "policy_lapsed": "My health insurance lapsed - I couldn't pay the premium.",
@@ -1729,6 +1738,10 @@ class AgentRuntime:
                     "SELECT DISTINCT agent_id,NULL AS population_tier FROM memories "
                     "WHERE kind='summary' AND demoted=0 AND tick BETWEEN ? AND ? "
                     "ORDER BY agent_id", (rollup_start, tick))
+            if int(self.config.get("engine_semantics_version", 1)) >= 15:
+                minors = {int(row["id"]) for row in self.store.query("SELECT id FROM agents WHERE age<18")}
+                weekly_rows = [dict(row, population_tier="periphery") if int(row["agent_id"]) in minors else row
+                               for row in weekly_rows]
             weekly_ids = [
                 int(r["agent_id"]) for r in weekly_rows
                 if not living_world or r["population_tier"] == "core"

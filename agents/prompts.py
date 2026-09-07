@@ -396,6 +396,8 @@ class ContextBuilder:
                 int(agent_row["id"]), tick)
             if construction is not None:
                 ctx["construction_work"] = construction
+        if self.engine_semantics_version >= 15:
+            ctx["household"] = self.e.households.decision_context(int(agent_row["id"]), tick)
         entrepreneurship = self.config.get("entrepreneurship", {})
         if (
             bool(entrepreneurship.get("enabled", False))
@@ -2111,6 +2113,9 @@ class ContextBuilder:
                     f"{_render_cents(context.get('retirement_drawdown_target_cents', 0), currency_code)}. "
                     "Only a retired agent may use withdraw_savings{amount}, and the amount "
                     "cannot exceed the supplied savings balance.")
+        if context.get("household"):
+            lines.append("[HOUSEHOLD - YOUR MEMBERSHIP AND CHILD SUPPORT] "
+                         + json.dumps(context["household"], separators=(",", ":")))
         if context.get("compute_plan"):
             lines.append(
                 "[COMPUTE PLAN] "

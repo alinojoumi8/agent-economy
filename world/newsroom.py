@@ -605,6 +605,9 @@ class Conversations:
                 "WHERE x.alive=1 AND y.alive=1")
         if not ties:
             return []
+        if int(self.config.get("engine_semantics_version", 1)) >= 15:
+            minors = {int(row["id"]) for row in self.store.query("SELECT id FROM agents WHERE age<18")}
+            ties = [tie for tie in ties if int(tie["agent_a"]) not in minors and int(tie["agent_b"]) not in minors]
         # Weight by tie strength + event salience (agents touched by big events talk).
         salient = {int(r["agent_id"]) for r in self.store.query(
             "SELECT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}

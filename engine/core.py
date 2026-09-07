@@ -16,6 +16,7 @@ from .construction import ConstructionEconomy
 from .exchange import Exchange
 from .firms import Firms
 from .government import Government
+from .households import Households
 from .information import InformationEconomy
 from .labor import Labor
 from .legal import LegalInstitution
@@ -62,10 +63,12 @@ class Economy:
             store,
             engine_semantics_version=self.engine_semantics_version,
         )
+        self.households = Households(self, config.get("households"))
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
                                    health_cfg=config.get("health", {}),
-                                   engine_semantics_version=self.engine_semantics_version)
+                                   engine_semantics_version=self.engine_semantics_version,
+                                   households=self.households, seed=int(config.get("seed", 42)))
         self.gov = Government(store, self.ledger, config.get("government"))
         self.vc = VentureCapital(store, self.ledger)
         self.legal = LegalInstitution(store, self.ledger, config.get("legal"))

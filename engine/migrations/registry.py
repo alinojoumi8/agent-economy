@@ -15,6 +15,7 @@ from . import (
     v018_news_redaction_provenance,
     v019_construction_economy,
     v020_external_turn_attendance,
+    v021_households,
 )
 
 
@@ -74,6 +75,9 @@ _MIGRATIONS = (
         20, v020_external_turn_attendance.NAME,
         v020_external_turn_attendance.SQL,
         verify=v020_external_turn_attendance.verify),
+    Migration.create(
+        21, v021_households.NAME, v021_households.SQL,
+        verify=v021_households.verify),
 )
 
 

@@ -409,11 +409,13 @@ class City:
     def _promote_successor(
         self, region, agency_id: int, office_id: int, tick: int,
     ) -> int | None:
+        adult_clause = "AND a.age>=18 " if self.engine_semantics_version >= 15 else ""
         row = self.store.query_one(
             "SELECT a.id FROM agents a "
             "LEFT JOIN agency_staff s ON s.agent_id=a.id AND s.active=1 "
             "WHERE a.alive=1 AND a.region_id=? AND a.employer_id IS NULL "
             "AND a.role IS NULL AND a.kind='citizen' AND s.id IS NULL "
+            + adult_clause +
             "ORDER BY a.id LIMIT 1",
             (int(region["id"]),),
         )
@@ -642,6 +644,16 @@ class City:
         )
 
     def _home_place(self, region_id: int, agent_id: int):
+        if self.engine_semantics_version >= 15:
+            # The household keeps its original district anchor. This is a
+            # routine placement, not ownership of a newly granted dwelling.
+            anchor = self.store.scalar(
+                "SELECT original.agent_id FROM household_memberships current "
+                "JOIN household_memberships original ON original.household_id=current.household_id "
+                "WHERE current.agent_id=? AND current.left_tick IS NULL "
+                "ORDER BY original.joined_tick,original.id LIMIT 1", (agent_id,))
+            if anchor is not None:
+                agent_id = int(anchor)
         if self.construction_enabled:
             completed = self.store.scalar(
                 "SELECT place_id FROM construction_projects "
@@ -664,6 +676,9 @@ class City:
 
     def _business_place(self, agent) -> tuple[int, str, int | None] | None:
         agent_id = int(agent["id"])
+        if self.engine_semantics_version >= 15 and int(agent["age"]) < 18:
+            home = self._home_place(int(agent["region_id"]), agent_id)
+            return (home, "routine_home", int(agent["region_id"])) if home is not None else None
         staff = self.store.query_one(
             "SELECT place_id,agency_id FROM agency_staff "
             "WHERE agent_id=? AND active=1 ORDER BY id DESC LIMIT 1",

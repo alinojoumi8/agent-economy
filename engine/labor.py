@@ -22,8 +22,9 @@ class Labor:
         if self.engine_semantics_version < 7:
             return True
         actor = self.store.query_one(
-            "SELECT alive,retired FROM agents WHERE id=?", (agent_id,))
-        return bool(actor and actor["alive"] and not actor["retired"])
+            "SELECT alive,retired,age FROM agents WHERE id=?", (agent_id,))
+        return bool(actor and actor["alive"] and not actor["retired"]
+                    and (self.engine_semantics_version < 15 or int(actor["age"]) >= 18))
 
     def post_job(self, tick: int, firm_id: int, title: str, wage_cents: int) -> int:
         job_id = self.store.insert("jobs", tick=tick, firm_id=firm_id, title=title,

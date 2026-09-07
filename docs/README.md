@@ -17,6 +17,8 @@ each audience can find the authoritative level of detail.
   mechanism assumptions, input provenance, measurement contracts and limits.
 - [Price Discovery Lab](research/price-lab.md) — historical inspector, goods/equity observations,
   strict study drafts, provider-free pilots, replay receipts and findings.
+- [Persistent people and household needs](semantics15-households.md) — version-15
+  births, age, membership, care gaps, child demand, census and replay boundaries.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
   information boundaries, beliefs, routing, budget, and shock targeting.
 - [Local and hosted API reference](api-reference.md) — REST, WebSocket,

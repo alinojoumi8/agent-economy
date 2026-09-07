@@ -72,6 +72,7 @@ class Genesis:
         self._social_graph()
         self.e.startups.initialize_trader_profiles(0)
         self.e.regions.rebalance_tiers(0)
+        self.e.households.initialize()
         self._initial_metrics()
         self.store.log_event(0, "genesis", {
             "banks": len(self.bank_ids),

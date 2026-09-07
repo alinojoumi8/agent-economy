@@ -55,6 +55,10 @@ class Scheduler:
             int(self.config.get("engine_semantics_version", 1)) >= 6
             and self._has_pending_liquidity_request())
         for a in agents:
+            if semantics_version >= 15 and int(a["age"]) < 18:
+                # Children have deterministic needs; adult decision seats start
+                # at majority without conferring employment or a compute grant.
+                continue
             if (self.institutional_role_purposes
                     and a["role"] in {"editor", "reporter"}):
                 # The Newsroom owns these seats and already records role-bound

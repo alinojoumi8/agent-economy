@@ -416,6 +416,12 @@ recorded responses; fresh model calls are a different replication.
 
 ## S5. People, households, and generations
 
+Implementation checkpoint: [Semantics 15](../semantics15-households.md) implements
+person origins, births, basic household membership/separation/custody, age
+eligibility, child food demand, demographic keyed draws and census. Care time,
+partnership assent, joint migration, full estates and long-horizon validation
+below remain required. This first checkpoint does not close W5.
+
 Work package: W5. Existing seams: `engine/lifecycle.py`, `world/genesis.py`,
 `World._spawn_due_arrivals`, ledger ownership, social ties, and Living Agents
 projections. Preserve the existing person/agent identity space.
