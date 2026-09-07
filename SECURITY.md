@@ -30,6 +30,41 @@ R22 adds a separately enabled hosted service. Its security boundary is:
 The local and hosted servers are distinct entry points. Hosted mode does not
 turn the unauthenticated local API into an internet-safe service.
 
+The [Hostinger alternative](docs/hostinger-vps.md) uses filesystem recovery
+snapshots and SFTP replication instead of MinIO. Separate SSH identities give
+the app read-only run recovery, Litestream run replication, and the catalog
+backup service access to its own chroot. The catalog reader uses a non-superuser
+role with read access across tenant RLS policies. SSH keys and the pinned server
+host key are operator configuration. Archives and replicas
+contain full private memory/model/history data; compression is not encryption
+or redaction. Protect and encrypt the storage volumes on both servers. Restoring
+an older PostgreSQL catalog can restore old sessions or grants, so reconcile
+revocations before reopening access. Hosted storage admission rejects new run
+writes at configured capacity with a path-free `507` response while preserving
+reads and pause/stop controls.
+
+External APIs accept only personal and access credentials as bearer tokens;
+refresh tokens work only at the OAuth token endpoint. Hosted agent writes verify
+credentials before scanning storage, and revalidate after admission before
+mutating credential state. Every hosted HTTP method has the same 64 KiB body
+limit, including GET requests that pass through the agent proxy.
+Rate-limit denials add at most one audit row per connection/minute; rejected
+traffic does not create an unbounded audit trail in a paused run.
+
+Anonymous OAuth client registration permits 20 requests per observed peer and
+300 total per hour, per server process. Forwarded headers supplied directly by
+clients do not change the limiter's peer. A proxy or shared NAT can group clients;
+configure trusted proxy addresses at the deployment boundary before relying on
+distinct peer limits. PostgreSQL registration is also serialized and capped at
+10,000 stored client records across processes; the local SQLite service has the
+same cap. Existing clients and agent memory remain intact when registration is
+refused. New registrations return 429 with `Retry-After` for the ingress limit
+or 503 at persistent capacity. Operators must review unused client metadata or
+adjust the reviewed capacity before increasing this ceiling.
+
+The [September storage and hosted security review](docs/security-review-2026-09-07.md)
+records reproduced issues, fixes, validation and remaining deployment checks.
+
 ## Hosted threat model and operator obligations
 
 The implemented boundary addresses ordinary cross-tenant reads/writes, stolen

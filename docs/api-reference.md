@@ -36,6 +36,14 @@ mounts, replay discovery, arbitrary paths, provider configuration, prompt
 payloads, and credentials are not proxied. Service endpoints are
 `/health/live`, `/health/ready`, and `/metrics`.
 
+With a storage policy enabled, capacity-limited run creation, advancing controls,
+agent connections and world mutations return HTTP 507. Hosted administrative
+routes and external protocols use `{"detail":{"code":"storage_capacity_reached"}}`.
+Invalid credentials are rejected before storage admission. Read access,
+pause/stop requests and credential revocation remain available. Tick
+execution also checks capacity and pauses before advancing the world. See
+[storage and recovery](storage-and-recovery.md) for budget and reserve behavior.
+
 Hosted administrative writes append tenant-local chained audit rows after
 control-plane migration 003. The HTTP API does not present the hash chain as
 simulation truth or external non-repudiation; authorized operators verify one
@@ -196,6 +204,14 @@ generated contract is available at `/api/v2/openapi.json` and checked in at
 | `GET`, `POST` | `/api/v2/agent/commons` | Scope-filtered Commons read/write adapter |
 | `GET`, `POST` | `/api/v2/tenants/{tenant_id}/agent-connections` | Human owner/admin connection control plane |
 | `POST` | `/api/v2/tenants/{tenant_id}/agent-connections/{id}/credentials` | One-time PAT rotation or revocation |
+
+Bearer authentication accepts personal and OAuth access tokens. Refresh tokens
+are rejected with HTTP 401 on REST/MCP; exchange them only through `/oauth/token`.
+Hosted requests have a 64 KiB body limit for every HTTP method, including GET.
+Anonymous registration is limited to 20 requests per observed peer and 300 total
+per hour per process (HTTP 429 and `Retry-After`), with a durable 10,000-client
+ceiling (HTTP 503). Existing clients continue to work. See the
+[security policy](../SECURITY.md) for proxy and capacity behavior.
 
 Hosted connection creation requires a run whose gateway is enabled on engine
 semantics 9 or later. The default compatible choice is

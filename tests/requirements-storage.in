@@ -1,0 +1,2 @@
+# Optional local SFTP server for the real Litestream recovery drill only.
+paramiko==5.0.0

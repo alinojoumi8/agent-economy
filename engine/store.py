@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from .schema import SCHEMA_VERSION, assert_schema_compatible, initialize_schema
+from .payloads import configure_payload_reads, pack_payload
 
 
 def _utcnow() -> str:
@@ -39,7 +40,7 @@ def open_read_only_connection(
         # a source-file handle until a later GC cycle after an exact replay.
         cached_statements=0)
     try:
-        conn.row_factory = sqlite3.Row
+        configure_payload_reads(conn)
         conn.execute("PRAGMA query_only = ON")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
@@ -78,7 +79,7 @@ class ReadOnlyReplaySnapshot:
                 str(self.path), isolation_level=None, check_same_thread=False,
                 cached_statements=0)
             source.backup(snapshot)
-            snapshot.row_factory = sqlite3.Row
+            configure_payload_reads(snapshot)
             snapshot.execute("PRAGMA query_only = ON").close()
             snapshot.execute("PRAGMA foreign_keys = ON").close()
             snapshot.execute("PRAGMA busy_timeout = 5000").close()
@@ -142,6 +143,7 @@ class Store:
     def __init__(self, path: str, *, create: bool = True, read_only: bool = False):
         self.path = path
         self.read_only = bool(read_only)
+        self.compress_payloads = False
         self._closed = False
         if self.read_only:
             self.conn = open_read_only_connection(path)
@@ -149,7 +151,7 @@ class Store:
         if create:
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        configure_payload_reads(self.conn)
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA busy_timeout = 5000")
         try:
@@ -169,11 +171,12 @@ class Store:
         query_only = connection.execute("PRAGMA query_only").fetchone()
         if query_only is None or query_only[0] != 1:
             raise ValueError("connection must have PRAGMA query_only enabled")
-        connection.row_factory = sqlite3.Row
+        configure_payload_reads(connection)
         assert_schema_compatible(connection)
         store = cls.__new__(cls)
         store.path = str(Path(path).resolve())
         store.read_only = True
+        store.compress_payloads = False
         store._closed = False
         store.conn = connection
         return store
@@ -199,6 +202,10 @@ class Store:
         return default if val is None else val
 
     def insert(self, table: str, **cols) -> int:
+        if self.compress_payloads and table == "llm_calls":
+            cols = {key: pack_payload(value)
+                    if key in {"request_json", "response_json"} else value
+                    for key, value in cols.items()}
         keys = list(cols.keys())
         placeholders = ",".join("?" for _ in keys)
         sql = f"INSERT INTO {table} ({','.join(keys)}) VALUES ({placeholders})"

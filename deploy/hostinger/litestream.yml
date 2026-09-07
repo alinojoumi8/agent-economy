@@ -1,0 +1,25 @@
+# Litestream 0.5.17. Only live run databases are watched.
+addr: ":9090"
+logging:
+  type: json
+  level: info
+snapshot:
+  interval: 24h
+  retention: 168h
+retention:
+  enabled: true
+verify-compaction: true
+shutdown-sync-timeout: 30s
+dbs:
+  - dir: /var/lib/agent-economy/runs
+    pattern: "*.db"
+    recursive: true
+    watch: true
+    replica:
+      type: sftp
+      host: ${AE_BACKUP_SFTP_HOST}
+      user: ${AE_BACKUP_SFTP_USER}
+      key-path: /run/secrets/backup_key
+      host-key: ${AE_BACKUP_SFTP_HOST_KEY}
+      path: ${AE_BACKUP_SFTP_PATH}
+      sync-interval: 1s

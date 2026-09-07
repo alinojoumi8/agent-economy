@@ -2,6 +2,12 @@
 
 ## System shape
 
+The optional [storage layer](storage-and-recovery.md) losslessly compresses model
+bodies inside SQLite and rotates verified recovery copies. The
+[Hostinger deployment](hostinger-vps.md) streams live databases through Litestream
+to SFTP; PostgreSQL's identity/catalog backups remain separate. No schema or
+economic-semantics version changes are required for the physical encoding.
+
 ```mermaid
 flowchart LR
     UI[React observatory] <-->|REST and WebSocket| API[FastAPI server]

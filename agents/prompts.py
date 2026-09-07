@@ -168,7 +168,8 @@ DEFAULT_ENTREPRENEURSHIP_SECTORS = (
 
 
 def _seed(agent_id: int, tick: int, salt: str = "") -> int:
-    return int(hashlib.sha1(f"{agent_id}:{tick}:{salt}".encode()).hexdigest()[:12], 16)
+    # Deterministic simulation variation, never a credential or integrity proof.
+    return int(hashlib.sha1(f"{agent_id}:{tick}:{salt}".encode(), usedforsecurity=False).hexdigest()[:12], 16)
 
 
 def _render_cents(value: object, currency_code: object = "currency units") -> str:

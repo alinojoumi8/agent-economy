@@ -16,6 +16,14 @@
 
 ## Status terminology
 
+September 7, 2026 storage addition: optional lossless model-payload encoding,
+verified checkpoint/snapshot rotation, pins, quotas and run archives are
+implemented on `codex/hostinger-storage-recovery`. The Hostinger VPS/SFTP
+deployment includes pinned Litestream recovery and hourly PostgreSQL backups.
+Repository verification is distinct from deployment: no real VPS, backup-server
+or complete PostgreSQL disaster-recovery receipt is claimed by this change.
+See [the deployment guide](hostinger-vps.md). Public hosted rollout gates remain.
+
 | Term | Meaning in this repository |
 |---|---|
 | **Implemented** | Code and repository tests exist for the named opt-in contract. |

@@ -5,6 +5,9 @@ from dataclasses import dataclass
 import hashlib
 
 
+MAX_OAUTH_CLIENTS = 10_000
+
+
 @dataclass
 class ExternalAgentError(RuntimeError):
     status_code: int

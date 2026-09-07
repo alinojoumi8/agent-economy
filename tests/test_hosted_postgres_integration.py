@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from hosted.catalog import HostedCatalog, TENANT_CONTEXT_SQL
+from hosted.catalog import CatalogError, HostedCatalog, TENANT_CONTEXT_SQL
 from hosted.catalog_auth import CatalogAuthService
 from hosted.migrations import migrate
 from hosted.security import hash_password
@@ -55,6 +55,27 @@ def supervisor_catalog(catalog: HostedCatalog) -> HostedCatalog:
     )
     supervisor.assert_runtime_security()
     return supervisor
+
+
+def test_anonymous_registration_cap_serializes_concurrent_writers(catalog, monkeypatch):
+    import psycopg
+    with psycopg.connect(RUNTIME_DSN) as connection:
+        before = connection.execute("SELECT COUNT(*) FROM external_oauth_clients").fetchone()[0]
+    monkeypatch.setattr("hosted.catalog.MAX_OAUTH_CLIENTS", before + 1)
+    def register(index):
+        try:
+            return catalog.register_external_oauth_client(
+                client_name=f"Bounded fixture {index}",
+                redirect_uris=["https://client.example/callback"],
+                grant_types=["authorization_code", "refresh_token"], response_types=["code"])
+        except CatalogError as exc:
+            assert "registration capacity" in str(exc)
+            return None
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(register, range(12)))
+    assert sum(result is not None for result in results) == 1
+    with psycopg.connect(RUNTIME_DSN) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM external_oauth_clients").fetchone()[0] == before + 1
 
 
 @pytest.fixture(scope="module")

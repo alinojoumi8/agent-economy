@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from engine.storage_policy import StoragePolicy
+
 
 _ROLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 _ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
@@ -123,6 +125,12 @@ class HostedRuntimeConfig:
     writer_lease_seconds: int = 30
     snapshot_interval_ticks: int = 5
     shutdown_grace_seconds: int = 30
+    checkpoint_directory: Path | None = None
+    storage_policy: StoragePolicy | None = None
+    snapshot_keep_last: int = 0
+    recovery_mode: str = "snapshot"
+    litestream_config: Path | None = None
+    litestream_binary: str = "litestream"
 
     def __post_init__(self) -> None:
         _require_absolute_path(self.run_directory, "hosted run_directory")
@@ -130,8 +138,23 @@ class HostedRuntimeConfig:
         if _paths_equivalent(self.run_directory, self.snapshot_directory):
             raise ValueError("hosted run and snapshot directories must differ")
         _bounded_int(self.writer_lease_seconds, "writer_lease_seconds", 5, 3_600)
-        _bounded_int(self.snapshot_interval_ticks, "snapshot_interval_ticks", 1, 1_000_000)
+        if self.recovery_mode not in {"snapshot", "litestream"}:
+            raise ValueError("recovery_mode must be snapshot or litestream")
+        minimum_interval = 0 if self.recovery_mode == "litestream" else 1
+        _bounded_int(self.snapshot_interval_ticks, "snapshot_interval_ticks", minimum_interval, 1_000_000)
         _bounded_int(self.shutdown_grace_seconds, "shutdown_grace_seconds", 1, 3_600)
+        if self.snapshot_keep_last != 0:
+            _bounded_int(self.snapshot_keep_last, "snapshot_keep_last", 2, 10_000)
+        if self.checkpoint_directory is not None:
+            _require_absolute_path(self.checkpoint_directory, "checkpoint_directory")
+            if _paths_overlap(self.checkpoint_directory, self.run_directory):
+                raise ValueError("checkpoint_directory must be outside the live run directory")
+        if self.recovery_mode == "litestream":
+            if self.litestream_config is None or self.checkpoint_directory is None or self.storage_policy is None:
+                raise ValueError("Litestream requires config, separate checkpoints and a storage policy")
+            _require_absolute_path(self.litestream_config, "litestream_config")
+            if _paths_overlap(self.snapshot_directory, self.run_directory):
+                raise ValueError("snapshot_directory must be outside the Litestream watcher")
 
 
 @dataclass(frozen=True)
@@ -157,6 +180,11 @@ class HostedConfig:
             and _paths_equivalent(self.artifacts.filesystem_root, self.runtime.run_directory)
         ):
             raise ValueError("artifact filesystem root must differ from run_directory")
+        if self.runtime.snapshot_keep_last or self.runtime.recovery_mode == "litestream":
+            if self.artifacts.backend != "filesystem":
+                raise ValueError("bounded local snapshots and Litestream require filesystem artifacts")
+            if _paths_overlap(self.artifacts.filesystem_root, self.runtime.run_directory):
+                raise ValueError("artifact root must be outside the Litestream watcher")
 
     def redacted(self) -> dict[str, Any]:
         """Return operational configuration without credentials or internal DSNs."""
@@ -194,6 +222,10 @@ class HostedConfig:
                 "writer_lease_seconds": self.runtime.writer_lease_seconds,
                 "snapshot_interval_ticks": self.runtime.snapshot_interval_ticks,
                 "shutdown_grace_seconds": self.runtime.shutdown_grace_seconds,
+                "checkpoint_directory": str(self.runtime.checkpoint_directory) if self.runtime.checkpoint_directory else None,
+                "storage_policy": self.runtime.storage_policy.as_dict() if self.runtime.storage_policy else None,
+                "snapshot_keep_last": self.runtime.snapshot_keep_last,
+                "recovery_mode": self.runtime.recovery_mode,
             },
         }
 
@@ -310,6 +342,11 @@ def _paths_equivalent(left: Path, right: Path) -> bool:
         return os.path.normcase(os.path.abspath(str(left))) == os.path.normcase(os.path.abspath(str(right)))
 
 
+def _paths_overlap(left: Path, right: Path) -> bool:
+    first, second = left.resolve(strict=False), right.resolve(strict=False)
+    return first.is_relative_to(second) or second.is_relative_to(first)
+
+
 def _path(value: Any, *, label: str) -> Path:
     if not isinstance(value, str) or not value or "\x00" in value or "$" in value:
         raise ValueError(f"{label} must be an absolute literal path")
@@ -395,7 +432,8 @@ def load_hosted_config(path: str | Path, *, environ: Mapping[str, str] | None = 
     runtime = _mapping(root.get("runtime", {}), label="hosted runtime config")
     _reject_unknown(
         runtime,
-        {"run_directory", "snapshot_directory", "writer_lease_seconds", "snapshot_interval_ticks", "shutdown_grace_seconds"},
+        {"run_directory", "snapshot_directory", "writer_lease_seconds", "snapshot_interval_ticks", "shutdown_grace_seconds",
+         "checkpoint_directory", "storage_policy", "snapshot_keep_last", "recovery_mode", "litestream_config", "litestream_binary"},
         label="runtime config",
     )
     public_url = _resolve_exact_env_reference(
@@ -436,6 +474,14 @@ def load_hosted_config(path: str | Path, *, environ: Mapping[str, str] | None = 
             writer_lease_seconds=runtime.get("writer_lease_seconds", 30),
             snapshot_interval_ticks=runtime.get("snapshot_interval_ticks", 5),
             shutdown_grace_seconds=runtime.get("shutdown_grace_seconds", 30),
+            checkpoint_directory=(_path(runtime["checkpoint_directory"], label="checkpoint_directory")
+                                  if runtime.get("checkpoint_directory") is not None else None),
+            storage_policy=StoragePolicy.from_mapping(runtime.get("storage_policy")),
+            snapshot_keep_last=runtime.get("snapshot_keep_last", 0),
+            recovery_mode=runtime.get("recovery_mode", "snapshot"),
+            litestream_config=(_path(runtime["litestream_config"], label="litestream_config")
+                               if runtime.get("litestream_config") is not None else None),
+            litestream_binary=runtime.get("litestream_binary", "litestream"),
         ),
     )
 
@@ -583,6 +629,7 @@ def create_supervisor(
     max_loaded_runs: int = 32,
 ):
     from .supervisor import HostedRunSupervisor
+    from .litestream import create_litestream_backup
 
     resolved_catalog = catalog or create_catalog(config, purpose="supervisor")
     resolved_store = artifact_store or create_artifact_store(config)
@@ -596,6 +643,10 @@ def create_supervisor(
         lease_ttl_seconds=config.runtime.writer_lease_seconds,
         snapshot_interval_ticks=config.runtime.snapshot_interval_ticks,
         shutdown_grace_seconds=config.runtime.shutdown_grace_seconds,
+        checkpoint_root=config.runtime.checkpoint_directory,
+        storage_policy=config.runtime.storage_policy,
+        snapshot_keep_last=config.runtime.snapshot_keep_last,
+        streaming_backup=create_litestream_backup(config.runtime),
     )
 
 
