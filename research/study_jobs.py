@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from itertools import islice
 import os
 from pathlib import Path
 import re
@@ -26,6 +27,7 @@ from research.process_lock import process_lock, ProcessLockBusy
 from research.studies import Contract, Digest, StudySpec, validate_study_inputs
 from research.study_results import StudyArtifactError, StudyIdentityChanged, read_json
 from research.study_runner import run_study, validate_execution
+from research.working_studies import validate_resume
 from run_config import load_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,16 +48,25 @@ class PilotRequest(Contract):
     equity_firm_id: Literal[1] = 1
     max_wall_seconds: Annotated[int, Field(ge=10, le=300)] = 180
     max_disk_mib: Annotated[int, Field(ge=32, le=128)] = 128
+    pause_after_ticks: Annotated[int, Field(ge=1, le=30)] | None = None
 
     @model_validator(mode="after")
     def ordered(self):
         if self.intervention_tick > self.horizon or len(set(self.seeds)) != len(self.seeds):
             raise ValueError("intervention must be within the horizon and seeds must be unique")
+        if self.pause_after_ticks is not None and self.pause_after_ticks >= self.horizon:
+            raise ValueError("the planned pause must precede the horizon")
         return self
 
 
 class LaunchRequest(Contract):
     draft_sha256: Digest
+    idempotency_key: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
+
+
+class ResumeRequest(Contract):
+    progress_sha256: Digest
+    resume_check_sha256: Digest
     idempotency_key: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
 
 
@@ -95,7 +106,7 @@ class StudyJobs:
             "limits": {"max_seeds": 5, "max_horizon": 30, "max_wall_seconds": 300,
                        "max_disk_mib": 128, "concurrency": 1, "provider_calls": 0, "spend_usd": 0},
             "scope": "New independent worlds; the observed world is not a parent checkpoint.",
-            "checkpoint_fork": False, "live_models": False, "resume": False}
+            "checkpoint_fork": False, "live_models": False, "resume": True}
 
     @staticmethod
     def _spec(request: PilotRequest, config: dict) -> StudySpec:
@@ -106,7 +117,7 @@ class StudyJobs:
             goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id)
         values = spec.model_dump(mode="json")
         values["operations"].update(max_wall_seconds=request.max_wall_seconds,
-                                    max_disk_bytes=request.max_disk_mib * MIB)
+                                    max_disk_bytes=request.max_disk_mib * MIB, pause_policy="preserve_and_resume")
         spec = StudySpec.model_validate(values)
         validate_execution(spec, config)
         return spec
@@ -156,6 +167,28 @@ class StudyJobs:
         if path.exists() and self._read(path).get("job_id") == job_id:
             path.unlink()  # Only this disposable scheduler pointer; claims/evidence remain.
 
+    def _require_slot(self):
+        active = self.root / "active.json"
+        if active.exists():
+            previous = self._read(active)["job_id"]
+            if (self.path("jobs", previous) / "terminal.json").is_file():
+                self._clear_active(previous)
+            else:
+                raise StudyIdentityChanged("A local study is active or needs recovery; inspect its job before launching another.")
+
+    def _start(self, job_id: str):
+        job = self.path("jobs", job_id)
+        try:
+            with (job / "supervisor.log").open("xb") as log:
+                process = subprocess.Popen([sys.executable, "-m", "research.study_jobs", "execute",
+                    "--root", str(self.root), "--job", job_id], cwd=ROOT,
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            threading.Thread(target=process.wait, daemon=True, name=f"study-reap-{job_id[:8]}").start()
+        except OSError:
+            publish_json(job / "terminal.json", {"status": "failed", "reason": "supervisor_start_failed"})
+            self._clear_active(job_id)
+
     def launch(self, identity: str, body: LaunchRequest, context: dict) -> dict:
         draft = self._draft(identity, context)
         if digest_json(draft) != body.draft_sha256:
@@ -168,13 +201,7 @@ class StudyJobs:
                 if claim["request"] != body.model_dump(mode="json"):
                     raise StudyIdentityChanged("This draft already has a launch; open its job or validate a new draft.")
                 return self.status(claim["job_id"], context)
-            active = self.root / "active.json"
-            if active.exists():
-                previous = self._read(active)["job_id"]
-                if (self.path("jobs", previous) / "terminal.json").is_file():
-                    self._clear_active(previous)
-                else:
-                    raise StudyIdentityChanged("A local study is active or needs recovery; inspect its job before launching another.")
+            self._require_slot()
             if code_identity() != draft["code"]:
                 raise StudyIdentityChanged("Source changed after validation; validate a new draft.")
             # A locally edited draft cannot bypass the interface's fixed profile
@@ -191,18 +218,72 @@ class StudyJobs:
                 "data_root": str(self.data_root), "out_dir": str(self.out_dir)}
             publish_json(job / "claim.json", claim)
             publish_json(launched, claim)
-            publish_json(active, {"job_id": job_id})
+            publish_json(self.root / "active.json", {"job_id": job_id})
+            self._start(job_id)
+        return self.status(job_id, context)
+
+    def _resume_state(self, job: Path, draft: dict, context: dict) -> dict:
+        batch = self._read(job / "batch.json")
+        config = load_config(ROOT / "runs/price-lab-pilot.yaml")
+        request = PilotRequest.model_validate(draft["request"])
+        spec = self._spec(request, config)
+        if draft["protocol"] != validate_study_inputs(spec, config, input_root=ROOT):
+            raise StudyIdentityChanged("The saved pilot no longer matches its original profile.")
+        state = validate_resume(batch["data_dir"], spec, config, input_root=ROOT,
+                                data_root=self.data_root, out_dir=self.out_dir)
+        if state["batch"] != batch:
+            raise StudyIdentityChanged("Saved job and working batch identities disagree.")
+        last = state["records"][-1]
+        progress = Path(batch["report_dir"]) / last["end"]["report"]["path"]
+        progress_hash = file_sha256(progress)
+        check = digest_json({"manifest_sha256": batch["manifest_sha256"], "batch_id": batch["batch_id"],
+                             "progress_sha256": progress_hash, "end_sha256": last["end_sha256"], "context": context})
+        return {"resumable": True, "resume_check_sha256": check, "progress_sha256": progress_hash,
+                "active_wall_seconds": state["active_wall_seconds"],
+                "remaining_wall_seconds": max(0, spec.operations.max_wall_seconds - state["active_wall_seconds"])}
+
+    def resume(self, identity: str, body: ResumeRequest, context: dict) -> dict:
+        job = self.path("jobs", identity)
+
+        def authorized_claim():
+            if not (job / "claim.json").is_file():
+                raise KeyError("study job not found")
+            value = self._read(job / "claim.json")
+            if value.get("job_id") != identity or value.get("context") != context:
+                raise StudyIdentityChanged("Study job belongs to a different run context.")
+            return value
+
+        authorized_claim()  # No new lock/directory for an absent or foreign job.
+        if not (job / "terminal.json").is_file() and not (job / "resume.json").is_file():
+            raise StudyIdentityChanged("Only a receipted paused study can resume.")
+        with execution_lock(self.root / "scheduler.lock"), execution_lock(job / "execution.lock"), execution_lock(job / "worker.lock"):
+            claim = authorized_claim()
+            continuation = job / "resume.json"
+            if continuation.exists():
+                saved = self._read(continuation)
+                if saved["request"] != body.model_dump(mode="json"):
+                    raise StudyIdentityChanged("This pause already has a continuation; open its existing job.")
+                return self.status(saved["job_id"], context)
+            if self._read(job / "terminal.json").get("status") != "paused":
+                raise StudyIdentityChanged("Only a receipted paused study can resume.")
+            draft = self._draft(claim["draft_id"], context)
+            if digest_json(draft) != claim["request"]["draft_sha256"]:
+                raise StudyIdentityChanged("Validated draft changed; the pause cannot resume.")
             try:
-                with (job / "supervisor.log").open("xb") as log:
-                    process = subprocess.Popen([sys.executable, "-m", "research.study_jobs", "execute",
-                        "--root", str(self.root), "--job", job_id], cwd=ROOT,
-                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-                # Reap our child without tying execution to the HTTP request's lifetime.
-                threading.Thread(target=process.wait, daemon=True, name=f"study-reap-{job_id[:8]}").start()
-            except OSError:
-                publish_json(job / "terminal.json", {"status": "failed", "reason": "supervisor_start_failed"})
-                self._clear_active(job_id)
+                checked = self._resume_state(job, draft, context)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                raise StudyIdentityChanged("Saved study is no longer compatible with this checkout, evidence or remaining budget. Refresh its job status.") from exc
+            if body.progress_sha256 != checked["progress_sha256"] or body.resume_check_sha256 != checked["resume_check_sha256"]:
+                raise StudyIdentityChanged("Working evidence changed; refresh and check it before resuming.")
+            self._require_slot()
+            job_id = digest_json({"parent_job": identity, "request": body.model_dump(mode="json")})[:32]
+            resumed = {**claim, "job_id": job_id, "created_at": time.time(),
+                "resume": {"parent_job_id": identity, "request": body.model_dump(mode="json"),
+                           "batch": self._read(job / "batch.json")["data_dir"]}}
+            publish_json(self.path("jobs", job_id) / "claim.json", resumed)
+            publish_json(continuation, {"request": body.model_dump(mode="json"), "job_id": job_id})
+            publish_json(self.root / "active.json", {"job_id": job_id})
+            self._start(job_id)
         return self.status(job_id, context)
 
     def status(self, identity: str, context: dict) -> dict:
@@ -232,11 +313,54 @@ class StudyJobs:
         cells = len(draft["protocol"]["study"]["arms"]) * len(draft["request"]["seeds"])
         progress = [self._read(job / f"cell-{index}.json") for index in range(1, cells + 1)
                     if (job / f"cell-{index}.json").is_file()]
+        resume = {"resumable": False}
+        if (job / "resume.json").is_file():
+            resume["continuation_job_id"] = self._read(job / "resume.json")["job_id"]
+        elif state["status"] == "paused":
+            try:
+                if digest_json(draft) != claim["request"]["draft_sha256"]:
+                    raise StudyIdentityChanged("validated draft changed")
+                resume = self._resume_state(job, draft, context)
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                # Never expose validation exceptions containing config or paths.
+                reason = "working_evidence_changed_or_incompatible"
+                for marker, code in (("code changed", "source_checkout_changed"),
+                                     ("cumulative budget", "original_budget_exhausted"),
+                                     ("published studies", "study_already_finalized"),
+                                     ("unfinished", "interrupted_segment_cannot_resume")):
+                    if marker in str(exc):
+                        reason = code
+                resume["resume_unavailable_reason"] = reason
         return {"contract": "operator-study-job-status-v1", "id": identity, "context": context,
             "draft_id": claim["draft_id"], "draft_sha256": claim["request"]["draft_sha256"],
             "title": draft["protocol"]["study"]["title"], "origin": "fresh_genesis",
-            "created_at": claim["created_at"], "expected_cells": cells, "finished_cells": len(progress),
-            "cells": progress, "recoverable": state["status"] == "interrupted" and not terminal.is_file(), **state}
+            "created_at": claim["created_at"], "expected_cells": cells,
+            "finished_cells": sum(row.get("eligibility", {}).get("status", "pending") != "pending" for row in progress),
+            "cells": progress, "recoverable": state["status"] == "interrupted" and not terminal.is_file(),
+            "parent_job_id": claim.get("resume", {}).get("parent_job_id"), **resume, **state}
+
+    def for_study(self, study_id: str, context: dict) -> dict | None:
+        """Find this workspace's most recent invocation without adopting CLI runs."""
+        if not re.fullmatch(r"[a-f0-9]{32}", study_id):
+            raise KeyError("study not found")
+        root = self.root / "jobs"
+        if not root.is_dir() or root.is_symlink() or not root.resolve().is_relative_to(self.root):
+            return None
+        matches = []
+        for job in islice(root.iterdir(), 500):
+            if not re.fullmatch(r"[a-f0-9]{32}", job.name) or job.is_symlink():
+                continue
+            try:
+                claim = self._read(job / "claim.json")
+                if claim.get("context") != context or not (job / "batch.json").is_file():
+                    continue
+                batch = self._read(job / "batch.json")
+                relative = (Path(batch["report_dir"]) / "results.json").relative_to(self.out_dir).as_posix()
+                if digest_json(relative)[:32] == study_id:
+                    matches.append((float(claim["created_at"]), job.name))
+            except (ValueError, OSError, KeyError, TypeError):
+                continue
+        return {**self.status(max(matches)[1], context), "study_id": study_id} if matches else None
 
     def active(self, context: dict) -> dict:
         path = self.root / "active.json"
@@ -293,11 +417,17 @@ def execute_job(root: Path, identity: str) -> None:
 
             result = run_study(spec, draft["protocol"]["resolved_config"], input_root=ROOT,
                 data_root=service.data_root, out_dir=service.out_dir, expected_code=draft["code"],
-                progress=progress, worker_guard_path=job / "worker.lock")
+                progress=progress, worker_guard_path=job / "worker.lock",
+                resume_batch=claim.get("resume", {}).get("batch"),
+                pause_after_ticks=None if "resume" in claim else draft["request"].get("pause_after_ticks"))
             path = Path(result["artifacts"]["json"])
+            for index, row in enumerate(result["results"], 1):
+                if not (job / f"cell-{index}.json").exists():
+                    progress({"stage": "cell", "index": index, "row": row})
             eligible = sum(row["eligibility"]["status"] == "eligible" for row in result["results"])
-            terminal = {"status": "completed" if eligible == len(result["results"]) else "completed_with_exclusions",
-                "eligible_cells": eligible, "study_id": digest_json(path.relative_to(service.out_dir).as_posix())[:32],
+            terminal = {"status": "paused" if result.get("status") == "paused" else (
+                "completed" if eligible == len(result["results"]) else "completed_with_exclusions"),
+                "eligible_cells": eligible, "study_id": digest_json((path.parent / "results.json").relative_to(service.out_dir).as_posix())[:32],
                 "result_sha256": file_sha256(path), "reason": result["operations"]["stop_reason"]}
         except Exception as exc:
             terminal = {"status": "failed", "reason": "supervisor_failed", "error_type": type(exc).__name__}

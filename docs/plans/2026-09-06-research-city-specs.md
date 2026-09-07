@@ -90,6 +90,14 @@ the original. Publication uses temporary files plus atomic finalize. Crashes
 between source, replay, and report leave the attempt pending/ineligible, never
 implicitly complete.
 
+The committed-day implementation now includes supervised CLI and local operator
+resume, a separate working-study library view and portable working evidence.
+Read compatibility is independent of execution compatibility; a changed checkout
+may read a frozen checkpoint but cannot resume it. Operator continuations bind
+the original job/context, progress hash, validation hash and cumulative budget.
+Partial-phase recovery remains pending. The detailed contracts and commands are
+in [paused-study recovery](2026-09-06-paused-study-resume.md).
+
 ### Eligibility and causal pairing
 
 Before estimating a confirmatory effect, require the declared measurement

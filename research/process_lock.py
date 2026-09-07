@@ -35,7 +35,7 @@ def process_lock(path: Path, *, wait_seconds: float = 0):
                     raise ProcessLockBusy("research process lock is held") from exc
                 time.sleep(.05)
         try:
-            yield
+            yield handle
         finally:
             handle.seek(0)
             if os.name == "nt":

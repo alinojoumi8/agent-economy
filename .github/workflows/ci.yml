@@ -147,6 +147,8 @@ jobs:
           tests/test_study_runner.py
           tests/test_working_attempts.py
           tests/test_working_studies.py
+          tests/test_working_evidence.py
+          tests/test_working_study_jobs.py
           tests/test_study_results.py
           tests/test_study_bundle.py
           tests/test_study_library.py

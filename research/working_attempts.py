@@ -139,9 +139,11 @@ def _batch_active_seconds(data_dir: Path, spec: StudySpec) -> float:
     return total
 
 
-def _check_source(directory: Path, row: dict, claim: dict) -> None:
+def _check_source(directory: Path, row: dict, claim: dict, *,
+                  resolve_path: Callable[[str], Path] = Path,
+                  expected_schema_version: int = SCHEMA_VERSION) -> None:
     source = _member(directory, f"source/{claim['run_id']}.db")
-    if str(source) != row["source_database"] or file_sha256(source) != row["source_database_sha256"]:
+    if source != resolve_path(row["source_database"]) or file_sha256(source) != row["source_database_sha256"]:
         raise ValueError("paused source changed")
     for suffix in ("-wal", "-shm", "-journal"):
         sidecar = _member(directory, f"source/{claim['run_id']}.db{suffix}")
@@ -151,7 +153,7 @@ def _check_source(directory: Path, row: dict, claim: dict) -> None:
         if row[key] != claim[key]:
             raise ValueError("paused attempt contract changed")
     genesis = _member(directory, "genesis.json")
-    if file_sha256(genesis) != row["genesis_receipt_sha256"]:
+    if genesis != resolve_path(row["genesis_receipt"]) or file_sha256(genesis) != row["genesis_receipt_sha256"]:
         raise ValueError("genesis receipt changed")
     origin = _read(genesis)
     if digest_json({"state": origin["sha256"], "prng_state": origin["prng_state"]}) != row["genesis_hash"]:
@@ -170,7 +172,7 @@ def _check_source(directory: Path, row: dict, claim: dict) -> None:
         raise
     try:
         meta = store.get_meta()
-        if (meta["schema_version"] != SCHEMA_VERSION
+        if (meta["schema_version"] != expected_schema_version
                 or digest_json(json.loads(meta["config_json"])) != claim["config_sha256"]
                 or int(meta["seed"]) != claim["seed"] or meta["run_id"] != claim["run_id"]):
             raise ValueError("paused database contract changed")
@@ -185,6 +187,10 @@ def _check_source(directory: Path, row: dict, claim: dict) -> None:
                 or store.scalar("PRAGMA quick_check") != "ok" or not Ledger(store).reconcile()[0]
                 or meta["external_agent_influenced"]):
             raise ValueError("paused source fails integrity or influence checks")
+        observed = collect_outcomes(store, StudySpec.model_validate(claim["study_manifest"]["study"]))
+        if (any(digest_json(row.get(key)) != digest_json(value) for key, value in observed.items())
+                or observed["provider_calls"] or observed["spend_usd"]):
+            raise ValueError("paused source observations or provider-free contract changed")
     finally:
         store.close()
     if file_sha256(source) != row["source_database_sha256"]:

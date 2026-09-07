@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from research.study_library import StudyLibrary
-from research.study_jobs import LaunchRequest, PilotInputError, PilotRequest, StudyJobs
+from research.study_jobs import LaunchRequest, PilotInputError, PilotRequest, ResumeRequest, StudyJobs
 from research.study_results import StudyArtifactError, StudyIdentityChanged
 from server.projections.envelope import lineage, validate_fork, ProjectionRequestError
 
@@ -121,6 +121,14 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         response.headers["Cache-Control"] = "private, no-store"
         return await read_work(jobs.recover, job_id, context)
 
+    @router.post("/jobs/{job_id}/resume", status_code=202)
+    async def resume(job_id: str, body: ResumeRequest, run_id: str, response: Response,
+                     fork_id: str | None = None, tick: str = "live",
+                     x_csrf_token: str | None = Header(default=None)):
+        context = authorize(x_csrf_token, run_id, fork_id, tick)
+        response.headers["Cache-Control"] = "private, no-store"
+        return await read_work(jobs.resume, job_id, body, context)
+
     @router.get("/studies/{study_id}")
     async def study(study_id: str, run_id: str, response: Response,
                     result_sha256: str = Query(pattern=r"^[a-f0-9]{64}$"),
@@ -128,7 +136,10 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
                     x_csrf_token: str | None = Header(default=None)):
         context = authorize(x_csrf_token, run_id, fork_id, tick)
         response.headers["Cache-Control"] = "private, no-store"
-        return {"context": context, **await read_work(library.verify, study_id, result_sha256)}
+        view = await read_work(library.verify, study_id, result_sha256)
+        if view["contract"] == "operator-working-study-v1":
+            view["operator_job"] = await read_work(jobs.for_study, study_id, context)
+        return {"context": context, **view}
 
     @router.post("/studies/{study_id}/export")
     async def export(study_id: str, body: ExportStudyBody, run_id: str, response: Response,

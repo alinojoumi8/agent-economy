@@ -8,11 +8,12 @@ The full city integration, checkpoint-derived studies, live-model
 policy comparisons and empirical validation remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
-The CLI additionally supports explicit `preserve_and_resume` studies, committed-day
-pauses and `--resume-batch`, with cumulative budgets and portable finalized
-recovery evidence. See the [recovery contract and commands](../plans/2026-09-06-paused-study-resume.md#supervised-runner-and-cli).
-Working-state library discovery and operator Resume controls remain pending;
-the interface's interrupted-job release action only releases its launch slot.
+The CLI and local operator support `preserve_and_resume` studies, committed-day
+pauses and original cumulative budgets. Working checkpoints and finalized
+results have separate verified private bundle formats. See the
+[recovery contract and commands](../plans/2026-09-06-paused-study-resume.md#supervised-runner-and-cli).
+The interface's interrupted-job release action only releases its launch slot;
+compatible receipted pauses have a separate explicit Resume action.
 
 ## Interactive price inspector
 
@@ -59,6 +60,13 @@ at most 1,024 attempt/outcome observations; the CLI supports larger bundles.
 Catalog scans are bounded and list at most 100 batches. Checkpoint-based study
 forks remain pending.
 
+Working studies retain the same library entry through finalization. Select one
+to see assigned worlds, last saved days, pending eligibility and the original
+budget. Comparisons are unavailable until finalization. A verified working
+checkpoint can be downloaded privately; active, damaged or not-yet-saved
+checkpoints cannot. **Open study controls** returns to its originating local
+operator job when one exists. Imported/CLI evidence keeps its original controls.
+
 ## Create and monitor a local pilot
 
 Under **Experiments → Price studies → Create a study**, choose G2 (input costs)
@@ -67,6 +75,8 @@ measure goods and equities. **Validate draft** preserves an immutable protocol
 with its resolved configuration and source identity; it creates no world or
 provider call. Review the baseline, intervention, measurement window, targets,
 declared primary outcome and limits before choosing **Run independent study**.
+Optionally set **Pause after saved days** to stop at a closed checkpoint in the
+first world. Leave it blank for an uninterrupted pilot.
 
 These are fresh-genesis pilots using `runs/price-lab-pilot.yaml`: 14 agents,
 three firms, scripted policies, zero external provider calls/spend. They do not
@@ -92,6 +102,15 @@ cell/replay reports and offers **Open verified comparison** when a result exists
 Completion is distinct from valid outcomes: exclusions and missing prices remain
 visible in comparison. No automatic retry, resume or provider fallback occurs.
 
+At a clean pause, **Inspect saved progress** opens the library. **Resume saved
+study** appears only when the original code, inputs, configuration and evidence
+still match and budget remains. It continues the original worlds, finishes
+remaining assignments and records a new linked operator job. Original claims
+and receipts remain unchanged. Refresh/reload cannot trigger resume; repeated
+requests return the same continuation. The wall-time budget includes all active
+segments and excludes operator idle time. A changed checkout may block resume
+while the frozen checkpoint remains readable and exportable.
+
 After a supervisor exits without a terminal receipt, the job is marked
 interrupted once it had started or its 30-second startup allowance expires.
 **Release interrupted job slot** first checks the process-owned execution lock,
@@ -108,7 +127,7 @@ The local-only endpoints are under `/api/v2/operator/research`:
 | Method and path | Contract |
 |---|---|
 | `GET /studies` | Bounded catalog; no verification claims for listed titles |
-| `GET /studies/{id}?result_sha256=...` | Fresh comparison from verified evidence; no database/config/private path payloads |
+| `GET /studies/{id}?result_sha256=...` | Separate working-progress or finalized-comparison contract; no database/config/private path payloads |
 | `POST /studies/{id}/export` | Strict result/verification hash body; create or reuse an exclusively published private bundle |
 | `GET /exports/{token}` | Authorized attachment download with `private, no-store` caching |
 | `GET /capabilities` | Fixed pilot scope, resource limits and any active job in this run context |
@@ -117,6 +136,7 @@ The local-only endpoints are under `/api/v2/operator/research`:
 | `POST /drafts/{id}/launch` | Reviewed `draft_sha256` and a 32-character hexadecimal `idempotency_key`; return 202 with the existing or new job |
 | `GET /jobs/{id}` | Context-bound progress, terminal state and comparison reference; no log bodies or private paths |
 | `POST /jobs/{id}/recover` | Explicitly release an interrupted supervisor's slot without restarting it |
+| `POST /jobs/{id}/resume` | Bind `progress_sha256`, `resume_check_sha256` and a 32-character hexadecimal `idempotency_key`; return 202 with the linked continuation |
 
 All require `run_id`, the current `fork_id` when applicable, `tick=live` and
 the existing operator session's `X-CSRF-Token`. Hosted-safe instances deny

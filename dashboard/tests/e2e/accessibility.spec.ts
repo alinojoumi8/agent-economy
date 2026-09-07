@@ -71,6 +71,7 @@ test("named status, ticker, and scroll areas use valid keyboard-accessible roles
 });
 
 test("small Observatory controls retain WCAG AA text contrast", async ({ page }) => {
+  await page.getByText("Layers and agent filters", { exact: true }).click();
   const targets: Array<[string, Locator]> = [
     ["partial-day warning", page.getByText(/partial day 2/i)],
     ["active product link", page.getByRole("link", { name: "Observatory", exact: true })],

@@ -73,6 +73,12 @@ def test_resume_keeps_completed_cell_bytes_and_remaining_assignment(protocol, tm
     assert [row["execution_status"] for row in second["results"]] == ["completed", "paused"]
     finished = Path(second["results"][0]["attempt_claim"]).parent
     before = _bytes(finished)
+    working = export_study_bundle(second["artifacts"]["json"], tmp_path / "working.zip",
+        data_root=options["data_root"], out_dir=options["out_dir"])
+    imported = import_study_bundle(working["path"], tmp_path / "working-copy")
+    assert imported["study_verification"]["eligibility"] == "pending"
+    assert imported["study_verification"]["status"] == "verified"
+    assert _bytes(finished) == before
     final = run_study(**options, resume_batch=data)
     assert final["results"][0] == second["results"][0]
     assert _bytes(finished) == before

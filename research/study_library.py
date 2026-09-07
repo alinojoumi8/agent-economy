@@ -7,8 +7,11 @@ import re
 
 from research.artifacts import digest_json, file_sha256, publish_json
 from research.metric_registry import metric_definition
+from research.process_lock import ProcessLockBusy
+from research.studies import StudySpec
 from research.study_bundle import export_study_bundle
-from research.study_results import StudyArtifactError, StudyIdentityChanged, load_study_result, read_json, verification_identity
+from research.study_results import StudyArtifactError, StudyIdentityChanged, _location, read_json, verification_identity
+from research.working_evidence import load_study_evidence, load_working_progress, working_export_guard
 
 
 class StudyChanged(StudyIdentityChanged):
@@ -43,19 +46,34 @@ class StudyLibrary:
                     return {"items": items, "truncated": True, "omitted": omitted}
                 scanned += 1
                 path = batch / "results.json"
+                kind = "finalized"
+                if not path.is_file() and batch.is_dir() and not batch.is_symlink():
+                    checkpoints = [item for item in islice(batch.iterdir(), 1026)
+                                   if re.fullmatch(r"progress-[0-9]{6}\.json", item.name) and item.is_file()]
+                    path = max(checkpoints, default=batch / "manifest.json")
+                    kind = "working"
                 if batch.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
                     continue
                 try:
                     payload = read_json(path)
-                    if payload.get("contract") != "study-result-v1" or payload["batch"]["manifest"]["kind"] != "prospective_study":
+                    frozen = payload if path.name == "manifest.json" else payload.get("batch", {})
+                    manifest = frozen.get("manifest", {})
+                    if manifest.get("kind") != "prospective_study":
                         continue
-                    study = payload["batch"]["manifest"]["study"]
+                    if kind == "finalized" and payload.get("contract") != "study-result-v1":
+                        continue
+                    if kind == "working" and (manifest.get("attempt_protocol") != "working-attempt-v2"
+                            or manifest["study"]["operations"]["pause_policy"] != "preserve_and_resume"):
+                        continue
+                    study = manifest["study"]
                     if not isinstance(study["title"], str) or not isinstance(study["domains"], list):
                         raise StudyArtifactError("invalid catalog metadata")
-                    relative = path.relative_to(self.out_dir).as_posix()
+                    # One identity survives progress publication and finalization.
+                    relative = (batch / "results.json").relative_to(self.out_dir).as_posix()
                     items.append({"id": digest_json(relative)[:32], "title": study["title"][:200],
                         "domains": [name for name in study["domains"] if name in {"goods", "equities"}],
                         "result_sha256": file_sha256(path), "verification": "not_checked",
+                        "kind": kind,
                         "_path": path})
                 except (OSError, ValueError, KeyError, TypeError):
                     omitted += 1
@@ -77,8 +95,8 @@ class StudyLibrary:
         path = self.resolve(study_id)
         if file_sha256(path) != expected_sha256:
             raise StudyChanged("Study result changed; refresh the catalog before continuing.")
-        return load_study_result(path, data_root=self.data_root, out_dir=self.out_dir,
-                                  expected_sha256=expected_sha256)
+        return load_study_evidence(path, data_root=self.data_root, out_dir=self.out_dir,
+                                   expected_sha256=expected_sha256)
 
     @staticmethod
     def _view(study_id: str, result: dict) -> dict:
@@ -118,13 +136,69 @@ class StudyLibrary:
         payload["verification_sha256"] = verification_identity(result)
         return payload
 
+    def _working_view(self, study_id: str, path: Path, expected_sha256: str) -> dict:
+        if file_sha256(path) != expected_sha256:
+            raise StudyChanged("Study progress changed; refresh the catalog before continuing.")
+        payload = read_json(path)
+        if path.name == "manifest.json":
+            relative = path.parent.relative_to(self.out_dir / "studies")
+            frozen = {**payload, "data_dir": str(self.data_root / relative), "report_dir": str(path.parent)}
+        else:
+            frozen = payload["batch"]
+        _location({"batch": frozen}, path.parent / "results.json", self.data_root, self.out_dir)
+        spec = StudySpec.model_validate(frozen["manifest"]["study"])
+        if len(spec.arms) * len(spec.randomness.seeds) > 512:
+            raise StudyArtifactError("working study exceeds the interface's assignment limit")
+        state, checked = "checkpoint_unavailable", None
+        if path.name != "manifest.json":
+            try:
+                with working_export_guard(path, data_root=self.data_root, out_dir=self.out_dir):
+                    checked = load_working_progress(path, data_root=self.data_root, out_dir=self.out_dir,
+                                                    expected_sha256=expected_sha256)
+                state = "paused"
+            except ProcessLockBusy:
+                state = "running"
+            except (StudyArtifactError, ValueError, OSError):
+                state = "needs_attention"
+        reported = {(row.get("seed"), row.get("arm")): row for row in payload.get("results", []) if isinstance(row, dict)}
+        attempts = []
+        for seed in spec.randomness.seeds:
+            for arm in spec.arms:
+                row = reported.get((seed, arm.key), {})
+                ticks = row.get("ticks")
+                status = row.get("execution_status", "planned")
+                attempts.append({"seed": seed, "arm": arm.key, "expected_ticks": spec.time.horizon,
+                    "ticks": ticks if type(ticks) is int and 0 <= ticks <= spec.time.horizon else None,
+                    "execution_status": status if status in {"planned", "paused", "completed", "failed", "halted"} else "unknown",
+                    "eligibility": row.get("eligibility") if checked else {"status": "pending", "reasons": ["working_evidence_not_verified"]}})
+        verification = ({key: value for key, value in checked["verification"].items()
+                         if key not in {"data_dir", "report_dir"}} if checked else {
+            "status": "not_verified", "publication": "working", "eligibility": "pending",
+            "result_sha256": expected_sha256, "issues": [{"reason": state}]})
+        view = {"contract": "operator-working-study-v1", "id": study_id, "state": state,
+            "title": spec.title, "hypothesis": spec.hypothesis, "limitations": spec.limitations,
+            "domains": spec.domains, "arms": [arm.model_dump(mode="json") for arm in spec.arms],
+            "measurement_window": [spec.time.measurement_start, spec.time.measurement_end],
+            "attempts": attempts, "comparison_available": False, "export_available": bool(checked),
+            "verification": verification, "manifest_sha256": frozen["manifest_sha256"],
+            "source_identity": {key: frozen["manifest"]["code"].get(key) for key in ("git_commit", "source_tree_sha256")},
+            "budget": {"max_wall_seconds": spec.operations.max_wall_seconds,
+                       "active_wall_seconds": verification.get("active_wall_seconds"),
+                       "max_disk_bytes": spec.operations.max_disk_bytes},
+            "verification_sha256": verification_identity(checked) if checked else digest_json(verification)}
+        if file_sha256(path) != expected_sha256:
+            raise StudyChanged("Study progress changed; refresh the catalog before continuing.")
+        return view
+
     def verify(self, study_id: str, expected_sha256: str) -> dict:
+        path = self.resolve(study_id)
+        if path.name != "results.json":
+            return self._working_view(study_id, path, expected_sha256)
         return self._view(study_id, self._load(study_id, expected_sha256))
 
     def export(self, study_id: str, expected_sha256: str, expected_verification: str) -> dict:
         result = self._load(study_id, expected_sha256)
-        view = self._view(study_id, result)
-        if view["verification_sha256"] != expected_verification:
+        if verification_identity(result) != expected_verification:
             raise StudyChanged("Study evidence changed; verify it again before exporting.")
         token = f"{study_id}-{expected_verification[:16]}"
         target, receipt_path = self.export_root / f"{token}.zip", self.export_root / f"{token}.json"

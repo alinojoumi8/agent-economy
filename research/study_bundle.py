@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -12,9 +13,11 @@ import tempfile
 import zipfile
 
 from research.artifacts import digest_json, file_sha256, json_bytes, publish_json
-from research.study_results import StudyArtifactError, StudyIdentityChanged, load_study_result, verification_identity
+from research.study_results import StudyArtifactError, StudyIdentityChanged, verification_identity
+from research.working_evidence import load_study_evidence as load_study_result, working_export_guard
 
 CONTRACT = "study-evidence-bundle-v1"
+WORKING_CONTRACT = "study-working-evidence-bundle-v1"
 CLASSIFICATION = "private_research_evidence"
 MAX_FILES = 8192
 MAX_BYTES = 2 * 1024 ** 3
@@ -40,7 +43,7 @@ def _linked(path: Path) -> bool:
                                    & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
-def _inventory(result: dict, *, max_bytes: int) -> dict[str, dict]:
+def _inventory(result: dict, *, max_bytes: int, locked_bytes: dict | None = None) -> dict[str, dict]:
     entries, total = {}, 0
     roots = (("data", Path(result["verification"]["data_dir"])),
              ("reports/studies", Path(result["verification"]["report_dir"])))
@@ -64,7 +67,9 @@ def _inventory(result: dict, *, max_bytes: int) -> dict[str, dict]:
                 total += size
                 if len(entries) >= MAX_FILES or total > max_bytes:
                     raise StudyArtifactError("study exceeds the bundle size or file limit")
-                entries[name] = {"path": path, "size": size, "sha256": file_sha256(path)}
+                digest = (hashlib.sha256(locked_bytes[path]).hexdigest()
+                          if locked_bytes and path in locked_bytes else file_sha256(path))
+                entries[name] = {"path": path, "size": size, "sha256": digest}
     return entries
 
 
@@ -79,6 +84,16 @@ def export_study_bundle(result_path: str | Path, destination: str | Path, *,
                         data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out",
                         expected_sha256: str | None = None, expected_verification: str | None = None,
                         max_bytes: int = MAX_BYTES) -> dict:
+    with working_export_guard(Path(result_path), data_root=Path(data_root), out_dir=Path(out_dir)) as locked_bytes:
+        return _export_study_bundle(result_path, destination, data_root=data_root, out_dir=out_dir,
+            expected_sha256=expected_sha256, expected_verification=expected_verification, max_bytes=max_bytes,
+            locked_bytes=locked_bytes)
+
+
+def _export_study_bundle(result_path: str | Path, destination: str | Path, *,
+                         data_root: str | Path, out_dir: str | Path,
+                         expected_sha256: str | None, expected_verification: str | None,
+                         max_bytes: int, locked_bytes: dict) -> dict:
     """Copy original bytes, including exclusions, into an exclusively published ZIP."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_BYTES:
         raise StudyArtifactError("invalid bundle size limit")
@@ -93,9 +108,10 @@ def export_study_bundle(result_path: str | Path, destination: str | Path, *,
     for root in (result["verification"]["data_dir"], result["verification"]["report_dir"]):
         if target.is_relative_to(Path(root)):
             raise StudyArtifactError("bundle destination must be outside its source study")
-    entries = _inventory(result, max_bytes=max_bytes)
+    entries = _inventory(result, max_bytes=max_bytes, locked_bytes=locked_bytes)
     result_name = next(name for name, item in entries.items() if item["path"].resolve() == Path(result_path).resolve())
-    index = {"contract": CONTRACT, "classification": CLASSIFICATION,
+    index = {"contract": WORKING_CONTRACT if result["contract"] == "working-study-progress-v1" else CONTRACT,
+             "classification": CLASSIFICATION,
              "batch_id": result["batch"]["batch_id"], "manifest_sha256": result["batch"]["manifest_sha256"],
              "result_path": result_name, "result_sha256": result["verification"]["result_sha256"],
              "files": {name: {k: v for k, v in item.items() if k != "path"}
@@ -112,7 +128,9 @@ def export_study_bundle(result_path: str | Path, destination: str | Path, *,
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
                 for name, item in sorted(entries.items()):
                     digest, size = hashlib.sha256(), 0
-                    with item["path"].open("rb") as source, archive.open(name, "w", force_zip64=True) as member:
+                    source_stream = (io.BytesIO(locked_bytes[item["path"]]) if item["path"] in locked_bytes
+                                     else item["path"].open("rb"))
+                    with source_stream as source, archive.open(name, "w", force_zip64=True) as member:
                         while chunk := source.read(1024 * 1024):
                             size += len(chunk)
                             if size > item["size"]:
@@ -127,7 +145,7 @@ def export_study_bundle(result_path: str | Path, destination: str | Path, *,
         # Recheck the live sources and their logical proof after all bytes were read.
         after = load_study_result(result_path, data_root=data_root, out_dir=out_dir,
                                   expected_sha256=index["result_sha256"])
-        if _proof(after) != index["proof"] or _inventory(after, max_bytes=max_bytes) != entries:
+        if _proof(after) != index["proof"] or _inventory(after, max_bytes=max_bytes, locked_bytes=locked_bytes) != entries:
             raise StudyArtifactError("study changed during bundle export")
         with zipfile.ZipFile(temporary) as archive:
             _checked_index(archive, max_bytes=max_bytes)
@@ -159,13 +177,15 @@ def _checked_index(archive: zipfile.ZipFile, *, max_bytes: int) -> tuple[dict, d
     if "bundle.json" not in names or names["bundle.json"].file_size > MAX_INDEX_BYTES:
         raise StudyArtifactError("bundle index is missing or too large")
     index = json.loads(archive.read("bundle.json"))
-    if (not isinstance(index, dict) or index.get("contract") != CONTRACT
+    if (not isinstance(index, dict) or index.get("contract") not in {CONTRACT, WORKING_CONTRACT}
             or index.get("classification") != CLASSIFICATION or not isinstance(index.get("files"), dict)
             or set(index["files"]) != set(names) - {"bundle.json"}):
         raise StudyArtifactError("invalid bundle index or unlisted members")
     result_path = _name(index["result_path"])
     parts = PurePosixPath(result_path).parts
-    if len(parts) != 5 or parts[:2] != ("reports", "studies") or parts[-1] != "results.json":
+    expected_name = (bool(re.fullmatch(r"progress-[0-9]{6}\.json", parts[-1]))
+                     if index["contract"] == WORKING_CONTRACT else parts[-1] == "results.json")
+    if len(parts) != 5 or parts[:2] != ("reports", "studies") or not expected_name:
         raise StudyArtifactError("invalid bundled study result path")
     prefixes = (f"data/{parts[2]}/{parts[3]}/", f"reports/studies/{parts[2]}/{parts[3]}/")
     total = 0

@@ -5,18 +5,24 @@ import { workspaceApi } from "../app/api";
 import { useObserverViewState } from "../app/observerViewState";
 import { WorkspaceTable } from "./workspaceShared";
 import { studyFrameMatches, studyNumber, studyOutcomeRows } from "./studyLibraryModel.js";
+import { operatorStudyFrameMatches } from "./studyLauncherModel.js";
 import "./price-lab.css";
 import "./study-library.css";
 
-type CatalogItem = { id: string; title: string; domains: string[]; result_sha256: string };
+type CatalogItem = { id: string; title: string; domains: string[]; result_sha256: string; kind?: "working" | "finalized" };
 type MeasurementRow = { id: number; arm: string; seed: number; value: number | null; status: string; age_ticks: number | null };
 type Catalog = { context: any; contract: string; items: CatalogItem[]; truncated: boolean; omitted: number; scope: string };
-type Comparison = { context: any; contract: string; id: string; title: string; hypothesis: string; limitations: string[];
+type Comparison = { context: any; contract: "operator-study-comparison-v1"; id: string; title: string; hypothesis: string; limitations: string[];
   arms: Array<{ key: string; label: string; role: string }>; measurement_window: number[]; outcomes: any[];
   summary: { baseline_arm: string; coverage: Record<string, any>; metrics: any; exclusions: any[] };
   attempts: any[]; verification: any; verification_sha256: string; manifest_sha256: string; source_identity: any };
+type Working = Omit<Comparison, "contract" | "outcomes" | "summary"> & {
+  contract: "operator-working-study-v1"; state: string; comparison_available: false; export_available: boolean;
+  budget: { max_wall_seconds: number; active_wall_seconds: number | null; max_disk_bytes: number }; operator_job?: any };
 
 const words = (value: unknown) => String(value ?? "Unavailable").replaceAll("_", " ");
+const isWorking = (value: Comparison | Working): value is Working => value.contract === "operator-working-study-v1";
+const isComparison = (value: Comparison | Working): value is Comparison => value.contract === "operator-study-comparison-v1";
 
 function DomainComparison({ study, domain, treatment }: { study: Comparison; domain: string; treatment: string }) {
   const rows = studyOutcomeRows(study, domain, treatment);
@@ -73,10 +79,14 @@ export function StudyLibrary() {
   const detailQuery = new URLSearchParams(query);
   if (selected) detailQuery.set("result_sha256", selected.result_sha256);
   const detail = useQuery({ queryKey: ["study-comparison", runId, observer.fork, observer.tick, studyId, selected?.result_sha256],
-    queryFn: ({ signal }) => workspaceApi<Comparison>(`/api/v2/operator/research/studies/${encodeURIComponent(studyId)}?${detailQuery}`, { headers, signal }),
+    queryFn: ({ signal }) => workspaceApi<Comparison | Working>(`/api/v2/operator/research/studies/${encodeURIComponent(studyId)}?${detailQuery}`, { headers, signal }),
     enabled: Boolean(live && token && selected), retry: false, refetchOnWindowFocus: false });
   const study = selected && !detail.isFetching && studyFrameMatches(detail.data,
-    { ...scope, studyId, resultHash: selected.result_sha256 }) ? detail.data : undefined;
+    { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind }) ? detail.data : undefined;
+  const comparison = study && isComparison(study) ? study : undefined;
+  const working = study && isWorking(study) ? study : undefined;
+  const operatorJob = working?.operator_job?.study_id === studyId && operatorStudyFrameMatches(working.operator_job,
+    scope, "operator-study-job-status-v1", working.operator_job.id) ? working.operator_job : undefined;
   const treatment = study?.arms.find(arm => arm.key === params.get("study_arm") && arm.role === "treatment")?.key
     || study?.arms.find(arm => arm.role === "treatment")?.key || "";
   const [exportState, setExportState] = useState<{ identity: string; pending?: boolean; error?: string; sha256?: string } | null>(null);
@@ -91,7 +101,7 @@ export function StudyLibrary() {
     return next;
   });
   const download = async () => {
-    if (!study || !token || (exportState?.identity === identity && exportState.pending)) return;
+    if (!study || !token || (working && !working.export_available) || (exportState?.identity === identity && exportState.pending)) return;
     const exportIdentity = identity;
     setExportState({ identity, pending: true });
     try {
@@ -120,7 +130,7 @@ export function StudyLibrary() {
   };
   const mismatch = (catalog.data && !catalog.isFetching && !studyFrameMatches(catalog.data, scope))
     || (selected && detail.data && !detail.isFetching && !studyFrameMatches(detail.data,
-      { ...scope, studyId, resultHash: selected.result_sha256 }));
+      { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind }));
   const error = session.error || catalog.error || detail.error
     || (mismatch ? new Error("Study evidence does not match the selected run, fork, study or result identity.") : null);
   const shownExport = exportState?.identity === identity ? exportState : null;
@@ -133,12 +143,13 @@ export function StudyLibrary() {
       <p>Inspect paired worlds, missing observations and preserved evidence. These studies are independent of the world currently open.</p></div></header>
     <div className="price-lab__controls">
       <label>Saved study <select aria-label="Saved study" value={selected?.id || ""} onChange={event => choose("study", event.target.value)}>
-        <option value="">Choose a study to verify</option>{currentCatalog?.items.map(item => <option key={item.id} value={item.id}>{item.title} · {item.id.slice(0, 6)}</option>)}
+        <option value="">Choose a study to verify</option>{currentCatalog?.items.map(item => <option key={item.id} value={item.id}>{item.title} · {item.kind === "working" ? "Working · " : ""}{item.id.slice(0, 6)}</option>)}
       </select></label>
       <button type="button" disabled={!token || catalog.isFetching} onClick={() => { void catalog.refetch(); }}>Refresh library</button>
-      {study && <><label>Treatment arm <select aria-label="Treatment arm" value={treatment} onChange={event => choose("study_arm", event.target.value)}>
-        {study.arms.filter(arm => arm.role === "treatment").map(arm => <option key={arm.key} value={arm.key}>{arm.label}</option>)}
-      </select></label><button type="button" onClick={() => { void detail.refetch(); }}>Verify again</button></>}
+      {comparison && <label>Treatment arm <select aria-label="Treatment arm" value={treatment} onChange={event => choose("study_arm", event.target.value)}>
+        {comparison.arms.filter(arm => arm.role === "treatment").map(arm => <option key={arm.key} value={arm.key}>{arm.label}</option>)}
+      </select></label>}
+      {study && <button type="button" onClick={() => { void detail.refetch(); }}>Verify again</button>}
     </div>
     {(session.isFetching || catalog.isFetching || detail.isFetching) && <p role="status">Checking saved study evidence…</p>}
     {error && <p className="world-os-form-error" role="alert">{error instanceof Error ? error.message : "Study library is unavailable."}</p>}
@@ -146,13 +157,29 @@ export function StudyLibrary() {
     {Boolean(currentCatalog?.omitted) && <p>{currentCatalog?.omitted} malformed catalog record(s) could not be listed.</p>}
     {currentCatalog && !currentCatalog.items.length && <div className="world-os-empty"><h3>No saved price studies</h3><p>Choose Create a study to prepare a G2 or F2 pilot, or use the local research commands.</p></div>}
     {studyId && currentCatalog && !selected && <p role="alert">This study is not in the current local catalog.</p>}
-    {study && <>
-      <div className="study-library__verdict" aria-live="polite"><strong>{study.verification.status === "verified" ? "Evidence verified" : "Evidence needs attention"}</strong>
-        <span>Measurement ticks {study.measurement_window.join("–")} · exploratory paired worlds</span>
-        <p>{study.hypothesis}</p><p>Small samples and narrow intervals do not establish real-economy fit. A zero response and an unavailable observation are different results.</p>
+    {working && <section className="study-library__verdict" aria-label="Working study progress">
+      <h4>Working study · {words(working.state)}</h4>
+      <p>{working.verification.status === "verified" ? "Saved checkpoint verified. Study eligibility is pending." : "This checkpoint has not been verified. Refresh after execution stops or inspect the job status."}</p>
+      <p>Price-effect comparisons become available after finalization and replay checks. Earlier completed cells and unfinished assignments are preserved below.</p>
+      <WorkspaceTable caption="Saved study days" rows={working.attempts.map((row, index) => ({ ...row, id: index }))} columns={[
+        { key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
+        { key: "ticks", label: "Saved day / horizon", render: row => `${row.ticks ?? "Unavailable"} / ${row.expected_ticks}` },
+        { key: "execution", label: "Execution", render: row => words(row.execution_status) },
+        { key: "eligibility", label: "Eligibility", render: row => words(row.eligibility.status) },
+      ]} />
+      <p>Active wall time: {studyNumber(working.budget.active_wall_seconds)} / {working.budget.max_wall_seconds} seconds. Original disk budget: {studyNumber(working.budget.max_disk_bytes / 1048576)} MiB.</p>
+      {operatorJob ? <button type="button" onClick={() => setParams(previous => {
+        const next = new URLSearchParams(previous); next.set("study_mode", "create");
+        next.set("study_job", operatorJob.id); next.set("study_draft", operatorJob.draft_id); return next;
+      })}>Open study controls</button> : <p>Resume controls are available in the local operator workspace that launched this study. Command-line studies retain their original configuration and controls.</p>}
+    </section>}
+    {comparison && <>
+      <div className="study-library__verdict" aria-live="polite"><strong>{comparison.verification.status === "verified" ? "Evidence verified" : "Evidence needs attention"}</strong>
+        <span>Measurement ticks {comparison.measurement_window.join("–")} · exploratory paired worlds</span>
+        <p>{comparison.hypothesis}</p><p>Small samples and narrow intervals do not establish real-economy fit. A zero response and an unavailable observation are different results.</p>
         <p>Arm means use each arm's available eligible observations. Paired differences use matching eligible seeds.</p>
       </div>
-      <WorkspaceTable caption="Study attempt coverage" rows={study.arms.map(arm => ({ ...arm, ...study.summary.coverage[arm.key], id: arm.key }))}
+      <WorkspaceTable caption="Study attempt coverage" rows={comparison.arms.map(arm => ({ ...arm, ...comparison.summary.coverage[arm.key], id: arm.key }))}
         columns={[
           { key: "arm", label: "Arm", render: row => row.label },
           { key: "assigned", label: "Assigned", render: row => row.assigned },
@@ -160,8 +187,10 @@ export function StudyLibrary() {
           { key: "completed", label: "Completed", render: row => row.completed },
           { key: "eligible", label: "Eligible", render: row => row.eligible },
         ]} />
-      <div className="price-lab__domains"><DomainComparison study={study} domain="goods" treatment={treatment} />
-        <DomainComparison study={study} domain="equities" treatment={treatment} /></div>
+      <div className="price-lab__domains"><DomainComparison study={comparison} domain="goods" treatment={treatment} />
+        <DomainComparison study={comparison} domain="equities" treatment={treatment} /></div>
+    </>}
+    {study && <>
       <details><summary>Attempt and exclusion evidence</summary>
         <WorkspaceTable caption="Preserved study attempts" rows={study.attempts.map((row, index) => ({ ...row, id: index }))} columns={[
           { key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
@@ -174,9 +203,9 @@ export function StudyLibrary() {
       </details>
       <details><summary>Protocol, costs and limitations</summary>
         <dl className="study-library__metadata">
-          <div><dt>Provider calls</dt><dd>{studyNumber(study.verification.operations.provider_calls)}</dd></div>
-          <div><dt>Provider spend (USD)</dt><dd>{studyNumber(study.verification.operations.provider_spend_usd)}</dd></div>
-          <div><dt>Cost evidence</dt><dd>{words(study.verification.operations.status)}</dd></div>
+          <div><dt>Provider calls</dt><dd>{studyNumber(study.verification.operations?.provider_calls)}</dd></div>
+          <div><dt>Provider spend (USD)</dt><dd>{studyNumber(study.verification.operations?.provider_spend_usd)}</dd></div>
+          <div><dt>Cost evidence</dt><dd>{words(study.verification.operations?.status)}</dd></div>
           <div><dt>Model and input snapshots</dt><dd>{words(study.verification.declared_context)}</dd></div>
           <div><dt>Manifest SHA-256</dt><dd><code>{study.manifest_sha256}</code></dd></div>
           <div><dt>Source commit</dt><dd><code>{study.source_identity.git_commit}</code></dd></div>
@@ -184,7 +213,8 @@ export function StudyLibrary() {
       </details>
       <aside className="study-library__export"><h4>Private evidence bundle</h4>
         <p>Includes original run databases, recorded communications, local paths and receipts. Keep this archive within your research workspace.</p>
-        <button type="button" onClick={() => { void download(); }} disabled={shownExport?.pending}>{shownExport?.pending ? "Verifying and packaging…" : "Download private evidence"}</button>
+        {working && <p>This archive preserves a working checkpoint with pending eligibility. Importing it verifies evidence; it does not grant resume compatibility.</p>}
+        <button type="button" onClick={() => { void download(); }} disabled={shownExport?.pending || (working && !working.export_available)}>{shownExport?.pending ? "Verifying and packaging…" : "Download private evidence"}</button>
         <p>UI export supports up to 128 MiB of source evidence. The local bundle command supports larger studies.</p>
         {shownExport?.error && <p role="alert">{shownExport.error}</p>}
         {shownExport?.sha256 && <p role="status">Download ready. SHA-256: <code>{shownExport.sha256}</code></p>}

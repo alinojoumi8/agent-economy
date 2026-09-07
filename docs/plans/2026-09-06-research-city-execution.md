@@ -6,8 +6,8 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 
 | Recommendation | Packages | Status |
 |---|---|---|
-| 1. Research integrity and shared historical context | W0–W2 | Core fixes verified; paused-attempt resume and daily keyed streams remain pending contracts |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
+| 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day supervised resume, working evidence portability and CLI/operator controls implemented; partial-phase recovery and daily keyed streams remain pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | G1/F1 benchmarks, offline policy comparisons, G2/F2 studies, historical inspector, local draft/launch/pause/resume/compare/export workflow implemented; checkpoint-derived studies and live-policy comparisons pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
@@ -681,3 +681,60 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   original 240-second/256 MB limits. Raw evidence remains ignored under
   `tmp/wsh-0a823971/`, including per-command logs and `receipt.json`. This checks
   mechanics and recovery, not empirical validity or a price-discovery forecast.
+
+## Working study library and operator resume (2026-09-07)
+
+- At `0ec6d17`, required [CI 34078486637](https://github.com/alinojoumi8/agent-economy/actions/runs/34078486637)
+  passed all four jobs. All eight Ubuntu/Python 3.12 full-suite shards passed in
+  [run 34078516783](https://github.com/alinojoumi8/agent-economy/actions/runs/34078516783):
+  **1,813 passed and 10 skipped**. These checks precede this integration slice.
+- Added independent working-evidence verification, frozen input/source/segment
+  checks and separate `study-working-evidence-bundle-v1` archives. Paused and
+  completed cells are remeasured from closed sources. Export owns both batch
+  locks and copies their original control bytes through the owning handles on
+  Windows. A frozen imported pause remains readable after the original source
+  resumes; eligibility stays pending and execution compatibility is separate.
+- The saved library now discovers prepared and paused batches under a stable ID
+  that survives finalization. It shows every assigned world and its last saved
+  day, with pending/unverified states. Working evidence has no effect-comparison
+  payload. Verified pauses can be exported; active checkpoints cannot.
+- New operator drafts use the working protocol and accept an optional planned
+  saved-day pause. Read-only resume checks bind original code/config/inputs,
+  namespace, progress and remaining budget. An explicit, idempotent Resume POST
+  creates a linked continuation job under existing CSRF/run/fork/Live authority.
+  Parent claims/terminal receipts stay immutable. CLI/imported batches are not
+  adopted into an operator profile, and interrupted-job release remains separate.
+- The browser provides saved-day tables, pending evidence, private export,
+  origin-job navigation, compatible Resume controls and existing-continuation
+  links. Historical views make no operator requests, and foreign/stale resume
+  responses cannot replace the selected job. Synthetic UI captures are stored
+  in `docs/research/assets/study-working-progress.png` and
+  `docs/research/assets/study-resume-controls.png`.
+- Initial portable checks exposed Windows locked-byte reads and the old
+  results-only bundle index; explicit ownership and a separate working format
+  resolved both. The working/bundle selection then passed **23 tests** (35.50 s).
+  Operator tests subsequently reached real G2/F2 resume and completion but had
+  assertion errors matching `stored_summary_matches` as a metric payload and
+  reading the wrong timing field. Corrected assertions retain the original
+  integrity and budget checks. The recovery/evidence/operator selection passed
+  **24 tests** (192.36 s), including 4/4 eligible source/replay pairs for each
+  G2/F2 pilot, same genesis/run identity, unchanged parent evidence and zero
+  mutation of the observed world. Later additions cover prepared discovery and
+  sanitized POST rejection after a checkout change.
+- TypeScript and **240 UI unit tests** passed. The first full browser run had
+  **103 passed, 1 failed, 1 skipped**: an existing contrast test searched inside
+  the now-collapsed city filter panel. Opening the panel retains the contrast
+  assertions; that check and the working-library/resume/mobile flow passed
+  together (**2 passed**, 9.7 s) after the final control styling. Production
+  build and license checks passed; the existing large-chunk warning remains.
+- Tests use fresh short Windows roots and a 40 GiB free-space preflight.
+  Approximately **132.6 GiB** remained after production build. No cleanup or
+  paid provider run was performed. Partial-phase recovery, daily keyed streams,
+  remaining city lenses and W5–W9 remain active roadmap work.
+- Final regression selection (working jobs/evidence, existing jobs/library/bundle,
+  golden replay and documentation): **79 passed** (151.65 s). Final TypeScript
+  check passed. The full Chromium suite then passed **104 tests with 1 skipped**
+  (2.4 min); the skip is the opt-in real-backend menu smoke. No browser failure
+  remains in this run. Research/API compilation, dependency check and diff
+  whitespace validation passed. Full hosted and Windows/version CI matrices
+  remain unrun.

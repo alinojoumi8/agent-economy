@@ -7,7 +7,9 @@
 .study-launcher__fields, .study-launcher__facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .study-launcher__fields label { display: grid; gap: 6px; align-content: start; }
 .study-launcher__fields input, .study-launcher__fields select { width: 100%; min-width: 0; padding: 8px; border-radius: 4px; color: var(--ae-text); background: var(--ae-surface-1); border: 1px solid var(--ae-border); }
-.study-launcher button { min-height: 40px; padding: 8px 12px; cursor: pointer; }
+.study-launcher button { min-height: 44px; padding: 8px 12px; cursor: pointer; border: 1px solid var(--ae-border); border-radius: 4px; background: var(--ae-surface-1); color: var(--ae-text); }
+.study-launcher button:focus-visible { outline: 2px solid var(--ae-accent); outline-offset: 3px; }
+.study-launcher button.study-launcher__primary { border-color: var(--ae-accent); color: var(--ae-accent); font-weight: 650; }
 .study-launcher button:disabled { cursor: default; opacity: .55; }
 .study-launcher__facts dt { color: var(--ae-text-2); font-size: .82rem; }
 .study-launcher__facts dd { margin: 4px 0 0; font-weight: 600; }

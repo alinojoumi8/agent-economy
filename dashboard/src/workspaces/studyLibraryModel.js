@@ -1,10 +1,10 @@
 /** @param {any} frame
- * @param {{runId: string, fork: string|null, tick: string, studyId?: string, resultHash?: string}} scope */
-export function studyFrameMatches(frame, { runId, fork, tick, studyId, resultHash }) {
+ * @param {{runId: string, fork: string|null, tick: string, studyId?: string, resultHash?: string, kind?: string}} scope */
+export function studyFrameMatches(frame, { runId, fork, tick, studyId, resultHash, kind = "finalized" }) {
   if (!frame || tick !== "live" || frame.context?.tick !== "live"
     || frame.context?.run_id !== runId || (frame.context?.fork_id ?? null) !== (fork ?? null)) return false;
   if (studyId !== undefined && (frame.id !== studyId || frame.verification?.result_sha256 !== resultHash
-    || frame.contract !== "operator-study-comparison-v1")) return false;
+    || frame.contract !== (kind === "working" ? "operator-working-study-v1" : "operator-study-comparison-v1"))) return false;
   if (studyId === undefined && frame.contract !== "operator-study-catalog-v1") return false;
   return true;
 }

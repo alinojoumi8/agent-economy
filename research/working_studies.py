@@ -70,8 +70,15 @@ def _journal(data: Path, report: Path, manifest_sha256: str) -> list[dict]:
     return records
 
 
-def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict]) -> None:
-    data = Path(batch["data_dir"])
+def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict], *, location=None) -> None:
+    from research.study_results import _logical_path
+    data = location.data_dir if location is not None else Path(batch["data_dir"])
+    original = _logical_path(batch["data_dir"])
+
+    def owned(value: str) -> Path:
+        path = location.locate(value) if location is not None else Path(value)
+        return _member(data, str(path.relative_to(data)))
+
     if [(row["seed"], row["arm"]) for row in rows] != _assigned(spec):
         raise ValueError("working progress changed the assigned cells")
     for row in rows:
@@ -87,8 +94,8 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict]) 
         claim = _read(claim_path)
         cfg = _arm_config(spec, config, row["arm"])
         cfg.update(seed=row["seed"], checkpoint_every=0, speed_delay_s=0.0,
-                   checkpoint_dir=str(directory / "checkpoints"), report_dir=str(directory / "reports"))
-        if (row["attempt_claim"] != str(claim_path)
+                   checkpoint_dir=str(original / cell / "checkpoints"), report_dir=str(original / cell / "reports"))
+        if (owned(row["attempt_claim"]) != claim_path
                 or row["attempt_claim_sha256"] != file_sha256(claim_path)
                 or claim["study_manifest"] != batch["manifest"]
                 or claim["study_manifest_sha256"] != batch["manifest_sha256"]
@@ -101,7 +108,11 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict]) 
             _, paused = _history(directory, file_sha256(claim_path))
             if paused != row:
                 raise ValueError("working pause differs from supervised progress")
-            _check_source(directory, row, claim)
+            if location is None:
+                _check_source(directory, row, claim)
+            else:
+                _check_source(directory, row, claim, resolve_path=owned,
+                              expected_schema_version=spec.model.schema_version)
         else:
             result_path = _member(directory, "result.json")
             seal = _read(_member(directory, "finalized.json"))
@@ -111,18 +122,18 @@ def _checked_rows(batch: dict, spec: StudySpec, config: dict, rows: list[dict]) 
             # These bytes were independently verified at finalization. Recheck
             # their seals before any writable open, without creating WAL files.
             for field in ("attempt_claim", "source_database", "source_receipt", "replay_receipt", "genesis_receipt"):
-                if field in row and file_sha256(_member(data, str(Path(row[field]).relative_to(data)))) != row[field + "_sha256"]:
+                if field in row and file_sha256(owned(row[field])) != row[field + "_sha256"]:
                     raise ValueError("finalized working evidence changed")
             if "replay_receipt" in row:
-                replay = _read(Path(row["replay_receipt"]))
-                replay_path = _member(data, str(Path(replay["replay_database"]).relative_to(data)))
+                replay = _read(owned(row["replay_receipt"]))
+                replay_path = owned(replay["replay_database"])
                 if file_sha256(replay_path) != replay["replay_database_sha256"]:
                     raise ValueError("finalized replay changed")
             for ref in row.get("working_history", []):
-                if file_sha256(_member(data, str(Path(ref["path"]).relative_to(data)))) != ref["sha256"]:
+                if file_sha256(owned(ref["path"])) != ref["sha256"]:
                     raise ValueError("finalized working segment changed")
             if row["execution_status"] == "completed" and verify_working_history(
-                    row, claim, resolve_path=lambda value: _member(data, str(Path(value).relative_to(data)))):
+                    row, claim, resolve_path=owned):
                 raise ValueError("finalized working history changed")
             for database in directory.rglob("*.db"):
                 for suffix in ("-wal", "-journal"):

@@ -817,7 +817,7 @@ async function mockStudyLaunch(page: Page, mode: "complete" | "stale" | "wrong" 
     requests.push({ path, method, body });
     expect(route.request().headers()["x-csrf-token"]).toBe("test");
     const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
-    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false } });
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false, resume: true } });
     if (path.endsWith("/validate")) { draft = launchFixture(context.fork_id, body); return route.fulfill({ json: draft }); }
     const job = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
       context, title: "Dual-domain pilot", status: mode === "interrupted" ? "interrupted" : "completed", origin: "fresh_genesis",
@@ -903,3 +903,119 @@ test("interrupted study recovery is explicit and never starts another job", asyn
 });
 
 const BASE_LAUNCH = "/api/v2/operator/research";
+
+async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wrong-parent" | "running" = "ready") {
+  const requests = await mockStudyLaunch(page);
+  const childId = "f".repeat(32);
+  let resumed = false;
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (!path.includes("/jobs/") && !path.endsWith("/studies") && !path.endsWith(`/studies/${studyId}`)) return route.fallback();
+    const method = route.request().method(), body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    const attempts = [1, 2].flatMap(seed => ["base", "cost"].map(arm => ({ seed, arm, ticks: seed === 1 && arm === "base" ? 1 : 0,
+      expected_ticks: 8, execution_status: seed === 1 && arm === "base" ? "paused" : "planned", eligibility: { status: "pending", reasons: [] } })));
+    const parent = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
+      context, title: "Dual-domain pilot", status: "paused", expected_cells: 4, finished_cells: 0, eligible_cells: 0,
+      study_id: studyId, result_sha256: studyHash, cells: attempts, resumable: !resumed && mode !== "incompatible",
+      progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), remaining_wall_seconds: 170,
+      ...(resumed ? { continuation_job_id: childId } : {}),
+      ...(mode === "incompatible" ? { resume_unavailable_reason: "source_checkout_changed" } : {}) };
+    const child = { ...parent, id: childId, parent_job_id: jobId, status: "completed", resumable: false, finished_cells: 4, eligible_cells: 4,
+      cells: attempts.map(row => ({ ...row, ticks: 8, execution_status: "completed", eligibility: { status: "eligible", reasons: [] } })) };
+    if (path.endsWith("/resume")) {
+      if (mode === "wrong-parent") return route.fulfill({ status: 202, json: { ...child, parent_job_id: "other", title: "WRONG-RESUME-CANARY" } });
+      resumed = true;
+      return route.fulfill({ status: 202, json: child });
+    }
+    if (path.includes("/jobs/")) return route.fulfill({ json: path.endsWith(childId) ? child : parent });
+    if (path.endsWith("/studies")) return route.fulfill({ json: { contract: "operator-study-catalog-v1", context,
+      items: [{ id: studyId, title: "Dual-domain pilot", domains: ["goods", "equities"], result_sha256: studyHash, kind: resumed ? "finalized" : "working" }], truncated: false, omitted: 0 } });
+    const complete = comparisonFixture(context.fork_id);
+    if (resumed) return route.fulfill({ json: complete });
+    const { summary, outcomes, measurements, ...common } = complete;
+    return route.fulfill({ json: { ...common, contract: "operator-working-study-v1", state: mode === "running" ? "running" : "paused",
+      attempts, comparison_available: false, export_available: mode !== "running", operator_job: parent,
+      verification: { ...common.verification, status: mode === "running" ? "not_verified" : "verified", publication: "working", eligibility: "pending" },
+      budget: { max_wall_seconds: 180, active_wall_seconds: 10, max_disk_bytes: 134217728 } } });
+  });
+  return { requests, childId };
+}
+
+test("planned study pause is reviewed before any world starts", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Pause after saved days (optional)").fill("2");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("After 2 saved days in the first world");
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body.pause_after_ticks).toBe(2);
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+});
+
+test("working library keeps unfinished assignments pending and resumes only on explicit action", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests, childId } = await mockWorkingStudy(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}&fork=fork-1`);
+  const progress = page.getByRole("region", { name: "Working study progress" });
+  await expect(progress).toContainText("Study eligibility is pending");
+  await expect(page.getByRole("table", { name: "Saved study days" }).getByRole("row")).toHaveCount(5);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  await expect(page.getByLabel("Treatment arm")).toHaveCount(0);
+  if (process.env.AE_CAPTURE_STUDY_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-working-progress.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.getByRole("button", { name: "Open study controls" }).click();
+  await expect(page.getByRole("button", { name: "Resume saved study" })).toBeEnabled();
+  await expect(page.getByRole("region", { name: "Study job status" })).toContainText("170.0 seconds remain");
+  if (process.env.AE_CAPTURE_STUDY_UI === "1") await page.getByRole("region", { name: "Study job status" }).screenshot({ path: "../docs/research/assets/study-resume-controls.png" });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Resume saved study" })).toBeVisible();
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Resume saved study" }).click();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("study_job")).toBe(childId);
+  expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  const posts = requests.filter(row => row.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toMatchObject({ path: `${BASE_LAUNCH}/jobs/${jobId}/resume`, body: {
+    progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), idempotency_key: jobId } });
+  await page.getByRole("button", { name: "Open verified comparison" }).click();
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+for (const mode of ["incompatible", "wrong-parent"] as const) {
+  test(`paused study ${mode} cannot show a successful continuation`, async ({ page }) => {
+    await setup(page);
+    const { requests } = await mockWorkingStudy(page, mode);
+    await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_job=${jobId}`);
+    if (mode === "incompatible") {
+      await expect(page.getByText(/Resume unavailable: source checkout changed/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Resume saved study" })).toHaveCount(0);
+      expect(requests.filter(row => row.method === "POST")).toEqual([]);
+    } else {
+      await page.getByRole("button", { name: "Resume saved study" }).click();
+      await expect(page.getByRole("alert")).toContainText("does not match");
+      await expect(page.locator("body")).not.toContainText("WRONG-RESUME-CANARY");
+      expect(new URL(page.url()).searchParams.get("study_job")).toBe(jobId);
+    }
+    await expect(page.getByRole("button", { name: "Open verified comparison" })).toHaveCount(0);
+  });
+}
+
+test("active working evidence cannot be exported or compared", async ({ page }) => {
+  await setup(page);
+  const { requests } = await mockWorkingStudy(page, "running");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("region", { name: "Working study progress" })).toContainText("checkpoint has not been verified");
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeDisabled();
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+});

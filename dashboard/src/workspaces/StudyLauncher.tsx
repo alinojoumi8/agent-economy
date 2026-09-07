@@ -12,8 +12,8 @@ const BASE = "/api/v2/operator/research";
 const words = (value: unknown) => String(value ?? "Unavailable").replaceAll("_", " ");
 const mib = (value: number) => `${(value / 1048576).toFixed(1)} MiB`;
 type Form = { preset: string; seeds: string; horizon: number; intervention_tick: number; goods_firm_id: number;
-  max_wall_seconds: number; max_disk_mib: number };
-const initialForm: Form = { preset: "G2", seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128 };
+  max_wall_seconds: number; max_disk_mib: number; pause_after_ticks: number | null };
+const initialForm: Form = { preset: "G2", seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128, pause_after_ticks: null };
 
 export function PriceStudyWorkbench() {
   const [params, setParams] = useSearchParams();
@@ -82,21 +82,24 @@ export function StudyLauncher() {
     return next;
   });
 
-  const mutate = async (kind: "validate" | "launch" | "recover") => {
+  const mutate = async (kind: "validate" | "launch" | "recover" | "resume") => {
     if (!live || !token || !caps || mismatch || synchronousPending.current) return;
+    if (kind === "resume" && (!job?.resumable || !job.progress_sha256 || !job.resume_check_sha256)) return;
     synchronousPending.current = true;
     const requestIdentity = identity, key = {};
     setOperation({ identity, key, pending: true });
     try {
       const path = kind === "validate" ? "/drafts/validate"
-        : kind === "launch" ? `/drafts/${draft.id}/launch` : `/jobs/${job.id}/recover`;
+        : kind === "launch" ? `/drafts/${draft.id}/launch` : `/jobs/${job.id}/${kind}`;
       const body = kind === "validate" ? { ...form, seeds: parseStudySeeds(form.seeds), equity_firm_id: 1 }
-        : kind === "launch" ? { draft_sha256: draft.draft_sha256, idempotency_key: draft.id } : undefined;
+        : kind === "launch" ? { draft_sha256: draft.draft_sha256, idempotency_key: draft.id }
+        : kind === "resume" ? { progress_sha256: job.progress_sha256, resume_check_sha256: job.resume_check_sha256, idempotency_key: job.id } : undefined;
       const result = await workspaceApi<any>(`${BASE}${path}?${query}`, { headers, method: "POST", body: body ? JSON.stringify(body) : undefined });
       if (active.current !== requestIdentity) return;
       const contract = kind === "validate" ? "operator-study-draft-v1" : "operator-study-job-status-v1";
       if (!matches(result, contract, kind === "recover" ? job.id : undefined)
-        || (kind === "launch" && (result.draft_id !== draft.id || result.draft_sha256 !== draft.draft_sha256))) {
+        || (kind === "launch" && (result.draft_id !== draft.id || result.draft_sha256 !== draft.draft_sha256))
+        || (kind === "resume" && (result.parent_job_id !== job.id || result.draft_id !== job.draft_id || result.draft_sha256 !== job.draft_sha256))) {
         throw new Error("Study response does not match the reviewed draft or run context.");
       }
       if (kind === "validate") navigate({ study_draft: result.id, study_job: null });
@@ -143,7 +146,10 @@ export function StudyLauncher() {
         <label>Goods firm<select value={form.goods_firm_id} onChange={event => setForm({ ...form, goods_firm_id: Number(event.target.value) })}><option value={2}>Firm 2</option><option value={3}>Firm 3</option></select></label>
         <label>Wall-time limit (seconds)<input type="number" min={10} max={300} required value={form.max_wall_seconds} onChange={event => setForm({ ...form, max_wall_seconds: Number(event.target.value) })} /></label>
         <label>Evidence disk budget (MiB)<input type="number" min={32} max={128} required value={form.max_disk_mib} onChange={event => setForm({ ...form, max_disk_mib: Number(event.target.value) })} /></label>
+        {caps?.resume && <label>Pause after saved days (optional)<input type="number" min={1} max={form.horizon - 1} value={form.pause_after_ticks ?? ""}
+          onChange={event => setForm({ ...form, pause_after_ticks: event.target.value ? Number(event.target.value) : null })} aria-describedby="study-pause-help" /></label>}
       </div><p id="study-seed-help">Use one to five unique seeds. At least two usable pairs are required for a bootstrap interval. Equity target: listed firm 1; currency: USD.</p>
+      {caps?.resume && <p id="study-pause-help">Leave blank to run to completion. A planned pause stops the batch at a saved day in its first unfinished world. Resume uses the remaining original budget.</p>}
       <button type="submit">{pending ? "Validating…" : "Validate draft"}</button></fieldset>
       <p>Validation preserves an immutable protocol and estimates storage. It creates no simulated worlds.</p>
     </form>}
@@ -156,6 +162,7 @@ export function StudyLauncher() {
         <div><dt>Storage planning allowance</dt><dd>{mib(draft.estimate.disk_bytes)} / {mib(draft.estimate.disk_bytes_limit)} budget</dd></div>
         <div><dt>Wall-time limit</dt><dd>{draft.estimate.wall_seconds_limit} seconds</dd></div>
         <div><dt>Provider calls / spend</dt><dd>0 / $0</dd></div>
+        {draft.request.pause_after_ticks != null && <div><dt>Planned pause</dt><dd>After {draft.request.pause_after_ticks} saved days in the first world</dd></div>}
       </dl>
       <p>{draft.estimate.method}. Actual disk use is checked every 200 ms; a write or final report can exceed the threshold.</p>
       <div className="study-launcher__arms">{draft.spec.arms.map((arm: any) => <article key={arm.key}><h4>{arm.role === "baseline" ? "Baseline" : "Treatment"}</h4><p>{arm.label}</p>
@@ -171,19 +178,24 @@ export function StudyLauncher() {
       </div>}
     </section>}
     {job && <section className="study-launcher__job" aria-label="Study job status">
-      <h4>{words(job.status)}</h4><p role="status">{job.finished_cells} / {job.expected_cells} world attempts reported. Each completed attempt includes its replay check.</p>
+      <h4>{words(job.status)}</h4><p role="status">{job.finished_cells} / {job.expected_cells} world attempts reported as finished. Eligibility requires the full horizon and verified replay.</p>
       {job.reason && <p>{words(job.reason)}</p>}
       <WorkspaceTable<any> caption="Study execution progress" rows={job.cells.map((row: any, index: number) => ({ ...row, id: index }))} empty="Waiting for the first world attempt to report."
         columns={[{ key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
           { key: "execution_status", label: "Execution", render: row => words(row.execution_status) },
+          { key: "ticks", label: "Saved day", render: row => row.ticks ?? "Unavailable" },
           { key: "eligibility", label: "Evidence", render: row => words(row.eligibility.status) },
           { key: "reasons", label: "Exclusions", render: row => row.eligibility.reasons.map(words).join(", ") || "None reported" }]} />
       <div className="study-launcher__actions"><button type="button" disabled={jobQuery.isFetching} onClick={() => { void jobQuery.refetch(); }}>Refresh job status</button>
-        {job.study_id && <button type="button" onClick={compare}>Open verified comparison</button>}
+        {job.study_id && <button type="button" onClick={compare}>{job.status === "paused" ? "Inspect saved progress" : "Open verified comparison"}</button>}
+        {job.resumable && <button type="button" className="study-launcher__primary" disabled={pending || !caps || Boolean(mismatch)} onClick={() => { void mutate("resume"); }}>{pending ? "Resuming…" : "Resume saved study"}</button>}
+        {job.continuation_job_id && <button type="button" onClick={() => navigate({ study_job: job.continuation_job_id })}>Open continuation job</button>}
         {job.recoverable && <button type="button" disabled={pending} onClick={() => { void mutate("recover"); }}>Release interrupted job slot</button>}
         {!studyJobActive(job.status) && <button type="button" onClick={edit}>Prepare another draft</button>}</div>
       {job.recoverable && <p>The supervisor is no longer active. Releasing its slot preserves all evidence; it does not resume or rerun the study.</p>}
-      <p>Leaving this page does not stop the independent supervisor. Only explicit Run starts a new study; a repeated request returns this job.</p>
+      {job.resumable && <p>{Number(job.remaining_wall_seconds).toFixed(1)} seconds remain in the original wall-time budget. Resume continues the same worlds and preserves earlier receipts. Idle time is excluded.</p>}
+      {job.resume_unavailable_reason && <p role="status">Resume unavailable: {words(job.resume_unavailable_reason)}. Saved evidence remains available for inspection.</p>}
+      <p>Leaving this page does not stop the independent supervisor. Run starts a new study; Resume continues an existing pause. Repeating either request opens its existing job.</p>
     </section>}
   </section>;
 }

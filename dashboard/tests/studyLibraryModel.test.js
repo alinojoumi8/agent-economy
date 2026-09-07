@@ -28,3 +28,14 @@ test("domain comparisons keep missing values distinct from zero and retain pair 
   assert.equal(studyNumber(0), "0");
   for (const value of [null, undefined, NaN, Infinity, "0"]) assert.equal(studyNumber(value), "Unavailable");
 });
+
+test("working progress cannot be accepted as a finalized comparison or stale checkpoint", () => {
+  const frame = { context: { run_id: "run", fork_id: null, tick: "live" },
+    contract: "operator-working-study-v1", id: "study", verification: { result_sha256: "pause" } };
+  const scope = { runId: "run", fork: null, tick: "live", studyId: "study", resultHash: "pause", kind: "working" };
+  assert.equal(studyFrameMatches(frame, scope), true);
+  for (const change of [{ kind: "finalized" }, { resultHash: "old" }, { tick: "3" }, { runId: "other" }]) {
+    assert.equal(studyFrameMatches(frame, { ...scope, ...change }), false);
+  }
+  assert.equal(studyFrameMatches({ ...frame, contract: "operator-study-comparison-v1" }, scope), false);
+});

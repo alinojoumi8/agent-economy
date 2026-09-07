@@ -1,8 +1,8 @@
 # Paused study recovery: implementation contract
 
-Status: scripted committed-day batch resume and CLI controls are implemented.
-Finalized studies retain portable recovery evidence. Working-study library,
-operator/UI integration and partial-phase recovery remain pending.
+Status: scripted committed-day batch resume, CLI/operator controls, saved working
+studies and portable working evidence are implemented. Partial-phase recovery
+remains pending. Updated 2026-09-07; verification is recorded in the execution log.
 Source checkpoints inspected: `0b454b1` and `88f1e89`. This closes the implementation-design
 gap in [S1](2026-09-06-research-city-specs.md#s1-research-contract-and-experiment-integrity)
 before further household, school, production or banking expansion. It does not
@@ -15,9 +15,9 @@ scripted cell under a process-owned batch lock. It requires the explicit
 `preserve_and_resume` pause policy, a `working-attempt-v2` manifest and semantics
 7 or later with persisted PRNG state. `prepare_study` binds this protocol and
 its cumulative-active-time contract before execution. The ordinary study
-runner dispatches that policy through `research/working_studies.py`; the local
-operator interface still creates finalized version-1 studies and advertises
-`resume: false` until its working-study integration is delivered.
+runner dispatches that policy through `research/working_studies.py`. New local
+operator pilots use this protocol and advertise `resume: true`; legacy finalized
+version-1 studies retain their original read-only disposition.
 
 An intact committed-day pause retains pending eligibility and append-only
 segment receipts. It has no final source/replay/result receipt. Resume checks
@@ -105,10 +105,43 @@ unresolved and refuse continuation. The history limit is 1,024 invocations.
 
 Finalized result loading and private ZIP export/import verify both supervisor
 and attempt lineage, including prior pauses and result timing seals. Working
-progress is currently inspectable through its JSON/CLI, with read-only
-`--validate-only` compatibility checks. Working-state portable export, saved
-library discovery and operator Resume controls remain the next delivery; the
-existing UI job-slot release action does not resume scientific execution.
+progress is inspectable through JSON/CLI and the local saved-study library.
+The existing UI job-slot release action still does not resume scientific execution.
+
+## Saved working evidence and operator recovery
+
+The library uses one stable batch ID from preparation through finalization.
+Before the first closed checkpoint it shows assigned cells with unavailable
+saved-day evidence. A verified pause shows each assignment, last saved day,
+execution status and eligibility. Active or damaged checkpoints stay unverified.
+Working studies never expose price-effect comparisons, even when some cells
+have finished; the finalized comparison contract remains separate.
+
+`research/working_evidence.py` verifies frozen inputs, supervisor/segment
+lineage, closed source bytes and independently recorded observations without
+requiring the current checkout to match. Private working export holds both
+batch ownership locks while copying the exact evidence. On Windows the locked
+control bytes are read through their owning handles. The explicit
+`study-working-evidence-bundle-v1` format preserves pending study eligibility
+after import, including after the original live source advances. It is an
+evidence copy, not a grant of execution compatibility or a complete runtime.
+
+In **Create a study**, an optional saved-day pause is part of the reviewed
+request. After a receipted pause, **Resume saved study** appears only after
+read-only compatibility checks against the original fixed pilot profile,
+manifest, source/config/input identities, namespace and remaining cumulative
+budget. The POST binds both the progress digest and a fresh resume-check digest.
+It cannot change seeds, horizon, policy or resource limits. The same local
+run/fork/Live cursor and CSRF authority are required.
+
+Resume creates an immutable continuation job linked to its parent; the parent
+claim, terminal record and scientific receipts remain unchanged. Repeating
+the same request returns that continuation, while a different key conflicts.
+The existing supervised runner rechecks ownership and compatibility before
+scientific writes. Failed, finalized, legacy or interrupted unreceipted work
+cannot be turned into a clean pause. Source incompatibility leaves the saved
+checkpoint readable. The library links only jobs originating in that operator
+workspace and context; arbitrary CLI or imported studies are not adopted.
 
 ## Existing behavior and compatibility boundary
 
