@@ -164,12 +164,14 @@ def test_final_receipt_detects_altered_pause_lineage(protocol, tmp_path):
     assert "working_history_invalid" in verify_attempt(complete, expected_ticks=3)
 
 
-def test_legacy_runner_refuses_working_policy_before_creating_artifacts(protocol, tmp_path):
+def test_legacy_policy_refuses_resume_controls_before_creating_artifacts(protocol, tmp_path):
     options = _prepare(protocol, tmp_path)
+    raw = options["spec"].model_dump(mode="json")
+    raw["operations"]["pause_policy"] = "preserve_and_stop"
     before = _bytes(tmp_path)
-    with pytest.raises(ValueError, match="resumable attempt executor"):
-        run_study(options["spec"], options["config"], input_root=tmp_path,
-                  data_root=tmp_path / "other-data", out_dir=tmp_path / "other-out")
+    with pytest.raises(ValueError, match="preserve_and_resume"):
+        run_study(StudySpec.model_validate(raw), options["config"], input_root=tmp_path,
+                  data_root=tmp_path / "other-data", out_dir=tmp_path / "other-out", pause_after_ticks=1)
     assert _bytes(tmp_path) == before
 
 
@@ -243,4 +245,24 @@ def test_other_cells_use_sealed_budget_records(protocol, tmp_path):
     before = _bytes(tmp_path)
     with pytest.raises(ValueError, match="finalized working result changed"):
         execute_working_attempt(**{**options, "arm": "cost"}, resume=True)
+    assert _bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize("name", ["checkpoints", "reports"])
+def test_resume_refuses_aliased_output_directories(protocol, tmp_path, name):
+    options = _prepare(protocol, tmp_path)
+    paused = execute_working_attempt(**options, max_ticks=1)
+    directory = Path(paused["attempt_claim"]).parent
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = directory / name
+    if target.exists():
+        target.rename(directory / (name + "-retained"))
+    try:
+        target.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable on this host")
+    before = _bytes(tmp_path)
+    with pytest.raises(ValueError, match="aliased"):
+        execute_working_attempt(**options, resume=True)
     assert _bytes(tmp_path) == before

@@ -631,3 +631,53 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   addition; the final 21-test selection covers that addition. This remains a
   bounded mechanics rehearsal, not a completed multi-arm study or empirical
   validation.
+
+## Supervised study recovery and CLI
+
+- At `88f1e89`, required [CI 34076614198](https://github.com/alinojoumi8/agent-economy/actions/runs/34076614198)
+  passed all four jobs. All eight Ubuntu/Python 3.12 full-suite shards passed in
+  [run 34076613979](https://github.com/alinojoumi8/agent-economy/actions/runs/34076613979):
+  **1,794 passed and 10 skipped**. These results precede the supervisor changes
+  below. The full Windows/version matrix and hosted integration were not run.
+- Connected `preserve_and_resume` to supervised batch execution and CLI
+  `--pause-after-ticks`, `--resume-batch` and read-only resume validation.
+  A clean pause retains every assignment and pending eligibility in an immutable
+  progress report. Resume preserves completed cells and advances only compatible
+  paused/planned cells. Version-1 finalized artifacts remain immutable.
+- Added supervisor ownership, 200 ms worker time/disk checks, orphan termination,
+  append-only invocation/worker/progress receipts and sealed cumulative timing.
+  Missing finalization or supervision records refuse recovery. Completed studies
+  verify these records through existing result loading and portable ZIP import/export.
+  Aliased output directories also refuse cell resume before writable access.
+- The first integrated run completed source/replay and portable verification,
+  then failed one test assertion using the wrong import-receipt field (**1 failed,
+  13.60 s**). The next selection had **13 passed, 2 failed** (76.61 s): a Windows
+  byte-range lock cannot be hashed while held, and the fixture also contains an
+  auxiliary database. Assertions now compare before/after lock ownership and
+  the original database inventory instead of assuming one file. No production
+  guard was relaxed.
+- The supervisor, working-attempt, legacy runner, result, bundle and operator-job
+  selection passed **97 tests** (206.42 s), including CLI pause/validate/resume,
+  preserved completed cells, both price domains, portable lineage, competing
+  ownership, original-budget exhaustion and actual supervisor death. The existing
+  Starlette deprecation warning remains. Required research CI includes the new
+  `tests/test_working_studies.py` module.
+- Working-state library/export/operator UI and partial-phase recovery are still
+  pending. The internal cell API remains cooperative; the CLI now uses its own
+  hard worker supervisor. The broader five-part roadmap remains active.
+- After the final output-alias and receipt-seal checks, the complete supervisor
+  module, new alias rejections, study protocol, legacy golden replay and
+  documentation selection passed **56 tests** (105.86 s). Research compilation
+  passed. Tests used fresh short Windows roots with a 40 GiB free-space preflight;
+  remaining space after this slice was approximately **129.4 GiB**.
+- An unmocked CLI rehearsal loaded a saved Semantics-15 configuration and study
+  YAML, paused at day **3**, ran read-only resume validation, then finished all
+  **four 30-day cells** (two seeds, baseline/cost arms) with **4/4 eligible**
+  source/replay pairs and a verified aggregate. All four canonical replay hashes
+  matched, all books reconciled, and no paid provider calls/spend occurred.
+  Each world retained 25 living actors and 30 child-day records; recorded child
+  food purchases were 30, 30, 29 and 30 units. The previous progress report stayed
+  byte-identical. Cumulative supervised active time was **66.20 s** within the
+  original 240-second/256 MB limits. Raw evidence remains ignored under
+  `tmp/wsh-0a823971/`, including per-command logs and `receipt.json`. This checks
+  mechanics and recovery, not empirical validity or a price-discovery forecast.

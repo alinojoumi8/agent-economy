@@ -29,6 +29,8 @@ PROTOCOL = "working-attempt-v2"
 
 
 def _read(path: Path) -> dict:
+    if path.stat().st_size > 32 * 1024 * 1024:
+        raise ValueError("working-attempt record exceeds its verification size limit")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("invalid working-attempt record")
@@ -51,7 +53,7 @@ def _duration(value) -> float:
 
 
 def _contract(batch: dict, spec: StudySpec, config: dict, input_root: Path) -> tuple[Path, Path]:
-    validate_execution(spec, config, working=True)
+    validate_execution(spec, config)
     if spec.operations.pause_policy != "preserve_and_resume" or spec.model.engine_semantics_version < 7:
         raise ValueError("working attempts require explicit resume policy and persisted PRNG semantics")
     manifest = batch["manifest"]
@@ -259,6 +261,8 @@ def execute_working_attempt(*, batch: dict, spec: StudySpec, config: dict,
     directory = _member(data_dir, cell)
 
     def check_disposition():
+        for name in ("source", "replay", "checkpoints", "reports"):
+            _member(directory, name)
         if resume:
             if not directory.is_dir():
                 raise ValueError("working attempt is missing")

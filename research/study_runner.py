@@ -73,10 +73,10 @@ def collect_outcomes(store: Store, spec: StudySpec) -> dict:
                 "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
 
 
-def validate_execution(spec: StudySpec, config: dict, *, working: bool = False) -> None:
+def validate_execution(spec: StudySpec, config: dict) -> None:
     """Check this runner's capabilities before creating any study artifacts."""
-    if spec.operations.pause_policy == "preserve_and_resume" and not working:
-        raise ValueError("working studies require the resumable attempt executor; batch orchestration is not yet supported")
+    if spec.operations.pause_policy == "preserve_and_resume" and spec.model.engine_semantics_version < 7:
+        raise ValueError("working studies require persisted PRNG semantics")
     if spec.operations.mode != "provider_free" or spec.behavior.family != "scripted":
         raise ValueError("this runner supports explicitly scripted provider-free studies only")
     if spec.operations.concurrency != 1:
@@ -108,7 +108,7 @@ def _arm_config(spec: StudySpec, config: dict, arm_key: str) -> dict:
 
 def _worker(spec_data: dict, config: dict, seed: int, arm: str,
             data_dir: str, result_path: str, input_root: str, expected_code: dict,
-            worker_guard_path: str | None = None) -> None:
+            worker_guard_path: str | None = None, working: dict | None = None) -> None:
     parent = multiprocessing.parent_process()
     if parent is not None:
         if not parent.is_alive():
@@ -124,7 +124,15 @@ def _worker(spec_data: dict, config: dict, seed: int, arm: str,
     with process_lock(Path(worker_guard_path), wait_seconds=5) if worker_guard_path else nullcontext():
         if parent is not None and not parent.is_alive():
             os._exit(70)
-        _execute_worker(spec_data, config, seed, arm, data_dir, result_path, input_root, expected_code)
+        if working is None:
+            _execute_worker(spec_data, config, seed, arm, data_dir, result_path, input_root, expected_code)
+        else:
+            from research.working_attempts import execute_working_attempt
+            # Keep a clean pause pending. Exceptions leave the segment and
+            # missing worker receipt visible to the owning supervisor.
+            row = execute_working_attempt(spec=StudySpec.model_validate(spec_data),
+                config=config, seed=seed, arm=arm, input_root=input_root, **working)
+            publish_json(result_path, row)
 
 
 def _execute_worker(spec_data: dict, config: dict, seed: int, arm: str,
@@ -181,9 +189,19 @@ def run_study(spec: StudySpec, config: dict, *, input_root: str | Path,
               data_root: str | Path = "data/studies", out_dir: str | Path = "reports/out",
               expected_code: dict | None = None,
               progress: Callable[[dict], None] | None = None,
-              worker_guard_path: Path | None = None) -> dict:
+              worker_guard_path: Path | None = None,
+              resume_batch: str | Path | None = None,
+              pause_after_ticks: int | None = None) -> dict:
     spec = StudySpec.model_validate(spec.model_dump(mode="json"))
     validate_execution(spec, config)
+    if spec.operations.pause_policy == "preserve_and_resume":
+        from research.working_studies import run_working_study
+        return run_working_study(spec, config, input_root=input_root, data_root=data_root,
+            out_dir=out_dir, expected_code=expected_code, progress=progress,
+            worker_guard_path=worker_guard_path, resume_batch=resume_batch,
+            pause_after_ticks=pause_after_ticks)
+    if resume_batch is not None or pause_after_ticks is not None:
+        raise ValueError("pause and resume controls require the preserve_and_resume policy")
     if expected_code is not None and code_identity() != expected_code:
         raise ValueError("source changed after study validation")
     started = time.monotonic()
@@ -327,18 +345,32 @@ def main() -> int:
     parser.add_argument("--data-root", type=Path, default=Path("data/studies"))
     parser.add_argument("--out-dir", type=Path, default=Path("reports/out"))
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--resume-batch", type=Path,
+                        help="Existing working data directory under --data-root")
+    parser.add_argument("--pause-after-ticks", type=int,
+                        help="Maximum additional days per cell; stop at the first clean pause")
     args = parser.parse_args()
     try:
         spec, config = load_study(args.study), load_config(args.config)
         validate_execution(spec, config)
+        if args.pause_after_ticks is not None and args.pause_after_ticks < 1:
+            raise ValueError("pause tick limit must be positive")
+        if (args.resume_batch is not None or args.pause_after_ticks is not None) and spec.operations.pause_policy != "preserve_and_resume":
+            raise ValueError("pause and resume controls require the preserve_and_resume policy")
         if args.validate_only:
             validate_study_inputs(spec, config, input_root=args.input_root)
+            if args.resume_batch is not None:
+                from research.working_studies import validate_resume
+                validate_resume(args.resume_batch, spec, config, input_root=args.input_root,
+                                data_root=args.data_root, out_dir=args.out_dir)
             print(json.dumps({"status": "valid", "study": spec.key,
                               "input_hashes_verified": True, "executed": False}))
         else:
             result = run_study(spec, config, input_root=args.input_root,
-                               data_root=args.data_root, out_dir=args.out_dir)
-            print(json.dumps({"artifacts": result["artifacts"], "coverage": result["summary"]["coverage"]}))
+                               data_root=args.data_root, out_dir=args.out_dir,
+                               resume_batch=args.resume_batch, pause_after_ticks=args.pause_after_ticks)
+            print(json.dumps({"artifacts": result["artifacts"], "coverage": result["summary"]["coverage"],
+                              "status": result.get("status", "finalized"), "batch": result["batch"]["data_dir"]}))
             if any(row["execution_status"] != "completed" for row in result["results"]):
                 return 1
         return 0

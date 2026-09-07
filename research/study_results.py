@@ -129,6 +129,14 @@ def _verify_cell(row: dict, worker: dict | None, spec: StudySpec, config: dict,
         if claim_path != location.data_dir / cell_id / "attempt.json":
             raise StudyArtifactError("attempt namespace mismatch")
         claim = read_json(claim_path)
+        if claim.get("protocol_version") == 2:
+            finished = location.data_file(f"{cell_id}/result.json")
+            seal = read_json(location.data_file(f"{cell_id}/finalized.json"))
+            stored = read_json(finished)
+            if (seal.get("result_sha256") != file_sha256(finished)
+                    or digest_json({k: v for k, v in stored.items() if k != "eligibility"})
+                    != digest_json({k: v for k, v in row.items() if k != "eligibility"})):
+                reasons.append("finalized_working_result_changed")
         expected = _arm_config(spec, config, row["arm"])
         original_attempt = _logical_path(row["attempt_claim"]).parent
         expected.update(seed=row["seed"], checkpoint_every=0, speed_delay_s=0.0,
@@ -209,6 +217,9 @@ def load_study_result(result_path: str | Path, *, data_root: str | Path = "data/
                    * spec.analysis.bootstrap_samples > 2_000_000):
             raise StudyArtifactError("study exceeds this loader's verification work limit")
         context_status = _verify_context(payload["batch"]["manifest"], spec, location)
+        if spec.operations.pause_policy == "preserve_and_resume":
+            from research.working_studies import verify_supervised_result
+            verify_supervised_result(payload, data_dir=location.data_dir, report_dir=location.report_dir)
         publication = location.report_file("publication.json")
         publication_status = "legacy_missing"
         if publication.is_file():

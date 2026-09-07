@@ -1,8 +1,9 @@
 # Paused study recovery: implementation contract
 
-Status: implementation in progress. The working-attempt executor exists;
-batch supervision, CLI, portable working-study evidence and UI integration
-remain pending. Source checkpoint initially inspected: `0b454b1`. This closes the implementation-design
+Status: scripted committed-day batch resume and CLI controls are implemented.
+Finalized studies retain portable recovery evidence. Working-study library,
+operator/UI integration and partial-phase recovery remain pending.
+Source checkpoints inspected: `0b454b1` and `88f1e89`. This closes the implementation-design
 gap in [S1](2026-09-06-research-city-specs.md#s1-research-contract-and-experiment-integrity)
 before further household, school, production or banking expansion. It does not
 replace the [five-part roadmap](2026-09-06-research-city-roadmap.md).
@@ -14,8 +15,9 @@ scripted cell under a process-owned batch lock. It requires the explicit
 `preserve_and_resume` pause policy, a `working-attempt-v2` manifest and semantics
 7 or later with persisted PRNG state. `prepare_study` binds this protocol and
 its cumulative-active-time contract before execution. The ordinary study
-runner and its validation command reject the new policy until batch supervision
-is connected; it is not exposed as a working UI feature.
+runner dispatches that policy through `research/working_studies.py`; the local
+operator interface still creates finalized version-1 studies and advertises
+`resume: false` until its working-study integration is delivered.
 
 An intact committed-day pause retains pending eligibility and append-only
 segment receipts. It has no final source/replay/result receipt. Resume checks
@@ -26,11 +28,14 @@ checking that the hash-bound source is closed and has no WAL/SHM/journal; it
 does not apply that mode to live databases. Completed, failed, legacy finalized
 or unreceipted attempts refuse in-place resume.
 
-The executor accounts for accumulated active time across existing batch cells,
+The cell executor accounts for accumulated active time across existing batch cells,
 checks disk/time at committed days and before publication, and records
 finalization time separately. These checks are cooperative: a single slow day
-or evidence operation can exceed a sampled limit. The future supervisor must
-enforce hard deadlines and retain orphan-worker handling before CLI/UI exposure.
+or evidence operation can exceed a sampled limit. The batch supervisor now
+terminates its owned worker when a 200 ms poll detects time/disk exhaustion,
+including during initialization and replay. A parent-process guard stops the
+child if the supervisor dies. Sampling, the current write, process shutdown and
+final diagnostic receipts can exceed a threshold; these are not filesystem quotas.
 Operator idle time between calls is excluded by the new timing contract.
 Closed results receive a hash seal before their timing can contribute to a
 later cell's budget. A changed result or a missing finalization seal prevents
@@ -54,8 +59,56 @@ Keep the checkout and declared inputs unchanged between these calls. The
 working source is expected to advance; prior manifests and segment receipts
 remain unchanged. Finalization reuses the existing independent replay and
 receipt verifier, with added checks for working-segment lineage and PRNG state.
-This API does not yet publish a resumable batch report or portable working
-study, and does not support resuming a partial active phase.
+This cell API alone does not publish batch reports. Use the supervised runner
+below for batch execution. Neither entry point resumes a partial active phase.
+
+## Supervised runner and CLI
+
+Set `operations.pause_policy: preserve_and_resume` in the study specification
+before preparing a new study. Its resolved configuration hash must match the
+selected config. Changing an existing manifest to enable recovery is refused.
+Both goods and equity outcomes use this same execution path.
+
+```powershell
+# Use your validated study.yaml and its matching configuration.
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/household-rehearsal.yaml --pause-after-ticks 3
+# Set this to the exact data directory printed in the first command's batch field.
+$batchDirectory = 'data/studies/<study-key>/<manifest-and-batch-id>'
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/household-rehearsal.yaml --resume-batch $batchDirectory --validate-only
+.\.venv\Scripts\python.exe -m research.study_runner study.yaml --config runs/household-rehearsal.yaml --resume-batch $batchDirectory
+```
+
+Keep any custom `--input-root`, `--data-root` and `--out-dir` arguments identical
+across commands. `--pause-after-ticks` caps additional days per cell and stops
+the batch at its first clean pause. Without that flag, resume finishes the
+paused cell and remaining planned cells. The same API arguments are available
+on `run_study`. CLI exit codes are 0 for completed execution, 1 for an incomplete
+or paused study, and 2 for rejected validation; eligibility and missing outcomes
+still require inspecting the resulting evidence.
+
+Each invocation owns a separate supervisor lock, while its child owns the
+working-attempt writer lock. Resume validates the full batch twice, including
+under ownership, before creating its invocation record. Completed cells retain
+their original bytes. Paused progress keeps every assigned cell and pending
+eligibility; it writes `progress-NNNNNN.json`, never `results.json` or a study
+publication receipt. Finalization publishes the existing result/report format
+once, with the supervision contract in its operations metadata.
+
+Append-only invocation start, end and seal records bind each progress report,
+worker receipt, prior invocation and cumulative active wall time. Successful
+invocations include preparation/validation, worker startup, source execution,
+replay and report publication. The final timing receipt/seal has small recording
+overhead; operator idle time is excluded. Resume uses the cumulative supervisor
+time, which must also cover the cell executor's recorded time. It cannot raise
+or reset the original budget. Missing starts, ends or seals leave crash accounting
+unresolved and refuse continuation. The history limit is 1,024 invocations.
+
+Finalized result loading and private ZIP export/import verify both supervisor
+and attempt lineage, including prior pauses and result timing seals. Working
+progress is currently inspectable through its JSON/CLI, with read-only
+`--validate-only` compatibility checks. Working-state portable export, saved
+library discovery and operator Resume controls remain the next delivery; the
+existing UI job-slot release action does not resume scientific execution.
 
 ## Existing behavior and compatibility boundary
 

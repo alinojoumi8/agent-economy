@@ -8,6 +8,12 @@ The full city integration, checkpoint-derived studies, live-model
 policy comparisons and empirical validation remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
+The CLI additionally supports explicit `preserve_and_resume` studies, committed-day
+pauses and `--resume-batch`, with cumulative budgets and portable finalized
+recovery evidence. See the [recovery contract and commands](../plans/2026-09-06-paused-study-resume.md#supervised-runner-and-cli).
+Working-state library discovery and operator Resume controls remain pending;
+the interface's interrupted-job release action only releases its launch slot.
+
 ## Interactive price inspector
 
 Open **Markets → Price lab** in a running local observatory. Select a business
