@@ -59,7 +59,7 @@ def test_phase_lookup_rejects_unsupported_semantics(version: int) -> None:
 def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
     store = Store(str(tmp_path / "fresh.db"))
     try:
-        assert SCHEMA_VERSION == 21
+        assert SCHEMA_VERSION == 22
         communication_tables = {
             row["name"] for row in store.query(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
@@ -85,6 +85,7 @@ def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
             (19, "construction_economy", "applied"),
             (20, "external_turn_attendance", "applied"),
             (21, "persistent_households", "applied"),
+            (22, "household_decisions", "applied"),
         ]
         news_columns = {
             row["name"] for row in store.query("PRAGMA table_info(news_articles)")

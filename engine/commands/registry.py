@@ -14,6 +14,8 @@ from .models import (ApplyBusinessPermit, ApplyConstructionPermit,
                      ForwardMessage, LegacyCommand, PerformConstructionWork,
                      ProposeConstruction, ReplyMessage, SendMessage,
                      SetComputeSponsorship, StudySkill)
+from .models import (CancelHouseholdProposal, ProposeHouseholdMove,
+                     ProposePartnership, RespondHousehold, SeparateHousehold)
 
 
 class CommandValidationError(ValueError):
@@ -90,6 +92,14 @@ CONSTRUCTION_MODELS = {
     "cancel_construction": CancelConstruction,
 }
 
+HOUSEHOLD_MODELS = {
+    "propose_partnership": ProposePartnership,
+    "propose_household_move": ProposeHouseholdMove,
+    "respond_household": RespondHousehold,
+    "cancel_household_proposal": CancelHouseholdProposal,
+    "separate_household": SeparateHousehold,
+}
+
 
 def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     registry = CommandRegistry()
@@ -98,6 +108,7 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         | set(COGNITION_MODELS)
         | set(CIVIC_MODELS)
         | set(CONSTRUCTION_MODELS)
+        | set(HOUSEHOLD_MODELS)
     )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
@@ -133,5 +144,10 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
             model=model,
             handler_name=f"_do_{command_type}",
             introduced_in_semantics=13,
+        ))
+    for command_type, model in HOUSEHOLD_MODELS.items():
+        registry.register(CommandDefinition(
+            command_type=command_type, model=model,
+            handler_name=f"_do_{command_type}", introduced_in_semantics=17,
         ))
     return registry

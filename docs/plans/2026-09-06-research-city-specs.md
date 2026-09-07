@@ -435,9 +435,12 @@ recorded responses; fresh model calls are a different replication.
 
 Implementation checkpoint: [Semantics 15](../semantics15-households.md) implements
 person origins, births, basic household membership/separation/custody, age
-eligibility, child food demand, demographic keyed draws and census. Care time,
-partnership assent, joint migration, full estates and long-horizon validation
-below remain required. This first checkpoint does not close W5.
+eligibility, child food demand, demographic keyed draws and census.
+
+[Semantics 17](2026-09-07-household-decisions.md) adds mutual partnership assent,
+separation with primary minor wards and atomic joint household migration.
+Delivered care/time, full estates and long-horizon validation remain required;
+these checkpoints do not close W5.
 
 Work package: W5. Existing seams: `engine/lifecycle.py`, `world/genesis.py`,
 `World._spawn_due_arrivals`, ledger ownership, social ties, and Living Agents

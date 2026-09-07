@@ -1421,3 +1421,59 @@ acceptance cases passed locally (**2.76 s**, `-k served_acceptance`, fresh base
 `ae-b2ccad54`). The final correction changes only this test and this log. Its
 required CI and corrected shard-5 results are recorded separately on draft PR #82;
 the failed initial full run remains part of the validation record.
+
+## 2026-09-07 — W5 mutual household decisions
+
+Implemented the [household decision contract](2026-09-07-household-decisions.md)
+as opt-in Semantics 17. Schema 22 records proposals, immutable adult assents and
+partnership intervals. All affected adults must agree before household formation
+or a joint move. Proposals bind exact membership/guardianship and, for moves,
+employment; changed terms invalidate consent. Separation takes the departing
+adult's primary minor wards and preserves custody/history. Personal accounts and
+assets retain their owners. Joint moves settle together at night, retain currency
+balances and stop if any member has credit exposure or a conflicting move.
+
+Native/model decision context and the external participant catalog expose the
+same bounded actions. The declared scripted citizen/founder baseline forms
+households with existing contacts and declines a companion move that would end
+an existing job. Competing proposals are ordinary rejections. Birth, death,
+adulthood, separation, expiry and withdrawal cannot silently expand old consent.
+City routine residence follows the recorded household membership.
+
+Hash-contract-v4 includes the three new tables and exports them. Frozen v1–v3
+contract files are unchanged. Exact replay admits only the named empty schema-22
+extension for older semantics and omits that new migration receipt from the
+older replay surface; populated extension data remains compared. An actual
+schema-21 source replayed under schema 22 with its source-file hash unchanged.
+
+Validation on Windows/Python 3.11.15:
+
+- The focused regression command below passed **190 tests**, **153.09 s**,
+  fresh base `ae-e851ca1e`. It includes household/custody, money reconciliation,
+  credit/migration, old action validation, schema migration rollback, model and
+  participant context, exports, legacy golden replay and source-handle closure.
+- After final event metadata and participant-label alignment,
+  `python -m pytest -q tests/test_semantics17_household_decisions.py tests/test_documentation.py`
+  passed **48 tests**, **16.28 s**, fresh base `ae-670e3190`. The real city profile
+  executes scripted proposals/assents, resumes after three days, reaches day four
+  and replays exactly. Catalog/context checks use a separate world so extra agent
+  observations cannot contaminate the replay source.
+- `npm --prefix dashboard test`: **256 passed**. Typecheck, production build,
+  third-party notices and npm audit passed. The regenerated production bundle
+  equals the committed bundle. Existing large-chunk and Starlette warnings remain.
+- Four pinned datasets verified; two optional inputs remain unpinned. Python
+  dependency consistency and the lockfile vulnerability audit passed. **178**
+  application/engine Python files compiled in memory, and CI YAML parsed.
+- Every pytest used a new short directory and a fresh 40-GiB free-space guard.
+  The drive had 101.89 GiB free at the initial check and about 100.8 GiB after the
+  bounded runs. Complete Python coverage is dispatched to CI shards. Committed
+  CI results and the staged secret scan are recorded on draft PR #82.
+
+```powershell
+python -m pytest -q tests/test_semantics17_household_decisions.py tests/test_semantics15_households.py tests/test_compatibility_guards.py tests/test_recorded_replay_golden.py tests/test_replay_source_lifecycle.py tests/test_research_export.py tests/test_participant_mode.py tests/test_v2_regions.py tests/test_credit_semantics7.py tests/test_lifecycle.py tests/test_semantics12_civic_city.py tests/test_semantics8_foundations.py tests/test_documentation.py --basetemp C:/Users/matri/.codex/tmp/ae-e851ca1e
+```
+
+W5 remains open: delivered care with finite work/study/care time, corresponding
+wage and production effects, full multi-currency estates and business succession,
+cohort checks and a real multi-decade run. W6–W9 also remain. This four-day scripted
+rehearsal is not demographic calibration, paid-model validation or scale evidence.

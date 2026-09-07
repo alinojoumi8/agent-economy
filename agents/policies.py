@@ -142,6 +142,23 @@ def _first_legal_action(context: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 # Citizens / households
 # ─────────────────────────────────────────────────────────────────────────────
+def _household_decision(context: dict) -> dict | None:
+    family = context.get("household_decisions") or {}
+    if family.get("scripted_matching"):
+        # Declared baseline: form households with known contacts; a companion
+        # keeps an existing job by declining a joint move that would end it.
+        for proposal in family.get("pending", []):
+            if proposal["own_assent"] is None and proposal["status"] == "pending":
+                response = "reject" if proposal.get("own_employment_ending") else "accept"
+                return _env(None, [{"type": "respond_household",
+                    "household_decision_id": proposal["household_decision_id"], "decision": response}], [],
+                    f"{response} household proposal under scripted matching v1")
+        if family.get("formation_day") and family.get("candidates"):
+            return _env(None, [dict(family["candidates"][0]["action"])], [],
+                        "proposing a household under scripted matching v1")
+    return None
+
+
 def citizen_decision(context: dict) -> dict:
     required_civic_action = context.get("civic_required_action")
     if isinstance(required_civic_action, dict):
@@ -168,6 +185,10 @@ def citizen_decision(context: dict) -> dict:
     legal_action = _first_legal_action(context)
     if legal_action:
         return _env(None, [legal_action], [], "pursuing an unresolved recorded legal claim")
+    household_choice = _household_decision(context)
+    if household_choice is not None:
+        return household_choice
+    family = context.get("household_decisions") or {}
     rng = _rng(context)
     agent = context.get("agent", {})
     state = context.get("state", {})
@@ -322,10 +343,17 @@ def citizen_decision(context: dict) -> dict:
                 options,
                 key=lambda option: (-int(option["wage_gain_bps"]),
                                     int(option["destination_region_id"])))
-            actions.append(dict(destination["action"]))
-            reasons.append(
-                f"migrating for a {int(destination['wage_gain_bps'])}bps wage gain")
-            migration_requested = True
+            move = dict(destination["action"])
+            if family and (family.get("member_count", 1) > 1 or family.get("pending")):
+                move = next((dict(action) for action in family.get("eligible_actions", [])
+                             if action["type"] == "propose_household_move" and
+                             action["destination_region_id"] == destination["destination_region_id"]), None)
+            if move:
+                actions.append(move)
+                reasons.append(
+                    ("proposing a household move" if move["type"] == "propose_household_move" else "migrating")
+                    + f" for a {int(destination['wage_gain_bps'])}bps wage gain")
+                migration_requested = True
 
     # 6.5) Labour: negotiate a pending offer before applying elsewhere.
     if (not migration_requested and not state.get("employed")
@@ -697,6 +725,9 @@ def founder_decision(context: dict) -> dict:
     startup_action = _first_startup_action(context)
     if startup_action:
         return _env(None, [startup_action], [], "performing the next authorized startup step")
+    household_choice = _household_decision(context)
+    if household_choice is not None:
+        return household_choice
     actions: list[dict] = []
     reasons: list[str] = []
     inv = int(firm.get("inventory", 0))

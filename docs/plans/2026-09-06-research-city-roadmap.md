@@ -26,6 +26,9 @@ Track completed code and verification in the [execution log](2026-09-06-research
 The [production workflow gate](2026-09-07-city-research-acceptance.md) now repeats
 the city-to-study path with real projections, both price domains and independently
 verified exports. Human usability sessions and research-scale validation remain.
+The [household decision slice](2026-09-07-household-decisions.md) extends W5 with
+recorded consent, partnerships, separation and joint moves. W5 remains open for
+delivered care, shared time constraints, complete estates and cohort validation.
 
 ## First deliverable: Price Discovery Lab v1
 

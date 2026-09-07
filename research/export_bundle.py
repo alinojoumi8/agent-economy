@@ -164,7 +164,7 @@ def export_bundle(
     contract = load_hash_contract(contract_path)
     if contract_path is None:
         selected = _contract_for_database(sqlite_connection)
-        if selected["id"] == "hash-contract-v3":
+        if selected["id"] in {"hash-contract-v3", "hash-contract-v4"}:
             contract = selected
     verify_hash_contract(sqlite_connection, contract)
     hashes = canonical_hashes(sqlite_connection, contract)

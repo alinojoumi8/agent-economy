@@ -15,6 +15,35 @@ class LegacyCommand(CommandBase):
     model_config = ConfigDict(extra="allow")
 
 
+class HouseholdRequest(CommandBase):
+    request_key: str = Field(min_length=1, max_length=96, pattern=r"\S")
+
+
+class ProposePartnership(HouseholdRequest):
+    type: Literal["propose_partnership"]
+    partner_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class ProposeHouseholdMove(HouseholdRequest):
+    type: Literal["propose_household_move"]
+    destination_region_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class SeparateHousehold(HouseholdRequest):
+    type: Literal["separate_household"]
+
+
+class RespondHousehold(CommandBase):
+    type: Literal["respond_household"]
+    household_decision_id: Annotated[StrictInt, Field(gt=0)]
+    decision: Literal["accept", "reject"]
+
+
+class CancelHouseholdProposal(CommandBase):
+    type: Literal["cancel_household_proposal"]
+    household_decision_id: Annotated[StrictInt, Field(gt=0)]
+
+
 class BuyComputePlan(CommandBase):
     type: Literal["buy_compute_plan"]
     tier: Literal["flash", "premium"]

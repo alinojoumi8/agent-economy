@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 from .core import Economy
 from .credit import LoanTerms
 from .firms import DEFAULT_PRODUCT, normalize_business_idea
+from .households import HouseholdError
 from .ledger import Leg
 from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError, positive_integer_id
@@ -63,6 +64,8 @@ VALID_TYPES = {
     "propose_construction", "apply_construction_permit",
     "decide_construction_permit", "contribute_construction_funding",
     "perform_construction_work", "cancel_construction",
+    "propose_partnership", "propose_household_move", "respond_household",
+    "cancel_household_proposal", "separate_household",
 }
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
@@ -84,6 +87,32 @@ def _authorization_payload(action: dict) -> str | None:
 
 
 class ActionExecutor:
+    def _household_action(self, tick, actor_id, action, phase, operation, *args, **kwargs):
+        try:
+            return operation(tick, actor_id, *args, **kwargs)
+        except HouseholdError as exc:
+            return self._reject(tick, actor_id, action, str(exc), phase)
+
+    def _do_propose_partnership(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "partnership", action["request_key"], partner_id=action["partner_id"])
+
+    def _do_propose_household_move(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "joint_move", action["request_key"], destination_region_id=action["destination_region_id"])
+
+    def _do_respond_household(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.respond,
+                                      action["household_decision_id"], action["decision"])
+
+    def _do_cancel_household_proposal(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.cancel,
+                                      action["household_decision_id"])
+
+    def _do_separate_household(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "separation", action["request_key"])
+
     def __init__(self, economy: Economy, *,
                  pre_action_hook: Callable[[int, int, dict, str], Optional[str]] | None = None,
                  post_action_hook: Callable[[int, int, dict, str, dict], None] | None = None):
@@ -209,7 +238,10 @@ class ActionExecutor:
                         "decide_construction_permit",
                         "contribute_construction_funding",
                         "perform_construction_work", "cancel_construction",
-                    } and self.engine_semantics_version < 13)):
+                    } and self.engine_semantics_version < 13)
+                or (atype in {"propose_partnership", "propose_household_move", "respond_household",
+                              "cancel_household_proposal", "separate_household"}
+                    and self.engine_semantics_version < 17)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))

@@ -262,6 +262,8 @@ class Households:
             self.reconcile_custody(tick)
             self._event(tick, "household_separated", agent_id,
                         {"previous_household_id": previous, "household_id": new_id, "reason": reason})
+            if self.e.engine_semantics_version >= 17:
+                self.e.families.reconcile(tick)
             return new_id
 
     def reconcile_residence(self, tick: int) -> None:
@@ -286,6 +288,8 @@ class Households:
             self.store.update("household_memberships", int(member["id"]), left_tick=tick, end_reason="death")
             self._dissolve_empty(tick, int(member["household_id"]))
         self.reconcile_custody(tick)
+        if self.e.engine_semantics_version >= 17:
+            self.e.families.reconcile(tick)
 
     def reconcile_custody(self, tick: int) -> None:
         if not self.enabled:

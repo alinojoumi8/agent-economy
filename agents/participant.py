@@ -631,6 +631,15 @@ class ParticipantService:
                         f"({option.get('price_cents')}c)",
                         f"study-{option.get('skill_key')}",
                     ))
+        for index, action in enumerate((ctx.get("household_decisions") or {}).get("eligible_actions", [])):
+            label = action["type"].replace("_", " ").capitalize()
+            if action["type"] == "respond_household":
+                label = f"{action['decision'].capitalize()} household proposal {action['household_decision_id']}"
+            elif action["type"] == "propose_partnership":
+                label = f"Propose partnership with person {action['partner_id']}"
+            elif action["type"] == "propose_household_move":
+                label = f"Propose household move to region {action['destination_region_id']}"
+            items.append(exact_action(action, label, f"household-{index}"))
         if firm:
             firm_id = int(firm["firm_id"])
             firm_items = [

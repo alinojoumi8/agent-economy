@@ -16,6 +16,7 @@ from .cognition import CognitionEconomy
 from .construction import ConstructionEconomy
 from .exchange import Exchange
 from .firms import Firms
+from .families import HouseholdDecisions
 from .government import Government
 from .households import Households
 from .information import InformationEconomy
@@ -65,6 +66,7 @@ class Economy:
             engine_semantics_version=self.engine_semantics_version,
         )
         self.households = Households(self, config.get("households"))
+        self.families = HouseholdDecisions(self, config.get("family_decisions"))
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
                                    health_cfg=config.get("health", {}),

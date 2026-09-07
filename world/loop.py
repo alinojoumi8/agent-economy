@@ -633,6 +633,8 @@ class World:
             e.politics.run_nightly(tick)
             if self.engine_semantics_version >= 5:
                 e.regions.run_nightly(tick)
+        if self.engine_semantics_version >= 17:
+            e.families.run_nightly(tick)
         if self.engine_semantics_version >= 11:
             e.cognition.run_nightly(tick)
         # Arrivals due today (stable population).

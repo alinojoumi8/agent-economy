@@ -357,7 +357,7 @@ def test_schema_21_migration_is_additive_atomic_and_does_not_invent_people(tmp_p
     s.close()
     m = next(m for m in all_migrations if m.version == 21)
     bad = registry.Migration.create(21, m.name, m.sql + "\nTHIS IS INVALID SQL;", verify=m.verify)
-    monkeypatch.setattr(registry, "_MIGRATIONS", (*all_migrations[:-1], bad))
+    monkeypatch.setattr(registry, "_MIGRATIONS", tuple(bad if m.version == 21 else m for m in all_migrations))
     with pytest.raises(registry.MigrationError):
         Store(str(path))
     with sqlite3.connect(path) as connection:
@@ -368,7 +368,8 @@ def test_schema_21_migration_is_additive_atomic_and_does_not_invent_people(tmp_p
     try:
         assert s.scalar("SELECT dependents FROM agents") == 3
         assert s.scalar("SELECT COUNT(*) FROM person_lifecycle") == 0
-        assert s.scalar("SELECT schema_version FROM run_meta") == 21
+        from engine.schema import SCHEMA_VERSION
+        assert s.scalar("SELECT schema_version FROM run_meta") == SCHEMA_VERSION
     finally:
         s.close()
 

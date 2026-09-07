@@ -108,6 +108,7 @@ jobs:
           tests/test_semantics11_cognition.py
           tests/test_semantics12_civic_city.py
           tests/test_semantics15_households.py
+          tests/test_semantics17_household_decisions.py
           tests/test_semantics7_spec_closure.py
           tests/test_semantics8_causal_membership.py
           tests/test_semantics8_communication_branches.py

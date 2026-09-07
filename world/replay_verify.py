@@ -117,12 +117,27 @@ def _connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+HOUSEHOLD_DECISION_TABLES = {"household_decisions", "household_assents", "partnerships"}
+
+
+def _has_household_decision_semantics(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
+    config = json.loads(row[0]) if row else {}
+    return int(config.get("engine_semantics_version", 1)) >= 17
+
+
 def _tables(conn: sqlite3.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' "
         "ORDER BY name"
     ).fetchall()
-    return [str(row[0]) for row in rows if str(row[0]) not in EXCLUDED_TABLES]
+    names = [str(row[0]) for row in rows if str(row[0]) not in EXCLUDED_TABLES]
+    if not _has_household_decision_semantics(conn):
+        # Schema 22 adds these empty tables when replaying an older recording.
+        # Only this declared extension is compatible; populated data is compared.
+        names = [name for name in names if name not in HOUSEHOLD_DECISION_TABLES
+                 or conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is not None]
+    return names
 
 
 def _canonical_value(column: str, value: Any) -> Any:
@@ -511,6 +526,10 @@ def _table_digest(
         params = tuple(sorted(OPERATIONAL_LLM_PURPOSES))
     elif table == "external_action_submissions":
         where = " WHERE status='executed'"
+    elif table == "schema_migrations" and not _has_household_decision_semantics(conn):
+        # The additive migration receipt is not a historical simulated effect.
+        # All pre-existing receipts and all Semantics-17 receipts remain exact.
+        where = " WHERE version<>22"
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
     rows = conn.execute(f'SELECT {selected} FROM "{table}"{where}{order}', params).fetchall()

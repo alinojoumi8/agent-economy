@@ -344,6 +344,13 @@ mechanism/origin keys, unchanged historical draws, and the opt-in goods/equity
 pilot profile. Required research CI covers draw isolation and source/resume/replay
 checks for both domains. It adds no database migration.
 
+The [Semantics 17 household decision contract](plans/2026-09-07-household-decisions.md)
+adds schema 22 proposals, adult assents, partnerships and atomic joint migration.
+Run `tests/test_semantics17_household_decisions.py` for the focused core gate.
+Its rehearsal uses the small city profile with real scripted decisions and no
+provider calls. New state uses hash-contract-v4; older contracts remain frozen.
+Care time, complete estates and long-horizon household validation remain W5 work.
+
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate

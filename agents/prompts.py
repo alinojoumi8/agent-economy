@@ -399,6 +399,9 @@ class ContextBuilder:
                 ctx["construction_work"] = construction
         if self.engine_semantics_version >= 15:
             ctx["household"] = self.e.households.decision_context(int(agent_row["id"]), tick)
+        if self.engine_semantics_version >= 17:
+            ctx["household_decisions"] = self.e.families.decision_context(
+                int(agent_row["id"]), tick, ctx.get("migration_options", []))
         entrepreneurship = self.config.get("entrepreneurship", {})
         if (
             bool(entrepreneurship.get("enabled", False))
@@ -2120,6 +2123,9 @@ class ContextBuilder:
         if context.get("household"):
             lines.append("[HOUSEHOLD - YOUR MEMBERSHIP AND CHILD SUPPORT] "
                          + json.dumps(context["household"], separators=(",", ":")))
+        if context.get("household_decisions"):
+            lines.append("[PRIVATE HOUSEHOLD DECISIONS] "
+                         + json.dumps(context["household_decisions"], separators=(",", ":")))
         if context.get("compute_plan"):
             lines.append(
                 "[COMPUTE PLAN] "
@@ -2438,6 +2444,12 @@ class ContextBuilder:
                 "is observer-only and cannot assign this work. Reply with the JSON "
                 "envelope only.")
         system = SYSTEM_PREFIX
+        if context.get("household_decisions"):
+            system += ("\nHousehold actions are available only as supplied in household_decisions. "
+                       "Copy one complete eligible action when choosing it. A proposal records "
+                       "only your assent; respond_household requires your own choice to accept "
+                       "or reject. You may decline, cancel a pending proposal, or separate. "
+                       "Do not claim another adult agreed or that shared residence merges assets.")
         if grounding_active:
             memory = getattr(self, "mem", None)
             validator_step = (
