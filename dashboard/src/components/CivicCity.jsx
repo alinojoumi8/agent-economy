@@ -213,14 +213,14 @@ export function CivicCity(props) {
     if (!observerState || !onObserverStateChange || loading || error || followId) return;
     const resolvedId = selected ? Number(selected.id) : null;
     if (observerState.firm != null) {
-      if (!selectedFirm) onObserverStateChange({ firm: null, agent: resolvedId }, { replace: true });
+      if (!selectedFirm) onObserverStateChange({ firm: null, agent: resolvedId }, { replace: true, onlyIfCurrent: true });
       return;
     }
     if (observerState.project != null) {
       if (!selectedProject) {
         onObserverStateChange(
           { project: null, agent: resolvedId },
-          { replace: true },
+          { replace: true, onlyIfCurrent: true },
         );
       }
       return;
@@ -229,13 +229,13 @@ export function CivicCity(props) {
       if (!selectedPlace) {
         onObserverStateChange(
           { place: null, agent: resolvedId },
-          { replace: true },
+          { replace: true, onlyIfCurrent: true },
         );
       }
       return;
     }
     if (observerState.agent !== resolvedId) {
-      onObserverStateChange({ agent: resolvedId }, { replace: true });
+      onObserverStateChange({ agent: resolvedId }, { replace: true, onlyIfCurrent: true });
     }
   }, [
     loading,

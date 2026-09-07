@@ -305,6 +305,9 @@ test("historical city uses the requested fork/tick and independent playback", as
 });
 
 test("a delayed new tick never borrows old placements or overwrites a newer selection", async ({ page }) => {
+  // Keep the gap between browser navigation and React's commit observable.
+  const timing = await page.context().newCDPSession(page);
+  await timing.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   let release: () => void = () => {};
   const holdSix = new Promise<void>(resolve => { release = resolve; });
   await mockCity(page, { beforeMap: tick => tick === 6 ? holdSix : Promise.resolve() });
@@ -323,6 +326,8 @@ test("a delayed new tick never borrows old placements or overwrites a newer sele
   release();
   await expect(page.getByRole("button", { name: "Play recorded day", exact: true })).toBeEnabled();
   await expect.poll(async () => (await cityProbe(page))?.tick).toBe(3);
+  await expect(page).toHaveURL(/tick=3(?:&|$)/);
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("agent:1");
   await expect(page.getByText("Resident 1 at tick 6", { exact: true })).toHaveCount(0);
 });
 

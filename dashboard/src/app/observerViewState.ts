@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import {
   commonObserverParamsFromState as commonObserverParamsFromStateCore,
   commonObserverSearchParams as commonObserverSearchParamsCore,
@@ -72,24 +72,35 @@ export function projectionScopeParams(
 
 export function useObserverViewState(): [
   ObserverViewState,
-  (patch: ObserverViewPatch, options?: { replace?: boolean }) => void,
+  (patch: ObserverViewPatch, options?: { replace?: boolean; onlyIfCurrent?: boolean }) => void,
 ] {
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const pendingParams = useRef(params);
-  const renderedSearch = useRef(params.toString());
+  const renderedLocation = useRef(location);
   const search = params.toString();
-  if (renderedSearch.current !== search) {
-    renderedSearch.current = search;
+  if (renderedLocation.current !== location) {
+    renderedLocation.current = location;
     pendingParams.current = params;
   }
   const state = useMemo(() => parseObserverViewState(params), [params]);
   const patch = useCallback((
     update: ObserverViewPatch,
-    options: { replace?: boolean } = {},
+    options: { replace?: boolean; onlyIfCurrent?: boolean } = {},
   ) => {
+    // A completed request can trigger selection repair while a newer browser
+    // navigation is still waiting for React to render. That older view must
+    // not restore its URL. Interactive updates (including an ongoing drag)
+    // continue to accumulate against the latest pending parameters.
+    if (window.location.pathname !== location.pathname) return;
+    if (options.onlyIfCurrent) {
+      if (renderedLocation.current !== location) return;
+      const browserSearch = new URLSearchParams(window.location.search).toString();
+      if (browserSearch !== search || pendingParams.current.toString() !== search) return;
+    }
     const next = patchObserverViewState(pendingParams.current, update);
     pendingParams.current = next;
     setParams(next, { replace: options.replace });
-  }, [setParams]);
+  }, [location, search, setParams]);
   return [state, patch];
 }

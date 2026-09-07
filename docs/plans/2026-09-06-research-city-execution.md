@@ -854,3 +854,34 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - This remains progress on the five-part goal. Live policy studies,
   checkpoint-derived experiments, remaining city lenses, W5–W8 economics and
   W9 validation remain pending. No paid provider run or cleanup was performed.
+
+## City navigation during delayed responses (2026-09-07)
+
+- Saved-phase recovery commit `8a6a8e7` passed all eight Ubuntu/Python 3.12
+  shards in [CI 34089185185](https://github.com/alinojoumi8/agent-economy/actions/runs/34089185185):
+  **1,865 passed, 10 skipped**. The research evidence job passed 229 tests,
+  the core guard 359, and smoke 144. These additional jobs overlap the shards.
+- Required [CI 34089159270](https://github.com/alinojoumi8/agent-economy/actions/runs/34089159270)
+  passed its Python/research jobs but failed one of 97 Chromium checks: an
+  automatic resident selection could restore day 6 after the browser requested
+  day 3 while a map response was delayed. The same check passed 12 unthrottled
+  local repetitions, then failed all 24 repetitions at 4x CPU throttling.
+- Automatic city-selection repairs now require their rendered location and
+  pending search to remain current, and the browser to remain on that route and
+  search. Direct interactions still accumulate against the latest pending
+  parameters. This prevents stale selection repair from overriding navigation.
+  The regression retains slower browser execution and checks the final URL,
+  recorded day and selected resident, without relaxing its assertions.
+- The corrected regression passed **4 repetitions** (24.8 s). TypeScript,
+  **241 UI unit tests**, license notices and the regenerated production build
+  passed. The first full browser run passed 103 tests, skipped one and exposed
+  two regressions: the guard also rejected direct drag/selection updates while
+  their earlier URL changes were being rendered. Restricting the strict search
+  check to automatic repairs fixed both; all three affected checks then passed
+  **12 repetitions** (30.5 s). TypeScript, 241 UI unit tests and production build
+  passed again. The existing large-chunk warning remains. Documentation passed
+  **22 tests** using the bounded Windows preflight and a fresh short temp root.
+  Final full browser verification passed **105 tests, 1 skipped** (2.2 min),
+  including both direct-interaction regressions and the slower navigation case.
+  The skip remains the opt-in real-backend menu smoke. Staged Gitleaks and diff
+  hygiene passed. Required CI is dispatched after committing this correction.
