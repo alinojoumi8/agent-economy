@@ -152,6 +152,24 @@ test("desktop city gives the map at least 65 percent of the visible workspace", 
   }
 });
 
+test("city toolbar controls remain visible around the desktop breakpoint", async ({ page }) => {
+  await mockCity(page);
+  for (const width of [390, 768, 980, 1101, 1199, 1200, 1279]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/runs/run-demo/world?tick=3&agent=1");
+    await expect(page.getByRole("heading", { name: "The living city", exact: true })).toBeVisible();
+    const bounds = await page.locator(".civic-city__toolbar").evaluate(toolbar =>
+      [...toolbar.querySelectorAll(".civic-city__view-toggle button, .civic-city__statistics > summary, .civic-city__filter-panel > summary, select")]
+        .map(control => { const rect = control.getBoundingClientRect(); return {
+          label: control.textContent?.slice(0, 35), left: rect.left, right: rect.right,
+        }; }));
+    for (const control of bounds) {
+      expect(control.left, `${width}: ${control.label}`).toBeGreaterThanOrEqual(0);
+      expect(control.right, `${width}: ${control.label}`).toBeLessThanOrEqual(width);
+    }
+  }
+});
+
 test("city list paginates public records and searches banks without changing the historical scope", async ({ page }) => {
   const evidence = await mockCity(page, { semantics: 16, editFrame: frame => {
     addSociety(frame);

@@ -11,6 +11,8 @@ equally primary research domains.
   main workspace at 1280×900 and 1440×1000, with its inspector open. The test
   includes workspace padding and controls in its denominator. The application
   navigation rail and global header are outside that workspace.
+  The compact toolbar begins at 1200 pixels; smaller windows retain stacked
+  controls so the navigation and details buttons stay within the viewport.
 - City details, evidence instrumentation and filters are collapsible. Camera and
   follow controls occupy the inspector rail so they cannot intercept map objects.
 - Atlas, Diorama, recorded day and List share the existing observer cursor and

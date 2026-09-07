@@ -10,7 +10,7 @@
   .civic-city--compact .civic-city__view-toggle button { min-height: 44px; white-space: normal; padding: 4px 8px; }
 }
 
-@media (min-width: 1101px) {
+@media (min-width: 1200px) {
   .world-os-shell .world-os-main:has(> .world-os-world-workspace) { padding: 8px; }
   .world-os-world-workspace .civic-city--compact {
     --civic-lens-gutter: 8px;

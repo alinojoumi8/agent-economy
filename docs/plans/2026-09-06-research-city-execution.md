@@ -1333,3 +1333,16 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   against a bounded real campaign remains next, followed by W5–W9. This slice
   does not establish research-scale performance, model validity or complete
   household, education, production, housing and banking behavior.
+- Implementation commit `7c3b4a6` passed all eight required jobs in
+  [CI 34150216641](https://github.com/alinojoumi8/agent-economy/actions/runs/34150216641),
+  including **363** research and **113** critical Chromium tests. Its complete
+  eight-shard Ubuntu/Python 3.12 run,
+  [CI 34150309069](https://github.com/alinojoumi8/agent-economy/actions/runs/34150309069),
+  passed **2,148 tests**, with **10 skips**; all other applicable jobs passed.
+- A subsequent breakpoint check found City details clipped at 1101 pixels.
+  The compact toolbar now begins at 1200 pixels, retaining stacked controls
+  below it. The new regression checks every toolbar control at 390, 768, 980,
+  1101, 1199, 1200 and 1279 pixels. All **28 city browser tests** passed
+  (**53.4 s**) and the production bundle rebuilt. This follow-up changes only
+  responsive CSS, browser coverage, documentation and generated assets; the
+  full Python result above applies to the preceding implementation commit.
