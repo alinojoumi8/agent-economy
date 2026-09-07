@@ -8,7 +8,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI/operator execution, original-budget day/phase recovery, independent verification and private final/paused v3 bundles implemented; separately authorized real-provider validation pending |
-| 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls, persistent follow and historical core-household/public-bank inspectors implemented; remaining layout/interaction acceptance pending; richer household/institution fields depend on W5–W8 |
+| 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day/List selection, playback, transcripts, price navigation, camera/follow, historical household/bank inspectors, breadcrumbs, operator bookmarks and desktop layout implemented; integrated real-campaign workflow acceptance remains; richer household/institution fields depend on W5–W8 |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
@@ -60,8 +60,8 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Continue the interactive city acceptance requirements, then the remaining
-W5–W9 society, economic-depth and validation work. The
+Continue the integrated city/price-lab workflow acceptance against a bounded real
+campaign, then the remaining W5–W9 society, economic-depth and validation work. The
 [policy operator contract](2026-09-07-policy-operator-workflow.md) records the
 implemented policy, supervisor, recovery/evidence and operator workflow;
 real-provider validation remains separately authorized work.
@@ -1290,3 +1290,46 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - Free disk remained above **84 GiB** during verification. No project cleanup,
   paid-provider run, schema/semantics change or merge was performed. Full W4
   layout/interaction acceptance and remaining W5–W9 work stay on the roadmap.
+
+### W4: desktop layout, public-object list and saved observations
+
+- The desktop map now occupies **65.50%** of the visible main workspace at
+  1280×900 and **66.54%** at 1440×1000, with the inspector fully inside the
+  viewport. The previous fixture layout measured **32.26%** and **37.86%**.
+  Optional details/instrumentation collapse; camera/follow controls occupy the
+  inspector rail and no longer cover map hit targets. Synthetic before/after
+  and mobile captures were visually inspected.
+- Added `view=list`, 40-record pages, public name/type/role search and mobile
+  keyboard activation into the single evidence sheet. Person/household and
+  business/workplace breadcrumbs preserve recorded relationships. The final
+  search correction keeps matching people selectable when querying their type.
+- Saved observations/event bookmarks freeze the displayed tick and retain
+  selected identity, filters and camera. They use the existing separate
+  operator `saved_views` table, scoped by owner and exact map context; no world
+  schema, engine semantics or economic state changes are involved. The API
+  bounds 20 entries, validates navigation fields, normalizes URL serialization,
+  requires CSRF, checks optimistic versions and commits its audit atomically.
+  Successful responses are private/no-store. Hosted-safe mode refuses these
+  local routes. Conflicts and failures remain visible; stale responses cannot
+  populate another fork. Shared Python/JavaScript vectors verify the format.
+- Local Windows/Python 3.11.15 projection, household, operator, replay and
+  documentation regressions passed **100 tests** (**42.42 s**), using
+  `C:/Users/matri/.codex/tmp/ae-0fd4a449`. After serialization/audit/cache checks,
+  the final API/store/documentation set passed **52 tests** (**5.35 s**) under
+  `C:/Users/matri/.codex/tmp/ae-ef70cb85`. The latter overlaps the first set.
+- The full dashboard unit suite passed **256 tests**. The full Chromium suite
+  passed **121 tests**, with one opted-in real-backend smoke skipped (**2.9 min**).
+  After the last list-search correction, all **27 city browser tests** passed
+  again (**48.1 s**). Earlier full runs exposed browser-storage use, covered map
+  targets, duplicate status labels and a missing route fixture; those issues
+  were corrected before the passing runs. No guard was weakened.
+- Type checking, production bundle, **359** Python source compilations, CI YAML,
+  four pinned datasets, Python/npm dependency audits, notices and configured
+  diff checks passed. Existing Starlette/color/chunk warnings remain. API/store
+  checks now run in required research CI; committed-head CI evidence is recorded
+  on draft PR #82. The [navigation contract](2026-09-07-city-workspace-navigation.md)
+  and updated handbook/API/development guides specify the delivered behavior.
+- Free disk remained above **83 GiB**. Integrated city/price-lab acceptance
+  against a bounded real campaign remains next, followed by W5–W9. This slice
+  does not establish research-scale performance, model validity or complete
+  household, education, production, housing and banking behavior.

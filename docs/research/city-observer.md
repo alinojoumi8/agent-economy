@@ -1,7 +1,8 @@
 # City observation and price inspection
 
 The City workspace connects Atlas, 2.5D Diorama and recorded-day playback to
-one evidence inspector and the Price Discovery Lab. It is a read-only observer.
+one evidence inspector and the Price Discovery Lab. It observes simulation state
+without changing it; saved navigation belongs to the separate operator workspace.
 City now opens `/runs/:runId/world`; existing `/live-city` links redirect to its
 recorded-day view while preserving the observation context. Progress and
 remaining work are tracked in the [execution log](../plans/2026-09-06-research-city-execution.md).
@@ -32,6 +33,17 @@ On a narrow screen, **Open selected evidence** moves from Diorama to the
 inspector. Optional agent search, activity filters and layers live under
 **Layers and agent filters**. A URL with an active agent search/filter opens
 that panel initially. Atlas remains available when WebGL cannot start.
+
+## List and saved observations
+
+The **List** view provides public-object search and 40-row pages using the same
+selection. On mobile, activating a list item opens and focuses the shared evidence
+sheet. Breadcrumbs connect a person to their visible household and a business to
+its recorded workplace. **Save observation** and **Save event bookmark** persist
+the numeric tick, selection, filters and camera in the local operator workspace;
+they do not copy evidence bodies. See the
+[layout and bookmark contract](../plans/2026-09-07-city-workspace-navigation.md)
+for capacity, reload and concurrent-edit behavior.
 
 ## Follow a person
 

@@ -1,0 +1,61 @@
+.civic-city__toolbar { display: contents; }
+.civic-city:not(.civic-city--compact) .civic-city__statistics > summary,
+.civic-city:not(.civic-city--compact) .civic-city__instrument-details > summary { display: none; }
+.civic-city__instrument-details > summary { padding: .8rem; cursor: pointer; }
+.city-map-tools { position: relative; z-index: 20; }
+
+@media (max-width: 600px) {
+  .civic-city--compact .civic-city__view-toggle { width: 100%; }
+  .civic-city--compact .civic-city__view-toggle > div { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .civic-city--compact .civic-city__view-toggle button { min-height: 44px; white-space: normal; padding: 4px 8px; }
+}
+
+@media (min-width: 1101px) {
+  .world-os-shell .world-os-main:has(> .world-os-world-workspace) { padding: 8px; }
+  .world-os-world-workspace .civic-city--compact {
+    --civic-lens-gutter: 8px;
+    --civic-lens-w: clamp(224px, calc(25% - 16px), 340px);
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__toolbar {
+    position: relative; display: flex; align-items: center; gap: 4px;
+    height: 48px; padding: 4px 6px; border-bottom: 1px solid var(--ops-rule, #647887);
+    background: var(--ae-surface-2, #eef2f0); z-index: 30;
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__mast,
+  .world-os-world-workspace .civic-city--compact .civic-city__controls { display: contents; }
+  .world-os-world-workspace .civic-city--compact .civic-city__heading {
+    flex: 0 0 142px; min-width: 0; padding: 0 4px; clip-path: none; background: transparent;
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__heading h2 { font-size: 1.05rem; }
+  .civic-city__scene-status { font-size: .65rem; margin-top: 3px; }
+  .world-os-world-workspace .civic-city--compact .civic-city__statistics { order: 5; flex: 0 0 auto; }
+  .world-os-world-workspace .civic-city--compact .civic-city__statistics > summary { cursor: pointer; padding: 10px 6px; font-size: .75rem; }
+  .world-os-world-workspace .civic-city--compact .civic-city__statistics .civic-city__run-state,
+  .world-os-world-workspace .civic-city--compact .civic-city__filter-panel .civic-city__filters {
+    position: absolute; z-index: 35; top: 100%; right: 0; left: auto;
+    width: min(560px, 100%); padding: 12px; border: 1px solid var(--ops-rule, #647887);
+    background: var(--ae-surface-2, #eef2f0);
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__view-toggle {
+    order: 1; flex: 0 0 auto; min-width: 0; padding: 0; background: transparent; border: 0;
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__view-toggle > span { display: none; }
+  .world-os-world-workspace .civic-city--compact .civic-city__view-toggle button { min-height: 38px; padding: 0 8px; }
+  .world-os-world-workspace .civic-city--compact .civic-city__object-explorer {
+    order: 2; flex: 1 1 200px; min-width: 150px; margin: 0; padding: 0 4px; border: 0; background: transparent;
+  }
+  .world-os-world-workspace .civic-city--compact .civic-city__object-explorer > span { display: none; }
+  .world-os-world-workspace .civic-city--compact .civic-city__object-explorer select { width: 100%; min-width: 0; max-width: none; min-height: 38px; }
+  .world-os-world-workspace .civic-city--compact .civic-city__filter-panel { order: 3; flex: 0 0 auto; }
+  .world-os-world-workspace .civic-city--compact .civic-city__filter-panel > summary { padding: 10px 6px; font-size: .75rem; }
+  .world-os-world-workspace .civic-city--compact .civic-city__workfield { height: max(620px, calc(100dvh - 164px)); min-height: 0; }
+  .world-os-world-workspace .civic-city--compact .civic-city__atlas { height: 100%; min-height: 0; }
+  .world-os-world-workspace .civic-city--compact .city-map-tools {
+    position: relative; display: flex; flex-wrap: wrap; align-items: center;
+    background: var(--ae-surface-2, #eef2f0); border: 1px solid var(--ops-rule, #647887);
+  }
+  .world-os-world-workspace .civic-city--compact .city-follow { padding: 4px; }
+  .world-os-world-workspace .civic-city--compact .city-follow p { max-width: 30ch; }
+  .world-os-world-workspace .civic-city--compact .city-follow:has(button[aria-pressed="false"]) p { display: none; }
+  .world-os-world-workspace .civic-city--compact .city-camera { padding: 4px; }
+}

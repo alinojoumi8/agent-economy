@@ -140,6 +140,14 @@ calls under `runs/base.yaml` and does not validate hosted-only destinations.
 
 ## Test layers
 
+City navigation bookmarks use the separate operator store. Focused checks are
+`tests/test_city_observations_api.py`, `tests/test_operator_workspace.py`, the
+dashboard `cityObservations`/`cityObjectList` node suites, and the city-context and
+workspace-route browser suites. These cover API admission, world immutability,
+concurrent edits, mobile keyboard selection and the desktop map-area requirement.
+The [navigation contract](plans/2026-09-07-city-workspace-navigation.md) records
+the exact scope and the remaining real-campaign acceptance work.
+
 Working research studies now have two explicit pause contracts: version 2 for
 committed days and opt-in version 3 for saved phases. Run the bounded phase
 regressions with `tests/test_phase_working_attempts.py` and

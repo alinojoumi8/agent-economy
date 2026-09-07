@@ -21,6 +21,10 @@ import { CityCameraControls } from "./CityCameraControls.jsx";
 import { CityAtlasViewport } from "./CityAtlasViewport.jsx";
 import { CitySocietyEvidence } from "./CitySocietyEvidence.jsx";
 import { citySociety, householdForPerson } from "../lib/citySociety.js";
+import "./city-workspace.css";
+import { CityObservationBar, CitySelectionBreadcrumb } from "./CityObservationBar.jsx";
+import { CityObjectList } from "./CityObjectList.jsx";
+import { cityObjectRows, cityObjectMatches } from "../lib/cityObjectList.js";
 import { DEFAULT_CITY_CAMERA, cityFollowState, normalizeCityCamera } from "../lib/cityCamera.js";
 // Shared controls, place buttons and fallback styles must precede any renderer.
 import "./civic-diorama.css";
@@ -149,6 +153,7 @@ export function CivicCity(props) {
     onObserverStateChange = null,
   } = props;
   const [localActiveLayer, setLocalActiveLayer] = useState("all");
+  const compactCity = Boolean(observerState && onObserverStateChange);
   const [localQuery, setLocalQuery] = useState("");
   const [localActiveOnly, setLocalActiveOnly] = useState(false);
   const [localSelectedId, setLocalSelectedId] = useState(null);
@@ -185,9 +190,11 @@ export function CivicCity(props) {
   const needle = query.trim().toLowerCase();
   const visibleAgents = filterCityAgents(model.agents, {
     layer: activeLayer,
-    q: query,
+    q: cityView === "list" ? "" : query,
     activeOnly,
-  });
+  }).filter(agent => cityView !== "list" || cityObjectMatches({
+    name: agent.name, id: agent.id, role: agent.role, label: "Person",
+  }, query));
   const showClusters = populationMode === "clusters"
     && activeLayer === "all"
     && !activeOnly
@@ -531,6 +538,7 @@ export function CivicCity(props) {
   };
   const openMobileLens = () => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    lensRef.current?.focus({ preventScroll: true });
     lensRef.current?.scrollIntoView({
       behavior: reduceMotion ? "auto" : "smooth",
       block: "start",
@@ -540,18 +548,22 @@ export function CivicCity(props) {
   const animateLiveActivity = tick === "live" && connected && !historical && liveAgents.length > 0;
 
   return <section
-    className={`civic-city civic-city--${variant} civic-city--view-${cityView}${model.agents.length > 72 ? " civic-city--dense" : ""}`}
+    className={`civic-city civic-city--${variant} civic-city--view-${cityView}${compactCity ? " civic-city--compact" : ""}${model.agents.length > 72 ? " civic-city--dense" : ""}`}
     aria-labelledby={`civic-city-title-${variant}`}
     aria-busy={loading}
   >
+    <div className="civic-city__toolbar">
     <header className="civic-city__mast">
       <div className="civic-city__heading">
         <p>Civic Weather Room <span>Map sheet 01</span></p>
         <h2 id={`civic-city-title-${variant}`}>The living city</h2>
+        {compactCity && <span className="civic-city__scene-status">{statusCopy(status, connected, tick, historical)}</span>}
         <p className="civic-city__lede">See who is working, what changed, and which committed record proves it.</p>
       </div>
+      <details className="civic-city__statistics" open={!compactCity}>
+      <summary>City details</summary>
       <dl className="civic-city__run-state" aria-label="City run state">
-        <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>
+        {!compactCity && <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>}
         <div><dt>Phase</dt><dd>{humanize(phase, "Between phases")}</dd></div>
         <div><dt>AI live</dt><dd>{historical || !runtime || cityView === "recorded" ? "Unavailable in this view" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
         <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
@@ -559,6 +571,7 @@ export function CivicCity(props) {
         <div><dt>Construction</dt><dd>{model.counts.construction} <small>stored projects</small></dd></div>
         <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd></div>
       </dl>
+      </details>
     </header>
 
     <div className="civic-city__controls">
@@ -568,6 +581,7 @@ export function CivicCity(props) {
           <button type="button" aria-pressed={cityView === "atlas"} onClick={() => changeView("atlas")}>Atlas</button>
           <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
           {onObserverStateChange && <button type="button" aria-pressed={cityView === "recorded"} onClick={() => changeView("recorded")}>Recorded day</button>}
+          {onObserverStateChange && <button type="button" aria-pressed={cityView === "list"} onClick={() => changeView("list")}>List</button>}
         </div>
       </div>
       <details className="civic-city__filter-panel" open={filtersOpen} onToggle={event => setFiltersOpen(event.currentTarget.open)}>
@@ -641,23 +655,14 @@ export function CivicCity(props) {
       </select>
       <span>One selection across city views</span>
     </label>
-    {!society.households.available && <p className="city-society-availability">Household lens: {society.households.reason}</p>}
-    {society.households.available && !society.households.items.length && <p className="city-society-availability">No core household members are exposed at this tick.</p>}
-    <div className="city-follow">
-      <button type="button" aria-pressed={Boolean(followId)}
-        disabled={!followId && (!selected || loading || Boolean(error) || selected.alive === false || selected.alive === 0)}
-        onClick={toggleFollow}>{followId ? "Stop following" : "Follow person"}</button>
-      <p role="status" aria-label="City follow status">{cityView === "recorded"
-        ? (followId ? `Follow enabled for person #${followId}.` : "Select a person to follow their recorded day.")
-        : follow.message || "Select a person to follow across committed ticks. Drag the Atlas background to pan."}</p>
     </div>
-    {cityView !== "recorded" && <CityCameraControls
-      getCamera={() => cameraPositionRef.current} onCameraChange={changeCamera}
-      canFocus={Boolean(cameraSelection)} disabled={loading || Boolean(error)}
-      onFocus={() => cameraSelection && changeCamera({ ...displayCamera, x: cameraSelection.x, y: cameraSelection.y })}
-    />}
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
+        {cityView === "list" && <CityObjectList
+          key={`${runId}:${observerState?.fork}:${tick}:${activeLayer}:${populationMode}:${activeOnly}`}
+          rows={cityObjectRows(model, society, visibleAgents, query)} state={observerState}
+          tick={model.selectedTick} query={query} onQuery={changeQuery} onSelect={onObserverStateChange}
+          onOpenEvidence={openMobileLens} disabled={loading || Boolean(error)} />}
         {cityView === "recorded" && <Suspense fallback={<p role="status">Loading recorded-day renderer…</p>}>
           <RecordedDayCity
             key={`${frame?.snapshot_version}:${populationMode}:${activeLayer}:${query}:${activeOnly}`}
@@ -898,10 +903,29 @@ export function CivicCity(props) {
 
       <aside
         ref={lensRef}
+        tabIndex={-1}
         className="civic-city__lens"
         aria-live="polite"
         aria-label="Selected city evidence"
       >
+        {cityView !== "list" && <div className="city-map-tools">
+          <div className="city-follow">
+            <button type="button" aria-pressed={Boolean(followId)}
+              disabled={!followId && (!selected || loading || Boolean(error) || selected.alive === false || selected.alive === 0)}
+              onClick={toggleFollow}>{followId ? "Stop following" : "Follow person"}</button>
+            <p role="status" aria-label="City follow status">{cityView === "recorded"
+              ? (followId ? `Follow enabled for person #${followId}.` : "Select a person to follow their recorded day.")
+              : follow.message || "Select a person to follow across committed ticks. Drag the Atlas background to pan."}</p>
+          </div>
+          {cityView !== "recorded" && <CityCameraControls
+            getCamera={() => cameraPositionRef.current} onCameraChange={changeCamera}
+            canFocus={Boolean(cameraSelection)} disabled={loading || Boolean(error)}
+            onFocus={() => cameraSelection && changeCamera({ ...displayCamera, x: cameraSelection.x, y: cameraSelection.y })}
+          />}
+        </div>}
+        {compactCity && <CitySelectionBreadcrumb state={observerState} household={personHousehold}
+          workplace={selectedFirm?.place_id == null ? null : model.places.find(place => String(place.id) === String(selectedFirm.place_id))}
+          onSelect={onObserverStateChange} />}
         <header>
           <div><p>Evidence lens</p><span>Observed + derived fields</span></div>
           <div className="civic-city__lens-nav">
@@ -909,6 +933,8 @@ export function CivicCity(props) {
             <button type="button" onClick={() => moveSelection(1)} disabled={visibleAgents.length < 2} aria-label="Next visible agent">→</button>
           </div>
         </header>
+        {!society.households.available && <p className="city-society-availability">Household lens: {society.households.reason}</p>}
+        {society.households.available && !society.households.items.length && <p className="city-society-availability">No core household members are exposed at this tick.</p>}
         {societySelected ? <CitySocietyEvidence household={selectedHousehold} institution={selectedInstitution}
           requested={selectedHouseholdId != null ? `Household #${selectedHouseholdId}` : selectedInstitutionId}
           tick={model.selectedTick} onPerson={inspectHouseholdPerson}
@@ -1108,6 +1134,9 @@ export function CivicCity(props) {
       </aside>
     </div>
 
+    {compactCity && <CityObservationBar frame={frame} runId={runId} state={observerState}
+      event={selected?.event || null} disabled={loading || Boolean(error)} onRestore={onObserverStateChange} />}
+
     <section className="civic-city__activity-dock" aria-label="Live agent activity dock">
       <header>
         <div><span>Agent activity</span><strong>{historical ? `Tick ${tick}` : "Live operations"}</strong></div>
@@ -1134,6 +1163,8 @@ export function CivicCity(props) {
       </div>
     </section>
 
+    <details className="civic-city__instrument-details" open={!compactCity}>
+    <summary>City instrumentation</summary>
     <dl className="civic-city__instruments" aria-label="City instrumentation">
       <div><dt>Active marks</dt><dd><span className="civic-city__instrument-value">{model.counts.active}</span><small>live or changed at selected tick</small></dd></div>
       <div><dt>Operating firms</dt><dd><span className="civic-city__instrument-value">{model.counts.firms}</span><small>canonical firm endpoint</small></dd></div>
@@ -1145,5 +1176,6 @@ export function CivicCity(props) {
       <div><dt>World time</dt><dd><span className="civic-city__instrument-value">{historical ? `t${tick}` : runIsActive ? "Live" : "Current"}</span><small>{tick === "live" ? humanize(phase, "between phases") : `tick ${tick} · ${humanize(phase, "between phases")}`}</small></dd></div>
       <div><dt>Layout proof</dt><dd><span className="civic-city__instrument-value">{humanize(model.coordinateMode)}</span><small>{model.counts.assigned} role assignments</small></dd></div>
     </dl>
+    </details>
   </section>;
 }

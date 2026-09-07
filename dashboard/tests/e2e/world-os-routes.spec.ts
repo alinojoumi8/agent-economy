@@ -83,6 +83,9 @@ async function mockWorkspaceApis(
     if (path === "/api/v2/operator/investigations" && request.method() === "GET") {
       return route.fulfill({ json: { items: [] } });
     }
+    if (path === "/api/v2/operator/city-observations" && request.method() === "GET") {
+      return route.fulfill({ json: { context: JSON.parse(url.searchParams.get("context")!), version: 0, entries: [] } });
+    }
     let body: unknown;
     if (path === "/api/v2/mode") {
       body = { hosted: false, mode: "local" };

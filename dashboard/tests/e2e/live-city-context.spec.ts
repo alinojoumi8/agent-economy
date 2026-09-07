@@ -30,6 +30,10 @@ function cityFrame(tick: number, fork: string | null = null) {
 
 async function mockCity(page: Page, options: {
   semantics?: number;
+  publicEvents?: boolean;
+  viewKey?: () => string;
+  workspaceWriteStatus?: () => number;
+  beforeObservationWrite?: () => Promise<void>;
   beforeMap?: (tick: number) => Promise<void>;
   wrongTick?: boolean;
   wrongConversation?: boolean;
@@ -40,6 +44,8 @@ async function mockCity(page: Page, options: {
 } = {}) {
   const requests: URL[] = [];
   const mutations: string[] = [];
+  const observations = new Map<string, { context: Record<string, unknown>; version: number; entries: string[] }>();
+  const workspaceWrites: unknown[] = [];
   await page.addInitScript(() => {
     (window as any).__citySockets = 0;
     class QuietSocket extends EventTarget {
@@ -58,14 +64,33 @@ async function mockCity(page: Page, options: {
     const request = route.request();
     const url = new URL(request.url());
     requests.push(url);
-    if (request.method() !== "GET") mutations.push(request.method());
+    if (request.method() !== "GET" && !url.pathname.startsWith("/api/v2/operator/")) mutations.push(request.method());
+    if (url.pathname === "/api/v2/operator/session") return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test-csrf" } });
+    if (url.pathname === "/api/v2/operator/city-observations") {
+      const body = request.method() === "PUT" ? request.postDataJSON() : null;
+      const context = body?.context ?? JSON.parse(url.searchParams.get("context")!);
+      const key = JSON.stringify(context);
+      const current = observations.get(key) ?? { context, version: 0, entries: [] };
+      if (body) {
+        workspaceWrites.push(body);
+        await options.beforeObservationWrite?.();
+        const status = options.workspaceWriteStatus?.() ?? 200;
+        if (status !== 200) return route.fulfill({ status, json: { detail: "Workspace write failed" } });
+        if (body.expected_version !== current.version) return route.fulfill({ status: 409, json: { detail: "Version conflict" } });
+        expect(request.headers()["x-csrf-token"]).toBe("test-csrf");
+        observations.set(key, { context, version: current.version + 1, entries: body.entries });
+      }
+      return route.fulfill({ json: observations.get(key) ?? current });
+    }
     const tick = url.searchParams.get("tick") === "live" ? options.liveTick?.() ?? 3 : Number(url.searchParams.get("tick"));
     const base = cityFrame(tick, url.searchParams.get("fork_id"));
     base.semantics_version = options.semantics ?? base.semantics_version;
+    base.view_key = options.viewKey?.() ?? base.view_key;
     if (url.pathname === "/api/v2/world-map") {
       await options.beforeMap?.(tick);
       const frame = cityFrame(options.wrongTick ? tick + 1 : tick, url.searchParams.get("fork_id"));
       frame.semantics_version = options.semantics ?? frame.semantics_version;
+      frame.view_key = options.viewKey?.() ?? frame.view_key;
       if (options.empty) frame.data.presence = [];
       if (options.withheld) frame.data.agents.push({ id: 3, name: "Peripheral resident", role: "citizen",
         population_tier: "periphery", region_id: 1, x: 0.2, y: 0.2, alive: true });
@@ -82,18 +107,193 @@ async function mockCity(page: Page, options: {
       ...base, projection: "civic.summary", data: { tick, enabled: true },
     } });
     if (url.pathname === "/api/v2/snapshot") return route.fulfill({ json: {
-      ...base, projection: "world.snapshot", data: { summary: { tick, status: "paused", phase: "idle" }, events: { items: [] } },
+      ...base, projection: "world.snapshot", data: { summary: { tick, status: "paused", phase: "idle" }, events: { items: options.publicEvents
+        ? [{ id: tick + 40, tick, kind: "work", actor_type: "agent", actor_id: 1,
+          payload: { agent_id: 1, private_marker: "DO-NOT-PERSIST-EVENT-BODY" } }] : [] } },
     } });
     if (url.pathname === "/api/v2/workspaces/world") return route.fulfill({ json: { ...base, projection: "workspace.world" } });
     if (url.pathname === "/api/v2/mode") return route.fulfill({ json: { mode: "local", hosted: false } });
     return route.fulfill({ json: {} });
   });
-  return { requests, mutations };
+  return { requests, mutations, observations, workspaceWrites };
 }
 
 async function cityProbe(page: Page) {
   return page.evaluate(() => (window as any).__liveCityProbe?.());
 }
+
+test("desktop city gives the map at least 65 percent of the visible workspace", async ({ page }) => {
+  await mockCity(page);
+  const measurements = [];
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 1000 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/runs/run-demo/world?tick=3&agent=1");
+    await expect(page.getByTestId("city-atlas-viewport")).toBeVisible();
+    const measured = await page.evaluate(() => {
+      const main = document.querySelector("#workspace-main")!.getBoundingClientRect();
+      const map = document.querySelector(".civic-city__map-field")!.getBoundingClientRect();
+      const field = document.querySelector(".civic-city__workfield")!.getBoundingClientRect();
+      const inspector = document.querySelector(".civic-city__lens")!.getBoundingClientRect();
+      const visibleHeight = (rect: DOMRect) => Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top));
+      return { mapFraction: map.width * visibleHeight(map) / (main.width * visibleHeight(main)),
+        fieldFraction: map.width / field.width, mainTop: main.top, mapTop: map.top, mapWidth: map.width,
+        mainWidth: main.width, mapHeight: map.height, visibleMapHeight: visibleHeight(map),
+        inspectorInside: inspector.left >= map.right && inspector.right <= innerWidth && inspector.bottom <= innerHeight };
+    });
+    measurements.push({ ...viewport, ...measured });
+    if (process.env.AE_CAPTURE_CITY_WORKSPACE === "1" && viewport.width === 1440) {
+      await page.screenshot({ path: "../docs/research/assets/city-workspace-desktop.png", animations: "disabled" });
+    }
+  }
+  console.log("City area measurements", JSON.stringify(measurements));
+  for (const measurement of measurements) {
+    expect(measurement.mapFraction).toBeGreaterThanOrEqual(0.65);
+    expect(measurement.inspectorInside).toBe(true);
+  }
+});
+
+test("city list paginates public records and searches banks without changing the historical scope", async ({ page }) => {
+  const evidence = await mockCity(page, { semantics: 16, editFrame: frame => {
+    addSociety(frame);
+    for (let id = 3; id <= 100; id++) frame.data.agents.push({ ...frame.data.agents[0], id, name: `Resident ${id}` });
+  } });
+  await page.goto("/runs/run-demo/world?tick=4&household=7&view=list");
+  const list = page.getByRole("region", { name: "Public city object list" });
+  await expect(list.getByRole("listitem")).toHaveCount(40);
+  await list.getByRole("button", { name: "Next objects", exact: true }).click();
+  await expect(list.getByText("Page 2 of 3", { exact: true })).toBeVisible();
+  await list.getByRole("searchbox", { name: "Search city objects" }).fill("Person");
+  await expect(list.getByRole("listitem")).toHaveCount(40);
+  await expect(list.getByText("Tick 4 · 100 matching records", { exact: true })).toBeVisible();
+  await list.locator("li button").first().click();
+  await expect(page.getByRole("complementary", { name: "Selected city evidence" })
+    .getByRole("heading", { name: "Resident 1 at tick 4", exact: true })).toBeVisible();
+  await list.getByRole("searchbox", { name: "Search city objects" }).fill("Community Bank");
+  await expect(list.getByRole("listitem")).toHaveCount(1);
+  await list.getByRole("button", { name: /Community Bank/ }).click();
+  await expect(page).toHaveURL(/institution=bank%3A3/);
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  await expect(lens.getByRole("heading", { name: "Community Bank", exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("tick")).toBe("4");
+  expect(new URL(page.url()).searchParams.get("view")).toBe("list");
+  expect(evidence.mutations).toEqual([]);
+});
+
+test("mobile city list, breadcrumbs and saved observations share one accessible inspector", async ({ page }) => {
+  await mockCity(page, { semantics: 16, editFrame: addSociety });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/runs/run-demo/world?tick=4&agent=1&view=list");
+  const list = page.getByRole("region", { name: "Public city object list" });
+  const person = list.getByRole("button", { name: /Resident 2 at tick 4/ });
+  await person.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/agent=2/);
+  await list.getByRole("button", { name: "Open selected evidence", exact: true }).click();
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  const breadcrumb = lens.getByRole("navigation", { name: "Selected city object" });
+  await expect(breadcrumb).toContainText("Person #2");
+  await breadcrumb.getByRole("button", { name: "Household #7", exact: true }).click();
+  await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Selected city evidence" })).toHaveCount(1);
+  const history = page.getByRole("region", { name: "City observation history" });
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  await page.reload();
+  await expect(page).toHaveURL(/view=list/);
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  if (process.env.AE_CAPTURE_CITY_WORKSPACE === "1") {
+    await page.setViewportSize({ width: 390, height: 1100 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: "../docs/research/assets/city-workspace-mobile-list.png", animations: "disabled" });
+  }
+});
+
+test("event bookmarks restore a historical selection and camera without storing evidence bodies", async ({ page }) => {
+  const evidence = await mockCity(page, { publicEvents: true });
+  await page.goto("/runs/run-demo/world?tick=3&agent=1&view=diorama&camera=40,60,4&population=all&q=tick");
+  const history = page.getByRole("region", { name: "City observation history" });
+  await history.getByRole("button", { name: "Save event bookmark" }).click();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  const stored = [...evidence.observations.values()];
+  expect(stored).toHaveLength(1);
+  expect(JSON.stringify(stored)).not.toContain("DO-NOT-PERSIST");
+  expect(JSON.stringify(stored)).not.toContain("Resident");
+  await page.goto("/runs/run-demo/world?tick=4&agent=2");
+  await history.locator("summary").click();
+  await history.getByRole("button", { name: "Event #43 · Tick 3 · Person #1", exact: true }).click();
+  await expect(page).toHaveURL(/tick=3/);
+  for (const [key, value] of Object.entries({ agent: "1", event: "43", view: "diorama", camera: "40,60,4", population: "all", q: "tick" })) {
+    expect(new URL(page.url()).searchParams.get(key)).toBe(value);
+  }
+  await page.reload();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  await history.locator("summary").click();
+  await history.getByRole("button", { name: "Remove Event #43 · Tick 3 · Person #1", exact: true }).click();
+  await expect(history.locator("summary")).toHaveText("Saved observations (0)");
+  expect(evidence.mutations).toEqual([]);
+  expect(evidence.workspaceWrites).toHaveLength(2);
+  expect(evidence.requests.filter(url => url.pathname === "/api/llm/runtime" || url.pathname === "/api/status")).toEqual([]);
+});
+
+test("live bookmarks freeze the displayed tick and do not cross visibility or fork contexts", async ({ page }) => {
+  let viewKey = "public";
+  const evidence = await mockCity(page, { viewKey: () => viewKey });
+  await page.goto("/runs/run-demo/world?agent=1");
+  const history = page.getByRole("region", { name: "City observation history" });
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  const saved = [...evidence.observations.values()][0];
+  expect(new URLSearchParams(saved.entries[0]).get("tick")).toBe("3");
+  await page.goto("/runs/run-demo/world?tick=2&fork=child&agent=1");
+  await expect(history.locator("summary")).toHaveText("Saved observations (0)");
+  viewKey = "changed-visibility";
+  await page.goto("/runs/run-demo/world?tick=2&agent=1");
+  await expect(history.locator("summary")).toHaveText("Saved observations (0)");
+  viewKey = "public";
+  await page.reload();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+});
+
+test("bookmark failures and concurrent edits stay visible until explicit reload", async ({ page }) => {
+  let status = 500;
+  const evidence = await mockCity(page, { workspaceWriteStatus: () => status });
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  const history = page.getByRole("region", { name: "City observation history" });
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect(history.getByRole("alert")).toContainText("could not be saved");
+  await expect(history.locator("summary")).toHaveText("Saved observations (0)");
+  status = 200;
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect(history.locator("summary")).toHaveText("Saved observations (1)");
+  const record = [...evidence.observations.values()][0];
+  record.version += 1;
+  record.entries = ["tick=2&agent=2"];
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect(history.getByRole("alert")).toContainText("Reload observations before saving");
+  await expect(history.getByRole("button", { name: "Save observation", exact: true })).toBeDisabled();
+  expect(record.entries).toEqual(["tick=2&agent=2"]);
+  await history.getByRole("button", { name: "Reload observations", exact: true }).click();
+  await expect(history.getByRole("alert")).toHaveCount(0);
+  await history.locator("summary").click();
+  await expect(history.getByRole("button", { name: "Tick 2 · Person #2", exact: true })).toBeVisible();
+  expect(evidence.mutations).toEqual([]);
+});
+
+test("an observation save response cannot populate a newly selected fork", async ({ page }) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const evidence = await mockCity(page, { beforeObservationWrite: () => pending });
+  await page.goto("/runs/run-demo/world?tick=3&agent=1");
+  const history = page.getByRole("region", { name: "City observation history" });
+  await history.getByRole("button", { name: "Save observation", exact: true }).click();
+  await expect.poll(() => evidence.workspaceWrites.length).toBe(1);
+  await page.goto("/runs/run-demo/world?tick=2&fork=child&agent=2");
+  release();
+  await expect(history.getByRole("button", { name: "Save observation", exact: true })).toBeEnabled();
+  await expect(history.locator("summary")).toHaveText("Saved observations (0)");
+  expect(evidence.mutations).toEqual([]);
+});
 
 function addSociety(frame: ReturnType<typeof cityFrame>) {
   const tick = frame.tick;

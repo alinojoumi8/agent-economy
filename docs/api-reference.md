@@ -169,6 +169,19 @@ fallback and never copy raw event payloads. Runtime `queued`/`thinking`
 presence may be included only for a current view; a historical `tick` request
 drops current runtime telemetry.
 
+## City observation bookmarks
+
+Local city navigation bookmarks use a separate operator workspace:
+
+| Method | Path | Input/notes |
+|---|---|---|
+| `GET` | `/api/v2/operator/city-observations?context=<JSON>` | Exact map run/fork/visibility/version context; returns context, optimistic version and up to 20 navigation strings |
+| `PUT` | `/api/v2/operator/city-observations` | Context, `expected_version`, entries and operator-session CSRF header; atomic save, 409 on stale context/version; no world writes |
+
+Both routes return 404 in hosted-safe mode. See the
+[city workspace contract](plans/2026-09-07-city-workspace-navigation.md) for the
+field allowlist, context schema, local identity and error handling.
+
 ## Oracle and calibration
 
 | Method | Path | Input/notes |
