@@ -45,6 +45,7 @@ from server.projections.envelope import ProjectionRequestError, lineage, validat
 from server.projections.events import build_backfill
 from server.projections.price_lab import build_price_lab
 from server.projections.city_conversations import build_city_conversations
+from server.projections.city_society import build_city_households, build_city_institutions
 
 
 class GodActionBody(BaseModel):
@@ -456,6 +457,10 @@ def install_v2_routes(app, world, controller) -> None:
         if "organizations" in selected:
             data["organizations"] = build_world_map_organizations(
                 store, as_of_tick=as_of_tick)
+        if "households" in selected:
+            data["households"] = build_city_households(store, as_of_tick=as_of_tick)
+        if "institutions" in selected:
+            data["institutions"] = build_city_institutions(store, as_of_tick=as_of_tick)
         if "places" in selected:
             data["places"] = world.economy.city.map_places(as_of_tick)
         if "construction_projects" in selected:

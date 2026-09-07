@@ -7,8 +7,8 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | Recommendation | Packages | Status |
 |---|---|---|
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
-| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI execution, original-budget day/phase recovery, independent verification and private final/paused v3 bundles implemented; v3 operator integration and real-provider validation pending |
-| 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls and persistent follow implemented; institutional/household lenses and remaining layout/interaction acceptance pending |
+| 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI/operator execution, original-budget day/phase recovery, independent verification and private final/paused v3 bundles implemented; separately authorized real-provider validation pending |
+| 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day selection, playback, scoped transcripts, price navigation, camera controls, persistent follow and historical core-household/public-bank inspectors implemented; remaining layout/interaction acceptance pending; richer household/institution fields depend on W5–W8 |
 | 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
 | 5. Validation and scale evidence | W9 | Pending |
 
@@ -60,10 +60,11 @@ PR #78 are preserved; its four prerequisite commits are still ahead of main.
 
 ## Next delivery
 
-Continue live-policy study support, interactive city integration and W5–W9.
-The [live-policy implementation contract](2026-09-07-live-policy-studies.md)
-records shared completion reservations and the remaining policy, supervisor,
-recovery/evidence and operator integration.
+Continue the interactive city acceptance requirements, then the remaining
+W5–W9 society, economic-depth and validation work. The
+[policy operator contract](2026-09-07-policy-operator-workflow.md) records the
+implemented policy, supervisor, recovery/evidence and operator workflow;
+real-provider validation remains separately authorized work.
 Maintain equal priority for
 both price domains. The foundations, benchmarks and inspector do not complete
 the five-part goal. Saved-day/phase recovery and daily-world keyed randomness
@@ -1253,3 +1254,39 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   regression. Committed-head CI evidence is tracked on draft PR #82. Remaining
   city lenses, partnerships/care/estates, education, production/housing, banking
   and scale/model validation remain active under the original roadmap.
+
+### W4: historical household and public bank inspectors
+
+- Added opt-in `households` and `institutions` map layers at the selected
+  committed tick. Formation/membership/custody/death intervals and immutable
+  birth ticks supply the household view; exact-day child records preserve
+  unmet needs, currency-specific spending and required care without claiming
+  care delivery or a complete household budget. Public banks use their recorded
+  failure boundary. Private accounts, receipts and exact residences are absent.
+- Core-member household and typed bank selections now share the existing
+  Keyboard explorer, person/place inspector links, Atlas/2.5D/recorded-day
+  selection, browser history, evidence bookmarks and camera context. Missing
+  identities remain selected with an unavailable state. Member selection
+  returns to the map and clears filters that would hide the member. Legacy
+  profiles have explicit household unavailability; peripheral members are
+  withheld under the existing observer identity boundary.
+- New projection tests plus household, workspace, API, conversation,
+  recorded-replay and documentation regressions passed **77 tests** in
+  **38.23 s** on Windows/Python 3.11.15, using a fresh short temporary root.
+  The initial isolated projection check passed **5 tests**. The only Python
+  warning is the existing Starlette/httpx deprecation.
+- All **248** dashboard unit tests and **114** Chromium browser tests passed
+  (**2.7 min**); the separately opted-in real-backend smoke was skipped. The
+  three new browser cases cover renderer/history/reload, absent or mismatched
+  frames, bank failure, missing daily records and mobile/keyboard navigation.
+  Initial assertions used an old layer list and different text capitalization;
+  their expectations were corrected and the full suites passed.
+- Type checking, production bundle, all **357** Python source compilations,
+  CI YAML, pinned dataset verification, Python/npm dependency audits, notices
+  and configured diff checks passed. The household projection suite is now in
+  the required research CI job. Inspected synthetic desktop/mobile captures
+  and the [lens contract](2026-09-07-city-society-lenses.md) are committed with
+  the regenerated dashboard. Committed-head CI is tracked on draft PR #82.
+- Free disk remained above **84 GiB** during verification. No project cleanup,
+  paid-provider run, schema/semantics change or merge was performed. Full W4
+  layout/interaction acceptance and remaining W5–W9 work stay on the roadmap.

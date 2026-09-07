@@ -17,6 +17,11 @@ function projectIdentifier(value) {
   return /^[a-zA-Z0-9:_-]+$/.test(normalized) ? normalized : null;
 }
 
+function institutionIdentifier(value) {
+  const match = /^bank:([1-9]\d*)$/.exec(String(value || ""));
+  return match && positiveInteger(match[1]) ? `bank:${Number(match[1])}` : null;
+}
+
 function normalizedTick(value) {
   if (!value || value === "live") return "live";
   if (!/^\d+$/.test(value)) return "live";
@@ -29,14 +34,17 @@ export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
   const view = params.get("view") || "atlas";
-  const project = projectIdentifier(params.get("project"));
-  const firm = project ? null : positiveInteger(params.get("firm"));
+  const institution = institutionIdentifier(params.get("institution"));
+  const household = institution ? null : positiveInteger(params.get("household"));
+  const society = institution || household;
+  const project = society ? null : projectIdentifier(params.get("project"));
+  const firm = society || project ? null : positiveInteger(params.get("firm"));
   const requestedFollow = positiveInteger(params.get("follow"));
   const requestedAgent = positiveInteger(params.get("agent"));
   const place = positiveInteger(params.get("place"));
-  const follow = project || firm || (!requestedAgent && place)
+  const follow = society || project || firm || (!requestedAgent && place)
     || (requestedAgent && requestedAgent !== requestedFollow) ? null : requestedFollow;
-  const agent = project || firm ? null : requestedAgent || follow;
+  const agent = society || project || firm ? null : requestedAgent || follow;
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
@@ -48,8 +56,10 @@ export function parseObserverViewState(params) {
     agent,
     follow,
     firm,
+    household,
+    institution,
     camera: parseCityCamera(params.get("camera")),
-    place: project || firm || agent ? null : positiveInteger(params.get("place")),
+    place: society || project || firm || agent ? null : positiveInteger(params.get("place")),
     project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
     view: CITY_VIEW_MODES.has(view) ? view : "atlas",
@@ -85,11 +95,22 @@ export function patchObserverViewState(params, patch) {
   }
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
   if ("camera" in patch) setOrDelete("camera", serializeCityCamera(patch.camera));
+  for (const key of ["household", "institution"]) {
+    if (!(key in patch)) continue;
+    const selected = key === "institution" ? institutionIdentifier(patch[key])
+      : positiveInteger(String(patch[key] || ""))?.toString();
+    setOrDelete(key, selected);
+    if (selected) for (const other of ["household", "institution", "agent", "firm", "place", "project", "follow"]) {
+      if (other !== key) next.delete(other);
+    }
+  }
   if ("firm" in patch) {
     const firm = Number(patch.firm);
     const selected = Number.isSafeInteger(firm) && firm > 0 ? String(firm) : null;
     setOrDelete("firm", selected);
     if (selected) {
+      next.delete("household");
+      next.delete("institution");
       next.delete("agent");
       next.delete("place");
       next.delete("project");
@@ -100,6 +121,8 @@ export function patchObserverViewState(params, patch) {
     const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
     setOrDelete("agent", selected);
     if (selected) {
+      next.delete("household");
+      next.delete("institution");
       next.delete("firm");
       next.delete("place");
       next.delete("project");
@@ -110,6 +133,8 @@ export function patchObserverViewState(params, patch) {
     const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
     setOrDelete("place", selected);
     if (selected) {
+      next.delete("household");
+      next.delete("institution");
       next.delete("firm");
       next.delete("agent");
       next.delete("project");
@@ -119,6 +144,8 @@ export function patchObserverViewState(params, patch) {
     const project = projectIdentifier(patch.project);
     setOrDelete("project", project);
     if (project) {
+      next.delete("household");
+      next.delete("institution");
       next.delete("firm");
       next.delete("agent");
       next.delete("place");
@@ -140,7 +167,7 @@ export function patchObserverViewState(params, patch) {
   if ("follow" in patch) setOrDelete("follow", positiveInteger(String(patch.follow || ""))?.toString());
   // A selected object never inherits another person's follow identity.
   const follow = positiveInteger(next.get("follow"));
-  if (follow && (next.has("firm") || next.has("place") || next.has("project")
+  if (follow && (next.has("household") || next.has("institution") || next.has("firm") || next.has("place") || next.has("project")
     || ("agent" in patch && positiveInteger(next.get("agent")) !== follow))) next.delete("follow");
   else if (follow) next.set("agent", String(follow));
   return next;

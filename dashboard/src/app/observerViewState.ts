@@ -19,6 +19,8 @@ export type ObserverViewState = {
   agent: number | null;
   follow: number | null;
   firm: number | null;
+  household: number | null;
+  institution: string | null;
   camera: { x: number; y: number; zoom: number } | null;
   place: number | null;
   project: string | null;
@@ -36,6 +38,8 @@ export type ObserverViewPatch = Partial<{
   agent: number | null;
   follow: number | null;
   firm: number | null;
+  household: number | null;
+  institution: string | null;
   camera: { x: number; y: number; zoom: number } | null;
   place: number | null;
   project: string | null;

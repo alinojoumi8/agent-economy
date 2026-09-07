@@ -29,6 +29,7 @@ function cityFrame(tick: number, fork: string | null = null) {
 }
 
 async function mockCity(page: Page, options: {
+  semantics?: number;
   beforeMap?: (tick: number) => Promise<void>;
   wrongTick?: boolean;
   wrongConversation?: boolean;
@@ -60,9 +61,11 @@ async function mockCity(page: Page, options: {
     if (request.method() !== "GET") mutations.push(request.method());
     const tick = url.searchParams.get("tick") === "live" ? options.liveTick?.() ?? 3 : Number(url.searchParams.get("tick"));
     const base = cityFrame(tick, url.searchParams.get("fork_id"));
+    base.semantics_version = options.semantics ?? base.semantics_version;
     if (url.pathname === "/api/v2/world-map") {
       await options.beforeMap?.(tick);
       const frame = cityFrame(options.wrongTick ? tick + 1 : tick, url.searchParams.get("fork_id"));
+      frame.semantics_version = options.semantics ?? frame.semantics_version;
       if (options.empty) frame.data.presence = [];
       if (options.withheld) frame.data.agents.push({ id: 3, name: "Peripheral resident", role: "citizen",
         population_tier: "periphery", region_id: 1, x: 0.2, y: 0.2, alive: true });
@@ -91,6 +94,97 @@ async function mockCity(page: Page, options: {
 async function cityProbe(page: Page) {
   return page.evaluate(() => (window as any).__liveCityProbe?.());
 }
+
+function addSociety(frame: ReturnType<typeof cityFrame>) {
+  const tick = frame.tick;
+  const members = [{ agent_id: 1, name: "Resident 1", age_years: 31, age_band: "adult",
+    role: "adult", joined_tick: 0, origin: "genesis", origin_tick: 0, legacy_dependents: 2, guardian_agent_id: null },
+  { agent_id: 2, name: "Resident 2", age_years: 0, age_band: "child",
+    role: "dependent", joined_tick: 2, origin: "birth", origin_tick: 2, legacy_dependents: 0, guardian_agent_id: 1 }];
+  Object.assign(frame.data, {
+    households: { available: true, source: "recorded_household_membership", tick, visibility: "core_members_only",
+      items: tick >= 2 ? [{ id: 7, name: "Household #7", formed_tick: 0, policy: "guardian_basic_needs_v1", members,
+        child_needs: tick === 4 ? [{ child_agent_id: 2, currency_code: "USD", goods_sector: "food",
+          required_units: 2, purchased_units: 1, spent_cents: 90, care_required_minutes: 120, care_status: "time_allocation_pending" }] : [] }] : [] },
+    institutions: { available: true, source: "public_bank_status", tick, visibility: "public_status_only",
+      items: [{ id: "bank:3", bank_id: 3, name: "Community Bank", kind: "bank", currency_code: "USD", status: tick >= 5 ? "failed" : "open" }] },
+  });
+}
+
+test("household and bank lenses preserve selection across renderers, history and member inspection", async ({ page }) => {
+  const evidence = await mockCity(page, { editFrame: addSociety, semantics: 16 });
+  await page.goto("/runs/run-demo/world?tick=4&fork=child&agent=1&camera=40,60,4");
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  await lens.getByRole("button", { name: "Inspect household", exact: true }).click();
+  await expect(page).toHaveURL(/household=7/);
+  await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+  await expect(lens.getByText("1 / 2 food units purchased", { exact: true })).toBeVisible();
+  await expect(lens.getByText("120 care minutes required · Time Allocation Pending", { exact: true })).toBeVisible();
+  for (const view of ["2.5D Diorama", "Recorded day", "Atlas"]) {
+    await page.getByRole("button", { name: view, exact: true }).click();
+    await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("household")).toBe("7");
+    expect(new URL(page.url()).searchParams.get("fork")).toBe("child");
+  }
+  await page.getByRole("combobox", { name: "Keyboard explorer" }).selectOption("institution:bank:3");
+  await expect(lens.getByRole("heading", { name: "Community Bank", exact: true })).toBeVisible();
+  await expect(lens.getByText("Open", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("household")).toBe(false);
+  await page.goBack();
+  await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+  await lens.getByRole("button", { name: "Inspect Resident 2", exact: true }).click();
+  expect(new URL(page.url()).searchParams.get("agent")).toBe("2");
+  expect(new URL(page.url()).searchParams.has("household")).toBe(false);
+  await expect(lens.getByRole("heading", { name: "Resident 2 at tick 4", exact: true })).toBeVisible();
+  await lens.getByRole("button", { name: "Inspect household", exact: true }).click();
+  expect(evidence.mutations).toEqual([]);
+  expect(evidence.requests.filter(url => url.pathname === "/api/llm/runtime" || url.pathname === "/api/status")).toEqual([]);
+});
+
+test("unavailable household selection is retained at older and mismatched frames", async ({ page }) => {
+  await mockCity(page, { semantics: 16, editFrame: frame => {
+    addSociety(frame);
+    if (frame.tick === 3) (frame.data as any).households.tick = 4;
+  } });
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  for (const tick of [1, 3]) {
+    await page.goto(`/runs/run-demo/world?tick=${tick}&household=7`);
+    await expect(lens.getByRole("region", { name: "Unavailable city record" })).toBeVisible();
+    await expect(page).toHaveURL(/household=7/);
+    await expect(lens.getByRole("button", { name: "Inspect Resident 2" })).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.has("agent")).toBe(false);
+  }
+  await page.goto("/runs/run-demo/world?tick=5&institution=bank:3");
+  await expect(lens.getByText("Failed", { exact: true })).toBeVisible();
+  await page.goto("/runs/run-demo/world?tick=2&household=7");
+  await expect(lens.getByText(/No child-needs record is available/)).toBeVisible();
+  await expect(lens.getByText("90 USD cents spent", { exact: true })).toHaveCount(0);
+});
+
+test("household evidence fits mobile and retains keyboard member navigation", async ({ page }) => {
+  await mockCity(page, { editFrame: addSociety, semantics: 16 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/runs/run-demo/world?tick=4&household=7");
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  await page.getByRole("button", { name: /Household #7.*Open evidence/ }).click();
+  await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  const member = lens.getByRole("button", { name: "Inspect Resident 2", exact: true });
+  await member.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/agent=2/);
+  await lens.getByRole("button", { name: "Inspect household", exact: true }).click();
+  if (process.env.AE_CAPTURE_SOCIETY_UI === "1") {
+    await page.setViewportSize({ width: 390, height: 1800 });
+    await lens.evaluate(node => node.scrollIntoView({ block: "center" }));
+    await lens.screenshot({ path: "../docs/research/assets/city-household-mobile.png", animations: "disabled" });
+    await page.setViewportSize({ width: 1440, height: 1400 });
+    await page.locator(".civic-city__workfield").evaluate(node => node.scrollIntoView({ block: "center" }));
+    await page.locator(".civic-city__workfield").screenshot({ path: "../docs/research/assets/city-household-desktop.png", animations: "disabled" });
+  }
+});
 
 test("Atlas camera centers selections and restores keyboard pan and zoom through history", async ({ page }) => {
   const evidence = await mockCity(page);

@@ -20,7 +20,7 @@ function requireFrame(frame, scope, projection) {
  * @param {(path: string) => Promise<any>} read */
 export async function loadCityProjection(scope, read) {
   const mapParams = projectionScopeParams(scope);
-  mapParams.set("layers", "regions,agents,organizations,places,construction_projects,presence,flows");
+  mapParams.set("layers", "regions,agents,organizations,places,construction_projects,presence,flows,households,institutions");
   mapParams.set("population", scope.population);
   const map = await read(`/api/v2/world-map?${mapParams}`);
   requireFrame(map, scope, "world.map");

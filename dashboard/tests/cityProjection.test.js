@@ -36,7 +36,7 @@ test("city supporting projections are pinned to the map's actual tick and fork",
   });
   assert.equal(requests[0].searchParams.get("tick"), "live");
   assert.equal(requests[0].searchParams.get("population"), "all");
-  assert.equal(requests[0].searchParams.get("layers"), "regions,agents,organizations,places,construction_projects,presence,flows");
+  assert.equal(requests[0].searchParams.get("layers"), "regions,agents,organizations,places,construction_projects,presence,flows,households,institutions");
   assert.equal(city.civic.tick, 4);
   assert.deepEqual(city.agents, [{ id: 1 }]);
 });

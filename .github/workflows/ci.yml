@@ -163,6 +163,7 @@ jobs:
           tests/test_price_observations.py
           tests/test_price_lab_projection.py
           tests/test_city_conversations_projection.py
+          tests/test_city_society_projection.py
           tests/test_metric_registry.py
 
   research-policy-recovery:

@@ -5,6 +5,14 @@ a local run. It reads authorized projections of a stored world; it does not own
 economic mutation, bypass the ledger, or turn private provider/event payloads
 into display data.
 
+City evidence now includes historical household and public bank inspectors in
+the Keyboard explorer. A person's **Inspect household** button opens recorded
+core membership and the selected day's child needs; selecting a member returns
+to that person on the map. Household selection remains intact when a prior day
+has no visible record. Banks show public status at that day. See the
+[city society lens contract](plans/2026-09-07-city-society-lenses.md) for partial
+visibility, care/purchase meanings and supported fields.
+
 ![World Pulse live briefing in Civic Atlas](images/civic-atlas-world-pulse.png)
 
 ## Start with the safe profile

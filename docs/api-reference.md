@@ -145,6 +145,7 @@ These read-only endpoints return the canonical envelope and accept `tick` plus
 | `GET` | `/api/v2/construction-projects` | Semantics-13 projects; filter by `project_kind=private_home|workplace|public_facility` and exact lifecycle `status` |
 | `GET` | `/api/v2/construction-projects/{project_id}` | One exact public project or privacy-safe aggregate, plus contribution-type totals where authorized |
 | `GET` | `/api/v2/world-map?layers=construction_projects` | Construction layer separate from usable `places`; supports stable project selection in Live City |
+| `GET` | `/api/v2/world-map?layers=households,institutions&tick=N` | Historical core household membership/child needs and public bank status, bound to the map envelope; no private accounts or exact household residences. See the [lens contract](plans/2026-09-07-city-society-lenses.md). |
 | `GET` | `/api/v2/city/conversations?tick=3&fork_id=...&limit=60` | `city.conversations` envelope for the exact recorded day; ordinary small-talk transcripts, never private communication or provider stores |
 
 City conversations return `data.items`, `tick`, `source=recorded_small_talk`,

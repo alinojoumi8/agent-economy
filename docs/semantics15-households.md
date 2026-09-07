@@ -6,6 +6,11 @@ The [status ledger](implementation-status.md) records release maturity; the
 [research city specifications](plans/2026-09-06-research-city-specs.md#s5-people-households-and-generations)
 retain the full delivery contract.
 
+The [City evidence household lens](plans/2026-09-07-city-society-lenses.md) now
+reads these historical records. It exposes core members and their exact-day
+child needs, with explicit partial visibility and unavailable data. This
+observer feature does not complete the remaining W5 economic mechanics.
+
 ## Run the bounded mechanics rehearsal
 
 ```powershell

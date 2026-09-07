@@ -40,6 +40,7 @@ HANDBOOK_DOCS = (
     "research/model-description.md",
     "research/price-lab.md",
     "plans/2026-09-07-policy-operator-workflow.md",
+    "plans/2026-09-07-city-society-lenses.md",
     "research/market-benchmarks.md",
     "documentation-maintenance.md", "reproducibility-release-profile.md",
     "semantics14-external-turn-attendance.md", "semantics15-households.md", "adr/README.md",

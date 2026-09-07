@@ -151,7 +151,8 @@ export function WorldWorkspace() {
      * independently loaded workspace summary: a valid map selection can arrive
      * before that summary contains the same record.
      */
-    if (selectedProjectId != null || selectedPlaceId != null || observerState.firm != null) next.delete("region");
+    if (selectedProjectId != null || selectedPlaceId != null || observerState.firm != null
+      || observerState.household != null || observerState.institution != null) next.delete("region");
     if (selectedRegionId != null && !selectedRegion) next.delete("region");
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
@@ -162,6 +163,8 @@ export function WorldWorkspace() {
     selectedPlaceId,
     selectedProjectId,
     observerState.firm,
+    observerState.household,
+    observerState.institution,
     selectedRegion,
     selectedRegionId,
     setSearchParams,
@@ -187,6 +190,8 @@ export function WorldWorkspace() {
       next.delete("project");
       next.delete("agent");
       next.delete("firm");
+      next.delete("household");
+      next.delete("institution");
     }
     if (key === "place") next.delete("region");
     setSearchParams(next);
