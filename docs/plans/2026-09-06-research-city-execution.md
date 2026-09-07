@@ -1049,3 +1049,15 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   production/housing, banking and validation packages remain in the active
   five-part goal. The [live-policy specification](2026-09-07-live-policy-studies.md)
   records this implementation boundary and the CLI workflow.
+- At `bab0294`, required [CI 34112703468](https://github.com/alinojoumi8/agent-economy/actions/runs/34112703468)
+  passed all five jobs: **321 research, 47 saved-world, 359 core, 144 smoke and
+  100 Chromium checks**. Full [CI 34112697080](https://github.com/alinojoumi8/agent-economy/actions/runs/34112697080)
+  passed eight Ubuntu/Python 3.12 shards: **2,004 passed, 10 skipped**.
+- Final evidence review added two consistency checks: each reservation must use
+  its binding's provider/model, and a completed world cannot have more recorded
+  provider calls than its scope accounts for. A deliberately rewritten ledger
+  and all associated public receipts cannot conceal the calls in an independently
+  verified scientific database. After that change,
+  `.venv/Scripts/python.exe -m pytest -x -q tests/test_policy_studies.py tests/test_provider_budget.py tests/test_study_results.py tests/test_recorded_replay_golden.py tests/test_documentation.py --basetemp <fresh-short-root>`
+  passed **130 tests** (77.18 s). CI for the follow-up commit is tracked on the
+  same draft PR; these 2,004 full-suite passes belong to `bab0294` specifically.

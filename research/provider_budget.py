@@ -249,8 +249,14 @@ class ProviderBudget:
             raise ValueError("scope bindings require the v2 budget contract")
         with self._transaction() as conn:
             scopes = {}
-            for row in conn.execute("SELECT DISTINCT scope,binding_key FROM reservations ORDER BY scope,binding_key"):
-                scopes.setdefault(row["scope"], []).append(row["binding_key"])
+            bindings = {binding.key: {(target.provider, target.model) for target in binding.targets}
+                        for binding in self.contract.gateway_bindings}
+            for row in conn.execute("SELECT DISTINCT scope,binding_key,provider,model FROM reservations ORDER BY scope,binding_key"):
+                if (row["provider"], row["model"]) not in bindings.get(row["binding_key"], set()):
+                    raise BudgetLedgerError("provider reservation leaves its gateway binding")
+                keys = scopes.setdefault(row["scope"], [])
+                if row["binding_key"] not in keys:
+                    keys.append(row["binding_key"])
             return scopes
 
     def is_sealed(self) -> bool:

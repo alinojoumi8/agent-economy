@@ -409,6 +409,32 @@ def test_edited_policy_prices_cannot_enter_the_verified_estimator(executed_polic
     assert loaded["summary"]["metrics"]["goods_price"]["model_a"]["paired_effect"]["matched_seeds"] == [2]
 
 
+def test_rewritten_budget_receipts_cannot_hide_recorded_model_calls(executed_policy_study, tmp_path):
+    from research.policy_results import load_policy_result
+
+    _spec, path, data = copied_policy_evidence(executed_policy_study, tmp_path)
+    payload = json.loads(path.read_text())
+    row = next(row for row in payload["results"] if row["policy"] == "model_a" and row["seed"] == 1)
+    database = data / "provider-budget.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("DELETE FROM reservations WHERE scope=?", (row["cell_key"],))
+    contract = ProviderBudgetContract.model_validate_json((data / "provider-budget-contract.json").read_text())
+    budget = ProviderBudget(database, contract, scope="inspection", binding_key="model_a", read_only=True)
+    receipt = payload["provider_budget"]
+    receipt.update(database_sha256=file_sha256(database), usage={**budget.snapshot(), "sealed": True})
+    (data / "provider-budget-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    worker_path = data / f"cell-{row['cell_key']}.json"
+    packet = json.loads(worker_path.read_text())
+    packet["provider_usage"] = row["provider_usage"] = budget.snapshot(scope=row["cell_key"])
+    worker_path.write_text(json.dumps(packet), encoding="utf-8")
+    row["policy_receipt_sha256"] = file_sha256(worker_path)
+    republish_test_report(path, payload)
+    loaded = load_policy_result(path, data_root=tmp_path / "data", out_dir=tmp_path / "reports")
+    rejected = next(item for item in loaded["results"] if item["cell_key"] == row["cell_key"])
+    assert "recorded_provider_calls_not_accounted" in rejected["eligibility"]["reasons"]
+    assert loaded["summary"]["metrics"]["goods_price"]["model_a"]["paired_effect"]["matched_seeds"] == [2]
+
+
 def test_live_launch_needs_declared_approval_before_artifacts_or_calls(policy_setup, tmp_path):
     from research.study_runner import run_study
 

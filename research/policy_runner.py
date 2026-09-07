@@ -232,6 +232,8 @@ def verify_policy_cell(packet: dict, cell: dict, batch: dict, *,
                 store.close()
             if any(digest_json(row.get(key)) != digest_json(value) for key, value in measured.items()):
                 reasons.append("independent_measurement_mismatch")
+            if measured["provider_calls"] > expected_usage["provider_calls"]:
+                reasons.append("recorded_provider_calls_not_accounted")
         return sorted(set(reasons))
     except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, BudgetLedgerError):
         return ["policy_cell_identity_invalid"]
