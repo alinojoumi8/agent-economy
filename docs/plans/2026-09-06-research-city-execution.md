@@ -1206,3 +1206,50 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   to this slice. Tests use fresh short roots with the 40 GiB admission floor.
   Next: v3 operator review/launch/comparison, then a separately authorized real
   provider rehearsal and the remaining city/society/validation roadmap.
+
+### W3/W4: policy studies in the local operator workspace
+
+- The private-evidence base at `18edbe3` passed required
+  [CI 34133521768](https://github.com/alinojoumi8/agent-economy/actions/runs/34133521768)
+  and full [CI 34133569729](https://github.com/alinojoumi8/agent-economy/actions/runs/34133569729):
+  all applicable jobs and eight Ubuntu/Python 3.12 shards, **2,085 passed,
+  10 skipped**. This is the prior committed baseline, not a claim about the new revision.
+- Added owner-configured policy design choices and strict provider-free drafts
+  to the existing operator. Policy launches bind explicit approval of the
+  reviewed original call/token/spend allowance. Durable claims preserve that
+  approval across original-budget recovery; no resume request can set new caps.
+  Bad private configuration disables model launch without breaking G2/F2.
+- Added distinct v3 working/comparison views with all cell/model-draw identities,
+  original accounting, inherited costs and verified private export. Actual cell
+  execution determines coverage; incomplete replication blocks never become
+  paired effects. Readiness can succeed before later exhaustion, so the UI
+  retains a completed scripted cell while excluding its incomplete world block.
+- The dashboard supports policy selection, design refresh, explicit inference
+  review, phase/day pause and resume, individual-draw evidence, both price
+  domains and tiny nonzero charges. Draw filtering leaves the declared estimate
+  unchanged. Reloading clears approval. Added and inspected synthetic
+  [desktop](../research/assets/policy-operator-desktop.png) and
+  [mobile](../research/assets/policy-operator-mobile.png) captures and regenerated
+  the committed production bundle.
+- Local Windows/Python 3.11.15 regression:
+  `.venv/Scripts/python.exe -u -m pytest -q tests/test_policy_operator.py tests/test_policy_evidence.py tests/test_study_jobs.py tests/test_working_study_jobs.py tests/test_checkpoint_study_jobs.py tests/test_study_library.py --tb=short -x --basetemp <fresh-short-root>`
+  passed **116 tests** (877.53 s), with the existing Starlette warning. Initial
+  development caught an incorrect test assumption that an exhausted allowance
+  always means failed readiness; the final test separately verifies readiness
+  failure and partial execution. No product evidence was changed to fit the test.
+- `npm --prefix dashboard test` passed **245 tests**; all **35** workspace
+  browser checks passed. After the final design-refresh control and cost wording,
+  the **3** policy browser checks passed again (15.4 s). Type checking and the
+  production build passed; existing chunk-size/color warnings remain.
+  All **355 Python sources** compiled in memory. CI YAML, pinned datasets,
+  `pip check`, locked Python/npm audits, notices and configured diff checks passed.
+- The [operator policy contract](2026-09-07-policy-operator-workflow.md) records
+  configuration, request/approval fields, admission limits, privacy and recovery
+  semantics. The handbook, price-lab, API, Civic Atlas, development and existing
+  policy/evidence guides now describe this workflow. A dedicated required CI job
+  exercises real local supervisors using controlled loopback HTTP.
+- No paid-provider rehearsal, project cleanup, economic schema change or merge
+  belongs to this slice. Free disk remained above 85 GiB during the main local
+  regression. Committed-head CI evidence is tracked on draft PR #82. Remaining
+  city lenses, partnerships/care/estates, education, production/housing, banking
+  and scale/model validation remain active under the original roadmap.

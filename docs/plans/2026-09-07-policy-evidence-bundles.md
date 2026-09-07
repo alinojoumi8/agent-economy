@@ -63,8 +63,10 @@ manifest or budget. A copied unsealed allowance is scientific evidence; import
 does not grant another running budget or adopt the copy into the operator.
 Runtime resume continues to require the original namespace, code, configuration,
 inputs and allowance. Original studies can later resume without changing an
-already exported pending archive. The v1/v2 operator catalog must not advertise
-v3 execution or comparison until that interface is implemented.
+already exported pending archive. The [policy operator interface](2026-09-07-policy-operator-workflow.md)
+now reads these archives using distinct v3 comparison/progress contracts.
+Configured policy launches retain their original job and allowance; import does
+not adopt a copied archive into that authority.
 
 ## CLI workflow
 

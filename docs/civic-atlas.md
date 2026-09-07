@@ -61,6 +61,13 @@ analytical Atlas/2.5D layers. Both read recorded projections.
 The rail can collapse to icons and scrolls on narrow screens without removing
 destinations. **Classic Observatory** at the bottom returns to `/`.
 
+The **Experiments → Price studies** workspace supports reviewed scripted and
+configured decision-policy studies from fresh or explicitly selected saved
+worlds. Both price domains share the same comparison. Policy evidence retains
+model draws and the original provider allowance; launch and resume require
+deliberate operator actions. See the [price study workflow](research/price-lab.md)
+and [policy operator contract](plans/2026-09-07-policy-operator-workflow.md).
+
 ## Navigate and search
 
 Press `Ctrl+K` or, on macOS, `Command+K` to open **Navigate and inspect**. It

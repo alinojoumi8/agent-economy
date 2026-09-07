@@ -39,6 +39,7 @@ HANDBOOK_DOCS = (
     "buzz-derived-architecture.md", "branch-lifecycle.md",
     "research/model-description.md",
     "research/price-lab.md",
+    "plans/2026-09-07-policy-operator-workflow.md",
     "research/market-benchmarks.md",
     "documentation-maintenance.md", "reproducibility-release-profile.md",
     "semantics14-external-turn-attendance.md", "semantics15-households.md", "adr/README.md",

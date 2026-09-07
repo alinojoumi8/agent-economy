@@ -138,7 +138,24 @@ def test_private_policy_roundtrip_reads_both_prices_and_pending_costs(campaigns,
                 if row["execution_status"] != "planned":
                     assert row["inherited_provider_calls"] == 1 and row["inherited_spend_usd"] == 7.5
                     assert row["spend_usd"] < .1
-        assert StudyLibrary(**snapshot["roots"], export_root=snapshot["root"] / "exports").public_catalog()["items"] == []
+        library = StudyLibrary(**snapshot["roots"], export_root=snapshot["root"] / "exports")
+        catalog = library.public_catalog()
+        assert len(catalog["items"]) == 1 and catalog["items"][0]["protocol_version"] == "research-study-v3"
+        item = catalog["items"][0]
+        view = library.verify(item["id"], item["result_sha256"])
+        assert len({row["cell_key"] for row in view["attempts"]}) == len(current["results"])
+        assert view["provider_allowance"]["usage"]["provider_calls"] == current["verification"]["provider_budget"]["provider_calls"]
+        assert view["provider_allowance"]["verified"] is True
+        if snapshot is not campaign["final"]:
+            assert view["contract"] == "operator-policy-working-study-v1" and view["comparison_available"] is False
+            assert not any(key in view for key in ("summary", "measurements", "outcomes"))
+        else:
+            assert view["contract"] == "operator-policy-study-comparison-v1"
+            for rows in view["measurements"].values():
+                assert len({row["cell_key"] for row in rows}) == len(current["results"])
+        public = json.dumps(view)
+        assert not any(value in public for value in ("base_url", "endpoint_reference", "source_database", '"llm"', '"auth"', "provider-budget.db"))
+        assert str(campaign["root"]).replace("\\", "\\\\") not in public
     assert tree_hashes(campaign["root"]) == before and len(campaign["posts"]) == campaign["calls"]
 
 
@@ -181,6 +198,14 @@ def test_policy_archive_respects_each_mutable_owner(campaigns, tmp_path, owner):
     with process_lock(Path(checked["verification"]["data_dir"]) / owner):
         with pytest.raises(ProcessLockBusy):
             export_study_bundle(path, tmp_path / "busy.zip", **roots)
+        library = StudyLibrary(**roots, export_root=tmp_path / "exports")
+        item = library.public_catalog()["items"][0]
+        view = library.verify(item["id"], item["result_sha256"])
+        assert view["state"] == "running" and view["export_available"] is False
+        assert view["provider_allowance"]["verified"] is False
+        assert view["provider_allowance"]["usage"]["provider_calls"] is None
+        assert len({row["cell_key"] for row in view["attempts"]}) == 8
+        assert all(row["eligibility"]["status"] == "pending" and "position" not in row for row in view["attempts"])
     assert not (tmp_path / "busy.zip").exists() and tree_hashes(*roots.values()) == before
 
 

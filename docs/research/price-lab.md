@@ -1,11 +1,12 @@
 # Price Discovery Lab: inspector and study workflow
 
 The price lab provides a historical price inspector and local UI/Python workflows for
-drafting, validating, running and reporting provider-free paired studies.
+drafting, validating, running and reporting scripted and decision-policy studies.
 Goods and equities share observation, eligibility and analysis contracts.
 [G1/F1 induced-value policy benchmarks](market-benchmarks.md) are also available.
-The full city integration, checkpoint-derived studies, live-model
-policy comparisons and empirical validation remain pending. See the
+City price links, explicit saved-world studies and bounded model-policy
+comparisons are implemented. Further city lenses and empirical validation
+remain pending. See the
 [implementation log](../plans/2026-09-06-research-city-execution.md).
 
 The CLI and local operator support `preserve_and_resume` studies, committed-day
@@ -39,7 +40,7 @@ cannot launch a study or advance the world.
 
 Open **Experiments → Price studies** with the observer cursor at **Live**.
 Choose a saved study to verify its evidence. The library lists local G2/F2
-study batches; catalog labels are unverified until that selection finishes.
+and v3 policy-study batches; catalog labels are unverified until that selection finishes.
 These independent study worlds are not counterfactual children of the world
 currently open. Historical views do not fetch current library artifacts.
 
@@ -57,8 +58,8 @@ identities before publishing a private ZIP. Repeating an unchanged export
 returns the same verified artifact. Downloads require operator authority and
 carry a SHA-256. The interface limits source evidence to 128 MiB and exposes
 at most 1,024 attempt/outcome observations; the CLI supports larger bundles.
-Catalog scans are bounded and list at most 100 batches. Checkpoint-based study
-forks remain pending.
+Catalog scans are bounded and list at most 100 batches. Saved-world studies
+retain the identities of their explicitly selected original snapshots.
 
 Working studies retain the same library entry through finalization. Select one
 to see assigned worlds, last saved days, pending eligibility and the original
@@ -66,6 +67,29 @@ budget. Comparisons are unavailable until finalization. A verified working
 checkpoint can be downloaded privately; active, damaged or not-yet-saved
 checkpoints cannot. **Open study controls** returns to its originating local
 operator job when one exists. Imported/CLI evidence keeps its original controls.
+
+## Compare configured decision policies
+
+Choose **Create a study → Goods and equities: decision policies** after the
+server owner configures a valid private design. Choose independent source
+worlds and one to three named model draws, then set the original physical-call,
+token, spend, active-time and storage limits. Validation contacts no provider.
+Review the model settings and declared token prices before checking inference
+approval and selecting **Run reviewed policy study**. Reloading never grants
+approval or launches a job.
+
+Preflight, execution, retries and every resume share that original allowance.
+The library shows physical reservations, reported usage, encumbered allowance
+and unknown usage separately. Per-cell logical calls and recorded costs belong
+to the new interval; inherited source costs are separate. The **Evidence model
+draw** filter changes rows, while paired effects keep the full declared design.
+Complete draws are averaged within each independent world before comparison.
+
+See the [operator policy contract](../plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for private design configuration, strict request fields and admission ceilings.
+Both fresh and explicitly selected saved worlds are supported. Broader model
+designs use the CLI. Imported evidence can be inspected without adopting its
+allowance into a new operator job.
 
 ## Create and monitor a local pilot
 
@@ -122,6 +146,8 @@ supervisor dies. Its separate execution lock prevents recovery while it is
 still stopping. A hard stop preserves partial evidence without a success receipt.
 Use the originating local run context to inspect or recover its job.
 
+## Local operator API
+
 The local-only endpoints are under `/api/v2/operator/research`:
 
 | Method and path | Contract |
@@ -130,10 +156,10 @@ The local-only endpoints are under `/api/v2/operator/research`:
 | `GET /studies/{id}?result_sha256=...` | Separate working-progress or finalized-comparison contract; no database/config/private path payloads |
 | `POST /studies/{id}/export` | Strict result/verification hash body; create or reuse an exclusively published private bundle |
 | `GET /exports/{token}` | Authorized attachment download with `private, no-store` caching |
-| `GET /capabilities` | Fixed pilot scope, resource limits and any active job in this run context |
+| `GET /capabilities` | Fixed pilot scope, resource limits, bounded private design choices and any active job in this run context |
 | `POST /drafts/validate` | Strict preset/seed/time/budget request; save a reviewable immutable draft without execution |
 | `GET /drafts/{id}` | Frozen protocol, digest, planning allowance and existing job reference |
-| `POST /drafts/{id}/launch` | Reviewed `draft_sha256` and a 32-character hexadecimal `idempotency_key`; return 202 with the existing or new job |
+| `POST /drafts/{id}/launch` | Reviewed `draft_sha256` and a 32-character hexadecimal `idempotency_key`; policy drafts additionally require `approve_live_inference: true`; return 202 with the existing or new job |
 | `GET /jobs/{id}` | Context-bound progress, terminal state and comparison reference; no log bodies or private paths |
 | `POST /jobs/{id}/recover` | Explicitly release an interrupted supervisor's slot without restarting it |
 | `POST /jobs/{id}/resume` | Bind `progress_sha256`, `resume_check_sha256` and a 32-character hexadecimal `idempotency_key`; return 202 with the linked continuation |
@@ -142,8 +168,9 @@ All require `run_id`, the current `fork_id` when applicable, `tick=live` and
 the existing operator session's `X-CSRF-Token`. Hosted-safe instances deny
 access. Stale context/evidence gives 409; unavailable evidence gives a sanitized
 422. IDs cannot select arbitrary filesystem paths. Optional local config
-`operator_research` supports `enabled`, `data_root` and `out_dir`; defaults are
-the checkout's `data/studies` and `reports/out`. Export artifacts live beside
+`operator_research` supports `enabled`, `data_root`, `out_dir`, `checkpoint_root`
+and `policy_root`; directory defaults are the checkout's `data/studies`,
+`reports/out`, `data/checkpoints` and `data/policies`. Export artifacts live beside
 the operator workspace database under `research-exports/`, outside scientific
 world tables. Drafts, job claims, progress and private supervisor logs live under
 `research-jobs/` beside the workspace database and are ignored by Git. They are

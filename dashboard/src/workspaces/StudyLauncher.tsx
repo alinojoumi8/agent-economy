@@ -5,9 +5,10 @@ import { workspaceApi } from "../app/api";
 import { useObserverViewState } from "../app/observerViewState";
 import { StudyLibrary } from "./StudyLibrary";
 import { StudyOrigin } from "./StudyOrigin";
-import { operatorStudyFrameMatches, priceStudyRequest, studyJobActive } from "./studyLauncherModel.js";
+import { StudyPolicyEvidence } from "./StudyPolicyEvidence";
+import { operatorStudyFrameMatches, policyStudyRequest, priceStudyRequest, studyJobActive } from "./studyLauncherModel.js";
 import { WorkspaceTable } from "./workspaceShared";
-import { studyPhaseLabel, studyPhasePosition } from "./studyLibraryModel.js";
+import { studyCost, studyPhaseLabel, studyPhasePosition } from "./studyLibraryModel.js";
 import "./study-launcher.css";
 
 const BASE = "/api/v2/operator/research";
@@ -16,9 +17,12 @@ const mib = (value: number) => `${(value / 1048576).toFixed(1)} MiB`;
 type CheckpointChoice = { id: string; database_sha256: string; receipt_sha256: string };
 type Form = { preset: string; origin: string; checkpoints: CheckpointChoice[]; warmup_ticks: number;
   seeds: string; horizon: number; intervention_tick: number; goods_firm_id: number;
-  max_wall_seconds: number; max_disk_mib: number; pause_after_ticks: number | null; pause_after_phase: string | null };
+  max_wall_seconds: number; max_disk_mib: number; pause_after_ticks: number | null; pause_after_phase: string | null;
+  design: { id: string; sha256: string } | null; model_replicates: string;
+  max_provider_calls: number; max_tokens: number; max_spend_usd: number };
 const initialForm: Form = { preset: "G2", origin: "fresh_genesis", checkpoints: [], warmup_ticks: 0,
-  seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128, pause_after_ticks: null, pause_after_phase: null };
+  seeds: "1, 2", horizon: 8, intervention_tick: 3, goods_firm_id: 2, max_wall_seconds: 180, max_disk_mib: 128, pause_after_ticks: null, pause_after_phase: null,
+  design: null, model_replicates: "draw1, draw2", max_provider_calls: 500, max_tokens: 1000000, max_spend_usd: 1 };
 
 export function PriceStudyWorkbench() {
   const [params, setParams] = useSearchParams();
@@ -51,6 +55,7 @@ export function StudyLauncher() {
   active.current = identity;
   useEffect(() => () => { if (active.current === identity) active.current = ""; }, [identity]);
   const [form, setForm] = useState<Form>(initialForm);
+  const [approvedDraft, setApprovedDraft] = useState("");
   useEffect(() => { setForm(initialForm); }, [runId, observer.fork, observer.tick]);
   const [operation, setOperation] = useState<{ identity: string; key: object; pending?: boolean; error?: string } | null>(null);
   const currentOperation = operation?.identity === identity ? operation : null;
@@ -78,6 +83,11 @@ export function StudyLauncher() {
     queryFn: ({ signal }) => read(`/drafts/${encodeURIComponent(draftId)}`, signal),
     enabled: live && Boolean(token && draftId), retry: false, refetchOnWindowFocus: false });
   const draft = matches(draftQuery.data, "operator-study-draft-v1", draftId) ? draftQuery.data : undefined;
+  const policy = Boolean(draft ? draft.policy_design : form.preset === "POLICY");
+  const policyCatalog = caps?.policy_designs?.contract === "operator-policy-design-catalog-v1" ? caps.policy_designs : undefined;
+  const policyLimits = policyCatalog?.limits;
+  const approvalIdentity = draft ? `${identity}:${draft.draft_sha256}` : "";
+  const approved = Boolean(approvalIdentity && approvedDraft === approvalIdentity);
   const choosingSaved = form.origin === "verified_checkpoints" && !draftId && !jobId;
   const checkpointQuery = useQuery({ queryKey: ["study-checkpoints", runId, observer.fork, observer.tick],
     queryFn: ({ signal }) => read("/checkpoints", signal), enabled: live && Boolean(token && caps?.checkpoint_fork && choosingSaved),
@@ -100,14 +110,15 @@ export function StudyLauncher() {
   const mutate = async (kind: "validate" | "launch" | "recover" | "resume") => {
     if (!live || !token || !caps || mismatch || synchronousPending.current) return;
     if (kind === "resume" && (!job?.resumable || !job.progress_sha256 || !job.resume_check_sha256)) return;
+    if (kind === "launch" && policy && !approved) return;
     synchronousPending.current = true;
     const requestIdentity = identity, key = {};
     setOperation({ identity, key, pending: true });
     try {
       const path = kind === "validate" ? "/drafts/validate"
         : kind === "launch" ? `/drafts/${draft.id}/launch` : `/jobs/${job.id}/${kind}`;
-      const body = kind === "validate" ? priceStudyRequest(form, checkpoints)
-        : kind === "launch" ? { draft_sha256: draft.draft_sha256, idempotency_key: draft.id }
+      const body = kind === "validate" ? (form.preset === "POLICY" ? policyStudyRequest(form, checkpoints, policyCatalog) : priceStudyRequest(form, checkpoints))
+        : kind === "launch" ? { draft_sha256: draft.draft_sha256, idempotency_key: draft.id, ...(policy ? { approve_live_inference: true } : {}) }
         : kind === "resume" ? { progress_sha256: job.progress_sha256, resume_check_sha256: job.resume_check_sha256, idempotency_key: job.id } : undefined;
       const result = await workspaceApi<any>(`${BASE}${path}?${query}`, { headers, method: "POST", body: body ? JSON.stringify(body) : undefined });
       if (active.current !== requestIdentity) return;
@@ -132,6 +143,7 @@ export function StudyLauncher() {
   };
   const edit = () => {
     if (draft) setForm({ ...initialForm, ...draft.request, checkpoints: draft.request.checkpoints ?? [],
+      model_replicates: (draft.request.model_replicates ?? ["draw1", "draw2"]).join(", "),
       seeds: (draft.request.seeds ?? []).join(", ") });
     void capabilities.refetch();
     navigate({ study_draft: null, study_job: null });
@@ -145,8 +157,8 @@ export function StudyLauncher() {
 
   return <section className="study-launcher" aria-label="Create a price study">
     <header><p className="world-os-kicker">Local operator · Independent worlds</p><h3>{job ? "Study execution" : draft ? "Review the validated study" : "Draft a price study"}</h3>
-      <p>Compare a baseline with one declared intervention. Both goods and equities are measured in every study.</p></header>
-    <p className="study-launcher__scope">These pilots use the 14-agent profile and scripted decisions. Choose fresh worlds or compatible saved worlds explicitly. New external provider calls and spend are zero.</p>
+      <p>Compare a baseline with a declared intervention or decision policy. Both goods and equities are measured in every study.</p></header>
+    <p className="study-launcher__scope">{policy ? "Policy pilots use the 14-agent profile and owner-configured models. Validation makes no provider calls. Launch requires explicit approval of the original inference allowance." : "These pilots use the 14-agent profile and scripted decisions. Choose fresh worlds or compatible saved worlds explicitly. New external provider calls and spend are zero."}</p>
     {(session.isFetching || capabilities.isFetching || draftQuery.isFetching || (jobQuery.isFetching && !job)) && <p role="status">Loading the local study workspace…</p>}
     {error && <p role="alert" className="world-os-form-error">{error}</p>}
     {caps?.launch_blocked && !job && <aside className="study-launcher__callout"><p>{caps.reason || "A study already owns the local execution slot. You can still prepare a draft."}</p>
@@ -156,16 +168,29 @@ export function StudyLauncher() {
       <fieldset disabled={!caps || pending}><legend>Study parameters</legend><div className="study-launcher__fields">
         <label>Initial conditions<select value={form.origin} onChange={event => setForm({ ...form, origin: event.target.value, checkpoints: [] })}>
           <option value="fresh_genesis">Fresh worlds</option><option value="verified_checkpoints" disabled={!caps?.checkpoint_fork}>Saved worlds</option></select></label>
-        <label>Research question<select value={form.preset} onChange={event => setForm({ ...form, preset: event.target.value })}>
-          <option value="G2">Goods: input-cost increase (G2)</option><option value="F2">Equities: public firm information (F2)</option></select></label>
+        <label>Research question<select value={form.preset} onChange={event => setForm({ ...form, preset: event.target.value,
+          max_wall_seconds: event.target.value === "POLICY" ? 300 : Math.min(form.max_wall_seconds, 300),
+          max_disk_mib: event.target.value === "POLICY" ? 256 : Math.min(form.max_disk_mib, 128) })}>
+          <option value="G2">Goods: input-cost increase (G2)</option><option value="F2">Equities: public firm information (F2)</option>
+          <option value="POLICY" disabled={!caps?.live_models}>Goods and equities: decision policies</option></select></label>
+        {policy && <>
+          <label>Configured policy design<select required value={form.design?.id ?? ""} onChange={event => {
+            const selected = policyCatalog?.items.find((item: any) => item.id === event.target.value);
+            setForm({ ...form, design: selected ? { id: selected.id, sha256: selected.sha256 } : null });
+          }}><option value="">Choose policies</option>{policyCatalog?.items.map((item: any) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+          <label>Model draw labels<input required value={form.model_replicates} onChange={event => setForm({ ...form, model_replicates: event.target.value })} aria-describedby="study-draw-help" /></label>
+          <label>Original physical-call limit<input type="number" min={1} max={policyLimits?.max_provider_calls} required value={form.max_provider_calls} onChange={event => setForm({ ...form, max_provider_calls: Number(event.target.value) })} /></label>
+          <label>Original token limit<input type="number" min={1} max={policyLimits?.max_tokens} required value={form.max_tokens} onChange={event => setForm({ ...form, max_tokens: Number(event.target.value) })} /></label>
+          <label>Original spend limit (USD)<input type="number" min={0.000001} max={policyLimits?.max_spend_usd} step="any" required value={form.max_spend_usd} onChange={event => setForm({ ...form, max_spend_usd: Number(event.target.value) })} /></label>
+        </>}
         {form.origin === "fresh_genesis" ? <label>World seeds<input value={form.seeds} onChange={event => setForm({ ...form, seeds: event.target.value })} aria-describedby="study-seed-help" /></label>
-          : <label>Additional warmup (days)<input type="number" min={0} max={29} required value={form.warmup_ticks}
+          : !policy && <label>Additional warmup (days)<input type="number" min={0} max={29} required value={form.warmup_ticks}
             onChange={event => setForm({ ...form, warmup_ticks: Number(event.target.value) })} /></label>}
         <label>Horizon (days)<input type="number" min={3} max={30} required value={form.horizon} onChange={event => setForm({ ...form, horizon: Number(event.target.value) })} /></label>
-        <label>Intervention day<input type="number" min={1} max={form.horizon} required value={form.intervention_tick} onChange={event => setForm({ ...form, intervention_tick: Number(event.target.value) })} /></label>
-        <label>Goods firm<select value={form.goods_firm_id} onChange={event => setForm({ ...form, goods_firm_id: Number(event.target.value) })}><option value={2}>Firm 2</option><option value={3}>Firm 3</option></select></label>
-        <label>Wall-time limit (seconds)<input type="number" min={10} max={300} required value={form.max_wall_seconds} onChange={event => setForm({ ...form, max_wall_seconds: Number(event.target.value) })} /></label>
-        <label>Evidence disk budget (MiB)<input type="number" min={32} max={128} required value={form.max_disk_mib} onChange={event => setForm({ ...form, max_disk_mib: Number(event.target.value) })} /></label>
+        {!policy && <><label>Intervention day<input type="number" min={1} max={form.horizon} required value={form.intervention_tick} onChange={event => setForm({ ...form, intervention_tick: Number(event.target.value) })} /></label>
+          <label>Goods firm<select value={form.goods_firm_id} onChange={event => setForm({ ...form, goods_firm_id: Number(event.target.value) })}><option value={2}>Firm 2</option><option value={3}>Firm 3</option></select></label></>}
+        <label>Wall-time limit (seconds)<input type="number" min={10} max={policy ? policyLimits?.max_wall_seconds : 300} required value={form.max_wall_seconds} onChange={event => setForm({ ...form, max_wall_seconds: Number(event.target.value) })} /></label>
+        <label>Evidence disk budget (MiB)<input type="number" min={32} max={policy ? policyLimits?.max_disk_mib : 128} required value={form.max_disk_mib} onChange={event => setForm({ ...form, max_disk_mib: Number(event.target.value) })} /></label>
         {caps?.resume && <label>Pause after saved days (optional)<input type="number" min={1} max={form.horizon - 1} value={form.pause_after_ticks ?? ""}
           onChange={event => setForm({ ...form, pause_after_ticks: event.target.value ? Number(event.target.value) : null, pause_after_phase: null })} aria-describedby="study-pause-help" /></label>}
         {Array.isArray(caps?.pause_phases) && <label>Pause after a step (optional)<select value={form.pause_after_phase ?? ""}
@@ -173,8 +198,13 @@ export function StudyLauncher() {
           <option value="">No step pause</option>{caps.pause_phases.map((phase: string) => <option key={phase} value={phase}>{studyPhaseLabel(phase)}</option>)}
         </select></label>}
       </div><p id="study-seed-help">Use one to five unique seeds. At least two usable pairs are required for a bootstrap interval. Equity target: listed firm 1; currency: USD.</p>
+      {policy && <p id="study-draw-help">Use one to three distinct labels, such as draw1, draw2. These are repeated decisions within each source world, not additional independent worlds. Readiness checks and retries consume the same original allowance.</p>}
+      {policy && <button type="button" disabled={capabilities.isFetching} onClick={() => {
+        setForm({ ...form, design: null }); void capabilities.refetch();
+      }}>Refresh policy designs</button>}
+      {!caps?.live_models && policyCatalog && <p>No valid policy designs are configured. The server owner can add a private design to the configured policy directory to enable model comparisons.</p>}
       {choosingSaved && <section className="study-launcher__sources" aria-label="Choose saved worlds">
-        <h4>Choose saved worlds</h4><p>Choose the same completed day from one to five independent worlds. Their seeds are retained. Horizon and intervention are absolute simulation days; warmup starts after the saved day.</p>
+        <h4>Choose saved worlds</h4><p>Choose the same completed day from one to five independent worlds. Their seeds are retained. {policy ? "The horizon is an absolute simulation day, with at least three new days after the saved day. Each policy begins at the same saved state." : "Horizon and intervention are absolute simulation days; warmup starts after the saved day."}</p>
         <button type="button" disabled={checkpointQuery.isFetching} onClick={() => { setForm({ ...form, checkpoints: [] }); void checkpointQuery.refetch(); }}>Refresh saved worlds</button>
         {checkpointQuery.isFetching && <p role="status">Checking compatible saved states…</p>}
         {checkpoints?.items.length === 0 && <p>No compatible closed snapshots were found. The local catalog accepts the scripted pilot profile and snapshots up to {caps?.checkpoint_source_mib ?? 16} MiB. The checkpoint directory is configured on the server.</p>}
@@ -196,7 +226,7 @@ export function StudyLauncher() {
         </>}
       </section>}
       {caps?.resume && <p id="study-pause-help">Leave blank to run to completion. Choose a saved-day limit or a step in the first unfinished world. An unfinished day remains pending and has no price comparison. Resume uses the remaining original budget.</p>}
-      <button type="submit" disabled={choosingSaved && (!checkpoints || !form.checkpoints.length)}>{pending ? "Validating…" : "Validate draft"}</button></fieldset>
+      <button type="submit" disabled={(choosingSaved && (!checkpoints || !form.checkpoints.length)) || (policy && !form.design)}>{pending ? "Validating…" : "Validate draft"}</button></fieldset>
       <p>Validation preserves an immutable protocol and estimates storage. It creates no simulated worlds.</p>
     </form>}
     {draft && <section aria-label="Validated study protocol" className="study-launcher__review">
@@ -208,28 +238,33 @@ export function StudyLauncher() {
         <div><dt>Source + replay ticks</dt><dd>{draft.estimate.source_and_replay_ticks}</dd></div>
         <div><dt>Storage planning allowance</dt><dd>{mib(draft.estimate.disk_bytes)} / {mib(draft.estimate.disk_bytes_limit)} budget</dd></div>
         <div><dt>Wall-time limit</dt><dd>{draft.estimate.wall_seconds_limit} seconds</dd></div>
-        <div><dt>Provider calls / spend</dt><dd>0 / $0</dd></div>
+        <div><dt>Provider calls / spend during validation</dt><dd>0 / $0</dd></div>
         {draft.request.pause_after_ticks != null && <div><dt>Planned pause</dt><dd>After {draft.request.pause_after_ticks} saved days in the first world</dd></div>}
         {draft.request.pause_after_phase != null && <div><dt>Planned pause</dt><dd>After {studyPhaseLabel(draft.request.pause_after_phase)} in the first world</dd></div>}
       </dl>
+      {draft.policy_design && !jobId && <StudyPolicyEvidence design={draft.policy_design} allowance={draft.provider_allowance} />}
       <p>{draft.estimate.method}. Actual disk use is checked every 200 ms; a write or final report can exceed the threshold.</p>
       <div className="study-launcher__arms">{draft.spec.arms.map((arm: any) => <article key={arm.key}><h4>{arm.role === "baseline" ? "Baseline" : "Treatment"}</h4><p>{arm.label}</p>
-        {arm.changes.shocks.length ? arm.changes.shocks.map((shock: any, index: number) => <p key={index}>Day {shock.tick}: {shock.kind === "oil" ? `input commodity cost × ${shock.multiplier}` : `public adverse information about firm ${shock.firm_id}`}</p>) : <p>No intervention.</p>}</article>)}</div>
-      <p>Goods target: firm {draft.request.goods_firm_id}; equity target: firm {draft.request.equity_firm_id}. The preset's primary outcome is declared before execution; the other outcomes remain exploratory.</p>
+        {arm.changes?.shocks?.length ? arm.changes.shocks.map((shock: any, index: number) => <p key={index}>Day {shock.tick}: {shock.kind === "oil" ? `input commodity cost × ${shock.multiplier}` : `public adverse information about firm ${shock.firm_id}`}</p>) : <p>{policy ? `Decision policy: ${arm.policy}. Common economic conditions.` : "No intervention."}</p>}</article>)}</div>
+      <p>{policy ? "Goods and equity prices are equally primary outcomes. Policy comparisons use common observations, feasible actions and economic parameters." : `Goods target: firm ${draft.request.goods_firm_id}; equity target: firm ${draft.request.equity_firm_id}. The preset's primary outcome is declared before execution; the other outcomes remain exploratory.`}</p>
       <details><summary>Frozen protocol and limitations</summary><p>Draft SHA-256: <code>{draft.draft_sha256}</code></p><p>Source tree: <code>{draft.source_identity.source_tree_sha256}</code></p>
         <ul>{draft.spec.limitations.map((item: string) => <li key={item}>{item}</li>)}</ul>
         <pre>{JSON.stringify(draft.spec, null, 2)}</pre></details>
       {!jobId && <div className="study-launcher__actions">
+        {policy && !draft.job_id && <label className="study-launcher__approval"><input type="checkbox" checked={approved} onChange={event => setApprovedDraft(event.target.checked ? approvalIdentity : "")} />
+          <span>I approve live inference for this reviewed draft, within {draft.request.max_provider_calls} physical calls, {draft.request.max_tokens} tokens and {studyCost(draft.request.max_spend_usd)} total. Readiness checks and any resume share these limits.</span></label>}
         {draft.job_id ? <button type="button" onClick={() => navigate({ study_job: draft.job_id })}>Open this draft's existing job</button>
-          : <button type="button" disabled={!caps || caps.launch_blocked || pending || Boolean(mismatch)} onClick={() => { void mutate("launch"); }}>{pending ? "Starting…" : draft.origin === "verified_checkpoints" ? "Run saved-world study" : "Run independent study"}</button>}
+          : <button type="button" disabled={!caps || caps.launch_blocked || pending || Boolean(mismatch) || (policy && !approved)} onClick={() => { void mutate("launch"); }}>{pending ? "Starting…" : policy ? "Run reviewed policy study" : draft.origin === "verified_checkpoints" ? "Run saved-world study" : "Run independent study"}</button>}
         <button type="button" onClick={edit} disabled={pending}>Edit as a new draft</button>
       </div>}
     </section>}
     {job && <section className="study-launcher__job" aria-label="Study job status">
       <h4>{words(job.status)}</h4><p role="status">{job.finished_cells} / {job.expected_cells} world attempts reported as finished. Eligibility requires the full horizon and verified replay.</p>
       {job.reason && <p>{words(job.reason)}</p>}
-      <WorkspaceTable<any> caption="Study execution progress" rows={job.cells.map((row: any, index: number) => ({ ...row, id: index }))} empty="Waiting for the first world attempt to report."
+      {job.policy_design && <StudyPolicyEvidence design={job.policy_design} allowance={job.provider_allowance} />}
+      <WorkspaceTable<any> caption="Study execution progress" rows={job.cells.map((row: any, index: number) => ({ ...row, id: row.cell_key ?? index }))} empty="Waiting for the first world attempt to report."
         columns={[{ key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
+          ...(job.policy_design ? [{ key: "model_replicate", label: "Model draw", render: (row: any) => row.model_replicate }] : []),
           { key: "execution_status", label: "Execution", render: row => words(row.execution_status) },
           { key: "ticks", label: "Saved day", render: row => row.ticks ?? "Unavailable" },
           { key: "position", label: "Next step", render: row => studyPhasePosition(row, job.resumable || job.status === "completed") },

@@ -210,7 +210,8 @@ def _validate_resume(directory: str | Path, spec: StudySpec, config: dict, *,
         raise ValueError("supervised time is less than recorded execution time")
     if active >= spec.operations.max_wall_seconds or _disk_bytes(data) + _disk_bytes(report) >= spec.operations.max_disk_bytes:
         raise ValueError("working study has exhausted its cumulative budget")
-    return {"batch": batch, "records": records, "results": payload["results"], "active_wall_seconds": active}
+    return {"batch": batch, "records": records, "results": payload["results"], "active_wall_seconds": active,
+            **({"provider_budget": {**usage, "sealed": False}} if policy else {})}
 
 
 def verify_supervised_result(payload: dict, *, data_dir: Path, report_dir: Path) -> None:

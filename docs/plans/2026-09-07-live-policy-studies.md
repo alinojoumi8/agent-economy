@@ -179,7 +179,9 @@ unresolved accounting and an unfinished journal, which cannot resume automatical
 
 This supports recovery from cooperative closed boundaries. An unknown interrupted
 transaction cannot resume automatically. Private evidence can be exported at a
-current closed pause. The existing operator does not yet advertise v3 capability.
+current closed pause. The [local operator workflow](2026-09-07-policy-operator-workflow.md)
+now provides v3 evidence views and reviewed launches when a valid private design
+is configured; it preserves the original allowance across recovery.
 
 ### Implemented: declared policies from saved worlds
 

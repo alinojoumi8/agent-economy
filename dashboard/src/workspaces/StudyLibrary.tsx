@@ -4,28 +4,30 @@ import { useParams, useSearchParams } from "react-router";
 import { workspaceApi } from "../app/api";
 import { useObserverViewState } from "../app/observerViewState";
 import { WorkspaceTable } from "./workspaceShared";
-import { studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "./studyLibraryModel.js";
+import { studyCost, studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "./studyLibraryModel.js";
 import { operatorStudyFrameMatches } from "./studyLauncherModel.js";
 import { StudyOrigin, type OriginDetails } from "./StudyOrigin";
+import { StudyPolicyEvidence, type PolicyDesign, type ProviderAllowance } from "./StudyPolicyEvidence";
 import "./price-lab.css";
 import "./study-library.css";
 
-type CatalogItem = { id: string; title: string; domains: string[]; result_sha256: string; kind?: "working" | "finalized" };
-type MeasurementRow = { id: number; arm: string; seed: number; value: number | null; status: string; age_ticks: number | null };
+type CatalogItem = { id: string; title: string; domains: string[]; result_sha256: string; kind?: "working" | "finalized"; protocol_version?: string };
+type MeasurementRow = { id: string | number; arm: string; seed: number; model_replicate?: string; value: number | null; status: string; age_ticks: number | null };
 type Catalog = { context: any; contract: string; items: CatalogItem[]; truncated: boolean; omitted: number; scope: string };
-type Comparison = { context: any; contract: "operator-study-comparison-v1"; id: string; title: string; hypothesis: string; limitations: string[];
+type Comparison = { context: any; contract: "operator-study-comparison-v1" | "operator-policy-study-comparison-v1"; id: string; title: string; hypothesis: string; limitations: string[];
   arms: Array<{ key: string; label: string; role: string }>; measurement_window: number[]; outcomes: any[];
   summary: { baseline_arm: string; coverage: Record<string, any>; metrics: any; exclusions: any[] };
-  attempts: any[]; verification: any; verification_sha256: string; manifest_sha256: string; source_identity: any; origin_details?: OriginDetails };
+  attempts: any[]; verification: any; verification_sha256: string; manifest_sha256: string; source_identity: any; origin_details?: OriginDetails;
+  policy_design?: PolicyDesign; provider_allowance?: ProviderAllowance; world_coverage?: Record<string, any>; cell_coverage?: Record<string, any> };
 type Working = Omit<Comparison, "contract" | "outcomes" | "summary"> & {
-  contract: "operator-working-study-v1"; state: string; comparison_available: false; export_available: boolean;
+  contract: "operator-working-study-v1" | "operator-policy-working-study-v1"; state: string; comparison_available: false; export_available: boolean;
   budget: { max_wall_seconds: number; active_wall_seconds: number | null; max_disk_bytes: number }; operator_job?: any };
 
 const words = (value: unknown) => String(value ?? "Unavailable").replaceAll("_", " ");
-const isWorking = (value: Comparison | Working): value is Working => value.contract === "operator-working-study-v1";
-const isComparison = (value: Comparison | Working): value is Comparison => value.contract === "operator-study-comparison-v1";
+const isWorking = (value: Comparison | Working): value is Working => ["operator-working-study-v1", "operator-policy-working-study-v1"].includes(value.contract);
+const isComparison = (value: Comparison | Working): value is Comparison => ["operator-study-comparison-v1", "operator-policy-study-comparison-v1"].includes(value.contract);
 
-function DomainComparison({ study, domain, treatment }: { study: Comparison; domain: string; treatment: string }) {
+function DomainComparison({ study, domain, treatment, draw }: { study: Comparison; domain: string; treatment: string; draw: string }) {
   const rows = studyOutcomeRows(study, domain, treatment);
   const label = domain === "goods" ? "Goods" : "Equities";
   return <article className="world-os-workspace-card" aria-label={`${label} study comparison`}>
@@ -43,11 +45,12 @@ function DomainComparison({ study, domain, treatment }: { study: Comparison; dom
       <p>95% paired bootstrap interval: {row.interval ? `${studyNumber(row.interval[0])} to ${studyNumber(row.interval[1])}` : "Unavailable"}.</p>
       {row.exclusions.length > 0 && <details><summary>{row.exclusions.length} excluded pair{row.exclusions.length === 1 ? "" : "s"}</summary>
         <ul>{row.exclusions.map((item: any, index: number) => <li key={index}>Seed {item.seed}: {words(item.reason || item.reasons?.join(", "))}</li>)}</ul></details>}
-      <details><summary>Values and execution age by seed</summary>
-        <WorkspaceTable<MeasurementRow> caption={`Outcome evidence for ${row.label}`} rows={row.measurements.map((item: any, index: number) => ({ ...item, id: index }))}
+      <details><summary>Values and execution age by seed{study.policy_design ? " and model draw" : ""}</summary>
+        <WorkspaceTable<MeasurementRow> caption={`Outcome evidence for ${row.label}`} rows={row.measurements.filter((item: any) => !draw || item.model_replicate === draw).map((item: any, index: number) => ({ ...item, id: item.cell_key || index }))}
           columns={[
             { key: "arm", label: "Arm", render: item => words(item.arm) },
             { key: "seed", label: "Seed", render: item => item.seed },
+            ...(study.policy_design ? [{ key: "draw", label: "Model draw", render: (item: MeasurementRow) => item.model_replicate }] : []),
             { key: "value", label: "Value", render: item => studyNumber(item.value) },
             { key: "status", label: "Evidence", render: item => words(item.status) },
             { key: "age", label: "Execution age (ticks)", render: item => item.age_ticks == null ? "Not recorded for this measure" : item.age_ticks },
@@ -83,9 +86,11 @@ export function StudyLibrary() {
     queryFn: ({ signal }) => workspaceApi<Comparison | Working>(`/api/v2/operator/research/studies/${encodeURIComponent(studyId)}?${detailQuery}`, { headers, signal }),
     enabled: Boolean(live && token && selected), retry: false, refetchOnWindowFocus: false });
   const study = selected && !detail.isFetching && studyFrameMatches(detail.data,
-    { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind }) ? detail.data : undefined;
+    { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind, protocol: selected.protocol_version }) ? detail.data : undefined;
   const comparison = study && isComparison(study) ? study : undefined;
   const working = study && isWorking(study) ? study : undefined;
+  const draw = study?.policy_design?.model_replicates.includes(params.get("study_draw") || "") ? params.get("study_draw")! : "";
+  const visibleAttempts = study?.attempts.filter(row => !draw || row.model_replicate === draw) || [];
   const operatorJob = working?.operator_job?.study_id === studyId && operatorStudyFrameMatches(working.operator_job,
     scope, "operator-study-job-status-v1", working.operator_job.id) ? working.operator_job : undefined;
   const treatment = study?.arms.find(arm => arm.key === params.get("study_arm") && arm.role === "treatment")?.key
@@ -98,7 +103,7 @@ export function StudyLibrary() {
   const choose = (key: string, value: string) => setParams(previous => {
     const next = new URLSearchParams(previous);
     if (value) next.set(key, value); else next.delete(key);
-    if (key === "study") next.delete("study_arm");
+    if (key === "study") { next.delete("study_arm"); next.delete("study_draw"); }
     return next;
   });
   const download = async () => {
@@ -131,7 +136,7 @@ export function StudyLibrary() {
   };
   const mismatch = (catalog.data && !catalog.isFetching && !studyFrameMatches(catalog.data, scope))
     || (selected && detail.data && !detail.isFetching && !studyFrameMatches(detail.data,
-      { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind }));
+      { ...scope, studyId, resultHash: selected.result_sha256, kind: selected.kind, protocol: selected.protocol_version }));
   const error = session.error || catalog.error || detail.error
     || (mismatch ? new Error("Study evidence does not match the selected run, fork, study or result identity.") : null);
   const shownExport = exportState?.identity === identity ? exportState : null;
@@ -151,6 +156,9 @@ export function StudyLibrary() {
         {comparison.arms.filter(arm => arm.role === "treatment").map(arm => <option key={arm.key} value={arm.key}>{arm.label}</option>)}
       </select></label>}
       {study && <button type="button" onClick={() => { void detail.refetch(); }}>Verify again</button>}
+      {study?.policy_design && <label>Evidence model draw <select aria-label="Evidence model draw" value={draw} onChange={event => choose("study_draw", event.target.value)}>
+        <option value="">All model draws</option>{study.policy_design.model_replicates.map(value => <option key={value} value={value}>{value}</option>)}
+      </select></label>}
     </div>
     {(session.isFetching || catalog.isFetching || detail.isFetching) && <p role="status">Checking saved study evidence…</p>}
     {error && <p className="world-os-form-error" role="alert">{error instanceof Error ? error.message : "Study library is unavailable."}</p>}
@@ -159,12 +167,15 @@ export function StudyLibrary() {
     {currentCatalog && !currentCatalog.items.length && <div className="world-os-empty"><h3>No saved price studies</h3><p>Choose Create a study to prepare a G2 or F2 pilot, or use the local research commands.</p></div>}
     {studyId && currentCatalog && !selected && <p role="alert">This study is not in the current local catalog.</p>}
     {study && <StudyOrigin origin={study.origin_details} />}
+    {study?.policy_design && study.provider_allowance && <StudyPolicyEvidence design={study.policy_design} allowance={study.provider_allowance} />}
+    {study?.policy_design && <p>Model-draw selection filters individual execution evidence. Paired estimates retain all declared draws.</p>}
     {working && <section className="study-library__verdict" aria-label="Working study progress">
       <h4>Working study · {words(working.state)}</h4>
       <p>{working.verification.status === "verified" ? "Saved checkpoint verified. Study eligibility is pending." : "This checkpoint has not been verified. Refresh after execution stops or inspect the job status."}</p>
       <p>Price-effect comparisons become available after finalization and replay checks. Earlier completed cells and unfinished assignments are preserved below.</p>
-      <WorkspaceTable caption="Saved study days" rows={working.attempts.map((row, index) => ({ ...row, id: index }))} columns={[
+      <WorkspaceTable caption="Saved study days" rows={visibleAttempts.map((row, index) => ({ ...row, id: row.cell_key || index }))} columns={[
         { key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
+        ...(working.policy_design ? [{ key: "draw", label: "Model draw", render: (row: any) => row.model_replicate }] : []),
         { key: "ticks", label: "Saved day / horizon", render: row => `${row.ticks ?? "Unavailable"} / ${row.expected_ticks}` },
         { key: "position", label: "Next step", render: row => studyPhasePosition(row, working.verification.status === "verified") },
         { key: "execution", label: "Execution", render: row => words(row.execution_status) },
@@ -180,9 +191,9 @@ export function StudyLibrary() {
       <div className="study-library__verdict" aria-live="polite"><strong>{comparison.verification.status === "verified" ? "Evidence verified" : "Evidence needs attention"}</strong>
         <span>Measurement ticks {comparison.measurement_window.join("–")} · exploratory paired worlds</span>
         <p>{comparison.hypothesis}</p><p>Small samples and narrow intervals do not establish real-economy fit. A zero response and an unavailable observation are different results.</p>
-        <p>Arm means use each arm's available eligible observations. Paired differences use matching eligible seeds.</p>
+        <p>{comparison.policy_design ? "Arm means use complete eligible world-level observations. Paired differences match independent worlds." : "Arm means use each arm's available eligible observations. Paired differences use matching eligible seeds."}</p>
       </div>
-      <WorkspaceTable caption="Study attempt coverage" rows={comparison.arms.map(arm => ({ ...arm, ...comparison.summary.coverage[arm.key], id: arm.key }))}
+      <WorkspaceTable caption={comparison.policy_design ? "World replication coverage" : "Study attempt coverage"} rows={comparison.arms.map(arm => ({ ...arm, ...(comparison.world_coverage || comparison.summary.coverage)[arm.key], id: arm.key }))}
         columns={[
           { key: "arm", label: "Arm", render: row => row.label },
           { key: "assigned", label: "Assigned", render: row => row.assigned },
@@ -190,13 +201,21 @@ export function StudyLibrary() {
           { key: "completed", label: "Completed", render: row => row.completed },
           { key: "eligible", label: "Eligible", render: row => row.eligible },
         ]} />
-      <div className="price-lab__domains"><DomainComparison study={comparison} domain="goods" treatment={treatment} />
-        <DomainComparison study={comparison} domain="equities" treatment={treatment} /></div>
+      {comparison.cell_coverage && <WorkspaceTable caption="Model execution coverage" rows={comparison.arms.map(arm => ({ ...arm, ...comparison.cell_coverage![arm.key], id: arm.key }))} columns={[
+        { key: "arm", label: "Arm", render: row => row.label }, { key: "assigned", label: "Assigned cells", render: row => row.assigned },
+        { key: "started", label: "Started", render: row => row.started }, { key: "completed", label: "Completed", render: row => row.completed },
+        { key: "eligible", label: "Eligible", render: row => row.eligible },
+      ]} />}
+      <div className="price-lab__domains"><DomainComparison study={comparison} domain="goods" treatment={treatment} draw={draw} />
+        <DomainComparison study={comparison} domain="equities" treatment={treatment} draw={draw} /></div>
     </>}
     {study && <>
       <details><summary>Attempt and exclusion evidence</summary>
-        <WorkspaceTable caption="Preserved study attempts" rows={study.attempts.map((row, index) => ({ ...row, id: index }))} columns={[
+        <WorkspaceTable caption="Preserved study attempts" rows={visibleAttempts.map((row, index) => ({ ...row, id: row.cell_key || index }))} columns={[
           { key: "arm", label: "Arm", render: row => words(row.arm) }, { key: "seed", label: "Seed", render: row => row.seed },
+          ...(study.policy_design ? [{ key: "draw", label: "Model draw", render: (row: any) => row.model_replicate },
+            { key: "cost", label: "New-period logical calls / recorded cost", render: (row: any) => `${studyNumber(row.provider_calls)} / ${studyCost(row.spend_usd)}` },
+            { key: "inherited", label: "Inherited calls / cost", render: (row: any) => `${studyNumber(row.inherited_provider_calls)} / ${studyCost(row.inherited_spend_usd)}` }] : []),
           { key: "execution", label: "Execution", render: row => words(row.execution_status) },
           { key: "ticks", label: "Ticks", render: row => `${row.ticks} / ${row.expected_ticks}` },
           { key: "eligible", label: "Eligibility", render: row => words(row.eligibility.status) },
@@ -206,9 +225,9 @@ export function StudyLibrary() {
       </details>
       <details><summary>Protocol, costs and limitations</summary>
         <dl className="study-library__metadata">
-          <div><dt>Provider calls</dt><dd>{studyNumber(study.verification.operations?.provider_calls)}</dd></div>
-          <div><dt>Provider spend (USD)</dt><dd>{studyNumber(study.verification.operations?.provider_spend_usd)}</dd></div>
-          <div><dt>Cost evidence</dt><dd>{words(study.verification.operations?.status)}</dd></div>
+          {!study.policy_design && <><div><dt>Provider calls</dt><dd>{studyNumber(study.verification.operations?.provider_calls)}</dd></div>
+            <div><dt>Provider spend (USD)</dt><dd>{studyNumber(study.verification.operations?.provider_spend_usd)}</dd></div>
+            <div><dt>Cost evidence</dt><dd>{words(study.verification.operations?.status)}</dd></div></>}
           <div><dt>Model and input snapshots</dt><dd>{words(study.verification.declared_context)}</dd></div>
           <div><dt>Manifest SHA-256</dt><dd><code>{study.manifest_sha256}</code></dd></div>
           <div><dt>Source commit</dt><dd><code>{study.source_identity.git_commit}</code></dd></div>

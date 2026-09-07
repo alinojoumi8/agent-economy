@@ -65,11 +65,9 @@ class StudyLibrary:
                     study = manifest.get("study")
                     if not isinstance(study, dict):
                         raise StudyArtifactError("invalid catalog metadata")
-                    # Policy transport is available through the private CLI.
-                    # The current operator view does not yet support v3 cells.
-                    if study.get("protocol_version") == "research-study-v3":
-                        continue
-                    if kind == "finalized" and payload.get("contract") != "study-result-v1":
+                    policy = study.get("protocol_version") == "research-study-v3"
+                    contracts = ("policy-study-result-v1", "policy-study-result-v2") if policy else ("study-result-v1",)
+                    if kind == "finalized" and payload.get("contract") not in contracts:
                         continue
                     if kind == "working":
                         protocol = working_protocol(manifest["study"]["operations"]["pause_policy"])
@@ -83,6 +81,7 @@ class StudyLibrary:
                         "domains": [name for name in study["domains"] if name in {"goods", "equities"}],
                         "result_sha256": file_sha256(path), "verification": "not_checked",
                         "kind": kind,
+                        **({"protocol_version": "research-study-v3"} if policy else {}),
                         "_path": path})
                 except (OSError, ValueError, KeyError, TypeError):
                     omitted += 1
@@ -144,6 +143,9 @@ class StudyLibrary:
                           "eligibility": row["eligibility"], "ticks": row.get("ticks"),
                           "expected_ticks": row["expected_ticks"]} for row in result["results"]]}
         payload["verification_sha256"] = verification_identity(result)
+        if spec["protocol_version"] == "research-study-v3":
+            from research.policy_operator import decorate_policy_comparison
+            return decorate_policy_comparison(payload, result)
         return payload
 
     def _working_view(self, study_id: str, path: Path, expected_sha256: str) -> dict:
@@ -157,6 +159,10 @@ class StudyLibrary:
             frozen = payload["batch"]
         _location({"batch": frozen}, path.parent / "results.json", self.data_root, self.out_dir)
         spec = StudySpec.model_validate(frozen["manifest"]["study"])
+        if spec.policy_design is not None:
+            from research.policy_operator import working_policy_view
+            return working_policy_view(study_id, path, expected_sha256, frozen=frozen, payload=payload,
+                spec=spec, data_root=self.data_root, out_dir=self.out_dir)
         if len(spec.arms) * len(spec.randomness.seeds) > 512:
             raise StudyArtifactError("working study exceeds the interface's assignment limit")
         state, checked = "checkpoint_unavailable", None

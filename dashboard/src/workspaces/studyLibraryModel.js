@@ -1,10 +1,13 @@
 /** @param {any} frame
- * @param {{runId: string, fork: string|null, tick: string, studyId?: string, resultHash?: string, kind?: string}} scope */
-export function studyFrameMatches(frame, { runId, fork, tick, studyId, resultHash, kind = "finalized" }) {
+ * @param {{runId: string, fork: string|null, tick: string, studyId?: string, resultHash?: string, kind?: string, protocol?: string}} scope */
+export function studyFrameMatches(frame, { runId, fork, tick, studyId, resultHash, kind = "finalized", protocol }) {
   if (!frame || tick !== "live" || frame.context?.tick !== "live"
     || frame.context?.run_id !== runId || (frame.context?.fork_id ?? null) !== (fork ?? null)) return false;
+  const policy = protocol === "research-study-v3";
+  const contract = kind === "working" ? (policy ? "operator-policy-working-study-v1" : "operator-working-study-v1")
+    : policy ? "operator-policy-study-comparison-v1" : "operator-study-comparison-v1";
   if (studyId !== undefined && (frame.id !== studyId || frame.verification?.result_sha256 !== resultHash
-    || frame.contract !== (kind === "working" ? "operator-working-study-v1" : "operator-study-comparison-v1"))) return false;
+    || frame.contract !== contract)) return false;
   if (studyId === undefined && frame.contract !== "operator-study-catalog-v1") return false;
   return true;
 }
@@ -12,6 +15,12 @@ export function studyFrameMatches(frame, { runId, fork, tick, studyId, resultHas
 export function studyNumber(value) {
   return typeof value === "number" && Number.isFinite(value)
     ? new Intl.NumberFormat("en", { maximumFractionDigits: 3 }).format(value) : "Unavailable";
+}
+
+export function studyCost(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "Unavailable";
+  if (value > 0 && value < .000001) return "<$0.000001";
+  return new Intl.NumberFormat("en", { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(value);
 }
 
 const PHASE_LABELS = { NIGHT_CLOSE: "Start of day", INBOX_DELIVERY: "Inbox delivery", MORNING: "Morning decisions",

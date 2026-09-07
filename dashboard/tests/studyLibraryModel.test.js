@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "../src/workspaces/studyLibraryModel.js";
+import { studyCost, studyFrameMatches, studyNumber, studyOutcomeRows, studyPhasePosition } from "../src/workspaces/studyLibraryModel.js";
 
 test("study evidence is bound to local live run, fork, study and result identity", () => {
   const frame = { context: { run_id: "run", fork_id: "fork", tick: "live" },
@@ -50,4 +50,22 @@ test("only a verified phase can be shown as the next unfinished-day step", () =>
   }
   assert.equal(studyPhasePosition({ ticks: 1, execution_status: "paused" }, true), "Between days");
   assert.equal(studyPhasePosition({ execution_status: "planned" }, true), "Not started");
+});
+
+test("policy evidence binds its distinct working or comparison contract", () => {
+  const scope = { runId: "run", fork: null, tick: "live", studyId: "study", resultHash: "hash", protocol: "research-study-v3" };
+  const frame = { contract: "operator-policy-study-comparison-v1", id: "study",
+    context: { run_id: "run", fork_id: null, tick: "live" }, verification: { result_sha256: "hash" } };
+  assert.equal(studyFrameMatches(frame, scope), true);
+  assert.equal(studyFrameMatches(frame, { ...scope, protocol: undefined }), false);
+  assert.equal(studyFrameMatches(frame, { ...scope, kind: "working" }), false);
+  assert.equal(studyFrameMatches({ ...frame, contract: "operator-policy-working-study-v1" }, { ...scope, kind: "working" }), true);
+  assert.equal(studyFrameMatches(frame, { ...scope, resultHash: "changed" }), false);
+});
+
+test("small verified charges remain visible and unknown costs never become zero", () => {
+  assert.equal(studyCost(.000014), "$0.000014");
+  assert.equal(studyCost(.00000001), "<$0.000001");
+  assert.equal(studyCost(0), "$0.00");
+  for (const value of [null, undefined, "0", NaN, Infinity, -1]) assert.equal(studyCost(value), "Unavailable");
 });

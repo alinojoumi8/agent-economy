@@ -1,8 +1,38 @@
 # Local and hosted API reference
 
 The dashboard uses the same REST and WebSocket interfaces available to local
-tools. There is no authentication; keep the server on localhost. FastAPI exposes
+tools. Local mode has no account authentication; keep the server on localhost.
+Local operator actions additionally require the operator session's CSRF token. FastAPI exposes
 interactive OpenAPI documentation at `/docs` while the app is running.
+
+## Local research operator
+
+`/api/v2/operator/research` provides the local study library, reviewed drafts,
+durable jobs and private exports. Every request requires the current `run_id`,
+`tick=live`, the current `fork_id` when applicable and `X-CSRF-Token` from the
+operator session. Hosted-safe instances reject these routes. Responses use
+`Cache-Control: private, no-store`.
+
+`GET /capabilities` lists the fixed scripted pilot and valid owner-configured
+policy designs. `POST /drafts/validate` accepts either G2/F2 parameters or a
+strict `preset: "POLICY"` request with reviewed design identity, explicit source
+worlds, model draws and original limits. No validation step contacts a provider.
+`GET /drafts/{id}` returns the reviewed protocol without gateway configuration,
+credential references or private paths.
+
+`POST /drafts/{id}/launch` binds the draft hash and idempotency key. Policy
+drafts additionally require literal `approve_live_inference: true`. The
+supervisor repeats all source/design checks and charges preflight to the
+original allowance. `POST /jobs/{id}/resume` accepts only the original progress
+hash, compatibility-check hash and idempotency key, never replacement caps.
+Both writes return 202 and preserve existing jobs on an identical retry.
+
+`GET /studies/{id}?result_sha256=...` independently verifies evidence before
+comparison. V3 policy frames retain distinct model draws and use separate
+pending and final contracts. Private exports require the displayed result and
+verification hashes. See the [complete endpoint table](research/price-lab.md#local-operator-api)
+and [operator policy specification](plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for fields, directory configuration, admission bounds and recovery semantics.
 
 ## Hosted R22 boundary
 

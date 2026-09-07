@@ -1168,3 +1168,160 @@ test("active working evidence cannot be exported or compared", async ({ page }) 
   await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
   expect(requests.filter(row => row.method === "POST")).toEqual([]);
 });
+
+async function mockPolicyStudy(page: Page, mode: "comparison" | "working" | "launch" | "wrong-contract" = "comparison") {
+  const requests = await mockStudyLaunch(page);
+  const designId = "2".repeat(32), childId = "3".repeat(32);
+  let resumed = mode === "comparison" || mode === "wrong-contract";
+  let request: any = { preset: "POLICY", seeds: [1, 2], horizon: 8, model_replicates: ["draw1", "draw2"],
+    design: { id: designId, sha256: "4".repeat(64) }, max_provider_calls: 500, max_tokens: 1000000,
+    max_spend_usd: 1, max_wall_seconds: 300, max_disk_mib: 256, pause_after_phase: "MORNING" };
+  const policies = [{ key: "base", family: "scripted", provider: null, model: null, temperature: null, repair_temperature: .2, preflight_temperature: 0, prompt_sha256: null },
+    { key: "cost", family: "live_llm", provider: "fixture", model: "demo-model", temperature: .4, repair_temperature: .2, preflight_temperature: 0, prompt_sha256: "5".repeat(64) }];
+  const tariffs = [{ provider: "fixture", model: "demo-model", max_input_tokens: 200000, max_output_tokens: 10000, input_usd_per_million_tokens: .01, output_usd_per_million_tokens: .02 }];
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname, method = route.request().method();
+    if (path.endsWith("/export") || path.includes("/exports/")) return route.fallback();
+    const body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    if (path.endsWith("/validate")) request = body;
+    const design = { policies, tariffs, independent_worlds: 2, model_replicates: request.model_replicates,
+      assigned_cells: 2 * policies.length * request.model_replicates.length, aggregation: "complete-paired-block-mean-v1" };
+    const limits = { max_provider_calls: request.max_provider_calls, max_tokens: request.max_tokens,
+      max_spend_usd: request.max_spend_usd, max_wall_seconds: request.max_wall_seconds, max_disk_bytes: request.max_disk_mib * 1048576 };
+    const allowance = { limits, verified: true, preflight_ready: true, usage: { provider_calls: resumed ? 150 : 10,
+      reported_tokens: resumed ? 18000 : 1200, encumbered_tokens: resumed ? 18000 : 1200,
+      reported_cost_usd: resumed ? .00021 : .000014, encumbered_usd: resumed ? .00021 : .000014,
+      unresolved_calls: 0, unknown_usage_calls: 0, breached_calls: 0, sealed: resumed } };
+    const attempts = [1, 2].flatMap(seed => request.model_replicates.flatMap((draw: string) => ["base", "cost"].map(arm => ({ seed, arm,
+      cell_key: `${seed}-${arm}-${draw}`, policy: arm, model_replicate: draw, ticks: resumed ? 8 : 0, expected_ticks: 8,
+      execution_status: resumed ? "completed" : seed === 1 && arm === "base" && draw === "draw1" ? "paused" : "planned",
+      eligibility: { status: resumed ? "eligible" : "pending", reasons: [] } }))));
+    const complete: any = { ...comparisonFixture(context.fork_id), contract: mode === "wrong-contract" ? "operator-study-comparison-v1" : "operator-policy-study-comparison-v1",
+      title: "Decision policy comparison", policy_design: design, provider_allowance: allowance, attempts,
+      world_coverage: Object.fromEntries(["base", "cost"].map(arm => [arm, { assigned: 2, started: 2, completed: 2, eligible: 2 }])),
+      cell_coverage: Object.fromEntries(["base", "cost"].map(arm => [arm, { assigned: 4, started: 4, completed: 4, eligible: 4 }])) };
+    complete.measurements = Object.fromEntries(["goods", "equity"].map(outcome => [outcome, attempts.map(row => ({ ...row, value: outcome === "goods" ? 200 : 150, status: "complete", age_ticks: outcome === "equity" ? 7 : null }))]));
+    complete.outcomes = complete.outcomes.map((row: any) => ({ ...row, purpose: "primary" }));
+    const parent = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash, context,
+      title: complete.title, status: "paused", expected_cells: attempts.length, finished_cells: 0, cells: attempts,
+      policy_design: design, provider_allowance: allowance, study_id: studyId, result_sha256: studyHash,
+      resumable: !resumed, progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), remaining_wall_seconds: 280 };
+    const child = { ...parent, id: childId, parent_job_id: jobId, status: "completed", finished_cells: attempts.length, resumable: false };
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null,
+      launch_blocked: false, live_models: true, resume: true, pause_phases: ["MORNING", "MARKET"],
+      policy_designs: { contract: "operator-policy-design-catalog-v1", items: [{ ...request.design, title: "Scripted / demo model", policies, tariffs }],
+        limits: { max_provider_calls: 5000, max_tokens: 10000000, max_spend_usd: 5, max_wall_seconds: 600, max_disk_mib: 1024 } } } });
+    if (path.endsWith("/launch")) return route.fulfill({ status: 202, json: parent });
+    if (path.endsWith("/resume")) { resumed = true; return route.fulfill({ status: 202, json: child }); }
+    if (path.includes("/jobs/")) return route.fulfill({ json: path.endsWith(childId) ? child : parent });
+    if (path.includes("/drafts/")) {
+      const draft = launchFixture(context.fork_id, request);
+      return route.fulfill({ json: { ...draft, policy_design: design,
+        provider_allowance: { ...allowance, verified: false, preflight_ready: null, usage: Object.fromEntries(Object.keys(allowance.usage).map(key => [key, null])) },
+        estimate: { ...draft.estimate, worlds: attempts.length, disk_bytes_limit: limits.max_disk_bytes, wall_seconds_limit: limits.max_wall_seconds },
+        spec: { ...draft.spec, title: complete.title, arms: complete.arms.map((arm: any) => ({ ...arm, policy: arm.key })) } } });
+    }
+    if (path.endsWith("/studies")) return route.fulfill({ json: { contract: "operator-study-catalog-v1", context,
+      items: [{ id: studyId, title: complete.title, domains: ["goods", "equities"], protocol_version: "research-study-v3",
+        kind: resumed ? "finalized" : "working", result_sha256: studyHash }], truncated: false, omitted: 0 } });
+    if (resumed) return route.fulfill({ json: complete });
+    const { summary, outcomes, measurements, ...common } = complete;
+    return route.fulfill({ json: { ...common, contract: "operator-policy-working-study-v1", state: "paused",
+      comparison_available: false, export_available: true, operator_job: parent,
+      verification: { ...common.verification, publication: "working", eligibility: "pending" },
+      budget: { max_wall_seconds: limits.max_wall_seconds, active_wall_seconds: 20, max_disk_bytes: limits.max_disk_bytes } } });
+  });
+  return { requests, designId, childId };
+}
+
+test("policy comparison preserves every draw, equal domains and precise charges on desktop and mobile", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests } = await mockPolicyStudy(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "World replication coverage" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Model execution coverage" })).toBeVisible();
+  await page.getByText("Attempt and exclusion evidence", { exact: true }).click();
+  const rows = page.getByRole("table", { name: "Preserved study attempts" }).getByRole("row");
+  await expect(rows).toHaveCount(9);
+  await page.getByLabel("Evidence model draw", { exact: true }).selectOption("draw2");
+  await expect(rows).toHaveCount(5);
+  expect(new URL(page.url()).searchParams.get("study_draw")).toBe("draw2");
+  const allowance = page.getByRole("region", { name: "Decision policies and original allowance" });
+  await expect(allowance).toContainText("$0.00021");
+  if (process.env.AE_CAPTURE_POLICY_UI === "1") {
+    await page.setViewportSize({ width: 1280, height: 1200 });
+    await allowance.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await allowance.screenshot({ path: "../tmp/policy-operator-desktop.png" });
+  }
+  await page.reload();
+  await expect(page.getByLabel("Evidence model draw", { exact: true })).toHaveValue("draw2");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  if (process.env.AE_CAPTURE_POLICY_UI === "1") {
+    await page.setViewportSize({ width: 390, height: 1600 });
+    await allowance.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await allowance.screenshot({ path: "../tmp/policy-operator-mobile.png" });
+  }
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
+});
+
+test("policy launch binds deliberate approval to the reviewed draft and recovers original allowance", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests, designId, childId } = await mockPolicyStudy(page, "launch");
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByRole("combobox", { name: "Research question", exact: true }).selectOption("POLICY");
+  await page.getByRole("combobox", { name: "Configured policy design", exact: true }).selectOption(designId);
+  await page.getByRole("button", { name: "Refresh policy designs" }).click();
+  await expect(page.getByRole("combobox", { name: "Configured policy design", exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Validate draft" })).toBeDisabled();
+  await page.getByRole("combobox", { name: "Configured policy design", exact: true }).selectOption(designId);
+  await page.getByLabel("Model draw labels", { exact: true }).fill("draw1, draw2");
+  await page.getByLabel("Pause after a step (optional)").selectOption("MORNING");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  const launch = page.getByRole("button", { name: "Run reviewed policy study" });
+  await expect(launch).toBeDisabled();
+  expect(requests.filter(row => row.method === "POST")).toHaveLength(1);
+  await page.getByRole("checkbox", { name: /I approve live inference/ }).check();
+  await expect(launch).toBeEnabled();
+  await page.reload();
+  await expect(launch).toBeDisabled();
+  const approval = page.getByRole("checkbox", { name: /I approve live inference/ });
+  await approval.focus();
+  await page.keyboard.press("Space");
+  await expect(launch).toBeEnabled();
+  await launch.click();
+  const job = page.getByRole("region", { name: "Study job status" });
+  await expect(job).toContainText("$0.000014");
+  await expect(job).toContainText("280.0 seconds remain");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Resume saved study" }).click();
+  await expect(job.getByRole("heading", { name: "completed", exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("study_job")).toBe(childId);
+  const launchBody = requests.find(row => row.path.endsWith("/launch"))?.body;
+  expect(launchBody).toEqual({ draft_sha256: draftHash, idempotency_key: draftId, approve_live_inference: true });
+  const resumeBody = requests.find(row => row.path.endsWith("/resume"))?.body;
+  expect(resumeBody).toEqual({ progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), idempotency_key: jobId });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(diagnostics.consoleErrors).toEqual([]);
+});
+
+test("policy working evidence filters pending draws and rejects a legacy comparison contract", async ({ page }) => {
+  await setup(page);
+  await mockPolicyStudy(page, "working");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("region", { name: "Working study progress" })).toContainText("Study eligibility is pending");
+  await page.getByLabel("Evidence model draw", { exact: true }).selectOption("draw2");
+  await expect(page.getByRole("table", { name: "Saved study days" }).getByRole("row")).toHaveCount(5);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  await mockPolicyStudy(page, "wrong-contract");
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("Study evidence does not match");
+  await expect(page.getByRole("region", { name: "Decision policies and original allowance" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toHaveCount(0);
+});

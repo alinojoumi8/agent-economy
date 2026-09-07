@@ -204,6 +204,25 @@ jobs:
         # Keep their transport and tampering checks outside the recovery job.
         run: python -m pytest -q tests/test_policy_evidence.py
 
+  research-policy-operator:
+    name: Policy operator review, launch and recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify private design review and original-allowance supervision
+        # Real local supervisors against controlled loopback HTTP only.
+        run: python -m pytest -q tests/test_policy_operator.py
+
   research-checkpoints:
     name: Saved-world study execution and operator recovery
     runs-on: ubuntu-latest

@@ -17,6 +17,8 @@
 .study-launcher__arms article { border: 1px solid var(--ae-border); border-radius: 6px; padding: 16px; }
 .study-launcher__review, .study-launcher__job { min-width: 0; padding: 18px; border: 1px solid var(--ae-border); border-radius: 6px; }
 .study-launcher__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.study-launcher__approval { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 12px; border: 1px solid var(--ae-accent); border-radius: 4px; line-height: 1.55; }
+.study-launcher__approval input { flex-shrink: 0; width: 20px; height: 20px; margin-top: 3px; }
 .study-launcher code { overflow-wrap: anywhere; }
 .study-launcher pre { overflow: auto; max-height: 360px; font-size: .78rem; padding: 12px; }
 .study-launcher__sources { margin: 18px 0; padding: 16px 0; border-block: 1px solid var(--ae-border); }

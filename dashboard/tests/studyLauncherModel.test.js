@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { operatorStudyFrameMatches, parseStudySeeds, priceStudyRequest, studyJobActive } from "../src/workspaces/studyLauncherModel.js";
+import { operatorStudyFrameMatches, parseModelDraws, parseStudySeeds, policyStudyRequest, priceStudyRequest, studyJobActive } from "../src/workspaces/studyLauncherModel.js";
 
 test("study seed parsing preserves explicit zero and rejects duplicates or unsupported numbers", () => {
   assert.deepEqual(parseStudySeeds("0, 2 4"), [0, 2, 4]);
@@ -41,4 +41,28 @@ test("operator draft and job frames require exact context and identity", () => {
   assert.equal(operatorStudyFrameMatches(frame, scope, "job", "other"), false);
   assert.equal(studyJobActive("interrupted"), false);
   assert.equal(studyJobActive("running"), true);
+});
+
+test("policy requests bind reviewed designs and draw labels without unrelated intervention controls", () => {
+  const design = { id: "a".repeat(32), sha256: "b".repeat(64), private: "not-sent" };
+  const form = { preset: "POLICY", origin: "fresh_genesis", design, seeds: "1, 2", horizon: 5,
+    model_replicates: "draw1, draw2", intervention_tick: 3, goods_firm_id: 2, warmup_ticks: 1,
+    max_provider_calls: 100, max_tokens: 10000, max_spend_usd: .1, max_wall_seconds: 60, max_disk_mib: 128,
+    pause_after_ticks: null, pause_after_phase: "MORNING" };
+  const request = policyStudyRequest(form, undefined, { items: [design] });
+  assert.deepEqual(request.design, { id: design.id, sha256: design.sha256 });
+  assert.deepEqual(request.model_replicates, ["draw1", "draw2"]);
+  assert.deepEqual(request.seeds, [1, 2]);
+  for (const key of ["intervention_tick", "warmup_ticks", "goods_firm_id", "checkpoints", "approve_live_inference"])
+    assert.equal(key in request, false);
+  assert.throws(() => policyStudyRequest(form, undefined, { items: [{ ...design, sha256: "changed" }] }), /reviewed policy/);
+  for (const value of ["", "draw1,draw1", "a,b,c,d", "../a", "Draw1"])
+    assert.throws(() => parseModelDraws(value), /distinct model draw/);
+  const sources = [1, 2].map(seed => ({ id: String(seed), seed, tick: 2, run_id: String(seed), database_sha256: "db", receipt_sha256: "receipt" }));
+  const saved = { ...form, origin: "verified_checkpoints", checkpoints: sources };
+  assert.equal(policyStudyRequest(saved, { items: sources }, { items: [design] }).seeds, null);
+  assert.throws(() => policyStudyRequest({ ...saved, horizon: 4 }, { items: sources }, { items: [design] }), /three new days/);
+  const scripted = priceStudyRequest({ ...form, preset: "G2" }, undefined);
+  for (const key of ["design", "model_replicates", "max_provider_calls", "max_tokens", "max_spend_usd"])
+    assert.equal(key in scripted, false);
 });

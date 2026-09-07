@@ -7,15 +7,20 @@ for directory configuration, source limits and continuation semantics.
 Focused coverage is in `tests/test_checkpoint_study_jobs.py`; browser coverage
 and synthetic desktop/mobile review captures are in the world-workspace suite.
 
-Policy studies from fresh and saved worlds use the separate v3 CLI and evidence reader.
+Policy studies from fresh and saved worlds use the v3 CLI, evidence reader and local operator workspace.
 Their prospective day/phase recovery policy preserves the original shared
 provider allowance across readiness checks and all model replicates. See the
 [live-policy workflow](plans/2026-09-07-live-policy-studies.md#cli-workflow) for
 drafting, explicit launch authorization, pause and provider-free resume validation.
 `tests/test_policy_recovery.py` and `tests/test_policy_origins.py` exercise controlled
 loopback HTTP, original allowance recovery and declared saved-world policy
-transitions in their own required CI job. These v3 studies are not yet
-advertised by the existing operator.
+transitions in their own required CI job. The operator advertises policy launches
+only when a valid owner-configured design is available. Its default directory is
+`data/policies`; override it with `operator_research.policy_root` in the server
+configuration. See the [operator policy workflow](plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for design limits, deliberate approval and original-allowance recovery.
+`tests/test_policy_operator.py` covers provider-free review and real local
+supervisors with controlled loopback HTTP in a separate required CI job.
 
 Private v3 evidence is readable and portable through `research.policy_results`
 and `research.study_bundle`. Export the current closed pause or sealed final

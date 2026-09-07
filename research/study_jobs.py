@@ -24,6 +24,9 @@ from pydantic import Field, model_validator
 from research.artifacts import code_identity, digest_json, file_sha256, publish_json
 from research.price_catalog import draft_checkpoint_price_study, draft_price_study, price_study_catalog
 from research.operator_checkpoints import OperatorCheckpoints, study_origin_view
+from research.operator_policies import OperatorPolicies, PolicySelection
+from research.policy_operator import allowance_view, policy_design_view
+from research.policy_studies import draft_checkpoint_policy_comparison, draft_policy_comparison, study_cells
 from research.process_lock import process_lock, ProcessLockBusy
 from research.studies import Contract, Digest, StudySpec, validate_study_inputs
 from research.study_results import StudyArtifactError, StudyIdentityChanged, read_json
@@ -87,6 +90,56 @@ class LaunchRequest(Contract):
     idempotency_key: Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]
 
 
+class PolicyLaunchRequest(LaunchRequest):
+    approve_live_inference: Literal[True]
+
+    @model_validator(mode="before")
+    @classmethod
+    def explicit_approval(cls, value):
+        if isinstance(value, dict) and value.get("approve_live_inference") is not True:
+            raise ValueError("policy launch requires explicit true approval")
+        return value
+
+
+class PolicyPilotRequest(Contract):
+    preset: Literal["POLICY"]
+    design: PolicySelection
+    origin: Literal["fresh_genesis", "verified_checkpoints"] = "fresh_genesis"
+    seeds: Annotated[list[Annotated[int, Field(ge=0, le=2**31 - 1)]], Field(min_length=1, max_length=5)] | None = None
+    checkpoints: Annotated[list[CheckpointSelection], Field(min_length=1, max_length=5)] | None = None
+    model_replicates: Annotated[list[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")]], Field(min_length=1, max_length=3)]
+    horizon: Annotated[int, Field(ge=3, le=30)]
+    max_wall_seconds: Annotated[int, Field(ge=10, le=600)] = 300
+    max_disk_mib: Annotated[int, Field(ge=32, le=1024)] = 256
+    max_provider_calls: Annotated[int, Field(ge=1, le=5000)]
+    max_tokens: Annotated[int, Field(ge=1, le=10_000_000)]
+    max_spend_usd: Annotated[float, Field(ge=.000001, le=5)]
+    pause_after_ticks: Annotated[int, Field(ge=1, le=30)] | None = None
+    pause_after_phase: Literal["NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET",
+                               "NEWSROOM", "EVENING", "MEMORY", "FINALIZE"] | None = None
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.origin == "fresh_genesis":
+            if not self.seeds or self.checkpoints is not None or len(set(self.seeds)) != len(self.seeds):
+                raise ValueError("fresh policy worlds require distinct seeds and no checkpoints")
+        elif self.seeds is not None or not self.checkpoints:
+            raise ValueError("saved policy worlds require explicit checkpoints and retain their seeds")
+        if self.checkpoints and len({item.id for item in self.checkpoints}) != len(self.checkpoints):
+            raise ValueError("choose each checkpoint only once")
+        if len(set(self.model_replicates)) != len(self.model_replicates):
+            raise ValueError("model draw labels must be distinct")
+        if self.pause_after_ticks is not None and self.pause_after_ticks >= self.horizon:
+            raise ValueError("the planned pause must precede the horizon")
+        if self.pause_after_phase is not None and self.pause_after_ticks is not None:
+            raise ValueError("choose a saved-day limit or a phase pause")
+        return self
+
+
+def pilot_request(value: dict) -> PilotRequest | PolicyPilotRequest:
+    return (PolicyPilotRequest if value.get("preset") == "POLICY" else PilotRequest).model_validate(value)
+
+
 class ResumeRequest(Contract):
     progress_sha256: Digest
     resume_check_sha256: Digest
@@ -104,9 +157,11 @@ def execution_lock(path: Path, *, wait_seconds: float = 0):
 
 
 class StudyJobs:
-    def __init__(self, root: Path, *, data_root: Path, out_dir: Path, checkpoint_root: Path | None = None):
+    def __init__(self, root: Path, *, data_root: Path, out_dir: Path, checkpoint_root: Path | None = None,
+                 policy_root: Path | None = None):
         self.root, self.data_root, self.out_dir = root.resolve(), data_root.resolve(), out_dir.resolve()
         self.checkpoints = OperatorCheckpoints(checkpoint_root or ROOT / "data/checkpoints")
+        self.policies = OperatorPolicies(policy_root or ROOT / "data/policies")
 
     def path(self, kind: str, identity: str) -> Path:
         if kind not in {"drafts", "jobs"} or not re.fullmatch(r"[a-f0-9]{32}", identity):
@@ -138,13 +193,31 @@ class StudyJobs:
     def checkpoint_catalog(self) -> dict:
         return self.checkpoints.catalog(load_config(ROOT / "runs/price-lab-pilot.yaml"))
 
-    def input_root(self, request: PilotRequest) -> Path:
+    def policy_catalog(self) -> dict:
+        return self.policies.catalog(load_config(ROOT / "runs/price-lab-pilot.yaml"))
+
+    def launch_capabilities(self) -> dict:
+        catalog = self.policy_catalog()
+        return {**self.capabilities(), "live_models": bool(catalog["items"]), "policy_designs": catalog}
+
+    def input_root(self, request: PilotRequest | PolicyPilotRequest) -> Path:
         return self.checkpoints.root if request.origin == "verified_checkpoints" else ROOT
 
-    def _spec(self, request: PilotRequest, config: dict) -> StudySpec:
+    def _spec(self, request: PilotRequest | PolicyPilotRequest, config: dict) -> StudySpec:
         if config.get("population", {}).get("size") != 14 or config.get("firms", {}).get("count") != 3:
             raise PilotInputError("The local interface requires the 14-agent, 3-firm pilot profile.")
-        if request.origin == "verified_checkpoints":
+        if isinstance(request, PolicyPilotRequest):
+            policies, tariffs = self.policies.resolve(request.design)
+            options = dict(policies=policies, tariffs=tariffs, model_replicates=request.model_replicates,
+                horizon=request.horizon, max_provider_calls=request.max_provider_calls,
+                max_tokens=request.max_tokens, max_spend_usd=request.max_spend_usd,
+                max_wall_seconds=request.max_wall_seconds, max_disk_bytes=request.max_disk_mib * MIB)
+            if request.origin == "verified_checkpoints":
+                spec = draft_checkpoint_policy_comparison(config,
+                    checkpoints=self.checkpoints.resolve(request.checkpoints, config), input_root=self.checkpoints.root, **options)
+            else:
+                spec = draft_policy_comparison(config, seeds=request.seeds, **options)
+        elif request.origin == "verified_checkpoints":
             paths = self.checkpoints.resolve(request.checkpoints, config)
             spec = draft_checkpoint_price_study(config, request.preset, checkpoints=paths,
                 input_root=self.checkpoints.root, horizon=request.horizon,
@@ -157,6 +230,8 @@ class StudyJobs:
             spec = draft_price_study(config, request.preset, seeds=request.seeds,
                 horizon=request.horizon, intervention_tick=request.intervention_tick,
                 goods_firm_id=request.goods_firm_id, equity_firm_id=request.equity_firm_id)
+        if request.pause_after_ticks is not None and request.pause_after_ticks >= request.horizon - (spec.origin.tick if spec.origin else 0):
+            raise PilotInputError("The planned pause must precede the remaining continuation horizon.")
         values = spec.model_dump(mode="json")
         values["operations"].update(max_wall_seconds=request.max_wall_seconds,
             max_disk_bytes=request.max_disk_mib * MIB,
@@ -167,15 +242,16 @@ class StudyJobs:
                        ticks=request.pause_after_ticks, phase=request.pause_after_phase)
         return spec
 
-    def validate(self, request: PilotRequest, context: dict) -> dict:
+    def validate(self, request: PilotRequest | PolicyPilotRequest, context: dict) -> dict:
         before = code_identity()
         config = load_config(ROOT / "runs/price-lab-pilot.yaml")
         spec = self._spec(request, config)
         protocol = validate_study_inputs(spec, config, input_root=self.input_root(request))
         # Explicit planning heuristic, including source and replay; not a measured forecast.
-        cells = len(spec.randomness.seeds) * len(spec.arms)
+        draws = len(spec.randomness.model_replicates) if spec.policy_design else 1
+        cells = len(spec.randomness.seeds) * len(spec.arms) * draws
         remaining = request.horizon - (spec.origin.tick if spec.origin else 0)
-        copy_bytes = sum(row["byte_size"] for row in protocol.get("checkpoint_origins", {}).values()) * (1 + 2 * len(spec.arms))
+        copy_bytes = sum(row["byte_size"] for row in protocol.get("checkpoint_origins", {}).values()) * (1 + 2 * len(spec.arms) * draws)
         estimate = copy_bytes + cells * (8 * MIB + remaining * 256 * 1024)
         if estimate > request.max_disk_mib * MIB:
             raise PilotInputError("The planning storage estimate exceeds the disk budget. Reduce seeds or horizon, or increase the budget.")
@@ -189,6 +265,10 @@ class StudyJobs:
                 "method": "planning allowance: initial saved-world copies plus 8 MiB/world and 256 KiB/new world-tick, including replay; uncalibrated",
                 "wall_seconds_limit": request.max_wall_seconds, "disk_bytes_limit": request.max_disk_mib * MIB,
                 "provider_calls": 0, "spend_usd": 0}}
+        if spec.policy_design:
+            draft["estimate"].update(independent_worlds=len(spec.randomness.seeds), model_draws=draws,
+                provider_calls_limit=spec.operations.max_provider_calls, tokens_limit=spec.operations.max_tokens,
+                spend_usd_limit=spec.operations.max_spend_usd, preflight_ready=None)
         publish_json(self.path("drafts", identity) / "draft.json", draft)
         return self.draft(identity, context)
 
@@ -205,11 +285,20 @@ class StudyJobs:
         draft = self._draft(identity, context)
         launched = self.path("drafts", identity) / "launch.json"
         job_id = self._read(launched)["job_id"] if launched.is_file() else None
+        spec = draft["protocol"]["study"]
+        policy = spec.get("protocol_version") == "research-study-v3"
+        if policy:
+            # Public review omits gateways, endpoint references and input paths.
+            parsed = StudySpec.model_validate(spec)
+            spec = {key: spec[key] for key in ("protocol_version", "title", "hypothesis", "domains",
+                "randomness", "time", "analysis", "operations", "limitations")}
+            spec["arms"] = [{"key": arm.key, "label": arm.label, "role": arm.role, "policy": arm.policy} for arm in parsed.arms]
         return {"contract": draft["contract"], "id": identity, "context": context,
             "draft_sha256": digest_json(draft), "origin": study_origin_view(draft["protocol"])["kind"],
             "origin_details": study_origin_view(draft["protocol"]), "request": draft["request"],
             "estimate": draft["estimate"], "source_identity": draft["code"],
-            "spec": draft["protocol"]["study"], "executed": False if job_id is None else None, "job_id": job_id}
+            "spec": spec, "executed": False if job_id is None else None, "job_id": job_id,
+            **({"policy_design": policy_design_view(parsed), "provider_allowance": allowance_view(parsed, None)} if policy else {})}
 
     def _clear_active(self, job_id: str) -> None:
         path = self.root / "active.json"
@@ -238,10 +327,15 @@ class StudyJobs:
             publish_json(job / "terminal.json", {"status": "failed", "reason": "supervisor_start_failed"})
             self._clear_active(job_id)
 
-    def launch(self, identity: str, body: LaunchRequest, context: dict) -> dict:
+    def launch(self, identity: str, body: LaunchRequest | PolicyLaunchRequest, context: dict) -> dict:
         draft = self._draft(identity, context)
         if digest_json(draft) != body.draft_sha256:
             raise StudyIdentityChanged("Validated draft changed; validate again before running.")
+        request = pilot_request(draft["request"])
+        if isinstance(request, PolicyPilotRequest) and not isinstance(body, PolicyLaunchRequest):
+            raise PilotInputError("Review the original inference allowance and explicitly approve this policy launch.")
+        if not isinstance(request, PolicyPilotRequest) and isinstance(body, PolicyLaunchRequest):
+            raise PilotInputError("Inference approval is only accepted for a policy study draft.")
         directory = self.path("drafts", identity)
         with execution_lock(self.root / "scheduler.lock"):
             launched = directory / "launch.json"
@@ -255,7 +349,6 @@ class StudyJobs:
                 raise StudyIdentityChanged("Source changed after validation; validate a new draft.")
             # A locally edited draft cannot bypass the interface's fixed profile
             # or resource bounds, even if its caller supplies the edited digest.
-            request = PilotRequest.model_validate(draft["request"])
             config = load_config(ROOT / "runs/price-lab-pilot.yaml")
             expected = validate_study_inputs(self._spec(request, config), config, input_root=self.input_root(request))
             if draft["protocol"] != expected:
@@ -266,6 +359,8 @@ class StudyJobs:
                 "request": body.model_dump(mode="json"), "context": context, "created_at": time.time(),
                 "data_root": str(self.data_root), "out_dir": str(self.out_dir),
                 "checkpoint_root": str(self.checkpoints.root)}
+            if isinstance(request, PolicyPilotRequest):
+                claim["policy_root"] = str(self.policies.root)
             publish_json(job / "claim.json", claim)
             publish_json(launched, claim)
             publish_json(self.root / "active.json", {"job_id": job_id})
@@ -275,7 +370,7 @@ class StudyJobs:
     def _resume_state(self, job: Path, draft: dict, context: dict) -> dict:
         batch = self._read(job / "batch.json")
         config = load_config(ROOT / "runs/price-lab-pilot.yaml")
-        request = PilotRequest.model_validate(draft["request"])
+        request = pilot_request(draft["request"])
         spec = self._spec(request, config)
         if draft["protocol"] != validate_study_inputs(spec, config, input_root=self.input_root(request)):
             raise StudyIdentityChanged("The saved pilot no longer matches its original profile.")
@@ -290,7 +385,8 @@ class StudyJobs:
                              "progress_sha256": progress_hash, "end_sha256": last["end_sha256"], "context": context})
         return {"resumable": True, "resume_check_sha256": check, "progress_sha256": progress_hash,
                 "active_wall_seconds": state["active_wall_seconds"],
-                "remaining_wall_seconds": max(0, spec.operations.max_wall_seconds - state["active_wall_seconds"])}
+                "remaining_wall_seconds": max(0, spec.operations.max_wall_seconds - state["active_wall_seconds"]),
+                **({"provider_allowance": allowance_view(spec, {"provider_budget": state["provider_budget"]})} if spec.policy_design else {})}
 
     def resume(self, identity: str, body: ResumeRequest, context: dict) -> dict:
         job = self.path("jobs", identity)
@@ -360,7 +456,8 @@ class StudyJobs:
                         state = {"status": "interrupted_worker_active", "reason": "supervisor_lost_worker_stopping"}
             except StudyIdentityChanged:
                 state = {"status": "running", "reason": None}
-        cells = len(draft["protocol"]["study"]["arms"]) * len(draft["protocol"]["study"]["randomness"]["seeds"])
+        spec = StudySpec.model_validate(draft["protocol"]["study"])
+        cells = len(study_cells(spec)) if spec.policy_design else len(spec.arms) * len(spec.randomness.seeds)
         progress = [self._read(job / f"cell-{index}.json") for index in range(1, cells + 1)
                     if (job / f"cell-{index}.json").is_file()]
         resume = {"resumable": False}
@@ -376,6 +473,7 @@ class StudyJobs:
                 reason = "working_evidence_changed_or_incompatible"
                 for marker, code in (("code changed", "source_checkout_changed"),
                                      ("cumulative budget", "original_budget_exhausted"),
+                                     ("original provider allowance", "original_budget_exhausted"),
                                      ("published studies", "study_already_finalized"),
                                      ("unfinished", "interrupted_segment_cannot_resume")):
                     if marker in str(exc):
@@ -388,7 +486,9 @@ class StudyJobs:
             "created_at": claim["created_at"], "expected_cells": cells,
             "finished_cells": sum(row.get("eligibility", {}).get("status", "pending") != "pending" for row in progress),
             "cells": progress, "recoverable": state["status"] == "interrupted" and not terminal.is_file(),
-            "parent_job_id": claim.get("resume", {}).get("parent_job_id"), **resume, **state}
+            "parent_job_id": claim.get("resume", {}).get("parent_job_id"),
+            **({"policy_design": policy_design_view(spec), "provider_allowance": allowance_view(spec, None)} if spec.policy_design else {}),
+            **resume, **state}
 
     def for_study(self, study_id: str, context: dict) -> dict | None:
         """Find this workspace's most recent invocation without adopting CLI runs."""
@@ -446,7 +546,8 @@ def execute_job(root: Path, identity: str) -> None:
     job = provisional.path("jobs", identity)
     claim = provisional._read(job / "claim.json")
     service = StudyJobs(root, data_root=Path(claim["data_root"]), out_dir=Path(claim["out_dir"]),
-                        checkpoint_root=Path(claim["checkpoint_root"]) if claim.get("checkpoint_root") else None)
+                        checkpoint_root=Path(claim["checkpoint_root"]) if claim.get("checkpoint_root") else None,
+                        policy_root=Path(claim["policy_root"]) if claim.get("policy_root") else None)
     with execution_lock(job / "execution.lock", wait_seconds=5):
         with execution_lock(service.root / "scheduler.lock", wait_seconds=5):
             if (job / "terminal.json").exists() or service._read(service.root / "active.json").get("job_id") != identity:
@@ -456,7 +557,9 @@ def execute_job(root: Path, identity: str) -> None:
             draft = service._draft(claim["draft_id"], claim["context"])
             if digest_json(draft) != claim["request"]["draft_sha256"]:
                 raise StudyIdentityChanged("validated draft changed")
-            request = PilotRequest.model_validate(draft["request"])
+            request = pilot_request(draft["request"])
+            if isinstance(request, PolicyPilotRequest):
+                PolicyLaunchRequest.model_validate(claim["request"])
             config = load_config(ROOT / "runs/price-lab-pilot.yaml")
             spec = service._spec(request, config)
             if validate_study_inputs(spec, config, input_root=service.input_root(request)) != draft["protocol"]:
@@ -470,6 +573,7 @@ def execute_job(root: Path, identity: str) -> None:
                     publish_json(job / f"cell-{event['index']}.json", {
                         "arm": row["arm"], "seed": row["seed"], "execution_status": row["execution_status"],
                         "eligibility": row["eligibility"], "ticks": row.get("ticks"),
+                        **({key: row[key] for key in ("cell_key", "policy", "model_replicate")} if spec.policy_design else {}),
                         **({"position": {key: row["position"][key]
                             for key in ("completed_tick", "active_tick", "next_phase")}} if "position" in row else {})})
 
@@ -478,7 +582,8 @@ def execute_job(root: Path, identity: str) -> None:
                 progress=progress, worker_guard_path=job / "worker.lock",
                 resume_batch=claim.get("resume", {}).get("batch"),
                 pause_after_ticks=None if "resume" in claim else draft["request"].get("pause_after_ticks"),
-                pause_after_phase=None if "resume" in claim else draft["request"].get("pause_after_phase"))
+                pause_after_phase=None if "resume" in claim else draft["request"].get("pause_after_phase"),
+                **({"approve_live_inference": True} if isinstance(request, PolicyPilotRequest) else {}))
             path = Path(result["artifacts"]["json"])
             for index, row in enumerate(result["results"], 1):
                 if not (job / f"cell-{index}.json").exists():

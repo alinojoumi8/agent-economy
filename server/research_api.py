@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from research.study_library import StudyLibrary
-from research.study_jobs import LaunchRequest, PilotInputError, PilotRequest, ResumeRequest, StudyJobs
+from research.study_jobs import LaunchRequest, PilotInputError, PilotRequest, PolicyLaunchRequest, PolicyPilotRequest, ResumeRequest, StudyJobs
 from research.study_results import StudyArtifactError, StudyIdentityChanged
 from server.projections.envelope import lineage, validate_fork, ProjectionRequestError
 
@@ -30,7 +30,8 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         export_root=workspace_path.parent / "research-exports")
     app.state.study_library = library
     jobs = StudyJobs(workspace_path.parent / "research-jobs", data_root=library.data_root, out_dir=library.out_dir,
-        checkpoint_root=Path(config.get("checkpoint_root", root / "data/checkpoints")))
+        checkpoint_root=Path(config.get("checkpoint_root", root / "data/checkpoints")),
+        policy_root=Path(config.get("policy_root", root / "data/policies")))
     app.state.study_jobs = jobs
     lock = threading.Lock()
 
@@ -87,10 +88,10 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
                            x_csrf_token: str | None = Header(default=None)):
         context = authorize(x_csrf_token, run_id, fork_id, tick)
         response.headers["Cache-Control"] = "private, no-store"
-        return {"context": context, **jobs.capabilities(), **await read_work(jobs.active, context)}
+        return {"context": context, **await read_work(jobs.launch_capabilities), **await read_work(jobs.active, context)}
 
     @router.post("/drafts/validate")
-    async def validate(body: PilotRequest, run_id: str, response: Response,
+    async def validate(body: PilotRequest | PolicyPilotRequest, run_id: str, response: Response,
                        fork_id: str | None = None, tick: str = "live",
                        x_csrf_token: str | None = Header(default=None)):
         context = authorize(x_csrf_token, run_id, fork_id, tick)
@@ -106,7 +107,7 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         return await read_work(jobs.draft, draft_id, context)
 
     @router.post("/drafts/{draft_id}/launch", status_code=202)
-    async def launch(draft_id: str, body: LaunchRequest, run_id: str, response: Response,
+    async def launch(draft_id: str, body: LaunchRequest | PolicyLaunchRequest, run_id: str, response: Response,
                      fork_id: str | None = None, tick: str = "live",
                      x_csrf_token: str | None = Header(default=None)):
         context = authorize(x_csrf_token, run_id, fork_id, tick)
@@ -145,7 +146,7 @@ def install_research_routes(app, world, controller, *, csrf_token: str, workspac
         context = authorize(x_csrf_token, run_id, fork_id, tick)
         response.headers["Cache-Control"] = "private, no-store"
         view = await read_work(library.verify, study_id, result_sha256)
-        if view["contract"] == "operator-working-study-v1":
+        if view["contract"] in {"operator-working-study-v1", "operator-policy-working-study-v1"}:
             view["operator_job"] = await read_work(jobs.for_study, study_id, context)
         return {"context": context, **view}
 

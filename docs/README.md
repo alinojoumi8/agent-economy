@@ -17,6 +17,8 @@ each audience can find the authoritative level of detail.
   mechanism assumptions, input provenance, measurement contracts and limits.
 - [Price Discovery Lab](research/price-lab.md) — historical inspector, goods/equity observations,
   strict study drafts, provider-free pilots, replay receipts and findings.
+- [Policy studies in the operator workspace](plans/2026-09-07-policy-operator-workflow.md) — private model designs,
+  reviewed inference allowances, model draws, pause/resume and price evidence.
 - [Persistent people and household needs](semantics15-households.md) — version-15
   births, age, membership, care gaps, child demand, census and replay boundaries.
 - [Daily random keys](semantics16-randomness.md) — version-16 mechanism/day/origin
