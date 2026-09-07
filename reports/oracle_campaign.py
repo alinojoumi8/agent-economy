@@ -33,6 +33,7 @@ from engine.checkpoint_manifest import (
 )
 from engine.schema import SCHEMA_VERSION as DATABASE_SCHEMA_VERSION
 from engine.store import Store, load_json
+from engine.payloads import configure_payload_reads
 from llm.gateway import (
     REPLAY_OPERATIONAL_PURPOSES,
     _logical_replay_call,
@@ -1543,7 +1544,7 @@ def _checkpoint_integrity(
                 continue
             uri = f"{path.as_uri()}?mode=ro"
             connection = sqlite3.connect(uri, uri=True)
-            connection.row_factory = sqlite3.Row
+            configure_payload_reads(connection)
             quick = str(connection.execute("PRAGMA quick_check").fetchone()[0])
             meta = connection.execute("SELECT * FROM run_meta WHERE id=1").fetchone()
             schema = sqlite_schema_evidence(connection)

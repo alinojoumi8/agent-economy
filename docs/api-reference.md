@@ -36,6 +36,14 @@ mounts, replay discovery, arbitrary paths, provider configuration, prompt
 payloads, and credentials are not proxied. Service endpoints are
 `/health/live`, `/health/ready`, and `/metrics`.
 
+With a storage policy enabled, capacity-limited run creation, advancing controls,
+agent connections and world mutations return HTTP 507. Hosted administrative
+routes use `{"detail":{"code":"storage_capacity_reached"}}`; the external
+world protocol uses `{"error":"storage_capacity_reached"}`. Read access,
+pause/stop requests and credential revocation remain available. Tick
+execution also checks capacity and pauses before advancing the world. See
+[storage and recovery](storage-and-recovery.md) for budget and reserve behavior.
+
 Hosted administrative writes append tenant-local chained audit rows after
 control-plane migration 003. The HTTP API does not present the hash chain as
 simulation truth or external non-repudiation; authorized operators verify one

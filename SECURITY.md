@@ -30,6 +30,16 @@ R22 adds a separately enabled hosted service. Its security boundary is:
 The local and hosted servers are distinct entry points. Hosted mode does not
 turn the unauthenticated local API into an internet-safe service.
 
+The [Hostinger alternative](docs/hostinger-vps.md) uses filesystem recovery
+snapshots and SFTP replication instead of MinIO. Its dedicated SSH key and
+pinned server host key are private operator configuration. Archives and replicas
+contain full private memory/model/history data; compression is not encryption
+or redaction. Protect and encrypt the storage volumes on both servers. Restoring
+an older PostgreSQL catalog can restore old sessions or grants, so reconcile
+revocations before reopening access. Hosted storage admission rejects new run
+writes at configured capacity with a path-free `507` response while preserving
+reads and pause/stop controls.
+
 ## Hosted threat model and operator obligations
 
 The implemented boundary addresses ordinary cross-tenant reads/writes, stolen

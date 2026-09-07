@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from engine.payloads import unpack_payload
+
 from .hashing import (
     canonical_hashes,
     classified_tables,
@@ -112,7 +114,7 @@ def _export_table(
     for source in source_rows:
         row = []
         for index, column in enumerate(column_names):
-            value = source[index]
+            value = unpack_payload(source[index])
             if column in redacted_columns:
                 if value is not None:
                     redaction_counts[column] += 1

@@ -626,6 +626,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
              new_run_id_override: str | None = None,
              activate_entrepreneurship: bool = False,
              activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
+    from engine.storage_policy import StoragePolicy
+    policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+    if policy is not None and not replay:
+        policy.check_run(data_dir / f"{resume or 'admission'}.db")
     if replay and replay_source_dir is not None:
         source_root = Path(replay_source_dir).resolve()
         output_root = Path(data_dir).resolve()
@@ -661,6 +665,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             store.close()
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        # Operational overrides affect this writer only, not recorded scientific
+        # configuration or historical economic semantics.
+        if "storage_policy" in config:
+            stored_cfg["storage_policy"] = config["storage_policy"]
         tightened = _tighten_resume_operational_limits(stored_cfg, config)
         if tightened:
             operational_log(
@@ -695,6 +703,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         finally:
             source_store.close()
         replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        if "storage_policy" in config:
+            replay_cfg["storage_policy"] = config["storage_policy"]
         replay_cfg.update({
             "seed": source_seed,
             "replay_source_path": str(source_db.resolve()),
@@ -1275,6 +1285,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: evolving live-agent desktop profile)")
+    ap.add_argument("--storage-policy", type=Path,
+                    help="operational storage policy YAML; also applies on resume")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
@@ -1445,6 +1457,8 @@ def main() -> None:
             "--replay-source-dir requires replay mode without competing "
             "command modes"
         )
+    if args.storage_policy is not None and mode not in {"run", "resume", "fork", "replay"}:
+        ap.error("--storage-policy requires run, resume, fork, or replay mode")
     # This command is a read-only persisted-evidence boundary. Dispatch it
     # before logging setup so the default invocation produces no log or SQLite
     # sidecar artifacts; explicit --output remains its only filesystem output.
@@ -1560,6 +1574,15 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    if args.storage_policy is not None:
+        import yaml
+        from engine.storage_policy import StoragePolicy
+        with args.storage_policy.open(encoding="utf-8") as handle:
+            raw_policy = yaml.safe_load(handle)
+        policy = StoragePolicy.from_mapping(raw_policy)
+        if policy is None:
+            ap.error("storage policy file must contain a mapping")
+        config["storage_policy"] = policy.as_dict()
     preflight_then_run = bool(
         args.preflight_live and (args.serve or args.ticks is not None))
     if args.oracle_campaign_run:

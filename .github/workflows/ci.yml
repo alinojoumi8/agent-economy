@@ -30,6 +30,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  storage-recovery:
+    name: Storage and real SFTP recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install locked application and SFTP test dependencies
+        run: python -m pip install --require-hashes -r requirements.lock -r tests/requirements-storage.lock
+      - name: Install the verified Litestream release
+        run: python deploy/hostinger/install_litestream.py --output "$RUNNER_TEMP/litestream"
+      - name: Exercise compression, retention, quotas, archives, and real recovery
+        env:
+          AE_LITESTREAM_BIN: ${{ runner.temp }}/litestream
+        run: >
+          python -m pytest -q
+          tests/test_payload_storage.py
+          tests/test_storage_policy.py
+          tests/test_storage_archive.py
+          tests/test_checkpoint_retention.py
+          tests/test_hosted_storage.py
+          tests/test_hosted_supervisor.py
+          tests/test_litestream_recovery.py
+          tests/test_catalog_backup_retention.py
+      - name: Validate the Hostinger Compose model
+        run: docker compose -f deploy/hostinger/compose.yaml config --no-interpolate --quiet
+      - name: Build and smoke the catalog backup image
+        run: |
+          docker build -f deploy/hostinger/Dockerfile.catalog-backup -t ae-catalog-backup:ci .
+          docker run --rm ae-catalog-backup:ci --help
+
   smoke:
     name: Python smoke test
     runs-on: ubuntu-latest

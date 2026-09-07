@@ -206,6 +206,23 @@ def create_app(world: World, *, served_ticks: int | None = None,
     hub = controller.hub
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
+    if hosted_safe:
+        @app.middleware("http")
+        async def storage_admission(request: Request, call_next):
+            # External agents can submit while a world is paused. Apply the
+            # same budget to those writes; reads and stop/pause remain usable.
+            policy = getattr(world, "storage_policy", None)
+            if (policy is not None and request.method in {"POST", "PUT", "PATCH"}
+                    and request.url.path not in {"/api/run/pause", "/api/run/stop", "/oauth/revoke"}):
+                from engine.storage_policy import StorageBudgetExceeded
+                try:
+                    await asyncio.to_thread(policy.check_run, store.path)
+                    guard = getattr(world, "storage_guard", None)
+                    if guard is not None:
+                        await asyncio.to_thread(guard)
+                except StorageBudgetExceeded:
+                    return JSONResponse(status_code=507, content={"error": "storage_capacity_reached"})
+            return await call_next(request)
     app.state.run_controller = controller
     from server.v2_api import install_v2_routes
     install_v2_routes(app, world, controller)

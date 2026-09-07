@@ -27,6 +27,12 @@ COPY --from=dashboard-build /src/server/static ./server/static
 RUN mkdir -p /var/lib/agent-economy/runs /var/lib/agent-economy/snapshots \
     && chown -R agent-economy:agent-economy /var/lib/agent-economy
 
+# Installing here keeps local/replay Python dependencies unchanged. The same
+# verified binary runs the Hostinger sidecar and application recovery command.
+RUN python deploy/hostinger/install_litestream.py \
+    && mkdir -p /var/lib/agent-economy/checkpoints /var/lib/agent-economy/artifacts \
+    && chown -R agent-economy:agent-economy /var/lib/agent-economy
+
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=4 \

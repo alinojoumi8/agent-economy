@@ -1,0 +1,188 @@
+name: agent-economy-hostinger
+
+x-backup-environment: &backup-environment
+  AE_BACKUP_SFTP_HOST: ${AE_BACKUP_SFTP_HOST:?set the separate backup server host:port}
+  AE_BACKUP_SFTP_USER: ${AE_BACKUP_SFTP_USER:?set the backup user}
+  AE_BACKUP_SFTP_HOST_KEY: ${AE_BACKUP_SFTP_HOST_KEY:?set the verified SSH public host key}
+  AE_BACKUP_SFTP_PATH: ${AE_BACKUP_SFTP_PATH:?set the dedicated absolute backup path}
+
+x-runtime-environment: &runtime-environment
+  <<: *backup-environment
+  AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:?set the public HTTPS origin}
+  AGENT_ECONOMY_HOSTED_DATABASE_URL: postgresql://agent_economy_app@postgres:5432/agent_economy
+  AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
+  AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL: postgresql://agent_economy_supervisor@postgres:5432/agent_economy
+  AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+
+x-app-base: &app-base
+  image: agent-economy-hostinger:${AGENT_ECONOMY_IMAGE_TAG:-local}
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  networks: [backend]
+  read_only: true
+  tmpfs: [/tmp:size=256m,mode=1777]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: agent_economy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
+      SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d agent_economy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-base
+    environment:
+      AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:?set the public HTTPS origin}
+      AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL: postgresql://postgres@postgres:5432/agent_economy
+      AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command: [migrate, --config, /app/config/hosted.migrate.docker.yaml]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  bootstrap:
+    <<: *app-base
+    profiles: [ops]
+    environment:
+      AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:?set the public HTTPS origin}
+      AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_URL: postgresql://postgres@postgres:5432/agent_economy
+      AGENT_ECONOMY_HOSTED_MIGRATION_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command: [bootstrap, --help]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: "no"
+
+  app:
+    <<: *app-base
+    networks: [backend, outbound]
+    environment: *runtime-environment
+    command: [serve, --config, /app/config/hosted.hostinger.yaml, --host, 0.0.0.0, --port, "8000"]
+    volumes:
+      - run-data:/var/lib/agent-economy
+      - ./secrets/backup_key:/run/secrets/backup_key:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      litestream: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  litestream:
+    <<: *app-base
+    networks: [backend, outbound]
+    environment: *backup-environment
+    entrypoint: [/usr/local/bin/litestream]
+    command: [replicate, -config, /app/deploy/hostinger/litestream.yml]
+    volumes:
+      - run-data:/var/lib/agent-economy
+      - ./secrets/backup_key:/run/secrets/backup_key:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9090/metrics', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    stop_grace_period: 45s
+    restart: unless-stopped
+
+  catalog-backup:
+    build:
+      context: ../..
+      dockerfile: deploy/hostinger/Dockerfile.catalog-backup
+    environment:
+      <<: *backup-environment
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: agent_economy
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    networks: [backend, outbound]
+    read_only: true
+    tmpfs: [/tmp:size=2g,mode=1777]
+    volumes:
+      - ./secrets/backup_key:/run/secrets/backup_key:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    healthcheck:
+      test: [CMD, python3, /opt/catalog_backup.py, health]
+      interval: 5m
+      timeout: 5s
+      start_period: 10m
+      retries: 1
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=1GB
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./storage-alerts.yml:/etc/prometheus/storage-alerts.yml:ro
+      - prometheus-data:/prometheus
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      AGENT_ECONOMY_PUBLIC_HOST: ${AGENT_ECONOMY_PUBLIC_HOST:?set the public domain}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ../Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [backend, outbound]
+    depends_on:
+      app: {condition: service_healthy}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    restart: unless-stopped
+
+networks:
+  backend: {internal: true}
+  outbound: {}
+volumes:
+  postgres-data: {}
+  run-data: {}
+  caddy-data: {}
+  caddy-config: {}
+  prometheus-data: {}
