@@ -145,6 +145,7 @@ jobs:
           tests/test_research_attempt_integrity.py
           tests/test_study_protocol.py
           tests/test_study_runner.py
+          tests/test_working_attempts.py
           tests/test_study_results.py
           tests/test_study_bundle.py
           tests/test_study_library.py

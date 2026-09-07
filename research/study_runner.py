@@ -73,8 +73,10 @@ def collect_outcomes(store: Store, spec: StudySpec) -> dict:
                 "SELECT COUNT(*) FROM llm_calls WHERE provider IS NULL OR provider<>'scripted'", default=0))}
 
 
-def validate_execution(spec: StudySpec, config: dict) -> None:
+def validate_execution(spec: StudySpec, config: dict, *, working: bool = False) -> None:
     """Check this runner's capabilities before creating any study artifacts."""
+    if spec.operations.pause_policy == "preserve_and_resume" and not working:
+        raise ValueError("working studies require the resumable attempt executor; batch orchestration is not yet supported")
     if spec.operations.mode != "provider_free" or spec.behavior.family != "scripted":
         raise ValueError("this runner supports explicitly scripted provider-free studies only")
     if spec.operations.concurrency != 1:

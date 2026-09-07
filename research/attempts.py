@@ -75,23 +75,7 @@ def execute_attempt(*, run_id: str, seed: int, arm: str, config: dict,
             reasons.append("invalid_genesis_references")
         publish_json(attempt_dir / "running.json", {**claim, "execution_status": "running"})
         asyncio.run(world.run(max_ticks=ticks))
-        meta = store.get_meta()
-        row.update(collect(store))
-        row["ticks"] = store.tick
-        row["reconciled"], row["reconciliation"] = world.economy.ledger.reconcile()
-        row["final_boundary"] = (meta["active_tick"] is None
-                                 and meta["next_phase"] in (None, "NIGHT_CLOSE")
-                                 and meta["status"] != "halted")
-        row["external_agent_influenced"] = bool(meta["external_agent_influenced"])
-        row["execution_status"] = (
-            "completed" if row["ticks"] == ticks and row["final_boundary"]
-            else "failed" if meta["status"] == "halted" else "paused")
-        state = canonical_state_receipt(store.conn)
-        row["event_hash"] = state["tables"]["events"]["sha256"]
-        row["source_state_hash"] = state["sha256"]
-        row["database_integrity"] = store.scalar("PRAGMA quick_check") == "ok"
-        if not state["references_valid"]:
-            reasons.append("invalid_source_references")
+        reasons.extend(observe_source(world, row, ticks=ticks, collect=collect))
     except Exception as exc:
         # Failed worlds remain in the assigned cohort; error text can contain
         # private model content, so the public result keeps a type/reason only.
@@ -106,6 +90,35 @@ def execute_attempt(*, run_id: str, seed: int, arm: str, config: dict,
         elif store is not None:
             store.close()
 
+    return finalize_attempt(row, attempt_dir=attempt_dir, reasons=reasons)
+
+
+def observe_source(world: World, row: dict, *, ticks: int,
+                   collect: Callable[[Store], dict]) -> list[str]:
+    """Measure committed state without deciding publication or retry policy."""
+    store, meta = world.store, world.store.get_meta()
+    row.update(collect(store))
+    row["ticks"] = store.tick
+    row["reconciled"], row["reconciliation"] = world.economy.ledger.reconcile()
+    row["final_boundary"] = (meta["active_tick"] is None
+                             and meta["next_phase"] in (None, "NIGHT_CLOSE")
+                             and meta["status"] != "halted")
+    row["external_agent_influenced"] = bool(meta["external_agent_influenced"])
+    row["execution_status"] = (
+        "completed" if row["ticks"] == ticks and row["final_boundary"]
+        else "failed" if meta["status"] == "halted" else "paused")
+    state = canonical_state_receipt(store.conn)
+    row["event_hash"] = state["tables"]["events"]["sha256"]
+    row["source_state_hash"] = state["sha256"]
+    row["database_integrity"] = store.scalar("PRAGMA quick_check") == "ok"
+    return [] if state["references_valid"] else ["invalid_source_references"]
+
+
+def finalize_attempt(row: dict, *, attempt_dir: Path, reasons: list[str],
+                     final_checks: Callable[[], list[str]] | None = None) -> dict:
+    """Freeze source/replay/result receipts once; never replace prior evidence."""
+    source_path = Path(row["source_database"])
+    source_dir, run_id, ticks = source_path.parent, row["run_id"], row["expected_ticks"]
     row["source_database_sha256"] = file_sha256(source_path)
     source_receipt = publish_json(attempt_dir / "source-receipt.json", row)
     row["source_receipt"] = str(source_receipt)
@@ -150,6 +163,8 @@ def execute_attempt(*, run_id: str, seed: int, arm: str, config: dict,
     # Reopen and check the receipts/artifacts, not just the in-memory success flag.
     if not reasons:
         reasons = verify_attempt(row, expected_ticks=ticks)
+    if final_checks is not None:
+        reasons.extend(final_checks())
     row["eligibility"] = {"status": "ineligible" if reasons else "eligible",
                           "reasons": sorted(set(reasons))}
     publish_json(attempt_dir / "result.json", row)
@@ -202,6 +217,12 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 "source_state_hash", "genesis_hash", "event_hash", "metrics",
                 "series", "events", "spend_usd", "provider_calls", "outcome_observations")):
             reasons.append("source_receipt_mismatch")
+        if claim.get("protocol_version") == 2:
+            from research.working_attempts import verify_working_history
+            reasons.extend(verify_working_history(row, claim, resolve_path=locate))
+            for key in ("working_history", "genesis_receipt_sha256", "prng_state_sha256", "active_wall_seconds"):
+                if digest_json(source.get(key)) != digest_json(row.get(key)):
+                    reasons.append("working_source_receipt_mismatch")
         if (replay["execution"] != "recorded_replay"
                 or replay["attempt_claim_sha256"] != row["attempt_claim_sha256"]
                 or replay["source_database_sha256"] != row["source_database_sha256"]
@@ -228,6 +249,8 @@ def verify_attempt(row: dict, *, expected_ticks: int,
                 reasons.append("source_contract_mismatch")
             if canonical_state_receipt(store.conn)["sha256"] != row["source_state_hash"]:
                 reasons.append("source_state_changed")
+            if claim.get("protocol_version") == 2 and digest_json(meta["prng_state"]) != row["prng_state_sha256"]:
+                reasons.append("source_prng_state_changed")
         finally:
             store.close()
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):

@@ -1,10 +1,61 @@
 # Paused study recovery: implementation contract
 
-Status: planned; no resumable study executor is delivered by this document.
-Source checkpoint inspected: `0b454b1`. This closes the implementation-design
+Status: implementation in progress. The working-attempt executor exists;
+batch supervision, CLI, portable working-study evidence and UI integration
+remain pending. Source checkpoint initially inspected: `0b454b1`. This closes the implementation-design
 gap in [S1](2026-09-06-research-city-specs.md#s1-research-contract-and-experiment-integrity)
 before further household, school, production or banking expansion. It does not
 replace the [five-part roadmap](2026-09-06-research-city-roadmap.md).
+
+## Current executor
+
+`research/working_attempts.py::execute_working_attempt` advances one declared
+scripted cell under a process-owned batch lock. It requires the explicit
+`preserve_and_resume` pause policy, a `working-attempt-v2` manifest and semantics
+7 or later with persisted PRNG state. `prepare_study` binds this protocol and
+its cumulative-active-time contract before execution. The ordinary study
+runner and its validation command reject the new policy until batch supervision
+is connected; it is not exposed as a working UI feature.
+
+An intact committed-day pause retains pending eligibility and append-only
+segment receipts. It has no final source/replay/result receipt. Resume checks
+the complete manifest, input snapshots, code/configuration, genesis, closed
+source bytes, schema, phase, PRNG, references and ledger before opening a
+writable Store. Source preflight uses an immutable SQLite reader only after
+checking that the hash-bound source is closed and has no WAL/SHM/journal; it
+does not apply that mode to live databases. Completed, failed, legacy finalized
+or unreceipted attempts refuse in-place resume.
+
+The executor accounts for accumulated active time across existing batch cells,
+checks disk/time at committed days and before publication, and records
+finalization time separately. These checks are cooperative: a single slow day
+or evidence operation can exceed a sampled limit. The future supervisor must
+enforce hard deadlines and retain orphan-worker handling before CLI/UI exposure.
+Operator idle time between calls is excluded by the new timing contract.
+Closed results receive a hash seal before their timing can contribute to a
+later cell's budget. A changed result or a missing finalization seal prevents
+that continuation; failures retain their actual last completed day.
+
+For a prepared 30-day scripted specification, the internal API is:
+
+```python
+from research.studies import prepare_study
+from research.working_attempts import execute_working_attempt
+
+batch = prepare_study(spec, config, input_root=".",
+                      data_root="data/studies", out_dir="reports/out")
+cell = dict(batch=batch, spec=spec, config=config, input_root=".",
+            seed=spec.randomness.seeds[0], arm=spec.arms[0].key)
+paused = execute_working_attempt(**cell, max_ticks=3)
+completed = execute_working_attempt(**cell, resume=True)
+```
+
+Keep the checkout and declared inputs unchanged between these calls. The
+working source is expected to advance; prior manifests and segment receipts
+remain unchanged. Finalization reuses the existing independent replay and
+receipt verifier, with added checks for working-segment lineage and PRNG state.
+This API does not yet publish a resumable batch report or portable working
+study, and does not support resuming a partial active phase.
 
 ## Existing behavior and compatibility boundary
 

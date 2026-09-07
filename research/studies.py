@@ -145,7 +145,7 @@ class OperationContract(Contract):
     max_disk_bytes: Annotated[int, Field(ge=1)]
     concurrency: Annotated[int, Field(ge=1, le=32)]
     failure_policy: Literal["preserve_and_exclude"]
-    pause_policy: Literal["preserve_and_stop"]
+    pause_policy: Literal["preserve_and_stop", "preserve_and_resume"]
 
     @model_validator(mode="after")
     def bounded_mode(self):
@@ -321,6 +321,9 @@ def prepare_study(spec: StudySpec, config: dict, *, input_root: str | Path,
                   data_root: str | Path, out_dir: str | Path) -> dict:
     """Verify declarations, then claim a new immutable, prospective study batch."""
     protocol = validate_study_inputs(spec, config, input_root=input_root)
+    if spec.operations.pause_policy == "preserve_and_resume":
+        protocol["attempt_protocol"] = "working-attempt-v2"
+        protocol["timing_contract"] = "cumulative-active-wall-v1"
     description = Path(__file__).resolve().parents[1] / "docs/research/model-description.md"
     sources = {"model-description.md": (description, protocol["model_description_sha256"])}
     for artifact in spec.inputs:

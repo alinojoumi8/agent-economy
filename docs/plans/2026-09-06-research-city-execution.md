@@ -572,3 +572,62 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - The complete study-runner/protocol/documentation selection passed **42
   tests** (18.68 s) after those corrections, under the short-root/free-space
   preflight. This does not relabel the failed earlier shard as a pass.
+
+## Working-attempt recovery executor
+
+- At correction commit `d0254d5`, required PR CI
+  [34074585568](https://github.com/alinojoumi8/agent-economy/actions/runs/34074585568)
+  passed all four jobs. All eight Ubuntu/Python 3.12 full-suite shards passed in
+  [34074675811](https://github.com/alinojoumi8/agent-economy/actions/runs/34074675811),
+  totaling **1,773 passed and 10 skipped**. This verifies the household checkpoint
+  and budget-test correction; it precedes the recovery executor below. The
+  Windows/Python-version matrix and hosted integration were not run here.
+- Added `working-attempt-v2` and explicit `preserve_and_resume` preparation for
+  scripted studies. The executor advances one assigned cell under a portable
+  batch writer lock, records immutable pause/segment lineage, preserves pending
+  eligibility before the horizon and reuses exact source/replay finalization.
+  Legacy finalized attempts remain immutable. New checks bind the manifest,
+  inputs, code/configuration, genesis, source bytes, schema, phase, PRNG,
+  references and ledger before writable database access.
+- The first focused run had **37 passed, 1 failed** (70.10 s). The strict
+  cross-source comparison differed only in request latency, which remains part
+  of the historical replay contract. Its conformance fixture now fixes the
+  gateway's observational clock while retaining real decisions, economic state
+  and budget clocks; no production replay exclusions were added.
+- Stronger rejection cases then exposed read-only SQLite sidecar creation on
+  Windows and a lock file created before rejecting an old finalized attempt:
+  **51 passed, 4 failed** (82.02 s). Preflight now uses a closed, sidecar-free,
+  hash-bound snapshot reader, and finalized disposition is checked before lock
+  creation and again under ownership. The subsequent working/legacy-attempt/
+  study-runner/protocol/golden-replay selection passed **55 tests** (75.01 s).
+- Cumulative active time includes earlier segments/cells, with operator idle
+  time excluded only under the explicit new timing contract. Limits remain
+  cooperative at this internal executor seam. Hard worker budgets, batch
+  resume, CLI, portable evidence, saved-study discovery and operator/UI recovery
+  remain required next work under the
+  [implementation contract](2026-09-06-paused-study-resume.md). Ordinary runner
+  validation rejects this policy until orchestration is integrated; the full
+  five-part goal remains active.
+- The expanded working-attempt, legacy-attempt, runner, protocol, results,
+  portable bundle, saved library, local jobs, golden replay and documentation
+  selection passed **137 tests** (136.30 s), with the existing Starlette warning.
+  Final hardening binds closed result timings to a separate immutable seal
+  before another cell can consume that budget record. All **21 working-attempt
+  tests** then passed (64.48 s), including repeated pauses, an actual failed
+  day, competing ownership and altered cross-cell budget records. Required
+  research CI now includes this module.
+- A separate, unmocked provider-free Semantics-15 household rehearsal paused
+  at day **3**, resumed the same source to day **30**, and verified independent
+  recorded replay at canonical hash
+  `b4188250ab4ec7594f08bab7371fc5a4c0963fb481595380fd8ab3c938b3b9e2`.
+  It retained **25 living actors**, **31 censuses** including genesis, **30
+  child-days/food units purchased for 10,352 cents**, zero child model calls,
+  no paid provider calls/spend, valid segment lineage and reconciled books.
+  Active source time was 6.80 s and finalization 9.53 s. Its first summary
+  query used incorrect column/table names after the source and replay had
+  succeeded; the corrected receipt was read from those existing frozen
+  artifacts without rerunning the simulation. Raw evidence remains ignored
+  under `tmp/wha-0786b8f0/`. This pilot preceded only the final result-seal
+  addition; the final 21-test selection covers that addition. This remains a
+  bounded mechanics rehearsal, not a completed multi-arm study or empirical
+  validation.
