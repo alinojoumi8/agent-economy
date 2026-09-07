@@ -341,6 +341,50 @@ jobs:
           git diff --exit-code -- server/static
           test -z "$(git status --porcelain --untracked-files=all -- server/static)"
 
+  city-research-acceptance:
+    name: City and price studies against the production backend
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.integration == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install locked Python dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Install dashboard dependencies and Chromium
+        working-directory: dashboard
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Exercise the committed production bundle with both price studies
+        run: python -u scripts/city_research_acceptance.py --output-root "${{ runner.temp }}/city-research-acceptance"
+      - name: Verify owned-server shutdown after success and failure
+        run: python -m pytest -q tests/test_city_research_acceptance.py --basetemp "${{ runner.temp }}/city-research-server-tests"
+      - name: Retain the acceptance receipt and browser log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-research-acceptance
+          path: |
+            ${{ runner.temp }}/city-research-acceptance/acceptance.json
+            ${{ runner.temp }}/city-research-acceptance/browser.log
+          if-no-files-found: warn
+          retention-days: 7
+
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.os }}

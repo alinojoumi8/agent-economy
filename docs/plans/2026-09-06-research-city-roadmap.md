@@ -1,6 +1,6 @@
 # Agent Economy: research city execution roadmap
 
-Date: 2026-09-06. Status: **Implementation active; foundation fixes implemented and under full verification**.
+Date: 2026-09-06. Status: **Implementation active; automated city/price-study workflow verified; deeper-economy and validation packages remain**.
 Basis: [review and verified limitations](2026-09-06-research-city-review.md).
 Contracts: [implementation specifications](2026-09-06-research-city-specs.md).
 
@@ -23,6 +23,9 @@ unfinished or claim that proposed features already exist. The user has now
 authorized implementation of recommendations 1–5 in order: research integrity,
 the dual price lab, the interactive city, deeper economics, then validation.
 Track completed code and verification in the [execution log](2026-09-06-research-city-execution.md).
+The [production workflow gate](2026-09-07-city-research-acceptance.md) now repeats
+the city-to-study path with real projections, both price domains and independently
+verified exports. Human usability sessions and research-scale validation remain.
 
 ## First deliverable: Price Discovery Lab v1
 

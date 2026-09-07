@@ -158,7 +158,7 @@ export function StudyLauncher() {
   return <section className="study-launcher" aria-label="Create a price study">
     <header><p className="world-os-kicker">Local operator · Independent worlds</p><h3>{job ? "Study execution" : draft ? "Review the validated study" : "Draft a price study"}</h3>
       <p>Compare a baseline with a declared intervention or decision policy. Both goods and equities are measured in every study.</p></header>
-    <p className="study-launcher__scope">{policy ? "Policy pilots use the 14-agent profile and owner-configured models. Validation makes no provider calls. Launch requires explicit approval of the original inference allowance." : "These pilots use the 14-agent profile and scripted decisions. Choose fresh worlds or compatible saved worlds explicitly. New external provider calls and spend are zero."}</p>
+    <p className="study-launcher__scope">{policy ? "Policy pilots use small research worlds and owner-configured models. Validation makes no provider calls. Launch requires explicit approval of the original inference allowance." : "These pilots use small research worlds and scripted decisions. Choose fresh worlds or compatible saved worlds explicitly. New external provider calls and spend are zero."}</p>
     {(session.isFetching || capabilities.isFetching || draftQuery.isFetching || (jobQuery.isFetching && !job)) && <p role="status">Loading the local study workspace…</p>}
     {error && <p role="alert" className="world-os-form-error">{error}</p>}
     {caps?.launch_blocked && !job && <aside className="study-launcher__callout"><p>{caps.reason || "A study already owns the local execution slot. You can still prepare a draft."}</p>

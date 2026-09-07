@@ -118,6 +118,14 @@ the application stylesheet or its content hash.
 
 ### Provider-free real-backend menu smoke
 
+The repeatable city-to-price-study gate creates its own isolated world and serves
+the production bundle: `python scripts/city_research_acceptance.py`. It covers
+historical navigation, operator bookmarks, mobile keyboard selection, both price
+studies, independent evidence import and unchanged source-world contents. See the
+[acceptance contract](plans/2026-09-07-city-research-acceptance.md) for setup,
+bounds, retained evidence and CI. Use the older manual menu smoke below when
+testing a separately started disposable world.
+
 The normal Playwright suite mocks projection contracts. To exercise the same
 menus against a real deterministic database and FastAPI server, start a bounded
 provider-free run in one terminal:
@@ -146,7 +154,8 @@ dashboard `cityObservations`/`cityObjectList` node suites, and the city-context 
 workspace-route browser suites. These cover API admission, world immutability,
 concurrent edits, mobile keyboard selection and the desktop map-area requirement.
 The [navigation contract](plans/2026-09-07-city-workspace-navigation.md) records
-the exact scope and the remaining real-campaign acceptance work.
+the focused scope; the [production workflow gate](plans/2026-09-07-city-research-acceptance.md)
+adds the actual backend and supervised study/export path.
 
 Working research studies now have two explicit pause contracts: version 2 for
 committed days and opt-in version 3 for saved phases. Run the bounded phase

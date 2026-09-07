@@ -1346,3 +1346,58 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
   (**53.4 s**) and the production bundle rebuilt. This follow-up changes only
   responsive CSS, browser coverage, documentation and generated assets; the
   full Python result above applies to the preceding implementation commit.
+
+## Repeatable production city and price-study acceptance (2026-09-07)
+
+- Added `scripts/city_research_acceptance.py`, a separate production Playwright
+  configuration/spec, and the small `city-research-acceptance.yaml` profile.
+  The driver owns an ephemeral local server, world, operator workspace, study
+  roots, downloads/imports and child processes. It refuses existing output roots,
+  requires Windows disk headroom, retains failures and stops its owned processes.
+  The UI's misleading “14-agent” pilot label now says “small research worlds”:
+  the population setting counts ordinary residents separately from institutions.
+- Final local workflow: **passed in 71.77 s**, Python 3.11.15/Chromium, using the
+  production bundle with no HTTP mocks. Evidence root: `.codex/tmp/ae-city-bhjgqljy`
+  under the local user directory; receipt: `acceptance.json`. The scripted world
+  `a54d7e58f1` contained **25 agents, seven places, three firms**, real goods sales
+  and an equity execution. It stayed paused at **day 3** throughout observation,
+  separate study execution, download and independent import.
+- Historical person/firm/market navigation, browser Back, bookmark reload and
+  restore, renderer switching and 390-pixel keyboard selection passed. The mobile
+  inspector received focus and at least half of it entered the viewport. Historical
+  navigation made no live status, runtime or conversation requests. The actual
+  equity execution price appeared in the price inspector.
+- G2 study `73c1b63a1c6fd913fe458c63bc506f39` and F2 study
+  `a9bb8db738489b71e404ce77d2656490` each completed **4/4 eligible attempts**:
+  two seeds, baseline/treatment, eight days, intervention day 3. Every comparison
+  showed both domains with **zero external provider calls and spend**. This is
+  **two matched seed pairs per study**, not four independent pairs.
+- Private downloads were **3,915,344** and **3,912,252 bytes**. Both matched their
+  export receipts and passed independent import verification. Their SHA-256 values
+  are retained in the receipt. The source world's complete SQLite logical dump
+  remained `1d201e4390dba2bc21c95f810b8ef84b3a1baa3d43cdfeef9e33ba78a6139fe9`.
+  The whole acceptance directory used **186.85 MiB**; its server port was closed
+  after completion. No source runs or older evidence were cleaned up.
+- **24 Python tests passed in 5.70 s**, comprising documentation and two actual
+  server-lifecycle tests. Success and simulated browser failure both close the
+  server and listener. Earlier harness runs exposed an overly exact form-label
+  selector and closing the socket before server shutdown; these were corrected.
+  Final execution had no shutdown exception. Receipt guards also refuse success
+  after a shutdown exception or a source-world change during shutdown.
+  The two price-study passes before
+  the final focus assertion are retained as separate attempts, not substituted
+  for the final receipt.
+- Dashboard typecheck/build and **256 node tests** passed. The combined routes/
+  city browser run passed **61 tests** with **two loading timeouts** while the
+  real backend and Python tests ran concurrently. Those exact two cases passed
+  without competing jobs (**19.1 s**); no timeout or assertion was weakened.
+  The concurrent backend logged loop-stall warnings. This small check does not
+  establish performance under load; CI runs the production acceptance separately.
+- Added a required CI job using the committed production bundle and locked
+  dependencies. It retains the receipt/browser log, leaving private databases,
+  archives and traces out of uploaded artifacts. See the
+  [acceptance contract](2026-09-07-city-research-acceptance.md) and development guide.
+  Committed-head CI results are recorded on draft PR #82.
+- The automated W4 workflow check is delivered. W5–W9 remain: partnerships/care/
+  estates, education, production/housing, banking depth, and empirical/scale
+  validation. The proposed human usability sessions remain unperformed.
