@@ -41,7 +41,10 @@ def test_real_study_runs_both_price_domains_and_verifies_each_replay(protocol, t
 def test_budget_exhaustion_retains_assignments_and_null_effects(protocol, tmp_path):
     config = _config()
     protocol["model"]["resolved_config_sha256"] = digest_json(config)
-    protocol["operations"]["max_disk_bytes"] = 1
+    # Allow the declared context snapshot, but leave no room for manifests or
+    # execution. A one-byte budget fails earlier during snapshot preflight.
+    description = Path(__file__).resolve().parents[1] / "docs/research/model-description.md"
+    protocol["operations"]["max_disk_bytes"] = description.stat().st_size
     result = run_study(StudySpec.model_validate(protocol), config, input_root=tmp_path,
                        data_root=tmp_path / "data", out_dir=tmp_path / "out")
     assert len(result["results"]) == 6
@@ -52,6 +55,18 @@ def test_budget_exhaustion_retains_assignments_and_null_effects(protocol, tmp_pa
     assert effect["mean_difference"] is None and effect["ci95_bootstrap"] is None
     assert result["operations"]["stop_reason"] == "disk_budget_exhausted"
     assert Path(result["batch"]["data_dir"], "manifest.json").is_file()
+    assert not list(Path(result["batch"]["data_dir"]).rglob("*.db"))
+
+
+def test_context_over_budget_is_rejected_before_publishing_a_batch(protocol, tmp_path):
+    config = _config()
+    protocol["model"]["resolved_config_sha256"] = digest_json(config)
+    protocol["operations"]["max_disk_bytes"] = 1
+    with pytest.raises(ValueError, match="snapshot size limit"):
+        run_study(StudySpec.model_validate(protocol), config, input_root=tmp_path,
+                  data_root=tmp_path / "data", out_dir=tmp_path / "out")
+    assert not (tmp_path / "data").exists()
+    assert not (tmp_path / "out").exists()
 
 
 def test_worker_wall_limit_preserves_partial_artifacts_and_stops_later_cells(protocol, tmp_path):

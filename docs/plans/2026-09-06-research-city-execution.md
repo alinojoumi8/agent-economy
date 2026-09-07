@@ -545,3 +545,30 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - The earlier five-part scope remains open. After preserving this first W5
   checkpoint, close paused-study resume and the other research foundation
   gaps before expanding household time/estate mechanics and W6–W9.
+- Household checkpoint `0b454b1` is pushed to draft PR #82. Staged Gitleaks
+  found no leaks in 100.53 KB; the staged whitespace check passed. Required
+  PR CI [34074026442](https://github.com/alinojoumi8/agent-economy/actions/runs/34074026442)
+  passed all four jobs: smoke, core, research evidence and dashboard.
+- A separate full-suite run
+  [34074059513](https://github.com/alinojoumi8/agent-economy/actions/runs/34074059513)
+  was dispatched at that same commit using all eight Ubuntu/Python 3.12
+  shards. Its result is pending at the time of this entry; this does not claim
+  the complete Windows/Python-version matrix or hosted integration passed.
+- Source inspection established that current research runners finalize even
+  paused attempts. The next
+  [resume implementation contract](2026-09-06-paused-study-resume.md) therefore
+  specifies separate working attempts, preserved legacy receipts, compatibility
+  validation before writable database access, cumulative budgets, and staged
+  CLI/evidence/UI delivery. This is a saved implementation design, not a claim
+  that study resume is already implemented.
+- The broader run exposed a stale study-runner test in shard 1: its one-byte
+  budget now correctly fails context-snapshot preflight before any study is
+  created. The test now gives the context exactly enough room to publish,
+  then verifies that manifest overhead prevents all world execution while
+  retaining every assigned arm/seed and null effects. A separate test proves
+  that an unaffordable context publishes no batch. Production budget guards
+  were not relaxed. The required research CI selection now includes
+  `tests/test_study_runner.py`, closing the coverage gap that hid this failure.
+- The complete study-runner/protocol/documentation selection passed **42
+  tests** (18.68 s) after those corrections, under the short-root/free-space
+  preflight. This does not relabel the failed earlier shard as a pass.
