@@ -10,7 +10,7 @@ import threading
 
 
 @contextmanager
-def sftp_replica(root, key_directory):
+def sftp_replica(root, key_directory, *, username="drill", read_only=False):
     import paramiko
 
     root = Path(root).resolve()
@@ -24,7 +24,7 @@ def sftp_replica(root, key_directory):
             return "publickey"
 
         def check_auth_publickey(self, username, key):
-            return paramiko.AUTH_SUCCESSFUL if username == "drill" and key == client_key else paramiko.AUTH_FAILED
+            return paramiko.AUTH_SUCCESSFUL if username == allowed_user and key == client_key else paramiko.AUTH_FAILED
 
         def check_channel_request(self, kind, channel_id):
             return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
@@ -48,6 +48,8 @@ def sftp_replica(root, key_directory):
         lstat = stat
 
         def chattr(self, path, attributes):
+            if read_only:
+                return paramiko.SFTP_PERMISSION_DENIED
             return self._operation(lambda: (paramiko.SFTPServer.set_file_attr(str(self.local(path)), attributes),
                                             paramiko.SFTP_OK)[1])
 
@@ -62,6 +64,8 @@ def sftp_replica(root, key_directory):
             return self._operation(listing)
 
         def open(self, path, flags, attributes):
+            if read_only and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+                return paramiko.SFTP_PERMISSION_DENIED
             def opened():
                 descriptor = os.open(self.local(path), flags, 0o600)
                 mode = "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb"
@@ -71,6 +75,8 @@ def sftp_replica(root, key_directory):
                         return paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno()))
 
                     def chattr(self, attributes):
+                        if read_only:
+                            return paramiko.SFTP_PERMISSION_DENIED
                         paramiko.SFTPServer.set_file_attr(str(self.filename), attributes)
                         return paramiko.SFTP_OK
                 handle = Handle(flags)
@@ -81,19 +87,28 @@ def sftp_replica(root, key_directory):
             return self._operation(opened)
 
         def mkdir(self, path, attributes):
+            if read_only:
+                return paramiko.SFTP_PERMISSION_DENIED
             return self._operation(lambda: (self.local(path).mkdir(), paramiko.SFTP_OK)[1])
 
         def rmdir(self, path):
+            if read_only:
+                return paramiko.SFTP_PERMISSION_DENIED
             return self._operation(lambda: (self.local(path).rmdir(), paramiko.SFTP_OK)[1])
 
         def remove(self, path):
+            if read_only:
+                return paramiko.SFTP_PERMISSION_DENIED
             return self._operation(lambda: (self.local(path).unlink(), paramiko.SFTP_OK)[1])
 
         def rename(self, old, new):
+            if read_only:
+                return paramiko.SFTP_PERMISSION_DENIED
             return self._operation(lambda: (os.rename(self.local(old), self.local(new)), paramiko.SFTP_OK)[1])
 
         posix_rename = rename
 
+    allowed_user = username
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen()
@@ -122,7 +137,7 @@ def sftp_replica(root, key_directory):
     thread.start()
     try:
         yield {"type": "sftp", "host": f"127.0.0.1:{listener.getsockname()[1]}",
-               "user": "drill", "key-path": str(key_path),
+               "user": username, "key-path": str(key_path),
                "host-key": f"{host_key.get_name()} {host_key.get_base64()}", "path": "/backup"}
     finally:
         stopped.set()

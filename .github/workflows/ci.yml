@@ -58,6 +58,7 @@ jobs:
           tests/test_hosted_supervisor.py
           tests/test_litestream_recovery.py
           tests/test_catalog_backup_retention.py
+          tests/test_security_review.py
       - name: Validate the Hostinger Compose model
         run: docker compose -f deploy/hostinger/compose.yaml config --no-interpolate --quiet
       - name: Build and smoke the catalog backup image

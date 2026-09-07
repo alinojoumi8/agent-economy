@@ -8,6 +8,7 @@ x-backup-environment: &backup-environment
 
 x-runtime-environment: &runtime-environment
   <<: *backup-environment
+  AE_BACKUP_SFTP_USER: ${AE_RESTORE_SFTP_USER:?set the read-only run recovery user}
   AGENT_ECONOMY_PUBLIC_BASE_URL: ${AGENT_ECONOMY_PUBLIC_BASE_URL:?set the public HTTPS origin}
   AGENT_ECONOMY_HOSTED_DATABASE_URL: postgresql://agent_economy_app@postgres:5432/agent_economy
   AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
@@ -36,9 +37,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?set APP_DATABASE_PASSWORD}
       SUPERVISOR_DATABASE_PASSWORD: ${SUPERVISOR_DATABASE_PASSWORD:?set SUPERVISOR_DATABASE_PASSWORD}
+      CATALOG_BACKUP_PASSWORD: ${CATALOG_BACKUP_PASSWORD:?set CATALOG_BACKUP_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/002_backup_role.sh:/docker-entrypoint-initdb.d/002_backup_role.sh:ro
     networks: [backend]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U postgres -d agent_economy"]
@@ -80,7 +83,7 @@ services:
     command: [serve, --config, /app/config/hosted.hostinger.yaml, --host, 0.0.0.0, --port, "8000"]
     volumes:
       - run-data:/var/lib/agent-economy
-      - ./secrets/backup_key:/run/secrets/backup_key:ro
+      - ./secrets/restore_key:/run/secrets/backup_key:ro
     depends_on:
       migrate: {condition: service_completed_successfully}
       litestream: {condition: service_healthy}
@@ -115,15 +118,17 @@ services:
       dockerfile: deploy/hostinger/Dockerfile.catalog-backup
     environment:
       <<: *backup-environment
+      AE_BACKUP_SFTP_USER: ${AE_CATALOG_SFTP_USER:?set the separate catalog backup user}
+      AE_BACKUP_SFTP_PATH: ${AE_CATALOG_SFTP_PATH:?set the separate catalog backup path}
       PGHOST: postgres
-      PGUSER: postgres
+      PGUSER: agent_economy_backup
       PGDATABASE: agent_economy
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGPASSWORD: ${CATALOG_BACKUP_PASSWORD:?set CATALOG_BACKUP_PASSWORD}
     networks: [backend, outbound]
     read_only: true
     tmpfs: [/tmp:size=2g,mode=1777]
     volumes:
-      - ./secrets/backup_key:/run/secrets/backup_key:ro
+      - ./secrets/catalog_key:/run/secrets/backup_key:ro
     depends_on:
       migrate: {condition: service_completed_successfully}
     security_opt: [no-new-privileges:true]

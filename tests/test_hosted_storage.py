@@ -165,7 +165,14 @@ def test_hostinger_deployment_has_no_amazon_dependency_and_bounds_logs():
     assert services["app"]["depends_on"]["litestream"]["condition"] == "service_healthy"
     for service in services.values():
         assert service["logging"]["options"] == {"max-size": "10m", "max-file": "3"}
-    assert services["litestream"]["volumes"] == services["app"]["volumes"]
+    assert services["litestream"]["volumes"][0] == services["app"]["volumes"][0]
+    assert "restore_key" in services["app"]["volumes"][1]
+    assert "./secrets/backup_key" in services["litestream"]["volumes"][1]
+    assert "catalog_key" in services["catalog-backup"]["volumes"][0]
+    assert "AE_RESTORE_SFTP_USER" in services["app"]["environment"]["AE_BACKUP_SFTP_USER"]
+    assert "AE_CATALOG_SFTP_USER" in services["catalog-backup"]["environment"]["AE_BACKUP_SFTP_USER"]
+    assert services["catalog-backup"]["environment"]["PGUSER"] == "agent_economy_backup"
+    assert "POSTGRES_PASSWORD" not in str(services["catalog-backup"]["environment"])
     assert "ports" not in services["litestream"]
     assert "ports" not in services["postgres"]
 

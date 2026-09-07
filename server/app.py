@@ -209,11 +209,12 @@ def create_app(world: World, *, served_ticks: int | None = None,
     if hosted_safe:
         @app.middleware("http")
         async def storage_admission(request: Request, call_next):
-            # External agents can submit while a world is paused. Apply the
-            # same budget to those writes; reads and stop/pause remain usable.
+            # The hosted control plane authorizes run controls before forwarding.
+            # External protocols perform admission after checking credentials.
             policy = getattr(world, "storage_policy", None)
             if (policy is not None and request.method in {"POST", "PUT", "PATCH"}
-                    and request.url.path not in {"/api/run/pause", "/api/run/stop", "/oauth/revoke"}):
+                    and request.url.path.startswith("/api/run/")
+                    and request.url.path not in {"/api/run/pause", "/api/run/stop"}):
                 from engine.storage_policy import StorageBudgetExceeded
                 try:
                     await asyncio.to_thread(policy.check_run, store.path)

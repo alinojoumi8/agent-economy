@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing, ExitStack
+from copy import deepcopy
 from uuid import uuid4
 
 import pytest
@@ -89,6 +90,12 @@ def test_real_litestream_recovers_committed_wal_memory_and_action_history(tmp_pa
     replica["sync-interval"] = "100ms"
     config = {"dbs": [{"dir": str(root), "pattern": "*.db", "recursive": True, "watch": True,
                        "replica": replica}]}
+    recovery_config = deepcopy(config)
+    if replica_type == "sftp":
+        reader_keys = tmp_path / "reader-keys"
+        reader_keys.mkdir()
+        recovery_config["dbs"][0]["replica"] = stack.enter_context(
+            sftp_replica(remote, reader_keys, username="drill-reader", read_only=True))
     path = tmp_path / "replication.yml"
     path.write_text(yaml.safe_dump(config))
     log_path = tmp_path / "litestream.log"
@@ -112,7 +119,7 @@ def test_real_litestream_recovers_committed_wal_memory_and_action_history(tmp_pa
             # with its replica definition still pointing to the original run.
             restored_root = tmp_path / "recovered"
             destination = restored_root / target.relative_to(root)
-            recovery = LitestreamBackup(binary=binary, run_root=restored_root, config=config)
+            recovery = LitestreamBackup(binary=binary, run_root=restored_root, config=recovery_config)
             for number in (1, 2):
                 writer.execute("INSERT INTO memories VALUES(?,?)", (number, f"experience {number}"))
                 writer.execute("INSERT INTO events VALUES(?,?)", (number, f"action {number}"))

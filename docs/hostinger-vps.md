@@ -17,20 +17,63 @@ limits, compatibility and the archive commands.
    on `codex/hostinger-storage-recovery`; merging and production deployment are
    separate steps.
 2. Point the site's domain at the VPS. Set the exact HTTPS origin and host.
-3. Create a dedicated SFTP backup user and absolute backup directory on the
-   separate server. Grant access only to that backup tree, permit SFTP file
-   timestamps and rename operations, and restrict network access where possible.
-4. Generate a dedicated SSH client key. Install its public key on the backup
-   server. Verify the server's public host key through its trusted console/provider;
+3. Create the three SFTP accounts described below on the separate server.
+   Keep run backups and catalog backups in separate chroots. Permit file
+   timestamps and rename operations for writers; recovery access must be read-only.
+4. Generate three independent SSH client keys. Install each public key on its
+   corresponding backup account. Do not reuse a key between the accounts.
+   Verify the server's public host key through its trusted console/provider;
    a network key scan alone does not establish its identity.
-5. Save the client private key at the ignored
-   `deploy/hostinger/secrets/backup_key`. On Linux give it owner UID/GID
+5. Save the private keys as `backup_key`, `restore_key`, and `catalog_key` in the
+   ignored `deploy/hostinger/secrets/` directory. On Linux give each owner UID/GID
    `10001:10001` and mode `0600`; containers use that unprivileged identity.
-   Keep the directory private and keep an independent recovery copy of the key.
+   Keep the directory private and keep independent recovery copies of the keys.
 6. Copy [the environment template](../deploy/hostinger/.env.example) to the
    ignored `deploy/hostinger/.env` and fill every blank. Use independent strong
    PostgreSQL passwords. `AE_BACKUP_SFTP_HOST_KEY` is the algorithm plus base64
    public host key; `AE_BACKUP_SFTP_PATH` is the dedicated absolute directory.
+
+## Backup access boundaries
+
+| Container | SSH private key | SFTP account | Access |
+| --- | --- | --- | --- |
+| `app` | `restore_key` | `AE_RESTORE_SFTP_USER` | Read-only access to run replicas |
+| `litestream` | `backup_key` | `AE_BACKUP_SFTP_USER` | Write and retain run replicas |
+| `catalog-backup` | `catalog_key` | `AE_CATALOG_SFTP_USER` | Write and retain catalog dumps in a separate chroot |
+
+The [SSH server configuration example](../deploy/hostinger/sshd-backups.conf.example)
+uses `ae_run_writer`, `ae_run_reader`, and `ae_catalog_writer`. Set the environment
+values to the actual account names. Both run accounts see the same run directory;
+`AE_BACKUP_SFTP_PATH` could be `/backup`. Set `AE_CATALOG_SFTP_PATH` to a directory
+inside the catalog account's separate chroot, also possibly `/backup`. These paths
+refer to different server directories even when their names inside each chroot match.
+The catalog tool creates its `catalog` child there.
+
+All chroot roots and parents must be owned by root and must not be writable by
+the SFTP accounts. Provision the run `/backup` directory with the writer as owner,
+a group shared with the reader, and mode `2750`; future directories inherit that
+group. The writer's `0027` umask keeps replicas group-readable and private to those
+accounts. The reader must be forced to `internal-sftp -R`, with shell execution,
+forwarding and password authentication disabled. Keep authorized-key files outside
+writable backup directories. Restrict SSH network access to the site and recovery
+operators. Validate the SSH configuration before reloading it, then prove the
+reader can restore a newly written replica and cannot create, replace, rename or
+delete files. The app must not have access to the catalog tree.
+
+The catalog service now uses `agent_economy_backup` and its independent
+`CATALOG_BACKUP_PASSWORD`. This role has `pg_read_all_data` and `BYPASSRLS` so dumps
+include every tenant, with no superuser, table-write or role-management privileges.
+The initialization script runs automatically for a new PostgreSQL volume. When
+upgrading an existing installation, load the new environment/container definition,
+then run `exec postgres /bin/sh /docker-entrypoint-initdb.d/002_backup_role.sh` with
+the Compose options below before starting `catalog-backup`. No data migration or
+memory deletion is involved. Changing environment values alone does not rotate an
+existing database role's password.
+
+These permissions follow PostgreSQL's [predefined role guidance](https://www.postgresql.org/docs/17/predefined-roles.html)
+and OpenSSH's [read-only SFTP option](https://man.openbsd.org/sftp-server.8).
+
+## Start the services
 
 From the repository root:
 
@@ -111,9 +154,9 @@ runs remain paused, with external connections reconciled against the catalog.
 For loss of the site VPS:
 
 1. Provision a replacement VPS with the reviewed application release, protected
-   environment file and backup SSH key. Keep the app and Litestream stopped
+   environment file and the three backup SSH keys. Keep the app and Litestream stopped
    during catalog recovery.
-2. Start only PostgreSQL. It initializes the current app/supervisor roles from
+2. Start only PostgreSQL. It initializes the current app/supervisor/backup roles from
    the protected passwords. Use a new, empty catalog database for recovery;
    keep any previous damaged volumes for investigation.
 3. Fetch a named catalog dump to a private host directory with the backup image:
@@ -164,7 +207,10 @@ binary failed directory fsync in local verification; use Linux for this service.
 
 The storage CI job also builds the catalog backup image and tests a real
 PostgreSQL 17 dump, SFTP upload/download, and restore into a second database,
-including table ownership and grants. To repeat that disposable drill on Linux
+including all tenant rows under RLS, table ownership and grants. It also proves
+the backup role cannot delete/drop tables, read PostgreSQL password hashes, or
+assume the superuser role. The Litestream SFTP drill restores with a separate
+read-only identity. To repeat the disposable catalog drill on Linux
 with Docker available:
 
 ```bash
@@ -177,6 +223,11 @@ restore a real PostgreSQL catalog into an isolated replacement stack. Repository
 tests and rendered Compose configuration do not prove the chosen server's SSH
 permissions, off-server durability, TLS, capacity or complete disaster recovery.
 The existing hosted/external-agent rollout requirements remain in effect.
+
+Remote writer accounts necessarily retain deletion rights for retention. Protect
+backup-server administration separately and keep server-side recovery points that
+these writer accounts cannot erase. The read-only app credential limits damage
+from an app compromise; it does not protect against compromise of the backup server.
 
 Configuration follows Litestream's official
 [directory watcher](https://litestream.io/guides/directory-watcher/),

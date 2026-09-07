@@ -465,7 +465,7 @@ def test_public_oauth_client_registration_is_canonical_and_retrievable():
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
     }
-    registered = CatalogConnection([Cursor(one=row)])
+    registered = CatalogConnection([Cursor(), Cursor(one={"total": 0}), Cursor(one=row)])
     retrieved = CatalogConnection([Cursor(one=row)])
     catalog = HostedCatalog(
         "postgresql://example", connect=Connections(registered, retrieved))
@@ -479,7 +479,7 @@ def test_public_oauth_client_registration_is_canonical_and_retrievable():
     loaded = catalog.get_external_oauth_client(client_id)
 
     assert created == loaded == row
-    insert_sql, insert_params = registered.calls[0]
+    insert_sql, insert_params = registered.calls[-1]
     assert "INSERT INTO external_oauth_clients" in insert_sql
     assert insert_params[1:] == (
         "OpenClaw", ["https://agent.example/callback"],

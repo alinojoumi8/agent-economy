@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from agents.external_contract import ExternalAgentError, hash_external_credential
 from engine.storage_policy import StorageBudgetExceeded
 from hosted.auth import AuthFailure
+from server.request_limits import OAuthRegistrationLimitMiddleware
 from hosted.security import (
     CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -80,14 +81,14 @@ _EXTERNAL_ACTION_RECEIPT_PATH = re.compile(
 
 
 class _RequestBodyLimitMiddleware:
-    """Bound mutating request bodies before FastAPI/Pydantic allocates them."""
+    """Bound all HTTP bodies, including GET bodies forwarded by the agent proxy."""
 
     def __init__(self, app: Any, *, max_bytes: int) -> None:
         self.app = app
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http" or scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
         chunks: list[bytes] = []
@@ -666,6 +667,7 @@ def create_hosted_app(
     )
     app.state.readiness_tasks = {}
     app.add_middleware(_RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+    app.add_middleware(OAuthRegistrationLimitMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:

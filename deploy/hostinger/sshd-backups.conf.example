@@ -1,0 +1,34 @@
+# Install on the SEPARATE backup server, adapting these account names/roots.
+# Chroot directories and all parents must be root-owned and not writable by
+# these users. Provision a writable /backup child only for each writer.
+# Give ae_run_reader read/traverse access to the run tree and its future files.
+# Keep authorized_keys root-owned under /etc/ssh/authorized_keys/<username>.
+
+Match User ae_run_writer,ae_run_reader
+    ChrootDirectory /srv/ae-backups/runs
+    AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    DisableForwarding yes
+    PermitTunnel no
+    PermitUserRC no
+
+Match User ae_run_reader
+    ForceCommand internal-sftp -R
+
+Match User ae_run_writer
+    ForceCommand internal-sftp -u 0027
+
+Match User ae_catalog_writer
+    ChrootDirectory /srv/ae-backups/catalog
+    AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    DisableForwarding yes
+    PermitTunnel no
+    PermitUserRC no
+    ForceCommand internal-sftp -u 0077
+
+Match all
