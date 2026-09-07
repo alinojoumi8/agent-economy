@@ -1401,3 +1401,23 @@ and [induced-value benchmarks](../research/market-benchmarks.md).
 - The automated W4 workflow check is delivered. W5–W9 remain: partnerships/care/
   estates, education, production/housing, banking depth, and empirical/scale
   validation. The proposed human usability sessions remain unperformed.
+
+### Committed verification and resumed-acceptance test correction
+
+Commit `0fe9af4` passed all **nine required CI jobs** in
+[run 34155365249](https://github.com/alinojoumi8/agent-economy/actions/runs/34155365249),
+including 114 critical browser cases and the production workflow in **45.23 s**.
+The committed static bundle matched the Linux rebuild. The complete eight-shard
+Ubuntu/Python 3.12 run, [34155377002](https://github.com/alinojoumi8/agent-economy/actions/runs/34155377002),
+returned **2,149 passed, one failed, 10 skipped**. Seven shards passed; shard 5
+exposed a timing flaw in the existing resumed served-acceptance test.
+
+That test exhausted 100 fast status polls after tick 2 had committed but before
+checkpoint/report finalization. A new Start correctly returned `already_running`.
+The test now uses the existing served-acceptance pattern: a 120-second wall-clock
+deadline, 50-ms polling, and explicit idle/completed assertions before checking
+`limit_reached`. Production execution and its guards are unchanged. Both served
+acceptance cases passed locally (**2.76 s**, `-k served_acceptance`, fresh base
+`ae-b2ccad54`). The final correction changes only this test and this log. Its
+required CI and corrected shard-5 results are recorded separately on draft PR #82;
+the failed initial full run remains part of the validation record.
