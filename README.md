@@ -29,6 +29,21 @@ It runs independent Ollama, DeepSeek, MiniMax, and Kimi pools, assigns citizen
 compute subscriptions, and persists learnable domain skills. See the
 [Semantics-11 live cognition guide](docs/semantics11-cognition.md).
 
+## City 3D (`simcity` branch)
+
+Explore an original Blender city tied to real citizens, firms, banks, permits
+and construction. The free profile starts 300 citizens and keeps all money and
+building decisions in the deterministic engine:
+
+```bash
+python run.py --config runs/simcity.yaml --serve
+```
+
+Choose **3D city** on Live City. Select a citizen or building, follow its evidence,
+and propose a workplace through a permitted company. See the [city guide](city/README.md),
+[integration plan](docs/superpowers/plans/2026-09-10-simcity.md), and
+[verification evidence](city/verification.md). The existing 2D atlas remains available.
+
 ## Legal-Political Economy v2
 
 The flagship `runs/v2.yaml` world makes institutions part of the economy rather
@@ -399,9 +414,9 @@ documents.
 
 All PRD-v1 P0/P1 feature surfaces and the R18 participant, R19 1,000-agent,
 R20 multi-region, R21 real-U.S. calibration, and R22 hosted multi-user code
-surfaces are implemented. Maintained new runs support schema 17 / Semantics 12.
+surfaces are implemented. Maintained new runs support schema 19 / Semantics 13.
 Semantics 8 is the released deterministic causal baseline; Semantics 9–10 are
-implemented but rollout-gated; Semantics 11–12 are implemented opt-in contracts
+implemented but rollout-gated; Semantics 11–13 are implemented opt-in contracts
 whose public use inherits those hosted gates. The
 [implementation-status ledger](docs/implementation-status.md) is the single
 authority for current release labels and remaining evidence.

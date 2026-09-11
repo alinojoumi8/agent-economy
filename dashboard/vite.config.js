@@ -8,9 +8,9 @@ export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8000",
-      "/ws": { target: "ws://127.0.0.1:8000", ws: true },
-      "/reports": "http://127.0.0.1:8000",
+      "/api": process.env.AGENT_ECONOMY_API_URL || "http://127.0.0.1:8000",
+      "/ws": { target: (process.env.AGENT_ECONOMY_API_URL || "http://127.0.0.1:8000").replace(/^http/, "ws"), ws: true },
+      "/reports": process.env.AGENT_ECONOMY_API_URL || "http://127.0.0.1:8000",
     },
   },
   build: {

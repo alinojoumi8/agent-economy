@@ -69,6 +69,7 @@ class Genesis:
         self._firms()
         self._health_institutions()
         self.e.city.initialize(0)
+        self.e.urban.initialize(0)
         self._social_graph()
         self.e.startups.initialize_trader_profiles(0)
         self.e.regions.rebalance_tiers(0)

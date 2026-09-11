@@ -113,6 +113,7 @@ class World:
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
             if self.engine_semantics_version >= 12:
                 self.economy.city.initialize(self.store.tick)
+                self.economy.urban.initialize(self.store.tick)
                 self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
@@ -763,6 +764,7 @@ class World:
         if self.engine_semantics_version >= 12:
             # Civic maintenance stays inside the existing single-writer phase.
             self.economy.city.finalize(tick)
+        self.economy.urban.finalize(tick)
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.

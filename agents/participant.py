@@ -287,7 +287,7 @@ class ParticipantService:
         agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (int(agent_id),))
         if not agent or not agent["alive"] or agent["kind"] != "citizen":
             return []
-        ctx = self.ctx.build(agent, self.store.tick + 1)
+        ctx = self.ctx.build(agent, self.store.tick + 1, read_only=True)
         prices = ctx.get("prices", [])
         jobs = ctx.get("jobs", [])
         listed = ctx.get("listed_firms", [])
@@ -689,6 +689,22 @@ class ParticipantService:
                      "disabled_reason": "No active IPO book"},
                 ])
             items.extend(firm_items)
+        if (self.engine_semantics_version >= 13 and self.config.get("urban_development", {}).get("enabled")
+                and self.config.get("city", {}).get("enabled")):
+            owned = [dict(r) for r in self.store.query(
+                "SELECT f.id,f.name,f.region_id FROM firms f WHERE f.founder_agent_id=? AND f.status<>'bankrupt' "
+                "AND EXISTS(SELECT 1 FROM civic_authorizations c WHERE c.consumed_by_firm_id=f.id AND c.status='consumed') ORDER BY f.id", (agent_id,))]
+            parcels = [dict(r) for r in self.store.query("SELECT id,parcel_key,region_id FROM urban_parcels WHERE blocked=0 AND zone_key='commercial' AND owner_firm_id IS NULL ORDER BY id")]
+            projects = [dict(r) for r in self.store.query("SELECT p.id,p.status FROM construction_projects p JOIN firms f ON f.id=p.firm_id WHERE f.founder_agent_id=? AND p.status IN ('building','completed') ORDER BY p.id", (agent_id,))]
+            items.append({"type":"construct_building", "label":"Construct a workplace (50000 cents, 3 ticks)", "fields":[
+                select("firm_id","Funding firm",[{"value":f["id"],"label":f["name"]} for f in owned]),
+                select("parcel_id","Commercial parcel",[{"value":p["id"],"label":p["parcel_key"]} for p in parcels if p["region_id"] in {f["region_id"] for f in owned}]),
+                {"name":"template_key","kind":"hidden","default":"workplace"},
+                text("request_key","Unique request key",maximum=120)]})
+            for kind,status,label in [("cancel_construction","building","Cancel construction (full refund)"),("demolish_building","completed","Demolish workplace (no refund)")]:
+                items.append({"type":kind,"label":label,"fields":[
+                    select("project_id","Project",[{"value":p["id"],"label":f"Project {p['id']}"} for p in projects if p["status"]==status]),
+                    text("request_key","Unique request key",maximum=120)]})
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -776,6 +792,13 @@ class ParticipantService:
 
     def decision_for_tick(self, tick: int) -> Optional[dict]:
         row = self._replay_action(tick)
+        if isinstance(row, dict) and row.get("replay_idle"):
+            self.store.log_event(tick, "participant_idle", {"agent_id": row["agent_id"]}, phase="MORNING",
+                                 subject_type="agent", subject_id=row["agent_id"], importance=0.8)
+            return {"agent_id": row["agent_id"], "purpose": "participant_idle",
+                    "envelope": {"actions": [{"type": "do_nothing"}], "belief_updates": []},
+                    "reasoning": "Participant explicitly supplied no command.",
+                    "llm_call_id": None, "participant_action_id": None}
         if row is None:
             self.release_if_unavailable(tick, commit=False)
             agent_id = self.active_agent_id()
@@ -818,6 +841,10 @@ class ParticipantService:
                 "SELECT * FROM participant_actions WHERE target_tick=? "
                 "AND status IN ('executed','rejected') ORDER BY id LIMIT 1", (tick,)).fetchone()
             if not source:
+                if self.engine_semantics_version >= 13:
+                    idle = conn.execute("SELECT payload_json FROM events WHERE tick=? AND kind='participant_idle' ORDER BY id LIMIT 1", (tick,)).fetchone()
+                    if idle:
+                        return {"replay_idle": True, "agent_id": int(json.loads(idle["payload_json"])["agent_id"])}
                 return None
             self.store.execute(
                 "INSERT OR IGNORE INTO participant_actions(agent_id,target_tick,action_json,reasoning,"

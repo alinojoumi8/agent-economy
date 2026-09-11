@@ -288,6 +288,9 @@ class Lifecycle:
         if not agent or not agent["alive"]:
             return
 
+        if getattr(self, "urban", None):
+            self.urban.founder_death(tick, agent_id)
+
         # 1) Settle debts via the creditor waterfall (dead agent's cash first).
         loans = self.store.query(
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=? AND status='active'",

@@ -1101,3 +1101,6 @@ body::before {
   .panel * { color: black !important; }
   main { padding: 0 !important; }
 }
+
+/* City presentation toggle stays styled before the lazy 3D module loads. */
+.city3d-toggle{display:flex;gap:6px;padding:0 0 12px}.city3d-toggle button{padding:9px 18px;border:1px solid #506481;border-radius:4px;font-size:12px}.city3d-toggle button[aria-pressed=true]{background:#b7d64a;color:#12233f;border-color:#b7d64a}

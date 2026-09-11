@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { lazy, Suspense, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
+const CityViewport = lazy(() => import("../city/CityViewport"));
 import { projectionApi, workspaceApi } from "../app/api";
 import { commonObserverParamsFromState, projectionScopeParams, useObserverViewState } from "../app/observerViewState";
 import { CivicCity } from "../components/CivicCity";
@@ -83,6 +84,9 @@ export function OverviewWorkspace() {
   const [activityMode, setActivityMode] = useState<"alerts" | "recent">("alerts");
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const tick = observerState.tick;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const city3d = searchParams.get("cityView") === "3d";
+  const setCityView = (value: boolean) => { const next = new URLSearchParams(searchParams); if (value) next.set("cityView", "3d"); else next.delete("cityView"); setSearchParams(next, { replace: true }); };
   const query = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "overview", tick],
     queryFn: ({ signal }) => {
@@ -106,10 +110,10 @@ export function OverviewWorkspace() {
     },
   });
   const cityQuery = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, "city", tick, observerState.population],
+    queryKey: ["world-os", runId, observerState.fork, "city", tick, observerState.population, city3d],
     queryFn: async ({ signal }) => {
       const mapParams = projectionScopeParams(observerState);
-      mapParams.set("layers", "regions,agents,organizations,places,presence");
+      mapParams.set("layers", "regions,agents,organizations,banks,places,presence");
       mapParams.set("population", observerState.population);
       const civicParams = projectionScopeParams(observerState);
       const [mapEnvelope, civicEnvelope] = await Promise.all([
@@ -123,6 +127,8 @@ export function OverviewWorkspace() {
         ),
       ]);
       return {
+        envelope: mapEnvelope,
+        activitySnapshot: city3d ? await projectionApi<Overview>(`/api/v2/snapshot?tick=${mapEnvelope.tick}${observerState.fork ? `&fork_id=${encodeURIComponent(observerState.fork)}` : ""}&domains=events`, signal) : null,
         agents: mapEnvelope.data.agents || [],
         firms: mapEnvelope.data.organizations || [],
         map: mapEnvelope.data,
@@ -160,7 +166,17 @@ export function OverviewWorkspace() {
     <div className="world-os-workspace-freshness-row">
       <FreshnessBadge transport={transport} tick={tick} envelope={envelope} sourceLabel="Overview committed projection" />
     </div>
-    <CivicCity
+    <div className="city3d-toggle" role="group" aria-label="City presentation">
+      <button aria-pressed={!city3d} onClick={() => setCityView(false)}>2D atlas</button>
+      <button aria-pressed={city3d} onClick={() => setCityView(true)}>3D city</button>
+    </div>
+    {city3d ? <Suspense fallback={<p role="status">Loading city viewer…</p>}>
+      <CityViewport key={`${runId}:${observerState.fork}:${cityQuery.data?.envelope.view_key || ""}`}
+        envelope={cityQuery.data?.envelope} snapshot={cityQuery.data?.activitySnapshot} runId={runId} tick={tick}
+        status={runStatus} stale={cityQuery.isError || transport.status !== "live"}
+        loading={cityQuery.isLoading} error={cityQuery.error instanceof Error ? cityQuery.error.message : ""}
+        onFallback={() => setCityView(false)} />
+    </Suspense> : <CivicCity
       agents={cityQuery.data?.agents}
       firms={cityQuery.data?.firms}
       events={data.events?.items}
@@ -183,7 +199,7 @@ export function OverviewWorkspace() {
       variant="world-os"
       observerState={observerState}
       onObserverStateChange={patchObserverState}
-    />
+    />}
 
     <div className="world-os-metrics" role="group" aria-label="World summary">
       <Link to={workspaceUrl("world")}>

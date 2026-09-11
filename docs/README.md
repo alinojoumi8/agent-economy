@@ -15,6 +15,9 @@ each audience can find the authoritative level of detail.
 - [Local and hosted API reference](api-reference.md) — REST, WebSocket,
   tenant/auth/run routes, request shapes, and PowerShell examples.
 
+- [City 3D guide](../city/README.md) — Blender assets, the provider-free city, citizen control and construction.
+- [Construction contract](urban-development.md) — semantics13 authority, ledger escrow, lifecycle and replay.
+
 ## Operate and recover
 
 - [Operator runbook](operator-runbook.md) — safe startup, hosted deployment,

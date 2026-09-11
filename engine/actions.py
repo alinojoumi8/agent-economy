@@ -30,6 +30,7 @@ from observability import get_logger, log_event as operational_log
 logger = get_logger("engine.actions")
 
 VALID_TYPES = {
+    "construct_building", "cancel_construction", "demolish_building",
     "buy_goods", "place_order", "cancel_orders", "apply_loan", "approve_loan", "deny_loan",
     "post_job", "apply_job", "set_price", "hire", "fire", "found_company", "transfer",
     "make_job_offer", "counter_job_offer", "accept_job_offer", "reject_job_offer",
@@ -199,7 +200,9 @@ class ActionExecutor:
                     and self.engine_semantics_version < 11)
                 or (atype in {"apply_business_permit", "attend_civic_appointment",
                               "decide_business_permit"}
-                    and self.engine_semantics_version < 12)):
+                    and self.engine_semantics_version < 12)
+                or (atype in {"construct_building", "cancel_construction", "demolish_building"}
+                    and self.engine_semantics_version < 13)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -268,10 +271,19 @@ class ActionExecutor:
                 if atype == "study_skill":
                     action = {**action, "_proposal_id": proposal_id}
                 result = handler(tick, actor_id, action, phase)
-                if self.engine_semantics_version >= 11 and result.get("ok"):
+                # Only the new construction contract has durable accepted receipts.
+                # A receipt retry is auditable, but is not a second economic action.
+                idempotent_retry = (
+                    self.engine_semantics_version >= 13
+                    and atype in {"construct_building", "cancel_construction", "demolish_building"}
+                    and result.get("idempotent_retry") is True
+                )
+                if (self.engine_semantics_version >= 11 and result.get("ok")
+                        and not idempotent_retry):
                     self.e.cognition.record_accepted_action(
                         tick, actor_id, atype, proposal_id=proposal_id)
-                if self.engine_semantics_version >= 8 and result.get("ok"):
+                if (self.engine_semantics_version >= 8 and result.get("ok")
+                        and not idempotent_retry):
                     events = self.store.query(
                         "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))
                     transactions = self.store.query(
@@ -337,7 +349,7 @@ class ActionExecutor:
             "action_proposals", proposal_id,
             validation_status="accepted" if result.get("ok") else "rejected",
             result_json=json.dumps(result, sort_keys=True, default=str))
-        if self.post_action_hook is not None:
+        if self.post_action_hook is not None and not idempotent_retry:
             try:
                 self.post_action_hook(tick, actor_id, action, phase, result)
             except Exception as exc:
@@ -720,6 +732,15 @@ class ActionExecutor:
         return self.e.firms.close_ipo(tick, actor_id, offering_id)
 
     # ── founding ─────────────────────────────────────────────────────────────
+    def _do_construct_building(self, tick, actor_id, action, phase):
+        return self.e.urban.command(tick, actor_id, "construct_building", action)
+
+    def _do_cancel_construction(self, tick, actor_id, action, phase):
+        return self.e.urban.command(tick, actor_id, "cancel_construction", action)
+
+    def _do_demolish_building(self, tick, actor_id, action, phase):
+        return self.e.urban.command(tick, actor_id, "demolish_building", action)
+
     def _do_apply_business_permit(self, tick, actor_id, action, phase) -> dict:
         return self.e.city.apply_business_permit(tick, actor_id, action)
 

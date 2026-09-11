@@ -11,6 +11,7 @@ from typing import Optional
 
 from .credit import Bank
 from .city import City
+from .urban_development import UrbanDevelopment
 from .cognition import CognitionEconomy
 from .exchange import Exchange
 from .firms import Firms
@@ -81,6 +82,9 @@ class Economy:
             seed=int(config.get("seed", 42)),
         )
         self.city = City(self, config.get("city"))
+        self.urban = UrbanDevelopment(self)
+        self.firms.urban = self.urban
+        self.lifecycle.urban = self.urban
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

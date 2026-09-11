@@ -129,7 +129,9 @@ def test_current_release_status_has_one_authoritative_ledger():
     lowered = status.lower()
     assert "single maintained release-status" in lowered
     assert "ledger" in lowered
-    assert "schema 17 / semantics 12" in lowered
+    from engine.schema import SCHEMA_VERSION
+    from engine.semantics import CURRENT_ENGINE_SEMANTICS_VERSION
+    assert f"schema {SCHEMA_VERSION} / semantics {CURRENT_ENGINE_SEMANTICS_VERSION}" in lowered
     assert "semantics 8 / schema 12" in lowered
     assert "**released deterministic causal baseline**" in lowered
     assert "semantics 9 / schema 13" in lowered
@@ -137,6 +139,8 @@ def test_current_release_status_has_one_authoritative_ledger():
     assert lowered.count("**rollout-gated**") >= 2
     assert "semantics 11 / schema 15" in lowered
     assert "semantics 12 / schema 17" in lowered
+    assert "semantics 13 / schema 19" in lowered
+    assert "city/verification.md" in lowered
     assert "historical semantics-7 closure matrix" in lowered
 
     status_indexes = {

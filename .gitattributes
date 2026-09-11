@@ -6,3 +6,5 @@ deploy/Caddyfile text eol=lf
 research/data/*.json -text
 dashboard/index.html text eol=lf
 server/static/index.html text eol=lf
+# The generated Three.js chunk embeds upstream GLSL shader whitespace verbatim.
+server/static/assets/CityViewport-*.js whitespace=-trailing-space,-space-before-tab

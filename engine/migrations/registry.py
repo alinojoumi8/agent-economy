@@ -13,6 +13,7 @@ from . import (
     v016_passport_bindings,
     v017_civic_city,
     v018_news_redaction_provenance,
+    v019_urban_development,
 )
 
 
@@ -64,6 +65,7 @@ _MIGRATIONS = (
         18, v018_news_redaction_provenance.NAME,
         v018_news_redaction_provenance.SQL,
         verify=v018_news_redaction_provenance.verify),
+    Migration.create(19, v019_urban_development.NAME, v019_urban_development.SQL, verify=v019_urban_development.verify),
 )
 
 

@@ -9,6 +9,9 @@ from typing import Any
 
 
 _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
+    ("construct_building", "construction", 13),
+    ("cancel_construction", "construction", 13),
+    ("demolish_building", "construction", 13),
     ("do_nothing", "economic", 1),
     ("buy_goods", "economic", 1),
     ("apply_job", "employment", 1),

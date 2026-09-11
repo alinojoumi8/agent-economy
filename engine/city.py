@@ -490,6 +490,10 @@ class City:
                 "r.name AS region_name,r.x,r.y "
                 "FROM firms f JOIN regions r ON r.id=f.region_id "
                 "WHERE f.status<>'bankrupt' ORDER BY f.id"):
+            if (self.e.engine_semantics_version >= 13 and self.store.scalar(
+                    "SELECT COUNT(*) FROM construction_projects WHERE firm_id=? AND place_id IS NOT NULL",
+                    (int(firm["id"]),), default=0)):
+                continue
             region = dict(firm)
             region["id"] = int(firm["place_region_id"])
             self._ensure_place(
@@ -2083,6 +2087,15 @@ class City:
             "purpose": str(purpose),
             "lanes": snapshot,
         }
+        if self.engine_semantics_version >= 13:
+            # Operational UI events may shift physical event IDs during replay.
+            # The context identity describes its attention content; persisted
+            # source references are separately validated against logical events.
+            identity["lanes"] = {
+                lane: [{key: value for key, value in item.items() if key != "source_event_id"}
+                       for item in items]
+                for lane, items in snapshot.items()
+            }
         context_key = _hash_json(identity)
         snapshot_json = _canonical_json(snapshot)
         self.store.execute(

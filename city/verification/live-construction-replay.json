@@ -1,0 +1,28 @@
+{
+  "source_run": "11b31a68d9",
+  "tick": 16,
+  "source_unchanged": true,
+  "exact": true,
+  "differences": [],
+  "tables_compared": 122,
+  "source_hash": "bd1919a3e1554370b7094b5d0668b72988422fa5308da3ce68bf2064b66424d7",
+  "replay_hash": "bd1919a3e1554370b7094b5d0668b72988422fa5308da3ce68bf2064b66424d7",
+  "browser_errors": [],
+  "projects": [
+    {
+      "capacity": 12,
+      "completion_tick": 16,
+      "cost_cents": 50000,
+      "created_event_id": 14344,
+      "currency_code": "NSD",
+      "firm_id": 7,
+      "id": 1,
+      "outcome_event_id": 18283,
+      "parcel_id": 1,
+      "place_id": 53,
+      "requested_tick": 13,
+      "status": "completed",
+      "template_key": "workplace"
+    }
+  ]
+}

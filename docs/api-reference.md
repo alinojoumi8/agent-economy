@@ -189,3 +189,23 @@ Invoke-RestMethod -Method Post -ContentType application/json `
   -Body '{"question":"Will any bank fail within 30 ticks?"}' `
   http://127.0.0.1:8000/api/oracle/ask
 ```
+
+## City 3D and construction
+
+`GET /api/v2/world-map?tick=live&population=all` supplies authorized city layers.
+The optional `banks` layer returns public `id`, `name`, `region_id` and as-of
+`status`, without accounts or balances. Citizens are filtered by arrival and
+death at the requested tick. Place and presence privacy restrictions still apply.
+
+`GET /api/v2/urban-development?tick=live` returns the standard scoped envelope
+with public catalog quotes, parcels and lifecycle projects. Numeric completed
+ticks and `fork_id` scope work like other projections. It never exposes escrow
+accounts, private balances or request keys, and performs no writes.
+
+With the semantics13 profile enabled, the participant action catalog includes
+`construct_building`, `cancel_construction` and `demolish_building`. Submit them
+through `/api/participant/action`; a queued command is not a completed building.
+Quotes and placement validation are server-owned. See the
+[construction contract](urban-development.md) for exact fields, authority and
+refund rules. Reading the participant catalog does not update agent memories;
+native decision execution continues to record memory access normally.

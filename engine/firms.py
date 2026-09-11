@@ -314,6 +314,8 @@ class Firms:
         firm = self.get(firm_id)
         if not firm or firm["status"] == "bankrupt":
             return
+        if getattr(self, "urban", None):
+            self.urban.close_firm(tick, firm_id)
         firm_acct = int(firm["account_id"])
         loans = self.store.query(
             "SELECT * FROM loans WHERE borrower_type='firm' AND borrower_id=? AND status='active' "
