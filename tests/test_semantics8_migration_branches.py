@@ -9,6 +9,7 @@ import pytest
 from engine.migrations import registry
 from engine.migrations.registry import Migration, MigrationError
 from engine.migrations.v012_communications import REQUIRED_TABLES, verify
+from engine.schema import SCHEMA_VERSION
 from engine.store import Store
 
 
@@ -97,13 +98,15 @@ def test_application_failure_without_active_transaction_is_wrapped():
 
 def test_noop_migration_covers_optional_verify_paths(tmp_path, monkeypatch):
     store = Store(str(tmp_path / "optional-verify.db"))
+    future_version = SCHEMA_VERSION + 1
     migration = Migration.create(
-        19, "optional_verify", "CREATE TABLE optional_verify(id INTEGER);")
+        future_version, "optional_verify", "CREATE TABLE optional_verify(id INTEGER);")
     monkeypatch.setattr(
         registry, "_MIGRATIONS", (*registry.registered_migrations(), migration))
     try:
         assert registry.apply_migrations(
-            store.conn, source_schema=18, target_schema=19) == (19,)
+            store.conn, source_schema=SCHEMA_VERSION,
+            target_schema=future_version) == (future_version,)
         assert store.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE name='optional_verify'") == 1
     finally:

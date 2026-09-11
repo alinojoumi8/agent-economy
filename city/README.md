@@ -2,7 +2,9 @@
 
 A playable, original Blender city integrated into the existing Agent Economy dashboard on branch `simcity`. The Python economy owns all money, permits, firms and construction. The browser projects those records into selectable buildings and citizens.
 
-![Live city after recorded construction completed](live-city.png)
+![Live city after recorded construction completed](live-city-preview.png)
+
+[Full city and construction controls](live-city.png).
 
 ## Run the city
 
