@@ -120,16 +120,16 @@ def test_deepseek_v4_flash_minimax_profile_routes_only_requested_models():
     assert report["routed_providers"] == ["deepseek", "minimax"]
     assert set(llm["providers"]) == {"deepseek", "minimax"}
     assert llm["providers"]["deepseek"]["documented_model_version"] == (
-        "DeepSeek-V4-Flash-0731")
+        "DeepSeek-V4.1-Flash")
     assert llm["providers"]["deepseek"]["concurrency"] == 2
     assert llm["providers"]["minimax"]["concurrency"] == 1
     assert llm["default_route"] == {
-        "provider": "deepseek", "model": "deepseek-v4-flash"}
+        "provider": "deepseek", "model": "deepseek-flash"}
     assert {
         (route["provider"], route["model"])
         for route in llm["routes"].values()
     } == {
-        ("deepseek", "deepseek-v4-flash"),
+        ("deepseek", "deepseek-flash"),
         ("minimax", "MiniMax-M3"),
     }
     assert llm["routes"]["founder"] == {

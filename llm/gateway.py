@@ -295,6 +295,8 @@ DEFAULT_PRICING = {
     "MiniMax-M2.7": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "kimi-k2.6": {"in": 0.95, "out": 4.00, "cache": 0.16},
     "deepseek-v4-flash": {"in": 0.14, "out": 0.28, "cache": 0.0028},
+    # V4.1 peak rates: conservative modeled cost; historical IDs stay frozen.
+    "deepseek-flash": {"in": 0.30, "out": 1.20, "cache": 0.006},
     "qwen3.5:9b": {"in": 0.0, "out": 0.0, "cache": 0.0},
     "agent-economy-qwen3.5:9b-16k": {"in": 0.0, "out": 0.0, "cache": 0.0},
     "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00, "cache": 0.10},
