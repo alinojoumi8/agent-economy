@@ -19,7 +19,7 @@ V5_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v5.json")
 V6_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v6.json")
 CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v7.json")
 URBAN_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v9.json")
-URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "construction_receipts", "urban_projection_history"}
+URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "urban_construction_receipts", "urban_projection_history"}
 POPULATION_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v8.json")
 
 

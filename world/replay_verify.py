@@ -76,7 +76,7 @@ EVENT_REFERENCE_JSON_COLUMNS = {
     ("action_proposals", "evidence_event_ids_json"),
 }
 NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
-    ("construction_receipts", "result_json"),
+    ("urban_construction_receipts", "result_json"),
     ("urban_projection_history", "data_json"),
     ("events", "payload_json"),
     ("action_proposals", "payload_json"),
@@ -187,7 +187,7 @@ POPULATION_TABLES = {"person_residence_events", "population_resident_census",
 SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_TABLES),
                        (19, 24, ESTATE_CASH_TABLES), (20, 25, ASSET_SUCCESSION_TABLES),
                        (21, 26, POPULATION_TABLES))
-URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "construction_receipts", "urban_projection_history"}
+URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "urban_construction_receipts", "urban_projection_history"}
 
 
 def _urban_enabled(conn: sqlite3.Connection) -> bool:

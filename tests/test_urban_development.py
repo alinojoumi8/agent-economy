@@ -248,7 +248,7 @@ def test_accepted_receipt_retries_have_no_economic_or_skill_effect(urban,kind):
     domain_tables=(
         'accounts','account_ledger_totals','transactions','ledger_entries',
         'agent_skills','agent_skill_history','events','causal_links',
-        'urban_parcels','urban_construction_projects','construction_receipts',
+        'urban_parcels','urban_construction_projects','urban_construction_receipts',
         'urban_projection_history','places','occupancy_leases',
     )
     def domain_state():

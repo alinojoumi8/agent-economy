@@ -42,7 +42,7 @@ class UrbanDevelopment:
         if not self.enabled:
             return {"ok": False, "reason": "construction is unavailable"}
         payload = canonical({"type": kind, **{k:v for k,v in action.items() if k in {"firm_id", "parcel_id", "template_key", "project_id", "request_key"}}})
-        receipt = self.store.query_one("SELECT * FROM construction_receipts WHERE actor_agent_id=? AND request_key=?", (actor_id,action['request_key']))
+        receipt = self.store.query_one("SELECT * FROM urban_construction_receipts WHERE actor_agent_id=? AND request_key=?", (actor_id,action['request_key']))
         if receipt:
             if receipt['payload_json'] != payload:
                 return {"ok": False, "reason": "request key already used with different payload"}
@@ -88,7 +88,7 @@ class UrbanDevelopment:
                 return {'ok':False,'reason':f'project must be {required}'}
             status = 'cancelled' if required == 'building' else 'demolished'
             result = self.transition(tick, project, status)
-        self.store.insert('construction_receipts',actor_agent_id=actor_id,request_key=action['request_key'],payload_json=payload,result_json=canonical(result))
+        self.store.insert('urban_construction_receipts',actor_agent_id=actor_id,request_key=action['request_key'],payload_json=payload,result_json=canonical(result))
         self.snapshot(tick)
         return result
 

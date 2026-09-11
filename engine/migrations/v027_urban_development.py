@@ -18,7 +18,7 @@ CREATE TABLE urban_construction_projects (
 );
 CREATE UNIQUE INDEX construction_occupied_parcel ON urban_construction_projects(parcel_id) WHERE status IN ('building','completed');
 CREATE UNIQUE INDEX construction_active_firm ON urban_construction_projects(firm_id) WHERE status IN ('building','completed');
-CREATE TABLE construction_receipts (
+CREATE TABLE urban_construction_receipts (
  id INTEGER PRIMARY KEY, actor_agent_id INTEGER NOT NULL REFERENCES agents(id), request_key TEXT NOT NULL,
  payload_json TEXT NOT NULL, result_json TEXT NOT NULL, UNIQUE(actor_agent_id,request_key)
 );
@@ -28,6 +28,6 @@ CREATE TABLE urban_projection_history (
 CREATE INDEX urban_projection_tick ON urban_projection_history(tick,id);
 """
 def verify(conn):
-    for table in ('urban_parcels','urban_construction_projects','construction_receipts','urban_projection_history'):
+    for table in ('urban_parcels','urban_construction_projects','urban_construction_receipts','urban_projection_history'):
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
             raise RuntimeError(f"missing {table}")

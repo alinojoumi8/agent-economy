@@ -2,7 +2,7 @@
   "id": "hash-contract-v9",
   "schema_version": 27,
   "extends_contract": "hash-contract-v7",
-  "schema_inventory_sha256": "1064e12c70cba9cc1c3469796dbe79bcbf48e916844f9422f87df82dd49c7d6b",
+  "schema_inventory_sha256": "5f8d072dc1fe67e70e760366628b69f0a6bfbf67bdc38dfaae10da8b9b6302ff",
   "extension_tables": [
     "agency_staff",
     "agent_skill_history",
@@ -111,7 +111,7 @@
     "wage_settlements",
     "urban_parcels",
     "urban_construction_projects",
-    "construction_receipts",
+    "urban_construction_receipts",
     "urban_projection_history"
   ],
   "extension_columns": {
@@ -319,7 +319,7 @@
     "wage_settlements",
     "urban_parcels",
     "urban_construction_projects",
-    "construction_receipts"
+    "urban_construction_receipts"
   ],
   "derived_tables": [
     "account_ledger_totals",
@@ -446,7 +446,7 @@
       "request_json",
       "result_json"
     ],
-    "construction_receipts": [
+    "urban_construction_receipts": [
       "request_key",
       "payload_json",
       "result_json"
