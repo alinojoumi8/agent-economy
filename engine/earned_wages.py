@@ -22,9 +22,9 @@ class EarnedWages:
             raise WageClaimError("wage claim has no current beneficiary")
         return holder
 
-    @staticmethod
-    def outstanding(claim):
-        return int(claim["accrued_cents"]) - int(claim["paid_cents"]) - int(claim["written_off_cents"])
+    def outstanding(self, claim):
+        novated = self.e.wage_awards.novated(claim["id"]) if self.e.engine_semantics_version >= 20 else 0
+        return int(claim["accrued_cents"]) - int(claim["paid_cents"]) - int(claim["written_off_cents"]) - novated
 
     def _open_claim(self, tick, employment):
         claim = self.store.query_one("SELECT * FROM wage_claims WHERE employment_id=?", (employment["id"],))
@@ -153,6 +153,8 @@ class EarnedWages:
             }, phase="NIGHT_CLOSE")
 
     def process_due(self, tick):
+        if self.e.engine_semantics_version >= 20:
+            self.e.wage_awards.process_due(tick)
         distressed = set()
         for row in self.store.query(
                 "SELECT c.id,c.firm_id,c.employment_id,e.next_pay_tick,e.pay_interval_ticks,e.status "
@@ -173,6 +175,8 @@ class EarnedWages:
                     "firm_id": row["firm_id"], "agent_id": claim["employee_id"],
                     "employment_id": row["employment_id"], "claim_id": row["id"],
                     "wage_cents": owed, "claim_preserved": True,
+                    **({"through_accrual_id": self.store.scalar("SELECT MAX(id) FROM wage_accruals WHERE claim_id=?", (row["id"],)),
+                        "currency_code": claim["currency_code"]} if self.e.engine_semantics_version >= 20 else {}),
                 }, phase="NIGHT_CLOSE", importance=1.5)
             elif row["status"] == "active":
                 self.store.update("employments", row["employment_id"], next_pay_tick=tick + row["pay_interval_ticks"])
@@ -183,6 +187,8 @@ class EarnedWages:
             self.e.firms._maybe_bankrupt(tick, firm_id)
 
     def collect_before_death(self, tick, agent_id):
+        if self.e.engine_semantics_version >= 20:
+            self.e.wage_awards.process_due(tick, claimant_id=agent_id)
         for row in self.store.query(
                 "SELECT claim_id FROM wage_claim_holders WHERE owner_type='agent' AND owner_id=? "
                 "AND ended_tick IS NULL ORDER BY claim_id", (agent_id,)):
@@ -230,11 +236,15 @@ class EarnedWages:
                     "beneficiary_type": holder["owner_type"], "beneficiary_id": holder["owner_id"],
                     "currency_code": claim["currency_code"],
                 }, phase="NIGHT_CLOSE")
+            if self.e.engine_semantics_version >= 20:
+                self.e.legal_awards.write_off_firm(tick, firm_id)
 
     def check_invariants(self):
         for claim in self.store.query("SELECT * FROM wage_claims ORDER BY id"):
             holder = self.holder(claim["id"])
             owed = self.outstanding(claim)
+            if owed < 0:
+                raise WageClaimError("wage payments, losses and novations exceed earned work")
             accrued = self.store.scalar("SELECT COALESCE(SUM(earned_cents),0) FROM wage_accruals WHERE claim_id=?", (claim["id"],))
             if accrued != claim["accrued_cents"]:
                 raise WageClaimError("daily accruals do not reconcile to the wage claim")

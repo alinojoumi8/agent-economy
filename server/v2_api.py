@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from communications.policy import Principal
@@ -41,11 +42,16 @@ from server.projections import (
     SEARCH_KINDS,
 )
 from server.projections.cache import ProjectionSnapshotCache
-from server.projections.envelope import ProjectionRequestError, lineage, validate_fork
+from server.projections.envelope import ProjectionRequestError, lineage, validate_fork, semantics_version
 from server.projections.events import build_backfill
 from server.projections.price_lab import build_price_lab
 from server.projections.city_conversations import build_city_conversations
 from server.projections.city_society import build_city_households, build_city_institutions
+from server.projections.construction import hidden_home_place_ids, redact_hidden_home_locations
+from server.projections.legal_relief import monetary_relief_as_of
+from server.projections.population import (
+    PopulationProjectionError, population_at, population_counts, local_ids, resident_presence_at,
+)
 
 
 class GodActionBody(BaseModel):
@@ -96,6 +102,9 @@ def _page(rows, limit: int) -> dict[str, Any]:
 def install_v2_routes(app, world, controller) -> None:
     router = APIRouter(prefix="/api/v2", tags=["legal-political-economy-v2"])
     store = world.store
+    @app.exception_handler(PopulationProjectionError)
+    async def population_history_unavailable(_request, exc):
+        return JSONResponse(status_code=409, content={'detail': str(exc)})
     projection_cache = getattr(controller, "projection_cache", None)
     if projection_cache is None:
         projection_cache = ProjectionSnapshotCache()
@@ -109,6 +118,8 @@ def install_v2_routes(app, world, controller) -> None:
     install_city_observation_routes(app, world, controller, operator_workspace, csrf_token=csrf_token)
     from server.research_api import install_research_routes
     install_research_routes(app, world, controller, csrf_token=csrf_token, workspace_path=workspace_path)
+    from server.household_finances_api import install_household_finance_routes
+    install_household_finance_routes(app, world, controller, csrf_token=csrf_token)
 
     def projection_principal(
         *, agent_id: int | None = None, disclosure_case_id: int | None = None,
@@ -353,8 +364,12 @@ def install_v2_routes(app, world, controller) -> None:
         principal = Principal("ordinary-dashboard")
         selected = {item.strip() for item in layers.split(",") if item.strip()}
         data: dict[str, Any] = {}
+        visible_construction = construction_projects_as_of(store, as_of_tick=as_of_tick)
+        hidden_homes = hidden_home_place_ids(store, as_of_tick, visible_construction)
         geography = (build_world_map_geography(store, as_of_tick=as_of_tick)
                      if selected.intersection({"regions", "agents"}) else None)
+        cohort = geography.get('population') if geography is not None else population_at(store, as_of_tick)
+        residents = local_ids(cohort) if cohort is not None else None
         if "regions" in selected:
             data["regions"] = geography["regions"]
         if "agents" in selected:
@@ -368,10 +383,16 @@ def install_v2_routes(app, world, controller) -> None:
             )
             total_population = int(population_row["total"] or 0)
             core_population = int(population_row["core"] or 0)
+            if residents is not None:
+                total_population = len(residents)
+                core_population = sum(row['id'] in residents for row in store.query(
+                    "SELECT id FROM agents WHERE population_tier='core' OR COALESCE(pinned_core,0)=1"))
             live_active_ids = sorted({
                 int(item["agent_id"])
                 for item in world.gateway.active_agent_status()
             }) if tick == "live" else []
+            if residents is not None:
+                live_active_ids = [aid for aid in live_active_ids if aid in residents]
             agent_scope_params: tuple[int, ...] = ()
             agent_scope = ""
             if population in {"core", "clusters"}:
@@ -411,12 +432,16 @@ def install_v2_routes(app, world, controller) -> None:
                 "AND (a.died_tick IS NULL OR a.died_tick>?) "
                 f"{agent_scope}ORDER BY a.id",
                 (as_of_tick, as_of_tick, as_of_tick, *agent_scope_params))]
+            if residents is not None:
+                data['agents'] = [{**agent, 'modeled_residence': cohort[agent['id']]}
+                                  for agent in data['agents'] if agent['id'] in residents]
             region_by_id = {row["id"]: row for row in geography["regions"]}
             for agent in data["agents"]:
                 agent["region_id"] = geography["agent_regions"].get(int(agent["id"]))
                 if agent["place_id"] is None and agent["x"] is not None:
                     region = region_by_id.get(agent["region_id"], {})
                     agent["x"], agent["y"] = region.get("x"), region.get("y")
+            redact_hidden_home_locations(store, data["agents"], hidden_homes)
             clusters = []
             if population == "clusters":
                 cluster_exclusion = ""
@@ -435,6 +460,8 @@ def install_v2_routes(app, world, controller) -> None:
                     f"{cluster_exclusion}ORDER BY a.id",
                     (as_of_tick, as_of_tick, *cluster_params),
                 ):
+                    if residents is not None and row['id'] not in residents:
+                        continue
                     region_id = geography["agent_regions"].get(int(row["id"]))
                     regional_clusters[region_id] = regional_clusters.get(region_id, 0) + 1
                 for region_id in sorted(regional_clusters, key=lambda value: -1 if value is None else value):
@@ -450,6 +477,7 @@ def install_v2_routes(app, world, controller) -> None:
                 data["population_clusters"] = clusters
             data["population_mode"] = population
             data["population_summary"] = {
+                **population_counts(cohort),
                 "total": total_population,
                 "core": core_population,
                 "periphery": max(0, total_population - core_population),
@@ -464,10 +492,10 @@ def install_v2_routes(app, world, controller) -> None:
         if "institutions" in selected:
             data["institutions"] = build_city_institutions(store, as_of_tick=as_of_tick)
         if "places" in selected:
-            data["places"] = world.economy.city.map_places(as_of_tick)
+            data["places"] = [place for place in world.economy.city.map_places(as_of_tick)
+                              if place["id"] not in hidden_homes]
         if "construction_projects" in selected:
-            data["construction_projects"] = construction_projects_as_of(
-                store, as_of_tick=as_of_tick)
+            data["construction_projects"] = visible_construction
         if "presence" in selected:
             # Presence can carry exact place coordinates. Keep peripheral
             # identities out of every observer mode so `all` can lay them out
@@ -480,11 +508,13 @@ def install_v2_routes(app, world, controller) -> None:
                     (as_of_tick, as_of_tick),
                 )
             }
+            presence_rows = (resident_presence_at(store, as_of_tick, cohort) if cohort is not None
+                             else world.economy.city.map_presence(as_of_tick, public=True))
             data["presence"] = [
-                item for item in world.economy.city.map_presence(
-                    as_of_tick, public=True)
-                if item.get("agent_id") is None
-                or int(item["agent_id"]) in core_agent_ids
+                item for item in presence_rows
+                if item.get("place_id") not in hidden_homes
+                and (item.get("agent_id") is None
+                     or int(item["agent_id"]) in core_agent_ids)
             ]
         if "flows" in selected:
             data["flows"] = build_world_flows(store, as_of_tick=as_of_tick)
@@ -799,7 +829,19 @@ def install_v2_routes(app, world, controller) -> None:
 
     @router.get("/map")
     async def economic_map():
+        if semantics_version(store) >= 21:
+            # Keep the classic observer on the same committed population and
+            # privacy boundary as the canonical map.
+            envelope = await world_map_projection(tick='live', fork_id=None,
+                layers='regions,agents,organizations,places,presence,flows', population='core')
+            data = envelope['data']
+            return dict(enabled=bool(world.economy.regions.enabled), regions=data['regions'],
+                        core_agents=data['agents'], firms=data['organizations'], flows=data['flows'],
+                        places=data['places'], presence=data['presence'],
+                        population_summary=data['population_summary'],
+                        civic=world.economy.city.public_summary(store.tick))
         regions = world.economy.regions.region_state()
+        hidden_homes = hidden_home_place_ids(store, store.tick)
         core_agents = [dict(row) for row in store.query(
             "SELECT a.id,a.name,a.role,a.occupation,a.population_tier,a.region_id,"
             "CASE WHEN p.kind='licensing_office' THEN NULL ELSE ep.place_id END "
@@ -817,6 +859,7 @@ def install_v2_routes(app, world, controller) -> None:
             "WHERE a.alive=1 AND "
             "(a.population_tier='core' OR a.pinned_core=1) ORDER BY a.id",
             (store.tick,))]
+        redact_hidden_home_locations(store, core_agents, hidden_homes)
         firms = [dict(row) for row in store.query(
             "SELECT f.id,f.name,f.sector,f.status,f.region_id,f.currency_code,"
             "p.id AS place_id,p.name AS place_name,"
@@ -840,9 +883,10 @@ def install_v2_routes(app, world, controller) -> None:
             "core_agents": core_agents,
             "firms": firms,
             "flows": flows,
-            "places": world.economy.city.map_places(store.tick),
-            "presence": world.economy.city.map_presence(
-                store.tick, public=True),
+            "places": [place for place in world.economy.city.map_places(store.tick)
+                       if place["id"] not in hidden_homes],
+            "presence": [item for item in world.economy.city.map_presence(store.tick, public=True)
+                         if item.get("place_id") not in hidden_homes],
             "civic": world.economy.city.public_summary(store.tick),
         }
 
@@ -871,6 +915,9 @@ def install_v2_routes(app, world, controller) -> None:
         for item in page["items"]:
             item["requested_remedy"] = load_json(item.pop("requested_remedy_json", None), {})
             item["settlement"] = load_json(item.pop("settlement_json", None), None)
+            relief = monetary_relief_as_of(store, item["id"], int(store.tick))
+            if relief is not None:
+                item["monetary_relief"] = relief
         page["contracts"] = [dict(row) for row in store.query(
             "SELECT id,contract_type,title,status,ruleset_key,jurisdiction,offered_tick,executed_tick FROM contracts "
             "ORDER BY id DESC LIMIT 100")]

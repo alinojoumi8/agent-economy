@@ -568,6 +568,7 @@ export function CivicCity(props) {
         <div><dt>AI live</dt><dd>{historical || !runtime || cityView === "recorded" ? "Unavailable in this view" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
         <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
         <div><dt>Residents</dt><dd>{model.counts.residents} <small>{model.population.core} core</small></dd></div>
+        {model.population.knownLivingOutside != null && <div><dt>Known outside</dt><dd>{model.population.knownLivingOutside}</dd></div>}
         <div><dt>Construction</dt><dd>{model.counts.construction} <small>stored projects</small></dd></div>
         <div><dt>Permit queue</dt><dd>{model.civic?.enabled ? model.counts.queue : "—"}</dd></div>
       </dl>
@@ -938,6 +939,7 @@ export function CivicCity(props) {
         {societySelected ? <CitySocietyEvidence household={selectedHousehold} institution={selectedInstitution}
           requested={selectedHouseholdId != null ? `Household #${selectedHouseholdId}` : selectedInstitutionId}
           tick={model.selectedTick} onPerson={inspectHouseholdPerson}
+          personHref={runId ? id => `/runs/${encodeURIComponent(runId)}/people/${id}${commonSuffix}` : null}
           reason={selectedHouseholdId != null ? society.households.reason : society.institutions.reason}
         /> : selectedFirm ? <>
           <div className="civic-city__identity">
@@ -989,6 +991,13 @@ export function CivicCity(props) {
             <div><dt>Work</dt><dd>{selectedProjectMetrics.work}/{selectedProjectMetrics.requiredWork} units</dd></div>
             <div><dt>Milestones</dt><dd>{Number(selectedProject.milestone_count || 0)}</dd></div>
             <div><dt>Privacy</dt><dd>{selectedProject.privacy === "aggregated_private" ? "Owners and exact sites withheld" : "Public or policy-authorized site"}</dd></div>
+            {selectedProject.ownership && <>
+              <div className="civic-city__ownership-fact"><dt>Owners</dt><dd>{selectedProject.ownership.owners.map(owner =>
+                `${owner.name} (${owner.numerator}/${owner.denominator})`).join(", ")}</dd></div>
+              <div className="civic-city__ownership-fact"><dt>Manages project</dt><dd>{selectedProject.ownership.operator
+                ? `${selectedProject.ownership.operator.name} · ${humanize(selectedProject.ownership.operator.capacity)}` : "Unassigned"}</dd></div>
+              <div className="civic-city__ownership-fact"><dt>Original owner</dt><dd>{selectedProject.ownership.original_owner.name}</dd></div>
+            </>}
           </dl>
           <section className="civic-city__record">
             <header><span>Stored milestones</span><b>{Number(selectedProject.milestone_count || 0)}</b></header>
@@ -1007,6 +1016,15 @@ export function CivicCity(props) {
           <div className="civic-city__lens-actions">
             {projectHref && <Link className="is-primary" to={projectHref}>Open in Live City <span>→</span></Link>}
             {completedPlaceHref && <Link to={completedPlaceHref}>Open completed place <span>↗</span></Link>}
+            {selectedProject.ownership?.owners.filter(owner => owner.agent_id != null).map(owner =>
+              <button type="button" key={owner.agent_id} onClick={() => changeSelection(owner.agent_id)}>
+                Inspect {owner.name}
+              </button>)}
+            {selectedProject.ownership?.operator && !selectedProject.ownership.owners.some(owner =>
+              owner.agent_id === selectedProject.ownership.operator.agent_id) && <button type="button"
+              onClick={() => changeSelection(selectedProject.ownership.operator.agent_id)}>
+                Inspect {selectedProject.ownership.operator.name}, guardian
+              </button>}
           </div>
         </> : selectedPlace ? <>
           <div className="civic-city__identity">

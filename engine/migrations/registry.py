@@ -19,6 +19,7 @@ from . import (
     v022_household_decisions,
     v023_daily_time,
     v024_estate_cash,
+    v025_asset_succession,
 )
 
 
@@ -90,6 +91,9 @@ _MIGRATIONS = (
     Migration.create(
         24, v024_estate_cash.NAME, v024_estate_cash.SQL,
         verify=v024_estate_cash.verify),
+    Migration.create(
+        25, v025_asset_succession.NAME, v025_asset_succession.SQL,
+        verify=v025_asset_succession.verify),
 )
 
 

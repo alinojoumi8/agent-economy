@@ -14,7 +14,7 @@ on:
       full_suite_matrix:
         description: Optional JSON matrix override for focused full-suite reruns
         required: false
-        default: '{"os":["ubuntu-latest","windows-latest"],"python-version":["3.11","3.12"],"shard":[0,1,2,3,4,5,6,7]}'
+        default: '{"os":["ubuntu-latest","windows-latest"],"python-version":["3.11","3.12"],"shard":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]}'
         type: string
       integration:
         description: Run dashboard and hosted integration jobs
@@ -170,6 +170,152 @@ jobs:
           tests/test_city_observations_api.py
           tests/test_operator_workspace.py
           tests/test_metric_registry.py
+
+  research-population-exports:
+    name: Population research exports (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify population journals, legacy hashes and closed exports
+        run: >-
+          python -m pytest -q
+          tests/test_population_export.py
+          tests/test_population_migration_admission.py
+          tests/test_population_scenario.py
+          tests/test_research_export.py
+          tests/test_bounded_export.py
+          tests/test_recorded_replay_golden.py
+          tests/test_replay_source_lifecycle.py
+          --basetemp "${{ runner.temp }}/ae-population-export"
+
+  research-population-commons:
+    name: Population Commons (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify local actions, outside observation, rollback and replay
+        run: >-
+          python -m pytest -q
+          tests/test_population_commons.py
+          tests/test_population_commons_replay.py
+          tests/test_population_startups_and_shocks.py
+          tests/test_population_finance_workflow.py
+          tests/test_population_central_bank.py
+          tests/test_lolr_decisions.py
+          tests/test_population_resident_services.py
+          tests/test_population_actions.py
+          tests/test_population_control_workflow.py
+          tests/test_population_incorporation.py
+          tests/test_population_civic_routines.py
+          tests/test_population_decision_context.py
+          tests/test_population_shopping.py
+          tests/test_agent_commons.py
+          tests/test_external_agent_gateway.py
+          tests/test_recorded_replay_golden.py
+          tests/test_replay_source_lifecycle.py
+          --basetemp "${{ runner.temp }}/ae-population-commons"
+
+  research-population-startup-resume:
+    name: Population civic and startup decisions, phase recovery (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify civic participation, startup authority and phase replay
+        run: >-
+          python -m pytest -q
+          tests/test_population_civic_boundaries.py
+          tests/test_population_profile_admission.py
+          tests/test_population_merger_guidance.py
+          tests/test_population_startups_and_shocks.py
+          tests/test_phase_working_attempts.py
+          tests/test_phase_working_studies.py
+          tests/test_recorded_replay_golden.py
+          tests/test_replay_source_lifecycle.py
+          --basetemp "${{ runner.temp }}/ae-startup-resume"
+
+  research-population-lifecycle:
+    name: Population lifecycle, care and work (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify declared lifecycle, hiring, construction and recorded replay
+        run: >-
+          python -m pytest -q
+          tests/test_population_adjudication.py
+          tests/test_population_service_batches.py
+          tests/test_population_nightly_atomicity.py
+          tests/test_population_household_care.py
+          tests/test_population_lifecycle_matrix.py
+          tests/test_population_construction_workflow.py
+          tests/test_population_workforce_recovery.py
+          tests/test_population_recovery_authority.py
+          tests/test_workforce_recovery_bugs.py
+          tests/test_person_kind_history.py
+          tests/test_recorded_replay_golden.py
+          tests/test_v2_regions.py
+          tests/test_population_commitments.py
+          tests/test_population_movements.py
+          --basetemp "${{ runner.temp }}/ae-population-lifecycle"
 
   research-policy-recovery:
     name: Policy-study budget and recovery
@@ -394,8 +540,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.full_suite == true
     # Oracle campaign receipt/replay tests dominate the serial suite and pushed
     # the former combined job past its 25-minute limit. Partition the complete
-    # collected suite deterministically on every OS/Python pair so coverage is
-    # unchanged while per-job and overall wall times remain bounded.
+    # collected suite into sixteen shards on every OS/Python pair. Eight-way
+    # local batches now exceed 30 minutes as lifecycle and policy coverage grows;
+    # keep every case and the existing per-job limit.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -422,7 +569,7 @@ jobs:
           python -m pytest tests/ -q
           -p scripts.pytest_shard
           --ci-shard-index ${{ matrix.shard }}
-          --ci-shard-count 8
+          --ci-shard-count 16
 
   hosted-integration:
     if: github.event_name == 'workflow_dispatch' && inputs.integration == true

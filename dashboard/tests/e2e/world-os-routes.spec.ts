@@ -250,6 +250,60 @@ async function setup(page: Page) {
   return { consoleErrors, requestFailures, bodies, historicalBodies };
 }
 
+test("estate money follows the selected day on desktop and mobile", async ({ page }, testInfo) => {
+  const diagnostics = await setup(page);
+  const monetaryRequests: number[] = [];
+  await page.route("**/api/v2/workspaces/politics-law**", async route => {
+    const url = new URL(route.request().url());
+    const selected = Number(url.searchParams.get("tick") || 6);
+    monetaryRequests.push(selected);
+    const early = selected === 3;
+    const data = { politics: { enabled: false }, legal: { enabled: true }, matters: [
+      { id: 1, matter_type: "civil", claim_type: "contract_payment", venue: "City Tribunal", filed_tick: 1,
+        status: early ? "filed" : "resolved", monetary_relief: { visibility: "public", as_of_tick: selected,
+          award: early ? null : { id: 1, currency_code: "CAD", awarded_cents: 12000, credited_cents: 3000,
+            paid_cents: 6000, outstanding_cents: 3000 }, estate_reserve: { id: 1, currency_code: "CAD",
+            held_cents: early ? 10000 : 0, status: early ? "pending" : "resolved" } } },
+      { id: 2, matter_type: "civil", claim_type: "contract_payment", filed_tick: 1,
+        monetary_relief: { visibility: "withheld", award: { id: 99, awarded_cents: 999999, body: PRIVATE_CANARY } } },
+      ...(!early ? [{ id: 3, matter_type: "labor", claim_type: "unpaid_wages", filed_tick: 2,
+        monetary_relief: { visibility: "public", estate_reserve: null, award: {
+          id: 3, currency_code: "USD", payment_basis: "gross_wages", awarded_cents: 3000,
+          credited_cents: 0, paid_cents: 3000, tax_cents: 600, net_received_cents: 2400, outstanding_cents: 0 } } }] : []),
+    ] };
+    return route.fulfill({ json: { ...envelope("politics-law", url, data), semantics_version: 20 } });
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/runs/run-demo/politics-law?view=legal&tick=3");
+    const table = page.getByRole("region", { name: "Payments and estate reserves", exact: true });
+    await table.scrollIntoViewIfNeeded();
+    await expect(table.getByText("Awaiting decision", { exact: true })).toBeVisible();
+    await expect(table.getByText("100.00 CAD · pending", { exact: true })).toBeVisible();
+    await expect(table).not.toContainText("120.00 CAD");
+    await table.screenshot({ path: testInfo.outputPath(`legal-held-${width}.png`) });
+    await page.goto("/runs/run-demo/politics-law?view=legal&tick=6");
+    await table.scrollIntoViewIfNeeded();
+    await expect(table.getByText("120.00 CAD", { exact: true })).toBeVisible();
+    await expect(table.getByText("60.00 CAD", { exact: true })).toBeVisible();
+    await expect(table.getByText("30.00 CAD", { exact: true })).toHaveCount(2);
+    await expect(table.getByText("0.00 CAD · resolved", { exact: true })).toBeVisible();
+    await expect(table.getByText("Financial details withheld", { exact: true })).toBeVisible();
+    const wages = table.getByRole("article", { name: "Matter 3 financial details", exact: true });
+    await expect(wages.getByText("Paid on award (gross)", { exact: true })).toBeVisible();
+    await expect(wages.getByText("6.00 USD", { exact: true })).toBeVisible();
+    await expect(wages.getByText("24.00 USD", { exact: true })).toBeVisible();
+    await expect(table).not.toContainText(PRIVATE_CANARY);
+    await expect(table).not.toContainText("9999.99");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await table.screenshot({ path: testInfo.outputPath(`legal-collected-${width}.png`) });
+  }
+  expect(monetaryRequests).toContain(3);
+  expect(monetaryRequests).toContain(6);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
 test("workspace rail exposes every canonical destination with observer context", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/overview?fork=fork-1&tick=3");

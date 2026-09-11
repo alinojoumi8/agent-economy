@@ -9,6 +9,8 @@ from .ledger import (Leg, Ledger, SYS_COMMODITY, SYS_EXTERNAL, SYS_GOV,
                      SYS_HOUSING, SYS_INFLOW, SYS_LOSS, SYS_MEDICAL)
 from .legal import LegalInstitution
 from .store import Store
+from .business_control import operating_surface
+from .local_participation import is_local
 
 
 DEFAULT_REGIONS = [
@@ -156,6 +158,11 @@ class RegionalEconomy:
                 "UPDATE fx_orders SET status='cancelled' WHERE actor_id=? AND status='open'", (actor_id,))
         return {"ok": True, "cancelled": max(0, int(cursor.rowcount))}
 
+    def cancel_pending_migrations(self, tick: int, agent_id: int) -> None:
+        """A local relocation request cannot move a person after external exit."""
+        self.store.execute("UPDATE migrations SET status='cancelled',completed_tick=? "
+                           "WHERE agent_id=? AND status='pending'", (tick, agent_id))
+
     def match_fx(self, tick: int) -> list[dict[str, Any]]:
         trades = []
         for order in self.store.query(
@@ -251,6 +258,8 @@ class RegionalEconomy:
             "LEFT JOIN accounts ac ON ac.id=a.checking_account_id WHERE a.id=?",
             (actor_id,))
         if not agent or not agent["alive"] or agent["region_id"] is None:
+            return {}
+        if not is_local(self, actor_id) or not is_local(self, actor_id, tick=tick):
             return {}
 
         primary_currency = str(agent["currency_code"] or "USD")
@@ -438,6 +447,8 @@ class RegionalEconomy:
         agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (actor_id,))
         if not agent or not bool(agent["alive"]):
             return None, "migration requires a living citizen"
+        if not is_local(self, actor_id):
+            return None, "regional migration requires a local resident"
         if agent["region_id"] is None or int(agent["region_id"]) == destination_region_id:
             return None, "valid distinct destination required"
         if not self.store.query_one("SELECT 1 FROM regions WHERE id=?", (destination_region_id,)):
@@ -821,15 +832,23 @@ class RegionalEconomy:
             self.rebalance_tiers(tick)
 
     def rebalance_tiers(self, tick: int) -> None:
+        if self.engine_semantics_version >= 21:
+            with self.store.savepoint("resident_population_tiers"):
+                self._rebalance_tiers(tick)
+        else:
+            self._rebalance_tiers(tick)
+
+    def _rebalance_tiers(self, tick: int) -> None:
         if not self.enabled:
             return
+        firm_table, operator_column = operating_surface(self)
         rows = self.store.query(
             "WITH cash AS ("
             " SELECT owner_id AS agent_id,SUM(balance_cents) AS total FROM accounts"
             " WHERE owner_type='agent' GROUP BY owner_id"
             "), firm_counts AS ("
-            " SELECT founder_agent_id AS agent_id,COUNT(*) AS total FROM firms"
-            " WHERE status<>'bankrupt' GROUP BY founder_agent_id"
+            f" SELECT {operator_column} AS agent_id,COUNT(*) AS total FROM {firm_table}"
+            f" WHERE status<>'bankrupt' GROUP BY {operator_column}"
             "), matter_agents AS ("
             " SELECT id,claimant_id AS agent_id FROM legal_matters WHERE claimant_type='agent'"
             " UNION SELECT id,respondent_id AS agent_id FROM legal_matters WHERE respondent_type='agent'"
@@ -848,6 +867,8 @@ class RegionalEconomy:
             "WHERE a.alive=1 ORDER BY a.id", (max(0, tick - self.promotion_interval),))
         scored = []
         for row in rows:
+            if not is_local(self, int(row["id"]), tick=tick):
+                continue
             institutional = 1 if row["role"] else 0
             score = institutional * 1_000_000 + int(row["firms"]) * 100_000 + int(row["matters"]) * 10_000
             score += int(row["activity"]) * 100 + max(0, int(row["cash"])) / 100_000

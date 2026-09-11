@@ -3104,6 +3104,17 @@ body::before {
 }
 
 .civic-city--world-os .civic-city__lens-empty h3,
+.civic-city__facts > .civic-city__ownership-fact {
+  grid-column: 1 / -1;
+}
+
+.civic-city__facts > .civic-city__ownership-fact dd {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
 .civic-city--world-os .civic-city__identity h3,
 .civic-city--world-os .civic-city__activity strong,
 .civic-city--world-os .civic-city__activity--event strong {
@@ -3454,6 +3465,16 @@ body::before {
 }
 
 /* Put the city above supporting tables, with optional agent filters. */
+.world-os-legal-money { margin-top: 1rem; }
+.world-os-legal-money-record { border-top: 1px solid var(--border, #c8d0d3); padding: 1rem 0; }
+.world-os-legal-money-record h4 { margin: 0 0 .75rem; }
+.world-os-legal-money-record dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin: 0; }
+.world-os-legal-money-record dt { font-size: .72rem; line-height: 1.4; }
+.world-os-legal-money-record dd { margin: .3rem 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .world-os-legal-money-record dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .world-os-world-workspace .civic-city__mast {
   min-height: 0;
   grid-template-columns: minmax(180px, .7fr) minmax(0, 3fr);
@@ -3471,6 +3492,29 @@ body::before {
 .civic-city__filters { display: flex; flex-wrap: wrap; gap: .4rem; padding: .5rem; }
 .civic-city .civic-city__filters > * { min-width: 0; flex: 1 1 240px; }
 .world-os-world-supplement { margin-top: 1rem; }
+.world-os-household-finances { min-width: 0; padding: 1rem; color: var(--ae-text); }
+.world-os-household-finances > header, .world-os-finance-controls,
+.world-os-household-finances nav { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; }
+.world-os-household-finances > header { justify-content: space-between; }
+.world-os-household-finances h3, .world-os-household-finances h4 { margin: .4rem 0; }
+.world-os-household-finances p { max-width: 78ch; margin: .65rem 0; font-size: .85rem; line-height: 1.5; overflow-wrap: anywhere; }
+.world-os-household-finances button, .world-os-household-finances select {
+  min-height: 44px; padding: .5rem .7rem; border: 1px solid var(--ae-border); background: var(--ae-surface-2); color: var(--ae-text-hi);
+}
+.world-os-household-finances :is(button, select, summary):focus-visible { outline: 3px solid #2457d6; outline-offset: 3px; }
+.world-os-finance-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 1px; background: var(--ae-border-soft); margin: 1rem 0; }
+.world-os-finance-totals > div { padding: .8rem; background: var(--ae-surface-2); min-width: 0; }
+.world-os-household-finances dt { font-size: .76rem; color: var(--ae-text-2); }
+.world-os-household-finances dd { margin: .25rem 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.world-os-cash-inequality { border-left: 4px solid #48aeb0; padding: .6rem 1rem; background: var(--ae-surface-2); }
+.world-os-cash-inequality > strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.world-os-finance-instruments { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.world-os-finance-instruments > li { border: 1px solid var(--ae-border-soft); padding: .8rem; min-width: 0; }
+.world-os-finance-instruments > li > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.world-os-finance-instruments > li > div > span { font-size: .75rem; }
+.world-os-finance-instruments dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: .7rem; }
+.world-os-household-finances details { margin-top: 1rem; border-top: 1px solid var(--ae-border-soft); padding-top: .7rem; }
+.world-os-household-finances summary { padding: .5rem 0; cursor: pointer; }
 @media (max-width: 1100px) {
   .world-os-world-workspace .civic-city__mast { grid-template-columns: 1fr; }
   .world-os-world-workspace .civic-city__run-state dd { white-space: normal; }

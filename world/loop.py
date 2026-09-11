@@ -44,6 +44,7 @@ from engine.ledger import (
     SYS_INFLOW,
 )
 from engine.semantics import semantics_version
+from engine.population_scenario import PopulationScenario, parse_schedule
 from engine.keyed_random import daily_draw, daily_seed, person_key
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
@@ -56,6 +57,7 @@ from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .commons import CommonsService
+from .startup_authorizations import capture_startup_authorizations, restore_startup_authorizations
 from .recovery import recovery_settings
 from .shocks import Shocks
 from .phases import (
@@ -79,6 +81,7 @@ class World:
         self.store = store
         self.config = config
         self.engine_semantics_version = semantics_version(config, default=2)
+        population_schedule = parse_schedule(config, self.engine_semantics_version)
         self.phases = phase_names_for_semantics(self.engine_semantics_version)
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
@@ -88,6 +91,8 @@ class World:
         cfg = dict(config)
         cfg["replay"] = replay
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
+        self.population_scenario = (PopulationScenario(self.economy, population_schedule)
+                                    if self.engine_semantics_version >= 21 else None)
         self.gateway = Gateway(store, cfg, completion_guard=completion_guard)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
         self.commons = CommonsService(self.economy, self.runtime.mem)
@@ -120,7 +125,10 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
-            if self.engine_semantics_version >= 12:
+            if 12 <= self.engine_semantics_version < 20:
+                # Preserve legacy replay. New semantics resume the committed
+                # city; recalculating it here can apply later ownership to the
+                # previous day's work and occupancy.
                 self.economy.city.initialize(self.store.tick)
                 self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
@@ -145,6 +153,8 @@ class World:
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
         self.economy.cognition.seed_world(0)
         self.shocks.load_from_config()
+        if self.population_scenario is not None:
+            self.population_scenario.declare()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
@@ -364,6 +374,8 @@ class World:
 
     # ── one tick ─────────────────────────────────────────────────────────────
     async def step(self, *, pause_after_phase: str | None = None) -> dict:
+        if self.population_scenario is not None:
+            self.population_scenario.check_progress()
         if pause_after_phase is not None and pause_after_phase not in self.phases:
             raise ValueError("unknown pause phase")
         meta = self.store.get_meta()
@@ -372,6 +384,10 @@ class World:
         if phase not in self.phases:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
+        startup_settings = self.config.get('entrepreneurship', {})
+        save_startup_menus = (self.engine_semantics_version >= 21
+            and bool(startup_settings.get('enabled', False))
+            and tick >= max(0, int(startup_settings.get('activation_tick', 0))))
         if meta["active_tick"] is None:
             if self.engine_semantics_version >= 9:
                 await self.runtime.external.collect_online_turns(tick)
@@ -414,9 +430,15 @@ class World:
                     if self.engine_semantics_version >= 9:
                         self.runtime.external.restore_replay_after_morning(tick)
                     state["decisions"] = decisions
+                    if save_startup_menus:
+                        state['startup_authorizations'] = capture_startup_authorizations(
+                            tick, getattr(self.economy, '_startup_action_authorizations', {}))
                     decisions_count = len(decisions)
                 elif phase == "EXECUTION":
                     with self.store.savepoint(f"tick_{tick}_execution"):
+                        if save_startup_menus:
+                            self.economy._startup_action_authorizations = restore_startup_authorizations(
+                                tick, state.get('startup_authorizations'))
                         self.runtime.execute_decisions(tick, state.get("decisions", []))
                 elif phase == "MARKET":
                     with self.store.savepoint(f"tick_{tick}_market"):
@@ -468,6 +490,11 @@ class World:
                         return {"tick": self.store.tick, "active_tick": tick,
                                 "phase": self.store.next_phase, "paused": "phase_boundary"}
 
+            if self.engine_semantics_version >= 21 and self.config.get('replay_source_path'):
+                # Include the closed source's final between-day inputs without
+                # advancing another economic day. The next step rechecks this
+                # prefix idempotently before NIGHT_CLOSE.
+                self.runtime.external.restore_population_inputs(tick + 1)
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": decisions_count,
                        "governor": self.gateway.governor.status()}
@@ -624,6 +651,9 @@ class World:
             e.firms.produce(tick)
         # Lifecycle draws (illness, deaths + estates, aging, retirement, births).
         e.lifecycle.run_nightly(tick)
+        if self.engine_semantics_version >= 21:
+            self.population_scenario.apply(tick)
+            e.population.run_nightly(tick)
         # Government: unemployment benefits + periodic elections (P1 R12).
         e.gov.run_nightly(tick)
         # VC portfolio sweep: write-offs + stale pitches (P1 R13).
@@ -650,6 +680,10 @@ class World:
             e.households.register_new_people(tick)
             e.households.reconcile_residence(tick)
             e.households.reconcile_custody(tick)
+        if self.engine_semantics_version >= 20:
+            e.legal_representation.reconcile(tick)
+            e.business_control.refresh_custody(tick)
+            e.project_rights.refresh(tick)
         if self.engine_semantics_version >= 18:
             # Resolve population and location before allocating this day's time.
             e.city.run_nightly(tick)
@@ -863,10 +897,20 @@ class World:
             )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
+        if self.engine_semantics_version >= 20:
+            from engine.business_control import BusinessControlError
+            try:
+                self.economy.business_control.check_invariants()
+            except BusinessControlError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         if self.engine_semantics_version >= 19:
             from engine.estates import EstateError
             try:
                 self.economy.cash_estates.check_invariants()
+                if self.engine_semantics_version >= 20:
+                    self.economy.estate_cases.check_invariants()
+                    self.economy.project_rights.check_invariants()
+                    self.economy.legal_awards.check_invariants()
             except EstateError as error:
                 raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         if self.engine_semantics_version >= 18:
@@ -1053,6 +1097,10 @@ class World:
             # Social ties to a few residents + starting beliefs.
             residents = [int(r["id"]) for r in self.store.query(
                 "SELECT id FROM agents WHERE alive=1 AND id<>? ORDER BY id", (agent_id,))]
+            if self.engine_semantics_version >= 21:
+                residents = [other for other in residents
+                             if self.economy.population.is_available(other)
+                             and self.economy.population.is_local(other, tick)]
             if arrival_key:
                 seed = int(self.config.get("seed", 42))
                 resident_keys = {other: person_key(self.store, other) for other in residents}

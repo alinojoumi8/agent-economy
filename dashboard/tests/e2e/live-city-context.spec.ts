@@ -1,5 +1,39 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test("city shows inherited ownership and guardian authority with the original owner intact", async ({ page }, testInfo) => {
+  await mockCity(page, { semantics: 20, editFrame: frame => {
+    frame.data.agents.push({ ...frame.data.agents[1], id: 3, name: `Resident 3 at tick ${frame.tick}` });
+    Object.assign(frame.data, { construction_projects: [{ project_id: 80, project_key: "inherited-home",
+      name: "Shared family home", target_place_type: "private_home", status: "building", stage: "frame",
+      owner: null, initiator_agent_id: 9, region: { id: 1, name: "North", x: 0.4, y: 0.4 },
+      site: { site_key: "home", x: 0.45, y: 0.45 }, place_id: null, permit: null,
+      requirements: { funding_cents: 1200, work_units: 6 }, contributed: { funding_cents: 1200, work_units: 2 },
+      settlement: { spent_cents: 200, refunded_cents: 0 }, milestones: [], milestone_count: 0,
+      proposed_tick: 1, updated_tick: 5, completed_tick: null, cancelled_tick: null, evidence_refs: [], privacy: "public",
+      ownership: { owners: [2, 3].map(id => ({ agent_id: id, name: `Resident ${id} at tick ${frame.tick}`,
+        numerator: "1", denominator: "2", started_tick: 5 })),
+        operator: { agent_id: 1, name: `Resident 1 at tick ${frame.tick}`, capacity: "guardian", beneficiary_id: 2 },
+        original_owner: { id: 9, type: "agent", name: "Former owner" }, updated_tick: 5 },
+    }] });
+  } });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/runs/run-demo/world?tick=6&project=80");
+  const lens = page.getByRole("complementary", { name: "Selected city evidence" });
+  await expect(lens.getByRole("heading", { name: "Shared family home", exact: true })).toBeVisible();
+  await expect(lens).toContainText("Resident 2 at tick 6 (1/2)");
+  await expect(lens).toContainText("Resident 3 at tick 6 (1/2)");
+  await expect(lens).toContainText("Resident 1 at tick 6 · Guardian");
+  await expect(lens.getByText("Former owner", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("property-succession-desktop.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await lens.getByRole("button", { name: "Inspect Resident 2 at tick 6", exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("property-succession-mobile.png"), animations: "disabled" });
+  await lens.getByRole("button", { name: "Inspect Resident 2 at tick 6", exact: true }).click();
+  await expect(page).toHaveURL(/agent=2/);
+  await expect(page).toHaveURL(/tick=6/);
+  await expect(lens.getByRole("heading", { name: "Resident 2 at tick 6", exact: true })).toBeVisible();
+});
+
 function cityFrame(tick: number, fork: string | null = null) {
   const places = [
     { id: 1, name: "Home", kind: "residential_district", region_id: 1, x: 0.2, y: 0.2 },

@@ -14,6 +14,7 @@ from typing import Optional
 
 from engine.core import Economy
 from engine.keyed_random import daily_seed, person_key, stable_key
+from engine.local_participation import is_local
 from engine.store import load_json
 
 SHOCK_KINDS = ("policy_rate", "policy_rule_change", "oil", "rumor", "slant", "scandal", "epidemic")
@@ -321,7 +322,7 @@ class Shocks:
                 "rumor audience must be all_citizens or current_depositors")
         # New semantics rank each eligible person by the unchanged declaration;
         # inserting an unrelated shock or consuming another draw cannot shift it.
-        ids = [int(r["id"]) for r in agents]
+        ids = [int(r["id"]) for r in agents if is_local(self.e, int(r["id"]))]
         if self.e.engine_semantics_version >= 16:
             shock_key = self._random_key(s)
             keys = {aid: person_key(self.store, aid) for aid in ids}
@@ -347,6 +348,8 @@ class Shocks:
         }
         if research_targeting:
             event_payload.update({"bank_selector": selector, "audience": audience})
+        if self.e.engine_semantics_version >= 21:
+            event_payload["population_scope"] = "resident_citizens"
         self.store.log_event(tick, "rumor", event_payload,
             phase="NIGHT_CLOSE", subject_type="bank", subject_id=bank_id, importance=3.5)
 

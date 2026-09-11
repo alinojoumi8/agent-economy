@@ -56,7 +56,8 @@ class DailyTime:
             "WHERE e.agent_id=? AND e.status='active' AND f.status IN ('private','listed') ORDER BY e.id", (agent_id,))]
         employed = {row["firm_id"] for row in employment}
         owners = [{"id": row["id"], "firm_id": row["id"], "kind": "owner_work"} for row in self.store.query(
-            "SELECT id FROM firms WHERE founder_agent_id=? AND status IN ('private','listed') ORDER BY id", (agent_id,))
+            f"SELECT id FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? "
+            "AND status IN ('private','listed') ORDER BY id", (agent_id,))
             if row["id"] not in employed]
         return employment + owners
 
@@ -76,6 +77,8 @@ class DailyTime:
             "ON m.agent_id=a.id AND m.left_tick IS NULL LEFT JOIN guardianships g "
             "ON g.child_agent_id=a.id AND g.ended_tick IS NULL "
             "WHERE m.household_id=? AND a.alive=1 AND a.age<18 ORDER BY a.id", (member["household_id"],))
+        if self.e.engine_semantics_version >= 21:
+            rows = [row for row in rows if self.e.population.is_available(int(row['id']))]
         return [int(row["id"]) for row in rows if
                 (row["guardian_agent_id"] == agent_id if named is None else row["id"] in named)]
 
@@ -83,6 +86,8 @@ class DailyTime:
         if not self.enabled:
             raise TimeBudgetError("time plans require semantics 18")
         self._adult(agent_id)
+        if self.e.engine_semantics_version >= 21 and not self.e.population.is_local(agent_id, tick):
+            raise TimeBudgetError("outside people cannot submit a local time plan")
         key = action["request_key"]
         if not isinstance(key, str) or not key.strip() or len(key) > 96:
             raise TimeBudgetError("request_key must contain 1 to 96 characters")
@@ -157,6 +162,8 @@ class DailyTime:
             return
         with self.store.savepoint("prepare_person_day"):
             people = self.store.query("SELECT * FROM agents WHERE alive=1 ORDER BY id")
+            if self.e.engine_semantics_version >= 21:
+                people = [person for person in people if self.e.population.is_local(person["id"], tick)]
             for person in people:
                 plan = self.plan_at(person["id"], tick)
                 self.store.insert("time_days", tick=tick, agent_id=person["id"],
@@ -164,6 +171,8 @@ class DailyTime:
             for child in self.store.query(
                     "SELECT a.id,m.household_id FROM agents a JOIN household_memberships m ON m.agent_id=a.id "
                     "AND m.left_tick IS NULL WHERE a.alive=1 AND a.age<18 ORDER BY a.id"):
+                if self.e.engine_semantics_version >= 21 and not self.e.population.is_local(child["id"], tick):
+                    continue
                 self.store.insert("child_care_days", tick=tick, child_id=child["id"],
                     household_id=child["household_id"], required_minutes=self.e.households.p["care_minutes_per_child"])
             for move in self.store.query("SELECT * FROM migrations WHERE status='completed' AND completed_tick=? ORDER BY id", (tick,)):
@@ -314,7 +323,7 @@ class DailyTime:
         actor = self.store.query_one("SELECT alive,age FROM agents WHERE id=?", (agent_id,))
         if not actor or not actor["alive"] or actor["age"] < 18:
             actions = []
-        return {"available_minutes": day["available_minutes"] if day else None,
+        result = {"available_minutes": day["available_minutes"] if day else None,
                 "remaining_minutes": self.remaining(tick, agent_id) if day else None,
                 "allocations": [dict(row) for row in self.store.query("SELECT kind,minutes,delivered_minutes,reference_type,reference_id "
                     "FROM time_allocations WHERE tick=? AND agent_id=? ORDER BY id", (tick, agent_id))],
@@ -327,6 +336,14 @@ class DailyTime:
                     "JOIN wage_claim_holders h ON h.claim_id=c.id AND h.ended_tick IS NULL "
                     "WHERE h.owner_type='agent' AND h.owner_id=? AND c.closed_tick IS NULL ORDER BY c.id LIMIT 32", (agent_id,))],
                 "wage_claims_are_spendable_cash": False}
+        if self.e.engine_semantics_version >= 20:
+            for claim in result["wage_claims"]:
+                claim["outstanding_cents"] -= self.e.wage_awards.novated(claim["id"])
+            result["wage_awards"] = [{"award_id": row["id"], "currency_code": row["currency_code"],
+                "outstanding_gross_cents": self.e.legal_awards.remaining(row)} for row in self.store.query(
+                    "SELECT a.* FROM legal_awards a JOIN legal_wage_awards w ON w.award_id=a.id "
+                    "WHERE a.claimant_type='agent' AND a.claimant_id=? ORDER BY a.id", (agent_id,))]
+        return result
 
     def check_invariants(self):
         bad = self.store.query_one("SELECT d.tick,d.agent_id FROM time_days d LEFT JOIN time_allocations a "

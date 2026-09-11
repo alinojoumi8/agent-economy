@@ -367,12 +367,12 @@ def test_buzz_derived_architecture_documents_authority_and_history_boundaries():
 
 def test_full_suite_ci_uses_deterministic_cross_platform_shards():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert '"shard":[0,1,2,3,4,5,6,7]' in workflow
+    assert '"shard":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]' in workflow
     assert "matrix: ${{ fromJSON(inputs.full_suite_matrix) }}" in workflow
     assert "python -m pytest tests/ -q" in workflow
     assert "-p scripts.pytest_shard" in workflow
     assert "--ci-shard-index ${{ matrix.shard }}" in workflow
-    assert "--ci-shard-count 8" in workflow
+    assert "--ci-shard-count 16" in workflow
     assert workflow.count("persist-credentials: false") == workflow.count(
         "uses: actions/checkout@v7")
 

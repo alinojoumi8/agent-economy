@@ -16,6 +16,9 @@ from .models import (ApplyBusinessPermit, ApplyConstructionPermit,
                      SetComputeSponsorship, StudySkill)
 from .models import (CancelHouseholdProposal, ProposeHouseholdMove,
                      ProposePartnership, RespondHousehold, SeparateHousehold, SetTimePlan)
+from .models import AcceptEstatePropertyBid, PlaceEstatePropertyBid, WithdrawEstatePropertyBid
+from .models import AcceptEstateUnlistedBid, PlaceEstateUnlistedBid, WithdrawEstateUnlistedBid
+from .models import ProposePopulationMovement, RespondPopulationMovement
 
 
 class CommandValidationError(ValueError):
@@ -100,9 +103,25 @@ HOUSEHOLD_MODELS = {
     "separate_household": SeparateHousehold,
 }
 
+ESTATE_BID_MODELS = {
+    "place_estate_property_bid": PlaceEstatePropertyBid,
+    "accept_estate_property_bid": AcceptEstatePropertyBid,
+    "withdraw_estate_property_bid": WithdrawEstatePropertyBid,
+    "place_estate_unlisted_bid": PlaceEstateUnlistedBid,
+    "accept_estate_unlisted_bid": AcceptEstateUnlistedBid,
+    "withdraw_estate_unlisted_bid": WithdrawEstateUnlistedBid,
+}
+
+
+POPULATION_MODELS = {
+    "propose_population_movement": ProposePopulationMovement,
+    "respond_population_movement": RespondPopulationMovement,
+}
+
 
 def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     registry = CommandRegistry()
+    legal_mandates = {"request_legal_counsel", "respond_legal_counsel", "end_legal_counsel"}
     strict_types = (
         set(COMMUNICATION_MODELS)
         | set(COGNITION_MODELS)
@@ -110,6 +129,9 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         | set(CONSTRUCTION_MODELS)
         | set(HOUSEHOLD_MODELS)
         | {"set_time_plan"}
+        | legal_mandates
+        | set(ESTATE_BID_MODELS)
+        | set(POPULATION_MODELS)
     )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
@@ -153,4 +175,13 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         ))
     registry.register(CommandDefinition(command_type="set_time_plan", model=SetTimePlan,
         handler_name="_do_set_time_plan", introduced_in_semantics=18))
+    for command_type in sorted(legal_mandates):
+        registry.register(CommandDefinition(command_type=command_type, model=LegacyCommand,
+            handler_name=f"_do_{command_type}", introduced_in_semantics=20))
+    for command_type, model in ESTATE_BID_MODELS.items():
+        registry.register(CommandDefinition(command_type=command_type, model=model,
+            handler_name=f"_do_{command_type}", introduced_in_semantics=20))
+    for command_type, model in POPULATION_MODELS.items():
+        registry.register(CommandDefinition(command_type=command_type, model=model,
+            handler_name=f"_do_{command_type}", introduced_in_semantics=21))
     return registry

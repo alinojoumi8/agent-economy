@@ -8,7 +8,7 @@ insertion and tick reconciliation independently verifies every account (PRD R1).
 
 from .migrations import apply_migrations
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 class SchemaCompatibilityError(RuntimeError):
@@ -1401,6 +1401,14 @@ def initialize_schema(conn) -> None:
             "evidence_json TEXT NOT NULL DEFAULT '[]'")
     apply_migrations(
         conn, source_schema=source_schema, target_schema=SCHEMA_VERSION)
+    # Physical lookup aid only: no migration checksum or canonical rows change.
+    # person_key must still query the transaction's origin evidence on every
+    # call, including after rollback/ID reuse. Avoid scanning an agent's entire
+    # lifetime of events (and sorting it) to find that immutable origin record.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_events_person_origin_key ON events(subject_id,id) "
+        "WHERE subject_type='agent' AND kind IN ('person_registered','birth') "
+        "AND json_extract(payload_json,'$.random_key') IS NOT NULL")
     conn.execute(
         "UPDATE run_meta SET schema_version=? WHERE id=1 AND schema_version<?",
         (SCHEMA_VERSION, SCHEMA_VERSION))

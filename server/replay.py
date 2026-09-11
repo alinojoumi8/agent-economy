@@ -119,13 +119,8 @@ class ReplayReader:
             return None
         wanted = [n.strip() for n in (names or ",".join(HEADLINE_METRICS)).split(",") if n.strip()]
         wanted = wanted[:50]
-        out = {}
-        for name in wanted:
-            rows = conn.execute(
-                "SELECT tick, value FROM metrics WHERE name=? ORDER BY tick", (name,)).fetchall()
-            if rows:
-                out[name] = [{"tick": int(r["tick"]), "value": float(r["value"])} for r in rows]
-        return out
+        from server.projections.metric_series import metric_series_for_display
+        return {name: points for name, points in metric_series_for_display(conn, wanted).items() if points}
 
     # ── one tick's world, as the dashboard panels expect it ─────────────────
     def tick_view(self, run_id: str, tick: int) -> Optional[dict]:

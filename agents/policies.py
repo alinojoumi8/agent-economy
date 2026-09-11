@@ -19,6 +19,7 @@ import re
 from typing import Any, Callable
 
 from engine.types import positive_integer_id
+from engine.legal import DECISION_ROLES
 from world.recovery import assess_recovery, minimum_viable_price_cents
 
 
@@ -171,7 +172,107 @@ def _daily_plan_decision(context: dict) -> dict | None:
     return None
 
 
+def _adjudication_decision(context: dict) -> dict | None:
+    if context.get("purpose") not in {"decision", "citizen", "founder", *DECISION_ROLES}:
+        return None
+    work = context.get("institutional_work") or {}
+    eligible = work.get("eligible_actions") or []
+    if not work.get("adjudication_policy") or not eligible or eligible[0].get("type") != "issue_legal_decision":
+        return None
+    required = context.get("civic_required_action")
+    if isinstance(required, dict):
+        return _env(None, [dict(required)], [], "Attending the required civic appointment.")
+    return _env(None, [dict(eligible[0])], [], "Resolving the first eligible unanswered legal matter.")
+
+
+def _legal_representation_decision(context: dict) -> dict | None:
+    work = context.get("legal_representation") or {}
+    if not work.get("policy") or context.get("purpose") in {"reporter", "newsroom", "conversation", "memory", "oracle_plan", "oracle"}:
+        return None
+    actions = work.get("eligible_actions") or []
+    if not actions:
+        for matter in [*(context.get("assigned_legal_matters") or []), *(context.get("represented_legal_matters") or [])]:
+            scopes = matter.get("authorized_actions", [])
+            party = matter["represented_party"]
+            filed = {int(event) for filing in matter.get("filings", [])
+                     if (filing.get("filer_type"), filing.get("filer_id")) == (party["type"], party["id"])
+                     for event in filing.get("evidence_event_ids", [])}
+            kinds = {"obligation_breached", "wage_missed"}
+            if matter.get("side") == "respondent":
+                kinds |= {"obligation_performed", "wage_paid"}
+            evidence = [event["event_id"] for event in matter.get("evidence_events", [])
+                        if event["kind"] in kinds and event["event_id"] not in filed]
+            if evidence and "submit_filing" in scopes:
+                actions = [{"type": "submit_filing", "matter_id": matter["matter_id"], "filer_type": party["type"],
+                    "filer_id": party["id"], "filing_type": "evidence", "evidence_event_ids": evidence,
+                    "body": "The represented party relies on the recorded obligation and payment facts."}]
+                break
+            if matter.get("status") == "hearing" and matter.get("requested_remedy") and "propose_settlement" in scopes:
+                actions = [{"type": "propose_settlement", "matter_id": matter["matter_id"],
+                            "terms": {"remedy": matter["requested_remedy"]}}]
+                break
+    if not actions:
+        actions = (context.get("estate_legal_work") or {}).get("eligible_actions") or []
+    if not actions:
+        return None
+    required = context.get("civic_required_action")
+    if isinstance(required, dict):
+        return _env(None, [dict(required)], [], "Attending the required civic appointment.")
+    return _env(None, [dict(actions[0])], [], "Performing the first supported action for the represented legal party.")
+
+
+def _estate_asset_sale(context: dict) -> dict | None:
+    actions = (context.get("estate_property_market") or {}).get("eligible_actions") or []
+    if not actions:
+        actions = (context.get("estate_unlisted_market") or {}).get("eligible_actions") or []
+    if not actions:
+        return None
+    required = context.get("civic_required_action")
+    if isinstance(required, dict):
+        return _env(None, [dict(required)], [], "Attending the required civic appointment.")
+    return _env(None, [dict(actions[0])], [],
+        "Accepting the highest funded bid for the first eligible retained asset lot.")
+
+
+def _public_estate_sale(context: dict) -> dict | None:
+    """Give unreserved estate positions a turn using their actual offer history."""
+    if context.get("purpose") not in ("decision", "citizen", "founder", "gov_official"):
+        return None
+    if isinstance(context.get("civic_required_action"), dict):
+        return None
+    if any(isinstance(action, dict) and action.get("type") == "issue_legal_decision"
+           for action in (context.get("institutional_work") or {}).get("eligible_actions", [])):
+        return None
+    eligible = []
+    for case in context.get("estate_securities", []):
+        if case.get("authority") != "public_administrator":
+            continue
+        for position in case["securities"]:
+            quantity = int(position.get("orderable_qty", 0))
+            if position.get("tradeable") and quantity > 0:
+                last_offer = position.get("last_offer_tick")
+                eligible.append((-1 if last_offer is None else last_offer, case["estate_id"], position["firm_id"], position))
+    if eligible:
+        position = min(eligible, key=lambda offer: offer[:3])[3]
+        return _env(None, [{**position["order_scope"], "qty": int(position["orderable_qty"])}], [],
+            "Offering the least recently offered available estate position through its recorded public administration; "
+            "only an actual priced counterparty can fund a sale.")
+    return None
+
+
 def citizen_decision(context: dict) -> dict:
+    adjudication = _adjudication_decision(context)
+    if adjudication is not None:
+        return adjudication
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
+    estate_sale = _public_estate_sale(context)
+    if estate_sale is not None:
+        return estate_sale
     required_civic_action = context.get("civic_required_action")
     if isinstance(required_civic_action, dict):
         return _env(
@@ -731,6 +832,18 @@ def workforce_recovery_actions(
 
 
 def founder_decision(context: dict) -> dict:
+    adjudication = _adjudication_decision(context)
+    if adjudication is not None:
+        return adjudication
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
+    estate_sale = _public_estate_sale(context)
+    if estate_sale is not None:
+        return estate_sale
     firm = context.get("my_firm")
     if not firm:
         return citizen_decision(context)
@@ -943,6 +1056,12 @@ def _pick_bank(context: dict):
 # Institutional roles
 # ─────────────────────────────────────────────────────────────────────────────
 def credit_officer_decision(context: dict) -> dict:
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
     actions: list[dict] = []
     reasons: list[str] = []
     base_rate = int(context.get("policy_rate_bps", 500))
@@ -969,6 +1088,12 @@ def credit_officer_decision(context: dict) -> dict:
 def vc_partner_decision(context: dict) -> dict:
     """Scripted partner: fund pitches with traction at a risk-priced equity stake,
     keep dry powder, pass on the rest (R13)."""
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
     startup_action = _first_startup_action(context)
     if startup_action:
         return _env(None, [startup_action], [], "advancing a state-qualified startup round")
@@ -996,8 +1121,14 @@ def vc_partner_decision(context: dict) -> dict:
 
 def lawyer_decision(context: dict) -> dict:
     """File bounded evidence first, then make a remedy-limited settlement offer."""
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
     agent_id = int(context.get("agent", {}).get("id", 0))
-    matters = context.get("assigned_legal_matters", [])
+    matters = [] if (context.get("legal_representation") or {}).get("policy") else context.get("assigned_legal_matters", [])
     for matter in matters:
         filed_evidence = {
             int(event_id)
@@ -1042,6 +1173,12 @@ def lawyer_decision(context: dict) -> dict:
 
 
 def central_banker_decision(context: dict) -> dict:
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
     liquidity_requests = context.get("liquidity_support_requests", [])
     if liquidity_requests:
         actions = []
@@ -1361,6 +1498,18 @@ def oracle_plan(context: dict) -> dict:
 
 def institutional_decision(context: dict) -> dict:
     """Execute at most one state-derived institutional work item."""
+    adjudication = _adjudication_decision(context)
+    if adjudication is not None:
+        return adjudication
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
+    estate_sale = _public_estate_sale(context)
+    if estate_sale is not None:
+        return estate_sale
     eligible = list((context.get("institutional_work") or {}).get("eligible_actions") or [])
     construction = context.get("construction_work")
     construction_eligible = list(
@@ -1415,6 +1564,18 @@ POLICIES: dict[str, Callable[[dict], dict]] = {
 
 def scripted_decision(purpose: str, context: dict) -> dict:
     """Run one local policy without entering the governed model-call path."""
+    adjudication = _adjudication_decision(context)
+    if adjudication is not None:
+        return adjudication
+    representation = _legal_representation_decision(context)
+    if representation is not None:
+        return representation
+    property_sale = _estate_asset_sale(context)
+    if property_sale is not None:
+        return property_sale
+    estate_sale = _public_estate_sale(context)
+    if estate_sale is not None:
+        return estate_sale
     if "supplier_warning_policy_input" in context:
         return supplier_warning_decision(context["supplier_warning_policy_input"])
     construction = context.get("construction_work")

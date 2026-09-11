@@ -17,10 +17,12 @@ import {
   normalizeConstructionStage,
 } from "../components/ConstructionStoryboard";
 import { LivingAgentPortrait } from "../components/LivingAgentPortrait";
+import { HouseholdFinances } from "./HouseholdFinances";
 import {
   agentPageForSelection,
   featuredAgentId as pickFeaturedAgentId,
   resolveSelectedAgentId,
+  projectInvolvesAgent,
 } from "./peopleWorkspaceModel.js";
 
 type EvidenceRef = { kind: string; id: number | string; tick: number };
@@ -63,6 +65,11 @@ type ComputePlan = {
   expiry_tick: number | null;
   evidence_ref: EvidenceRef | null;
 };
+type ModeledResidence = {
+  state: "resident" | "outside";
+  since_tick: number;
+  evidence_ref: EvidenceRef;
+};
 type LivingAgent = {
   id: number;
   name: string;
@@ -74,9 +81,11 @@ type LivingAgent = {
   died_tick: number | null;
   alive: boolean;
   region: Region | null;
-  balance_cents: number;
+  balance_cents: number | null;
+  cash_by_currency?: Record<string, number>;
+  modeled_residence?: ModeledResidence;
   employment: Employment | null;
-  compute: ComputePlan;
+  compute: ComputePlan | null;
   skills: Skill[];
   residence: VisiblePlace | null;
   workplace: VisiblePlace | null;
@@ -88,6 +97,13 @@ type LivingProject = {
   kind: string;
   title: string;
   owner_agent_id: number | null;
+  beneficial_owner_ids?: number[];
+  steward_agent_id?: number | null;
+  ownership?: {
+    owners: { agent_id: number | null; name: string; numerator: string; denominator: string }[];
+    operator: { agent_id: number; name: string; capacity: string } | null;
+    original_owner: { id: number; name: string };
+  };
   stage: string;
   status: string;
   started_tick: number;
@@ -123,6 +139,8 @@ type LivingAgentsData = {
   summary: {
     tick: number;
     living_agents: number;
+    resident_population?: number;
+    known_living_outside?: number;
     active_employments: number;
     active_projects: number;
     completed_projects: number;
@@ -155,8 +173,10 @@ type AgentJourney = {
   current_state: {
     region: Region | null;
     employment: Employment | null;
-    balance_cents: number;
-    compute: ComputePlan;
+    balance_cents: number | null;
+    cash_by_currency?: Record<string, number>;
+    modeled_residence?: ModeledResidence;
+    compute: ComputePlan | null;
     residence: VisiblePlace | null;
     workplace: VisiblePlace | null;
   };
@@ -188,8 +208,8 @@ function label(value: string | null | undefined, fallback = "Not recorded") {
   return value.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-function formatCents(value: number) {
-  return `${value.toLocaleString()} cents`;
+function formatCents(value: number | null) {
+  return value == null ? "Unavailable" : `${value.toLocaleString()} cents`;
 }
 
 function placeLabel(place: VisiblePlace | null) {
@@ -247,7 +267,7 @@ export function PeopleWorkspace() {
   const projectKind = PROJECT_KINDS.some(([value]) => value === requestedProjectKind)
     ? requestedProjectKind : "all";
   const requestedProjectStatus = searchParams.get("project_status") || "all";
-  const projectStatus = ["all", "active", "completed", "cancelled"].includes(requestedProjectStatus)
+  const projectStatus = ["all", "active", "completed", "cancelled", "paused"].includes(requestedProjectStatus)
     ? requestedProjectStatus : "all";
   const searchRevision = searchParams.toString();
   const pendingSearchParams = useRef(searchRevision);
@@ -332,7 +352,8 @@ export function PeopleWorkspace() {
       agent.occupation,
       agent.region?.name,
       agent.employment?.firm_name,
-      agent.compute.tier,
+      agent.compute?.tier,
+      agent.modeled_residence?.state,
       ...agent.skills.map(skill => skill.skill_key),
     ].some(value => String(value || "").toLowerCase().includes(needle)));
   }, [agents, filter]);
@@ -373,7 +394,7 @@ export function PeopleWorkspace() {
     if (requested) return requested;
     const selectedConstruction = allProjects.find(project =>
       project.kind === "construction"
-      && project.owner_agent_id === selectedId
+      && projectInvolvesAgent(project, selectedId)
       && project.status === "active",
     );
     if (selectedConstruction) return selectedConstruction;
@@ -382,10 +403,10 @@ export function PeopleWorkspace() {
     );
     if (activeConstruction) return activeConstruction;
     const selectedProgress = allProjects.find(project =>
-      project.owner_agent_id === selectedId && project.status === "active",
+      projectInvolvesAgent(project, selectedId) && project.status === "active",
     );
     return selectedProgress
-      || allProjects.find(project => project.owner_agent_id === selectedId)
+      || allProjects.find(project => projectInvolvesAgent(project, selectedId))
       || allProjects.find(project => project.kind === "construction")
       || allProjects[0]
       || null;
@@ -471,6 +492,10 @@ export function PeopleWorkspace() {
         />
         <div className="world-os-people-stats" aria-label="Living Agents summary">
           <span><strong>{data.summary.living_agents}</strong> living</span>
+          {data.summary.resident_population != null && <>
+            <span><strong>{data.summary.resident_population}</strong> residents</span>
+            <span><strong>{data.summary.known_living_outside}</strong> outside</span>
+          </>}
           <span><strong>{data.summary.active_employments}</strong> working</span>
           <span><strong>{data.summary.active_projects}</strong> progressing</span>
           <span><strong>{data.summary.completed_projects}</strong> completed</span>
@@ -522,7 +547,7 @@ export function PeopleWorkspace() {
             <span className="world-os-agent-list-copy">
               <strong>{agent.name}</strong>
               <small>{label(agent.role || agent.occupation || agent.kind)}</small>
-              <em>{agent.region?.name || "No recorded region"}</em>
+              <em>{agent.modeled_residence?.state === "outside" ? "Outside the modeled economy" : agent.region?.name || "No recorded region"}</em>
             </span>
             <span className="world-os-agent-recency">
               <i className={`world-os-agent-status-dot ${agent.runtime ? "is-runtime" : agent.employment ? "is-working" : "is-recent"}`} aria-hidden="true" />
@@ -564,7 +589,7 @@ export function PeopleWorkspace() {
               <p className="world-os-kicker">Agent journey · ID {journey.profile.id}</p>
               <h3>{journey.profile.name}</h3>
               <p>{label(journey.profile.role || journey.profile.occupation || journey.profile.kind)}</p>
-              <small>{journey.current_state.region?.name || "No recorded region"} · as of tick {envelope.tick}</small>
+              <small>{journey.current_state.modeled_residence?.state === "outside" ? "Outside the modeled economy" : journey.current_state.region?.name || "No recorded region"} · as of tick {envelope.tick}</small>
             </div>
             <div className="world-os-journey-actions">
               {journey.runtime
@@ -572,9 +597,18 @@ export function PeopleWorkspace() {
                 : <i className={sourceClass("committed")}>
                   {tick === "live" ? "No runtime signal" : "Historical"}
                 </i>}
-              <Link to={cityUrl({ agent: journey.profile.id })}>Focus in Live City</Link>
+              {journey.current_state.modeled_residence?.state !== "outside" &&
+                <Link to={cityUrl({ agent: journey.profile.id })}>Focus in Live City</Link>}
             </div>
           </article>
+
+          {journey.current_state.modeled_residence?.state === "outside" && <p className="world-os-policy-note">
+            Outside since tick {journey.current_state.modeled_residence.since_tick}. Local work, compute, and location are unavailable.
+            Recorded history and retained financial interests remain inspectable.
+          </p>}
+
+          <HouseholdFinances runId={runId} fork={observerState.fork} agentId={journey.profile.id}
+            asOfTick={journeyQuery.data!.tick} />
 
           <article className="world-os-panel world-os-journey-milestones">
             <header>
@@ -622,10 +656,13 @@ export function PeopleWorkspace() {
               <dl>
                 <div><dt>Role</dt><dd>{journey.current_state.employment?.title || "Not employed"}</dd></div>
                 <div><dt>Employer</dt><dd>{journey.current_state.employment?.firm_name || "No active employer"}</dd></div>
-                <div><dt>Ledger balance</dt><dd>{formatCents(journey.current_state.balance_cents)}</dd></div>
-                <div><dt>Compute tier</dt><dd>{label(journey.current_state.compute.tier)}</dd></div>
+                {journey.current_state.cash_by_currency != null
+                  ? Object.entries(journey.current_state.cash_by_currency).map(([currency, amount]) =>
+                    <div key={currency}><dt>Cash · {currency}</dt><dd>{formatCents(amount)}</dd></div>)
+                  : <div><dt>Ledger balance</dt><dd>{formatCents(journey.current_state.balance_cents)}</dd></div>}
+                <div><dt>Compute tier</dt><dd>{label(journey.current_state.compute?.tier, "Unavailable")}</dd></div>
                 <div><dt>Employment since</dt><dd>{journey.current_state.employment ? `Tick ${journey.current_state.employment.start_tick}` : "Not applicable"}</dd></div>
-                <div><dt>Compute payer</dt><dd>{label(journey.current_state.compute.payer_type)}</dd></div>
+                <div><dt>Compute payer</dt><dd>{label(journey.current_state.compute?.payer_type, "Not applicable")}</dd></div>
               </dl>
               {journey.current_state.employment
                 ? <Link to={cityUrl({
@@ -718,6 +755,13 @@ export function PeopleWorkspace() {
               <div><dt>Started</dt><dd>Tick {selectedProject.started_tick}</dd></div>
               <div><dt>Evidence</dt><dd>{selectedProject.evidence_refs.length} refs</dd></div>
             </dl>}
+            {selectedProject.ownership && <dl className="world-os-project-evidence-metrics">
+              <div><dt>Owners</dt><dd>{selectedProject.ownership.owners.map(owner =>
+                `${owner.name} (${owner.numerator}/${owner.denominator})`).join(", ")}</dd></div>
+              <div><dt>Manages project</dt><dd>{selectedProject.ownership.operator
+                ? `${selectedProject.ownership.operator.name} · ${label(selectedProject.ownership.operator.capacity)}` : "Unassigned"}</dd></div>
+              <div><dt>Original owner</dt><dd>{selectedProject.ownership.original_owner.name}</dd></div>
+            </dl>}
             <p className="world-os-project-privacy">
               {["aggregated", "aggregated_private"].includes(selectedProject.privacy)
                 ? "Regional aggregate: private owner and exact location are protected."
@@ -759,6 +803,7 @@ export function PeopleWorkspace() {
                 <option value="active">Active</option>
                 <option value="completed">Completed</option>
                 <option value="cancelled">Cancelled</option>
+                <option value="paused">Paused</option>
               </select>
             </label>
           </div>

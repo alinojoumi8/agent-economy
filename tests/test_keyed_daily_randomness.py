@@ -15,6 +15,48 @@ from tests.test_research_attempt_integrity import _config
 from world.replay_verify import verify_replay
 
 
+def test_origin_lookup_index_preserves_first_valid_evidence_and_ignores_decoys(store):
+    actor = 77
+    store.log_event(0, "person_registered", {"random_key": "wrong-subject"}, subject_type="firm", subject_id=actor)
+    store.log_event(0, "person_registered", {}, subject_type="agent", subject_id=actor)
+    store.log_event(0, "news", {"random_key": "wrong-kind"}, subject_type="agent", subject_id=actor)
+    store.log_event(1, "birth", {"random_key": "first-origin"}, subject_type="agent", subject_id=actor)
+    store.log_event(2, "person_registered", {"random_key": "later-origin"}, subject_type="agent", subject_id=actor)
+    assert person_key(store, actor) == "first-origin"
+    assert person_key(store, actor + 1) == f"agent:{actor + 1}"
+    query = ("SELECT json_extract(payload_json,'$.random_key') FROM events WHERE subject_type='agent' AND subject_id=? "
+             "AND kind IN ('person_registered','birth') AND json_extract(payload_json,'$.random_key') IS NOT NULL ORDER BY id LIMIT 1")
+    assert store.scalar(query.replace("FROM events", "FROM events NOT INDEXED"), (actor,)) == person_key(store, actor)
+    plan = " ".join(str(row[3]) for row in store.query("EXPLAIN QUERY PLAN " + query, (actor,)))
+    assert "ix_events_person_origin_key" in plan and "TEMP B-TREE" not in plan
+
+
+def test_origin_lookup_index_does_not_keep_an_origin_from_a_rolled_back_insert(store):
+    actor = 88
+    with pytest.raises(RuntimeError, match="rollback origin"):
+        with store.savepoint("temporary_origin"):
+            first = store.log_event(1, "birth", {"random_key": "rolled-back"}, subject_type="agent", subject_id=actor)
+            assert person_key(store, actor) == "rolled-back"
+            raise RuntimeError("rollback origin")
+    assert person_key(store, actor) == f"agent:{actor}"
+    second = store.log_event(1, "birth", {"random_key": "committed"}, subject_type="agent", subject_id=actor)
+    assert second == first
+    assert person_key(store, actor) == "committed"
+
+
+def test_physical_origin_index_can_be_added_to_existing_schema_without_changing_canonical_data(store):
+    from engine.schema import initialize_schema
+    from research.hashing import canonical_hashes
+    store.log_event(1, "birth", {"random_key": "stable-origin"}, subject_type="agent", subject_id=99)
+    store.execute("DROP INDEX ix_events_person_origin_key")
+    before = canonical_hashes(store)
+    initialize_schema(store.conn)
+    initialize_schema(store.conn)
+    assert canonical_hashes(store) == before
+    assert person_key(store, 99) == "stable-origin"
+    assert store.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_events_person_origin_key'") == 1
+
+
 @pytest.fixture
 def worlds(tmp_path):
     with ExitStack() as stack:

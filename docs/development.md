@@ -1,5 +1,11 @@
 # Development and testing
 
+Local operator household inspection is available from a selected person's
+dossier. The [financial inspector contract](plans/2026-09-08-household-financial-inspector.md)
+describes its committed-tick API, `operator_households.enabled` flag, identity
+visibility and cash-inequality definitions. It requires current Semantics-20
+position history; historical source runs are never repaired by the reader.
+
 Saved-world operator studies use the bounded read-only checkpoint catalog and
 the same explicit review, launch and recovery flow as fresh-world pilots. See
 the [checkpoint study contract](plans/2026-09-07-checkpoint-studies.md#local-operator-interface)
@@ -71,6 +77,13 @@ cross-platform, hash-locked install after changing it:
 ```powershell
 uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
 ```
+
+Research exports use DuckDB's Python type conversion path, which checks pandas
+types. The pinned environment includes pandas to avoid repeated failed imports
+for each value. The exporter retains its bounded SQLite row batches, independent
+Parquet readback and resource limits. See the
+[export measurements](plans/2026-09-09-bounded-research-exports.md#measured-optional-import-bottleneck)
+for byte-parity evidence and the measured memory/time tradeoff.
 
 The full gate also uses `uvx` for the Python dependency audit. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/) first and verify
@@ -401,5 +414,8 @@ Ubuntu and Windows. Every PR also runs a single deterministic shard of the
 engine/world/agents-focused tests via `scripts/pytest_shard.py`, so edits to
 `run.py`, `llm/gateway.py`, `agents/`, `world/`, and `engine/` are exercised
 before merge; the full cross-platform matrix remains a manual workflow
-dispatch. Pull requests should state behavior, tests, live calls/cost,
+dispatch. Each OS/Python pair uses all 16 full-suite shards (indices 0–15),
+with a 30-minute limit per job. A focused matrix override provides partial
+coverage until every shard in the pair has a successful result.
+Pull requests should state behavior, tests, live calls/cost,
 compatibility impact, and remaining risk. See [CONTRIBUTING.md](../CONTRIBUTING.md).

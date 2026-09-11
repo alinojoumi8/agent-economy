@@ -18,6 +18,7 @@ from typing import Optional
 
 from engine.core import Economy
 from engine.keyed_random import policy_seed
+from engine.legal import DECISION_ROLES
 from engine.store import load_json
 from communications.projections import AgentKnowledgeProjection
 from engine.types import positive_integer_id
@@ -269,7 +270,8 @@ class ContextBuilder:
             and tick >= int(activation_tick)
         )
 
-    def build(self, agent_row, tick: int, *, firm_id: int | None = None) -> dict:
+    def build(self, agent_row, tick: int, *, firm_id: int | None = None,
+              retrieve_memories: bool = True) -> dict:
         role = agent_row["role"]
         if role == "central_banker":
             ctx = self._central_banker_context(agent_row, tick)
@@ -278,20 +280,21 @@ class ContextBuilder:
         elif role == "vc_partner":
             ctx = self._vc_partner_context(agent_row, tick)
         elif role == "lawyer":
-            ctx = self._lawyer_context(agent_row, tick)
+            ctx = self._lawyer_context(agent_row, tick, retrieve_memories=retrieve_memories)
         else:
             recovery = self._active_recovery_settings(tick)
             ctx = self._citizen_context(
-                agent_row, tick, recovery_settings_at_tick=recovery)
+                agent_row, tick, recovery_settings_at_tick=recovery,
+                retrieve_memories=retrieve_memories)
             if firm_id is not None:
                 firm = self.store.query_one(
-                    "SELECT * FROM firms WHERE id=? AND founder_agent_id=? "
+                    f"SELECT * FROM {self.e.business_control.table} WHERE id=? AND {self.e.business_control.column}=? "
                     "AND status<>'bankrupt'",
                     (int(firm_id), agent_row["id"]),
                 )
             else:
                 firm = self.store.query_one(
-                    "SELECT * FROM firms WHERE founder_agent_id=? "
+                    f"SELECT * FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? "
                     "AND status<>'bankrupt' LIMIT 1",
                     (agent_row["id"],),
                 )
@@ -402,6 +405,8 @@ class ContextBuilder:
         if self.engine_semantics_version >= 17:
             ctx["household_decisions"] = self.e.families.decision_context(
                 int(agent_row["id"]), tick, ctx.get("migration_options", []))
+        if self.engine_semantics_version >= 21:
+            ctx['population_boundary'] = self.e.population.action_context(int(agent_row['id']), tick)
         if self.engine_semantics_version >= 18:
             ctx["daily_time"] = self.e.daily_time.decision_context(int(agent_row["id"]), tick)
             if ctx.get("household"):
@@ -425,6 +430,19 @@ class ContextBuilder:
         if self.engine_semantics_version >= 16:
             ctx["rng_seed"] = policy_seed(self.e, "policy." + str(ctx.get("purpose") or "decision"),
                 tick, int(agent_row["id"]), 0, (ctx.get("my_firm") or {}).get("id"))
+        if self.engine_semantics_version >= 20:
+            ctx["estate_securities"] = self.e.estate_securities.context_for(int(agent_row["id"]), tick)
+            ctx["estate_property_market"] = self.e.estate_property_sales.context_for(int(agent_row["id"]), tick)
+            ctx["estate_unlisted_market"] = self.e.estate_unlisted_sales.context_for(int(agent_row["id"]), tick)
+            ctx["legal_representation"] = self.e.legal_representation.context_for(int(agent_row["id"]), tick)
+            ctx["estate_legal_work"] = self.e.estate_legal_work.context_for(int(agent_row["id"]), tick)
+            ctx["represented_legal_matters"] = self.e.legal_representation.matter_views(int(agent_row["id"]), tick, estate=True)
+            if "assigned_legal_matters" not in ctx:
+                ctx["assigned_legal_matters"] = self.e.legal_representation.matter_views(int(agent_row["id"]), tick)
+            if role in DECISION_ROLES and "institutional_work" not in ctx:
+                # Legal duties follow the official even when business control
+                # selects the founder purpose or role-specific purposes are off.
+                ctx["institutional_work"] = self._institutional_work(agent_row, tick)
         return ctx
 
     def _goal_driven_communication_action(
@@ -553,7 +571,7 @@ class ContextBuilder:
         role = agent_row["role"]
         if role in ("central_banker", "credit_officer", "vc_partner", "lawyer"):
             return role
-        if self.store.query_one("SELECT 1 FROM firms WHERE founder_agent_id=? AND status<>'bankrupt'",
+        if self.store.query_one(f"SELECT 1 FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? AND status<>'bankrupt'",
                                 (agent_row["id"],)):
             return "founder"
         if role == "permit_clerk":
@@ -564,7 +582,8 @@ class ContextBuilder:
 
     # ── citizen ──────────────────────────────────────────────────────────────
     def _citizen_context(self, a, tick: int, *,
-                         recovery_settings_at_tick: dict | None = None) -> dict:
+                         recovery_settings_at_tick: dict | None = None,
+                         retrieve_memories: bool = True) -> dict:
         if recovery_settings_at_tick is None:
             recovery_settings_at_tick = self._active_recovery_settings(tick)
         agent_id = int(a["id"])
@@ -616,7 +635,9 @@ class ContextBuilder:
             career_day = False
 
         heard = self._heard(agent_id, tick)
-        memories = self.mem.retrieve(agent_id, tick, k=6, query_entities=self._query_entities(bank_id))
+        # Catalogs need action terms, not a simulated act of remembering.
+        memories = (self.mem.retrieve(agent_id, tick, k=6,
+                    query_entities=self._query_entities(bank_id)) if retrieve_memories else [])
 
         insured = self.store.query_one(
             "SELECT 1 FROM insurance_policies WHERE agent_id=? AND status='active'",
@@ -690,7 +711,18 @@ class ContextBuilder:
                 else 0
             )
             if shoppers <= 0:
-                if region_id is None:
+                if self.engine_semantics_version >= 21:
+                    # An uncached catalog/context has no scheduled cohort yet.
+                    # Count eligible adult residents; children consume through
+                    # household provisioning, and departed people retain assets.
+                    region_filter = " AND region_id=?" if region_id is not None else ""
+                    candidates = self.store.query(
+                        "SELECT id FROM agents WHERE kind='citizen' AND alive=1 "
+                        "AND health<>'critical' AND age>=18" + region_filter + " ORDER BY id",
+                        (region_id,) if region_id is not None else ())
+                    shoppers = sum(self.e.population.is_local(int(person['id']), tick)
+                                   for person in candidates)
+                elif region_id is None:
                     shoppers = int(self.store.scalar(
                         "SELECT COUNT(*) FROM agents WHERE kind='citizen' "
                         "AND alive=1 AND health<>'critical'", default=1))
@@ -731,13 +763,26 @@ class ContextBuilder:
     def _legal_work(self, a, tick: int) -> dict:
         """Expose unresolved, actor-authorized legal work from durable events."""
         agent_id = int(a["id"])
+        wage_scope_filter = ""
+        if self.engine_semantics_version >= 20:
+            wage_scope_filter = (
+                "AND NOT EXISTS (SELECT 1 FROM legal_wage_scopes s JOIN legal_matters m ON m.id=s.matter_id "
+                "WHERE s.claim_id=CAST(json_extract(e.payload_json,'$.claim_id') AS INTEGER) "
+                "AND m.status NOT IN ('decided','dismissed','settled')) "
+                "AND (SELECT COALESCE(SUM(earned_cents),0) FROM wage_accruals wa "
+                "WHERE wa.claim_id=CAST(json_extract(e.payload_json,'$.claim_id') AS INTEGER) "
+                "AND wa.id<=CAST(json_extract(e.payload_json,'$.through_accrual_id') AS INTEGER)) > "
+                "(SELECT c.paid_cents+c.written_off_cents+COALESCE((SELECT SUM(n.removed_cents) "
+                "FROM wage_claim_novations n WHERE n.claim_id=c.id),0) FROM wage_claims c "
+                "WHERE c.id=CAST(json_extract(e.payload_json,'$.claim_id') AS INTEGER)) "
+            )
         missed = self.store.query_one(
             "SELECT e.id,e.payload_json FROM events e "
             "WHERE e.kind='wage_missed' "
             "AND CAST(json_extract(e.payload_json,'$.agent_id') AS INTEGER)=? "
             "AND NOT EXISTS (SELECT 1 FROM legal_matters m "
             "WHERE CAST(json_extract(m.metadata_json,'$.source_event_id') AS INTEGER)=e.id) "
-            "ORDER BY e.id LIMIT 1", (agent_id,))
+            f"{wage_scope_filter}ORDER BY e.id LIMIT 1", (agent_id,))
         if not missed:
             return {"eligible_actions": [],
                     "rule": "copy at most one supplied action exactly"}
@@ -766,10 +811,17 @@ class ContextBuilder:
             if employment is not None
             else None
         )
-        counsel = self.store.query_one(
+        counsel_query = (
             "SELECT id FROM agents WHERE alive=1 "
             "AND (role='lawyer' OR lower(occupation)='lawyer') "
-            "ORDER BY CASE WHEN role='lawyer' THEN 0 ELSE 1 END,pinned_core DESC,id LIMIT 1")
+            "ORDER BY CASE WHEN role='lawyer' THEN 0 ELSE 1 END,pinned_core DESC,id")
+        if self.engine_semantics_version >= 21:
+            # Use the same current professional eligibility as claim admission.
+            # A departed first candidate must not hide an available resident.
+            counsel = next((row for row in self.store.query(counsel_query)
+                            if self.e.legal._is_lawyer(int(row['id']))), None)
+        else:
+            counsel = self.store.query_one(counsel_query + " LIMIT 1")
         if firm_id is None or remedy_amount is None or not counsel:
             return {"eligible_actions": [],
                     "rule": "copy at most one supplied action exactly"}
@@ -788,6 +840,17 @@ class ContextBuilder:
             "metadata": {"source_event_id": event_id,
                          "evidence_event_ids": [event_id]},
         }
+        if self.engine_semantics_version >= 20:
+            from engine.estates import EstateError
+            try:
+                scopes = self.e.wage_awards.preview(tick, agent_id, firm_id, [{
+                    "claim_id": payload.get("claim_id"), "through_accrual_id": payload.get("through_accrual_id")}])
+            except EstateError:
+                return {"eligible_actions": [], "rule": "copy at most one supplied action exactly"}
+            action["requested_remedy"].update(
+                amount_cents=sum(s["end_cents"] - s["start_cents"] for s in scopes),
+                currency_code=scopes[0]["currency_code"],
+                wage_scopes=[{"claim_id": s["claim_id"], "through_accrual_id": s["through_accrual_id"]} for s in scopes])
         return {"eligible_actions": [action],
                 "rule": "copy at most one supplied action exactly"}
 
@@ -803,6 +866,9 @@ class ContextBuilder:
             return None
         if (not bool(agent_row["alive"]) or str(agent_row["health"]) != "healthy"
                 or bool(agent_row["retired"])):
+            return None
+        if (self.engine_semantics_version >= 21
+                and not self.e.population.is_available(int(agent_row["id"]))):
             return None
         minimum_age = max(18, int(settings.get("minimum_age", 21)))
         risk_floor = max(0.0, min(1.0, float(
@@ -882,16 +948,22 @@ class ContextBuilder:
 
         region_id = (int(agent_row["region_id"])
                      if agent_row["region_id"] is not None else None)
-        if region_id is None:
-            lawyer = self.store.query_one(
-                "SELECT id,name,region_id FROM agents WHERE alive=1 "
-                "AND lower(COALESCE(occupation,''))='lawyer' ORDER BY id LIMIT 1")
+        lawyer_query = (
+            "SELECT id,name,region_id FROM agents WHERE alive=1 "
+            "AND lower(COALESCE(occupation,''))='lawyer' ")
+        if self.engine_semantics_version >= 21:
+            lawyer_query += "AND age>=18 "
+        lawyer_query += ("ORDER BY id" if region_id is None
+                         else "ORDER BY CASE WHEN region_id=? THEN 0 ELSE 1 END,id")
+        lawyer_params = () if region_id is None else (region_id,)
+        if self.engine_semantics_version >= 21:
+            # Resolve the candidate set before selecting; a later missing
+            # residence record must not silently change the service market.
+            lawyers = [row for row in self.store.query(lawyer_query, lawyer_params)
+                       if self.e.population.is_available(int(row["id"]))]
+            lawyer = lawyers[0] if lawyers else None
         else:
-            lawyer = self.store.query_one(
-                "SELECT id,name,region_id FROM agents WHERE alive=1 "
-                "AND lower(COALESCE(occupation,''))='lawyer' "
-                "ORDER BY CASE WHEN region_id=? THEN 0 ELSE 1 END,id LIMIT 1",
-                (region_id,))
+            lawyer = self.store.query_one(lawyer_query + " LIMIT 1", lawyer_params)
         if lawyer is None:
             return None
 
@@ -1085,6 +1157,9 @@ class ContextBuilder:
         return out
 
     def _incoming_job_offers(self, agent_id: int) -> list[dict]:
+        if (self.engine_semantics_version >= 21
+                and not self.e.population.is_available(agent_id)):
+            return []
         rows = self.store.query(
             "SELECT jo.id AS offer_id,jo.application_id,jo.wage_cents,"
             "jo.proposer_agent_id,ap.job_id,j.firm_id,j.title,j.wage_cents AS posted_wage,"
@@ -1196,6 +1271,47 @@ class ContextBuilder:
             out.append(view)
         return out
 
+    def _legal_decision_work(self, agent_id, tick, work):
+        """Find an unanswered due matter this existing official may adjudicate."""
+        work["adjudication_policy"] = self.e.legal_authority.POLICY
+        skipped = []
+        blocked = []
+        for matter in self.store.query("SELECT m.* FROM legal_matters m WHERE m.status IN ('hearing','settlement_offered') "
+                "AND m.response_due_tick<=? AND NOT EXISTS (SELECT 1 FROM legal_decisions d WHERE d.matter_id=m.id) "
+                "AND NOT EXISTS (SELECT 1 FROM legal_filings f WHERE f.matter_id=m.id AND f.tick<=? "
+                "AND f.filer_type=m.respondent_type AND f.filer_id=m.respondent_id) ORDER BY m.id", (tick, tick)):
+            assessment = self.e.legal_authority.assess(tick, agent_id, matter)
+            if not assessment["eligible"]:
+                if len(skipped) < 5:
+                    skipped.append({"matter_id": matter["id"], "reason": assessment["reason"]})
+                continue
+            evidence = set()
+            for filing in self.store.query("SELECT evidence_event_ids_json FROM legal_filings "
+                    "WHERE matter_id=? AND admitted=1 AND tick<=? ORDER BY id", (matter["id"], tick)):
+                evidence.update(int(item) for item in (load_json(filing["evidence_event_ids_json"], []) or []))
+            remedy = load_json(matter["requested_remedy_json"], {}) or {}
+            if not evidence or not remedy:
+                continue
+            try:
+                error = (self.e.legal._validate_remedy(matter, remedy) if isinstance(remedy, dict)
+                         else "requested remedy must be an object")
+            except (TypeError, ValueError, OverflowError):
+                error = "requested remedy has invalid values"
+            if error:
+                if len(blocked) < 5:
+                    blocked.append({"matter_id": matter["id"], "reason": error})
+                continue
+            work["due_legal_matters"] = [{"matter_id": matter["id"], "response_due_tick": matter["response_due_tick"],
+                                         "evidence_event_ids": sorted(evidence)}]
+            work["eligible_actions"].insert(0, {"type": "issue_legal_decision", "matter_id": matter["id"],
+                "outcome": "claimant", "findings": [{"key": "unanswered_claim", "value": True}],
+                "evidence_event_ids": sorted(evidence), "remedy": remedy})
+            break
+        if skipped:
+            work["recused_legal_matters"] = skipped
+        if blocked:
+            work["blocked_legal_matters"] = blocked
+
     def _institutional_work(self, a, tick: int) -> dict:
         """Return a bounded queue of actions that are valid in the current state.
 
@@ -1207,6 +1323,10 @@ class ContextBuilder:
         agent_id = int(a["id"])
         role = str(a["role"] or "")
         work: dict = {"role": role, "eligible_actions": []}
+        if self.engine_semantics_version >= 21 and (
+                not self.e.population.is_available(agent_id)
+                or not self.e.population.is_local(agent_id, tick)):
+            return work
         primary = self.store.query_one(
             "SELECT ac.id,ac.balance_cents,ac.currency_code,ac.bank_id FROM agents ag "
             "JOIN accounts ac ON ac.id=ag.checking_account_id WHERE ag.id=?", (agent_id,))
@@ -1271,7 +1391,7 @@ class ContextBuilder:
                         "type": "review_merger", "merger_id": int(merger["id"]),
                         "remedy": {"type": "interoperability", "duration_ticks": 180},
                     })
-            if role == "labor_regulator":
+            if role == "labor_regulator" and self.engine_semantics_version < 20:
                 matter = self.store.query_one(
                     "SELECT * FROM legal_matters WHERE matter_type='labor' "
                     "AND status IN ('hearing','settlement_offered') "
@@ -1318,6 +1438,8 @@ class ContextBuilder:
                     "type": "place_fx_order", "pair": f"{base}/{quote}",
                     "side": "buy", "qty": 1000, "limit_rate_ppm": rate,
                 })
+        if self.engine_semantics_version >= 20 and role in DECISION_ROLES:
+            self._legal_decision_work(agent_id, tick, work)
         return work
 
     def _legislative_work(self, agent_id: int, work: dict) -> None:
@@ -1581,6 +1703,12 @@ class ContextBuilder:
             " AND ap.agent_id<>?" if exclude_agent_id is not None else "")
         params = ((firm_id, int(exclude_agent_id))
                   if exclude_agent_id is not None else (firm_id,))
+        local_candidates = self.engine_semantics_version >= 21
+        if local_candidates:
+            # Count current local offers before excluding the decision actor.
+            # An absent candidate must not consume another candidate's slot.
+            exclude_agent_clause = ""
+            params = (firm_id,)
         if self.engine_semantics_version >= 6:
             rows = self.store.query(
                 "SELECT ap.id AS application_id,ap.agent_id,ap.job_id,ap.state,"
@@ -1601,6 +1729,17 @@ class ContextBuilder:
                 "AND candidate_wallet.currency_code=f.currency_code "
                 "AND ap.state IN ('pending','negotiating') ORDER BY ap.id",
                 params)
+            local_offer_counts: dict[int, int] = {}
+            if local_candidates:
+                available = {person: self.e.population.is_available(person)
+                    for person in dict.fromkeys(int(row["agent_id"]) for row in rows)}
+                rows = [row for row in rows if available[int(row["agent_id"])]]
+                for row in rows:
+                    if row["current_offer_id"] is not None:
+                        job_id = int(row["job_id"])
+                        local_offer_counts[job_id] = local_offer_counts.get(job_id, 0) + 1
+                if exclude_agent_id is not None:
+                    rows = [row for row in rows if int(row["agent_id"]) != int(exclude_agent_id)]
             return [{
                 "application_id": int(r["application_id"]), "agent_id": int(r["agent_id"]),
                 "job_id": int(r["job_id"]), "occupation": r["occupation"],
@@ -1612,7 +1751,8 @@ class ContextBuilder:
                                        if r["current_offer_wage"] is not None else None),
                 "current_proposer_agent_id": (int(r["proposer_agent_id"])
                                                if r["proposer_agent_id"] is not None else None),
-                "job_pending_offer_count": int(r["job_pending_offer_count"]),
+                "job_pending_offer_count": (local_offer_counts.get(int(r["job_id"]), 0)
+                    if local_candidates else int(r["job_pending_offer_count"])),
             } for r in rows]
         if include_posted_wage:
             rows = self.store.query(
@@ -1655,6 +1795,10 @@ class ContextBuilder:
             "WHERE j.firm_id=? "
             + open_job_clause + " AND jo.status='pending' AND ap.state='negotiating' "
             "AND jo.proposer_agent_id=ap.agent_id ORDER BY jo.id", (firm_id,))
+        if self.engine_semantics_version >= 21:
+            available = {person: self.e.population.is_available(person)
+                for person in dict.fromkeys(int(row["agent_id"]) for row in rows)}
+            rows = [row for row in rows if available[int(row["agent_id"])]]
         return [{
             "offer_id": int(row["offer_id"]),
             "application_id": int(row["application_id"]),
@@ -1892,36 +2036,61 @@ class ContextBuilder:
             (firm_id, firm_id),
         ):
             return None
-        leader = self.store.query_one(
-            "SELECT f.id,a.balance_cents FROM firms f "
-            "JOIN accounts a ON a.id=f.account_id "
-            "WHERE lower(f.sector)=lower(?) "
-            "AND f.status IN ('private','listed') "
-            "ORDER BY a.balance_cents DESC,f.id LIMIT 1",
-            (str(firm["sector"]),),
-        )
+        candidates = None
+        if self.engine_semantics_version >= 21:
+            # Nominal cash is comparable within one currency. Availability is
+            # about current company control, not the founder's continued life.
+            candidates = []
+            for candidate in self.store.query(
+                    "SELECT f.id,a.balance_cents,f.currency_code FROM firms f "
+                    "JOIN accounts a ON a.id=f.account_id "
+                    "WHERE lower(f.sector)=lower(?) AND f.currency_code=? "
+                    "AND f.status IN ('private','listed') "
+                    "ORDER BY a.balance_cents DESC,f.id",
+                    (str(firm["sector"]), str(firm["currency_code"] or "USD"))):
+                operator = self.e.business_control.operator_at(int(candidate['id']), tick)
+                if operator is not None and self.e.legal.controls(operator, 'firm', int(candidate['id'])):
+                    candidates.append(candidate)
+            leader = candidates[0] if candidates else None
+        else:
+            leader = self.store.query_one(
+                "SELECT f.id,a.balance_cents FROM firms f "
+                "JOIN accounts a ON a.id=f.account_id "
+                "WHERE lower(f.sector)=lower(?) "
+                "AND f.status IN ('private','listed') "
+                "ORDER BY a.balance_cents DESC,f.id LIMIT 1",
+                (str(firm["sector"]),),
+            )
         if leader is None or int(leader["id"]) != firm_id:
             return None
         acquirer_cash = int(leader["balance_cents"] or 0)
         maximum_share_bps = max(1, min(10_000, int(
             settings.get("maximum_merger_cash_share_bps", 4_000))))
-        target = self.store.query_one(
-            "SELECT f.id,a.balance_cents,f.currency_code FROM firms f "
-            "JOIN accounts a ON a.id=f.account_id "
-            "JOIN agents founder ON founder.id=f.founder_agent_id "
-            "AND founder.alive=1 "
-            "WHERE f.id<>? AND lower(f.sector)=lower(?) "
-            "AND f.status IN ('private','listed') AND f.currency_code=? "
-            "AND NOT EXISTS (SELECT 1 FROM mergers m "
-            "WHERE m.status NOT IN ('closed','challenged') "
-            "AND (m.acquirer_firm_id=f.id OR m.target_firm_id=f.id)) "
-            "ORDER BY a.balance_cents,f.id LIMIT 1",
-            (
-                firm_id,
-                str(firm["sector"]),
-                str(firm["currency_code"] or "USD"),
-            ),
-        )
+        if candidates is not None:
+            target = next((candidate for candidate in sorted(
+                candidates, key=lambda row: (int(row['balance_cents']), int(row['id'])))
+                if int(candidate['id']) != firm_id and not self.store.query_one(
+                    "SELECT 1 FROM mergers WHERE status NOT IN ('closed','challenged') "
+                    "AND (acquirer_firm_id=? OR target_firm_id=?) LIMIT 1",
+                    (candidate['id'], candidate['id']))), None)
+        else:
+            target = self.store.query_one(
+                "SELECT f.id,a.balance_cents,f.currency_code FROM firms f "
+                "JOIN accounts a ON a.id=f.account_id "
+                "JOIN agents founder ON founder.id=f.founder_agent_id "
+                "AND founder.alive=1 "
+                "WHERE f.id<>? AND lower(f.sector)=lower(?) "
+                "AND f.status IN ('private','listed') AND f.currency_code=? "
+                "AND NOT EXISTS (SELECT 1 FROM mergers m "
+                "WHERE m.status NOT IN ('closed','challenged') "
+                "AND (m.acquirer_firm_id=f.id OR m.target_firm_id=f.id)) "
+                "ORDER BY a.balance_cents,f.id LIMIT 1",
+                (
+                    firm_id,
+                    str(firm["sector"]),
+                    str(firm["currency_code"] or "USD"),
+                ),
+            )
         if target is None:
             return None
         premium_bps = max(0, int(settings.get("merger_premium_bps", 1_000)))
@@ -1992,14 +2161,15 @@ class ContextBuilder:
                 ctx["startup_work"] = startup_work
         return ctx
 
-    def _lawyer_context(self, a, tick: int) -> dict:
+    def _lawyer_context(self, a, tick: int, *, retrieve_memories: bool = True) -> dict:
         agent_id = int(a["id"])
-        ctx = self._citizen_context(a, tick)
+        ctx = self._citizen_context(a, tick, retrieve_memories=retrieve_memories)
         matters = []
-        for matter in self.store.query(
+        legacy_matters = self.store.query(
                 "SELECT * FROM legal_matters WHERE counsel_agent_id=? "
                 "AND status NOT IN ('decided','dismissed','settled') ORDER BY id",
-                (agent_id,)):
+                (agent_id,)) if self.engine_semantics_version < 20 else []
+        for matter in legacy_matters:
             matter_id = int(matter["id"])
             contract_id = int(matter["contract_id"] or 0)
             explicit_evidence = []
@@ -2067,7 +2237,19 @@ class ContextBuilder:
                 "filings": filings,
             })
         ctx["purpose"] = "lawyer"
+        if self.engine_semantics_version >= 20:
+            matters = self.e.legal_representation.matter_views(agent_id, tick)
         ctx["assigned_legal_matters"] = matters
+        if self.engine_semantics_version >= 20:
+            ctx["monetary_award_policy"] = {
+                "basis": "total_entitlement_for_linked_obligations",
+                "prior_payments": "credited; adjudicated obligations cannot be collected again",
+                "obligation_ids": "use explicit supplied IDs, or admitted obligation breach/performance evidence",
+                "independent_damages": "true only for additional relief independent of those debts",
+                "estate": "known disputes reserve actual cash; heirs never become personal debtors",
+                "wage_compensation": "filed wage_scopes fix the earned period; total gross relief credits earlier gross pay and replaces that unpaid receivable",
+                "wage_collection": "only actual employer cash pays; income tax is withheld and the net follows any deceased claimant's estate",
+            }
         if self.engine_semantics_version >= 7:
             startup_work = self._startup_work(a, tick)
             if startup_work["eligible_actions"]:
@@ -2130,6 +2312,40 @@ class ContextBuilder:
         if context.get("household_decisions"):
             lines.append("[PRIVATE HOUSEHOLD DECISIONS] "
                          + json.dumps(context["household_decisions"], separators=(",", ":")))
+        if context.get('population_boundary'):
+            lines.append('[PRIVATE POPULATION MOVEMENT] '
+                         + json.dumps(context['population_boundary'], separators=(',', ':')))
+        if context.get("estate_property_market"):
+            lines.append("[ESTATE PROPERTY BIDS — WHOLE RECORDED INTERESTS] "
+                + json.dumps(context["estate_property_market"], separators=(",", ":"))
+                + " Available interests carry no invented market valuation. You may place_estate_property_bid with custody_id, "
+                "buyer_account_id from your wallets, a positive amount_cents you choose within that wallet's funds, "
+                "the stated currency_code, expires_tick between tomorrow and latest_expiry_tick, and a unique request_key. "
+                "A bid reserves no funds; acceptance rechecks cash and settles payment with exact title. "
+                "For a represented estate, copy one eligible_actions object. Proceeds pay the estate's creditors and residuals. "
+                "A buyer cannot represent the selling estate. Own bids include a withdrawal action. Quotes are not executed prices.")
+        if context.get("estate_unlisted_market"):
+            lines.append("[RETAINED PRIVATE-COMPANY SHARE BIDS] "
+                + json.dumps(context["estate_unlisted_market"], separators=(",", ":"))
+                + " Available lots have no inferred market valuation. You may place_estate_unlisted_bid with lot_id, "
+                "the exact whole-lot qty, buyer_account_id from your wallets, your positive total amount_cents, "
+                "the stated currency_code, expires_tick within the stated window, and a unique request_key. "
+                "Bids reserve no funds. Acceptance rechecks cash, current authority and available shares. "
+                "A buyer cannot represent the selling estate. Representatives may copy an eligible_actions object; "
+                "own bids carry a withdrawal action. Proceeds pay estate creditors and recorded residuals. "
+                "A funded private transfer does not create an exchange price or change issued shares.")
+        if context.get("estate_securities"):
+            lines.append("[PRIVATE ESTATE SECURITIES - REPRESENTATIVE AUTHORITY] "
+                + json.dumps(context["estate_securities"], separators=(",", ":"))
+                + " These are estate custody quantities. To sell, use the supplied order_scope with qty no greater "
+                "than custody_qty and your chosen limit_price in the stated currency's cents, or a market order. "
+                "Keep estate_id in the action. Proceeds settle the estate's creditors and recorded beneficiaries; "
+                "custody quantities are not your personal share balance. Public administrators act only through "
+                "their recorded appointment and receive no personal beneficial interest. Existing offers are "
+                "shown as pending_sale_qty; orderable_qty excludes those offers. last_offer_tick records the "
+                "most recent actual offer for each position, or null if none. Give other estate positions "
+                "a turn when retrying an unmatched offer. A tradeable=false position "
+                "has no supported exchange sale. No priced counterparty means no realized proceeds.")
         if context.get("daily_time"):
             lines.append("[DAILY TIME - COMMITTED AND DELIVERED MINUTES] "
                          + json.dumps(context["daily_time"], separators=(",", ":")))
@@ -2321,6 +2537,17 @@ class ContextBuilder:
             lines.append("[ASSIGNED LEGAL MATTERS — COPY matter_id, contract_id, party IDs, "
                          "AND evidence event_id VALUES EXACTLY] "
                          + json.dumps(context["assigned_legal_matters"], separators=(",", ":"))[:4000])
+        if context.get("legal_representation", {}).get("pending_requests"):
+            lines.append("[LEGAL COUNSEL REQUESTS — A REQUEST IS NOT AN ACCEPTED MANDATE] "
+                         + json.dumps(context["legal_representation"], separators=(",", ":")))
+        if context.get("represented_legal_matters"):
+            lines.append("[REPRESENTED ESTATE MATTERS — USE represented_party AS THE FILER; "
+                         "COPY IDs AND authorized_actions EXACTLY] "
+                         + json.dumps(context["represented_legal_matters"], separators=(",", ":"))[:4000])
+        if context.get("estate_legal_work", {}).get("rights"):
+            lines.append("[RETAINED ESTATE LEGAL RIGHTS — COPY ONE eligible_actions OBJECT EXACTLY; "
+                         "THE DECEASED REMAINS THE CLAIMANT] "
+                         + json.dumps(context["estate_legal_work"], separators=(",", ":")))
         if context.get("legal_work"):
             lines.append(
                 "[LEGAL WORK — ONLY eligible_actions MAY BE USED; COPY ONE ACTION "
@@ -2451,6 +2678,14 @@ class ContextBuilder:
                 "is observer-only and cannot assign this work. Reply with the JSON "
                 "envelope only.")
         system = SYSTEM_PREFIX
+        if context.get('population_boundary'):
+            system += ('\nPopulation movement is a prospective household choice. You may '
+                       'propose_population_movement using the supplied proposal_template: choose member_ids '
+                       'from your household, state care_plan for every affected minor, and use a future due_tick. '
+                       'Only return has destination_region_id. Your proposal records only your own assent. '
+                       'For another pending request use one supplied respond_population_movement action. '
+                       'Never claim another adult consented. Departure preserves assets and ends local activity; '
+                       'return preserves identity without another endowment or automatic job restoration.')
         if context.get("household_decisions"):
             system += ("\nHousehold actions are available only as supplied in household_decisions. "
                        "Copy one complete eligible action when choosing it. A proposal records "
@@ -2553,4 +2788,31 @@ class ContextBuilder:
                        'to cover current primary wards, or name current minor household members. '
                        'Work, care, study, construction and journeys share the supplied daily budget. '
                        'An unpaid wage claim is not spendable cash. Appointment reservations are not attendance.')
+        if context.get("estate_unlisted_market", {}).get("policy"):
+            system += ('\nPrivate estate share actions: place_estate_unlisted_bid{lot_id,qty,buyer_account_id,'
+                       'amount_cents,currency_code,expires_tick,request_key}; accept_estate_unlisted_bid{bid_id}; '
+                       'withdraw_estate_unlisted_bid{bid_id}. Quote an entire recorded private-share lot in '
+                       'total integer cents using actual same-currency funds. Acceptance requires current '
+                       'estate authority; the estate receives the payment and pays creditors before residuals.')
+        if context.get("estate_property_market", {}).get("policy"):
+            system += ('\nEstate property actions: place_estate_property_bid{custody_id,buyer_account_id,'
+                       'amount_cents,currency_code,expires_tick,request_key}; accept_estate_property_bid{bid_id}; '
+                       'withdraw_estate_property_bid{bid_id}. Bid only for an available recorded interest using '
+                       'your own available cash and chosen price. Bids reserve no money; acceptance rechecks funds '
+                       'and authority. For estate work copy eligible_actions, retaining the nominee and creditor priority. '
+                       'A bid is not an execution or an observed market valuation.')
+        if context.get("legal_representation", {}).get("policy"):
+            system += ('\nLegal representation: respond_legal_counsel{request_id,decision} accepts or declines '
+                       'a supplied pending request (decision="accept" or "decline"). An accepted lawyer may '
+                       'use only the matter\'s authorized_actions. For submit_filing use represented_party.type '
+                       'and represented_party.id as filer_type and filer_id. Estate representatives retain '
+                       'the deceased party\'s identity. Propose only a supported remedy; acceptance of a '
+                       'settlement requires the explicit accept_settlement scope. '
+                       'end_legal_counsel{request_id} withdraws your accepted mandate or revokes one you '
+                       'are authorized to end for the client. A request or estate appointment conveys no '
+                       'authority to decide the represented party\'s own case. Required civic attendance takes priority.')
+            system += ('\nAn actor controlling both parties may file for an explicitly named side and '
+                       'request counsel scoped only to submit_filing. Dual-party control never grants '
+                       'settlement authority. Preserve the original nominee and copy an eligible estate '
+                       'claim exactly; an unpaid receivable is not spendable cash.')
         return system, "\n\n".join(lines)

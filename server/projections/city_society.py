@@ -11,6 +11,8 @@ from .envelope import semantics_version
 
 def build_city_households(store, *, as_of_tick: int) -> dict:
     tick = int(as_of_tick)
+    from .population import population_at, population_counts
+    cohort = population_at(store, tick)
     result = {"available": semantics_version(store) >= 15,
               "source": "recorded_household_membership", "tick": tick,
               "visibility": "core_members_only", "items": []}
@@ -46,6 +48,8 @@ def build_city_households(store, *, as_of_tick: int) -> dict:
                   "origin": row["origin"], "origin_tick": int(row["origin_tick"]),
                   "legacy_dependents": int(row["legacy_dependents"]),
                   "guardian_agent_id": None}
+        if cohort is not None:
+            member['modeled_residence'] = cohort[agent_id]
         group["members"].append(member)
         members[agent_id] = member
         membership[agent_id] = household_id
@@ -64,7 +68,8 @@ def build_city_households(store, *, as_of_tick: int) -> dict:
             "purchased_units,spent_cents,care_required_minutes,care_status "
             "FROM child_needs WHERE tick=? ORDER BY household_id,child_agent_id", (tick,)):
         household_id, child = int(row["household_id"]), int(row["child_agent_id"])
-        if household_id in groups and membership.get(child) == household_id:
+        if (household_id in groups and membership.get(child) == household_id
+                and (cohort is None or cohort[child]['state'] == 'resident')):
             need = {
                 key: row[key] for key in (
                     "child_agent_id", "currency_code", "goods_sector", "required_units",
@@ -78,6 +83,10 @@ def build_city_households(store, *, as_of_tick: int) -> dict:
                             else "partial" if delivered else "unmet")
             groups[household_id]["child_needs"].append(need)
     result["items"] = list(groups.values())
+    if cohort is not None:
+        for group in result['items']:
+            group['visible_population'] = population_counts({
+                member['agent_id']: cohort[member['agent_id']] for member in group['members']})
     return result
 
 

@@ -43,7 +43,9 @@ def sources_and_spec(config, initial, tmp_path, pause_policy, *, inherited_cost=
     spec = draft_checkpoint_policy_comparison(config, checkpoints=sources, input_root=tmp_path,
         horizon=5, policies=list(initial.policy_design.policies), tariffs=list(initial.policy_design.tariffs),
         model_replicates=[f"draw{number+1}" for number in range(replicates)], max_provider_calls=initial.operations.max_provider_calls, max_tokens=100_000_000,
-        max_spend_usd=2.0, max_wall_seconds=240, max_disk_bytes=128 * 1024 * 1024, pause_policy=pause_policy)
+        # Eight cells retain source, replay, and terminal/phase checkpoints.
+        # Schema-25 artifacts exceed 128 MiB; declare room before any cell starts.
+        max_spend_usd=2.0, max_wall_seconds=240, max_disk_bytes=256 * 1024 * 1024, pause_policy=pause_policy)
     # Exercise live calls before either cooperative pause. Baseline identity stays scripted.
     raw = spec.model_dump(mode="json")
     raw["arms"].reverse()

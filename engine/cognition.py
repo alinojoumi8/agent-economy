@@ -12,6 +12,8 @@ from typing import Any
 from .ledger import Ledger, SYS_COMPUTE, SYS_EDUCATION, SYS_GOV
 from .keyed_random import person_key
 from .store import Store
+from .business_control import operating_surface
+from .local_participation import is_local
 
 
 SKILL_KEYS = (
@@ -425,26 +427,35 @@ class CognitionEconomy:
         return {"ok": True, "subscription_id": subscription_id,
                 "tier": "local", "effective_tick": tick + 1}
 
+    def end_local_access(self, agent_id: int) -> None:
+        """End pending or active access without scheduling a replacement plan."""
+        self.store.execute("UPDATE compute_subscriptions SET status='cancelled' "
+                           "WHERE agent_id=? AND status IN ('pending','active')", (agent_id,))
+        self.store.update("agents", agent_id, model_tier="local")
+
     def set_compute_sponsorship(self, tick: int, founder_id: int, tier: str,
                                 max_seats: int, firm_id: int | None = None) -> dict:
         if not self.enabled:
             return {"ok": False, "reason": "compute sponsorship requires semantics 11"}
+        if not is_local(self, founder_id):
+            return {"ok": False, "reason": "local firm operator required"}
         tier = str(tier or "").lower().strip()
         if tier not in {"flash", "premium"}:
             return {"ok": False, "reason": "sponsorship tier must be flash or premium"}
         max_seats = int(max_seats)
         if max_seats < 1 or max_seats > 25:
             return {"ok": False, "reason": "max_seats must be between 1 and 25"}
+        firm_table, operator_column = operating_surface(self)
         if firm_id:
             firm = self.store.query_one(
-                "SELECT id,founder_agent_id,account_id FROM firms "
+                f"SELECT id,founder_agent_id,{operator_column} AS acting_agent_id,account_id FROM {firm_table} "
                 "WHERE id=? AND status<>'bankrupt'", (int(firm_id),))
         else:
             firm = self.store.query_one(
-                "SELECT id,founder_agent_id,account_id FROM firms "
-                "WHERE founder_agent_id=? AND status<>'bankrupt' ORDER BY id LIMIT 1",
+                f"SELECT id,founder_agent_id,{operator_column} AS acting_agent_id,account_id FROM {firm_table} "
+                f"WHERE {operator_column}=? AND status<>'bankrupt' ORDER BY id LIMIT 1",
                 (founder_id,))
-        if not firm or int(firm["founder_agent_id"] or 0) != founder_id:
+        if not firm or int(firm["acting_agent_id"] or 0) != founder_id:
             return {"ok": False, "reason": "actor is not an authorized firm founder"}
         selected = self._eligible_sponsorship_employee_ids(
             tick, int(firm["id"]), tier, max_seats)
@@ -467,7 +478,8 @@ class CognitionEconomy:
         ]
         self.store.log_event(
             tick, "compute_sponsorship_set",
-            {"founder_agent_id": founder_id, "firm_id": int(firm["id"]),
+            {"founder_agent_id": firm["founder_agent_id"] if self.engine_semantics_version >= 20 else founder_id,
+             **({"operator_agent_id": founder_id} if self.engine_semantics_version >= 20 else {}), "firm_id": int(firm["id"]),
              "tier": tier, "agent_ids": selected, "price_cents": total,
              "effective_tick": tick + 1},
             phase="EXECUTION", subject_type="firm", subject_id=int(firm["id"]),
@@ -502,6 +514,8 @@ class CognitionEconomy:
         return selected
 
     def _plan_change_unavailable(self, tick: int, agent_id: int) -> str:
+        if not is_local(self, agent_id):
+            return "compute plans require a local resident"
         if self.store.query_one(
                 "SELECT 1 FROM compute_subscriptions WHERE agent_id=? AND status='pending' LIMIT 1",
                 (agent_id,)):
@@ -512,6 +526,8 @@ class CognitionEconomy:
         return ""
 
     def _tier_eligibility(self, agent_id: int, tier: str) -> str:
+        if not is_local(self, agent_id):
+            return "compute plans require a local resident"
         if tier != "premium":
             return ""
         highest = int(self.store.scalar(
@@ -523,32 +539,36 @@ class CognitionEconomy:
         agent = self.store.query_one("SELECT kind,role FROM agents WHERE id=?", (agent_id,))
         if not agent or str(agent["kind"]) != "citizen" or agent["role"]:
             return ""
-        population = int(self.store.scalar(
-            "SELECT COUNT(*) FROM agents WHERE alive=1 AND kind='citizen' AND role IS NULL",
-            default=0))
+        population, current_or_pending = self._premium_counts()
         cap = max(0, int(population * float(self.p["premium_cap_fraction"])))
-        current_or_pending = int(self.store.scalar(
-            "SELECT COUNT(DISTINCT s.agent_id) FROM compute_subscriptions s "
-            "JOIN agents a ON a.id=s.agent_id "
-            "WHERE s.tier='premium' AND s.status IN ('active','pending') "
-            "AND a.alive=1 AND a.kind='citizen' AND a.role IS NULL",
-            default=0))
         already_premium = self.current_tier(agent_id) == "premium"
         if not already_premium and current_or_pending >= cap:
             return "non-institutional premium seat cap reached"
         return ""
 
-    def _premium_new_seats_available(self) -> int:
+    def _premium_counts(self) -> tuple[int, int]:
+        if self.engine_semantics_version >= 21:
+            local = {int(row["id"]) for row in self.store.query(
+                "SELECT id FROM agents WHERE alive=1 AND kind='citizen' AND role IS NULL ORDER BY id")
+                if is_local(self, int(row["id"]))}
+            occupied = {int(row["agent_id"]) for row in self.store.query(
+                "SELECT DISTINCT agent_id FROM compute_subscriptions "
+                "WHERE tier='premium' AND status IN ('active','pending')")}
+            return len(local), len(local & occupied)
         population = int(self.store.scalar(
             "SELECT COUNT(*) FROM agents WHERE alive=1 AND kind='citizen' AND role IS NULL",
             default=0))
-        cap = max(0, int(population * float(self.p["premium_cap_fraction"])))
         occupied = int(self.store.scalar(
             "SELECT COUNT(DISTINCT s.agent_id) FROM compute_subscriptions s "
             "JOIN agents a ON a.id=s.agent_id "
             "WHERE s.tier='premium' AND s.status IN ('active','pending') "
             "AND a.alive=1 AND a.kind='citizen' AND a.role IS NULL",
             default=0))
+        return population, occupied
+
+    def _premium_new_seats_available(self) -> int:
+        population, occupied = self._premium_counts()
+        cap = max(0, int(population * float(self.p["premium_cap_fraction"])))
         return max(0, cap - occupied)
 
     def _schedule_subscription(self, tick: int, agent_id: int, tier: str,
@@ -579,6 +599,15 @@ class CognitionEconomy:
     def run_nightly(self, tick: int) -> None:
         if not self.enabled:
             return
+        if self.engine_semantics_version >= 21:
+            with self.store.savepoint("population_compute_nightly"):
+                self._run_nightly(tick)
+            return
+        self._run_nightly(tick)
+
+    def _run_nightly(self, tick: int) -> None:
+        if self.engine_semantics_version >= 21:
+            self.population.commitments.check_invariants()
         expiring = self.store.query(
             "SELECT id,agent_id,tier FROM compute_subscriptions "
             "WHERE status='active' AND expiry_tick<=? ORDER BY agent_id,id", (tick,))
@@ -612,7 +641,7 @@ class CognitionEconomy:
                 continue
             agent = self.store.query_one(
                 "SELECT alive,role FROM agents WHERE id=?", (agent_id,))
-            if (not agent or not bool(agent["alive"])
+            if (not agent or not bool(agent["alive"]) or not is_local(self, agent_id, tick=tick)
                     or self._institutional_tier(str(agent["role"] or ""))):
                 continue
             subscription_id = self.store.insert(
@@ -632,6 +661,7 @@ class CognitionEconomy:
             self, tick: int, previous_tiers: dict[int, str] | None = None) -> None:
         agents = self.store.query(
             "SELECT id,role FROM agents WHERE alive=1 AND role IS NOT NULL ORDER BY id")
+        agents = [agent for agent in agents if is_local(self, int(agent["id"]), tick=tick)]
         government = self.ledger.system_account(SYS_GOV)
         for agent in agents:
             agent_id = int(agent["id"])
@@ -768,7 +798,7 @@ class CognitionEconomy:
 
     # -- prompt/API projections ------------------------------------------------
     def decision_context(self, agent_id: int, tick: int) -> dict[str, Any]:
-        if not self.enabled:
+        if not self.enabled or not is_local(self, agent_id):
             return {}
         details = self.agent_projection(agent_id, include_history=False, tick=tick)
         renewal_open = not self._plan_change_unavailable(tick, agent_id)
@@ -792,8 +822,9 @@ class CognitionEconomy:
                 "xp_gain": 10,
                 "action": {"type": "study_skill", "skill_key": key},
             } for key in SKILL_KEYS]
+        firm_table, operator_column = operating_surface(self)
         founder = self.store.query_one(
-            "SELECT id,account_id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' "
+            f"SELECT id,account_id FROM {firm_table} WHERE {operator_column}=? AND status<>'bankrupt' "
             "ORDER BY id LIMIT 1", (agent_id,))
         sponsorship_actions = []
         if founder:

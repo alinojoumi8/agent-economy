@@ -114,7 +114,7 @@ class StudyLibrary:
         verification = {k: v for k, v in result["verification"].items() if k not in {"data_dir", "report_dir"}}
         outcomes, measurements = [], {}
         for outcome in result["outcomes"]:
-            definition = metric_definition(outcome["metric"])
+            definition = metric_definition(outcome["metric"], semantics_version=spec['model']['engine_semantics_version'])
             outcomes.append({**outcome, "domain": definition.domain, "label": definition.label,
                              "unit": definition.unit, "formula": definition.formula,
                              "missingness": definition.missingness})

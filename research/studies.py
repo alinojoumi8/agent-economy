@@ -345,7 +345,7 @@ class StudySpec(Contract):
             raise ValueError("confirmatory execution requires a supported study design beyond its stream contract")
         observed_domains = set()
         for outcome in outcomes:
-            definition = metric_definition(outcome.metric)
+            definition = metric_definition(outcome.metric, semantics_version=self.model.engine_semantics_version)
             if definition is None or definition.version != outcome.metric_version:
                 raise ValueError(f"unknown metric/version for outcome {outcome.key}")
             if self.model.engine_semantics_version < definition.min_semantics:

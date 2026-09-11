@@ -122,6 +122,8 @@ class Households:
             if self.e.engine_semantics_version >= 16:
                 payload["random_key"] = random_key or f"agent:{agent_id}"
             self._event(tick, "person_registered", agent_id, payload)
+            if self.e.engine_semantics_version >= 21:
+                self.e.population.history.record_origin(agent_id)
             return household
 
     def register_new_people(self, tick: int, *, genesis: bool = False) -> None:
@@ -155,6 +157,8 @@ class Households:
             member = self.membership(parent_id)
             if not parent or not parent["alive"] or int(parent["age"]) < ADULT_AGE or not member:
                 raise HouseholdError("birth needs a living adult in an active household")
+            if self.e.engine_semantics_version >= 21 and not self.e.population.is_local(parent_id, tick):
+                raise HouseholdError("outside births are not part of the population protocol")
             child_id = self.store.insert(
                 "agents", name="New person", kind="citizen",
                 occupation="child", age=0, health="healthy", dependents=0,
@@ -192,6 +196,8 @@ class Households:
             self._event(tick, "birth", child_id, payload)
             self._event(tick, "parenthood", parent_id,
                         {"child_agent_id": child_id, "household_id": int(member["household_id"])})
+            if self.e.engine_semantics_version >= 21:
+                self.e.population.history.record_origin(child_id)
             return child_id
 
     def scheduled_births(self, tick: int) -> None:
@@ -238,7 +244,7 @@ class Households:
             self.store.update("households", household_id, dissolved_tick=tick)
 
     def split_household(self, tick: int, agent_id: int, *, reason: str = "adult_separation") -> int:
-        """A deterministic adult departure; property and children do not silently move."""
+        """An internal adult separation; property and children do not silently move."""
         if not self.enabled:
             raise HouseholdError("household separation requires semantics 15")
         if reason not in {"adult_separation", "regional_migration"}:
@@ -248,6 +254,8 @@ class Households:
             member = self.membership(agent_id)
             if not agent or not agent["alive"] or int(agent["age"]) < ADULT_AGE or not member:
                 raise HouseholdError("separation needs a living adult member")
+            if self.e.engine_semantics_version >= 21 and not self.e.population.is_local(agent_id, tick):
+                raise HouseholdError("household separation requires a local resident")
             previous = int(member["household_id"])
             household = self.store.query_one("SELECT * FROM households WHERE id=?", (previous,))
             count = int(self.store.scalar("SELECT COUNT(*) FROM household_memberships WHERE household_id=? AND left_tick IS NULL", (previous,)))
@@ -266,10 +274,66 @@ class Households:
                 self.e.families.reconcile(tick)
             return new_id
 
+    def apply_population_movement(self, tick, movement_id, terms, snapshot):
+        """Apply the admitted group's explicit membership and care dispositions.
+
+        The caller owns the outer savepoint, residence transitions and assents.
+        No custody is inferred from proximity and no owned property is moved.
+        """
+        if self.e.engine_semantics_version < 21:
+            raise HouseholdError("population movement requires semantics 21")
+        reason = "population_" + terms["cause"]
+        region = terms["destination_region_id"] if terms["cause"] == "return" else snapshot["region_id"]
+        destination = self.store.insert("households", region_id=region, formed_tick=tick,
+                                        policy="guardian_basic_needs_v1")
+        people = {item["agent_id"]: item for item in snapshot["members"]}
+        for person in terms["member_ids"]:
+            current = self.membership(person)
+            if not current or current["id"] != people[person]["membership_id"] or tick < current["joined_tick"]:
+                raise HouseholdError("population membership changed before settlement")
+            self.store.update("household_memberships", current["id"], left_tick=tick, end_reason=reason)
+            self.store.insert("household_memberships", household_id=destination, agent_id=person,
+                              role=current["role"], joined_tick=tick)
+            if terms["cause"] == "return":
+                currency = self.e.regions.currency_for_region(region)
+                wallet = self.e.regions._wallet("agent", person, currency, create=True)
+                self.store.update("agents", person, region_id=region, checking_account_id=wallet)
+        self._dissolve_empty(tick, snapshot["household_id"])
+        for care in terms["care_plan"]:
+            child, guardian = care["child_id"], care["guardian_id"]
+            previous = self.store.query_one("SELECT * FROM guardianships WHERE child_agent_id=? AND ended_tick IS NULL", (child,))
+            relation = previous["id"] if previous else None
+            if previous and previous["guardian_agent_id"] != guardian:
+                self.store.update("guardianships", previous["id"], ended_tick=tick, end_reason=reason)
+                relation = None
+            if relation is None:
+                relation = self.store.insert("guardianships", child_agent_id=child, guardian_agent_id=guardian,
+                    started_tick=tick, reason="population_adult_assent_v1")
+            child_home = self.membership(child)["household_id"]
+            if child_home != self.membership(guardian)["household_id"]:
+                raise HouseholdError("population care disposition split child and guardian")
+            self._event(tick, "population_child_disposition", child,
+                {"movement_id": movement_id, "guardian_id": guardian, "guardianship_id": relation,
+                 "household_id": child_home, "state": self.e.population.history.state_at(child, tick)["state"],
+                 "policy": "population_adult_assent_v1"})
+        self._event(tick, "population_household_moved", terms["member_ids"][0],
+            {"movement_id": movement_id, "previous_household_id": snapshot["household_id"],
+             "household_id": destination, "member_ids": terms["member_ids"], "reason": reason,
+             "region_id": region})
+        self.check_invariants(tick)
+        return destination
+
     def reconcile_residence(self, tick: int) -> None:
         """Existing individual migration creates a new household in its destination."""
         if not self.enabled:
             return
+        if self.e.engine_semantics_version >= 21:
+            with self.store.savepoint("household_residence_reconcile"):
+                self._reconcile_residence(tick)
+        else:
+            self._reconcile_residence(tick)
+
+    def _reconcile_residence(self, tick: int) -> None:
         for row in self.store.query(
                 "SELECT a.id FROM agents a JOIN household_memberships m ON m.agent_id=a.id AND m.left_tick IS NULL "
                 "JOIN households h ON h.id=m.household_id WHERE a.alive=1 AND a.region_id IS NOT h.region_id ORDER BY a.id"):
@@ -294,6 +358,27 @@ class Households:
     def reconcile_custody(self, tick: int) -> None:
         if not self.enabled:
             return
+        if self.e.engine_semantics_version >= 21:
+            with self.store.savepoint("household_custody_reconcile"):
+                self._validate_care_residence()
+                self._reconcile_custody(tick)
+        else:
+            self._reconcile_custody(tick)
+
+    def _validate_care_residence(self) -> None:
+        """Validate living care households, including families together outside."""
+        states = {}
+        for member in self.store.query(
+                "SELECT a.id,m.household_id FROM agents a JOIN household_memberships m "
+                "ON m.agent_id=a.id AND m.left_tick IS NULL WHERE a.alive=1 AND m.household_id IN ("
+                "SELECT cm.household_id FROM household_memberships cm JOIN agents c ON c.id=cm.agent_id "
+                "WHERE cm.left_tick IS NULL AND c.alive=1 AND c.age<18) ORDER BY m.household_id,a.id"):
+            local = self.e.population.is_available(int(member['id']))
+            states.setdefault(int(member['household_id']), set()).add(local)
+        if any(len(values) != 1 for values in states.values()):
+            raise HouseholdError("a care household mixes resident and outside members")
+
+    def _reconcile_custody(self, tick: int) -> None:
         # End invalid assignments before choosing from the child's own household.
         self.store.execute(
             "UPDATE guardianships SET ended_tick=?,end_reason='household_change' "
@@ -315,6 +400,11 @@ class Households:
                                   started_tick=tick, reason="same_household_adult_v1")
                 self._event(tick, "guardian_assigned", int(child["id"]),
                             {"guardian_agent_id": int(guardian), "policy": "same_household_adult_v1"})
+        if self.e.engine_semantics_version >= 20:
+            # Custody can change during an action, before the nightly refresh.
+            # Revoke the former guardian's operating authority at that boundary.
+            self.e.business_control.refresh_custody(tick)
+            self.e.project_rights.refresh(tick)
 
     def guardian_id(self, child_id: int) -> int | None:
         value = self.store.scalar("SELECT guardian_agent_id FROM guardianships WHERE child_agent_id=? AND ended_tick IS NULL",
@@ -358,6 +448,8 @@ class Households:
                     "JOIN household_memberships m ON m.agent_id=a.id AND m.left_tick IS NULL "
                     "WHERE a.alive=1 AND a.age<18 ORDER BY a.id"):
                 child_id = int(child["id"])
+                if self.e.engine_semantics_version >= 21 and not self.e.population.is_local(child_id, tick):
+                    continue
                 if self.store.query_one("SELECT 1 FROM child_needs WHERE tick=? AND child_agent_id=?", (tick, child_id)):
                     continue
                 guardian = self.guardian_id(child_id)
@@ -429,6 +521,14 @@ class Households:
             raise HouseholdError(f"guardianship reconciliation failed for relation {invalid['id']}")
 
     def record_census(self, tick: int) -> None:
+        if self.e.engine_semantics_version >= 21:
+            with self.store.savepoint("both_population_censuses"):
+                self._record_all_living_census(tick)
+                self.e.population.history.record_census(tick)
+            return
+        self._record_all_living_census(tick)
+
+    def _record_all_living_census(self, tick: int) -> None:
         if not self.enabled:
             return
         self.check_invariants(tick)

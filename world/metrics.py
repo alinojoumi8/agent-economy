@@ -15,6 +15,16 @@ class Metrics:
         self.semantics_version = semantics_version
 
     def snapshot(self, tick: int) -> dict:
+        if self.semantics_version >= 21:
+            from engine.population_statistics import current_population_metrics
+            # Validate the complete cohort before CPI/index/metric writes, and
+            # roll the whole snapshot back if any later write fails.
+            with self.store.savepoint('population_economic_snapshot'):
+                population = current_population_metrics(self.e, tick)
+                return self._snapshot(tick, population=population)
+        return self._snapshot(tick)
+
+    def _snapshot(self, tick: int, *, population: dict | None = None) -> dict:
         out = {}
         out["gdp_proxy"] = self._gdp_proxy(tick)
         if self.semantics_version >= 3:
@@ -28,10 +38,17 @@ class Metrics:
                 out["cpi_yoy"] = self._cpi_yoy(tick, out["cpi"])
         else:
             out["cpi_yoy"] = self._cpi_yoy(tick, out["cpi"])
-        out["unemployment"] = self._unemployment()
+        if population is None:
+            out["unemployment"] = self._unemployment()
         out["money_supply"] = self.e.ledger.total_deposits_cents() / 100.0
         out["gini"] = self._gini()
-        out["sentiment"] = self._sentiment()
+        if self.semantics_version >= 20 and population is None:
+            from engine.position_history import cash_distribution_at
+            for currency, distribution in cash_distribution_at(self.store, tick).items():
+                out[f"cash_gini:{currency}"] = distribution["gini"]
+                out[f"cash_population:{currency}"] = distribution["population_count"]
+        if population is None:
+            out["sentiment"] = self._sentiment()
         idx = self.e.exchange.compute_index(tick)
         if idx is not None:
             out["index"] = idx
@@ -81,7 +98,24 @@ class Metrics:
         if self.semantics_version >= 5:
             out["fx_volume"] = float(self.store.scalar(
                 "SELECT COALESCE(SUM(base_qty),0) FROM fx_trades WHERE tick=?", (tick,), default=0))
+        if population is not None:
+            out.update(population)
+            # Empty denominators are unavailable, not zero unemployment/mood.
+            # A current-boundary retry must also remove any earlier value.
+            for name in ('unemployment', 'resident_unemployment', 'sentiment', 'resident_sentiment'):
+                if name not in out:
+                    self.store.execute('DELETE FROM metrics WHERE tick=? AND name=?', (tick, name))
         for name, value in out.items():
+            if population is not None:
+                # Keep row identities stable on FINALIZE retry. Historical
+                # semantics retain their original delete/insert behavior below.
+                rows = self.store.query('SELECT id,value FROM metrics WHERE tick=? AND name=?', (tick, name))
+                if len(rows) > 1:
+                    raise ValueError(f'duplicate current metric snapshot: {name}')
+                if rows:
+                    if rows[0]['value'] != float(value):
+                        self.store.execute('UPDATE metrics SET value=? WHERE id=?', (float(value), rows[0]['id']))
+                    continue
             if self.semantics_version >= 2:
                 # FINALIZE may be safely replayed after an interrupted boundary.
                 self.store.execute(
@@ -150,9 +184,17 @@ class Metrics:
         return (float(v) + float(w)) / 100.0
 
     def _labor_income(self, tick: int) -> float:
+        """Gross cash labor receipts; recognizing or discharging a claim is not income."""
         wages = self.store.scalar(
             "SELECT COALESCE(SUM(json_extract(payload_json,'$.wage_cents')),0) FROM events "
             "WHERE tick=? AND kind='wage_paid'", (tick,), default=0)
+        if self.semantics_version >= 20:
+            # Earlier payroll credits already appear in wage_paid. Include only
+            # new gross collections on compensation awards, once at payment.
+            wages += self.store.scalar(
+                "SELECT COALESCE(SUM(p.amount_cents),0) FROM legal_award_payments p "
+                "JOIN legal_wage_awards w ON w.award_id=p.award_id WHERE p.tick=?",
+                (tick,), default=0)
         return float(wages) / 100.0
 
     def _gdp_proxy_30d(self, tick: int) -> float:
@@ -216,7 +258,7 @@ class Metrics:
                 "SELECT COUNT(*) FROM agents a WHERE a.alive=1 AND a.retired=0 "
                 "AND a.kind='citizen' AND a.age BETWEEN 18 AND 64 AND ("
                 "EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id AND e.status='active') "
-                "OR EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id "
+                f"OR EXISTS (SELECT 1 FROM {self.e.business_control.table} f WHERE f.{self.e.business_control.column}=a.id "
                 "AND f.status<>'bankrupt'))", default=0)
         else:
             employed = self.store.scalar(

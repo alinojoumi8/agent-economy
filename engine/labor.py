@@ -18,11 +18,16 @@ class Labor:
         self.store = store
         self.engine_semantics_version = int(engine_semantics_version)
 
-    def _agent_can_work(self, agent_id: int) -> bool:
+    def _agent_can_work(self, agent_id: int, tick: int | None = None) -> bool:
         if self.engine_semantics_version < 7:
             return True
         actor = self.store.query_one(
             "SELECT alive,retired,age FROM agents WHERE id=?", (agent_id,))
+        if self.engine_semantics_version >= 21:
+            if tick is None:
+                raise ValueError("local work eligibility requires its tick")
+            if not self.population.is_local(agent_id, tick):
+                return False
         return bool(actor and actor["alive"] and not actor["retired"]
                     and (self.engine_semantics_version < 15 or int(actor["age"]) >= 18))
 
@@ -35,14 +40,17 @@ class Labor:
         return job_id
 
     def apply_job(self, tick: int, agent_id: int, job_id: int) -> Optional[int]:
-        if not self._agent_can_work(agent_id):
+        if not self._agent_can_work(agent_id, tick):
             return None
         job = self.store.query_one(
             "SELECT j.*,f.founder_agent_id FROM jobs j "
             "JOIN firms f ON f.id=j.firm_id WHERE j.id=?", (job_id,))
         if not job or job["status"] != "open":
             return None
-        if int(job["founder_agent_id"] or 0) == int(agent_id):
+        control = getattr(self, "business_control", None)
+        operator_id = (control.operator_at(job["firm_id"]) if control is not None and control.enabled
+                       else job["founder_agent_id"])
+        if int(operator_id or 0) == int(agent_id):
             return None
         dup = self.store.query_one(
             "SELECT id FROM applications WHERE job_id=? AND agent_id=? "
@@ -68,7 +76,7 @@ class Labor:
         app = self.store.query_one("SELECT * FROM applications WHERE id=?", (application_id,))
         if not app or app["state"] not in ("pending", "negotiating"):
             return None
-        if not self._agent_can_work(int(app["agent_id"])):
+        if not self._agent_can_work(int(app["agent_id"]), tick):
             return None
         job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (app["job_id"],))
         if not job or job["status"] != "open" or int(wage_cents) < 0:
@@ -121,7 +129,7 @@ class Labor:
         allowed_states = ("pending", "negotiating") if job_offer_id is not None else ("pending",)
         if not app or app["state"] not in allowed_states:
             return None
-        if not self._agent_can_work(int(app["agent_id"])):
+        if not self._agent_can_work(int(app["agent_id"]), tick):
             return None
         job = self.store.query_one("SELECT * FROM jobs WHERE id=?", (app["job_id"],))
         if not job or job["status"] != "open":
@@ -185,6 +193,37 @@ class Labor:
         }, phase="EXECUTION", subject_type="job_offer", subject_id=offer_id,
             importance=2.0)
         return emp_id
+
+    def end_for_departure(self, tick: int, agent_id: int, movement_id: int) -> None:
+        """End personal work and offers; accrued wage claims remain payable."""
+        if self.engine_semantics_version < 21:
+            raise ValueError("population work ending requires semantics 21")
+        for employment in self.store.query(
+                "SELECT * FROM employments WHERE agent_id=? AND status='active' ORDER BY id", (agent_id,)):
+            if tick < employment["start_tick"]:
+                raise ValueError("departure cannot precede employment")
+            self.store.update("employments", employment["id"], status="ended", end_tick=tick)
+            self.store.log_event(tick, "employment_ended_for_departure",
+                {"employment_id": employment["id"], "firm_id": employment["firm_id"],
+                 "agent_id": agent_id, "movement_id": movement_id}, phase="NIGHT_CLOSE",
+                subject_type="agent", subject_id=agent_id, importance=2.0)
+        self.store.update("agents", agent_id, employer_id=None)
+        for offer in self.store.query(
+                "SELECT o.* FROM job_offers o JOIN applications a ON a.id=o.application_id "
+                "WHERE o.status='pending' AND (a.agent_id=? OR o.proposer_agent_id=?) ORDER BY o.id",
+                (agent_id, agent_id)):
+            self.store.update("job_offers", offer["id"], status="rejected", decided_tick=tick)
+            self.store.execute("UPDATE applications SET state='pending' WHERE id=? AND state='negotiating'",
+                               (offer["application_id"],))
+            self.store.log_event(tick, "job_offer_ended_for_departure",
+                {"offer_id": offer["id"], "agent_id": agent_id, "movement_id": movement_id},
+                phase="NIGHT_CLOSE", subject_type="job_offer", subject_id=offer["id"], importance=1.5)
+        for application in self.store.query(
+                "SELECT id FROM applications WHERE agent_id=? AND state IN ('pending','negotiating') ORDER BY id", (agent_id,)):
+            self.store.update("applications", application["id"], state="rejected")
+            self.store.log_event(tick, "job_application_ended_for_departure",
+                {"application_id": application["id"], "agent_id": agent_id, "movement_id": movement_id},
+                phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id, importance=1.0)
 
     def fire(self, tick: int, employment_id: int) -> bool:
         emp = self.store.query_one("SELECT * FROM employments WHERE id=?", (employment_id,))

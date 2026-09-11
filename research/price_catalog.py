@@ -44,7 +44,7 @@ def draft_price_study(config: dict, preset: str, *, seeds: list[int], horizon: i
         ("equity_volume", f"equity_volume:{equity_firm_id}", "window_sum")]
     outcomes = []
     for key, metric, aggregation in observations:
-        definition = metric_definition(metric)
+        definition = metric_definition(metric, semantics_version=int(config.get('engine_semantics_version', 1)))
         if definition is None:
             raise ValueError("firm identity is invalid")
         outcomes.append({"key": key, "metric": metric, "metric_version": definition.version,

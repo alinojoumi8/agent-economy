@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from .ledger import Ledger, Leg, SYS_GOV
 from .store import Store
+from .business_control import operating_surface
+from .population_history import ResidenceError
 
 DEFAULT_PARAMS = {
     "tax_rate_bps": 1500,                 # 15% flat tax on wages
@@ -36,9 +38,12 @@ DEFAULT_PARAMS = {
 
 
 class Government:
-    def __init__(self, store: Store, ledger: Ledger, params: dict | None = None):
+    def __init__(self, store: Store, ledger: Ledger, params: dict | None = None, *,
+                 engine_semantics_version: int = 2):
         self.store = store
         self.ledger = ledger
+        self.engine_semantics_version = engine_semantics_version
+        self.population = None
         self.enabled = params is not None and params.get("enabled", True)
         self.p = {**DEFAULT_PARAMS, **(params or {})}
 
@@ -65,6 +70,13 @@ class Government:
     def run_nightly(self, tick: int) -> None:
         if not self.enabled:
             return
+        if self.engine_semantics_version >= 21:
+            with self.store.savepoint("population_fiscal_nightly"):
+                self._run_nightly(tick)
+            return
+        self._run_nightly(tick)
+
+    def _run_nightly(self, tick: int) -> None:
         interval = max(1, int(self.p["benefit_interval_ticks"]))
         if tick % interval == 0:
             self._pay_benefits(tick)
@@ -73,14 +85,22 @@ class Government:
             self.hold_election(tick)
 
     # ── unemployment benefits ────────────────────────────────────────────────
-    def _eligible_unemployed(self) -> list[int]:
+    def _is_local(self, agent_id: int, tick: int) -> bool:
+        if self.engine_semantics_version < 21:
+            return True
+        if self.population is None:
+            raise ResidenceError("local fiscal participation requires population history")
+        return self.population.is_local(agent_id, tick)
+
+    def _eligible_unemployed(self, tick: int) -> list[int]:
+        firm_table, operator_column = operating_surface(self)
         rows = self.store.query(
             "SELECT a.id FROM agents a WHERE a.alive=1 AND a.kind='citizen' AND a.retired=0 "
             "AND a.age BETWEEN 18 AND 64 "
             "AND NOT EXISTS (SELECT 1 FROM employments e WHERE e.agent_id=a.id AND e.status='active') "
-            "AND NOT EXISTS (SELECT 1 FROM firms f WHERE f.founder_agent_id=a.id AND f.status<>'bankrupt') "
+            f"AND NOT EXISTS (SELECT 1 FROM {firm_table} f WHERE f.{operator_column}=a.id AND f.status<>'bankrupt') "
             "ORDER BY a.id")
-        return [int(r["id"]) for r in rows]
+        return [int(r["id"]) for r in rows if self._is_local(int(r["id"]), tick)]
 
     def _pay_benefits(self, tick: int) -> None:
         amount = self.benefit_cents()
@@ -88,7 +108,7 @@ class Government:
             return
         paid = 0
         total = 0
-        for agent_id in self._eligible_unemployed():
+        for agent_id in self._eligible_unemployed(tick):
             acct = self.ledger.agent_checking_id(agent_id)
             if acct is None:
                 continue
@@ -115,16 +135,24 @@ class Government:
         """Two-platform election: EXPAND (raise tax + benefits) vs AUSTERITY
         (cut both). Ballots derive from beliefs + economic experience; the
         outcome shifts fiscal policy one bounded step."""
+        if self.engine_semantics_version >= 21:
+            with self.store.savepoint("population_fiscal_election"):
+                return self._hold_election(tick)
+        return self._hold_election(tick)
+
+    def _hold_election(self, tick: int) -> dict:
         voters = self.store.query(
             "SELECT id, political_lean, retired, age FROM agents "
             "WHERE alive=1 AND age>=18 ORDER BY id")
+        voters = [v for v in voters if self._is_local(int(v["id"]), tick)]
         sentiments = {int(r["agent_id"]): float(r["value"]) for r in self.store.query(
             "SELECT agent_id, value FROM beliefs WHERE key='sentiment'")}
         employed = {int(r["agent_id"]) for r in self.store.query(
             "SELECT DISTINCT agent_id FROM employments WHERE status='active'")}
+        firm_table, operator_column = operating_surface(self)
         founders = {int(r["founder_agent_id"]) for r in self.store.query(
-            "SELECT founder_agent_id FROM firms WHERE status<>'bankrupt' "
-            "AND founder_agent_id IS NOT NULL")}
+            f"SELECT {operator_column} AS founder_agent_id FROM {firm_table} WHERE status<>'bankrupt' "
+            f"AND {operator_column} IS NOT NULL")}
         window = 2 * int(self.p["benefit_interval_ticks"])
         recent_benefit = {int(r["subject_id"]) for r in self.store.query(
             "SELECT DISTINCT subject_id FROM events WHERE kind='benefit_paid' AND tick>?",
@@ -159,6 +187,9 @@ class Government:
         new_tax = max(int(self.p["min_tax_bps"]), min(int(self.p["max_tax_bps"]), new_tax))
         new_benefit = max(int(self.p["min_benefit_cents"]),
                           min(int(self.p["max_benefit_cents"]), new_benefit))
+        if self.engine_semantics_version >= 21 and not voters:
+            # An empty local electorate cannot mandate a fiscal change.
+            new_tax, new_benefit, direction = tax, benefit, "no_voters"
         self.store.record_metric(tick, "tax_rate_bps", new_tax)
         self.store.record_metric(tick, "unemployment_benefit_cents", new_benefit)
 

@@ -151,6 +151,11 @@ class Firms:
                                      kind="equity_investment", memo=f"found {name}")
         self.store.insert("shares", firm_id=firm_id, holder_type="agent",
                           holder_id=founder_agent_id, qty=shares)
+        if self.engine_semantics_version >= 20:
+            self.store.insert("share_movements", tick=tick, firm_id=firm_id,
+                from_holder_type=None, from_holder_id=None, to_holder_type="agent",
+                to_holder_id=founder_agent_id, qty=shares, movement_type="founder_issuance",
+                reference_type="firm", reference_id=firm_id, amount_cents=0)
         event_payload = {
             "firm_id": firm_id, "name": name, "sector": sector,
             "founder_agent_id": founder_agent_id}
@@ -354,8 +359,12 @@ class Firms:
                           shares_outstanding=0)
         if self.engine_semantics_version >= 18:
             # After senior bank recovery, remaining cash can satisfy wages.
+            if self.engine_semantics_version >= 20:
+                self.earned_wages.e.wage_awards.process_due(tick, firm_id=firm_id)
             for claim in self.store.query("SELECT id FROM wage_claims WHERE firm_id=? AND closed_tick IS NULL ORDER BY id", (firm_id,)):
                 self.earned_wages.settle(tick, claim["id"])
+            if self.engine_semantics_version >= 20:
+                self.earned_wages.e.legal_awards.collect_firm_cash_awards(tick, firm_id)
             self.earned_wages.write_off_firm(tick, firm_id)
             for claim in self.store.query("SELECT id FROM wage_claims WHERE firm_id=? AND closed_tick IS NULL ORDER BY id", (firm_id,)):
                 self.earned_wages._close_paid_exit(tick, claim["id"])
@@ -494,6 +503,11 @@ class Firms:
         }, phase="EXECUTION", subject_type="ipo_offering", subject_id=offering_id,
             importance=1.2)
         return {"ok": True, "bid_id": bid_id}
+
+    def cancel_ipo_bids(self, agent_id: int) -> None:
+        """Release unfilled personal bid commitments; retain allocated shares."""
+        self.store.execute("UPDATE ipo_bids SET status='cancelled' "
+                           "WHERE bidder_agent_id=? AND status='open'", (agent_id,))
 
     def close_ipo(self, tick: int, actor_id: int, offering_id: int) -> dict:
         offering = self.store.query_one(

@@ -18,6 +18,7 @@ type PoliticsLawProjection = {
   merger_reviews?: EvidenceRow[];
 };
 type View = "legislation" | "lobbying" | "legal" | "mergers";
+type ReliefRow = EvidenceRow & { visibility: string; award: EvidenceRow | null; estate_reserve: EvidenceRow | null };
 
 function text(value: unknown, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value).replaceAll("_", " ");
@@ -131,6 +132,28 @@ export function PoliticsLawWorkspace() {
           </article>
         </div>
       </div>}
+
+      {view === "legal" && <section className="world-os-workspace-card world-os-legal-money" aria-label="Payments and estate reserves">
+        <header><div><p className="world-os-kicker">Cash at the selected day</p><h3>Payments and estate reserves</h3></div></header>
+        <p>Earlier payments count toward the award. Tax and net cash describe collections on the award. Cash held for a dispute remains in the estate until a recorded decision or settlement.</p>
+        {!model.monetaryRelief.length && <p>No public monetary settlement records are available at this tick.</p>}
+        {(model.monetaryRelief as ReliefRow[]).map(row => <article className="world-os-legal-money-record" key={row.id} aria-label={`Matter ${row.id} financial details`}>
+          <h4>Matter {row.id}</h4>
+          {row.visibility === "withheld" ? <p>Financial details withheld</p> : <dl>
+            <div><dt>Award{row.award?.payment_basis === "gross_wages" ? " (gross)" : ""}</dt><dd>{row.award ? amount(row.award.awarded_cents, row.award.currency_code) : "Awaiting decision"}</dd></div>
+            <div><dt>Earlier payments{row.award?.payment_basis === "gross_wages" ? " (gross)" : ""}</dt><dd>{amount(row.award?.credited_cents, row.award?.currency_code)}</dd></div>
+            <div><dt>{row.award?.payment_basis === "gross_wages" ? "Paid on award (gross)" : "Collected on award"}</dt><dd>{amount(row.award?.paid_cents, row.award?.currency_code)}</dd></div>
+            <div><dt>Still unpaid{row.award?.payment_basis === "gross_wages" ? " (gross)" : ""}</dt><dd>{amount(row.award?.outstanding_cents, row.award?.currency_code)}</dd></div>
+            {row.award?.payment_basis === "gross_wages" && <>
+              <div><dt>Tax withheld</dt><dd>{amount(row.award.tax_cents, row.award.currency_code)}</dd></div>
+              <div><dt>Net received</dt><dd>{amount(row.award.net_received_cents, row.award.currency_code)}</dd></div>
+            </>}
+            {Number(row.award?.written_off_cents ?? 0) > 0 && <div><dt>Written off</dt><dd>{amount(row.award?.written_off_cents, row.award?.currency_code)}</dd></div>}
+            {Number(row.award?.credited_loss_cents ?? 0) > 0 && <div><dt>Previously discharged</dt><dd>{amount(row.award?.credited_loss_cents, row.award?.currency_code)}</dd></div>}
+            <div><dt>Disputed cash held</dt><dd>{row.estate_reserve ? `${amount(row.estate_reserve.held_cents, row.estate_reserve.currency_code)} · ${text(row.estate_reserve.status)}` : "—"}</dd></div>
+          </dl>}
+        </article>)}
+      </section>}
 
       {view === "mergers" && <div className="world-os-politics-grid">
         <article className="world-os-workspace-card"><header><div><p className="world-os-kicker">Transactions</p><h3>Mergers & acquisitions</h3></div></header>

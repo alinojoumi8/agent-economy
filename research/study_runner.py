@@ -414,7 +414,7 @@ def findings_markdown(payload: dict) -> str:
               "| Outcome | Role | Metric/version | Aggregation | Unit | Currency |",
               "|---|---|---|---|---|---|"]
     for outcome in payload["outcomes"]:
-        definition = metric_definition(outcome["metric"])
+        definition = metric_definition(outcome["metric"], semantics_version=spec['model']['engine_semantics_version'])
         lines.append(f"| {outcome['key']} | {outcome['purpose']} | {outcome['metric']} / "
                      f"{outcome['metric_version']} | {outcome['aggregation']} | "
                      f"{definition.unit if definition else 'unavailable'} | {outcome['currency']} |")

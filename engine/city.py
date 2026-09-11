@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from .civic_authority import agency_leaders_before_death
 from .firms import normalize_business_idea
 from .keyed_random import person_key
 from .ledger import Leg, SYS_EXTERNAL, SYS_GOV
@@ -405,19 +406,28 @@ class City:
             subject_id=agent_id,
             importance=2.0,
         )
+        if self.e.engine_semantics_version >= 21:
+            self.e.households.register_person(
+                tick, agent_id, "genesis" if tick == 0 else "engine_created")
         return agent_id
 
     def _promote_successor(
         self, region, agency_id: int, office_id: int, tick: int,
     ) -> int | None:
         adult_clause = "AND a.age>=18 " if self.engine_semantics_version >= 15 else ""
-        row = self.store.query_one(
+        if self.engine_semantics_version >= 20:
+            adult_clause += (
+                "AND a.retired=0 AND NOT EXISTS (SELECT 1 FROM employments e "
+                "WHERE e.agent_id=a.id AND e.status='active') "
+                "AND NOT EXISTS (SELECT 1 FROM firm_operations f "
+                "WHERE f.operator_agent_id=a.id AND f.status IN ('private','listed')) ")
+        row = self._first_local_candidate(
             "SELECT a.id FROM agents a "
             "LEFT JOIN agency_staff s ON s.agent_id=a.id AND s.active=1 "
             "WHERE a.alive=1 AND a.region_id=? AND a.employer_id IS NULL "
             "AND a.role IS NULL AND a.kind='citizen' AND s.id IS NULL "
             + adult_clause +
-            "ORDER BY a.id LIMIT 1",
+            "ORDER BY a.id",
             (int(region["id"]),),
         )
         if row is None:
@@ -473,13 +483,14 @@ class City:
         *,
         tick: int,
         allow_promotion: bool,
-    ) -> int:
-        row = self.store.query_one(
+    ) -> int | None:
+        row = self._first_local_candidate(
             "SELECT s.agent_id FROM agency_staff s JOIN agents a ON a.id=s.agent_id "
             "WHERE s.agency_id=? AND s.region_id=? AND s.role_key='permit_clerk' "
             "AND s.active=1 AND a.alive=1 AND a.region_id=? "
-            "ORDER BY s.agent_id LIMIT 1",
+            "ORDER BY s.agent_id",
             (int(agency_id), int(region["id"]), int(region["id"])),
+            identity="agent_id",
         )
         if row is not None:
             return int(row["agent_id"])
@@ -488,7 +499,13 @@ class City:
                 region, agency_id, office_id, tick)
             if allow_promotion else None
         )
-        return promoted or self._create_clerk(
+        if promoted is not None:
+            return promoted
+        if self.engine_semantics_version >= 20 and (allow_promotion or tick > 0):
+            # Post-genesis vacancies wait for an existing eligible adult; a
+            # death must not manufacture a worker or an external cash grant.
+            return None
+        return self._create_clerk(
             region, agency_id, office_id, tick)
 
     def _sync_firm_workplaces(self, tick: int) -> None:
@@ -573,6 +590,14 @@ class City:
             "source_id": int(source_id) if source_id is not None else None,
         })
 
+    def _check_population_lease_reuse(self, lease_id: int) -> None:
+        if self.e.engine_semantics_version < 21:
+            return
+        if self.store.query_one(
+                "SELECT 1 FROM population_commitment_endings "
+                "WHERE kind='local_occupancy' AND source_id=? LIMIT 1", (lease_id,)):
+            raise CityError("occupancy ended by departure requires a new interval")
+
     def _ensure_lease(
         self,
         *,
@@ -588,6 +613,9 @@ class City:
     ) -> int:
         if slot not in SLOTS:
             raise CityError(f"unsupported city slot: {slot}")
+        if (self.e.engine_semantics_version >= 21
+                and not self.e.population.is_available(agent_id)):
+            raise CityError("local occupancy requires a living resident")
         if end_tick == LONG_LEASE_END and source_type != "appointment":
             existing = self.store.query_one(
                 "SELECT id FROM occupancy_leases WHERE agent_id=? AND place_id=? "
@@ -602,10 +630,16 @@ class City:
                 ),
             )
             if existing is not None:
+                self._check_population_lease_reuse(int(existing["id"]))
                 return int(existing["id"])
         dedupe = self._lease_key(
             agent_id, place_id, slot, start_tick, end_tick, priority,
             source_type, source_id)
+        if self.e.engine_semantics_version >= 21:
+            existing = self.store.query_one(
+                "SELECT id FROM occupancy_leases WHERE dedupe_key=?", (dedupe,))
+            if existing is not None:
+                self._check_population_lease_reuse(int(existing["id"]))
         self.store.execute(
             "INSERT OR IGNORE INTO occupancy_leases "
             "(dedupe_key,agent_id,place_id,slot,start_tick,end_tick,priority,"
@@ -645,6 +679,10 @@ class City:
         )
 
     def _home_place(self, region_id: int, agent_id: int):
+        if self.engine_semantics_version >= 20 and self.construction_enabled:
+            home = self.e.project_rights.household_home(region_id, agent_id)
+            if home is not None:
+                return int(home)
         if self.engine_semantics_version >= 15:
             # The household keeps its original district anchor. This is a
             # routine placement, not ownership of a newly granted dwelling.
@@ -655,7 +693,7 @@ class City:
                 "ORDER BY original.joined_tick,original.id LIMIT 1", (agent_id,))
             if anchor is not None:
                 agent_id = int(anchor)
-        if self.construction_enabled:
+        if self.construction_enabled and self.engine_semantics_version < 20:
             completed = self.store.scalar(
                 "SELECT place_id FROM construction_projects "
                 "WHERE owner_type='agent' AND owner_id=? "
@@ -666,7 +704,10 @@ class City:
                 return int(completed)
         rows = self.store.query(
             "SELECT id FROM places WHERE region_id=? "
-            "AND kind='residential_district' AND active=1 ORDER BY id",
+            "AND kind='residential_district' AND active=1 "
+            + ("AND NOT EXISTS (SELECT 1 FROM construction_projects cp WHERE cp.place_id=places.id "
+               "AND cp.target_place_type='private_home') " if self.engine_semantics_version >= 20 else "")
+            + "ORDER BY id",
             (int(region_id),),
         )
         if not rows:
@@ -697,7 +738,7 @@ class City:
             firm_id = int(agent["employer_id"])
         else:
             founded = self.store.scalar(
-                "SELECT id FROM firms WHERE founder_agent_id=? "
+                f"SELECT id FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? "
                 "AND status<>'bankrupt' ORDER BY id LIMIT 1",
                 (agent_id,), default=None)
             if founded is not None:
@@ -723,15 +764,17 @@ class City:
     def _sync_routine_leases(self, tick: int) -> None:
         if not self.enabled:
             return
+        agents = self.store.query(
+            "SELECT * FROM agents WHERE alive=1 AND region_id IS NOT NULL ORDER BY id")
+        if self.e.engine_semantics_version >= 21:
+            agents = [agent for agent in agents if self.e.population.is_available(int(agent["id"]))]
         self.store.execute(
             "UPDATE occupancy_leases SET status='cancelled',ended_tick=? "
             "WHERE status='active' AND agent_id IN "
             "(SELECT id FROM agents WHERE alive=0)",
             (int(tick),),
         )
-        for agent in self.store.query(
-                "SELECT * FROM agents WHERE alive=1 AND region_id IS NOT NULL "
-                "ORDER BY id"):
+        for agent in agents:
             agent_id = int(agent["id"])
             home_id = self._home_place(int(agent["region_id"]), agent_id)
             if home_id is not None:
@@ -767,14 +810,16 @@ class City:
                     created_tick=int(tick),
                 )
 
+    def cancel_local_occupancy(self, tick: int, agent_id: int) -> None:
+        """End geographic occupancy without changing any property ownership."""
+        self.store.execute(
+            "UPDATE occupancy_leases SET status='cancelled',ended_tick=? "
+            "WHERE agent_id=? AND status='active'", (int(tick), int(agent_id)))
+
     def establish_effective_presence(self, tick: int) -> None:
         if not self.enabled:
             return
-        self.store.execute(
-            "DELETE FROM effective_presence WHERE tick=?", (int(tick),))
-        self.store.execute(
-            "INSERT INTO effective_presence "
-            "(tick,slot,agent_id,place_id,lease_id,priority,source_type) "
+        selection = (
             "SELECT ?,slot,agent_id,place_id,id,priority,source_type FROM ("
             " SELECT l.*,ROW_NUMBER() OVER ("
             "  PARTITION BY l.agent_id,l.slot "
@@ -784,9 +829,22 @@ class City:
             " JOIN agents a ON a.id=l.agent_id AND a.alive=1 "
             " JOIN places p ON p.id=l.place_id AND p.active=1 "
             " WHERE l.status='active' AND l.start_tick<=? AND l.end_tick>=?"
-            ") ranked WHERE rn=1 ORDER BY agent_id,slot",
-            (int(tick), int(tick), int(tick)),
+            ") ranked WHERE rn=1 ORDER BY agent_id,slot"
         )
+        parameters = (int(tick), int(tick), int(tick))
+        local = None
+        if self.e.engine_semantics_version >= 21:
+            # Validate residence before replacing the day's derived presence.
+            local = [tuple(row) for row in self.store.query(selection, parameters)
+                     if self.e.population.is_local(int(row["agent_id"]), tick)]
+        self.store.execute("DELETE FROM effective_presence WHERE tick=?", (int(tick),))
+        insert = ("INSERT INTO effective_presence "
+                  "(tick,slot,agent_id,place_id,lease_id,priority,source_type) ")
+        if local is None:
+            self.store.execute(insert + selection, parameters)
+        else:
+            for row in local:
+                self.store.execute(insert + "VALUES (?,?,?,?,?,?,?)", row)
 
     # -- nightly reconciliation -------------------------------------------
     def run_nightly(self, tick: int) -> None:
@@ -836,36 +894,7 @@ class City:
             "('applied','appointment_scheduled','submitted','under_review') "
             "ORDER BY c.id")
         for case in deceased:
-            case_id = int(case["id"])
-            self.store.execute(
-                "UPDATE service_cases SET status='abandoned',updated_tick=?,"
-                "decided_tick=?,decision='deny',reason_code='applicant_deceased' "
-                "WHERE id=?",
-                (int(tick), int(tick), case_id),
-            )
-            self._cancel_case_appointments(case_id, tick)
-            self.store.execute(
-                "UPDATE institution_tasks SET status='cancelled',completed_tick=? "
-                "WHERE source_case_id=? AND status IN ('pending','assigned')",
-                (int(tick), case_id),
-            )
-            event_id = self._log_semantic(
-                tick,
-                "business_permit_abandoned",
-                actor_type="government",
-                actor_id=1,
-                verb="closed",
-                object_type="service_case",
-                object_id=case_id,
-                outcome="applicant_deceased",
-                payload={"applicant_agent_id": int(case["applicant_agent_id"])},
-                phase="NIGHT_CLOSE",
-                subject_type="agent",
-                subject_id=int(case["applicant_agent_id"]),
-                importance=2.5,
-            )
-            self.store.update(
-                "service_cases", case_id, outcome_event_id=event_id)
+            self._abandon_case_after_death(tick, case)
         self.store.execute(
             "UPDATE civic_authorizations SET status='revoked' "
             "WHERE status='active' AND holder_agent_id IN "
@@ -918,39 +947,79 @@ class City:
                 importance=1.8,
             )
 
+    def _abandon_case_after_death(self, tick: int, case, *, reason="applicant_deceased") -> None:
+        self._abandon_personal_case(tick, case, reason=reason)
+
+    def _abandon_personal_case(self, tick: int, case, *, reason: str) -> None:
+        case_id = int(case["id"])
+        self.store.execute(
+            "UPDATE service_cases SET status='abandoned',updated_tick=?,"
+            "decided_tick=?,decision='deny',reason_code=? "
+            "WHERE id=?", (int(tick), int(tick), reason, case_id))
+        self._cancel_case_appointments(case_id, tick)
+        self.store.execute(
+            "UPDATE institution_tasks SET status='cancelled',completed_tick=? "
+            "WHERE source_case_id=? AND status IN ('pending','assigned')",
+            (int(tick), case_id))
+        event_id = self._log_semantic(
+            tick, "business_permit_abandoned",
+            actor_type="government", actor_id=1, verb="closed",
+            object_type="service_case", object_id=case_id,
+            outcome=reason,
+            payload={"applicant_agent_id": int(case["applicant_agent_id"])},
+            phase="NIGHT_CLOSE", subject_type="agent",
+            subject_id=int(case["applicant_agent_id"]), importance=2.5)
+        self.store.update("service_cases", case_id, outcome_event_id=event_id)
+
+    def _revoke_authorization_after_death(self, tick: int, authorization, *, reason: str) -> None:
+        self._revoke_personal_authorization(tick, authorization, reason=reason)
+
+    def _revoke_personal_authorization(self, tick: int, authorization, *, reason: str) -> None:
+        self.store.update("civic_authorizations", authorization["id"], status="revoked")
+        self._log_semantic(
+            tick, "civic_authorization_revoked", actor_type="government", actor_id=1,
+            verb="revoked", object_type="civic_authorization", object_id=authorization["id"],
+            outcome=reason, payload={"case_id": authorization["case_id"], "reason_code": reason},
+            phase="NIGHT_CLOSE", subject_type="agent", subject_id=authorization["holder_agent_id"], importance=2.0)
+
+    def _release_task_assignments(self, agent_id: int) -> None:
+        self.store.execute(
+            "UPDATE institution_tasks SET assigned_agent_id=NULL,"
+            "assigned_tick=NULL,status='pending' "
+            "WHERE assigned_agent_id=? AND status='assigned'", (int(agent_id),))
+
+    def _end_staff_assignment(self, tick: int, staff) -> None:
+        agent_id = int(staff["agent_id"])
+        self.store.update("agency_staff", int(staff["id"]), active=0, ended_tick=int(tick))
+        self._release_task_assignments(agent_id)
+        self._log_semantic(
+            tick, "agency_staff_ended",
+            actor_type="agency", actor_id=int(staff["agency_id"]), verb="released",
+            object_type="agent", object_id=agent_id, outcome="succession_required",
+            payload={"region_id": int(staff["region_id"])}, phase="NIGHT_CLOSE",
+            subject_type="agent", subject_id=agent_id, importance=2.0)
+
+    def _first_local_candidate(self, sql, params, *, identity="id"):
+        if self.e.engine_semantics_version < 21:
+            return self.store.query_one(sql + " LIMIT 1", params)
+        return next((row for row in self.store.query(sql, params)
+                     if self.e.population.is_available(row[identity])), None)
+
     def _reconcile_staff(self, tick: int) -> None:
         invalid = self.store.query(
             "SELECT s.id,s.agent_id,s.agency_id,s.region_id "
             "FROM agency_staff s JOIN agents a ON a.id=s.agent_id "
             "WHERE s.active=1 AND (a.alive=0 OR a.region_id<>s.region_id "
             "OR COALESCE(a.role,'')<>'permit_clerk') ORDER BY s.id")
+        if self.e.engine_semantics_version >= 21:
+            known = {row["id"] for row in invalid}
+            invalid.extend(row for row in self.store.query(
+                "SELECT s.id,s.agent_id,s.agency_id,s.region_id FROM agency_staff s "
+                "JOIN agents a ON a.id=s.agent_id WHERE s.active=1 AND a.alive=1 ORDER BY s.id")
+                if row["id"] not in known and not self.e.population.is_available(row["agent_id"]))
+            invalid.sort(key=lambda row: row["id"])
         for staff in invalid:
-            staff_id = int(staff["id"])
-            agent_id = int(staff["agent_id"])
-            self.store.update(
-                "agency_staff", staff_id,
-                active=0, ended_tick=int(tick))
-            self.store.execute(
-                "UPDATE institution_tasks SET assigned_agent_id=NULL,"
-                "assigned_tick=NULL,status='pending' "
-                "WHERE assigned_agent_id=? AND status='assigned'",
-                (agent_id,),
-            )
-            self._log_semantic(
-                tick,
-                "agency_staff_ended",
-                actor_type="agency",
-                actor_id=int(staff["agency_id"]),
-                verb="released",
-                object_type="agent",
-                object_id=agent_id,
-                outcome="succession_required",
-                payload={"region_id": int(staff["region_id"])},
-                phase="NIGHT_CLOSE",
-                subject_type="agent",
-                subject_id=agent_id,
-                importance=2.0,
-            )
+            self._end_staff_assignment(tick, staff)
         for region in self._region_rows():
             office = self._office_for_region(int(region["id"]))
             if office is not None:
@@ -993,10 +1062,17 @@ class City:
             "SELECT * FROM agents WHERE id=?", (int(actor_id),))
         if agent is None or not bool(agent["alive"]):
             return {"ok": False, "reason": "applicant is not alive"}
+        if self.e.engine_semantics_version >= 21 and (
+                int(agent["age"]) < 18 or not self.e.population.is_available(int(actor_id))):
+            return {"ok": False, "reason": "applicant is not a locally available adult"}
+        if self.engine_semantics_version >= 21:
+            failure = self._lawyer_failure(payload["lawyer_agent_id"])
+            if failure is not None:
+                return {"ok": False, "reason": failure}
         if agent["region_id"] is None:
             return {"ok": False, "reason": "applicant has no civic region"}
         if self.store.query_one(
-                "SELECT 1 FROM firms WHERE founder_agent_id=? "
+                f"SELECT 1 FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? "
                 "AND status<>'bankrupt' LIMIT 1", (int(actor_id),)):
             return {
                 "ok": False,
@@ -1209,6 +1285,11 @@ class City:
             return {"ok": False, "reason": "permit case is not assigned to this clerk"}
         if task["case_status"] != "under_review":
             return {"ok": False, "reason": "permit case is no longer under review"}
+        if self.engine_semantics_version >= 20 and decision == "approve":
+            case = self.store.query_one("SELECT * FROM service_cases WHERE id=?", (int(case_id),))
+            failure = self._mechanical_failure(case)
+            if failure is not None:
+                return {"ok": False, "reason": failure}
         if decision == "approve":
             authorization_id, event_id = self._approve_case(
                 tick, int(case_id), reason_code, actor_id=int(actor_id))
@@ -1322,12 +1403,16 @@ class City:
 
     def _mechanical_failure(self, case) -> str | None:
         case_id = int(case["id"])
+        active_approval = (
+            "AND (status<>'approved' OR EXISTS (SELECT 1 FROM civic_authorizations ca "
+            "WHERE ca.case_id=service_cases.id AND ca.status IN ('active','consumed'))) "
+            if self.engine_semantics_version >= 20 else "")
         earlier = self.store.query_one(
             "SELECT id FROM service_cases WHERE id<>? "
             "AND business_name=? COLLATE NOCASE "
             "AND status IN "
             "('applied','appointment_scheduled','submitted','under_review','approved') "
-            "AND (created_tick<? OR (created_tick=? AND id<?)) "
+            + active_approval + "AND (created_tick<? OR (created_tick=? AND id<?)) "
             "ORDER BY created_tick,id LIMIT 1",
             (
                 case_id,
@@ -1346,16 +1431,9 @@ class City:
             return "duplicate_name"
         if str(case["sector"]).lower() in self.prohibited_sectors:
             return "prohibited_sector"
-        lawyer = self.store.query_one(
-            "SELECT alive,occupation FROM agents WHERE id=?",
-            (int(case["lawyer_agent_id"]),),
-        )
-        if (
-            lawyer is None
-            or not bool(lawyer["alive"])
-            or str(lawyer["occupation"] or "").lower() != "lawyer"
-        ):
-            return "dead_or_unqualified_lawyer"
+        failure = self._lawyer_failure(int(case["lawyer_agent_id"]))
+        if failure is not None:
+            return failure
         checking_id = self.ledger.agent_checking_id(
             int(case["applicant_agent_id"]))
         if (
@@ -1364,6 +1442,17 @@ class City:
             < int(case["opening_capital_cents"])
         ):
             return "insufficient_capital"
+        return None
+
+    def _lawyer_failure(self, agent_id: int) -> str | None:
+        lawyer = self.store.query_one(
+            "SELECT alive,age,occupation FROM agents WHERE id=?", (int(agent_id),))
+        if (lawyer is None or not bool(lawyer["alive"])
+                or str(lawyer["occupation"] or "").lower() != "lawyer"):
+            return "dead_or_unqualified_lawyer"
+        if self.engine_semantics_version >= 21 and (
+                int(lawyer["age"]) < 18 or not self.e.population.is_available(int(agent_id))):
+            return "lawyer_unavailable"
         return None
 
     def _market_facts(self, case) -> dict[str, Any]:
@@ -1389,14 +1478,20 @@ class City:
         }
 
     def _resolve_submitted_cases(self, tick: int) -> None:
+        pending_status = "status IN ('submitted','under_review')" if self.engine_semantics_version >= 20 else "status='submitted'"
         cases = self.store.query(
-            "SELECT * FROM service_cases WHERE status='submitted' "
+            f"SELECT * FROM service_cases WHERE {pending_status} "
             "ORDER BY priority DESC,created_tick,id")
         for case in cases:
             case_id = int(case["id"])
             failure = self._mechanical_failure(case)
             if failure is not None:
-                self._deny_case(tick, case_id, failure, actor_id=None)
+                event_id = self._deny_case(tick, case_id, failure, actor_id=None)
+                if self.engine_semantics_version >= 20:
+                    self.store.execute("UPDATE institution_tasks SET status='cancelled',completed_tick=?,outcome_event_id=? "
+                                       "WHERE source_case_id=? AND status IN ('pending','assigned')", (tick, event_id, case_id))
+                continue
+            if case["status"] == "under_review":
                 continue
             facts = self._market_facts(case)
             if not bool(facts["borderline"]):
@@ -1558,15 +1653,16 @@ class City:
             "SELECT * FROM institution_tasks WHERE status='pending' "
             "ORDER BY priority DESC,created_tick,source_case_id,id")
         for task in tasks:
-            clerk = self.store.query_one(
+            clerk = self._first_local_candidate(
                 "SELECT s.agent_id,COUNT(t.id) AS open_tasks "
                 "FROM agency_staff s JOIN agents a ON a.id=s.agent_id "
                 "LEFT JOIN institution_tasks t ON t.assigned_agent_id=s.agent_id "
                 "AND t.status='assigned' "
                 "WHERE s.agency_id=? AND s.role_key='permit_clerk' "
                 "AND s.active=1 AND a.alive=1 "
-                "GROUP BY s.agent_id ORDER BY open_tasks,s.agent_id LIMIT 1",
+                "GROUP BY s.agent_id ORDER BY open_tasks,s.agent_id",
                 (int(task["agency_id"]),),
+                identity="agent_id",
             )
             if clerk is None:
                 continue
@@ -2478,6 +2574,11 @@ class City:
             "SELECT * FROM agencies WHERE id=?", (int(agency_id),))
         if agency is None:
             return None
+        agency = dict(agency)
+        if self.engine_semantics_version >= 20:
+            prior_leaders = agency_leaders_before_death(self.store, tick)
+            if agency_id in prior_leaders:
+                agency["leader_agent_id"] = prior_leaders[agency_id]
         staff = int(self.store.scalar(
             "SELECT COUNT(*) FROM agency_staff WHERE agency_id=? "
             "AND effective_tick<=? AND (ended_tick IS NULL OR ended_tick>?)",

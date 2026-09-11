@@ -58,6 +58,7 @@ type PulseWorldProjection = {
   construction_projects?: unknown[];
   summary?: {
     trade_count?: number;
+    known_living_outside?: number;
     migration_count?: number;
     construction_projects?: number;
   };
@@ -270,6 +271,8 @@ export function WorldPulseWorkspace() {
     >
       <dl className="world-pulse-summary" aria-label="World Pulse summary">
         <div><dt>Residents</dt><dd>{formatNumber(world.population)}</dd></div>
+        {projection.data?.summary?.known_living_outside != null &&
+          <div><dt>Known outside</dt><dd>{formatNumber(projection.data.summary.known_living_outside)}</dd></div>}
         <div><dt>Organizations</dt><dd>{formatNumber(world.activeOrganizations)}</dd></div>
         <div><dt>Regions</dt><dd>{formatNumber(world.regions.length)}</dd></div>
         <div><dt>Salient events</dt><dd>{Array.isArray(snapshot.data?.data.alerts) ? formatNumber(snapshot.data.data.alerts.length) : "—"}</dd></div>

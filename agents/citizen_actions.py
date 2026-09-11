@@ -68,6 +68,14 @@ _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
     ("cancel_household_proposal", "household", 17),
     ("separate_household", "household", 17),
     ("set_time_plan", "daily_time", 18),
+    ("place_estate_property_bid", "finance", 20),
+    ("accept_estate_property_bid", "finance", 20),
+    ("withdraw_estate_property_bid", "finance", 20),
+    ("place_estate_unlisted_bid", "finance", 20),
+    ("accept_estate_unlisted_bid", "finance", 20),
+    ("withdraw_estate_unlisted_bid", "finance", 20),
+    ("propose_population_movement", "population", 21),
+    ("respond_population_movement", "population", 21),
 )
 
 _COMMONS_ACTIONS: tuple[tuple[str, str, bool], ...] = (

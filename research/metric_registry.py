@@ -11,7 +11,14 @@ import re
 
 from engine.store import Store, load_json
 
-REGISTRY_VERSION = "research-metrics-v1"
+REGISTRY_VERSION = "research-metrics-v3"
+LEGACY_REGISTRY_VERSION = "research-metrics-v2"
+
+
+def _registry_version(semantics_version: int | None) -> str:
+    # The tag is part of saved study observations. Extending the catalog must
+    # not invalidate unchanged, independently measured legacy results.
+    return REGISTRY_VERSION if semantics_version is None or semantics_version >= 21 else LEGACY_REGISTRY_VERSION
 
 
 @dataclass(frozen=True)
@@ -65,11 +72,23 @@ DEFINITIONS = (
         ("world/metrics.py:Metrics._unemployment", "agents", "employments", "firms"),
         "Legacy engine returns zero with an empty labor force; older semantics count workers differently.", min_semantics=7),
     MetricDefinition(
-        "gini", "nonnegative-cash-gini-v1", "households", "Citizen cash inequality",
+        "gini", "legacy-all-account-gini-v1", "households", "Legacy citizen account inequality",
         "fraction", "single_currency_required", "living citizens; account sums clipped at zero",
-        "state_at_tick", "2*sum(rank*cash)/(n*sum(cash)) - (n+1)/n",
+        "state_at_tick", "2*sum(rank*nonnegative_account_sum)/(n*sum(nonnegative_account_sum)) - (n+1)/n",
         ("world/metrics.py:Metrics._gini", "accounts", "agents"),
-        "Returns zero for empty or zero-cash cohorts. Excludes shares, loans and real assets; not net-wealth Gini."),
+        "Historical engine sums every account kind, including noncash wage receivables, and nominal currencies before clipping. Strict readers require one currency. Returns zero for empty or zero-total cohorts; not cash or net-wealth Gini. Stored values are preserved."),
+    MetricDefinition(
+        "cash_gini:{currency}", "citizen-wallet-cash-gini-v20", "households", "Citizen cash inequality",
+        "fraction", "series_currency", "all living registered citizens, including minors and citizens without this currency",
+        "end_of_tick", "Gini of max(0,sum(checking,savings,fx balances per person in this currency))",
+        ("engine/position_history.py:cash_distribution_at", "ledger_entries", "person_lifecycle"),
+        "Zero for empty or zero-total cohorts by convention. Negative net wallets are clipped per person/currency. Excludes restricted cash, receivables, debts, shares and property; not household or net-wealth inequality.", min_semantics=20),
+    MetricDefinition(
+        "cash_population:{currency}", "citizen-wallet-cash-population-v20", "households", "Cash inequality population",
+        "people", "series_currency", "all living registered citizens, including minors and citizens without this currency",
+        "end_of_tick", "count(living registered citizens)",
+        ("engine/position_history.py:cash_distribution_at", "person_lifecycle"),
+        "Zero is an empty cohort. The same population is used for every observed currency; no cross-currency conversion.", min_semantics=20),
     MetricDefinition(
         "money_supply", "checking-savings-total-v1", "banking", "Checking and savings balances",
         "currency_major_units", "single_currency_required", "all checking and savings accounts",
@@ -153,29 +172,113 @@ DEFINITIONS = (
 )
 
 
-def metric_definition(name: str) -> MetricDefinition | None:
+POPULATION_DEFINITIONS = tuple(
+    MetricDefinition(key, 'resident-cohort-v21', 'population', label, 'people',
+        'currency_neutral', population, 'end_of_tick', formula,
+        ('engine/population_statistics.py:current_population_metrics', 'person_residence_events', 'person_lifecycle'),
+        'Missing/uncommitted snapshots are unavailable. Invalid or missing residence evidence prevents the whole snapshot.', min_semantics=21)
+    for key, label, population, formula in (
+        ('resident_population', 'Living residents', 'all registered living resident people', 'count(residents)'),
+        ('known_living_outside', 'Known people living outside', 'registered living people outside the modeled economy', 'count(outside)'),
+        ('known_living_population', 'All known living people', 'registered living people, resident or outside', 'residents + outside'),
+        ('resident_citizens', 'Resident citizens', 'living resident citizens, including minors', 'count(resident citizens)'),
+        ('resident_labor_force', 'Resident working-age population', 'living non-retired resident citizens aged 18-64', 'count(eligible citizens)'),
+        ('resident_working', 'Working residents', 'resident labor force', 'count(unique active employees or business operators)'),
+        ('resident_unemployed', 'Residents without active work', 'resident labor force', 'resident_labor_force - resident_working'),
+        ('resident_sentiment_observations', 'Resident sentiment observations', 'living resident citizens with a recorded sentiment belief', 'count(observed citizens)'),
+        ('resident_insured', 'Insured residents', 'all living residents with at least one active insurance policy', 'count(unique covered people)'),
+    )
+)
+POPULATION_DEFINITIONS += tuple(
+    MetricDefinition(key, 'resident-unemployment-v21', 'labor', 'Unemployed working-age residents',
+        'fraction', 'currency_neutral', 'living non-retired resident citizens aged 18-64',
+        'end_of_tick', '1 - resident_working / resident_labor_force',
+        ('engine/population_statistics.py:current_population_metrics', 'employments', 'firm_stewardships'),
+        'No value for an empty resident labor force. Outside owners and their retained claims do not enter this denominator.', min_semantics=21)
+    for key in ('unemployment', 'resident_unemployment')
+)
+POPULATION_DEFINITIONS += tuple(
+    MetricDefinition(key, 'resident-sentiment-v21', 'population', 'Observed resident sentiment',
+        'belief_value', 'currency_neutral', 'living resident citizens with a sentiment belief',
+        'end_of_tick', 'sum(recorded sentiment) / resident_sentiment_observations',
+        ('engine/population_statistics.py:current_population_metrics', 'beliefs'),
+        'No value if no resident citizen has a sentiment observation. Dead and outside people are excluded.', min_semantics=21)
+    for key in ('sentiment', 'resident_sentiment')
+)
+POPULATION_DEFINITIONS += tuple(
+    MetricDefinition(f'{cohort}_{metric}:{{currency}}', f'{cohort}-{metric}-v21', 'households',
+        f'{cohort.capitalize()} citizen {label}', unit, 'series_currency',
+        f'all registered living {cohort} citizens, including minors and citizens without this currency',
+        'end_of_tick', formula,
+        ('engine/population_statistics.py:cash_distributions_by_residence_at', 'person_residence_events', 'ledger_entries'),
+        'Residence and person kind are selected at the requested day. Cash is checking/savings/FX only; currencies never net. Empty or zero-total Gini is zero by explicit convention. Not household or net-wealth inequality.',
+        min_semantics=21)
+    for cohort in ('resident', 'outside')
+    for metric, label, unit, formula in (
+        ('cash_gini', 'cash inequality', 'fraction', 'Gini of max(0,net wallet cash per person/currency)'),
+        ('cash_population', 'cash population', 'people', 'count(cohort citizens, including zero-wallet people)'),
+        ('cash_signed_cents', 'signed cash', 'currency_minor_units', 'sum(signed net cash per person/currency)'),
+        ('cash_nonnegative_cents', 'nonnegative cash', 'currency_minor_units', 'sum(max(0,net cash per person/currency))'),
+        ('cash_negative_cents', 'negative cash', 'currency_minor_units', 'sum(min(0,net cash per person/currency))'),
+    )
+)
+DEFINITIONS += POPULATION_DEFINITIONS
+
+
+def metric_definition(name: str, *, semantics_version: int | None = None) -> MetricDefinition | None:
+    """Select the newest applicable contract, or the legacy contract without a run."""
+    selected = None
     for definition in DEFINITIONS:
         pattern = re.escape(definition.key)
         pattern = pattern.replace(re.escape("{firm_id}"), r"[1-9]\d*")
         pattern = pattern.replace(re.escape("{bank_id}"), r"[1-9]\d*")
+        pattern = pattern.replace(re.escape("{currency}"), r"[A-Z][A-Z0-9_]{1,15}")
         if re.fullmatch(pattern, name):
-            return definition
+            if selected is None:
+                selected = definition
+            elif (semantics_version is not None and selected.min_semantics < definition.min_semantics <= semantics_version):
+                selected = definition
+    return selected
+
+
+def metric_catalog(*, semantics_version: int | None = None) -> dict:
+    """List all versions, or one compatible contract per key for a selected run."""
+    definitions = DEFINITIONS
+    if semantics_version is not None:
+        selected = {}
+        for definition in DEFINITIONS:
+            if (definition.min_semantics <= semantics_version and
+                    (definition.key not in selected or selected[definition.key].min_semantics < definition.min_semantics)):
+                selected[definition.key] = definition
+        definitions = tuple(selected.values())
+    return {"registry_version": _registry_version(semantics_version),
+            "definitions": [asdict(definition) for definition in definitions]}
+
+
+def resident_rate_unavailable_reason(name: str, population) -> str | None:
+    """One exact-day denominator rule for research and observer series."""
+    if population is None:
+        return 'resident_denominator_not_recorded'
+    if (not isinstance(population, (int, float)) or not math.isfinite(population)
+            or population < 0 or int(population) != population):
+        return 'invalid_resident_denominator'
+    if population == 0:
+        return ('empty_resident_labor_force' if 'unemployment' in name
+                else 'no_resident_sentiment_observations')
     return None
-
-
-def metric_catalog() -> dict:
-    return {"registry_version": REGISTRY_VERSION,
-            "definitions": [asdict(definition) for definition in DEFINITIONS]}
 
 
 def read_metric_observation(store: Store, name: str, tick: int) -> dict:
     """Read a declared series without filling absent points or mixing currency."""
     if type(tick) is not int or tick < 0:
         raise ValueError("tick must be a nonnegative integer")
-    definition = metric_definition(name)
+    meta = store.get_meta()
+    config = load_json(meta["config_json"], {})
+    semantics = int(config.get('engine_semantics_version', 1))
+    definition = metric_definition(name, semantics_version=semantics)
     result = {"name": name, "tick": tick, "value": None, "observed_tick": None,
               "age_ticks": None, "currency": None, "status": "unavailable",
-              "reason": None, "registry_version": REGISTRY_VERSION,
+              "reason": None, "registry_version": _registry_version(semantics),
               "definition": asdict(definition) if definition else None}
 
     def unavailable(reason: str) -> dict:
@@ -183,18 +286,24 @@ def read_metric_observation(store: Store, name: str, tick: int) -> dict:
 
     if definition is None:
         return unavailable("unregistered_metric")
-    meta = store.get_meta()
     if tick > int(meta["tick"]):
         return unavailable("future_tick")
-    config = load_json(meta["config_json"], {})
     if int(config.get("engine_semantics_version", 1)) < definition.min_semantics:
         return unavailable("incompatible_metric_semantics")
+    if meta["active_tick"] is not None and tick >= int(meta["active_tick"]):
+        return unavailable("uncommitted_tick")
     if definition.currency_policy == "single_currency_required":
         currencies = [str(row[0]) for row in store.query(
             "SELECT DISTINCT currency_code FROM accounts ORDER BY currency_code")]
         if len(currencies) != 1 or not currencies[0]:
             return unavailable("multiple_or_unknown_currencies_without_conversion")
         result["currency"] = currencies[0]
+    elif definition.currency_policy == "series_currency":
+        currency = name.split(":")[1]
+        if not store.scalar("SELECT 1 FROM accounts a JOIN ledger_entries l ON l.account_id=a.id "
+                            "WHERE a.currency_code=? AND l.tick<=? LIMIT 1", (currency, tick)):
+            return unavailable("currency_not_observed_at_tick")
+        result["currency"] = currency
     elif definition.currency_policy in {"instrument_currency", "bank_currency"}:
         table = "firms" if definition.currency_policy == "instrument_currency" else "banks"
         currency = store.scalar(f"SELECT currency_code FROM {table} WHERE id=?", (int(name.split(":")[1]),))
@@ -207,6 +316,12 @@ def read_metric_observation(store: Store, name: str, tick: int) -> dict:
         "equity_vwap": ("equities", "executed_price"), "equity_volume": ("equities", "quantity"),
     }
     prefix = name.split(":")[0]
+    if semantics >= 21 and name in {'unemployment', 'resident_unemployment', 'sentiment', 'resident_sentiment'}:
+        denominator = ('resident_labor_force' if 'unemployment' in name else 'resident_sentiment_observations')
+        population = store.scalar('SELECT value FROM metrics WHERE tick=? AND name=? ORDER BY id DESC LIMIT 1', (tick, denominator))
+        reason = resident_rate_unavailable_reason(name, population)
+        if reason:
+            return unavailable(reason)
     if prefix in price_measures:
         from research.prices import price_observations
         try:

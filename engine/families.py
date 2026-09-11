@@ -34,6 +34,8 @@ class HouseholdDecisions:
         if (not actor or not actor["alive"] or actor["age"] < 18
                 or actor["kind"] != "citizen" or not self.e.households.membership(actor_id)):
             raise HouseholdError("household decision requires a living adult citizen member")
+        if self.e.engine_semantics_version >= 21 and not self.e.population.is_available(actor_id):
+            raise HouseholdError("household decision requires a local resident")
         return actor
 
     def partnership(self, actor_id: int):
@@ -77,6 +79,8 @@ class HouseholdDecisions:
                 if not row["alive"] or row["region_id"] != home["region_id"]:
                     raise HouseholdError("household residence is awaiting reconciliation")
                 person = int(row["agent_id"])
+                if self.e.engine_semantics_version >= 21 and not self.e.population.is_available(person):
+                    raise HouseholdError("household decisions require all members to be local residents")
                 adult = row["age"] >= 18
                 if adult:
                     if kind != "separation":
@@ -287,6 +291,45 @@ class HouseholdDecisions:
         self._event(tick, "household_separated", actor_id, row["id"],
                     household_id=destination, previous_household_id=home["household_id"],
                     policy="primary_minor_wards_accompany_v1")
+
+    def pending_interests(self, agent_id):
+        """Unsettled consent snapshots that name this person or their custody."""
+        return self.store.query(
+            "SELECT d.* FROM household_decisions d WHERE d.status IN ('pending','agreed') "
+            "AND (d.actor_id=? OR d.partner_id=? OR EXISTS ("
+            "SELECT 1 FROM json_each(d.snapshot_json,'$.households') h, "
+            "json_each(h.value,'$.members') m WHERE json_extract(m.value,'$.agent_id')=? "
+            "OR json_extract(m.value,'$.guardian_id')=?)) ORDER BY d.id",
+            (agent_id, agent_id, agent_id, agent_id))
+
+    def end_for_death(self, tick, row):
+        if tick < row["created_tick"]:
+            raise HouseholdError("death cannot precede the inventoried family proposal")
+        return self._finish(tick, row, "cancelled", "person_died", phase="NIGHT_CLOSE")
+
+    def pending_deceased_participant(self):
+        """Check active requests once, even after many generations of estates."""
+        if self.e.engine_semantics_version < 20:
+            return None
+        return self.store.scalar(
+            "WITH pending AS (SELECT * FROM household_decisions WHERE status IN ('pending','agreed')), "
+            "people AS (SELECT actor_id AS person FROM pending UNION ALL SELECT partner_id FROM pending "
+            "UNION ALL SELECT json_extract(m.value,'$.agent_id') FROM pending d, "
+            "json_each(d.snapshot_json,'$.households') h,json_each(h.value,'$.members') m "
+            "UNION ALL SELECT json_extract(m.value,'$.guardian_id') FROM pending d, "
+            "json_each(d.snapshot_json,'$.households') h,json_each(h.value,'$.members') m) "
+            "SELECT c.deceased_agent_id FROM people p JOIN estate_cases c ON c.deceased_agent_id=p.person LIMIT 1")
+
+    def invalidate_for_population_movement(self, tick, adult_ids, movement_id):
+        """End stale local agreements without ending the underlying kinship."""
+        if self.e.engine_semantics_version < 21:
+            raise HouseholdError("population movement requires semantics 21")
+        pending = {}
+        for adult in adult_ids:
+            pending.update({row["id"]: row for row in self.pending_interests(adult)})
+        for identity in sorted(pending):
+            self._finish(tick, pending[identity], "cancelled",
+                         f"population_movement:{movement_id}", phase="NIGHT_CLOSE")
 
     def reconcile(self, tick, *, phase="NIGHT_CLOSE"):
         """Close obsolete agreements without inferring fresh consent."""

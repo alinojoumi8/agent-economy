@@ -1,5 +1,224 @@
 # Research city implementation log
 
+Latest status: [environment recovery after cleanup](2026-09-11-environment-recovery.md)
+records the interrupted validation, restored Ubuntu/Python tools and preserved
+day-11,998 native world. The original native and Windows candidate receipts are
+failed; deleted evidence cannot support current release admission. Recovery
+continues under the original remaining allowances. W5 and W6–W9 remain open.
+
+Current validation status: the [hosted admission record](2026-09-10-population-hosted-admission.md)
+closes the four-environment local Python matrix and the eight Docker integration
+checks. The [native hiring trial](2026-09-10-native-employment-diagnosis.md)
+has passed its controller rehearsal and started a separate 14,600-day campaign
+with existing recruitment enabled. Bounded observations find all three firms
+bankrupt by day 2,101: two have no goods-sales income, while the third relies on
+borrowing to fund operating losses. The diagnosis records exact cash flows and
+a follow-up specification; the live trial remains fixed. A separate verified
+180-day pilot reproduces the early failures and tests existing shopping/recovery
+policies. The recovery bundle covers input costs and paid wages without loans
+over that short horizon; its reusable profile and limitations are saved in the
+diagnosis. Full native acceptance, recorded replay,
+comparison/export and W5 remain open. W6–W9 retain their existing order, with
+goods and equity research equally prioritized. Older progress entries below
+describe the state when those particular checks ran.
+
+Latest W5 project-gate follow-up: [validation results and capacity](2026-09-10-population-project-gates.md)
+records a passing Node 22 build, dependency audits, 264 dashboard tests and 121
+critical browser checks. All 22 policy-origin tests pass on Windows Python 3.11
+and 3.12 after a prospective fixture budget correction; the corrected
+CI/documentation selection passes 26 checks on each version. The earlier
+128 MiB study stop and both 30-minute full-shard stops remain retained.
+CI now defaults to 16 shards; full Python/platform coverage, remaining
+integrations, native acceptance and W5 remain open. Schema 25, maximum
+Semantics 20 and unregistered migration 26 remain. The
+[W6 education draft](2026-09-10-education-integration.md) is saved for later
+implementation; W6–W9 and equal goods/equity research coverage remain in scope.
+
+Previous W5 migration follow-up: [additive upgrades and historical replay](2026-09-10-population-migration-admission.md)
+fixes the reproduced comparison of older runs with new empty population tables.
+All 14 migration cases pass through the real runner, including rollback,
+idempotent reopen, retained stored rules, exact old/current replay and validated
+v7/v8 exports. The complete seven-suite export CI selection passes 114 cases in
+510.97 seconds; compatibility passes 129 in 25.26 seconds.
+The original source inventory, named mixed/profile matrices and bounded migration
+matrix are complete. Full current local/platform gates are the next work.
+Compilation, pinned datasets, installed dependencies, all 264 dashboard Node
+tests, TypeScript and notices also pass; full Python shards, dependency audits,
+production build and the remaining platform/integration gates are still open.
+Native acceptance, W5 and W6–W9 remain open; schema 25, maximum Semantics 20
+and unregistered migration 26 remain. Original campaign evidence and allowances
+stay unchanged.
+
+Previous W5 admission follow-up: [mixed scenarios and initialization profiles](2026-09-10-population-mixed-admission.md)
+closes the named core mixed-scenario and four-case profile matrices locally.
+The longer household, lifecycle, finance and construction workflows pass 31
+checks; World/scenario/rollback checks pass 77; legacy fixture compatibility
+passes eight. The complete eight-suite startup/phase-recovery CI selection passes
+73 in 586.70 seconds, including the four new profile cases.
+Historical fixtures retain their existing pre-15 restriction; no production
+mechanics change. The original 150-source-scope inventory remains complete.
+Next are migration/version admission and full current local/platform gates.
+Native acceptance, W5 and W6–W9 remain open. Public schema 25, maximum
+Semantics 20 and unregistered migration 26 remain unchanged.
+
+Previous W5 civic follow-up: [civic participation and arrival contacts](2026-09-10-population-civic-boundaries.md)
+adds draft rollback for direct elections, political nightly settlement and tier
+changes, current/day-specific action guidance, and resident first-arrival contacts.
+All 150 original source candidates now have current review dispositions; three
+earlier regional file-bound reviews were also revalidated. Nine new cases pass,
+including an actual three-day departure/arrival workflow, phase restart, exact
+replay and independently validated v8 exports. The complete local civic/startup
+CI selection passes 69 cases in 532.07 seconds; five compatibility
+suites pass 93 in 299.83 seconds. Full mixed/profile admission,
+platform CI, native acceptance and W6–W9 remain open. Public schema 25 and
+maximum Semantics 20 remain, with migration 26 unregistered.
+
+Previous W5 legal follow-up: [local adjudication and continuing legal rights](2026-09-10-population-adjudication.md)
+validates direct decision residence and independently audits the authority-event
+boundary. Six focused cases pass, including once-only retry, same-day departure,
+return without office restoration and payment against an outside respondent.
+Thirteen original scopes are dispositioned: 119 reviewed and 31 remaining.
+The legal/estate selection passes 133 cases in 388.77 seconds;
+population/legacy replay passes 27 in 122.15 seconds.
+Full mixed admission, expanded CI, native acceptance and W6–W9 remain open.
+Original native artifacts and cumulative resource allowances remain preserved.
+
+Previous W5 service follow-up: [atomic compute, fiscal and information settlement](2026-09-10-population-institutional-settlement.md)
+corrects five partial-update failures, preserves existing paid-plan return rules
+and dispositions eight more original scopes: 106 reviewed and 44 remaining.
+Six focused cases pass. The service/compatibility selection passes 158 cases in
+91.32 seconds and world/legacy replay passes 27 in 123.68 seconds, including the
+nine-day civic workflow, exact comparison and validated v8 exports. The broader
+selections retain 688.5 MB, and the replay batch ends with 338.1 GB free. Full W5
+admission, CI, native acceptance and later workstreams remain open; original native
+artifacts and cumulative allowances stay preserved.
+
+Previous W5 lifecycle follow-up: [atomic nightly settlement and continuing inheritance](2026-09-10-population-nightly-settlement.md)
+corrects direct draft batch rollback after later residence or custody failures.
+Retry creates one child and charges one premium; outside heirs retain money in
+each currency and their original identity. Eight more original scopes are
+dispositioned: 98 reviewed and 52 remaining. The behavior/compatibility selection
+passes 51 cases in 47.86 seconds and replay/randomness passes 37 in 364.10 seconds,
+retaining 482.2 MB across those two selections. The replay batch ends with 338.8 GB
+free and the 40 GiB reserve intact. Full W5 admission, expanded CI, native
+acceptance and later workstreams remain open with the original budgets preserved.
+
+Previous W5 household follow-up: [residence, custody and delivered care](2026-09-10-population-household-care.md)
+corrects four reproduced entry-point failures and adds aggregate custody/residence
+rollback. Seventeen focused cases pass in 84.94 seconds, retaining 69.7 MB. A
+seven-day city workflow verifies birth, departure, outside guardian death,
+successor care and return with three restarts, exact replay and v8 exports.
+It records 360 care minutes, 1,748 IVC cents in food purchases and one unmet food
+unit. Eleven additional original scopes are reviewed: 90 reviewed and 60 remaining.
+The expanded 11-suite lifecycle selection passes 183 cases in 915.21 seconds;
+six compatibility suites pass 104 in 377.24 seconds. Sources stay fixed, and the
+CI batch ends with 339.6 GB free. Full W5 admission, CI, native acceptance and
+later workstreams remain open with the original native budgets unchanged.
+
+Previous W5 merger follow-up: [current company control and startup phase recovery](2026-09-10-population-merger-and-phase-recovery.md)
+passes 18 focused cases in 96.81 seconds, retaining 112.1 MB. An eight-day city
+workflow closes a 55,000 NSD-cent merger through supplied actions, pays the outside
+owner, preserves wallets on return, restarts, replays exactly and validates v8
+exports. It also reproduced and corrected missing startup permissions after a
+MORNING restart. The dedicated six-suite CI selection passes 60 cases in 409.93
+seconds; four compatibility suites pass 115 in 104.23 seconds. Sources remain
+fixed, and 343.3 GB remains free after the CI batch. The original inventory is
+79 reviewed scopes and 71 remaining. Full admission, native acceptance, complete
+CI and later workstreams remain open; the original native budgets are unchanged.
+
+Previous W5 shopping follow-up: [resident shopper guidance and household demand](2026-09-10-population-shopping-cohort.md)
+passes 13 focused cases in 190.39 seconds, retaining 134.3 MB. Two seven-day city
+workflows distinguish real food shortage from seven actual purchases totaling
+4,660 IVC cents, with source/replay restarts and validated v8 exports. The original
+inventory is 78 reviewed scopes and 72 remaining. The exact expanded 17-suite
+population/Commons selection passes 214 cases in 1,076.09 seconds and retains
+1.26 GB; the six-suite compatibility selection passes 170 in 265.77 seconds and
+retains 797.8 MB. Source hashes/mtimes remain fixed and 345.1 GB remains free after
+the larger batch. W5 admission, full CI, native acceptance and W6–W9 remain open.
+
+Previous W5 runtime follow-up: [decision guidance and city return controls](2026-09-10-population-decision-guidance.md)
+passes 11 focused cases in 156.05 seconds, retaining 97.5 MB. Two seven-day city
+workflows cover participant/external departure and return, phase restart, exact
+replay, v8 export and preserved wallets. The original inventory now has 71 reviewed
+scopes and 79 remaining. A separate copy-only native-verifier recovery passes
+SQLite integrity and contains 7,810 completed days; the original replay allowance
+has at most 2,435.437 seconds left. Development can continue with the free-space
+reserve intact. Full admission, native verification and W5–W9 remain open.
+The exact 16-suite local CI selection passes 201 cases in 769.16 seconds;
+123 legal/wage/civic/runtime compatibility cases pass in 419.55 seconds. Both
+finish with unchanged source hashes/mtimes and retain the 40 GiB reserve.
+
+Latest W5 operator follow-up: [shared hiring capacity and current control](2026-09-09-population-recovery-authority.md)
+corrects five reproduced reservation/history failures and adds operator
+preflight. An eight-day World successor hire passes in 47.63 seconds with
+restart/exact replay/v8 export, retaining 25.9 MB. The owner keeps 999 shares
+and returns without automatic control restoration; the worker accrues 50,000
+NSD cents. The consolidated original inventory has 28 reviewed scopes matching
+current source and 122 remaining. The expanded local CI selection passes 166
+tests in 630.47 seconds, retains 1.02 GB and leaves 104.6 GB free, with source
+hashes and modification times unchanged. A separate birth/SQL probe confirms
+the existing one-active-primary-guardian constraint. Full admission and W5–W9
+remain open.
+
+Latest W5 workforce follow-up: [local recovery hiring and event provenance](2026-09-09-population-workforce-recovery.md)
+corrects outside-candidate allocation and hiring context. The 34-day World
+workflow hires a resident, settles 250,000 NSD cents in earned wage claims on the actual contractual
+payday, preserves the returning person's accounts, restarts, replays exactly
+and exports v8. The 24-case gate and four added reference-type cases pass;
+legacy/service and reader batches pass 152 and 22 cases. The preserved earlier
+pair now validates with unchanged hashes. The expanded local CI selection passes
+153 cases in 574.50 seconds, retains 937.2 MB and leaves 106.1 GB free, with
+source hashes and modification times unchanged. Full admission and W5–W9 remain open.
+
+Latest W5 construction follow-up: [staff departures, retained projects and historical decision roles](2026-09-09-population-construction-and-role-replay.md)
+corrects four reproduced residence/history gaps and a dated-role replay check.
+A nine-day World workflow preserves title and escrow outside, appoints an
+existing local clerk, completes paid construction after the owner returns, and
+replays/exports exactly. All 11 focused cases pass; service and reader batches
+pass 94 and 55 cases. The expanded local CI selection passes 111 cases in
+410.77 seconds, retains 631.5 MB and leaves 109.0 GB free. Rechecking the original
+failed pair changes only its validation verdict, with source hashes unchanged.
+A native-source role spot check confirms the same defect; full native and W5–W9
+acceptance remain open.
+
+Latest W5 mixed lifecycle follow-up: [guardian loss, adulthood and regional settlement](2026-09-09-population-lifecycle-and-regional-settlement.md)
+passes two declared 39-day World cohorts with independent departure/return,
+stale assent cancellation, inherited shares and accepted adult price setting.
+Both restart, replay exactly and export v8. The dedicated run passed in 237.70
+seconds and retained 187.9 MB; regional compatibility passed 85 cases in 54.18
+seconds and retained 305.0 MB. Three regional callers and three inventory
+candidates are dispositioned; no engine change was required. The new CI job's
+exact four-suite target list passed locally: 87 cases in 290.33 seconds,
+retaining 492.8 MB with source hashes/mtimes unchanged. These counts overlap.
+Full admission, native acceptance and W5–W9 remain open.
+
+Latest W5 service follow-up: [central-bank support and market admission](2026-09-09-population-bank-support-and-markets.md)
+now validate official residence before bank decisions and liquidity effects.
+Five reproduced failures are corrected. Six dedicated cases pass, including a
+five-day local rescue/departure/return source/restart/replay/export workflow;
+the preceding compatibility batch passed 12 cases. The expanded local integration
+job passed 161 tests in 352.89 seconds and retained 800.6 MB. The market caller inventory
+now distinguishes personal actors, estate custody, cancellation settlement and
+isolated endowed benchmarks. Full population admission and the original
+native/W5–W9 requirements remain open.
+
+Latest W5 finance follow-up: [credit and older VC entry points](2026-09-09-population-finance-entrypoints.md)
+now have combined 15-day World source/restart/replay/export evidence. Actual
+repayments continue during departure and after return; an expired personal
+application is rejected, while the company receives resident-led credit and VC
+capital and the outside founder retains shares. The dedicated case passed in
+72.47 seconds and used 40.9 MB. The expanded local integration job passed 149
+tests in 319.91 seconds and retained 737.0 MB. Full inventory, admission, native acceptance,
+full CI and W6–W9 remain open.
+
+Latest W5 follow-up: [startup authority and rumor delivery](2026-09-09-population-startups-and-information.md)
+now enforce local participation after a real departure. A returning person's
+retained investment closes through a recorded agent decision, and both rumor
+audiences exclude outside people until return. The six-day source/restart/
+replay/export case passes; broader gates pass **148 tests in 262.21 seconds**
+and **191 tests in 155.95 seconds**. Full inventory/admission, native acceptance,
+full CI and W6–W9 remain open. Both price-research domains retain equal priority.
+
 Started 2026-09-06 after explicit authorization to implement recommendations
 1–5 in order. The [roadmap](2026-09-06-research-city-roadmap.md) and
 [specifications](2026-09-06-research-city-specs.md) define the full scope.
@@ -9,7 +228,7 @@ Started 2026-09-06 after explicit authorization to implement recommendations
 | 1. Research integrity and shared historical context | W0–W2 | Core fixes, committed-day and opt-in phase supervised resume, working evidence portability, CLI/operator controls and Semantics 16 daily keyed streams implemented |
 | 2. Price Discovery Lab, equal goods/equity coverage | W3 and lab portion of W4 | Benchmarks, G2/F2 studies, historical inspector, fresh/saved-world scripted CLI/operator workflows and private evidence implemented; replicated fresh/saved-world policy CLI/operator execution, original-budget day/phase recovery, independent verification and private final/paused v3 bundles implemented; separately authorized real-provider validation pending |
 | 3. Unified interactive research city | City portion of W4 | Shared Atlas/Diorama/recorded-day/List selection, playback, transcripts, price navigation, camera/follow, historical household/bank inspectors, breadcrumbs, operator bookmarks and desktop layout implemented; integrated real-campaign workflow acceptance remains; richer household/institution fields depend on W5–W8 |
-| 4. Persistent society and deeper economics | W5–W8 | W5 person/birth/membership/custody/child-demand/census foundation implemented under Semantics 15; remaining W5 and W6–W8 pending |
+| 4. Persistent society and deeper economics | W5–W8 | Household consent, care/time, estates/succession and financial inspection developed through unpublished Semantics 20; native campaign stopped at its original four-hour limit on day 11,356, with five native adults and passing terminal audits; full-prefix recorded verification is interrupted without a terminal result, with its source and frozen environments preserved. Historical reader, bounded replay/export and dependency patches are integrated with 213 combined tests passed; full CI, the 40-year horizon and remaining W5–W8 work remain open |
 | 5. Validation and scale evidence | W9 | Pending |
 
 Implementation starts from `534323ea458cd410e246b2358e36c42680e9928f` on the
@@ -17,9 +236,80 @@ existing feature branch. The review/plan documentation was already uncommitted
 and is preserved. This log records actual implementation and executed checks;
 pending packages are not claims of delivered functionality.
 
+Latest W5 population work: [resident economic measurements](2026-09-09-open-population-boundary.md#resident-economic-measurements)
+now distinguish local employment/sentiment, insured residents and citizen cash
+from known living outside owners. Empty local rates are unavailable, retained
+claims are unchanged, and historical cash remains currency-specific. Metric
+definitions follow each run's engine semantics; studies cannot relabel the new
+resident unemployment contract as the older all-living-worker contract.
+
+The population integration gate passed **472 tests in 562.01 seconds**, including 19 dedicated
+metric cases, all draft population suites, historical household cash, legacy
+replay and research export/study checks. A declared six-day departure/return
+World survives a MORNING restart and exact recorded replay with source bytes
+and mtime unchanged and $0 provider cost. Snapshot retries preserve row IDs;
+failure rolls the entire snapshot back. The gate used 2,309,380,761
+bytes and left 114.86 GiB free, above the 40 GiB floor.
+
+The subsequent [registry compatibility correction](2026-09-09-open-population-boundary.md#saved-registry-compatibility)
+passed **96 tests in 169.92 seconds**. Semantics 1–20 keep the v2
+observation/catalog label, while draft Semantics 21 uses v3. A preserved-v2-reader
+fixture reproduced two measurement exclusions before the fix and now verifies
+both attempts with unchanged report/database bytes and mtimes. The audit
+records SQLite shared-memory mtime changes separately. The gate used
+949,745,134 bytes and left 113.27 GiB
+free. These checks overlap the preceding suite; earlier receipts remain intact.
+
+The preceding movement-command/UI slice passed 635 Python tests, 261 dashboard
+unit tests, type checking, two Chromium tests and the production build. That
+UI is unchanged in this metrics slice; those earlier checks are preserved.
+
+Historical resident/outside projections and exact-day optional-rate UI handling
+are now implemented and checked. The [observer contract](2026-09-09-open-population-boundary.md#historical-population-projections)
+records **160 combined Python tests**, **one additional currency case**, **264
+dashboard unit tests**, type checking, **three Chromium checks** and the rebuilt
+production bundle. A declared six-day source/replay case preserves every past
+population view and the closed source's bytes/mtime. Outside owners remain
+inspectable without local map marks or a mixed-currency cash total. Receipts
+and the independent count audit use `tmp/estate-finality-population-projections-*`.
+
+Remaining work includes the complete runtime/authority/commitment inventory,
+broader observation and economic classification, and the complete
+scenario/restart/replay/export matrix. The v8 contract below completes population
+table classification for the current draft. Schema 25 and maximum supported
+Semantics 20 remain unchanged. The native source and frozen environments remain
+preserved; no terminal full-prefix verification result exists. Full CI, W5
+native acceptance and W6–W9 remain pending.
+
 The implementation now has its own branch, `codex/research-city-price-lab`,
 based on that same starting commit. The original review branch and its open
 PR #78 are preserved; its four prerequisite commits are still ahead of main.
+
+Latest research export work: [the v8 population contract](2026-09-09-open-population-boundary.md#population-research-exports)
+now includes all seven draft journals. **206 combined tests passed in 519.63 seconds**;
+the preserved six-day source also exports with unchanged bytes/mtime and
+independently reproduced population counts. A dedicated four-cell CI job
+is defined; only local Windows/Python 3.11 was run here. The participation
+inventory reproduced outside Commons posting/feed effects; the correction
+below addresses those effects. Full CI and W5-W9 remain open.
+
+The final v8 definition guard also passed **40 tests in 336.73 seconds**.
+It rejects altered classifications or privacy rules under the same v8 label;
+the earlier 206-test receipt retains its own tested source. Details and the
+preserved-bundle revalidation are in the linked population export contract.
+
+Latest Commons work: [ordered social input replay](2026-09-09-commons-replay-inputs.md)
+now covers all ten Commons operations and interleaved arrival/manual/external
+control inputs. A six-day source and fresh replay both restart after NIGHT_CLOSE
+and preserve final-day inputs, exact event order, read effects and validated
+Parquet exports. The dedicated suite passed **16 cases in 116.21 seconds**;
+broader gates passed **175 tests in 289.52 seconds** and **120 tests in 206.80
+seconds**. Counts overlap. These extend the earlier 122-test local participation
+and outside-observation correction. Failed draft probes remain preserved.
+Source bytes/mtimes remain fixed, ledgers reconcile and provider cost is $0.
+Only local Windows/Python 3.11 was executed. The wider participation/scenario
+inventory, public version admission, full CI, native W5 acceptance and W6–W9
+remain open; goods and equity research retain equal priority.
 
 ## Foundation implementation
 
@@ -1605,3 +1895,1626 @@ interest are explicit research assumptions. Full disposition of illiquid rights,
 late receipts, negative balances/shared obligations, minor asset custody and
 business control still requires the next estate/succession slice. W5 cohort and
 multi-decade evidence and W6–W9 remain open; both price domains retain equal priority.
+
+## W5 estate-case implementation in progress — 2026-09-07
+
+The published cash checkpoint `ca6c1cf6e98356994e6bba1277fc9d03b2fa223d`
+passed required CI `34169669981` and the complete eight-shard Ubuntu/Python-3.12
+run `34169684709`. The current Semantics-20 working tree remains unpublished.
+Its full scope and remaining work are recorded in
+[estate assets and succession](2026-09-07-estate-assets-and-succession.md).
+
+Business stewardship reached real action authority, production, agent context
+and selected-tick construction attribution. The shared-engine regression passed
+**130 tests in 97.76 s**, `tmp/succession-engine-regression.log`, short base
+`C:/Users/matri/.codex/tmp/ae-89008b74`. Dashboard tests passed **257**; type,
+license and production-build checks passed before estate-case integration.
+
+The new estate-case implementation records family beneficiaries, opening assets,
+creditor terms, actual cash distributions and later recoveries. Its ledger hook
+keeps the original payment and all consequent estate distributions atomic.
+Unpaid wage claims stay under a recorded nominee; later cash follows the estate
+policy. Bank recoveries reverse the recorded loss/equity entries and cannot
+collect principal twice. The Semantics-19 implementation and frozen schema/hash
+contracts remain intact.
+
+The integrated focused run passed **45 tests in 69.33 s** after fixing two
+fixtures to respect the one-child-per-parent/day identity and immutable census.
+It covered multiple heirs, whole shares, cash deficits, currencies, partial
+contract claims, bank recoveries, two generations of late receipts, failed
+distribution rollback, export, additive migration rollback, restart and exact
+recorded replay without source changes. An earlier FX-order actor-column
+integration error was corrected before this successful run.
+
+```powershell
+python -m pytest -q tests/test_semantics20_estate_cases.py tests/test_semantics20_succession.py tests/test_semantics8_foundations.py --basetemp C:/Users/matri/.codex/tmp/ae-04aed3a4
+```
+
+Log: `tmp/estate-case-replay-tests.log`. Free space before the run was 98.52 GiB.
+The subsequent combined regression ran the two Semantics-20 suites plus
+Semantics-19 cash, Semantics-18 daily time, ledger and documentation checks:
+**113 passed, one fixture failure in 207.66 s**. The failed refund fixture
+assumed an optional `households` config section existed. Its first targeted
+rerun then exposed an invalid cancellation reason in the fixture. After using
+the supported command and optional-config default, the actual construction
+refund test **passed in 1.27 s**, preserving contributor identity and routing
+the returned cash through the estate. Production code was unchanged between
+the combined run and that successful rerun.
+
+```powershell
+python -m pytest -q tests/test_semantics20_estate_cases.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_ledger.py tests/test_documentation.py --basetemp C:/Users/matri/.codex/tmp/ae-81cb838a
+python -u -m pytest -q tests/test_semantics20_estate_cases.py::test_real_construction_refund_keeps_the_contributor_and_routes_the_deceased_wallet --basetemp C:/Users/matri/.codex/tmp/ae-956324e6
+```
+
+Logs: `tmp/estate-case-engine-regression.log` and
+`tmp/estate-case-construction-refund.log`. The successful rerun began with
+97.30 GiB free. Full estate/project title and legal-award disposition, nominal
+wage-claim wealth reporting, W5 cohort/multi-decade evidence and W6–W9 remain
+open. Do not publish or freeze Semantics 20 as a completed estate implementation
+on the strength of these cash and business checks.
+
+## W5 personal project and home succession — 2026-09-07
+
+The unpublished Semantics-20 implementation now preserves exact inherited
+project shares, current management/custody and original construction/funding
+identities. Heirs can finish a real project and use the completed home; multiple
+inherited projects coexist with an heir's original project. Minor owners retain
+title while guardians manage it. Custody changes revoke a living former
+guardian's authority immediately. Unclaimed unfinished projects refund actual
+contributors, while completed unclaimed homes remain explicit system property.
+
+Selected-tick city and People projections expose public beneficial fractions,
+current managers and original owners without assigning earlier construction
+milestones to a later heir. Withheld inherited homes are also removed from
+places, presence, exact agent coordinates and residence projects across the
+world-map and legacy map APIs, including requests for individual map layers.
+The desktop/mobile UI keeps these ownership facts readable and can navigate
+to an heir without losing the selected tick.
+
+The integrated regression passed **73 tests in 135.78 s**:
+
+```powershell
+python -u -m pytest -q tests/test_semantics20_project_rights.py tests/test_semantics20_estate_cases.py tests/test_semantics20_succession.py tests/test_semantics13_construction.py tests/test_semantics8_foundations.py --maxfail=3 --basetemp C:/Users/matri/.codex/tmp/ae-765d4140
+```
+
+Log: `tmp/project-rights-replay-regression.log`; initial free space: 94.39 GiB.
+Coverage includes exact fractions, guardian loss/adulthood, current authority,
+same-tick inheritance/migration, late refunds, whole-death rollback, API privacy,
+export, additive migration rollback, restart and recorded replay with an
+unchanged source database. The replay begins from a declared funded-project
+genesis fixture; it does not claim emergent construction. The first property
+projection run passed 12 cases and stopped one migration fixture at the existing
+unemployed-citizen rule; its eligible-citizen replacement passes above.
+
+Dashboard tests passed **258** and type/license checks passed. The production
+bundle was regenerated successfully, retaining the existing large-chunk warning.
+The shared-ownership/guardian browser check passed on desktop and mobile; its
+synthetic artifacts are in `tmp/project-rights-browser-739ad061/`. The development
+hash-contract-v7 now covers eleven new authoritative tables and has inventory
+hash `ddb4b2937c8470fde3ac1b2774e4b54002b02432150944a64f5509d891731045`.
+
+The [full estate plan](2026-09-07-estate-assets-and-succession.md) remains open.
+Next: existing and later legal awards, contested/shared claims and civic roles,
+then nominee wage-interest wealth reporting. W5 cohort/multi-decade evidence and
+W6–W9 also remain. Semantics 20 is still unpublished and extensible; these local
+checks do not replace the full gate or complete the goal.
+
+The follow-up documentation and existing observer regression passed **40 tests
+in 3.63 s** (`tests/test_documentation.py`,
+`tests/test_world_os_workspace_projections.py`,
+`tests/test_living_agents_projection.py`). Log:
+`tmp/project-rights-observer-regression-final.log`; fresh base
+`C:/Users/matri/.codex/tmp/ae-551381e8`, initial free space 94.09 GiB.
+An earlier command used a nonexistent Living Agents test filename and collected
+no tests; the corrected command above completed successfully.
+
+## W5 legal awards, estate disputes and selected-day cash — 2026-09-07
+
+The unpublished Semantics-20 estate work now records decisions/settlements,
+credits prior contractual payments, replaces adjudicated obligations and admits
+later estate claims prospectively. Known disputes hold actual cash until their
+recorded disposition releases it through the estate waterfall. Heirs do not
+become personal debtors. Pending claims cancelled by contract expiry or
+termination no longer collect future receipts.
+
+The new financial projection shows earlier credits, actual award collections,
+unpaid amounts and held/released reserves at the selected tick. It withholds new
+financial details for private personal parties. The Politics & Law readout fits
+desktop and mobile without hiding balances behind horizontal scrolling.
+
+The integrated local regression passed **162 tests in 330.66 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_legal_projection.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics13_construction.py tests/test_semantics8_foundations.py tests/test_v2_legal.py --maxfail=3 --basetemp C:/Users/matri/.codex/tmp/ae-7ef29381
+```
+
+Log: `tmp/estate-legal-integrated-regression.log`; initial free space: 93.81 GiB.
+The full-world replay fixture initially failed twice at the missing court
+decision assertion. Making the regulator core and enabling institutional
+decision routing in the declared genesis fixture resolved it. Subsequent
+source-preserving replay, restart and API/history checks pass. This fixture
+does not establish emergent judicial behavior or calibration.
+
+Dashboard tests passed **259**; type/license checks passed. Desktop and mobile
+browser validation passed again after visual inspection and the responsive
+readout adjustment. Artifacts: `tmp/legal-relief-browser-f82e1b19/`; logs:
+`tmp/estate-legal-dashboard-tests.log`, `tmp/estate-legal-browser-responsive.log`.
+The development v7 manifest now includes eighteen succession tables with
+inventory hash `af6897708a24a268c33165da78dba84a8df5e67859c1f2520a2a1812da58e4f9`.
+Frozen v024/v6 and earlier migration/manifests remain unchanged.
+The production dashboard bundle was regenerated successfully after the backend
+run. Log: `tmp/estate-legal-dashboard-build.log`; the existing large-chunk warning
+remains. The original storage-cleanup plan was preserved and no additional
+cleanup, paid provider use, publication or merge was performed.
+
+Next is the wage-judgment integration: a generic damages transfer currently
+does not reduce an earned-wage receivable. Preserve one collectible claim,
+prior payments, earnings cutoff, tax and nominee-estate routing before claiming
+this version is complete. Shared participants/civic authority, firm liability
+disposition, short/negative positions, estate-interest reporting and succession
+stress evidence remain in the [active estate plan](2026-09-07-estate-assets-and-succession.md).
+Semantics 20 remains unpublished and extensible. W5 cohort/multi-decade evidence,
+W6–W9 and equal goods/equity research coverage also remain open.
+
+The final documentation and existing observer regression passed **40 tests in
+3.27 s**. Log: `tmp/estate-legal-docs-and-observers.log`; fresh base:
+`C:/Users/matri/.codex/tmp/ae-69f4b510`; initial free space: 93.42 GiB.
+
+## W5 wage judgments, tax and estate collections — 2026-09-08
+
+The unpublished estate implementation now links wage decisions and accepted
+settlements to a fixed interval of recorded work. Prior actual pay and prior
+bankruptcy discharge receive distinct credits; the replaced wage balance cannot
+be collected again. Later work remains separate. Compensation collections
+reconcile gross pay, tax and net nominee-estate receipts, and firm bankruptcy
+records remaining losses without resurrecting original wage debt. The legal
+dashboard exposes these amounts at the selected day. Research labor cash income
+counts only actual new compensation collections; neither novation nor inheritance
+creates another income entry or goods sale.
+
+The integrated regression completed **178 passing tests and one failed test
+assertion in 380.23 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_wage_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics13_construction.py tests/test_semantics8_foundations.py tests/test_v2_legal.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-5650d6b8
+```
+
+Log: `tmp/wage-awards-full-estate-regression.log`; initial free space 93.28 GiB.
+The rejected-currency assertion wrongly disallowed the intentional rejection
+audit event. Production code remained unchanged; the corrected test proves
+that every other hashed table is unchanged and subsequently exercises actual
+EUR payment without consuming USD cash. The complete wage suite passed
+**17 tests in 45.43 s** with a fresh base:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_wage_awards.py --maxfail=1 --basetemp C:/Users/matri/.codex/tmp/ae-28a5781c
+```
+
+Log: `tmp/wage-awards-final.log`; initial free space 92.85 GiB. These checks include
+partial payment, continued work, successive judgments, wrong/future scopes,
+currency isolation, accepted settlement, full withholding, insolvency, rollback,
+export, death, restart and exact recorded replay with the source file unchanged.
+The world replay's declared arrears were enlarged after its original setup was
+fully paid by ordinary payroll before adjudication. Ordinary goods sales now
+fund a later compensation payment after nightly death; this is a seeded
+mechanics fixture and does not establish emergent bargaining or calibration.
+
+Dashboard unit tests passed **259** after correcting the event badge length;
+type and license checks passed. Desktop/mobile browser validation passed in
+6.4 s, and both financial readouts were visually inspected. Artifacts:
+`tmp/wage-awards-browser-fa9f1d9a/`; logs:
+`tmp/wage-awards-dashboard-tests-final.log`, `tmp/wage-awards-browser.log`,
+`tmp/wage-awards-dashboard-typecheck.log`, `tmp/wage-awards-dashboard-licenses.log`.
+
+The production bundle was regenerated successfully after backend testing.
+Log: `tmp/wage-awards-dashboard-build.log`; the existing large-chunk warning remains.
+
+The development v7 inventory now has twenty-two succession tables and hash
+`944b1ed58bf9c01a04c5aa072cf0fa4d87ddcc6e01ec2a376e85a98c371d0abe`.
+Frozen v024/v6 and older migration/manifests remain unchanged. Next are shared
+participants/civic authority, remaining firm liabilities, negative/short
+positions, nominee-interest reporting and succession stress evidence in the
+[active estate plan](2026-09-07-estate-assets-and-succession.md). Semantics 20
+remains unpublished and extensible. W5 cohort/multi-decade evidence, W6–W9 and
+equal goods/equity research coverage remain open. No additional cleanup,
+paid-provider use, staging, publication or merge was performed.
+
+The follow-up documentation and existing observer regression passed **40 tests
+in 3.37 s** (`tests/test_documentation.py`,
+`tests/test_world_os_workspace_projections.py`,
+`tests/test_living_agents_projection.py`). Log:
+`tmp/wage-awards-docs-and-observers.log`; fresh base
+`C:/Users/matri/.codex/tmp/ae-8eb84049`, initial free space 92.80 GiB.
+
+## W5 shared consent and personal authority — 2026-09-08
+
+Death now inventories and cancels shared household consent when the deceased is
+an affected member or guardian, including an agreed move awaiting settlement.
+Original assents remain evidence. Personal legislative office, agency leadership
+and pending counsel authority end atomically with the estate; institutional
+resources, historical votes/bills and the living client's matter survive.
+Semantics 20 rejects dead actors' authority while retaining earlier semantics.
+
+The unpublished v025 seat constraint allows several former officeholders without
+reassigning their IDs and allows only one active occupant. Source-preserving
+copy migration, injected whole-death rollback, export, restart and exact recorded
+replay are covered. The full-world fixture seeds a shared household and normal
+officials, then runs actual nightly deaths. This establishes mechanics, not
+emergent selection of replacements.
+
+The integrated regression passed **227 tests in 462.85 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_personal_authority.py tests/test_semantics20_wage_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics17_household_decisions.py tests/test_semantics13_construction.py tests/test_semantics8_foundations.py tests/test_v2_legal.py tests/test_v2_information_politics.py tests/test_recorded_replay_golden.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-73ae9099
+```
+
+Log: `tmp/personal-authority-estate-regression.log`; initial free space 103.42 GiB.
+One upstream test-client deprecation warning remains. Earlier fixture failures
+and their corrections are recorded in the
+[active estate plan](2026-09-07-estate-assets-and-succession.md).
+
+Follow-up inspection found that the organization timeline lost a former director
+even on days before the death. The projection now restores the public identity
+from the death inventory for those earlier days. API checks passed for before,
+at and after two directors' deaths, with no private estate fields exposed and no
+canonical mutation from the reads. The follow-up regression passed **54 tests
+in 29.91 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_personal_authority.py tests/test_documentation.py tests/test_world_os_workspace_projections.py tests/test_living_agents_projection.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-8cd9db90
+```
+
+Log: `tmp/personal-authority-history-and-observers.log`; initial free space
+102.35 GiB. The same upstream test-client warning remains.
+
+Vacancy filling, appointment history, remaining city/legal roles, other estate
+liabilities and succession stress remain open. Semantics 20 is still unpublished;
+W5 cohort evidence, W6–W9 and equal goods/equity research coverage remain open.
+
+The free-space check currently reports about 102 GiB, sufficient for bounded
+local validation with the existing 40-GiB floor. No further cleanup was needed.
+
+## W5 city work and permit succession — 2026-09-08
+
+Estate opening now records staff assignments, institutional task bindings,
+pending permit cases/appointments and unused permits. The actual city closing
+processors run inside the death transaction: a deceased applicant's personal
+case ends, while a clerk's institution-owned task can pass to another worker.
+Fees and original case evidence remain intact. Unused permits are revoked;
+consumed permits and the companies they created survive as institutional records.
+Neither clerk authority nor a personal permit is granted to an heir.
+
+Semantics-20 replacement clerks come from eligible existing local adults. No
+candidate means a genuine vacancy and pending work, without creating another
+person or an external cash endowment. Actual later availability can fill the
+vacancy. Original semantics retain their fallback. This deterministic staffing
+rule does not implement public-sector recruitment, consent or compensation.
+The two agency observer surfaces share public director-history reconstruction;
+staff intervals and historical queue totals remain tied to the selected day.
+
+The city suite passed **15 tests in 34.74 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_civic_succession.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-e5ee289e
+```
+
+Log: `tmp/civic-succession-final-focused.log`; initial free space 101.53 GiB.
+It covers actual appointment attendance and subsequent permit decisions,
+simultaneous staff/applicant deaths in both orders, incorporation, fee evidence,
+vacancy/recovery, rejection and whole-death rollback. A three-day full-world
+handoff reopens between days and reproduces exact recorded replay while leaving
+the source database unchanged. The declared genesis labor availability preserves
+the census; fixture failures and corrections are recorded in the
+[active estate plan](2026-09-07-estate-assets-and-succession.md).
+
+The integrated estate/legacy/observer regression passed **293 tests in 543.98 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_civic_succession.py tests/test_semantics20_personal_authority.py tests/test_semantics20_wage_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics17_household_decisions.py tests/test_semantics13_construction.py tests/test_semantics12_civic_city.py tests/test_semantics8_foundations.py tests/test_v2_legal.py tests/test_v2_information_politics.py tests/test_recorded_replay_golden.py tests/test_documentation.py tests/test_world_os_workspace_projections.py tests/test_living_agents_projection.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-ed65a5e4
+```
+
+Log: `tmp/civic-succession-integrated-regression.log`; initial free space
+101.44 GiB. The upstream test-client deprecation warning remains. No UI source,
+schema or hash-inventory change was needed in this city-work increment. These
+focused local results do not replace full CI or complete W5.
+
+The next personal-right checks are negotiating job applications and pending job
+offers at candidate death, plus permit approval after the nominated lawyer dies.
+Nominee reporting also needs a clear distinction between cash, outstanding claims
+and estate creditor priority: the current cash-Gini label does not describe the
+later noncash accounts included by its implementation. Remaining civic/legal
+appointments, other estate liabilities and succession stress remain open.
+Semantics 20 is unpublished and extensible. The later W5 cohort work and W6–W9
+remain in scope, with goods and equities equally primary.
+
+After recording the integrated result, the documentation suite passed **22 tests
+in 0.39 s**. Log: `tmp/civic-succession-documentation.log`; fresh base:
+`C:/Users/matri/.codex/tmp/ae-2c3b6a8f`; initial free space 100.54 GiB.
+Diff hygiene passed. No cleanup, provider spend, staging, publication or merge
+was performed in this increment.
+
+## W5 job negotiations and permit counsel — 2026-09-08
+
+Death now withdraws a candidate's pending/negotiating applications and expires
+their pending job offers while preserving the vacancy and original evidence.
+Surviving company offers continue through a change of operator; actual candidate
+and operator contexts retain the corresponding quote or counteroffer.
+
+Pending permit cases and unused authorizations that depend on deceased nominated
+counsel now close atomically with death. The applicant can use the ordinary
+application process with living counsel and the same name after revocation.
+Original fees and payloads remain intact; active/consumed permits and existing
+company names remain protected. Discretionary approval and normal under-review
+finalization recheck current mechanical eligibility under Semantics 20. An
+incorporated company and its consumed permit survive the former lawyer.
+
+The focused personal-commitment/labor regression passed **33 tests in 34.24 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_personal_commitments.py tests/test_labor_ipo.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-20d76e9b
+```
+
+Log: `tmp/personal-commitments-final-focused.log`; initial free space 99.98 GiB.
+Earlier city checks passed 28 tests in 50.36 s, and expanded replay/legacy checks
+passed 27 tests in 47.02 s. The [active estate plan](2026-09-07-estate-assets-and-succession.md)
+records their logs and scope. Coverage includes real offer acceptance, replacement
+applications, whole-death rollback, rejected dead authority, legacy behavior and
+a three-day world with restart and exact source-preserving replay. The existing
+upstream test-client deprecation warning remains.
+
+The drive was rechecked at 99.81 GiB free, sufficient for the next bounded
+regression with the existing 40-GiB floor. No extra cleanup was performed. The
+next processor audit covers insurance, compute subscriptions and pending loans;
+nominee reporting, other liabilities, succession stress, W5 cohort evidence and
+W6–W9 remain open. Semantics 20 remains unpublished and extensible, with goods
+and equities equally primary. No UI, schema or hash-inventory change was needed
+for this increment.
+
+The integrated regression passed **326 tests in 577.05 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_personal_commitments.py tests/test_labor_ipo.py tests/test_semantics20_civic_succession.py tests/test_semantics20_personal_authority.py tests/test_semantics20_wage_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics17_household_decisions.py tests/test_semantics13_construction.py tests/test_semantics12_civic_city.py tests/test_semantics8_foundations.py tests/test_v2_legal.py tests/test_v2_information_politics.py tests/test_recorded_replay_golden.py tests/test_documentation.py tests/test_world_os_workspace_projections.py tests/test_living_agents_projection.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-f9fdd3c6
+```
+
+Log: `tmp/personal-commitments-integrated-regression.log`; initial free space
+99.56 GiB, with 98.56 GiB remaining after completion. The existing upstream
+test-client deprecation warning remains. This covers all ten current Semantics-20
+modules plus the relevant legacy, labor, replay and observer suites; it is not
+full CI or completion of W5. No source, documentation, staging, commit or build
+mutation occurred during the scientific run.
+
+The active estate plan now records the concrete service-processor tests from
+read-only inspection. Preserve the nightly order: premiums and due loan payments
+precede mortality, while compute activation follows estate closing. Distinguish
+the deceased person's commitments from a surviving firm's obligations and living
+workers' sponsored access. Actual action, rollback and replay coverage remains
+required. No cleanup, paid provider call, staging, publication or merge occurred.
+
+After the result and follow-up scope were documented, the documentation suite
+passed **22 tests in 0.40 s**. Log:
+`tmp/personal-commitments-documentation.log`; fresh base:
+`C:/Users/matri/.codex/tmp/ae-ca34e140`; initial free space 98.55 GiB.
+
+## W5 insurance, compute and credit commitments — 2026-09-08
+
+Actual service actions now have death and succession coverage. Insurance closes
+for the deceased person while a surviving insurer continues paying claims.
+Personal and sponsored compute access ends for the deceased recipient; living
+workers keep company-funded access and the successor can pay for renewal.
+Personal loan applications expire, company applications survive their operator,
+and actual underwriting and later repayment use the proper borrower's account.
+Valid premiums and loan payments made before mortality remain recorded.
+
+Estate reconciliation rejects reactivated services and checks the closed records'
+original holder and terms against opening inventory. Whole-death rollback and
+retry retain the original purchases, applications and ledger evidence. The full
+world scenario reopens between three days and reproduces exact recorded replay
+with an unchanged source database. Its initial services use existing adults and
+cash; it does not establish emergent insurance supply.
+
+The first service run passed 20 tests in 19.06 s. The expanded world/legacy run
+passed **51 tests in 74.19 s**, covering Semantics-11 cognition and the existing
+P1 health/credit behavior. The final focused suite passed **27 tests in 28.10 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_service_commitments.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-8339c64d
+```
+
+Log: `tmp/service-commitments-final-focused.log`; initial free space 98.13 GiB.
+The [active estate plan](2026-09-07-estate-assets-and-succession.md) records the
+earlier logs, test scope and remaining work. One upstream test-client deprecation
+warning remains. No schema, hash-inventory or UI change was needed. Semantics 20
+is still unpublished and extensible; other liabilities, nominee reporting,
+generational stress, the W5 cohort campaign and W6–W9 remain open. Goods and
+equities remain equally primary.
+
+The integrated regression passed **383 tests in 1248.15 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_service_commitments.py tests/test_semantics11_cognition.py tests/test_p1_features.py tests/test_semantics20_personal_commitments.py tests/test_labor_ipo.py tests/test_semantics20_civic_succession.py tests/test_semantics20_personal_authority.py tests/test_semantics20_wage_awards.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_project_rights.py tests/test_semantics20_succession.py tests/test_semantics19_estate_cash.py tests/test_semantics18_daily_time.py tests/test_semantics17_household_decisions.py tests/test_semantics13_construction.py tests/test_semantics12_civic_city.py tests/test_semantics8_foundations.py tests/test_v2_legal.py tests/test_v2_information_politics.py tests/test_recorded_replay_golden.py tests/test_documentation.py tests/test_world_os_workspace_projections.py tests/test_living_agents_projection.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-6fa4d5cd
+```
+
+Log: `tmp/service-commitments-integrated-regression.log`; initial free space
+98.02 GiB, followed by 88.46 GiB at completion. The existing test-client
+deprecation warning remains. This covers all eleven current Semantics-20
+modules and the relevant legacy, health, cognition, labor, replay and observer
+checks; it is not full CI or completion of W5. No source, documentation, build,
+staging or commit mutation occurred during the run.
+
+Read-only inspection established the next cash-deficit case: coordinate negative
+and positive wallets within the same currency before distributing the estate,
+retaining each source balance, receipt, bank reserve movement and creditor
+boundary. The active plan now specifies the -50 checking/+100 savings case,
+late-receipt and multiple-bank variants, rollback and replay. The original spec
+defers short selling and leverage; this work retains that boundary and the
+existing long-only exchange. Nominee reporting and generational evidence remain
+open. No cleanup, provider spend, staging, publication or merge was performed.
+
+After recording the results and next cases, the documentation suite passed
+**22 tests in 0.35 s**. Log: `tmp/service-commitments-documentation.log`; fresh
+base: `C:/Users/matri/.codex/tmp/ae-ac5db12e`; initial free space 88.50 GiB.
+The integrated run's dedicated test directory contained 0.963 GiB of files at
+the post-run measurement; the larger change in drive free space was not
+attributed to a cause. The 40-GiB reserve was retained throughout this increment.
+
+### W5 estate cash offsets — 2026-09-08
+
+A reproduced -50 checking/+100 savings estate previously distributed all 100
+while leaving the deficit. Available cash now clears the same deceased person's
+other negative cash wallets in the same currency before creditors, legal
+reserves and beneficiaries. Each transfer has immutable `estate_cash_offsets`
+evidence, including the previous negative balance and exact ledger transaction.
+Cross-bank reserve legs reconcile, different currencies remain separate, and
+internal offset receipts cannot distribute their already absorbed credit again.
+
+Reconciliation reconstructs the balance boundary before receipt allocation so
+queued credits, direct deficit absorption and later receipts remain consistent.
+It rejects omitted, altered or orphaned evidence and creditor/heir payments that
+skip the offset priority. An injected late failure rolls back both the initiating
+death or credit and all nested distributions. A later payment through a deceased
+beneficiary clears that person's own deficit before the next generation receives
+the residual. The [active estate plan](2026-09-07-estate-assets-and-succession.md)
+records the policy, schema/hash changes and detailed acceptance cases.
+
+The initial defect test failed as expected. Implementation and expanded runs
+each passed 25 tests. The first world/generations run passed 26 and failed one
+fixture assumption about which existing savings wallet supplied the offset.
+After preserving and funding the actual genesis savings wallet, the corrected
+focused suite passed **27 tests in 35.28 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_cash_offsets.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-f97d40ce
+```
+
+Log: `tmp/cash-offsets-corrected-world.log`; initial free space 80.38 GiB, followed
+by 80.29 GiB. This includes three normal world days with reopening, exact recorded
+replay, unchanged source bytes, legacy Semantics-19 behavior, hash and export.
+The upstream test-client warning remains. At that cash-offset checkpoint, the
+unpublished schema-25/hash-v7 inventory contained 23 new authoritative tables;
+its hash was `7eb754f71e6a0a877047d88b117feb4374436bf718234adc8447138570e51014`.
+These focused results do not complete full estate semantics,
+the W5 cohort/multi-decade campaign or W6–W9. Goods and equities remain equally
+primary. No cleanup, paid provider call, unrelated process stop, staging,
+publication or merge occurred.
+
+The broader regression passed **262 tests in 781.79 s**:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_cash_offsets.py tests/test_semantics20_civic_succession.py tests/test_semantics20_estate_cases.py tests/test_semantics20_estate_disputes.py tests/test_semantics20_legal_awards.py tests/test_semantics20_legal_projection.py tests/test_semantics20_personal_authority.py tests/test_semantics20_personal_commitments.py tests/test_semantics20_project_rights.py tests/test_semantics20_service_commitments.py tests/test_semantics20_succession.py tests/test_semantics20_wage_awards.py tests/test_semantics19_estate_cash.py tests/test_semantics8_foundations.py tests/test_recorded_replay_golden.py tests/test_research_export.py tests/test_documentation.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-27c6f144
+```
+
+Log: `tmp/cash-offsets-estates-and-contracts.log`; initial free space 80.27 GiB,
+with 85.91 GiB measured afterward. The dedicated test files totaled 0.613 GiB.
+The upstream test-client warning remains. The batch covered all twelve current
+Semantics-20 modules plus the listed legacy and artifact contracts; it does not
+replace full CI. No source, documentation, build, staging or commit mutation
+occurred while these scientific tests ran.
+
+Read-only inspection during validation established the next asset/creditor
+boundary: estate opening transfers shares and beneficial project interests
+independently of unpaid claims, and a later market sale pays the living heir's
+checking account. The active plan now specifies an actual funded sale with
+100 cents of estate debt and 200 cents of proceeds, followed by partial fills,
+illiquidity, minor/multiple heirs, later claims and atomic/replay evidence. That
+case has not yet been executed. Complete the declared creditor recourse before
+finalizing nominee wealth reporting; the existing exchange's long-only rule and
+the original deferral of shorts/leverage remain intact.
+
+The final existing exchange and documentation suites passed **25 tests in 1.07 s**
+with no warnings:
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_exchange.py tests/test_documentation.py --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-396f5e02
+```
+
+Log: `tmp/cash-offsets-exchange-and-documentation.log`; initial free space
+85.89 GiB. The exchange tests verify non-owner sale rejection, price/time matching
+with partial fills, and no invented price without orders. They do not establish
+the still-planned inherited-sale creditor case.
+
+## 2026-09-08 — estate securities custody, funded sales and restart history
+
+The inherited-sale case above is now implemented under the still-unpublished
+Semantics 20. Its initial funded sale reproduced an unpaid bank loss; the new
+custody path routes actual proceeds through deficits, creditors, reserves and
+residual inheritance. The [active estate specification](2026-09-07-estate-assets-and-succession.md#implemented-estate-securities-custody-and-settlement)
+records the policy, evidence tables, authority rules, acceptance cases and open
+boundaries. Schema 25/hash-v7 now contains 28 new authoritative tables, with
+inventory hash `e8b38704b5797607213566c39070b118ca8c11cfca97e4930e2dd303212f18eb`.
+
+Living beneficiaries and current guardians receive a private `estate_id` sale
+scope; the deceased remains the economic nominee until settlement. Actual fills
+preserve the buyer's cash limit and creditor priority. Partial sales, in-kind
+residuals, a deceased beneficiary's own creditors, foreign settlement currency,
+contract adjudication and zero-cash dismissal have explicit cases. Failed
+settlement rolls back cash, shares, claims and order/trade evidence together.
+Business control uses remaining estate units after sales, preserving founder
+identity and distinguishing representative authority from beneficial assets.
+
+The full-world test exposed a resume defect: city initialization recalculated
+the previous day's occupancy using later business ownership. Semantics 20 now
+preserves that committed day on reopening. Replay provenance now follows
+recorded operating intervals, preserves the pre-decision bankruptcy boundary,
+and requires each decision's model pointer to match its recorded purpose.
+Authority evidence rejects an estate frontier from the future or before its
+own estate. Earlier semantics retain their recorded behavior.
+
+The integrated regression passed **296 tests in 1011.21 s**:
+
+```powershell
+$targets = @(
+  'tests/test_semantics20_cash_offsets.py',
+  'tests/test_semantics20_civic_succession.py',
+  'tests/test_semantics20_estate_cases.py',
+  'tests/test_semantics20_estate_disputes.py',
+  'tests/test_semantics20_estate_securities.py',
+  'tests/test_semantics20_legal_awards.py',
+  'tests/test_semantics20_legal_projection.py',
+  'tests/test_semantics20_personal_authority.py',
+  'tests/test_semantics20_personal_commitments.py',
+  'tests/test_semantics20_project_rights.py',
+  'tests/test_semantics20_service_commitments.py',
+  'tests/test_semantics20_succession.py',
+  'tests/test_semantics20_wage_awards.py',
+  'tests/test_semantics19_estate_cash.py',
+  'tests/test_semantics8_foundations.py',
+  'tests/test_recorded_replay_golden.py',
+  'tests/test_research_export.py',
+  'tests/test_exchange.py',
+  'tests/test_documentation.py',
+  'tests/test_prd_completion.py::test_replay_compares_llm_provenance_by_logical_call_identity',
+  'tests/test_prd_completion.py::test_replay_rejects_same_actor_turn_wrong_llm_purpose',
+  'tests/test_prd_completion.py::test_replay_canonicalizes_communication_model_provenance',
+  'tests/test_prd_completion.py::test_replay_validates_legal_model_reference_owners',
+  'tests/test_prd_completion.py::test_replay_reports_legacy_missing_llm_table_without_crashing'
+)
+.\.venv\Scripts\python.exe -u -m pytest -q @targets --maxfail=3 --basetemp C:/Users/matri/.codex/tmp/ae-a8aaeed8
+```
+
+Log: `tmp/estate-securities-integrated-regression.log`. Free space was 80.04 GiB
+at launch and 78.57 GiB afterward; the batch's artifacts totaled 0.721 GiB.
+The run covered all thirteen then-current Semantics-20 modules and the listed
+legacy, exchange, artifact and provenance checks. Full CI remains separate.
+
+The final authority-frontier and exact-purpose refinements were followed by
+**33 passing tests in 160.42 s**: the now-28-case securities module and five
+existing provenance cases.
+
+```powershell
+.\.venv\Scripts\python.exe -u -m pytest -q tests/test_semantics20_estate_securities.py tests/test_prd_completion.py::test_replay_compares_llm_provenance_by_logical_call_identity tests/test_prd_completion.py::test_replay_rejects_same_actor_turn_wrong_llm_purpose tests/test_prd_completion.py::test_replay_canonicalizes_communication_model_provenance tests/test_prd_completion.py::test_replay_validates_legal_model_reference_owners tests/test_prd_completion.py::test_replay_reports_legacy_missing_llm_table_without_crashing --maxfail=2 --basetemp C:/Users/matri/.codex/tmp/ae-e27072ef
+```
+
+Log: `tmp/estate-securities-final-authority-history.log`; initial free space
+78.48 GiB. A read-only compatibility audit of completed batch artifacts found
+no violations of those two refined predicates among 1,580 recorded decision
+references and 20 security authorizations. Five operator-workspace or
+invalid-JSON fixtures did not support that audit; their separate tests remain
+the relevant evidence. Both pytest runs emitted the existing Starlette/httpx
+deprecation warning. No source, documentation, build, staging or commit
+mutation occurred while scientific tests ran.
+
+The active plan preserves the remaining W5 acceptance scope. Next: property
+creditor custody or recourse, original contributor refunds, administration
+without an eligible representative, late-claim finality, and per-currency
+nominee/beneficial wealth without duplicated claims or invented valuations.
+Follow with selected-tick estate presentation, agent-policy experiments, cohort
+transitions and an actual multi-decade campaign, then W6–W9. These prescribed
+three-tick sale/replay cases do not establish autonomous market behavior or
+empirical price validity. Goods and equities retain equal priority.
+
+The changes remain unpublished on `codex/research-city-price-lab` at base HEAD
+`ca6c1cf6e98356994e6bba1277fc9d03b2fa223d`. No cleanup, paid provider calls,
+unrelated process stops, staging, commits, publication or merges occurred in
+this increment. The approved storage-cleanup plan remains separate and intact.
+
+## 2026-09-08 — project creditor custody and converging inheritance
+
+The [active estate specification](2026-09-07-estate-assets-and-succession.md#implemented-project-creditor-custody-and-late-inheritance)
+now records implemented property custody, in-kind release, estate administration
+through existing project actions, exact late inheritance and cancellation
+evidence. A completed home no longer becomes unencumbered inheritance while
+its escrow-currency creditors remain unpaid. Beneficiaries retain contingent
+residual rights and household use; current guardians or adult representatives
+can manage the project. An actual payment can release title. A deceased
+beneficiary's own creditors then apply before descendants inherit it.
+
+Original contribution accounts still receive their own refunds. The estate
+cannot spend another funder's return. Actual cancellation records extinguished
+project rights without inventing a sale price. Private residual beneficiaries
+and guardians withhold the home across city layers and person-residence views.
+Same-day estate openings and later property receipts have distinct evidence.
+Shared securities/property representative selection now sums interests that
+rejoin through multiple inheritance branches; the reproduced single-branch
+ranking defect is fixed without changing the path recorded for an authority.
+
+Schema 25/hash-v7 remains unpublished and extensible. Its **30** new authoritative
+tables now include `estate_project_custody` and `estate_project_releases`, with
+inventory hash `ebf0d8f25b1c0287549cea57445a56c732b1ff593bc522a0278b40309595e226`.
+Prior migrations and published hash contracts retain their semantics.
+
+Focused evidence: **46 passes / 226.83 s** for initial property/project/securities
+integration; **22 passes / 87.88 s** for inheritance chains, minors and privacy;
+**12 passes / 92.94 s** for the then-current property module with rollback and
+actual payment/restart/export/replay; and **2 passes / 1.69 s** after the later
+combined-beneficiary fix and corrected currency fixture. Logs, fresh temporary
+directories, initial free space and the observed baseline failures are recorded
+in the active specification. The replay writes both new tables, preserves the
+source's bytes and uses recorded decisions over three real world ticks. Declared
+age transitions and prescribed decisions are bounded acceptance fixtures, not
+the multi-decade or autonomous-behavior evidence still required by W5.
+
+Next acceptance work remains retained-asset administration without a living
+adult beneficiary or guardian, funded disposition of illiquid rights,
+late-claim finality, per-currency cash/claims/nominee reporting without duplicate
+wealth, selected-tick estate presentation, policy experiments and genuine
+cohort/multi-decade runs. Follow through to W6–W9, keeping goods and equities
+equally primary. Do not publish Semantics 20 around the current focused checks.
+
+The final local regression passed **314 tests in 780.00 s**, with the existing
+Starlette/httpx deprecation warning:
+
+```powershell
+$estateTargets = @(
+  'tests/test_semantics20_cash_offsets.py',
+  'tests/test_semantics20_civic_succession.py',
+  'tests/test_semantics20_estate_cases.py',
+  'tests/test_semantics20_estate_disputes.py',
+  'tests/test_semantics20_estate_property.py',
+  'tests/test_semantics20_estate_securities.py',
+  'tests/test_semantics20_legal_awards.py',
+  'tests/test_semantics20_legal_projection.py',
+  'tests/test_semantics20_personal_authority.py',
+  'tests/test_semantics20_personal_commitments.py',
+  'tests/test_semantics20_project_rights.py',
+  'tests/test_semantics20_service_commitments.py',
+  'tests/test_semantics20_succession.py',
+  'tests/test_semantics20_wage_awards.py',
+  'tests/test_semantics19_estate_cash.py',
+  'tests/test_semantics8_foundations.py',
+  'tests/test_recorded_replay_golden.py',
+  'tests/test_research_export.py',
+  'tests/test_exchange.py',
+  'tests/test_documentation.py',
+  'tests/test_prd_completion.py::test_replay_compares_llm_provenance_by_logical_call_identity',
+  'tests/test_prd_completion.py::test_replay_rejects_same_actor_turn_wrong_llm_purpose',
+  'tests/test_prd_completion.py::test_replay_canonicalizes_communication_model_provenance',
+  'tests/test_prd_completion.py::test_replay_validates_legal_model_reference_owners',
+  'tests/test_prd_completion.py::test_replay_reports_legacy_missing_llm_table_without_crashing'
+)
+.\.venv\Scripts\python.exe -u -m pytest -v --tb=short @estateTargets --maxfail=3 --basetemp C:/Users/matri/.codex/tmp/ae-8d99d2f3
+```
+
+Log: `tmp/estate-property-integrated-regression.log`; exit zero. Free space was
+77.04 GiB at launch and 83.39 GiB afterward; the batch's artifacts occupied
+0.794 GiB. All fourteen current Semantics-20 modules were included. A file-time
+audit found no changed source or documents written during the test run. Staging
+remains empty, and frozen migrations/hash manifests have no diff. The broader
+goal remains active; full W5, W6–W9, full CI and publication are not complete.
+
+## 2026-09-08 — public administration of retained estate assets
+
+The [active estate specification](2026-09-07-estate-assets-and-succession.md#implemented-public-administration-for-retained-assets)
+now records an implemented regional public-trustee policy for estates with
+retained securities or property and no private adult representative. An
+existing eligible regional government official receives recorded authority;
+the estate retains its assets and the official receives no inheritance or new
+endowment. A vacancy remains explicit when no eligible official exists.
+Appointments end when authority is lost, private representation returns or the
+retained assets have been disposed of. Company and project controls reject a
+former administrator immediately, before the history refresh.
+
+The default trustee policy offers one available listed position through the
+existing exchange. Outstanding offers reserve their units, unlisted shares
+are excluded, and only an actual funded counterparty produces proceeds.
+Settlement preserves creditor priority, releases residual assets and cancels
+remaining estate offers at the same boundary. Public administration preserves
+private beneficiaries' housing visibility restrictions.
+
+Unpublished schema 25/hash-v7 now includes **32** authoritative succession
+tables, adding immutable appointment and ending records. The inventory hash is
+`254821fb0785a1585265a44e3f76d88ea1f3f03941d5fb1b2a406740f1184377`.
+Order evidence links its appointment and ending frontier; property stewardship
+identifies administrator capacity without inventing a beneficial path.
+
+Focused evidence includes **11 passes / 11.20 s** for appointment, funded
+settlement, revocation, guardian return, rejection and rollback. A combined run
+produced **56 passes and one fixture failure / 206.42 s**: its prescribed buyer
+had entered the periphery decision path. Pinning that buyer to the recorded
+gateway corrected the fixture, and the full-world case then passed in
+**74.50 s**. It uses the trustee's default policy across actual world ticks,
+source restarts, export and exact recorded replay. The final immediate-control
+and private-child projection pair passed **2 tests / 7.62 s**. Exact logs and
+storage bounds are in the active specification.
+
+The combined regression passed **331 tests / 865.76 s** using all fifteen
+Semantics-20 modules and the legacy, exchange, export, documentation and five
+provenance cases in the preceding target list. Command options were
+`-v --tb=short --maxfail=3 --basetemp C:/Users/matri/.codex/tmp/ae-26904fdd`.
+Log: `tmp/estate-public-administration-integrated-regression.log`. Free space
+was 82.43 GiB at launch and 81.61 GiB afterward; artifacts occupied 0.868 GiB.
+The 1,070-file source snapshot retained all content hashes and modification
+times through the run. Staging remained empty and frozen contracts had no diff.
+
+Subsequent policy review reproduced starvation when the first estate position
+repeatedly lacked a buyer. Default selection now prioritizes unoffered positions
+and then the least recently offered across every represented estate, using
+actual quote history. Both one-estate/two-position and two-estate funded-sale
+cases failed before the correction and then passed in **1.65 s**. The final
+affected estate/export/replay regression passed **76 tests / 328.59 s**; the
+331-case result predates this refinement. The active specification records the
+complete target list and command, along with the failure, fixture correction
+and success logs. Final log:
+`tmp/estate-public-administration-final-policy-replay.log`; base
+`C:/Users/matri/.codex/tmp/ae-845f4743`. Free space was 81.58 GiB at launch and
+81.30 GiB afterward; artifacts occupied 0.252 GiB. All 1,070 source files kept
+their hashes and modification times throughout the run. AST and whitespace
+checks passed for eleven affected Python files, and normal `git diff --check`
+passed. Staging is empty. Pytest emitted only the existing Starlette/httpx warning.
+
+Remaining W5 work starts with the public-administrator conflict/recusal boundary
+and remaining legal-right processors: the existing decision-role check can
+admit a government official who also administers a party's estate. Add a
+declared disinterested-decision rule with actual rejection, replacement and
+replay evidence. Continue funded disposition of illiquid property and unlisted
+securities, administration of remaining legal rights, late-claim finality,
+per-currency nominee/beneficial reporting, selected-tick estate presentation,
+repeated succession, cohort transitions and a real multi-decade campaign. The
+three-tick acceptance fixture does not establish empirical price discovery.
+Continue W6–W9 afterward, keeping goods and equities equally primary.
+Semantics 20 remains unpublished and extensible until its full scope is ready.
+
+Current free space was rechecked at 82.44 GiB before preparing the combined
+regression. Each local batch still requires at least 40 GiB and a fresh short
+temporary directory. The approved cleanup plan remains intact. No cleanup,
+paid provider calls, unrelated process stops, staging, commits, publication or
+merges were performed in this increment.
+
+## W5 continuation: estate recusal and actual replacement decisions
+
+The preceding recusal work item is now implemented under the declared
+`disinterested_estate_adjudication_v1` policy. Existing adult decision makers
+cannot judge their own party, counsel, control, shareholding or estate interests.
+A public estate appointment and estate business stewardship retain their
+conflicts after they end. Accepted decisions record authority before enforcement;
+reconciliation reconstructs the prior estate/appointment/stewardship frontiers
+from event order, preserving earlier decisions when appointments occur later
+on the same day. Failures roll back authority, enforcement and estate money.
+
+The current unpublished schema 25/hash-v7 has **33** succession tables, including
+`legal_decision_authorities`, and records the creation event of each business
+stewardship interval. Inventory hash at that checkpoint:
+`7e4f3fca03a49f1404cbfcba96bf401f2d52a9bae9e2fe47bdcda8fd68a32581`.
+Frozen contracts remain unchanged.
+
+Actual agent contexts now supply eligible legal work to judges and officials,
+including an official operating a firm or running without role-specific
+purposes. The default policy skips recused and contested cases; an existing
+unconflicted official can decide a due unanswered claim using its admitted
+evidence. Required civic attendance retains priority.
+
+A full-world test caught a separate later-payment defect: estate settlement's
+nightly event defaults made a contract payment's causal edge run backward.
+Successful Semantics-20 actions now assign their phase to only newly emitted
+events with that default before binding causal links. The real payment settles
+the loan and funds the estate claim, with no relaxation of causal ordering.
+
+Evidence so far: **42 legal integration passes / 94.06 s** before the later
+frontier refinements; **19 authority/frontier passes / 20.99 s** after those
+refinements; **1 three-day world/restart/export/exact-replay pass / 67.39 s**
+after the payment fix; and **5 actual-context passes / 8.58 s** after reproducing
+four missing-queue failures. The active
+[estate specification](2026-09-07-estate-assets-and-succession.md) records the
+baseline failures, corrections, logs and fresh short temporary directories.
+The subsequent combined regression passed **378 tests / 936.33 s**. It covered
+all sixteen Semantics-20 modules plus legacy estate cash, schema/hash, causal
+ordering, v2 legal behavior, recorded golden replay, export, exchange,
+documentation and five provenance cases. The active specification includes its
+exact target list and command. Log:
+`tmp/estate-legal-authority-integrated-regression.log`; base
+`C:/Users/matri/.codex/tmp/ae-9f0116b2`. Free space was 80.72 GiB before launch
+and 79.68 GiB afterward; artifacts occupied 1.016 GiB. All 1,072 source files
+kept their hashes and modification times during the run; staging stayed empty.
+
+A later queue review reproduced **3 failures / 10.64 s** for invalid requested
+remedies delaying valid later cases. The queue now uses the engine's read-only
+validation and reports blocked matters without resolving them. The three actual
+decision cases passed **18.67 s** after correction. Final affected-policy/replay
+verification then passed **86 tests / 320.00 s**; the 378-case result predates
+this last refinement. The active specification records both exact commands.
+Final log: `tmp/estate-legal-authority-final-policy-replay.log`; base
+`C:/Users/matri/.codex/tmp/ae-e44e90b0`. Free space was 79.65 GiB at launch and
+79.34 GiB afterward; artifacts occupied 0.289 GiB. All 1,072 source files kept
+their hashes and modification times throughout the final run. Twelve affected
+Python files passed AST/whitespace checks, normal `git diff --check` passed,
+staging remained empty and frozen migrations/hash contracts had no diff.
+Only the existing Starlette/httpx deprecation warning appeared. No cleanup,
+paid calls, unrelated process stops, commits, publication or merges occurred.
+The final documentation check passed **22 tests / 0.35 s**, log
+`tmp/estate-legal-authority-documentation.log`, base
+`C:/Users/matri/.codex/tmp/ae-b7b2158f`; initial free space 79.34 GiB.
+
+The subsequent representation slice had concrete source targets: personal-party
+control in `LegalInstitution.controls`, counsel authorization in `_file_claim`,
+party membership in `submit_filing`, settlement authority, and the asset-only
+scan in `EstateAdministration.reconcile`. Record party/action-specific mandates,
+include retained legal work in administration, and preserve real funds, nominee
+identity, revocation, old semantics and replay.
+
+Full W5 remains open: complete legal representation and remaining appointments,
+funded illiquid-asset disposition, late-claim finality, per-currency nominee and
+beneficial reporting, selected-tick presentation, repeated succession, cohort
+and genuine multi-decade evidence. The default replacement decision is an
+acceptance fixture, with declared official availability and counterparty
+behavior. Continue W6–W9 afterward, preserving equal goods/equity priority and
+the original research truth boundaries.
+
+## W5 continuation: recorded client mandates and default legal work
+
+Semantics 20 now records legal action authority and both sides of counsel
+consent. An estate representative retains the deceased's party identity; an
+unrelated filer or self-appointed lawyer is rejected. Pending counsel requests,
+acceptance/decline, scopes, revocation, withdrawal and automatic endings have
+four immutable journals. The unpublished schema-25/hash-v7 manifest now has
+37 succession tables and inventory hash
+`10bc62e3be8de3651e8b9daa15b58e662fc109ddfb3c329a2b67bae9956c4131`.
+Earlier published contracts remain frozen.
+
+Open estate-party cases keep public administration available after asset
+release. Agent contexts and prompts carry pending requests and the precise
+party/scopes. Normal role policies can consent, file actual obligation evidence
+and offer a supported remedy, including an heir operating an inherited firm.
+Opposing parties keep separate filing histories. The default does not assume
+that a settlement offer is accepted; the existing action still requires an
+authorized counterparty and actual funds.
+
+The context checks passed 34 cases in 21.30 s after three reproduced missing
+prompt failures. A four-day save/restart/export/exact-replay case passed in
+97.73 s and preserved the source file hash. It used real default counsel
+acceptance, filing and offer, with declared client/counterparty behavior and
+no paid calls. Those results precede the last per-party evidence and query
+refinements; the final combined regression and focused correction are recorded in the active
+[estate specification](2026-09-07-estate-assets-and-succession.md).
+
+The combined run finished with **417 passes and one fixture failure / 1182.19 s**.
+The wrong-worker wage fixture also controlled the respondent employer and was
+rejected earlier by the new party-authority check. It now tests an unrelated
+worker and the original dual-party case separately; the complete wage module
+then passed **18 tests / 62.44 s**. No engine, policy, schema or replay code
+changed after the combined run. Its 37 representation cases all passed,
+including default-policy consent, actual payment and exact recorded replay.
+All 1,074 source files kept their hashes and modification times during both
+runs. The active specification records exact targets, receipts, storage
+measurements and the distinction between the combined result and focused rerun.
+
+Full W5 remains open. Next are the remaining unfiled/collection rights and
+conflicted procedural representation, funded illiquid-asset disposition,
+late-claim finality, per-currency nominee and beneficial reporting, selected-tick
+presentation, repeated succession and genuine cohort/multi-decade evidence.
+Then continue W6–W9 with goods and equities equally primary. Semantics 20 is
+still unpublished and extensible; this slice does not complete the goal.
+
+## W5 continuation: unfiled financial rights and procedural representation
+
+`recorded_estate_receivables_v1` now derives unpaid payment/indemnity and
+earned-wage rights from the original records. They retain public administration
+even without an existing case or other asset. The actual decision context
+provides bounded, evidence-backed filing opportunities under the deceased's
+identity, skips already-presented rights, and searches past blocked first
+items. Real early payment can release an appointment without a dispute.
+
+Explicit procedural sides support an heir or public trustee who represents
+both original parties. The recorded authority includes both direct capacities;
+settlement and adjudication remain restricted. Consenting counsel can receive
+only filing scope in that situation, and financial mandates end when the client
+or lawyer gains conflicting authority. An actual independent official resolves
+the tested dispute, followed by ledger-funded payment.
+
+The thirteen-case new module covers private/public contract and wage rights,
+real payment, bounded selection, duplicate prevention, lost authority, changing
+conflicts and default-policy/restart/export/exact-replay behavior. An earlier
+version passed **12 tests / 116.17 s**; the final expanded private/public
+procedural pair passed **2 tests / 1.61 s**. The active
+[estate specification](2026-09-07-estate-assets-and-succession.md) records the
+reproduced failures, source receipts, storage limits and final-source distinction.
+The final combined regression passed **432 tests / 1275.46 s**, covering all
+eighteen Semantics-20 modules and the existing legacy/export/exchange/provenance
+targets. All thirteen retained-right cases passed on the final source. No schema
+inventory change was needed; Semantics 20 remains unpublished.
+
+Receipts use `tmp/estate-legal-representation-retained-integrated` (`.log`,
+`-meta.json`, `-source.json`), with fresh test base
+`C:/Users/matri/.codex/tmp/ae-5afc5887`. All 1,076 source files retained their
+hashes and modification times, and staging stayed empty. The run started with
+76.14 GiB free and ended with 75.28 GiB free; its artifacts occupy 1.251 GiB.
+All 69 changed/new Python files passed AST/whitespace checks, normal
+`git diff --check` passed, and frozen migrations/hash contracts had no changes.
+Only the existing Starlette/httpx deprecation warning appeared. Full Python CI
+shards and the release gate remain publication requirements.
+
+Continue with funded illiquid-asset disposition, late-claim finality and
+per-currency nominee/beneficial reporting, then selected-tick presentation,
+repeated succession, cohort and genuine multi-decade evidence. Complete W6–W9
+afterward with goods and equities equally primary. No additional cleanup or
+paid provider run is needed for this increment. The active specification now
+defines the next funded property-bid/title-transfer slice, including the exact
+ledger/receipt ordering, inheritance-versus-sale invariant, failure cases and
+recorded replay gate. This continuation does not complete W5 or the goal.
+
+## W5 continuation: funded retained-property sales
+
+Semantics 20 now records explicit property bids, their endings and funded sales.
+An authorized estate representative can transfer one retained exact interest
+for a living adult buyer's actual same-currency cash. Payment, title and estate
+disbursement share one rollback boundary. Creditors receive priority and the
+recorded beneficiaries receive residual cash; original construction funding and
+refund entitlements retain their identities. The unpublished schema-25/hash-v7
+inventory now has 40 succession tables and hash
+`81b124e245e15241b8a41f221fbc2571b2a9757507cad403eec51c9bd6197fa3`.
+
+Bids do not reserve funds. Acceptance rechecks funding, expiry, current custody
+and authority. Agent prompts and citizen catalogs expose the actual choices;
+the default representative chooses a currently funded offer under the declared
+ordering. Sale consideration is distinct from an exchange trade or a valuation
+of other property. The three-day fixture declares a buyer and owner death, then
+uses the existing trustee's default acceptance policy with daily restart,
+nonempty export and exact source-preserving replay.
+
+The complete focused module passed **27 tests / 249.84 s**, including guardian
+cash ownership, invalid bids, authority loss, rollback/retry, fractional title
+and citizen catalogs. Receipts use
+`tmp/estate-legal-representation-property-sale-complete`; fresh base
+`C:/Users/matri/.codex/tmp/ae-64a1ac53`. All 1,078 source files retained their
+hashes and modification times. The active
+[estate specification](2026-09-07-estate-assets-and-succession.md) records earlier
+failures and their fixture corrections. The subsequent affected regression
+passed **294 tests / 863.04 s**, including the new cross-bank payment case and
+estate, ownership, legacy, export/replay and agent-control coverage. Receipts
+use `tmp/estate-legal-representation-property-sale-integrated`; base
+`C:/Users/matri/.codex/tmp/ae-94cbb0dc`. The prior 432-case result predates this
+property-sale implementation.
+
+A final control check reproduced fractional bid input being silently converted
+to an integer. Property-bid normalization now requires exact integer terms and
+enforces the displayed bounds, preserving older action behavior. A buyer's
+actual completion of an unfinished project also passed and preserved the
+original funder's refund entitlement. Final verification passed **68 tests /
+226.36 s**, covering all 29 property-sale cases plus participant, external-agent
+and golden-replay modules. Receipts use
+`tmp/estate-legal-representation-property-sale-final-controls`; base
+`C:/Users/matri/.codex/tmp/ae-b6f6d37e`.
+
+All 1,078 source files kept their hashes and modification times during both
+successful runs, with empty staging. Only the participant normalizer and
+property-sale tests changed between them. The final run started with
+80,710,438,912 bytes free and ended with 80,432,275,456 bytes free; its artifacts
+occupied 240,888,799 bytes. AST/whitespace and normal diff checks passed, and
+published migration/hash contracts remain unchanged. Full Python CI shards and
+the release gate remain publication requirements. The active specification
+contains the final test command and the separate documentation-check receipt.
+
+Next is funded unlisted-share disposition, with explicit lot consumption and
+share-movement evidence, followed by late-claim finality, per-currency nominee
+and beneficial reporting, selected-tick presentation and repeated/cohort/
+multi-decade evidence. Full W5 and W6–W9 remain open, with goods and equities
+equally primary.
+
+## W5 continuation: funded private-company share sales
+
+Semantics 20 now supports an explicit funded bid for the entire remaining lot
+of retained private-company shares. Acceptance rechecks the current buyer,
+representative, funds, issuer status and uncommitted custody. Actual payment,
+share movement, estate receipts, creditor/residual distribution and effective
+business-control refresh share one rollback boundary. Listed shares continue
+through the existing exchange. The exact private sale consideration does not
+create an exchange price or change issued supply or historical founder identity.
+
+The unpublished schema-25/hash-v7 extension now has 43 succession tables and
+inventory hash
+`bd50ddf37bcd33aebd6ebb5aac8a14749bebb521a4ed959a6ac5e47bc0ec1c34`.
+The three new journals record bids, their endings and sales, and shared custody
+accounting prevents private and listed disposition from consuming the same lot.
+Prompts and citizen catalogs expose real lots and bids with exact integer terms.
+The default representative can accept an actual funded offer; the mechanism
+does not generate a buyer or an estimated private-company valuation.
+
+Focused mechanics produced **33 passes and one assertion-pattern failure /
+172.45 s**. The failure was the test's expected error text: the ledger correctly
+rejected an unbalanced payment. Correcting that assertion and checking ownership,
+conflicts and the full world path produced **4 passes / 87.00 s**. The world case
+uses a declared buyer and owner death, default trustee acceptance, daily restarts,
+real catalog controls, nonempty export and exact source-preserving replay. The
+active [estate specification](2026-09-07-estate-assets-and-succession.md) records
+the earlier missing-currency fixture correction and all receipt paths.
+
+All 1,080 source files retained their hashes and modification times during these
+runs; staging stayed empty. The final affected regression passed **219 tests /
+913.36 s**, including all 37 private-share and 29 property-sale cases plus the
+shared estate, succession, legacy, export/replay and agent-control modules.
+Receipts use `tmp/estate-legal-representation-unlisted-sale-integrated`; base
+`C:/Users/matri/.codex/tmp/ae-8d04c2a5`. Its 1,080 source files also remained
+unchanged, with empty staging. The run began with 92,406,534,144 bytes free,
+ended with 175,344,197,632 bytes free and generated 672,728,833 bytes of artifacts.
+Drive-wide free-space changes are not attributed to this work; no cleanup ran.
+
+All 76 changed/new Python files passed AST/whitespace checks, normal diff checks
+passed, and frozen migration/hash contracts remain unchanged. The only test
+warning was the existing Starlette/httpx deprecation. Full Python CI shards and
+the release gate remain publication requirements.
+
+Documentation then passed **22 tests / 0.53 s**, with 1,080 unchanged source files
+and empty staging; receipt prefix
+`tmp/estate-legal-representation-unlisted-sale-documentation-direct`, base
+`C:/Users/matri/.codex/tmp/ae-1abd29a8`. The temporary runner and earlier preliminary
+metadata were no longer present, so the documentation test ran directly with the
+same guard. The current 219-case log, metadata and source snapshot remain
+available. The active specification records this artifact-availability boundary.
+
+The active specification now defines the next finality implementation and its
+acceptance gate: completed transfers remain final under an explicit recorded
+policy, while claims can reach retained assets and future same-currency receipts.
+Existing receipt ordering supplies the starting point; historical distributions
+and heir/buyer ownership must survive late admission. Follow with per-currency
+nominee/beneficial reporting, selected-tick presentation, repeated and biological
+cohort succession, and true multi-decade evidence. W6–W9 and equal goods/equity
+research coverage remain open. This continuation does not complete the goal.
+
+## W5 continuation: explicit finality for completed distributions
+
+Semantics 20 now records `prospective_receipts_no_clawback_v1` on each estate
+and its opening event. The immutable policy makes completed cash, property and
+share transfers final, while admitted claims can collect from retained assets
+and later actual same-currency receipts. Existing receipt and release cutoffs
+already preserve the required ordering, including within a tick.
+
+One column extends the unpublished schema-25/hash-v7 contract; the succession
+table count remains 43. The current inventory hash is
+`f3a8f1f80977a876d474b70d12a0848e4622ee3d1b40f3eeac919426a8aaefe3`.
+The read-only `EstateCases.finality_at` snapshot distinguishes recorded opening
+inventory, outstanding claim face amounts by currency, unresolved disputes and
+retained assets at the selected tick. Future claims, payments and releases do
+not leak into an earlier snapshot. Household wealth and city integration follow.
+
+Thirteen new cases cover completed and retained assets, creditor priority,
+currency separation, subsequent beneficiary death, same-tick ordering,
+immutability, duplicate admission, rollback and historical reads. The four-day
+world uses declared claimant, official and payer actions, with actual funded
+contract performance, daily restarts, nonempty export and exact source-preserving
+replay. The corrected property pair and world case passed **3 tests / 96.64 s**;
+a further combined property/private-share case passed **1 test / 1.36 s**.
+
+The active [estate specification](2026-09-07-estate-assets-and-succession.md)
+records the initial missing-policy failure and subsequent fixture corrections:
+the property's NSD currency and matching recipient wallet, and the direct share
+inheritance journal. Production code did not change after the first expanded
+run. All 1,081 source files stayed unchanged during each test run and staging
+remained empty. The final affected regression passed **136 tests / 548.85 s**,
+covering all thirteen finality cases, estate cash/disputes/awards/listed sales,
+Semantics-19 compatibility, schema foundations, research export and golden replay.
+Receipts use `tmp/estate-finality-integrated`; fresh base
+`C:/Users/matri/.codex/tmp/ae-b2a88416`. Its 1,081 source files also remained
+unchanged, with empty staging. The run started with 173,696,139,264 bytes free,
+ended with 172,785,680,384 bytes free, and generated 378,705,499 bytes of artifacts.
+Only the existing Starlette/httpx warning appeared. Static and diff checks passed;
+frozen migrations/hash manifests remain unchanged.
+
+Documentation verification passed **22 tests / 0.37 s**, with 1,081 unchanged
+source files and empty staging. Receipts use `tmp/estate-finality-documentation`;
+fresh base `C:/Users/matri/.codex/tmp/ae-cd938a32`. Only the active specification
+and this execution log changed after the integrated run.
+
+Next implement per-currency household beneficial positions and cash inequality,
+then selected-tick city presentation, repeated/cohort succession and the true
+multi-decade campaign. The earlier 219-test result predates this finality change.
+Full W5, W6–W9 and the publication gates remain open; goods and equities retain
+equal research priority.
+
+The next reporting contract is now concrete in the active specification: build
+one instrument inventory by selected tick and currency, preserve exact residual
+fractions and intervening estate creditors, deduplicate replaced claims, and
+reconcile source totals before household aggregation. The current beneficiary
+helper returns a set, so it cannot provide the required allocation weights.
+Correct the cash-Gini definition/emission together with its research reader and
+city labels, while preserving historical values. Unpriced or unsupported values
+remain explicit. Household positions, cash inequality and generational evidence
+are separate deliverables; the finality result does not substitute for them.
+
+## W5 household positions and cash inequality — local backend implementation
+
+The private selected-tick reader now inventories cash, restricted funds, wage
+and contract claims, judgments, personal bank principal, shares and property.
+Households and estates reference unique instruments. Conditional beneficiary
+paths retain exact fractions and every intervening creditor/reserve boundary;
+no nominee asset is copied into each heir's additive total. Values remain
+separate by currency and valuation type, with unknown market values explicit.
+The [active reporting contract](2026-09-07-estate-assets-and-succession.md#implemented-household-positions-and-cash-inequality)
+documents the sources, limitations, failed checks and corrections.
+
+The old `gini` remains unchanged. Semantics 20 now also records currency-specific
+cash Gini and population series, using only checking/savings/FX wallets of all
+living registered citizens. Registry v2 corrects the old all-account label and
+defines the new wallet measure. The missing founder issuance is now journaled
+under unpublished Semantics 20; the inventory combines that evidence with
+trades, transfer and funding histories. Schema/hash inventory is unchanged.
+
+The historical/restart/export/replay run passed **27 tests / 133.45 s**. The
+expanded affected regression passed **225 tests / 841.14 s**, including 20 new
+position cases, all registry cases, estate cash/securities/finality, wage awards,
+credit/funding/IPOs, frozen compatibility, schema foundations, export and golden
+replay. All 1,084 source files retained their hashes and modification times;
+staging was empty. Receipt prefix:
+`tmp/estate-finality-household-positions-integrated`; base:
+`C:/Users/matri/.codex/tmp/ae-899ef326`. Artifacts totalled 623,459,061 bytes,
+with 170,889,494,528 bytes free at completion.
+
+Two additional funding cases then passed **2 tests / 1.56 s**, proving that
+ordinary VC funding and a typed round linked to a funded pitch each create one
+reported issuance and no invented market mark. Their prefix is
+`tmp/estate-finality-household-funded-issuance`, base
+`C:/Users/matri/.codex/tmp/ae-4c9685d3`; source stayed unchanged and staging empty.
+Production code did not change after the expanded regression. Syntax and
+whitespace checks passed for 81 changed/new Python files.
+
+Documentation checks passed **22 tests / 0.48 s**; prefix
+`tmp/estate-finality-household-documentation`, base
+`C:/Users/matri/.codex/tmp/ae-e53d98d1`. All 1,084 source files stayed unchanged
+during this run and staging remained empty.
+
+The next step is authorized selected-tick city presentation and cash-series
+labelling, followed by simultaneous/repeated cohorts and a genuine multi-decade
+campaign. Historical ledger/path performance and full CI/publication gates are
+still pending. These controlled cases do not complete W5 or W6–W9. The goal
+remains active and goods/equity research retain equal priority. No cleanup,
+paid providers, staging, commits or publication were performed in this step.
+
+## W5 local operator household financial inspector
+
+The [financial inspector contract](2026-09-08-household-financial-inspector.md)
+now documents the implemented City → citizen dossier → Inspect finances flow.
+Its private local operator endpoint binds the response to the selected run,
+fork, person and committed tick. The public household layer stays unchanged;
+other private identities are anonymous. Household amounts remain separate by
+currency and valuation type, and conditional estate paths preserve exact
+fractions and creditor/reserve boundaries. The new currency-specific citizen
+cash Gini names its population and zero conventions. The old macro series is
+labelled Legacy account Gini.
+
+The guarded API/inventory/legal/registry run passed **50 tests / 109.80 s**,
+including 13 new API cases. All 1,090 source files retained hashes and mtimes;
+staging was empty. Prefix: `tmp/estate-finality-household-finance-ui-first`;
+fresh base: `C:/Users/matri/.codex/tmp/ae-736746d8`. Test artifacts totalled
+129,044,480 bytes, leaving 169,871,851,520 bytes free. Backend source did not
+change after this run.
+
+Type checking and **261 Node tests** passed. The initial Node pass found 14
+succession event kinds without display codes; unique codes now cover them.
+Screenshot review found a summary contrast issue, corrected to use the current
+World OS theme tokens. The final six development-browser cases passed in
+19.2 s, covering desktop/mobile, keyboard, currency/history, explicit missing
+cash meaning, exact rights, selected context and stale-response suppression.
+They also check at least 4.5:1 contrast for the financial summaries.
+
+The dashboard build passed with a large-chunk advisory. The first bundle smoke
+used the wrong preview asset mount and failed to render; the static harness
+then required a Windows command-path correction. With the application server's
+`/static/` layout, **all six production-bundle cases passed / 12.6 s**. Final
+captures: `tmp/estate-finality-household-finance-browser-static-final`. Browser
+financial fixtures are synthetic; backend amounts use real mechanics fixtures.
+
+Next implement simultaneous/repeated cohort stresses and the bounded
+multi-decade campaign. The reader currently reconstructs the full world before
+scoping its response, so ledger/path profiling remains required for scale.
+W5 is not complete; W6–W9 and full CI/publication remain open. Goods and equity
+research retain equal priority. No cleanup, providers, staging, commits or
+publication occurred in this step.
+
+Documentation verification passed **22 tests / 0.53 s** with all 1,091 source
+files unchanged and empty staging; prefix
+`tmp/estate-finality-household-finance-docs`, fresh base
+`C:/Users/matri/.codex/tmp/ae-7e81f8d5`. Static checks passed for 84 changed/new
+Python files, HTML asset references and all 19 frozen migration/hash paths.
+The unrelated storage-cleanup plan remained unchanged. Receipt:
+`tmp/estate-finality-household-finance-static-final.json`.
+
+## W5 native life-course profiling and replay
+
+The [life-course protocol](2026-09-08-life-course-validation.md) fixes ordinary
+daily aging, drift population, seed 1 and a 0.05 annual birth hazard, with only
+scripted routes. A thirty-day pilot completed, followed by two native one-year
+runs. The first year took 104.20 seconds and about 198 MB of closed artifacts;
+25 agents remained in 18 households, with no births or deaths. Goods recorded
+898 sales and equities 78 executions. Both domains remain equally required.
+
+A physical partial index now speeds the existing person-origin query while
+retaining transaction-local evidence, rollback and reused-ID behavior. It does
+not change migration checksums, schema inventory or canonical rows. The lookup
+probe was about nine times faster; the repeated native year took 83.95 seconds.
+These instrumented pilot timings are bounded evidence, not a scale guarantee.
+
+The focused regression passed **64 tests / 70.25 s**, including keyed randomness,
+source lifecycle, frozen replay compatibility and household positions. Prefix:
+`tmp/estate-finality-origin-index-integrated`. The fresh native pair differs in
+call timing and run-directory metadata; its comparison is not an exact replay
+verdict. An initial verification harness stopped on that metadata difference.
+The actual recorded-response replay subsequently passed all 365 days exactly,
+without calling fresh policies or changing either original database. Prefix:
+`tmp/estate-finality-life-course-recorded-year-v2`; duration 169.25 seconds,
+including preliminary hashing and final comparison. All 1,093 source files
+retained hashes/mtimes and staging stayed empty throughout these runs.
+
+The declared forty-year campaign uses ten-minute segments, a cumulative
+four-hour native allowance, a 16 GiB source/artifact limit and a 40 GiB free-space
+floor. Admission reserves space for later replay/copy/export. Its three-day
+smoke paused after day 1, resumed to day 3 and passed independent exact replay,
+preserving source bytes. No periodic checkpoint copies are requested. The
+campaign, combined-loss cases, complete export/replay and W6–W9 remain open.
+No cleanup, paid providers, staging, commits or publication occurred here.
+
+The first declared native segment then reached **day 1,648 / about 4.5 years**
+and closed cleanly at its ten-minute boundary. It observed three births, one
+death/estate and two retirement events; 27 living people remained in 18
+households. Newborns received zero birth endowment. Goods recorded 2,974 sales;
+equities recorded 85 executions, with the last on day 1,172. The subsequent
+inactive equity interval remains explicit. All 37,865 calls were scripted,
+with zero cost. Closed artifacts totalled 873,330,844 bytes, with
+161,351,729,152 bytes free. Source hashes/mtimes and empty staging were preserved.
+
+The read-only pause audit reconciled all 1,649 census rows and reproduced each
+of the four annual household reports in persisted JSON form. An initial
+Python-object comparison confused integer map keys with JSON string keys;
+the corrected comparison passed without changing values or history rules.
+Database bytes remained unchanged. Base: `C:/Users/matri/.codex/tmp/ae-a1447feb`;
+status: `tmp/estate-finality-life-course-native-40y-meta.json`. Resume this clean
+pause with the command in the protocol; the 14,600-day target, full replay/export
+and combined-loss cases remain open. Documentation checks before campaign
+launch passed **22 tests / 0.54 s** with unchanged sources and empty staging;
+prefix: `tmp/estate-finality-life-course-protocol-docs`. Syntax checks covered
+85 changed/new Python files. No Python source changed after the 64-test run,
+and frozen legacy migrations/hash manifests and the unrelated cleanup plan
+were unchanged.
+
+## W5 seven-year native pause and combined cohort stress
+
+The [native campaign](2026-09-08-life-course-validation.md#second-segment-closed-pause-at-day-2555)
+resumed from the same hash-bound source and reached **day 2,555 / seven years**.
+It closed cleanly after another 600.97 seconds, for 1,201.55 cumulative native
+seconds. All 58,405 calls were scripted and cost zero. Four births and two deaths
+leave 27 living people in 17 households, with three retirement events and two
+estates. The four children are ages 4, 3, 2 and 2. Goods recorded 4,010 executions;
+equities remain at 85, with the last on day 1,172. Inactive market intervals stay
+visible. Closed artifacts totalled 1,355,257,496 bytes, leaving
+158,873,755,648 bytes free. All 1,093 source files stayed unchanged and staging
+remained empty.
+
+The closed audit reconciled all 2,556 census rows and reproduced all seven annual
+household reports in 21-62 ms each. The first resume attempt had rejected an
+empty WAL left by the earlier audit. SQLite closed the empty journal without
+changing database bytes; subsequent closed audits use the existing immutable
+reader and leave no sidecars. The fixed simulation source, harness, plan and
+budgets were retained. Audit prefix:
+`tmp/estate-finality-life-course-native-40y-segment2-audit`.
+
+The new `tests/test_semantics20_combined_cohorts.py` exercises a four-day declared
+stress: two owner deaths together, a later guardian/successor death, and an
+accepted 1,800-cent contract receipt through two estates. It verifies distinct
+issuer assets, original identities, zero birth endowments, guardian succession
+and care gaps, exact fractions, creditor priority and the absence of inherited
+personal loans. Daily restarts, historical reports, export validation and exact
+recorded replay pass; source database bytes remain unchanged. The test does not
+accelerate the infants or claim natural aging.
+
+Final verification passed **1 test / 69.76 s** with 1,094 unchanged source files,
+empty staging and 9,511,868 bytes of artifacts. Prefix:
+`tmp/estate-finality-combined-cohort-third`; base:
+`C:/Users/matri/.codex/tmp/ae-4faca43a`. Earlier fixture attempts corrected an
+account-column name and the distinction between a written-off bank loan asset
+and a continuing estate recovery claim. No production code was changed.
+
+Continue the declared native campaign and finish the currency/age/migration
+coverage audit before closing W5. Newborn adulthood, the full 14,600-day horizon,
+campaign replay/export, W6–W9 and full CI/publication remain open. No research
+data cleanup, paid providers, staging, commits or publication occurred.
+
+Documentation verification passed **22 tests / 0.37 s**, with all 1,094 source
+files retaining hashes/mtimes and empty staging. Prefix:
+`tmp/estate-finality-combined-cohort-docs`; fresh base:
+`C:/Users/matri/.codex/tmp/ae-43489597`. The unrelated storage-cleanup plan and
+the frozen native campaign source/harness remain unchanged after the pause audit.
+
+## W5 first school-age transition and combined age/currency coverage
+
+The [native campaign](2026-09-08-life-course-validation.md#third-segment-first-native-school-age-transition)
+resumed from its unchanged source and closed at **day 3,377 / about 9.25 years**.
+Five births and four deaths leave 26 living people in 16 households, with four
+retirements and four estates. The first newborn reached age six on day 3,183;
+school enrollment remains W6. The nine annual household reports reproduce,
+all 3,378 census rows reconcile, and the closed reader leaves database bytes
+unchanged without sidecars. All 75,918 calls were scripted and cost zero.
+Goods have 4,833 executions through the current day; equities remain at 85,
+last traded on day 1,172. Both market observations are preserved equally.
+
+The segment took 600.74 seconds, for 1,802.29 cumulative native seconds.
+Closed artifacts occupied 1,762,236,351 bytes, leaving 156,842,774,528 bytes
+free. All 1,094 source files retained hashes/mtimes during the run. The fixed
+plan, runtime fingerprint, harness, 16 GiB artifact cap and 40 GiB free reserve
+remain unchanged. Audit: `tmp/estate-finality-life-course-native-40y-segment3-audit.json`.
+
+The combined owner/guardian/successor test now covers USD alone and USD plus
+an unpaid 70-cent EUR estate claim. The USD receipt follows its own waterfall,
+and the EUR claim remains separate without an invented conversion. Both
+variants passed **2 tests / 125.00 s**, with exact replay/export and unchanged
+sources. Prefix: `tmp/estate-finality-combined-currency-first`.
+
+The new `tests/test_semantics20_age_boundaries.py` declares genesis ages 17/64
+and advances both people through ordinary daily ticks. A guardian dies the day
+before or on the ward's 18th birthday while an agreed household move awaits
+settlement. Both cases cancel that obsolete move, preserve the ward's shares,
+end guardian authority at adulthood, and record retirement at 65. Daily
+restarts, immutable historical reports, export and exact replay pass. The
+initial fixture had placed a new regional clerk after the genesis census;
+it now creates the clerk before person registration. Production behavior was
+unchanged. Both 22-day variants passed **2 tests / 573.99 s**, with 1,095
+unchanged source files, empty staging and 62,713,509 bytes of artifacts.
+Prefix: `tmp/estate-finality-age-boundaries-second`; base:
+`C:/Users/matri/.codex/tmp/ae-1a5cbc4d`.
+
+Continue the same declared campaign and complete the W5 acceptance audit.
+Newborn adulthood, the full 14,600-day horizon and campaign replay/export
+remain open, as do W6–W9 and full CI/publication. The controlled genesis
+cohorts do not establish natural multi-generation behavior.
+
+## W5 eleven-year pause, combined property and acceptance audit
+
+The unchanged campaign reached **day 4,092 / about 11.2 years** and closed after
+600.91 seconds, for 2,403.20 cumulative native seconds. Six births and four deaths
+leave 27 living people in 16 households; four children are school-age, and no
+native-born child is an adult. Five retirements and four estates are recorded.
+All 89,809 calls were scripted and cost zero. Goods recorded 5,515 executions
+through day 4,092; equities remain at 85, last traded on day 1,172.
+
+Closed artifacts occupied 2,086,568,741 bytes, leaving 155,596,472,320 bytes free.
+All 1,095 source files retained hashes/mtimes and staging stayed empty. The closed
+audit reconciled all 4,093 census rows, reproduced all eleven annual reports in
+25-100 ms each and verified the four sixth birthdays. Source bytes remained
+unchanged with no SQLite sidecars. Receipt:
+`tmp/estate-finality-life-course-native-40y-segment4-audit.json`.
+
+The combined-loss regression now includes a completed personal home and an
+unfinished project funded by two original contributors. Both owners die
+together, the surviving guardian/heir dies later, and the delayed USD receipt
+passes through both estates while the EUR claim stays separate. Exact half
+interests, retained creditor rights, original funding/account/transaction
+evidence, minor/dead authority limits and unpriced household reports are
+preserved. All three variants passed **3 tests / 187.48 s**, including daily
+restarts, historical reads, validated export and exact recorded replay.
+Prefix: `tmp/estate-finality-combined-property-first`; fresh base:
+`C:/Users/matri/.codex/tmp/ae-88a7e671`; artifacts: 29,182,961 bytes.
+The test source stayed unchanged throughout; production code was not edited.
+
+The [current W5 acceptance audit](2026-09-09-w5-acceptance-audit.md) maps the
+original S5 requirements to code/tests and their limits. It identifies an
+uncovered original boundary: scheduled arrivals and internal moves exist, but
+the global census lacks external departure and its wealth/commitment accounting.
+The estate plan now has a current gate list instead of stale implementation
+to-dos for already completed reporting, sales and representation mechanisms.
+
+Next: finish the same frozen native campaign and full replay/export, resolve
+the open-population boundary, then complete current-version integration/CI
+before closing W5. W6–W9 remain in their original order. The campaign is cleanly
+paused; its fixed seed, source fingerprint, plan, resource limits and zero-spend
+boundary were preserved.
+
+## W5 fifth segment and sufficient storage
+
+The same source advanced to a clean pause at **day 4,701 / about 12.9 years**.
+The process exited with code zero after 600.93 seconds, bringing cumulative
+native time to 3,004.14 seconds. All 1,096 source files retained hashes/mtimes;
+the plan and harness stayed fixed and staging stayed empty. The closed audit
+reproduced twelve annual reports and reconciled all 4,702 census rows without
+changing database bytes or creating SQLite sidecars. The six native-born
+children are ages 10, 9, 8, 8, 4 and 2; no native-born adult has been observed.
+
+The campaign occupies **2.36 decimal GB**, with **143.6 GiB free** at the storage
+check. A reported 130 decimal GB also exceeds the original 104 GiB admission
+requirement. Further cleanup is unnecessary for this stage. Keep the 16 GiB
+artifact allowance and 40 GiB free reserve. Step times are growing, so the
+original four-hour native budget could become limiting before storage does.
+The [campaign record](2026-09-08-life-course-validation.md#fifth-segment-and-storage-admission-check)
+preserves the measurements, estimated growth and their limits. Receipts:
+`tmp/estate-finality-life-course-native-40y-segment5-audit.json` and
+`tmp/estate-finality-life-course-native-40y-segment5-growth.json`.
+
+Goods reached 6,080 executions through day 4,701; equities remain at 85,
+last traded on day 1,172. All 101,638 calls were scripted and cost zero.
+Continue the same declared campaign, retain any resource-stop outcome, and
+complete full replay/export and the remaining W5 gates before W6–W9.
+
+## W5 sixth segment and cohort-history verifier
+
+The unchanged campaign reached **day 5,226 / about 14.3 years** and exited with
+code zero after 600.42 seconds; cumulative native time is 3,604.56 seconds.
+Six births, four deaths/estates and seven retirements leave 27 living people in
+16 households. Five children have reached school age, and the oldest are eleven.
+Goods reached 6,606 executions; equities remain at 85, last traded on day 1,172.
+All 112,106 calls were scripted and cost zero. The source/harness/plan remain
+fixed, all 1,096 source files retained hashes/mtimes, and staging stayed empty.
+
+All fourteen annual reports and 5,227 census rows passed the closed audit.
+The new independent cohort audit additionally verified every person's birthday
+sequence, membership and guardianship history, household/partnership periods,
+daily care-gap counts and ledger reconciliation. It checked 31 permanent people
+and 393 birthdays, found no minor model calls, and rejected deliberately
+corrupted in-memory inputs. Its adulthood checks also passed both existing
+22-day recorded-replay age fixtures while rejecting invented adulthood money
+and premature adulthood. All source databases and fixture sidecars were preserved.
+
+The [campaign record](2026-09-08-life-course-validation.md#sixth-segment-and-independent-cohort-history-audit)
+contains the receipts and limits. This adds historical evidence and verifier
+coverage; native-born adulthood, the fixed full horizon and full campaign
+replay/export remain open. The W5 acceptance audit now records the actual
+nightly ordering and participation/ownership seams for external migration.
+Continue the fixed campaign and remaining W5 work before advancing to W6–W9.
+
+## W5 native adulthood, household consent and bounded verification
+
+The original campaign completed six more audited segments and paused cleanly at
+day **7,667** (about 21 simulated years). The supervisor exited **0** after the
+first native-born adult was observed. There are seven births, eight deaths and
+estates, eight retirements, 24 living people, fourteen active households and one
+unassigned minor. All 21 annual household reports and 7,668 census rows reconcile.
+The independent cohort audit covers 32 people and 553 birthdays. All seven actual
+partnerships also pass a separate consent/snapshot/event audit with eight negative
+input cases. Source bytes/mtime remain unchanged and no sidecars were created.
+
+Person 26 was born on day 993 and became eighteen on day 7,563, with zero
+endowment and normal custody/membership changes. From day 7,564, its 75 accepted
+native actions were all `do_nothing`; it remains a job seeker. This establishes
+the life-stage transition, not productive second-generation behavior. Children
+27 and 28 received no recorded care after guardian 2 died on day 5,871. Child 28
+later died of recorded illness at sixteen on day 7,473. The current health
+transition does not use care/nutrition inputs, so the preceding care gap is not
+causal proof. Preserve these outcomes for later model and policy evaluation.
+
+The campaign records **9,098 goods executions** and **104 equity executions**
+(520 shares), with zero provider spend. Closed artifacts were about **3.65 GB**;
+available disk remained about **139 GiB**. Native execution has used 7,209.10
+seconds of the original 14,400-second allowance. Sources, seed, clock, horizon,
+storage cap and time limits remained fixed throughout the segments.
+
+The [life-course plan](2026-09-08-life-course-validation.md) contains the segment
+table, native outcomes, receipt paths and limits. The
+[W5 acceptance audit](2026-09-09-w5-acceptance-audit.md) now distinguishes verified
+native adulthood/consent from unfinished gates. The new
+[bounded replay/export specification](2026-09-09-campaign-replay-and-export.md)
+identifies current whole-table/reference memory retention and defines exact-byte
+parity, invalid-reference rejection, bounded resources, original-source
+preservation and independent Parquet validation. This is a concrete pending
+implementation specification, not a completed verifier or an observed memory
+failure.
+
+The same campaign remains paused short of its declared 14,600-day horizon.
+Complete its remaining evidence, bounded replay/export, external population
+boundary and current-version integration before closing W5. W6–W9 remain in
+their original order. No production code, paid-provider route, cleanup, staging,
+commit or publication changed in this continuation.
+
+## Day-8,009 audit stop and isolated bounded verifier
+
+The native segment 13 exited normally at day 8,009; the supervisor then stopped
+with exit 1 on a historical-report assertion. No segment 14 was started.
+A staff succession on day 7,827 exposed use of current person kind in both
+historical cash cohorts and the temporary consent auditor. All 21 saved annual
+reports differ only in their five USD cash-distribution fields for the promoted
+person. The [diagnosis, preserved evidence and repair specification](2026-09-09-historical-role-reconstruction.md)
+are now saved. Source bytes/mtime and the pinned simulation runtime are preserved.
+
+The independent cohort audit still passes: two native birth-to-adulthood
+transitions, 576 birthdays, 8,010 census days, no minor calls/endowments and
+balanced ledger/currency checks. Native goods/equity counts are 9,479 and 107;
+all 161,804 calls are scripted with zero spend. The original native budgets and
+14,600-day horizon remain unchanged; a passed cohort audit does not cure the
+report/consent failures or complete W5.
+
+In `C:/Users/matri/.codex/tmp/ae-13979342`, the comparator now streams hashes,
+stores event references and logical byte sorting on bounded scratch disk, and
+limits cached bytes and repeated reference expansion. The [implementation and
+measured results](2026-09-09-campaign-replay-and-export.md#implementation-and-fixture-validation-in-isolation)
+include 63 passing focused tests, Semantics 1/2 and golden replay, eight complete
+old/new output matches, and measured memory through 32,000 added synthetic rows.
+The bounded child used 26.363 MiB versus 341.336 MiB for the original comparator,
+with 158.047 MiB scratch and a roughly sixfold runtime cost in the largest probe.
+Full-campaign performance is not established.
+
+The isolated implementation is archived and an exact three-file integration
+patch passes `git apply --check`; it is not applied to the root. Root changes in
+this step are plans/evidence only. Historical-role repair, audit recovery, full
+campaign replay/export, root integration, complete CI and W6–W9 remain open.
+
+## Historical-kind recovery validated before native continuation
+
+The selected-boundary person-kind reader now reconstructs the recorded
+citizen-to-permit-staff transition without changing today's cash results.
+The separate consent auditor uses dated event/assignment evidence at proposal
+and response time. The [repair and acceptance record](2026-09-09-historical-role-reconstruction.md#implemented-repair-and-validation)
+contains 40 passing tests, all 21 annual reports reproduced, seven partnerships
+and fourteen assents validated, sixteen negative cases rejected, and independent
+same-day authority/current-metric checks. Source and fixture bytes/mtimes are
+preserved. Original failed receipts remain available.
+
+The change is archived in `ae-daca0e1c` and its integration patch is checked but
+unapplied. The `batch-14-18` supervisor is prepared to resume the original
+native engine under unchanged budgets, with every audit reader source file and
+helper frozen. Its actual handle/metadata establish progress after launch.
+This closes the diagnosed historical-role audit gate for the preserved source;
+it does not complete the full horizon, root integration, export, W5 or W6–W9.
+
+## External goods observations and control review
+
+The [population control and quote contract](2026-09-09-population-control-and-quotes.md)
+corrects a reproduced omission of private-firm goods quotes from external
+observations. Draft Semantics 21 adds currency, region and posted-price meaning;
+older observation contracts are unchanged. Eight focused cases pass, including
+a seven-day arrival/departure/return journey with source/replay restarts, exact
+stored envelopes, preserved identity and validated v8 exports at $0 provider
+cost. The suite joins the existing cross-platform population/Commons job.
+Its exact 13-suite selection passes 169 tests locally in 437.20 seconds, leaving
+103,563,366,400 bytes free. The control review advances the original inventory
+to 50 matching reviewed scopes with 100 remaining.
+
+Implementation and bounded tests continue above the 40 GiB reserve. The control
+inventory, complete scenario matrix, native horizon/full-prefix verification,
+full CI and later workstreams remain pending. This continuation does not change
+the original native campaign or authorize new cleanup.
+
+## Professional availability at incorporation
+
+The subsequent [civic routine and permit review](2026-09-09-population-civic-routines.md)
+closes four more application/approval failures. Eight cases pass, including a
+nine-day city workflow with fees, attendance, professional departure/return,
+clerk succession and one company formation. Exact replay, two within-day
+restarts and source-validated v8 exports pass at $0 provider cost. Ten additional
+original scopes are reviewed, for 69 reviewed and 81 remaining. Full admission,
+the CI matrix, native acceptance and later workstreams remain pending.
+
+The civic follow-up's exact 15-suite integration selection passed 190 tests
+in 617.99 seconds; six compatibility suites passed 84 in 177.74 seconds.
+All tested sources kept their hashes and modification times. The integrated
+run retained 1,026,056,182 artifact bytes and ended with 356,414,152,704 bytes
+free. This observed storage increase permits prospective native recovery
+planning while preserving the original native and verification budgets.
+
+The [incorporation review](2026-09-09-population-incorporation.md) corrects five
+reproduced service failures in the draft: unavailable lawyers in execution,
+manual selection and native opportunities, plus outside/missing-history permit
+applicants charged through the direct service. Thirteen cases pass, including
+actual departure, return, a 500-cent capitalization, 1,000 issued shares,
+source/replay restarts and validated v8 exports at $0 provider cost.
+
+The new suite joins the population/Commons CI selection. Its exact 14-suite
+selection passed 182 tests locally in 555.35 seconds; six compatibility suites
+passed 95 tests in 121.50 seconds. Sources stayed unchanged during both runs.
+The integrated run retained 958,589,945 artifact bytes and ended with
+101,769,162,752 bytes free. Nine additional scope reviews bring the original
+150-candidate inventory to 59 reviewed and 91 remaining. Inventory completion,
+full scenario admission, native horizon/full-prefix verification, complete CI,
+the remaining earlier acceptance and W6–W9 remain open. No stored native source,
+frozen runtime, paid provider or cleanup scope is changed.

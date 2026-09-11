@@ -7,6 +7,8 @@ const FIELDS = {
   contracts: ["id", "contract_type", "title", "jurisdiction", "ruleset_key", "offered_tick", "executed_tick", "expiry_tick", "terminated_tick", "status"],
   obligations: ["id", "contract_id", "obligation_type", "due_tick", "grace_ticks", "amount_cents", "currency_code", "performed_tick", "breached_tick", "status"],
   matters: ["id", "matter_type", "venue", "contract_id", "claim_type", "filed_tick", "response_due_tick", "resolved_tick", "status"],
+  awards: ["id", "tick", "basis", "currency_code", "awarded_cents", "credited_cents", "credited_loss_cents", "paid_cents", "outstanding_cents", "payment_count", "last_paid_tick", "payment_basis", "tax_cents", "net_received_cents", "written_off_cents"],
+  reserves: ["id", "registered_tick", "currency_code", "requested_cents", "reserve_limit_cents", "funded_cents", "held_cents", "released_cents", "resolved_tick", "status"],
   mergers: ["id", "proposed_tick", "acquirer_firm_id", "target_firm_id", "consideration_type", "price_cents", "currency_code", "target_approved_tick", "regulator_notified_tick", "closed_tick", "terminated_tick", "status"],
   mergerReviews: ["id", "merger_id", "tick", "pre_hhi", "post_hhi", "delta_hhi", "threshold_hhi", "threshold_delta", "outcome"],
 };
@@ -28,6 +30,14 @@ export function normalizePoliticsLawWorkspace(data = {}) {
   const source = data && typeof data === "object" ? data : {};
   const politicsEnabled = source.politics?.enabled === true;
   const legalEnabled = source.legal?.enabled === true;
+  const monetaryRelief = (legalEnabled ? records(source.matters) : []).flatMap(row => {
+    const relief = row.monetary_relief;
+    if (row.id == null || !relief || !["public", "withheld"].includes(relief.visibility)) return [];
+    if (relief.visibility === "withheld") return [{ id: row.id, visibility: "withheld", award: null, estate_reserve: null }];
+    const award = normalize([relief.award], FIELDS.awards, "tick")[0] || null;
+    const reserve = normalize([relief.estate_reserve], FIELDS.reserves, "registered_tick")[0] || null;
+    return award || reserve ? [{ id: row.id, visibility: "public", award, estate_reserve: reserve }] : [];
+  }).sort((left, right) => Number(left.id) - Number(right.id));
   const lobbying = (politicsEnabled ? normalize(source.lobbying, FIELDS.lobbying, "tick") : []).map(row => ({
     ...row,
     disclosure_state: row.disclosed === true || row.disclosed === 1 ? "disclosed" : "undisclosed",
@@ -46,6 +56,7 @@ export function normalizePoliticsLawWorkspace(data = {}) {
     contracts: legalEnabled ? normalize(source.contracts, FIELDS.contracts, "offered_tick") : [],
     obligations: legalEnabled ? normalize(source.obligations, FIELDS.obligations, "due_tick") : [],
     matters: legalEnabled ? normalize(source.matters, FIELDS.matters, "filed_tick") : [],
+    monetaryRelief,
     mergers: legalEnabled ? normalize(source.mergers, FIELDS.mergers, "proposed_tick") : [],
     mergerReviews: legalEnabled ? normalize(source.merger_reviews, FIELDS.mergerReviews, "tick") : [],
   };

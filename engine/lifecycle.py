@@ -33,6 +33,8 @@ from .ledger import Ledger, Leg, SYS_MEDICAL, SYS_GOV
 from .keyed_random import daily_draw, demographic_draw, person_key, stable_key
 from .store import Store
 
+OUTSIDE_LIFE_POLICY = "age_exogenous_health_no_local_services_v1"
+
 DEFAULT_HEALTH = {
     "premium_cents": 3000,          # per premium interval
     "coverage_bps": 8000,           # insurer pays 80% of medical bills
@@ -81,8 +83,21 @@ class Lifecycle:
 
     # ── nightly driver ───────────────────────────────────────────────────────
     def run_nightly(self, tick: int) -> None:
+        if self.engine_semantics_version >= 21:
+            # Direct engine callers need the same all-or-nothing lifecycle
+            # boundary as World NIGHT_CLOSE, including new-person registration.
+            with self.store.savepoint("population_lifecycle_nightly"):
+                self._run_nightly(tick)
+            return
+        self._run_nightly(tick)
+
+    def _run_nightly(self, tick: int) -> None:
         if self.engine_semantics_version >= 15:
             self.households.register_new_people(tick)
+        if self.engine_semantics_version >= 21:
+            # A cancelled local service must not resume billing while its
+            # holder remains outside. Validate recorded endings before use.
+            self.households.e.population.commitments.check_invariants()
         self._collect_premiums(tick)
         agents = self.store.query(
             "SELECT * "
@@ -182,6 +197,8 @@ class Lifecycle:
         agent_id = int(a["id"])
         age = int(a["age"])
         health = a["health"]
+        local = self._is_local(tick, agent_id)
+        evidence = {} if local else {"residence": "outside", "outside_life_policy": OUTSIDE_LIFE_POLICY}
 
         # Baseline mortality (all living agents).
         if self._draw(tick, agent_id, "mortality") < self._mortality_annual(age) / 365.0:
@@ -191,11 +208,11 @@ class Lifecycle:
         if health == "healthy":
             # Epidemic shocks scale the onset hazard (threshold only — the draw
             # sequence is untouched, so schedules stay comparable across arms).
-            epidemic = self.store.metric_latest("epidemic_multiplier", 1.0) or 1.0
+            epidemic = (self.store.metric_latest("epidemic_multiplier", 1.0) or 1.0) if local else 1.0
             hazard = min(0.9, self._illness_onset_annual(age) / 365.0 * epidemic)
             if self._draw(tick, agent_id, "illness_onset") < hazard:
                 self.store.update("agents", agent_id, health="sick", sick_since_tick=tick)
-                self.store.log_event(tick, "illness_onset", {"agent_id": agent_id},
+                self.store.log_event(tick, "illness_onset", {"agent_id": agent_id, **evidence},
                                      phase="NIGHT_CLOSE", subject_type="agent",
                                      subject_id=agent_id, importance=1.5)
                 self._charge_medical(tick, agent_id)
@@ -204,12 +221,12 @@ class Lifecycle:
             roll = self._draw(tick, agent_id, "sick_transition")
             if roll < self.p["sick_to_critical_per_tick"]:
                 self.store.update("agents", agent_id, health="critical")
-                self.store.log_event(tick, "illness_critical", {"agent_id": agent_id},
+                self.store.log_event(tick, "illness_critical", {"agent_id": agent_id, **evidence},
                                      phase="NIGHT_CLOSE", subject_type="agent",
                                      subject_id=agent_id, importance=2.5)
             elif roll < self.p["sick_to_critical_per_tick"] + self.p["sick_recovery_per_tick"]:
                 self.store.update("agents", agent_id, health="healthy", sick_since_tick=None)
-                self.store.log_event(tick, "recovery", {"agent_id": agent_id},
+                self.store.log_event(tick, "recovery", {"agent_id": agent_id, **evidence},
                                      phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id)
         elif health == "critical":
             self._charge_medical(tick, agent_id, multiplier=3)
@@ -218,10 +235,15 @@ class Lifecycle:
                 self.settle_death(tick, agent_id, cause="illness")
             elif roll < self.p["critical_death_per_tick"] + self.p["critical_recovery_per_tick"]:
                 self.store.update("agents", agent_id, health="healthy", sick_since_tick=None)
-                self.store.log_event(tick, "recovery", {"agent_id": agent_id},
+                self.store.log_event(tick, "recovery", {"agent_id": agent_id, **evidence},
                                      phase="NIGHT_CLOSE", subject_type="agent", subject_id=agent_id)
 
+    def _is_local(self, tick: int, agent_id: int) -> bool:
+        return self.engine_semantics_version < 21 or self.households.e.population.is_local(agent_id, tick)
+
     def _charge_medical(self, tick: int, agent_id: int, multiplier: int = 1) -> None:
+        if not self._is_local(tick, agent_id):
+            return
         cost = int(self.p["medical_cost_cents"]) * multiplier
         acct = self.ledger.agent_checking_id(agent_id)
         if acct is None or cost <= 0:
@@ -296,12 +318,19 @@ class Lifecycle:
                     phase="NIGHT_CLOSE", subject_type="agent",
                     subject_id=int(pol["agent_id"]), importance=1.0)
 
+    def cancel_personal_insurance(self, tick: int, agent_id: int) -> None:
+        """End future local cover; recorded premiums and claims are unchanged."""
+        self.store.execute("UPDATE insurance_policies SET status='cancelled',end_tick=? "
+                           "WHERE agent_id=? AND status='active'", (tick, agent_id))
+
     # ── births (household events) ────────────────────────────────────────────
     def _maybe_birth(self, tick: int, a) -> None:
         if self.engine_semantics_version >= 15:
             # A health transition may have killed this parent earlier tonight.
             a = self.store.query_one("SELECT * FROM agents WHERE id=? AND alive=1", (a["id"],))
             if a is None:
+                return
+            if not self._is_local(tick, int(a["id"])):
                 return
             if any(item["tick"] == tick and item["parent_agent_id"] == int(a["id"])
                    for item in self.households.p["scheduled_births"]):
@@ -331,6 +360,7 @@ class Lifecycle:
         agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (agent_id,))
         if not agent or not agent["alive"]:
             return
+        local = self._is_local(tick, agent_id)
 
         if self.engine_semantics_version >= 18:
             self.earned_wages.collect_before_death(tick, agent_id)
@@ -359,10 +389,15 @@ class Lifecycle:
 
         heir_id = self._find_heir(agent_id)
         cash_filter = " AND kind IN ('checking','savings','fx')" if self.engine_semantics_version >= 18 else ""
-        if self.engine_semantics_version >= 18:
+        if 18 <= self.engine_semantics_version < 20:
             self.earned_wages.inherit(tick, agent_id, heir_id)
-        if self.engine_semantics_version >= 19:
+        if self.engine_semantics_version == 19:
             self.cash_estates.settle(tick, agent_id, heir_id)
+        estate_id = None
+        if self.engine_semantics_version >= 20:
+            estate_id = self.estate_cases.open(tick, agent_id)
+            beneficiaries = self.store.query("SELECT agent_id FROM estate_beneficiaries WHERE estate_id=? ORDER BY id", (estate_id,))
+            heir_id = beneficiaries[0]["agent_id"] if len(beneficiaries) == 1 else None
 
         # 2) Legacy cash transfer; Semantics 19 records this inside the waterfall.
         cash_accounts = [] if self.engine_semantics_version >= 19 else self.store.query(
@@ -388,7 +423,8 @@ class Lifecycle:
                                  memo="escheat to government")
 
         # 3) Transfer share holdings to heir (or wind down sole-proprietor firms).
-        self._transfer_shares_on_death(tick, agent_id, heir_id)
+        if self.engine_semantics_version < 20:
+            self._transfer_shares_on_death(tick, agent_id, heir_id)
 
         # 4) Terminate employment; clear roles.
         self.store.execute(
@@ -400,11 +436,17 @@ class Lifecycle:
                           employer_id=None)
         if self.engine_semantics_version >= 15:
             self.households.close_person(tick, agent_id)
-        self.store.log_event(tick, "death", {
+        death_event_id = self.store.log_event(tick, "death", {
             "agent_id": agent_id, "name": agent["name"], "cause": cause,
-            "occupation": agent["occupation"], "heir_id": heir_id}, phase="NIGHT_CLOSE",
+            "occupation": agent["occupation"], "heir_id": heir_id,
+            **({"residence": "outside", "outside_life_policy": OUTSIDE_LIFE_POLICY} if not local else {}),
+            **({"estate_id": estate_id} if self.engine_semantics_version >= 20 else {})}, phase="NIGHT_CLOSE",
             subject_type="agent", subject_id=agent_id, importance=4.0)
+        if self.engine_semantics_version >= 20:
+            self.business_control.on_death(tick, agent_id, death_event_id)
+            self.project_rights.refresh(tick)
         if (self.p["population_mode"] == "stable"
+                and local
                 and (self.engine_semantics_version < 15 or int(agent["age"]) >= 18)):
             if self.engine_semantics_version >= 15:
                 low, high = int(self.p["arrival_delay_min"]), int(self.p["arrival_delay_max"])
@@ -442,6 +484,9 @@ class Lifecycle:
         return None
 
     def _transfer_shares_on_death(self, tick: int, agent_id: int, heir_id: Optional[int]) -> None:
+        if self.engine_semantics_version >= 20:
+            self.business_control.distribute_shares(tick, agent_id, [(heir_id, 1)])
+            return
         holdings = self.store.query(
             "SELECT * FROM shares WHERE holder_type='agent' AND holder_id=?", (agent_id,))
         for h in holdings:

@@ -3,6 +3,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { formatMetricDelta, formatMetricValue } from "../api";
 import { rollingSumSeries } from "../metrics";
 import { Panel } from "./ui";
+import { metricAvailabilityText, metricDelta } from "../lib/metricSeries.js";
 
 const DEFINITIONS = [
   ["gdp_proxy_30d", "30-day output", "Rolling final-goods sales; wages are reported separately", "#79e6bd"],
@@ -12,7 +13,7 @@ const DEFINITIONS = [
   ["index", "Market index", "Listed-firm prices", "#93c5fd"],
   ["policy_rate", "Policy rate", "Central-bank rate", "#c4b5fd"],
   ["money_supply", "Money supply", "Deposits in circulation", "#67e8f9"],
-  ["gini", "Gini", "Balance inequality", "#f0abfc"],
+  ["gini", "Legacy account Gini", "All citizen accounts; currencies are not separated. This is not wallet-cash or net-wealth inequality.", "#f0abfc"],
   ["sentiment", "Sentiment", "Average belief", "#86efac"],
 ];
 
@@ -30,23 +31,30 @@ export function MacroOverview({ metrics }) {
           const sourceSeries = metrics[key] || [];
           const series = key === "labor_income" ? rollingSumSeries(sourceSeries, 30) : sourceSeries;
           const latest = series.at(-1)?.value;
-          const previous = series.at(-2)?.value;
-          const delta = previous === undefined ? null : Number(latest) - Number(previous);
+          const delta = metricDelta(series);
+          const unavailable = metricAvailabilityText(series.at(-1));
+          const residentRate = (key === "unemployment" || key === "sentiment") && series.at(-1)?.status != null;
+          const description = residentRate ? (key === "unemployment"
+            ? "Resident citizens aged 18–64, not retired, without active employment or a firm operator role"
+            : "Recorded sentiment among resident citizens") : help;
           const gradientId = macroGradientId(gradientPrefix, key);
           return (
-            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={help}>
+            <article key={key} className="min-w-0 bg-ink-900/95 px-3 py-3" title={description} aria-label={label}>
               <div className="truncate text-[10px] font-semibold uppercase tracking-[.12em] text-slate-500">{label}</div>
               <div className="mt-1 flex items-baseline gap-2">
                 <strong className="tabular truncate text-lg font-semibold text-slate-100">{formatMetricValue(key, latest)}</strong>
                 {delta !== null && <span className={`tabular text-[10px] ${delta > 0 ? "text-mint-300" : delta < 0 ? "text-coral-300" : "text-slate-600"}`}>{formatMetricDelta(key, delta)}</span>}
               </div>
+              {unavailable && <p className="mt-1 text-[10px] text-slate-400" role="status">
+                Unavailable at t{series.at(-1).tick}. {unavailable}
+              </p>}
               <div className="mt-2 h-10" aria-hidden="true">
                 {series.length > 1 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={series} accessibilityLayer={false} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
                       <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={.35}/><stop offset="100%" stopColor={color} stopOpacity={0}/></linearGradient></defs>
                       <Tooltip content={() => null} />
-                      <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#${gradientId})`} isAnimationActive={false} />
+                      <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#${gradientId})`} isAnimationActive={false} connectNulls={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (

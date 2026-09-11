@@ -3,7 +3,7 @@ import { humanize } from "../lib/civicCity.js";
 import "./city-society.css";
 
 /** @param {any} props */
-export function CitySocietyEvidence({ household, institution, requested, tick, reason, onPerson }) {
+export function CitySocietyEvidence({ household, institution, requested, tick, reason, onPerson, personHref }) {
   if (!household && !institution) return <section className="civic-city__record" aria-label="Unavailable city record">
     <h3>{requested}</h3><p>{reason || "This identity has no visible record at the selected tick."}</p>
     <p>The selection is preserved. Choose another public object or change the historical tick.</p>
@@ -19,8 +19,14 @@ export function CitySocietyEvidence({ household, institution, requested, tick, r
         <header><span>Recorded membership</span><b>{household.members.length} visible</b></header>
         <p>Core members only. This list does not establish the full household size or a shared residence.</p>
         <ul className="city-society-members">{household.members.map(member => <li key={member.agent_id}>
-          <button type="button" onClick={() => onPerson(member.agent_id)}>Inspect {member.name}</button>
+          {member.modeled_residence?.state === "outside"
+            ? (personHref ? <a href={personHref(member.agent_id)}>Inspect {member.name}</a> : <strong>{member.name}</strong>)
+            : <button type="button" onClick={() => onPerson(member.agent_id)}>Inspect {member.name}</button>}
           <span>{member.age_years} years · {humanize(member.role)} member</span>
+          {member.modeled_residence && <small>
+            {member.modeled_residence.state === "outside" ? "Outside the modeled economy" : "Local resident"}
+            {` since tick ${member.modeled_residence.since_tick}`}
+          </small>}
           {member.role === "dependent" && <small>Age band: {humanize(member.age_band)}</small>}
           <small>Member since tick {member.joined_tick}{member.guardian_agent_id != null
             ? ` · Recorded guardian #${member.guardian_agent_id}` : ""}</small>

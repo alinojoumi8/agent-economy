@@ -1,5 +1,12 @@
 export const AGENT_PAGE_SIZE = 36;
 
+/** A co-owner or guardian can follow a project without becoming its founder. */
+export function projectInvolvesAgent(project, agentId) {
+  return agentId != null && (project?.owner_agent_id === agentId
+    || project?.steward_agent_id === agentId
+    || (Array.isArray(project?.beneficial_owner_ids) && project.beneficial_owner_ids.includes(agentId)));
+}
+
 /** The agent the journey pane opens on when the URL names none. */
 export function featuredAgentId(agents, projects) {
   const list = Array.isArray(agents) ? agents : [];
@@ -10,6 +17,9 @@ export function featuredAgentId(agents, projects) {
     && project?.owner_agent_id != null
   ))?.owner_agent_id;
   if (constructionOwner != null) return constructionOwner;
+  const constructionSteward = streams.find(project => project?.kind === "construction"
+    && project?.status === "active" && project?.steward_agent_id != null)?.steward_agent_id;
+  if (constructionSteward != null) return constructionSteward;
   const runtimeAgent = list.find(agent => agent?.runtime);
   if (runtimeAgent) return runtimeAgent.id;
   const progressingOwner = streams.find(project => (

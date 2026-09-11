@@ -139,6 +139,8 @@ function asArray(value) {
 
 function mergeAgents(agents, map) {
   const merged = new Map();
+  const recordedPopulation = map?.population_summary?.resident_population != null;
+  const mappedIds = new Set(asArray(map?.agents ?? map?.core_agents).map(agent => String(agent.id)));
   asArray(map?.core_agents).forEach(agent => merged.set(String(agent.id), { ...agent }));
   asArray(map?.agents).forEach(agent => merged.set(String(agent.id), {
     ...(merged.get(String(agent.id)) || {}),
@@ -146,6 +148,7 @@ function mergeAgents(agents, map) {
   }));
   asArray(map?.presence)
     .filter(item => item?.agent_id != null && item?.slot === "business")
+    .filter(item => !recordedPopulation || mappedIds.has(String(item.agent_id)))
     .filter(item => merged.get(String(item.agent_id))?.population_tier !== "periphery")
     .forEach(item => {
       const key = String(item.agent_id);
@@ -165,9 +168,17 @@ function mergeAgents(agents, map) {
     });
   asArray(agents).forEach(agent => {
     const key = String(agent.id);
-    merged.set(key, { ...(merged.get(key) || {}), ...agent });
+    // A current /api/agents fallback must not add an outside identity or
+    // overwrite the selected day's canonical map location/residence.
+    if (recordedPopulation) {
+      if (mappedIds.has(key)) merged.set(key, { ...agent, ...(merged.get(key) || {}) });
+    } else {
+      merged.set(key, { ...(merged.get(key) || {}), ...agent });
+    }
   });
-  return [...merged.values()].filter(agent => agent?.id !== null && agent?.id !== undefined);
+  return [...merged.values()].filter(agent => agent?.id !== null && agent?.id !== undefined
+    && (!recordedPopulation || mappedIds.has(String(agent.id)))
+    && (!Object.hasOwn(agent, "modeled_residence") || agent.modeled_residence?.state === "resident"));
 }
 
 function pointInDistrict(agent, index, count, districtId) {
@@ -432,6 +443,8 @@ export function deriveCityModel({
   const coreCount = Number(projectedPopulation.core
     ?? cityAgents.filter(agent => agent.population_tier !== "periphery").length);
   const population = {
+    ...(projectedPopulation.known_living_outside != null
+      ? { knownLivingOutside: projectedPopulation.known_living_outside } : {}),
     mode: map?.population_mode || "core",
     total: Number(projectedPopulation.total ?? cityAgents.length),
     core: coreCount,
