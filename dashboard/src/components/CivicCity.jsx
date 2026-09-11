@@ -582,6 +582,7 @@ export function CivicCity(props) {
           <button type="button" aria-pressed={cityView === "atlas"} onClick={() => changeView("atlas")}>Atlas</button>
           <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
           {onObserverStateChange && <button type="button" aria-pressed={cityView === "recorded"} onClick={() => changeView("recorded")}>Recorded day</button>}
+          {props.onOpen3d && <button type="button" aria-pressed={false} onClick={props.onOpen3d}>3D city</button>}
           {onObserverStateChange && <button type="button" aria-pressed={cityView === "list"} onClick={() => changeView("list")}>List</button>}
         </div>
       </div>

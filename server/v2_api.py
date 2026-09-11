@@ -357,7 +357,7 @@ def install_v2_routes(app, world, controller) -> None:
     async def world_map_projection(
         tick: str = Query("live"), fork_id: str | None = None,
         layers: str = Query(
-            "regions,agents,organizations,places,presence,construction_projects"),
+            "regions,agents,organizations,banks,places,presence,construction_projects"),
         population: Literal["core", "all", "clusters"] = Query("core"),
     ):
         as_of_tick = projection_tick(tick, fork_id)
@@ -491,6 +491,14 @@ def install_v2_routes(app, world, controller) -> None:
             data["households"] = build_city_households(store, as_of_tick=as_of_tick)
         if "institutions" in selected:
             data["institutions"] = build_city_institutions(store, as_of_tick=as_of_tick)
+        if "banks" in selected:
+            # Public institution identity only. Banks have no recorded place,
+            # so the city must label their positions as derived display slots.
+            data["banks"] = [dict(row) for row in store.query(
+                "SELECT id,name,region_id,CASE WHEN failed_tick IS NOT NULL "
+                "AND failed_tick<=? THEN 'failed' ELSE 'open' END AS status "
+                "FROM banks ORDER BY id", (as_of_tick,))]
+
         if "places" in selected:
             data["places"] = [place for place in world.economy.city.map_places(as_of_tick)
                               if place["id"] not in hidden_homes]
@@ -693,6 +701,12 @@ def install_v2_routes(app, world, controller) -> None:
             build_city_conversations(store, as_of_tick=as_of_tick, limit=limit),
             as_of_tick=as_of_tick,
         )
+    @router.get("/urban-development")
+    async def urban_development(tick: str = Query("live"), fork_id: str | None = None):
+        as_of_tick = projection_tick(tick, fork_id)
+        return build_envelope(store, Principal("ordinary-dashboard"), "urban.development",
+                              world.economy.urban.projection(as_of_tick), as_of_tick=as_of_tick)
+
 
     @router.get("/civic/summary")
     async def civic_summary(

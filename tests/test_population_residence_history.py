@@ -43,7 +43,7 @@ def residence_case(estate_case):
 
 
 def test_unfinished_population_boundary_is_not_advertised(store):
-    assert SCHEMA_VERSION == 25 and CURRENT_ENGINE_SEMANTICS_VERSION == 20
+    assert SCHEMA_VERSION == 27 and CURRENT_ENGINE_SEMANTICS_VERSION == 20
     assert 26 not in {migration.version for migration in registered_migrations()}
     with pytest.raises(ValueError, match="unsupported"):
         validate_engine_semantics_version(21)

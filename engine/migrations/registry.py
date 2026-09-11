@@ -20,6 +20,7 @@ from . import (
     v023_daily_time,
     v024_estate_cash,
     v025_asset_succession,
+    v027_urban_development,
 )
 
 
@@ -94,6 +95,7 @@ _MIGRATIONS = (
     Migration.create(
         25, v025_asset_succession.NAME, v025_asset_succession.SQL,
         verify=v025_asset_succession.verify),
+    Migration.create(27, v027_urban_development.NAME, v027_urban_development.SQL, verify=v027_urban_development.verify),
 )
 
 

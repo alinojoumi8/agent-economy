@@ -56,7 +56,8 @@ class Memory:
 
     # ── retrieval ────────────────────────────────────────────────────────────
     def retrieve(self, agent_id: int, tick: int, k: int = 6,
-                 query_entities: Optional[list[str]] = None) -> list[dict]:
+                 query_entities: Optional[list[str]] = None, *,
+                 mark_access: bool = True) -> list[dict]:
         rows = self.store.query(
             "SELECT * FROM memories WHERE agent_id=? AND demoted=0 ORDER BY tick DESC LIMIT 200",
             (agent_id,))
@@ -76,8 +77,9 @@ class Memory:
             scored.append((score, r))
         scored.sort(key=lambda t: -t[0])
         top = scored[:k]
-        for _, r in top:
-            self.store.update("memories", int(r["id"]), last_accessed_tick=tick)
+        if mark_access:
+            for _, r in top:
+                self.store.update("memories", int(r["id"]), last_accessed_tick=tick)
         return [{"id": int(r["id"]), "tick": int(r["tick"]), "text": r["text"],
                  "kind": r["kind"], "importance": float(r["importance"])} for _, r in top]
 

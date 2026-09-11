@@ -47,7 +47,7 @@ def state(path):
 def install_draft(monkeypatch, migration=None, *, admit_semantics=False):
     assert 26 not in {item.version for item in registry.registered_migrations()}
     migration = migration or registry.Migration.create(26,draft.NAME,draft.SQL,verify=draft.verify)
-    monkeypatch.setattr(registry,'_MIGRATIONS',registry.registered_migrations()+(migration,))
+    monkeypatch.setattr(registry,'_MIGRATIONS',tuple(m for m in registry.registered_migrations() if m.version < 26)+(migration,))
     monkeypatch.setattr(schema,'SCHEMA_VERSION',26)
     monkeypatch.setattr(store_module,'SCHEMA_VERSION',26)
     if admit_semantics:
@@ -56,7 +56,11 @@ def install_draft(monkeypatch, migration=None, *, admit_semantics=False):
 
 
 @pytest.fixture
-def source20(tmp_path):
+def source20(tmp_path, monkeypatch):
+    # This fixture intentionally represents the historical schema-25 source.
+    monkeypatch.setattr(registry, "_MIGRATIONS", tuple(m for m in registry.registered_migrations() if m.version <= 25))
+    monkeypatch.setattr(schema, "SCHEMA_VERSION", 25)
+    monkeypatch.setattr(store_module, "SCHEMA_VERSION", 25)
     path = tmp_path/'original-schema25.db'
     config = civic_config()
     config.update(checkpoint_every=0,speed_delay_s=0)

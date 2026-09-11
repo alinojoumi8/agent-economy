@@ -4,6 +4,8 @@
 .civic-city__instrument-details > summary { padding: .8rem; cursor: pointer; }
 .city-map-tools { position: relative; z-index: 20; }
 
+
+
 @media (max-width: 600px) {
   .civic-city--compact .civic-city__view-toggle { width: 100%; }
   .civic-city--compact .civic-city__view-toggle > div { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
@@ -58,4 +60,10 @@
   .world-os-world-workspace .civic-city--compact .city-follow p { max-width: 30ch; }
   .world-os-world-workspace .civic-city--compact .city-follow:has(button[aria-pressed="false"]) p { display: none; }
   .world-os-world-workspace .civic-city--compact .city-camera { padding: 4px; }
+}
+
+@media (min-width: 1200px) and (max-width: 1399px) {
+  .world-os-world-workspace .civic-city--compact .civic-city__toolbar { gap: 2px; }
+  .world-os-world-workspace .civic-city--compact .civic-city__heading { flex-basis: 116px; }
+  .world-os-world-workspace .civic-city--compact .civic-city__view-toggle button { padding-inline: 3px; }
 }

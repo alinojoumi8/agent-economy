@@ -361,6 +361,14 @@ beside it, never rasterized into the asset.
 ### Don't:
 - **Don't** add reward loops, invented economic events, or decorative agent
   activity that could be mistaken for recorded behavior.
+- **Don't** turn the default observatory into an isometric game, reward loop,
+  or decorative agent aquarium. The optional City 3D view on `simcity` is an
+  intentional exception for spatial exploration and validated civic proposals.
+  It must keep the 2D atlas available, label derived positions and decorative
+  roads, provide HTML inspectors and keyboard controls, respect reduced motion,
+  and leave all economic decisions to the authoritative engine. A building
+  preview never implies an accepted action or authority over land.
+
 - **Don't** use generic dark-SaaS glass panels, decorative neon glows detached
   from telemetry, or interchangeable metric-card grids.
 - **Don't** imply geographic precision when a run exposes no coordinates;

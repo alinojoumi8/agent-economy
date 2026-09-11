@@ -9,6 +9,7 @@ import pytest
 from engine.migrations import registry
 from engine.migrations.registry import Migration, MigrationError
 from engine.migrations.v012_communications import REQUIRED_TABLES, verify
+from engine.schema import SCHEMA_VERSION
 from engine.store import Store
 
 

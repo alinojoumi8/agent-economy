@@ -76,6 +76,8 @@ EVENT_REFERENCE_JSON_COLUMNS = {
     ("action_proposals", "evidence_event_ids_json"),
 }
 NESTED_EVENT_REFERENCE_JSON_COLUMNS = {
+    ("construction_receipts", "result_json"),
+    ("urban_projection_history", "data_json"),
     ("events", "payload_json"),
     ("action_proposals", "payload_json"),
     ("action_proposals", "result_json"),
@@ -106,6 +108,9 @@ EVENT_REFERENCE_COLUMNS = {
     ("estate_unlisted_sales", "event_id"),
     ("estate_administrations", "event_id"),
     ("estate_administration_ends", "event_id"),
+    ("urban_construction_projects", "created_event_id"),
+    ("urban_construction_projects", "outcome_event_id"),
+
     ("liquidity_support_requests", "request_event_id"),
     ("service_cases", "created_event_id"),
     ("service_cases", "outcome_event_id"),
@@ -122,7 +127,8 @@ EVENT_REFERENCE_COLUMNS = {
 }
 EVENT_REFERENCE_KEYS = {
     "authority_event_id", "effect_event_id",
-    "request_event_id", "event_id", "created_event_id",
+    "request_event_id", "event_id", "created_event_id", "outcome_event_id",
+
     "publication_event_id", "root_event_id",
 }
 EVENT_REFERENCE_LIST_KEYS = {"evidence_event_ids", "source_event_ids"}
@@ -181,6 +187,13 @@ POPULATION_TABLES = {"person_residence_events", "population_resident_census",
 SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_TABLES),
                        (19, 24, ESTATE_CASH_TABLES), (20, 25, ASSET_SUCCESSION_TABLES),
                        (21, 26, POPULATION_TABLES))
+URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "construction_receipts", "urban_projection_history"}
+
+
+def _urban_enabled(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
+    config = json.loads(row[0]) if row else {}
+    return int(config.get("engine_semantics_version", 1)) >= 13 and bool(config.get("urban_development", {}).get("enabled"))
 
 
 def _engine_semantics(conn: sqlite3.Connection) -> int:
@@ -195,6 +208,9 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
         "ORDER BY name"
     ).fetchall()
     names = [str(row[0]) for row in rows if str(row[0]) not in EXCLUDED_TABLES]
+    if not _urban_enabled(conn):
+        names = [name for name in names if name not in URBAN_TABLES
+                 or conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is not None]
     for semantics, _, tables in SEMANTIC_EXTENSIONS:
         if _engine_semantics(conn) >= semantics:
             continue
@@ -714,10 +730,31 @@ def _canonicalize_nested_llm_references(
     return value, True
 
 
+def _canonical_attention_snapshot(value: Any, event_references: dict[int, Any]) -> tuple[Any, bool]:
+    """Retain every attention field while resolving physical evidence pointers."""
+    if isinstance(value, list):
+        resolved = [_canonical_attention_snapshot(item, event_references) for item in value]
+        return [item for item, _ in resolved], all(valid for _, valid in resolved)
+    if isinstance(value, dict):
+        output = {}
+        valid = True
+        for key, item in value.items():
+            if key == "source_event_id" and item is not None:
+                item, item_valid = _canonical_event_reference(item, event_references)
+            else:
+                item, item_valid = _canonical_attention_snapshot(item, event_references)
+            output[key] = item
+            valid = valid and item_valid
+        return output, valid
+    return value, True
+
+
 def _table_digest(
         conn: sqlite3.Connection, table: str,
         llm_call_references: Mapping[int, Any],
         event_references: Mapping[int, Any], storage: ReplayStorage) -> tuple[int, str, bool]:
+    config = json.loads(conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()[0] or "{}")
+    urban = int(config.get("engine_semantics_version", 1)) >= 13 and config.get("urban_development", {}).get("enabled")
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
     ignored = (IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
                | TABLE_IGNORED_COLUMNS.get(table, set()))
@@ -738,6 +775,8 @@ def _table_digest(
         # The additive migration receipt is not a historical simulated effect.
         # All pre-existing receipts and all Semantics-17 receipts remain exact.
         omitted = [str(version) for semantics, version, _ in SEMANTIC_EXTENSIONS if _engine_semantics(conn) < semantics]
+        if not _urban_enabled(conn):
+            omitted.append("27")
         where = " WHERE version NOT IN (" + ",".join(omitted) + ")" if omitted else ""
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
@@ -784,6 +823,9 @@ def _table_digest(
                 references_valid = references_valid and valid
             else:
                 value = _canonical_value(column, row[column])
+                if (urban and table == "attention_contexts" and column == "snapshot_json"):
+                    value, valid = _canonical_attention_snapshot(value, event_references)
+                    references_valid = references_valid and valid
                 if (table, column) in LLM_REFERENCE_JSON_COLUMNS:
                     resolver = None
                     if table == "events" and isinstance(value, dict):

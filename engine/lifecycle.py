@@ -365,6 +365,9 @@ class Lifecycle:
         if self.engine_semantics_version >= 18:
             self.earned_wages.collect_before_death(tick, agent_id)
 
+        if getattr(self, "urban", None):
+            self.urban.founder_death(tick, agent_id)
+
         # 1) Settle debts via the creditor waterfall (dead agent's cash first).
         loans = [] if self.engine_semantics_version >= 19 else self.store.query(
             "SELECT * FROM loans WHERE borrower_type='agent' AND borrower_id=? AND status='active'",

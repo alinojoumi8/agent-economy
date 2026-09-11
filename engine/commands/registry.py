@@ -8,6 +8,8 @@ from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from .models import (ApplyBusinessPermit, ApplyConstructionPermit,
                      AttendCivicAppointment,
+                     ConstructBuilding, CancelUrbanConstruction, DemolishBuilding,
+
                      BuyComputePlan, CancelComputePlan,
                      CancelConstruction, ContributeConstructionFunding,
                      DecideBusinessPermit, DecideConstructionPermit,
@@ -80,6 +82,12 @@ COGNITION_MODELS = {
     "study_skill": StudySkill,
 }
 
+URBAN_MODELS = {
+    "construct_building": ConstructBuilding,
+    "cancel_urban_construction": CancelUrbanConstruction,
+    "demolish_building": DemolishBuilding,
+}
+
 CIVIC_MODELS = {
     "apply_business_permit": ApplyBusinessPermit,
     "attend_civic_appointment": AttendCivicAppointment,
@@ -132,6 +140,8 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
         | legal_mandates
         | set(ESTATE_BID_MODELS)
         | set(POPULATION_MODELS)
+        | set(URBAN_MODELS)
+
     )
     for command_type in sorted(set(known_types) - strict_types):
         registry.register(CommandDefinition(
@@ -184,4 +194,7 @@ def default_registry(known_types: Iterable[str]) -> CommandRegistry:
     for command_type, model in POPULATION_MODELS.items():
         registry.register(CommandDefinition(command_type=command_type, model=model,
             handler_name=f"_do_{command_type}", introduced_in_semantics=21))
+    for command_type, model in URBAN_MODELS.items():
+        registry.register(CommandDefinition(command_type, model, f"_do_{command_type}", 13))
+
     return registry

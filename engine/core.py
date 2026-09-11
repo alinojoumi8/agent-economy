@@ -14,6 +14,7 @@ from .credit import Bank
 from .business_control import BusinessControl
 from .city import City
 from .civic_authority import CivicAuthority
+from .urban_development import UrbanDevelopment
 from .cognition import CognitionEconomy
 from .construction import ConstructionEconomy
 from .daily_time import DailyTime
@@ -150,6 +151,9 @@ class Economy:
         self.gov.population = self.population
         for institution in (self.bank, self.politics, self.cognition, self.information, self.regions):
             institution.population = self.population
+        self.urban = UrbanDevelopment(self)
+        self.firms.urban = self.urban
+        self.lifecycle.urban = self.urban
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

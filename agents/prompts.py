@@ -271,7 +271,7 @@ class ContextBuilder:
         )
 
     def build(self, agent_row, tick: int, *, firm_id: int | None = None,
-              retrieve_memories: bool = True) -> dict:
+              retrieve_memories: bool = True, read_only: bool = False) -> dict:
         role = agent_row["role"]
         if role == "central_banker":
             ctx = self._central_banker_context(agent_row, tick)
@@ -280,12 +280,12 @@ class ContextBuilder:
         elif role == "vc_partner":
             ctx = self._vc_partner_context(agent_row, tick)
         elif role == "lawyer":
-            ctx = self._lawyer_context(agent_row, tick, retrieve_memories=retrieve_memories)
+            ctx = self._lawyer_context(agent_row, tick, retrieve_memories=retrieve_memories, read_only=read_only)
         else:
             recovery = self._active_recovery_settings(tick)
             ctx = self._citizen_context(
                 agent_row, tick, recovery_settings_at_tick=recovery,
-                retrieve_memories=retrieve_memories)
+                retrieve_memories=retrieve_memories, read_only=read_only)
             if firm_id is not None:
                 firm = self.store.query_one(
                     f"SELECT * FROM {self.e.business_control.table} WHERE id=? AND {self.e.business_control.column}=? "
@@ -583,7 +583,7 @@ class ContextBuilder:
     # ── citizen ──────────────────────────────────────────────────────────────
     def _citizen_context(self, a, tick: int, *,
                          recovery_settings_at_tick: dict | None = None,
-                         retrieve_memories: bool = True) -> dict:
+                         retrieve_memories: bool = True, read_only: bool = False) -> dict:
         if recovery_settings_at_tick is None:
             recovery_settings_at_tick = self._active_recovery_settings(tick)
         agent_id = int(a["id"])
@@ -637,7 +637,7 @@ class ContextBuilder:
         heard = self._heard(agent_id, tick)
         # Catalogs need action terms, not a simulated act of remembering.
         memories = (self.mem.retrieve(agent_id, tick, k=6,
-                    query_entities=self._query_entities(bank_id)) if retrieve_memories else [])
+                    query_entities=self._query_entities(bank_id), mark_access=not read_only) if retrieve_memories else [])
 
         insured = self.store.query_one(
             "SELECT 1 FROM insurance_policies WHERE agent_id=? AND status='active'",
@@ -2161,9 +2161,9 @@ class ContextBuilder:
                 ctx["startup_work"] = startup_work
         return ctx
 
-    def _lawyer_context(self, a, tick: int, *, retrieve_memories: bool = True) -> dict:
+    def _lawyer_context(self, a, tick: int, *, retrieve_memories: bool = True, read_only: bool = False) -> dict:
         agent_id = int(a["id"])
-        ctx = self._citizen_context(a, tick, retrieve_memories=retrieve_memories)
+        ctx = self._citizen_context(a, tick, retrieve_memories=retrieve_memories, read_only=read_only)
         matters = []
         legacy_matters = self.store.query(
                 "SELECT * FROM legal_matters WHERE counsel_agent_id=? "

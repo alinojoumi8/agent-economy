@@ -1,8 +1,8 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Current assessment date:** 2026-09-07
+> **Current assessment date:** 2026-09-11
 >
-> **Maintained maximum contract for new runs:** schema 21 / semantics 16
+> **Maintained maximum contract for new runs:** schema 27 / semantics 20
 >
 > **Status authority:** this file is the single maintained release-status
 > ledger. Root and World OS specifications define behavior and intended
@@ -13,6 +13,17 @@
 > **Compatibility boundary:** stored historical runs retain their recorded
 > schema and semantics. Supporting schema 21 / semantics 16 for new runs does
 > not rewrite or upgrade historical evidence.
+
+## Local SimCity and DeepSeek integration
+
+The previous schema 21 / semantics 16 assessment is retained below as historical
+context. The integrated runtime preserves Semantics 20 and reserves migration 26
+for the unregistered population draft. Migration 27 adds separate firm-funded urban
+construction tables, with hash-contract-v9 for urban-enabled runs.
+The optional 3D city is available in Live City; the 2D atlas and research construction
+remain available. See [urban development](urban-development.md) and the branch-era
+[city verification](../city/verification.md). DeepSeek V4.1 support is included;
+this integration does not add paid-provider or hosted deployment evidence.
 
 ## Status terminology
 

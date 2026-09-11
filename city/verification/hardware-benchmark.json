@@ -1,0 +1,35 @@
+{
+  "status": "complete",
+  "seconds": 30,
+  "startupMs": 1738.139937,
+  "gpu": "ANGLE (NVIDIA Corporation, NVIDIA GeForce GTX 1080 Ti/PCIe/SSE2, OpenGL 4.5.0)",
+  "errors": [],
+  "samples": [
+    {
+      "elapsedMs": 10094.399999976158,
+      "frames": 605,
+      "renderedFrames": 607,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture · layout 1 · 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8401276
+    },
+    {
+      "elapsedMs": 20130.5,
+      "frames": 1207,
+      "renderedFrames": 1209,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture · layout 1 · 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8434492
+    },
+    {
+      "elapsedMs": 30070.099999964237,
+      "frames": 1803,
+      "renderedFrames": 1805,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture · layout 1 · 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8473736
+    }
+  ],
+  "meanAnimationFps": 59.959893715090544,
+  "meanRenderedFps": 59.893382463049406
+}

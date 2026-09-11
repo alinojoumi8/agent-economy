@@ -130,6 +130,7 @@ class World:
                 # city; recalculating it here can apply later ownership to the
                 # previous day's work and occupancy.
                 self.economy.city.initialize(self.store.tick)
+                self.economy.urban.initialize(self.store.tick)
                 self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
@@ -875,6 +876,7 @@ class World:
                 self.economy.households.record_census(tick)
             except HouseholdError as error:
                 raise ReconciliationError(f"tick {tick} FINALIZE: {error}") from error
+        self.economy.urban.finalize(tick)
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.

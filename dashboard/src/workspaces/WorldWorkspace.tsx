@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { projectionApi, workspaceApi } from "../app/api";
@@ -14,6 +14,8 @@ import {
   workspaceUrl,
   useWorkspaceProjection,
 } from "./workspaceShared";
+
+const CityViewport = lazy(() => import("../city/CityViewport"));
 
 type WorldRow = {
   id: number;
@@ -105,6 +107,12 @@ export function WorldWorkspace() {
    */
   const { observerState, runId } = projection;
   const tick = observerState.tick;
+  const city3d = searchParams.get("cityView") === "3d";
+  const setCityView = (enabled: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (enabled) next.set("cityView", "3d"); else next.delete("cityView");
+    setSearchParams(next, { replace: true });
+  };
   const recordedDay = observerState.view === "recorded";
   const city = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "world-city", tick, observerState.population],
@@ -201,7 +209,19 @@ export function WorldWorkspace() {
 
   return <section className="world-os-world-workspace">
     <WorkspaceState loading={projection.loading} error={projection.error}>
-      <CivicCity
+      {city3d && <div className="city3d-toggle" role="group" aria-label="City presentation">
+        <button aria-pressed={!city3d} onClick={() => setCityView(false)}>2D atlas</button>
+        <button aria-pressed={city3d} onClick={() => setCityView(true)}>3D city</button>
+      </div>}
+      {city3d ? <Suspense fallback={<p role="status">Loading city viewer…</p>}>
+        <CityViewport key={`${runId}:${observerState.fork}:${city.data?.envelope.view_key || ""}`}
+          envelope={!city.error ? city.data?.envelope : null} snapshot={!city.error ? overview.data : null}
+          runId={runId} tick={tick} status={runStatus}
+          stale={city.isError || projection.transport.status !== "live"}
+          loading={city.isLoading} error={city.error instanceof Error ? city.error.message : ""}
+          onFallback={() => setCityView(false)} />
+      </Suspense> : <CivicCity
+        onOpen3d={() => setCityView(true)}
         agents={!city.error ? city.data?.agents : []}
         firms={!city.error ? city.data?.firms : []}
         events={!city.error ? overview.data?.data.events?.items || [] : []}
@@ -238,7 +258,7 @@ export function WorldWorkspace() {
         variant="world-os"
         observerState={projection.observerState}
         onObserverStateChange={projection.setObserverState}
-      />
+      />}
 
       <div className="world-os-world-supplement">
     <WorkspaceHeader

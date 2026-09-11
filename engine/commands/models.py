@@ -337,3 +337,21 @@ class ForwardMessage(CommandBase):
     source_message_id: Annotated[StrictInt, Field(gt=0)]
     audience: Audience
     note: str = Field(default="", max_length=1000)
+
+
+class UrbanConstructionCommand(CommandBase):
+    request_key: str = Field(min_length=1, max_length=120, pattern=r".*\S.*")
+
+class ConstructBuilding(UrbanConstructionCommand):
+    type: Literal["construct_building"]
+    firm_id: Annotated[StrictInt, Field(gt=0)]
+    parcel_id: Annotated[StrictInt, Field(gt=0)]
+    template_key: Literal["workplace"]
+
+class CancelUrbanConstruction(UrbanConstructionCommand):
+    type: Literal["cancel_urban_construction"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
+
+class DemolishBuilding(UrbanConstructionCommand):
+    type: Literal["demolish_building"]
+    project_id: Annotated[StrictInt, Field(gt=0)]
