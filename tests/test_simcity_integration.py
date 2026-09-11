@@ -36,3 +36,19 @@ def test_urban_storage_is_additive_and_requires_its_hash_contract(tmp_path):
         assert manifest["schema_version"] == 27
     finally:
         store.close()
+
+
+def test_urban_outcome_references_do_not_reinterpret_historical_snapshots():
+    from world.replay_verify import _canonicalize_nested_event_references
+    historic = {"snapshot": {"outcome_event_id": None}}
+    assert _canonicalize_nested_event_references(historic, {}) == (historic, True)
+    logical = {"event": "construction_completed"}
+    assert _canonicalize_nested_event_references(
+        {"projects": [{"outcome_event_id": 7}]}, {7: logical},
+        extra_keys=frozenset({"outcome_event_id"}),
+    ) == ({"projects": [{"outcome_event_id": logical}]}, True)
+    _, valid = _canonicalize_nested_event_references(
+        {"projects": [{"outcome_event_id": 7}]}, {},
+        extra_keys=frozenset({"outcome_event_id"}),
+    )
+    assert not valid

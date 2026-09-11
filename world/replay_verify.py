@@ -127,7 +127,7 @@ EVENT_REFERENCE_COLUMNS = {
 }
 EVENT_REFERENCE_KEYS = {
     "authority_event_id", "effect_event_id",
-    "request_event_id", "event_id", "created_event_id", "outcome_event_id",
+    "request_event_id", "event_id", "created_event_id",
 
     "publication_event_id", "root_event_id",
 }
@@ -662,7 +662,7 @@ def _canonicalize_event_reference_list(
 
 
 def _canonicalize_nested_event_references(
-        value: Any, event_references: dict[int, Any]) -> tuple[Any, bool]:
+        value: Any, event_references: dict[int, Any], *, extra_keys: frozenset[str] = frozenset()) -> tuple[Any, bool]:
     """Resolve event IDs embedded in persisted action/event provenance."""
     if isinstance(value, dict):
         canonical = {}
@@ -673,7 +673,7 @@ def _canonicalize_nested_event_references(
             # in its prompt as if they belonged to the local event table.
             if key == "llm_call":
                 resolved, valid = nested, True
-            elif key in EVENT_REFERENCE_KEYS:
+            elif key in EVENT_REFERENCE_KEYS or key in extra_keys:
                 resolved, valid = _canonical_event_reference(
                     nested, event_references)
             elif key in EVENT_REFERENCE_LIST_KEYS:
@@ -681,7 +681,7 @@ def _canonicalize_nested_event_references(
                     nested, event_references)
             else:
                 resolved, valid = _canonicalize_nested_event_references(
-                    nested, event_references)
+                    nested, event_references, extra_keys=extra_keys)
             canonical[key] = resolved
             references_valid = references_valid and valid
         return canonical, references_valid
@@ -690,7 +690,7 @@ def _canonicalize_nested_event_references(
         references_valid = True
         for nested in value:
             resolved, valid = _canonicalize_nested_event_references(
-                nested, event_references)
+                nested, event_references, extra_keys=extra_keys)
             canonical.append(resolved)
             references_valid = references_valid and valid
         return canonical, references_valid
@@ -841,7 +841,8 @@ def _table_digest(
                     references_valid = references_valid and valid
                 if (table, column) in NESTED_EVENT_REFERENCE_JSON_COLUMNS:
                     value, valid = _canonicalize_nested_event_references(
-                        value, event_references)
+                        value, event_references, extra_keys=(frozenset({"outcome_event_id"})
+                            if table == "urban_projection_history" else frozenset()))
                     references_valid = references_valid and valid
                 record[column] = value
         encoded = storage.encode(record, exact=True)
