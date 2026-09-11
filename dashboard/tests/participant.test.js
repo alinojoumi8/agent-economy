@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -77,4 +78,15 @@ test("participant form reads and builds nested business ideas", () => {
       offering: "Useful goods",
     },
   });
+});
+
+test("participant form state survives catalog polls and resets only when the action changes", () => {
+  const source = readFileSync(
+    new URL("../src/components/ParticipantPanel.jsx", import.meta.url), "utf8",
+  );
+  // `catalog` is a fresh array every poll, so the memoised descriptor is a new
+  // object every 10 s; the reset effect must key on the action's identity.
+  assert.match(source, /const descriptorKey = descriptor \? participantActionKey\(descriptor\) : "";/);
+  assert.match(source, /\}, \[descriptorKey, participant\?\.queued_action\?\.id\]\);/);
+  assert.doesNotMatch(source, /\}, \[descriptor, participant\?\.queued_action\?\.id\]\);/);
 });

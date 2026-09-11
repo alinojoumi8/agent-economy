@@ -12,8 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from engine.store import Store, load_json
+from engine.store import Store, load_json, open_read_only_connection
+from engine.local_participation import departed_after, is_local
+from engine.commands.registry import POPULATION_MODELS
+from pydantic import ValidationError as CommandModelError
 from .citizen_actions import action_spec, citizen_world_action_types
+from .population_actions import population_action_catalog
 
 
 PARTICIPANT_TYPES = citizen_world_action_types()
@@ -60,6 +64,7 @@ class ParticipantService:
         self.local_currency_action_surfaces = bool(
             config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.engine_semantics_version = int(config.get("engine_semantics_version", 2))
+        self.population = context_builder.e.population if self.engine_semantics_version >= 21 else None
         self.enabled = bool(config.get("participant_mode", {}).get("enabled", False))
         if self.enabled and config.get("acceptance"):
             raise ValueError("participant mode cannot be enabled for an acceptance run")
@@ -72,10 +77,39 @@ class ParticipantService:
         if not row or not row["active"] or row["agent_id"] is None:
             return None
         agent = self.store.query_one(
-            "SELECT id, alive, kind FROM agents WHERE id=?", (int(row["agent_id"]),))
-        if not agent or not agent["alive"] or agent["kind"] != "citizen":
+            "SELECT id, alive, kind, age FROM agents WHERE id=?", (int(row["agent_id"]),))
+        if not self._controllable(agent) or not self._lease_continuous(row):
             return None
         return int(agent["id"])
+
+    def _available(self, agent) -> bool:
+        return bool(agent and agent["alive"] and agent["kind"] == "citizen"
+                    and (self.engine_semantics_version < 21
+                         or (agent["age"] >= 18 and is_local(self, int(agent["id"])))))
+
+    def _controllable(self, agent) -> bool:
+        if self._available(agent):
+            return True
+        return bool(self.engine_semantics_version >= 21 and agent and agent['alive']
+                    and agent['kind'] == 'citizen' and agent['age'] >= 18
+                    and not is_local(self, int(agent['id'])))
+
+    def _lease_continuous(self, row) -> bool:
+        if self.engine_semantics_version < 21:
+            return True
+        acquisition = self.store.query_one(
+            "SELECT id,payload_json FROM events WHERE kind='participant_control_acquired' "
+            "AND phase='CONTROL' AND subject_type='agent' AND subject_id=? AND tick=? ORDER BY id DESC LIMIT 1",
+            (row["agent_id"], row["acquired_tick"]))
+        if acquisition is None:
+            return False
+        frontier = int(acquisition['id'])
+        if departed_after(self, int(row['agent_id']), frontier):
+            return False
+        if load_json(acquisition['payload_json'], {}).get('scope') == 'return_only':
+            return not self.store.query_one("SELECT 1 FROM person_residence_events WHERE agent_id=? "
+                "AND cause='return' AND event_id>?", (row['agent_id'], frontier))
+        return True
 
     def release_if_unavailable(self, tick: int, *, commit: bool) -> bool:
         """Close a stale lease after the citizen dies or otherwise disappears."""
@@ -84,8 +118,8 @@ class ParticipantService:
             return False
         agent_id = int(row["agent_id"])
         agent = self.store.query_one(
-            "SELECT alive,kind FROM agents WHERE id=?", (agent_id,))
-        if agent and agent["alive"] and agent["kind"] == "citizen":
+            "SELECT id,alive,kind,age FROM agents WHERE id=?", (agent_id,))
+        if self._controllable(agent) and self._lease_continuous(row):
             return False
         self.store.execute(
             "UPDATE participant_control SET active=0,updated_at=? WHERE id=1", (_utcnow(),))
@@ -120,11 +154,14 @@ class ParticipantService:
     def acquire(self, agent_id: int, expected_tick: int, *, running: bool) -> dict:
         self._require_boundary(expected_tick, running)
         agent = self.store.query_one(
-            "SELECT id, name, kind, alive FROM agents WHERE id=?", (int(agent_id),))
+            "SELECT id, name, kind, alive, age FROM agents WHERE id=?", (int(agent_id),))
         if not agent:
             raise ParticipantError(404, "citizen not found")
-        if agent["kind"] != "citizen" or not agent["alive"]:
-            raise ParticipantError(409, "only a living citizen can be controlled")
+        if not self._controllable(agent):
+            raise ParticipantError(409, "only a living adult resident citizen can be controlled"
+                                   if self.engine_semantics_version >= 21 else "only a living citizen can be controlled")
+        if self.engine_semantics_version >= 21:
+            self.release_if_unavailable(self.store.tick, commit=False)
         current = self.active_agent_id()
         if current is not None and current != int(agent_id):
             raise ParticipantError(409, f"citizen {current} is already under participant control")
@@ -138,7 +175,9 @@ class ParticipantService:
         self.store.set_meta(participant_influenced=1)
         self.store.log_event(
             self.store.tick, "participant_control_acquired",
-            {"agent_id": int(agent_id), "name": agent["name"]}, phase="CONTROL",
+            {"agent_id": int(agent_id), "name": agent["name"],
+             **({'scope': 'local' if self._available(agent) else 'return_only'}
+                if self.engine_semantics_version >= 21 else {})}, phase="CONTROL",
             subject_type="agent", subject_id=int(agent_id), importance=1.5)
         self.store.commit()
         return self.status(running=False)
@@ -232,6 +271,8 @@ class ParticipantService:
             "controlled_agent": control, "completed_tick": self.store.tick,
             "next_tick": self.store.tick + 1, "queued_action": queued,
             "action_catalog": catalog,
+            **({'control_scope': ('return_only' if agent_id is not None and not is_local(self, agent_id)
+                                  else 'local')} if self.engine_semantics_version >= 21 else {}),
             "last_result": ({
                 "agent_id": int(last["agent_id"]), "target_tick": int(last["target_tick"]),
                 "action": load_json(last["action_json"], {}), "status": last["status"],
@@ -285,9 +326,14 @@ class ParticipantService:
 
     def action_catalog(self, agent_id: int) -> list[dict]:
         agent = self.store.query_one("SELECT * FROM agents WHERE id=?", (int(agent_id),))
-        if not agent or not agent["alive"] or agent["kind"] != "citizen":
+        if not self._available(agent):
+            if self._controllable(agent):
+                return population_action_catalog(self.population.action_context(int(agent_id), self.store.tick + 1),
+                                                 self.store.tick + 1)
             return []
-        ctx = self.ctx.build(agent, self.store.tick + 1)
+        ctx = (self.ctx.build(agent, self.store.tick + 1, retrieve_memories=False)
+               if self.engine_semantics_version >= 21
+               else self.ctx.build(agent, self.store.tick + 1))
         prices = ctx.get("prices", [])
         jobs = ctx.get("jobs", [])
         listed = ctx.get("listed_firms", [])
@@ -321,8 +367,12 @@ class ParticipantService:
         incoming_job_offers = ctx.get("incoming_job_offers", [])
         firm_job_offers = ctx.get("firm_job_offers", [])
         ipo_offerings = ctx.get("ipo_offerings", [])
+        lawyer_age_filter = "AND age>=18 " if self.engine_semantics_version >= 21 else ""
         lawyers = [dict(row) for row in self.store.query(
-            "SELECT id,name FROM agents WHERE alive=1 AND lower(COALESCE(occupation,''))='lawyer' ORDER BY id")]
+            "SELECT id,name FROM agents WHERE alive=1 AND lower(COALESCE(occupation,''))='lawyer' "
+            f"{lawyer_age_filter}ORDER BY id")]
+        if self.engine_semantics_version >= 21:
+            lawyers = [lawyer for lawyer in lawyers if self.population.is_available(lawyer["id"])]
 
         def select(name: str, label: str, options: list[dict], *, required: bool = True) -> dict:
             return {"name": name, "label": label, "kind": "select", "required": required,
@@ -631,6 +681,65 @@ class ParticipantService:
                         f"({option.get('price_cents')}c)",
                         f"study-{option.get('skill_key')}",
                     ))
+        if self.engine_semantics_version >= 20:
+            property_market = ctx.get("estate_property_market") or {}
+            for index, action in enumerate(property_market.get("eligible_actions", [])):
+                selected = (property_market.get("selected_bid") or {}).get("bid") or {}
+                items.append(exact_action(action,
+                    f"Accept property bid: {selected.get('amount_cents')} {selected.get('currency_code')} cents",
+                    f"estate-property-sale-{index}"))
+            for bid in property_market.get("own_bids", []):
+                items.append(exact_action(bid["withdraw_action"], "Withdraw property bid",
+                    f"estate-property-withdraw-{bid['id']}"))
+            for interest in property_market.get("available_interests", []):
+                for wallet in interest["buyer_wallets"]:
+                    fixed = {"custody_id": interest["custody_id"], "buyer_account_id": wallet["id"],
+                        "currency_code": interest["currency_code"],
+                        "request_key": f"property-{interest['custody_id']}-{wallet['id']}-{self.store.tick+1}"}
+                    items.append({"type": "place_estate_property_bid",
+                        "variant": f"estate-property-bid-{interest['custody_id']}-{wallet['id']}",
+                        "label": f"Bid for {interest['numerator']}/{interest['denominator']} of property {interest['project_id']}",
+                        "fields": [{"name": key, "kind": "hidden", "default": value} for key, value in fixed.items()] + [
+                            dict(number("amount_cents", f"Your bid ({interest['currency_code']} cents)", 1, 1),
+                                 max=min(wallet["balance_cents"], 1_000_000_000_000)),
+                            dict(number("expires_tick", "Bid expiry day", self.store.tick+8, self.store.tick+2),
+                                 max=interest["latest_expiry_tick"])]})
+        if self.engine_semantics_version >= 20:
+            market = ctx.get("estate_unlisted_market") or {}
+            for index, action in enumerate(market.get("eligible_actions", [])):
+                selected = (market.get("selected_bid") or {}).get("bid") or {}
+                items.append(exact_action(action,
+                    f"Accept private share bid: {selected.get('amount_cents')} {selected.get('currency_code')} cents total",
+                    f"estate-unlisted-sale-{index}"))
+            for bid in market.get("own_bids", []):
+                items.append(exact_action(bid["withdraw_action"], "Withdraw private share bid",
+                    f"estate-unlisted-withdraw-{bid['id']}"))
+            for lot in market.get("available_lots", []):
+                for wallet in lot["buyer_wallets"]:
+                    fixed = {"lot_id": lot["lot_id"], "qty": lot["qty"], "buyer_account_id": wallet["id"],
+                        "currency_code": lot["currency_code"],
+                        "request_key": f"unlisted-{lot['lot_id']}-{wallet['id']}-{self.store.tick+1}"}
+                    items.append({"type": "place_estate_unlisted_bid",
+                        "variant": f"estate-unlisted-bid-{lot['lot_id']}-{wallet['id']}",
+                        "label": f"Bid for {lot['qty']} private shares of {lot['firm_name']}",
+                        "fields": [{"name": key, "kind": "hidden", "default": value} for key, value in fixed.items()] + [
+                            dict(number("amount_cents", f"Your total bid ({lot['currency_code']} cents)", 1, 1),
+                                 max=min(wallet["balance_cents"], 1_000_000_000_000)),
+                            dict(number("expires_tick", "Bid expiry day", self.store.tick+8, self.store.tick+2),
+                                 max=lot["latest_expiry_tick"])]})
+        for index, action in enumerate((ctx.get("daily_time") or {}).get("eligible_actions", [])):
+            items.append(exact_action(action,
+                f"Plan tomorrow: {action['work_minutes']} min work, {action['care_minutes']} min care",
+                f"daily-time-{index}"))
+        for index, action in enumerate((ctx.get("household_decisions") or {}).get("eligible_actions", [])):
+            label = action["type"].replace("_", " ").capitalize()
+            if action["type"] == "respond_household":
+                label = f"{action['decision'].capitalize()} household proposal {action['household_decision_id']}"
+            elif action["type"] == "propose_partnership":
+                label = f"Propose partnership with person {action['partner_id']}"
+            elif action["type"] == "propose_household_move":
+                label = f"Propose household move to region {action['destination_region_id']}"
+            items.append(exact_action(action, label, f"household-{index}"))
         if firm:
             firm_id = int(firm["firm_id"])
             firm_items = [
@@ -702,6 +811,8 @@ class ParticipantService:
                      "disabled_reason": "No active IPO book"},
                 ])
             items.extend(firm_items)
+        if self.engine_semantics_version >= 21:
+            items.extend(population_action_catalog(ctx.get('population_boundary'), self.store.tick + 1))
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -722,6 +833,8 @@ class ParticipantService:
         action_type = str(action.get("type", ""))
         if action_type not in PARTICIPANT_TYPES:
             raise ParticipantError(400, f"action type {action_type or '<missing>'} is not available")
+        exact_bid_terms = self.engine_semantics_version >= 20 and action_type in {"place_estate_property_bid", "place_estate_unlisted_bid"}
+        exact_population_terms = self.engine_semantics_version >= 21 and action_type in POPULATION_MODELS
         variant = str(action.get("variant", "default"))
         descriptors = [item for item in self.action_catalog(agent_id)
                        if item["type"] == action_type and item.get("variant", "default") == variant]
@@ -740,6 +853,10 @@ class ParticipantService:
             if len(path) > 1:
                 nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
+            if exact_population_terms and kind == 'hidden':
+                supplied = _path_value(action, path, field.get('default'))
+                if supplied != field.get('default'):
+                    raise ParticipantError(409, f'{name} is stale or unavailable')
             # Hidden fields are server-owned capability data. A client may echo
             # them, but it cannot redirect an action to another firm or role.
             value = (field.get("default") if kind == "hidden" else
@@ -753,21 +870,38 @@ class ParticipantService:
             elif kind == "number":
                 if isinstance(value, bool):
                     raise ParticipantError(400, f"{name} must be an integer")
+                # Bid prices and deadlines must never be rounded by form coercion.
+                if (exact_bid_terms or exact_population_terms) and not isinstance(value, (int, str)):
+                    raise ParticipantError(400, f"{name} must be an integer")
                 try:
                     value = int(value)
                 except (TypeError, ValueError):
                     raise ParticipantError(400, f"{name} must be an integer") from None
                 if value < int(field.get("min", value)):
                     raise ParticipantError(400, f"{name} must be at least {field['min']}")
+                if exact_bid_terms and value > int(field.get("max", value)):
+                    raise ParticipantError(400, f"{name} must be at most {field['max']}")
             elif kind == "select":
                 values = [option["value"] for option in field.get("options", [])]
                 if value not in values:
                     raise ParticipantError(409, f"{name} is stale or unavailable")
             elif kind == "text":
+                if exact_population_terms and not isinstance(value, str):
+                    raise ParticipantError(400, f'{name} must be text')
                 value = str(value).strip()
                 if field.get("required", True) and not value:
                     raise ParticipantError(400, f"{name} is required")
+                if exact_population_terms and len(value) > int(field.get('max_length', 500)):
+                    raise ParticipantError(400, f'{name} is too long')
                 value = value[:int(field.get("max_length", 500))]
+            elif kind in {'people', 'care'}:
+                if isinstance(value, str):
+                    if len(value) > int(field.get('max_length', 16384)):
+                        raise ParticipantError(400, f'{name} is too long')
+                    try:
+                        value = json.loads(value)
+                    except ValueError:
+                        raise ParticipantError(400, f'{name} must be valid JSON') from None
             _path_assign(normalized, path, value)
         for root, names in nested_allowed.items():
             supplied = action.get(root)
@@ -781,6 +915,11 @@ class ParticipantService:
         extras = set(action).difference(allowed)
         if extras:
             raise ParticipantError(400, f"unexpected action fields: {sorted(extras)}")
+        if exact_population_terms:
+            try:
+                normalized = POPULATION_MODELS[action_type].model_validate(normalized).model_dump(exclude_none=True)
+            except CommandModelError as exc:
+                raise ParticipantError(400, f'invalid population command: {exc}') from None
         return normalized
 
     def normalize_action(self, agent_id: int, action: Any) -> dict:
@@ -798,6 +937,8 @@ class ParticipantService:
                 "SELECT * FROM participant_actions WHERE agent_id=? AND target_tick=? "
                 "AND status='queued' ORDER BY id DESC LIMIT 1", (agent_id, tick))
             if row is None:
+                if self.engine_semantics_version >= 21 and not is_local(self, agent_id):
+                    return None
                 self.store.log_event(
                     tick, "participant_idle", {"agent_id": agent_id}, phase="MORNING",
                     subject_type="agent", subject_id=agent_id, importance=0.8)
@@ -806,6 +947,17 @@ class ParticipantService:
                         "reasoning": "Participant explicitly supplied no command.",
                         "llm_call_id": None, "participant_action_id": None}
         action = load_json(row["action_json"], {})
+        if self.engine_semantics_version >= 21 and not is_local(self, int(row['agent_id'])):
+            if not self.population.outside_action_allowed(int(row['agent_id']), action, tick=tick):
+                raise ParticipantError(409, 'outside participant action is not an authorized return request')
+            # A return-only control lease is consumed by one submitted command.
+            # Waiting afterward does not create idle decisions or local duties.
+            control = self._control()
+            if control and control['active'] and control['agent_id'] == row['agent_id']:
+                self.store.execute('UPDATE participant_control SET active=0,updated_at=? WHERE id=1', (_utcnow(),))
+                self.store.log_event(tick, 'participant_control_released',
+                    {'agent_id': int(row['agent_id']), 'reason': 'population_command_submitted'},
+                    phase='CONTROL', subject_type='agent', subject_id=int(row['agent_id']), importance=1.5)
         return {
             "agent_id": int(row["agent_id"]), "purpose": "participant",
             "envelope": {"actions": [action], "belief_updates": []},
@@ -820,7 +972,10 @@ class ParticipantService:
         path = Path(str(source_path))
         if not path.exists():
             return None
-        conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
+        if self.config.get("replay_source_closed") is True:
+            conn = open_read_only_connection(str(path), require_closed=True)
+        else:
+            conn = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         try:
             exists = conn.execute(
@@ -832,6 +987,12 @@ class ParticipantService:
                 "AND status IN ('executed','rejected') ORDER BY id LIMIT 1", (tick,)).fetchone()
             if not source:
                 return None
+            if self.engine_semantics_version >= 21:
+                actor = self.store.query_one("SELECT * FROM agents WHERE id=?", (int(source["agent_id"]),))
+                if (not self._available(actor) and not (self._controllable(actor)
+                        and self.population.outside_action_allowed(int(source['agent_id']),
+                            load_json(source['action_json'], {}), tick=tick))):
+                    raise ParticipantError(409, "recorded participant action has no local adult actor")
             self.store.execute(
                 "INSERT OR IGNORE INTO participant_actions(agent_id,target_tick,action_json,reasoning,"
                 "status,source_action_id,created_at) VALUES(?,?,?,?,'queued',?,?)",

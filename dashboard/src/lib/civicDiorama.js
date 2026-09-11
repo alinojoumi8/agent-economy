@@ -177,18 +177,38 @@ function ownerLabel(place, firms) {
   return `${humanize(place.owner_type)} #${place.owner_id}`;
 }
 
+/*
+ * Two producers feed this scene in two vocabularies. /api/v2/world-map emits
+ * origin/destination region ids with a shipment's quantity, invoice and the
+ * migrant's agent id; /api/v2/map — the Observatory's path — aliases the same
+ * columns to source/target and carries only a magnitude. Both are the committed
+ * row, so both must draw; a flow whose endpoints match no public region is
+ * still dropped rather than guessed.
+ */
+function flowOriginId(flow) {
+  return flow.origin_region_id ?? flow.source_region_id;
+}
+
+function flowDestinationId(flow) {
+  return flow.destination_region_id ?? flow.target_region_id;
+}
+
 function flowTooltip(flow) {
   if (flow.kind === "trade") {
+    const invoice = flow.invoice_cents != null
+      ? ` · ${numeric(flow.invoice_cents)} ${flow.invoice_currency || "minor units"}`
+      : "";
     return [
       `Trade shipment #${flow.id}`,
       `${flow.originLabel} → ${flow.destinationLabel}`,
-      `${numeric(flow.quantity)} units · ${numeric(flow.invoice_cents)} ${flow.invoice_currency || "minor units"}`,
+      `${numeric(flow.quantity ?? flow.magnitude)} units${invoice}`,
       `Status: ${humanize(flow.status)}`,
     ].join("\n");
   }
+  const agent = flow.agent_id != null ? `Agent #${flow.agent_id} · ` : "";
   return [
     `Migration #${flow.id}`,
-    `Agent #${flow.agent_id} · ${flow.originLabel} → ${flow.destinationLabel}`,
+    `${agent}${flow.originLabel} → ${flow.destinationLabel}`,
     `Status: ${humanize(flow.status)}`,
   ].join("\n");
 }
@@ -313,8 +333,8 @@ export function buildDioramaScene(
     : [];
 
   const flows = (Array.isArray(model.flows) ? model.flows : []).flatMap(flow => {
-    const origin = regionById.get(String(flow.origin_region_id));
-    const destination = regionById.get(String(flow.destination_region_id));
+    const origin = regionById.get(String(flowOriginId(flow)));
+    const destination = regionById.get(String(flowDestinationId(flow)));
     if (!origin || !destination) return [];
     const dx = destination.x - origin.x;
     const dy = destination.y - origin.y;

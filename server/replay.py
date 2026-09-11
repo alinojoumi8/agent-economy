@@ -59,6 +59,17 @@ class ReplayReader:
         conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True,
                                check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        try:
+            is_run = conn.execute(
+                "SELECT run_id FROM run_meta WHERE id=1").fetchone() is not None
+        except sqlite3.Error:
+            is_run = False
+        if not is_run:
+            # Sidecar databases (for example the operator workspace) share the
+            # runs directory but are not replayable runs: report "not found"
+            # instead of failing inside every reader.
+            conn.close()
+            return None
         self._conns[run_id] = conn
         while len(self._conns) > self.max_connections:
             _, stale = self._conns.popitem(last=False)
@@ -107,13 +118,9 @@ class ReplayReader:
         if conn is None:
             return None
         wanted = [n.strip() for n in (names or ",".join(HEADLINE_METRICS)).split(",") if n.strip()]
-        out = {}
-        for name in wanted:
-            rows = conn.execute(
-                "SELECT tick, value FROM metrics WHERE name=? ORDER BY tick", (name,)).fetchall()
-            if rows:
-                out[name] = [{"tick": int(r["tick"]), "value": float(r["value"])} for r in rows]
-        return out
+        wanted = wanted[:50]
+        from server.projections.metric_series import metric_series_for_display
+        return {name: points for name, points in metric_series_for_display(conn, wanted).items() if points}
 
     # ── one tick's world, as the dashboard panels expect it ─────────────────
     def tick_view(self, run_id: str, tick: int) -> Optional[dict]:

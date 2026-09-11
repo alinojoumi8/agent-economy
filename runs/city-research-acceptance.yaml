@@ -1,0 +1,24 @@
+# Small, provider-free world for the production city/research workflow gate.
+# population.size counts ordinary residents; institutions add their own agents.
+extends: price-lab-keyed.yaml
+
+checkpoint_every: 0
+speed_delay_s: 0
+
+living_world:
+  enabled: true
+  core_agents: 32
+  regions:
+    - key: northstar
+      name: Northstar
+      currency: USD
+      population: 32
+      specialization: [technology, services, finance]
+      x: 0.5
+      y: 0.5
+      legal_ruleset: northstar-us-inspired-1.0
+      rate_ppm: 1000000
+
+city:
+  enabled: true
+  residential_districts_per_region: 2

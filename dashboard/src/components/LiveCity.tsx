@@ -1,24 +1,17 @@
-/*
- * THESIS: The city is the screen. Chrome floats on it; nothing frames it.
- * OWN-WORLD: A surveyed night field — three territories drawn as the hull of
- *   their own places, on a coordinate graticule, people as moving light.
- * STORY: Read the clock, watch the commute leave home, follow ONE person to
- *   work — click a chip and it keeps its name, its halo and its whole recorded
- *   day for as long as you watch it.
- * FIRST VIEWPORT: Edge-to-edge map, day clock top right, the interpolation
- *   disclosure pinned along the foot where it cannot be missed or dismissed.
- * MOTION: One requestAnimationFrame loop writing transforms. Every position is
- *   a recorded placement or a point on the segment between two of them, and the
- *   glide fills the whole of its leg so no interval of the day is a still frame.
- */
+/* Recorded-day renderer. The shared city supplies validated data and selection.
+ * The drawing loop interpolates stored placements on its own presentation clock;
+ * it neither fetches data nor advances economic time. */
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { Link, useParams } from "react-router";
-import { useProjectionSocket } from "../app/useProjectionSocket";
+import type { ProjectionEnvelope } from "../generated/worldOs";
+import { playbackElapsed, updatePlayback } from "../lib/recordedPlayback.js";
+import { CityCameraControls } from "./CityCameraControls.jsx";
+import { serializeCityCamera } from "../lib/cityCamera.js";
+import { recordedCameraTransform, recordedPointCamera } from "../lib/recordedCamera.js";
 import {
   CROWD_MIN,
   DAY_MS,
@@ -39,9 +32,10 @@ import {
   liveCounts,
   normalizeLiveCity,
   placeCohorts,
+  platePosition,
   slotWeights,
 } from "../lib/liveCity.js";
-import { EmptyState, count, humanize, useSource } from "../ui";
+import { EmptyState, count, humanize } from "../ui";
 import "./live-city.css";
 
 /* ------------------------------------------------------------ the model -- */
@@ -183,20 +177,11 @@ type Talk = {
   slot: string; people: string[]; topic: string; stackIndex: number;
   lines: Array<{ speaker: string; text: string }>;
 };
-type RunStatus = { tick?: number; status?: string; next_phase?: string; running?: boolean };
 
-/*
- * Chrome keeps its distance from the geography without cropping it. The map is
- * full-bleed — it runs under every overlay to the window edge — but recorded
- * points are laid inside this inset so no agent is ever hidden behind a panel.
- *
- * The right inset is the wide one because the clock and the legend stack into a
- * right-hand column, and Ironvale Union's places run to the far right of the
- * coordinate space: at the old 72 px a third of that polity was drawn underneath
- * the day clock, which is exactly the "sparse scatter on the right" a reader
- * cannot resolve.
- */
-const CHROME_INSET = { top: 108, right: 268, bottom: 132, left: 72 };
+
+/* Screen-space clearance for recorded anchors, de-collision and labels.
+ * Controls live outside the map, so no side is reserved for floating chrome. */
+const CHROME_INSET = { top: 40, right: 68, bottom: 40, left: 68 };
 /*
  * THE DETAIL PANEL, AND WHERE IT IS ALLOWED TO GO.
  *
@@ -277,50 +262,46 @@ function useReducedMotion(): boolean {
 
 /* ------------------------------------------------------------- surface -- */
 
-export function LiveCity() {
-  const { runId = "run" } = useParams();
-  const transport = useProjectionSocket(false);
+type CityCamera = { x: number; y: number; zoom: number };
+type RecordedDayProps = {
+  frame: ProjectionEnvelope<Record<string, unknown>> | null;
+  visibleAgentIds: number[];
+  selectedAgentId: number | null;
+  camera: CityCamera;
+  followId: number | null;
+  cameraPositionRef: RefObject<CityCamera>;
+  onCameraChange: (camera: CityCamera, options?: { replace?: boolean; keepFollow?: boolean }) => void;
+  onSelectAgent: (id: number | null) => void;
+  onOpenEvidence: () => void;
+  onPinDay: () => void;
+  historical: boolean;
+  loading: boolean;
+  error: string;
+  conversations: { items: ConversationRow[]; has_more: boolean; content_truncated: boolean } | null;
+  conversationsLoading: boolean;
+  conversationsError: string;
+};
+
+/** Presentation only: the workspace owns every request and validated frame. */
+export function RecordedDayCity({ frame, visibleAgentIds, selectedAgentId, onSelectAgent,
+  camera: savedCamera, followId, cameraPositionRef, onCameraChange,
+  onOpenEvidence, onPinDay, historical, loading, error, conversations,
+  conversationsLoading, conversationsError }: RecordedDayProps) {
+  const runId = frame?.run_id ?? "";
   const reducedMotion = useReducedMotion();
   const [frameRef, size] = useElementSize();
-
-  const status = useSource<RunStatus>({
-    key: ["live-city", runId, "run-status"],
-    path: "/api/run/status",
-    label: "/api/run/status",
-    refetchInterval: 3000,
-  });
-  /*
-   * The map is 408 KB and only changes when the tick does, so it is not polled.
-   * The cheap status source carries the tick, and a new tick is what pulls a
-   * fresh frame of truth. Between those pulls the city keeps moving on its own
-   * clock — see the animation loop below.
-   */
-  const map = useSource<unknown>({
-    key: ["live-city", runId, "map"],
-    path: "/api/v2/map",
-    label: "/api/v2/map",
-  });
-
-  const model = useMemo<CityModel>(
-    () => (map.data ? (normalizeLiveCity(map.data) as CityModel) : EMPTY_MODEL),
-    [map.data],
-  );
-  /*
-   * The tick's recorded conversations. Small (fifteen pairs, three lines each)
-   * and keyed to the frame of truth on screen rather than to wall clock, so the
-   * words a reader sees always belong to the tick the map is showing.
-   */
-  const conversations = useSource<ConversationRow[]>({
-    key: ["live-city", runId, "conversations", String(model.tick ?? "")],
-    path: `/api/conversations?limit=60&tick_from=${model.tick ?? 0}&tick_to=${model.tick ?? 0}`,
-    label: "/api/conversations",
-    enabled: model.tick !== null,
-  });
-  const talk = useMemo(
-    () => (conversationPlacements(
-      conversations.data || [], model.agents, { slot: "evening" }) as Talk[]),
-    [conversations.data, model.agents],
-  );
+  const mapError = error ? new Error(error) : null;
+  const visibleKey = visibleAgentIds.join(",");
+  const model = useMemo<CityModel>(() => {
+    if (!frame || error) return EMPTY_MODEL;
+    const visible = new Set(visibleKey.split(","));
+    const presence = Array.isArray(frame.data.presence) ? frame.data.presence : [];
+    return normalizeLiveCity({ ...frame.data, civic: { tick: frame.tick },
+      presence: presence.filter(row => row.agent_id == null || visible.has(String(row.agent_id))) }) as CityModel;
+  }, [frame, error, visibleKey]);
+  const talk = useMemo(() => conversationPlacements(
+    conversations?.items || [], model.agents, { slot: "evening" }) as Talk[],
+  [conversations, model.agents]);
 
   const offsets = useMemo<Map<string, Offset>>(
     () => decollisionLayout(model.agents) as Map<string, Offset>,
@@ -357,6 +338,12 @@ export function LiveCity() {
    * the day loops without a chip changing pixel. See liveCity.js.
    */
   const plan = useMemo<Plan>(() => legPlan(model.agents) as Plan, [model.agents]);
+  const requestedPerson = Array.isArray(frame?.data.agents)
+    ? frame.data.agents.find(agent => Number(agent.id) === followId) : null;
+  const canFollow = followId != null && requestedPerson?.alive !== false && requestedPerson?.alive !== 0
+    && model.agents.some(agent => agent.id === followId);
+  const cameraActive = followId != null || Boolean(serializeCityCamera(savedCamera));
+  const navigationTransform = useRef<ReturnType<typeof recordedCameraTransform> | null>(null);
   const projection = useMemo<Projection | null>(
     () => (size.width > 0 && size.height > 0
       ? (fitProjection(model.bounds, size.width, size.height, CHROME_INSET) as Projection)
@@ -373,7 +360,7 @@ export function LiveCity() {
    * first clear candidate wins; if none is clear the panel is not drawn.
    */
   const detailSlot = useMemo(() => {
-    if (!projection || !model.places.length || size.width < 1180) return null;
+    if (cameraActive || !projection || !model.places.length || size.width < 1180) return null;
     const points = [
       ...model.places.map(place => projection.project(place.x, place.y)),
       ...model.agents.flatMap(agent => agent.anchors.map(
@@ -403,7 +390,7 @@ export function LiveCity() {
       if (!busy) return candidate;
     }
     return null;
-  }, [projection, model.places, model.agents, size.width, size.height]);
+  }, [cameraActive, projection, model.places, model.agents, size.width, size.height]);
 
   const detail = useMemo<Detail | null>(() => {
     if (!projection || !detailSlot || !model.crowds.length) return null;
@@ -457,13 +444,7 @@ export function LiveCity() {
     }));
   }, [detail, model.agents]);
 
-  const serverTick = status.data?.tick ?? null;
   const mapTick = model.tick;
-  const refetchMap = map.refetch;
-  useEffect(() => {
-    if (serverTick === null || mapTick === null) return;
-    if (serverTick !== mapTick) refetchMap();
-  }, [serverTick, mapTick, refetchMap]);
 
   /* --------------------------------------------------------- the motion -- */
 
@@ -480,7 +461,9 @@ export function LiveCity() {
   const statText = useRef(new Map<string, string>());
   const lockRef = useRef<HTMLDivElement | null>(null);
   const fieldRef = useRef<HTMLDivElement | null>(null);
-  const dayOrigin = useRef(0);
+  const playback = useRef<{ elapsed: number; startedAt: number | null; speed: number }>({ elapsed: 0, startedAt: null, speed: 1 });
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [playbackPlaying, setPlaybackPlaying] = useState(false);
   const lastFrame = useRef<{
     clock: Clock;
     positions: Map<number, { x: number; y: number; offsetX: number; offsetY: number }>;
@@ -495,55 +478,31 @@ export function LiveCity() {
     plan: Plan;
     reducedMotion: boolean;
     focusId: number | null;
+    navigation: { camera: CityCamera; followId: number | null; width: number; height: number };
   }>({
     agents: [], offsets: new Map(), projection: null, detail: null,
     plan: legPlan([]) as Plan, reducedMotion: false, focusId: null,
+    navigation: { camera: savedCamera, followId: null, width: 0, height: 0 },
   });
   const [phase, setPhase] = useState({ legIndex: 0, nearIndex: 0 });
   const clockHand = useRef<HTMLElement | null>(null);
 
-  /* Who the reader is following. Hover proposes; a click pins, so a person can
+  /* Local highlight. Hover proposes; a click pins, so a person can
      be watched across the whole leg without keeping a cursor on a moving dot. */
-  const [focus, setFocus] = useState<{ id: number; pinned: boolean } | null>(null);
+  const [focus, setFocus] = useState<{ id: number; pinned: boolean } | null>(
+    selectedAgentId ? { id: selectedAgentId, pinned: true } : null);
   const focusAgent = useMemo(
     () => (focus ? model.agents.find(agent => agent.id === focus.id) ?? null : null),
     [focus, model.agents],
   );
-
-  /*
-   * The day clock starts once and then runs free. It is deliberately NOT reset
-   * when a new tick lands.
-   *
-   * Restarting it on every tick was written for a paused run, where the tick
-   * never changes and the reset therefore never fires. Against a running world
-   * it fired mid-day and snapped all 300 chips from wherever they had glided to
-   * back onto their morning anchors — a measured 330 px jump in a single frame,
-   * against 0.57 px for an ordinary one.
-   *
-   * That jump was pure artefact. Consecutive ticks change only 1-4 of 900
-   * recorded placements (0.1-0.4%), so the incoming frame of truth is very
-   * nearly the one already on screen: adopting it in place moves the two or
-   * three people whose placements actually changed and leaves everyone else
-   * mid-stride. The clock keeps time, the data underneath it is replaced, and
-   * nobody is teleported to represent a change that did not happen.
-   *
-   * The day and the tick are both ~45 s but not locked, so they drift. That is
-   * fine and stays honest: the day is a reading of ONE tick's three recorded
-   * slots, and the masthead names the tick it is reading.
-   */
   useEffect(() => {
-    /* Started by the FIRST frame of truth, not by mount: before the map lands
-       there is nobody to place, and a clock running against an empty field
-       would put the city a second or two into a day it had not begun. */
-    if (mapTick !== null && dayOrigin.current === 0) {
-      dayOrigin.current = performance.now();
-    }
-  }, [mapTick]);
+    setFocus(selectedAgentId ? { id: selectedAgentId, pinned: true } : null);
+  }, [selectedAgentId, frame?.fork_id, mapTick, runId]);
 
   const paint = useCallback((now: number) => {
     const {
       agents, offsets: layout, projection: camera, detail,
-      plan: legs, reducedMotion: still, focusId,
+      plan: legs, reducedMotion: still, focusId, navigation,
     } = scene.current;
     if (!camera || !agents.length) return;
     /* A readout is only rewritten when its digits actually change, so the
@@ -554,7 +513,7 @@ export function LiveCity() {
       const node = statRefs.current.get(key);
       if (node) node.textContent = value;
     };
-    const elapsed = now - dayOrigin.current;
+    const elapsed = playbackElapsed(playback.current, now);
     const clock = dayClock(elapsed, legs) as Clock;
     /* Reduced motion keeps the day, drops the glide: chips sit at the leg's
        recorded placement and change position only on a leg boundary. */
@@ -671,6 +630,15 @@ export function LiveCity() {
       node.style.opacity = weights[slotIndex].toFixed(3);
     }
 
+    const followedPoint = navigation.followId == null ? null : positions.get(navigation.followId) ?? null;
+    const transform = recordedCameraTransform(camera, navigation.width, navigation.height, navigation.camera, followedPoint);
+    navigationTransform.current = transform;
+    cameraPositionRef.current = transform.camera;
+    if (fieldRef.current) {
+      fieldRef.current.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+      fieldRef.current.style.setProperty("--recorded-camera-inverse", String(1 / transform.scale));
+    }
+
     if (lockRef.current) {
       const held = focusId === null ? null : positions.get(focusId);
       lockRef.current.style.transform = held
@@ -722,7 +690,15 @@ export function LiveCity() {
         ? current
         : { legIndex: effective.legIndex, nearIndex: effective.nearIndex }
     ));
-  }, []);
+  }, [cameraPositionRef]);
+
+  /* Every new committed day starts paused at its first placement. */
+  useLayoutEffect(() => {
+    playback.current = { elapsed: 0, startedAt: null, speed: playback.current.speed };
+    lastFrame.current = null;
+    setPlaybackPlaying(false);
+    paint(performance.now());
+  }, [runId, frame?.fork_id, mapTick, visibleKey, paint]);
 
   /*
    * Scene and first placement in one layout effect: the chips are written to
@@ -733,11 +709,23 @@ export function LiveCity() {
     scene.current = {
       agents: model.agents, offsets, projection, detail, plan, reducedMotion,
       focusId: focus?.id ?? null,
+      navigation: { camera: savedCamera, followId: canFollow ? followId : null, width: size.width, height: size.height },
     };
+    cameraPositionRef.current = savedCamera;
     paint(performance.now());
-  }, [model.agents, offsets, projection, detail, plan, reducedMotion, focus, paint]);
+  }, [model.agents, offsets, projection, detail, plan, reducedMotion, focus, paint,
+    savedCamera.x, savedCamera.y, savedCamera.zoom, canFollow, followId, size.width, size.height, cameraPositionRef]);
+
+  useLayoutEffect(() => {
+    const now = performance.now();
+    playback.current = updatePlayback(playback.current, {
+      playing: playbackPlaying && mapTick !== null, speed: playbackSpeed,
+    }, now);
+    paint(now);
+  }, [playbackPlaying, playbackSpeed, mapTick === null, paint]);
 
   useEffect(() => {
+    if (!playbackPlaying) { paint(performance.now()); return; }
     if (reducedMotion) {
       const timer = window.setInterval(() => paint(performance.now()), 1000);
       return () => window.clearInterval(timer);
@@ -749,12 +737,14 @@ export function LiveCity() {
     };
     handle = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(handle);
-  }, [paint, reducedMotion]);
+  }, [paint, reducedMotion, playbackPlaying]);
 
   useEffect(() => {
     if (!focus?.pinned) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFocus(null);
+      if (event.key === "Escape") {
+        setFocus(null);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -765,7 +755,7 @@ export function LiveCity() {
    * where movement came from, so the surface publishes its own numbers: the
    * camera, and for every chip the pixel it is drawn at, the de-collision
    * offset included in that pixel, and the recorded placements it is between.
-   * A checker can then re-derive the answer from /api/v2/map and disagree.
+   * A checker can then re-derive the answer from the validated world.map projection and disagree.
    */
   useEffect(() => {
     const probe = () => {
@@ -774,6 +764,9 @@ export function LiveCity() {
       if (!frame || !camera) return null;
       return {
         tick: mapTick,
+        playing: playback.current.startedAt !== null,
+        speed: playback.current.speed,
+        elapsed: playbackElapsed(playback.current, performance.now()),
         dayMs: legs.dayMs ?? DAY_MS,
         legs: legs.legs.map(leg => ({
           fromSlot: leg.fromSlot, toSlot: leg.toSlot, movers: leg.movers, ms: leg.ms,
@@ -786,6 +779,8 @@ export function LiveCity() {
           scaleX: camera.scaleX, scaleY: camera.scaleY,
           left: camera.left, top: camera.top,
         },
+        viewport: { ...navigationTransform.current, width: scene.current.navigation.width,
+          height: scene.current.navigation.height, trackingId: scene.current.navigation.followId },
         /* The detail camera, published on the same terms as the wide one: an
            affine map a checker can invert to re-derive every inset pixel. */
         detail: inset ? {
@@ -805,6 +800,8 @@ export function LiveCity() {
             id: agent.id,
             x: position?.x ?? null,
             y: position?.y ?? null,
+            screenX: position && navigationTransform.current ? position.x * navigationTransform.current.scale + navigationTransform.current.x : null,
+            screenY: position && navigationTransform.current ? position.y * navigationTransform.current.scale + navigationTransform.current.y : null,
             offsetX: position?.offsetX ?? null,
             offsetY: position?.offsetY ?? null,
             detailX: near?.x ?? null,
@@ -834,7 +831,7 @@ export function LiveCity() {
    */
   const territories = useMemo(() => {
     if (!projection) return [];
-    return model.regions.map(region => {
+    return model.regions.flatMap(region => {
       const own = model.places.filter(place => place.regionId === region.id);
       const hull = (convexHull(own) as { x: number; y: number }[])
         .map(point => projection.project(point.x, point.y));
@@ -844,27 +841,30 @@ export function LiveCity() {
           y: hull.reduce((sum, point) => sum + point.y, 0) / hull.length,
         }
         : projection.project(region.x, region.y);
-      const top = hull.reduce((least, point) => Math.min(least, point.y), Infinity);
-      const bottom = hull.reduce((most, point) => Math.max(most, point.y), -Infinity);
       /*
        * The name plate goes on the side of the territory that faces the middle
        * of the canvas — which is where the empty band between the polities is.
        * It reads as a map's own margin note, it never sits under the people, and
        * it puts something worth reading in the part of the field that had
        * nothing in it.
+       *
+       * A polity that owns no placed ground has no hull edge to clear, so its
+       * plate sits on its own projected centre; one whose centre cannot be
+       * projected gets no plate at all. Folding an empty hull to ±Infinity put
+       * the plate at a coordinate the browser drops, which left it wherever
+       * the container's static flow happened to place it.
        */
-      const below = centre.y < size.height / 2;
-      return {
+      const label = platePosition(hull, centre, { gap: PLATE_GAP_PX, height: size.height }) as
+        { x: number; y: number; below: boolean } | null;
+      if (!label) return [];
+      return [{
         region,
         places: own.length,
         path: hullPath(hull, { pad: HULL_PAD_PX }) as string,
         centre,
-        label: {
-          x: centre.x,
-          y: below ? bottom + PLATE_GAP_PX : top - PLATE_GAP_PX,
-        },
-        below,
-      };
+        label: { x: label.x, y: label.y },
+        below: label.below,
+      }];
     });
   }, [model.regions, model.places, projection, size.height]);
 
@@ -1071,9 +1071,7 @@ export function LiveCity() {
   /* The sky follows the people: it hands over at the half-way point of each leg,
      so departure and arrival are both legible from the field alone. */
   const skyBeat = nearSlot;
-  const runStatus = status.data?.status ?? null;
-  const paused = runStatus === "paused" || status.data?.running === false;
-  const unresolved = map.pending || !projection;
+  const unresolved = loading || !frame || !projection;
   const legSeconds = leg ? Math.round(leg.ms / 1000) : 0;
   /* Every move the tick records, summed over the legs — the denominator the
      clock's wall time is a share of. */
@@ -1091,11 +1089,55 @@ export function LiveCity() {
   };
   const onChipClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const id = agentUnder(event.target);
-    if (id === null) { setFocus(null); return; }
-    setFocus(current => (current?.id === id && current.pinned ? null : { id, pinned: true }));
+    const selected = id === null || (focus?.id === id && focus.pinned) ? null : id;
+    setFocus(selected === null ? null : { id: selected, pinned: true });
+    if (selected !== null) onSelectAgent(selected);
   };
+  return <section className="recorded-day" aria-label="Recorded day playback">
+    <header className="recorded-day__header">
+      <h3>The recorded day</h3>
+      <span>{historical ? "Historical view" : "Latest committed day"}</span>
+      <span>Tick {mapTick ?? "—"} · {fromCopy.label} → {toCopy.label}</span>
+      {!historical && frame && <button type="button" onClick={onPinDay}>Pin this day</button>}
+    </header>
+    <aside className="live-city__clock" ref={clockHand} aria-live="polite">
+      <div className="live-city__playback">
+        <button type="button" className="button" disabled={unresolved || Boolean(mapError) || !model.agents.length}
+          onClick={() => setPlaybackPlaying(current => !current)}
+          aria-pressed={playbackPlaying}>
+          {playbackPlaying ? "Pause playback" : "Play recorded day"}
+        </button>
+        <button type="button" className="button" disabled={unresolved || Boolean(mapError) || !model.agents.length}
+          onClick={() => {
+            playback.current = { elapsed: 0, startedAt: null, speed: playbackSpeed };
+            setPlaybackPlaying(false); paint(performance.now());
+          }}>Restart playback</button>
+        <label>Playback speed <select value={playbackSpeed} onChange={event => setPlaybackSpeed(Number(event.target.value))}>
+          {[0.5, 1, 2, 4].map(speed => <option key={speed} value={speed}>{speed}×</option>)}
+        </select></label>
+        <button type="button" className="recorded-day__open-evidence" onClick={onOpenEvidence}>Open selected evidence</button>
+        <span>{playbackPlaying ? "Playing" : "Paused"} · display time only</span>
+      </div>
+      <div className="live-city__leg-track"><i /></div>
+      <div className="live-city__day-track"><i /></div>
+    </aside>
 
-  return <div className="live-city" ref={frameRef}>
+    <CityCameraControls getCamera={() => cameraPositionRef.current} onCameraChange={onCameraChange}
+      disabled={unresolved || Boolean(mapError)} canFocus={selectedAgentId != null && model.agents.some(agent => agent.id === selectedAgentId)}
+      onFocus={() => {
+        const point = selectedAgentId == null ? null : lastFrame.current?.positions.get(selectedAgentId);
+        if (projection && point) onCameraChange(recordedPointCamera(projection, point, savedCamera.zoom));
+      }} />
+    {followId != null && <p className="recorded-day__follow-status" role="status">{canFollow
+      ? `Following person #${followId} through recorded placements. Camera motion uses display time.`
+      : `Follow paused for person #${followId}: no visible, living person with public recorded placements in this frame.`}</p>}
+    <p className="recorded-day__truth">Movement is interpolated between recorded placements. Playback does not advance the world.
+      {!historical && " A newly committed day resets playback to paused. Pin this day to keep watching it."}</p>
+    {frame && !error && <p className="recorded-day__coverage">
+      <b>{model.counts.agents} of {visibleAgentIds.length}</b> visible residents have recorded placements.
+      {visibleAgentIds.length > model.counts.agents && ` ${visibleAgentIds.length - model.counts.agents} unavailable or withheld.`}
+    </p>}
+    <div className="live-city live-city--embedded" data-beat={skyBeat} ref={frameRef}>
     <div className="live-city__field" data-beat={skyBeat} ref={fieldRef}>
       {projection && <svg
         className="live-city__terrain"
@@ -1309,13 +1351,14 @@ export function LiveCity() {
       </div>}
 
       {/* The lock-on. It rides the chip's own pixel every frame, so the person
-          you chose keeps a name and a halo while three hundred others move. */}
+          you chose keeps a name and a halo while three hundred others move. The
+          plate is the one piece of the followed person that is words, so it is
+          the one piece of the dot layer assistive technology is given. */}
       <div
         className={`live-city__lockon${focusAgent ? " is-on" : ""}${focus?.pinned ? " is-pinned" : ""}`}
         ref={lockRef}
-        aria-hidden="true"
       >
-        <i />
+        <i aria-hidden="true" />
         {focusAgent && <div className="live-city__lockon-plate">
           <strong>{focusAgent.name}</strong>
           <span>{humanize(focusAgent.occupation || focusAgent.role || "resident")}</span>
@@ -1420,25 +1463,34 @@ export function LiveCity() {
       </p>
     </aside>}
 
-    <header className="live-city__masthead">
-      <div className="live-city__identity">
-        {/* No run hash here. A build identifier is provenance, not a title; it
-            is set beside the tick it belongs to in the foot. */}
-        <p className="ae-cap">Street level · {model.regions.length} territories</p>
-        <h1>The recorded day</h1>
-        <p className="live-city__run">
-          <Link to={`/runs/${encodeURIComponent(runId)}/overview`}>← Workspaces</Link>
-          <span className={`live-city__pulse live-city__pulse--${paused ? "paused" : transport.status}`}>
-            {paused ? "Paused" : humanize(transport.status)}
-          </span>
-        </p>
-      </div>
-      {/*
-        * THE LEG IN VIEW, NOT THE TICK. Every figure here is written by the
-        * animation loop from the chips it just placed: the first two are counts
-        * of those chips, the last three are where the leg and the day have got
-        * to. The tick's own totals sit in the provenance foot.
-        */}
+    {unresolved && !mapError && <div className="live-city__veil" role="status">
+      <span className="ae-cap">Surveying the recorded day</span>
+      <p>Loading the selected tick’s recorded placements.</p>
+    </div>}
+    {mapError && <div className="live-city__veil" role="alert">
+      <EmptyState title="The city cannot be drawn">
+        {mapError.message}. A city frame requires recorded placements.
+      </EmptyState>
+    </div>}
+    {!unresolved && !mapError && !model.agents.length && <div className="live-city__veil" role="status">
+      <EmptyState title="No recorded placements at this tick">
+        This view needs civic places and recorded daily presence. Choose a civic city profile or a tick with recorded activity.
+      </EmptyState>
+    </div>}
+
+    <p className="live-city__sr" role="status">
+      {model.counts.agents
+        ? `${model.counts.agents} people with ${model.counts.recordedPlacements} recorded placements across `
+          + `${model.counts.places} places in ${model.regions.length} regions at tick ${mapTick ?? "unknown"}. `
+          + `Now showing the leg from the recorded ${leg?.fromSlot} placement to the recorded `
+          + `${leg?.toSlot} placement, which moves ${leg?.movers ?? 0} people. `
+          + `${model.counts.commuters} move between places during the day, `
+          + `${model.counts.longHaul} of them across a regional border. `
+          + `The field is nearest the ${nearCopy.label.toLowerCase()} placement. `
+          + `Positions between recorded placements are interpolated.`
+        : "No recorded placements have been received yet."}
+    </p>
+    </div>
       <dl className="live-city__readout">
         {([
           ["transit", "In transit"],
@@ -1457,33 +1509,16 @@ export function LiveCity() {
           >—</dd>
         </div>)}
       </dl>
-    </header>
-
-    <aside className="live-city__clock" ref={clockHand} aria-live="polite">
-      <p className="ae-cap">Recorded day{mapTick === null ? "" : ` · tick ${mapTick}`}</p>
-      <strong>{fromCopy.label} → {toCopy.label}</strong>
-      <ol className="live-city__beats">
-        {DAY_SLOTS.map((slot: string, index: number) => <li
-          key={slot}
-          className={index === nearIndex ? "is-now" : index === leg?.fromIndex ? "is-past" : ""}
-        >
-          <span>{BEAT_COPY[slot].label}</span>
-          <b className="ae-num">{count(model.counts.slots[slot]) ?? "—"}</b>
-        </li>)}
-      </ol>
-      <div className="live-city__leg-track"><i /></div>
-      <div className="live-city__day-track"><i /></div>
-      <small>
-        {!model.counts.agents
-          ? "Waiting for recorded placements."
-          : `${count(leg?.movers ?? 0)} people are between their recorded `
-            + `${leg?.fromSlot} and ${leg?.toSlot} places. It runs for ${legSeconds} s: `
-            + `this leg's share of the ${count(dayMoves)} moves the tick records.`}
-      </small>
-    </aside>
-
+    {conversationsLoading && <p className="recorded-day__notice" role="status">Loading recorded conversations for this day…</p>}
+    {conversationsError && <p className="recorded-day__notice" role="status">Recorded conversations unavailable: {conversationsError}</p>}
+    {(conversations?.has_more || conversations?.content_truncated) && <p className="recorded-day__notice">Conversation coverage is limited: only the newest 60 conversations and bounded transcript excerpts are available.</p>}
+    <details className="recorded-day__notes"><summary>How this day is drawn</summary>
+      <p>At 1× playback, this leg takes {legSeconds} seconds: {count(leg?.movers ?? 0)} of
+        the day's {count(dayMoves)} recorded changes of place. These durations describe
+        the animation, not recorded travel times.</p>
     <div className="live-city__legend">
       <p className="ae-cap">Where each person is</p>
+      <p>Click a person to keep their recorded day highlighted. Escape releases the highlight; the shared inspector retains its selection.</p>
       <ul>
         <li><i className="live-city__key live-city__key--routine_home" />At home</li>
         <li><i className="live-city__key live-city__key--routine_work" />At work</li>
@@ -1517,7 +1552,6 @@ export function LiveCity() {
           recorded in, never people
         </li>}
       </ul>
-      <p className="live-city__hint">Click anyone to follow them.</p>
     </div>
 
     <footer className="live-city__disclosure">
@@ -1559,27 +1593,6 @@ export function LiveCity() {
       </p>
     </footer>
 
-    {unresolved && !map.error && <div className="live-city__veil" role="status">
-      <span className="ae-cap">Surveying the recorded day</span>
-      <p>Placements arrive from <b className="mono">/api/v2/map</b> as one frame of truth per tick.</p>
-    </div>}
-    {map.error && <div className="live-city__veil" role="alert">
-      <EmptyState title="The city cannot be drawn">
-        {map.error.message}. Nothing is guessed in its place — no chip is shown without a recorded placement.
-      </EmptyState>
-    </div>}
-
-    <p className="live-city__sr" role="status">
-      {model.counts.agents
-        ? `${model.counts.agents} people with ${model.counts.recordedPlacements} recorded placements across `
-          + `${model.counts.places} places in ${model.regions.length} regions at tick ${mapTick ?? "unknown"}. `
-          + `Now showing the leg from the recorded ${leg?.fromSlot} placement to the recorded `
-          + `${leg?.toSlot} placement, which moves ${leg?.movers ?? 0} people. `
-          + `${model.counts.commuters} move between places during the day, `
-          + `${model.counts.longHaul} of them across a regional border. `
-          + `The field is nearest the ${nearCopy.label.toLowerCase()} placement. `
-          + `Positions between recorded placements are interpolated.`
-        : "No recorded placements have been received yet."}
-    </p>
-  </div>;
+    </details>
+  </section>;
 }

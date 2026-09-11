@@ -1,8 +1,38 @@
 # Local and hosted API reference
 
 The dashboard uses the same REST and WebSocket interfaces available to local
-tools. There is no authentication; keep the server on localhost. FastAPI exposes
+tools. Local mode has no account authentication; keep the server on localhost.
+Local operator actions additionally require the operator session's CSRF token. FastAPI exposes
 interactive OpenAPI documentation at `/docs` while the app is running.
+
+## Local research operator
+
+`/api/v2/operator/research` provides the local study library, reviewed drafts,
+durable jobs and private exports. Every request requires the current `run_id`,
+`tick=live`, the current `fork_id` when applicable and `X-CSRF-Token` from the
+operator session. Hosted-safe instances reject these routes. Responses use
+`Cache-Control: private, no-store`.
+
+`GET /capabilities` lists the fixed scripted pilot and valid owner-configured
+policy designs. `POST /drafts/validate` accepts either G2/F2 parameters or a
+strict `preset: "POLICY"` request with reviewed design identity, explicit source
+worlds, model draws and original limits. No validation step contacts a provider.
+`GET /drafts/{id}` returns the reviewed protocol without gateway configuration,
+credential references or private paths.
+
+`POST /drafts/{id}/launch` binds the draft hash and idempotency key. Policy
+drafts additionally require literal `approve_live_inference: true`. The
+supervisor repeats all source/design checks and charges preflight to the
+original allowance. `POST /jobs/{id}/resume` accepts only the original progress
+hash, compatibility-check hash and idempotency key, never replacement caps.
+Both writes return 202 and preserve existing jobs on an identical retry.
+
+`GET /studies/{id}?result_sha256=...` independently verifies evidence before
+comparison. V3 policy frames retain distinct model draws and use separate
+pending and final contracts. Private exports require the displayed result and
+verification hashes. See the [complete endpoint table](research/price-lab.md#local-operator-api)
+and [operator policy specification](plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for fields, directory configuration, admission bounds and recovery semantics.
 
 ## Hosted R22 boundary
 
@@ -53,7 +83,7 @@ mode has no authentication; do not put it behind a public proxy.
 | `POST` | `/api/run/pause` | Requests an interruptible clean pause |
 | `POST` | `/api/run/step` | Executes one tick and returns its summary |
 | `POST` | `/api/run/stop` | Finishes, checkpoints, and generates a report |
-| `POST` | `/api/run/speed` | JSON `{"delay_s": 0.5}` |
+| `POST` | `/api/run/speed` | JSON `{"delay_s": 0.5}`; `delay_s` must be finite and between 0 and 3600 seconds, otherwise HTTP 422 |
 | `GET` | `/api/run/status` | Run, phase, governor, readiness, cooldown, and report state |
 | `GET` | `/api/acceptance/status` | Gate results, progress, spend projection, exact Oracle checkpoint schedule, and shock evidence; a run/tick-matched final receipt supplies attachment-backed completed gates |
 
@@ -115,6 +145,18 @@ These read-only endpoints return the canonical envelope and accept `tick` plus
 | `GET` | `/api/v2/construction-projects` | Semantics-13 projects; filter by `project_kind=private_home|workplace|public_facility` and exact lifecycle `status` |
 | `GET` | `/api/v2/construction-projects/{project_id}` | One exact public project or privacy-safe aggregate, plus contribution-type totals where authorized |
 | `GET` | `/api/v2/world-map?layers=construction_projects` | Construction layer separate from usable `places`; supports stable project selection in Live City |
+| `GET` | `/api/v2/world-map?layers=households,institutions&tick=N` | Historical core household membership/child needs and public bank status, bound to the map envelope; no private accounts or exact household residences. See the [lens contract](plans/2026-09-07-city-society-lenses.md). |
+| `GET` | `/api/v2/city/conversations?tick=3&fork_id=...&limit=60` | `city.conversations` envelope for the exact recorded day; ordinary small-talk transcripts, never private communication or provider stores |
+
+City conversations return `data.items`, `tick`, `source=recorded_small_talk`,
+`has_more` and `content_truncated`. The default is the newest 60 conversations
+(maximum 200), each with up to 64 messages, 4,000 characters per message and
+512 topic characters. Per-item/message truncation flags preserve this boundary.
+Future conversations, messages and participants are withheld; malformed
+participant records are excluded. A wrong fork or unavailable tick returns 409.
+The endpoint performs no scientific writes. The city checks its envelope against
+the already displayed map before releasing any words. See the
+[city observer contract](research/city-observer.md).
 
 Peripheral private-home construction is aggregated by region, status, and
 stage. Owner, contributor, permit, exact-site, place, and reversible evidence
@@ -126,6 +168,19 @@ safe `kind`/`id`/`tick` references. Unknown kinds use a labelled generic
 fallback and never copy raw event payloads. Runtime `queued`/`thinking`
 presence may be included only for a current view; a historical `tick` request
 drops current runtime telemetry.
+
+## City observation bookmarks
+
+Local city navigation bookmarks use a separate operator workspace:
+
+| Method | Path | Input/notes |
+|---|---|---|
+| `GET` | `/api/v2/operator/city-observations?context=<JSON>` | Exact map run/fork/visibility/version context; returns context, optimistic version and up to 20 navigation strings |
+| `PUT` | `/api/v2/operator/city-observations` | Context, `expected_version`, entries and operator-session CSRF header; atomic save, 409 on stale context/version; no world writes |
+
+Both routes return 404 in hosted-safe mode. See the
+[city workspace contract](plans/2026-09-07-city-workspace-navigation.md) for the
+field allowlist, context schema, local identity and error handling.
 
 ## Oracle and calibration
 
@@ -160,9 +215,13 @@ score when resolvable.
 }
 ```
 
-Kinds: `policy_rate`, `oil`, `rumor`, `slant`, `scandal`, `epidemic`. Triggers:
-`shock`, `trend`, `conditional`. Empty trigger schedules the next tick. Unknown
-kinds return HTTP 400; halted runs return HTTP 409.
+Kinds: `policy_rate`, `policy_rule_change`, `oil`, `rumor`, `slant`, `scandal`,
+`epidemic`. Triggers: `shock`, `trend`, `conditional`. Empty trigger schedules
+the next tick. Unknown kinds return HTTP 400; halted runs return HTTP 409.
+Trigger and parameter fields are type-checked when the shock is scheduled
+(integer ticks and ids, finite numbers, known `op`, `bank_selector`, and
+`audience` values): a malformed field returns HTTP 400 with the reason instead
+of failing later inside every NIGHT_CLOSE and wedging the run.
 
 ## Reports and replay viewer
 
@@ -207,6 +266,11 @@ credential is created.
 
 See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
 [client quickstart](../clients/README.md) for the turn and receipt protocol.
+`GET /api/v2/agent/turn` and `ae_world_observe` require the `world.read` scope;
+the `commons` tier, which is defined without it, reads Commons content only. A
+turn always targets the next tick on which the connection is due: the next wake
+tick under its `wake_interval_ticks`, never a tick whose decision mailbox has
+already closed because it is in progress.
 World observations and Commons content are untrusted data; these endpoints never
 return private messages, prompts, chain-of-thought, provider payloads, or owner
 identity.

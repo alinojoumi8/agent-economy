@@ -60,10 +60,10 @@ test.describe("provider-free real backend menu smoke", () => {
 
     const destinations = [
       ["Pulse", "overview"],
+      ["City", "world"],
       ["People", "people"],
       ["Commons", "commons"],
       ["Evidence Lab", "investigations"],
-      ["City evidence", "world"],
       ["Institutions", "organizations"],
       ["Markets", "markets"],
       ["Politics & Law", "politics-law"],
@@ -140,9 +140,8 @@ test.describe("provider-free real backend menu smoke", () => {
 
     await page.goto(`${runPath}/live-city`);
     await expect(page.getByRole("heading", { name: "The recorded day", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Workspaces/ })).toHaveAttribute(
-      "href", `${runPath}/overview`,
-    );
+    await expect(page).toHaveURL(/\/world\?.*view=recorded/);
+    await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
 
     await page.goto("/");
     await expect(page.getByText("The living legal-political economy", { exact: true })).toBeVisible();

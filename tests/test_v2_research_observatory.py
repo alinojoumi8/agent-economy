@@ -330,6 +330,13 @@ def test_scenario_packs_and_paired_bootstrap_are_reproducible():
         {"arm": "control", "seed": 2, "metrics": {"hhi": 1700}},
         {"arm": "strict", "seed": 2, "metrics": {"hhi": 1550}},
     ]
+    # Statistical fixture: aggregation receives already verified execution rows.
+    # Real receipt verification is exercised in test_research_attempt_integrity.
+    for row in results:
+        row.update({"ticks": 30, "expected_ticks": 30, "execution_status": "completed",
+                    "final_boundary": True, "reconciled": True, "database_integrity": True,
+                    "genesis_hash": f"same-{row['seed']}",
+                    "eligibility": {"status": "eligible", "reasons": []}})
     first = paired_summary(results, "control", bootstrap_samples=200)
     second = paired_summary(results, "control", bootstrap_samples=200)
     assert first == second

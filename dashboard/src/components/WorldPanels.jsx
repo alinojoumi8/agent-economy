@@ -52,7 +52,9 @@ export function InstitutionsPanel({ institutions }) {
   const health = institutions?.health;
   return (
     <Panel title="Public & private institutions" eyebrow="Fiscal · VC · healthcare" className="col-span-full lg:col-span-3">
-      {!institutions ? <Empty>Loading institutions…</Empty> : <div className="divide-y divide-mint-300/10">
+      {/* Only the summary is passed in, so a null cannot tell a first load from a
+          failed /api/institutions request; the copy claims neither. */}
+      {!institutions ? <Empty>Institution summary unavailable.</Empty> : <div className="divide-y divide-mint-300/10">
         <article className="p-4">
           <div className="mb-2 flex justify-between"><strong className="text-xs uppercase tracking-wider text-slate-300">Government</strong><Badge tone={gov?.enabled ? "good" : "neutral"}>{gov?.enabled ? "active" : "disabled"}</Badge></div>
           {gov?.enabled && <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs"><dt className="text-slate-500">Tax rate</dt><dd className="text-right tabular">{number(gov.tax_rate_bps / 100, 1)}%</dd><dt className="text-slate-500">Benefit</dt><dd className="text-right tabular">{money(gov.unemployment_benefit_cents)}</dd><dt className="text-slate-500">Treasury</dt><dd className="text-right tabular">{money(gov.treasury_cents)}</dd></dl>}

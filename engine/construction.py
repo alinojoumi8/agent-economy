@@ -117,6 +117,9 @@ class ConstructionEconomy:
             return cached
         if not self.enabled:
             return {"ok": False, "reason": "construction economy is not enabled"}
+        if (self.e.engine_semantics_version >= 21
+                and not self.e.population.is_available(actor_id)):
+            return {"ok": False, "reason": "construction requires a local actor"}
         return None
 
     def _project(self, project_id: int):
@@ -126,6 +129,8 @@ class ConstructionEconomy:
         )
 
     def _controls_firm(self, actor_id: int, firm_id: int) -> bool:
+        if self.e.business_control.enabled:
+            return self.e.business_control.controls(actor_id, firm_id)
         firm = self.store.query_one(
             "SELECT founder_agent_id,status FROM firms WHERE id=?",
             (int(firm_id),),
@@ -183,6 +188,8 @@ class ConstructionEconomy:
         )
 
     def _authorized_project(self, actor_id: int, project) -> bool:
+        if self.engine_semantics_version >= 20 and project["owner_type"] == "agent":
+            return self.e.project_rights.controls(actor_id, project)
         return self._authorized_owner(
             actor_id, str(project["owner_type"]), int(project["owner_id"]),
             int(project["region_id"]))
@@ -250,6 +257,11 @@ class ConstructionEconomy:
             "ORDER BY id LIMIT 1",
             (owner_type, owner_id, target),
         )
+        if self.engine_semantics_version >= 20 and owner_type == "agent":
+            inherited = [p for p in self.e.project_rights.owned_projects(owner_id)
+                         if p["target_place_type"] == target and p["status"] not in TERMINAL_STATUSES]
+            if inherited:
+                existing = min(inherited, key=lambda p: p["id"])
         if existing is not None:
             project_id = int(existing["id"])
             return self._finish(tick, actor_id, action_type, action, {
@@ -577,6 +589,18 @@ class ConstructionEconomy:
     def perform_work(
         self, tick: int, actor_id: int, action: Mapping[str, Any],
     ) -> dict[str, Any]:
+        if self.e.engine_semantics_version >= 18:
+            cached = self._start(actor_id, "perform_construction_work", action)
+            if cached is not None:
+                return self._perform_work(tick, actor_id, action)
+            return self.e.daily_time.perform(tick, actor_id, f"construction:{action['dedupe_key']}",
+                "construction", int(action["work_units"]) * self.e.daily_time.p["construction_minutes_per_unit"],
+                dict(action), lambda: self._perform_work(tick, actor_id, action))
+        return self._perform_work(tick, actor_id, action)
+
+    def _perform_work(
+        self, tick: int, actor_id: int, action: Mapping[str, Any],
+    ) -> dict[str, Any]:
         action_type = "perform_construction_work"
         cached = self._start(actor_id, action_type, action)
         if cached is not None:
@@ -753,6 +777,26 @@ class ConstructionEconomy:
             return self._finish(tick, actor_id, action_type, action, {
                 "ok": False, "reason": "construction project is already terminal",
             }, project_id)
+        result = self._cancel_project(tick, project, actor_id, str(action["reason_code"]), action)
+        return self._finish(tick, actor_id, action_type, action, result, project_id)
+
+    def cancel_unclaimed(self, tick: int, project_id: int):
+        """Engine disposition of unclaimed property, never an impersonated owner."""
+        from .project_rights import interests_at
+        from .estates import EstateError
+        project = self._project(project_id)
+        if self.engine_semantics_version < 20 or project is None or project["owner_type"] != "agent":
+            raise EstateError("unclaimed construction requires a personal estate project")
+        shares = interests_at(self.store, project_id, enabled=True)
+        if not shares or self.e.project_rights.has_personal_residual(project_id):
+            raise EstateError("cannot cancel a project with a personal beneficial owner")
+        if project["status"] in TERMINAL_STATUSES:
+            return {"ok": True, "project_id": project_id, "status": project["status"], "refund_cents": 0}
+        with self.store.savepoint("unclaimed_project_cancellation"):
+            return self._cancel_project(tick, project, None, "no_estate_beneficiary", {}, phase="NIGHT_CLOSE")
+
+    def _cancel_project(self, tick, project, actor_id, reason, action, *, phase="EXECUTION"):
+        project_id = int(project["id"])
         refund_cents, refund_transaction_ids = self._refund_remaining(
             tick, project_id, terminal_reason="cancelled")
         if project["permit_case_id"] is not None:
@@ -761,19 +805,19 @@ class ConstructionEconomy:
                 "decided_tick=?,decision_actor_id=?,reason_code=? "
                 "WHERE id=? AND status='submitted'",
                 (
-                    int(tick), int(actor_id), str(action["reason_code"]),
+                    int(tick), int(actor_id) if actor_id is not None else None, reason,
                     int(project["permit_case_id"]),
                 ),
             )
         event_id = self.store.log_event(
             tick, "construction_project_cancelled", {
                 "project_id": project_id,
-                "actor_agent_id": int(actor_id),
-                "reason_code": str(action["reason_code"]),
+                "actor_agent_id": int(actor_id) if actor_id is not None else None,
+                "reason_code": reason,
                 "refund_cents": refund_cents,
                 "refund_transaction_ids": refund_transaction_ids,
                 "evidence_event_ids": _evidence(action),
-            }, phase="EXECUTION", subject_type="construction_project",
+            }, phase=phase, subject_type="construction_project",
             subject_id=project_id, importance=2.5)
         current = self._project(project_id)
         self.store.update(
@@ -783,13 +827,15 @@ class ConstructionEconomy:
                 int(current["refunded_funding_cents"]) + refund_cents),
             cancellation_event_id=event_id,
             evidence_refs_json=self._merge_evidence(current, action))
-        return self._finish(tick, actor_id, action_type, action, {
+        if self.engine_semantics_version >= 20:
+            self.e.estate_property.close_cancelled(tick, project_id)
+        return {
             "ok": True,
             "project_id": project_id,
             "status": "cancelled",
             "refund_cents": refund_cents,
             "refund_transaction_ids": refund_transaction_ids,
-        }, project_id)
+        }
 
     def _refund_remaining(
         self, tick: int, project_id: int, terminal_reason: str,
@@ -863,6 +909,7 @@ class ConstructionEconomy:
         region = self.store.query_one(
             "SELECT * FROM regions WHERE id=?", (int(project["region_id"]),))
         target = str(project["target_place_type"])
+        inherited_title = self.engine_semantics_version >= 20 and project["owner_type"] == "agent"
         place_kind = {
             "private_home": "residential_district",
             "workplace": "firm_workplace",
@@ -886,8 +933,8 @@ class ConstructionEconomy:
             metadata={
                 "construction_project_id": int(project_id),
                 "target_place_type": target,
-                "canonical_owner_type": str(project["owner_type"]),
-                "canonical_owner_id": int(project["owner_id"]),
+                **({"original_owner_type": str(project["owner_type"]), "original_owner_id": int(project["owner_id"])}
+                   if inherited_title else {"canonical_owner_type": str(project["owner_type"]), "canonical_owner_id": int(project["owner_id"])}),
                 "site_key": str(project["site_key"]),
             },
         )
@@ -903,8 +950,8 @@ class ConstructionEconomy:
                 "project_id": int(project_id),
                 "place_id": place_id,
                 "target_place_type": target,
-                "owner_type": str(project["owner_type"]),
-                "owner_id": int(project["owner_id"]),
+                **({"original_owner_type": str(project["owner_type"]), "original_owner_id": int(project["owner_id"])}
+                   if inherited_title else {"owner_type": str(project["owner_type"]), "owner_id": int(project["owner_id"])}),
                 "region_id": int(project["region_id"]),
                 "required_funding_cents": int(project["required_funding_cents"]),
                 "required_work_units": int(project["required_work_units"]),
@@ -977,6 +1024,9 @@ class ConstructionEconomy:
         """Return bounded, exact actions authored by the deciding agent."""
         if not self.enabled or not bool(self.config.get("agent_initiation", True)):
             return None
+        if (self.e.engine_semantics_version >= 21
+                and not self.e.population.is_available(agent_id)):
+            return None
         agent = self.store.query_one(
             "SELECT id,name,region_id FROM agents WHERE id=? AND alive=1",
             (int(agent_id),),
@@ -1008,7 +1058,7 @@ class ConstructionEconomy:
             "WHERE p.status IN ('proposed','permitting','funding','building') "
             "AND ((p.owner_type='agent' AND p.owner_id=?) OR "
             "(p.owner_type='firm' AND p.owner_id IN "
-            " (SELECT id FROM firms WHERE founder_agent_id=? "
+            f" (SELECT id FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? "
             "  AND status<>'bankrupt')) OR "
             "(p.owner_type='agency' AND p.owner_id IN "
             " (SELECT agency_id FROM agency_staff WHERE agent_id=? AND active=1 "
@@ -1016,6 +1066,11 @@ class ConstructionEconomy:
             "ORDER BY p.proposed_tick,p.id LIMIT 1",
             (int(agent_id), int(agent_id), int(agent_id)),
         )
+        if self.engine_semantics_version >= 20:
+            candidates = self.e.project_rights.operated_projects(agent_id)
+            if owned is not None:
+                candidates.append(owned)
+            owned = min(candidates, key=lambda p: (p["proposed_tick"], p["id"])) if candidates else None
         if action is None and owned is not None:
             status = str(owned["status"])
             if status == "proposed":
@@ -1032,8 +1087,8 @@ class ConstructionEconomy:
 
         if action is None and owned is None:
             founder = self.store.query_one(
-                "SELECT f.id,f.name,f.region_id FROM firms f "
-                "WHERE f.founder_agent_id=? AND f.status<>'bankrupt' "
+                f"SELECT f.id,f.name,f.region_id FROM {self.e.business_control.table} f "
+                f"WHERE f.{self.e.business_control.column}=? AND f.status<>'bankrupt' "
                 "AND NOT EXISTS (SELECT 1 FROM places p WHERE "
                 " p.owner_type='firm' AND p.owner_id=f.id "
                 " AND p.kind='firm_workplace' AND p.active=1) "
@@ -1111,6 +1166,9 @@ class ConstructionEconomy:
                 "AND status<>'cancelled' LIMIT 1",
                 (int(agent_id),),
             )
+            if self.engine_semantics_version >= 20:
+                home = self.e.project_rights.household_home(agent["region_id"], agent_id) or any(
+                    p["region_id"] == agent["region_id"] for p in self.e.project_rights.owned_projects(agent_id)) or None
             if home is None:
                 action = {
                     "type": "propose_construction",

@@ -12,7 +12,13 @@ from typing import Any, Iterable
 
 
 CONTRACT_PATH = Path(__file__).with_name("hash-contract-v1.json")
-CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v2.json")
+V2_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v2.json")
+V3_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v3.json")
+V4_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v4.json")
+V5_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v5.json")
+V6_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v6.json")
+CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v7.json")
+POPULATION_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v8.json")
 
 
 class HashContractError(RuntimeError):
@@ -22,13 +28,13 @@ class HashContractError(RuntimeError):
 def load_hash_contract(path: str | Path | None = None) -> dict:
     contract_path = Path(path) if path is not None else CONTRACT_PATH
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    if contract.get("id") not in {"hash-contract-v1", "hash-contract-v2"}:
+    if contract.get("id") not in {"hash-contract-v1", "hash-contract-v2", "hash-contract-v3", "hash-contract-v4", "hash-contract-v5", "hash-contract-v6", "hash-contract-v7", "hash-contract-v8"}:
         raise HashContractError("unsupported hash contract")
     return contract
 
 
 def _contract_for_database(database: Any) -> dict:
-    """Select the frozen v1 boundary for old semantics and v2 for 9+."""
+    """Select by recorded semantics, including the unregistered population draft."""
     connection = _connection(database)
     try:
         row = connection.execute(
@@ -37,8 +43,13 @@ def _contract_for_database(database: Any) -> dict:
         semantics = int(config.get("engine_semantics_version", 0))
     except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
         semantics = 0
-    return load_hash_contract(
-        CURRENT_CONTRACT_PATH if semantics >= 9 else CONTRACT_PATH)
+    return load_hash_contract(POPULATION_CONTRACT_PATH if semantics >= 21 else
+                              CURRENT_CONTRACT_PATH if semantics >= 20 else
+                              V6_CONTRACT_PATH if semantics >= 19 else
+                              V5_CONTRACT_PATH if semantics >= 18 else
+                              V4_CONTRACT_PATH if semantics >= 17 else
+                              V3_CONTRACT_PATH if semantics >= 15 else
+                              V2_CONTRACT_PATH if semantics >= 9 else CONTRACT_PATH)
 
 
 def _connection(database: Any) -> sqlite3.Connection:
@@ -91,20 +102,11 @@ def schema_inventory_sha256(database: Any) -> str:
 def _contract_inventory(connection: sqlite3.Connection, contract: dict) -> list[dict]:
     """Return the schema surface governed by one versioned contract.
 
-    Schema 13/14 tables exist in every newly opened database. The frozen v1
-    research boundary continues to hash the exact schema-12 surface for
-    Semantics 1-8, while accepting only extensions explicitly declared by v2.
+    Additive tables exist in newly opened historical databases. Preserve each
+    older contract's inventory, accepting only explicitly named extensions.
     """
     inventory = schema_inventory(connection)
-    if contract.get("id") != "hash-contract-v1" or int(
-            contract.get("schema_version", 0)) != 12:
-        return inventory
-    current = load_hash_contract(CURRENT_CONTRACT_PATH)
-    extension_tables = set(map(str, current.get("extension_tables", [])))
-    extension_columns = {
-        str(table): set(map(str, columns))
-        for table, columns in current.get("extension_columns", {}).items()
-    }
+    extension_tables, extension_columns = _compatible_extensions(contract)
     compatible = []
     for item in inventory:
         table = str(item["table"])
@@ -121,6 +123,27 @@ def _contract_inventory(connection: sqlite3.Connection, contract: dict) -> list[
     return compatible
 
 
+def _compatible_extensions(contract: dict) -> tuple[set[str], dict[str, set[str]]]:
+    if (contract.get("id"), int(contract.get("schema_version", 0))) not in {
+            ("hash-contract-v1", 12), ("hash-contract-v2", 20), ("hash-contract-v3", 21),
+            ("hash-contract-v4", 22), ("hash-contract-v5", 23), ("hash-contract-v6", 24),
+            ("hash-contract-v7", 25)}:
+        return set(), {}
+    current = load_hash_contract(POPULATION_CONTRACT_PATH)
+    tables = set(map(str, current.get("extension_tables", [])))
+    columns = {str(table): set(map(str, names)) for table, names in current.get("extension_columns", {}).items()}
+    previous_paths = {"hash-contract-v2": V2_CONTRACT_PATH, "hash-contract-v3": V3_CONTRACT_PATH,
+                      "hash-contract-v4": V4_CONTRACT_PATH, "hash-contract-v5": V5_CONTRACT_PATH,
+                      "hash-contract-v6": V6_CONTRACT_PATH,
+                      "hash-contract-v7": CURRENT_CONTRACT_PATH}
+    if contract["id"] in previous_paths:
+        previous = load_hash_contract(previous_paths[contract["id"]])
+        tables -= set(previous.get("extension_tables", []))
+        columns = {table: names - set(previous.get("extension_columns", {}).get(table, []))
+                   for table, names in columns.items()}
+    return tables, columns
+
+
 def _inventory_sha256(inventory: list[dict]) -> str:
     payload = json.dumps(
         inventory, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -131,6 +154,9 @@ def _inventory_sha256(inventory: list[dict]) -> str:
 def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
     """Fail closed when any table or column is not covered by the manifest."""
     contract = contract or _contract_for_database(database)
+    if (contract.get("id") == "hash-contract-v8"
+            and contract != load_hash_contract(POPULATION_CONTRACT_PATH)):
+        raise HashContractError("hash-contract-v8 definitions must match the maintained population contract")
     classified = {
         classification: set(map(str, contract[f"{classification}_tables"]))
         for classification in ("authoritative", "derived", "excluded")
@@ -144,13 +170,47 @@ def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
         raise HashContractError(
             "hash contract classifies tables more than once: " + ",".join(sorted(overlaps)))
     connection = _connection(database)
+    required = _contract_for_database(connection)["id"]
+    if required == "hash-contract-v8" and contract.get("id") != required:
+        raise HashContractError("Semantics 21 requires hash-contract-v8; population history cannot be omitted")
+    if required == "hash-contract-v7" and contract.get("id") != required:
+        raise HashContractError("Semantics 20 requires hash-contract-v7; asset succession cannot be omitted")
+    if required == "hash-contract-v6" and contract.get("id") != required:
+        raise HashContractError("Semantics 19 requires hash-contract-v6; estate receipts cannot be omitted")
+    if required == "hash-contract-v5" and contract.get("id") != required:
+        raise HashContractError("Semantics 18 requires hash-contract-v5; time and earned wages cannot be omitted")
+    if required == "hash-contract-v4" and contract.get("id") != required:
+        raise HashContractError("Semantics 17 requires hash-contract-v4; household decisions cannot be omitted")
+    if (_contract_for_database(connection)["id"] == "hash-contract-v3"
+            and contract.get("id") != "hash-contract-v3"):
+        raise HashContractError("Semantics 15 requires hash-contract-v3; household state cannot be omitted")
     discovered = set(_tables(connection))
     declared = set().union(*classified.values())
-    allowed_extensions: set[str] = set()
-    if contract.get("id") == "hash-contract-v1" and int(
-            contract.get("schema_version", 0)) == 12:
-        allowed_extensions = set(map(
-            str, load_hash_contract(CURRENT_CONTRACT_PATH).get("extension_tables", [])))
+    allowed_extensions, _ = _compatible_extensions(contract)
+    household_tables = set(load_hash_contract(V3_CONTRACT_PATH)["household_tables"])
+    for table in sorted((discovered - declared) & household_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated household state requires hash-contract-v3")
+    decision_tables = set(load_hash_contract(CURRENT_CONTRACT_PATH)["household_decision_tables"])
+    for table in sorted((discovered - declared) & decision_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated household decisions require hash-contract-v4")
+    time_tables = set(load_hash_contract(CURRENT_CONTRACT_PATH)["daily_time_tables"])
+    for table in sorted((discovered - declared) & time_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated daily time and wages require hash-contract-v5")
+    estate_tables = set(load_hash_contract(CURRENT_CONTRACT_PATH)["estate_cash_tables"])
+    for table in sorted((discovered - declared) & estate_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated estate receipts require hash-contract-v6")
+    succession_tables = set(load_hash_contract(CURRENT_CONTRACT_PATH)["asset_succession_tables"])
+    for table in sorted((discovered - declared) & succession_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated asset succession requires hash-contract-v7")
+    population_tables = set(load_hash_contract(POPULATION_CONTRACT_PATH)["population_tables"])
+    for table in sorted((discovered - declared) & population_tables):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated population history requires hash-contract-v8")
     missing = sorted(discovered - declared - allowed_extensions)
     stale = sorted(declared - discovered)
     if missing:

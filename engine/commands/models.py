@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 
 class CommandBase(BaseModel):
@@ -13,6 +13,111 @@ class CommandBase(BaseModel):
 
 class LegacyCommand(CommandBase):
     model_config = ConfigDict(extra="allow")
+
+
+class PlaceEstatePropertyBid(CommandBase):
+    type: Literal["place_estate_property_bid"]
+    custody_id: Annotated[StrictInt, Field(gt=0)]
+    buyer_account_id: Annotated[StrictInt, Field(gt=0)]
+    amount_cents: Annotated[StrictInt, Field(gt=0, le=1_000_000_000_000)]
+    currency_code: str = Field(min_length=3, max_length=12, pattern=r"^[A-Z][A-Z0-9]*$")
+    expires_tick: Annotated[StrictInt, Field(gt=0)]
+    request_key: str = Field(min_length=1, max_length=96, pattern=r"\S")
+
+
+class AcceptEstatePropertyBid(CommandBase):
+    type: Literal["accept_estate_property_bid"]
+    bid_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class WithdrawEstatePropertyBid(CommandBase):
+    type: Literal["withdraw_estate_property_bid"]
+    bid_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class PlaceEstateUnlistedBid(CommandBase):
+    type: Literal["place_estate_unlisted_bid"]
+    lot_id: Annotated[StrictInt, Field(gt=0)]
+    qty: Annotated[StrictInt, Field(gt=0, le=1_000_000_000_000)]
+    buyer_account_id: Annotated[StrictInt, Field(gt=0)]
+    amount_cents: Annotated[StrictInt, Field(gt=0, le=1_000_000_000_000)]
+    currency_code: str = Field(min_length=3, max_length=12, pattern=r"^[A-Z][A-Z0-9]*$")
+    expires_tick: Annotated[StrictInt, Field(gt=0)]
+    request_key: str = Field(min_length=1, max_length=96, pattern=r"\S")
+
+
+class AcceptEstateUnlistedBid(CommandBase):
+    type: Literal["accept_estate_unlisted_bid"]
+    bid_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class WithdrawEstateUnlistedBid(CommandBase):
+    type: Literal["withdraw_estate_unlisted_bid"]
+    bid_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class HouseholdRequest(CommandBase):
+    request_key: str = Field(min_length=1, max_length=96, pattern=r"\S")
+
+
+class PopulationCare(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    child_id: Annotated[StrictInt, Field(gt=0)]
+    guardian_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class ProposePopulationMovement(HouseholdRequest):
+    type: Literal["propose_population_movement"]
+    cause: Literal["departure", "return"]
+    member_ids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1, max_length=128)
+    due_tick: Annotated[StrictInt, Field(gt=0)]
+    destination_region_id: Annotated[StrictInt, Field(gt=0)] | None = None
+    care_plan: list[PopulationCare] = Field(default_factory=list, max_length=128)
+
+    @model_validator(mode="after")
+    def consistent_destination(self):
+        if (self.cause == "return") != (self.destination_region_id is not None):
+            raise ValueError("only return requires a modeled destination region")
+        return self
+
+
+class RespondPopulationMovement(CommandBase):
+    type: Literal["respond_population_movement"]
+    movement_id: Annotated[StrictInt, Field(gt=0)]
+    decision: Literal["accept", "decline", "withdraw"]
+
+
+class SetTimePlan(HouseholdRequest):
+    type: Literal["set_time_plan"]
+    work_minutes: Annotated[StrictInt, Field(ge=0, le=1440)]
+    care_minutes: Annotated[StrictInt, Field(ge=0, le=1440)]
+    work_firm_id: Annotated[StrictInt, Field(gt=0)] | None = None
+    care_child_ids: list[Annotated[StrictInt, Field(gt=0)]] | None = Field(default=None, max_length=32)
+
+
+class ProposePartnership(HouseholdRequest):
+    type: Literal["propose_partnership"]
+    partner_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class ProposeHouseholdMove(HouseholdRequest):
+    type: Literal["propose_household_move"]
+    destination_region_id: Annotated[StrictInt, Field(gt=0)]
+
+
+class SeparateHousehold(HouseholdRequest):
+    type: Literal["separate_household"]
+
+
+class RespondHousehold(CommandBase):
+    type: Literal["respond_household"]
+    household_decision_id: Annotated[StrictInt, Field(gt=0)]
+    decision: Literal["accept", "reject"]
+
+
+class CancelHouseholdProposal(CommandBase):
+    type: Literal["cancel_household_proposal"]
+    household_decision_id: Annotated[StrictInt, Field(gt=0)]
 
 
 class BuyComputePlan(CommandBase):

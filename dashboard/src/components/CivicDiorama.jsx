@@ -10,7 +10,7 @@ import {
 } from "react";
 import { buildDioramaScene } from "../lib/civicDiorama.js";
 import { humanize } from "../lib/civicCity.js";
-import "./civic-diorama.css";
+import { DEFAULT_CITY_CAMERA, normalizeCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
 
 const ORBIT_VIEW = new OrbitView({ id: "civic-diorama", orbitAxis: "Z" });
 const FIXED_CAMERA = {
@@ -21,6 +21,8 @@ const FIXED_CAMERA = {
   minZoom: 1.8,
   maxZoom: 5.4,
 };
+/* How long two consecutive live ticks glide into each other. */
+const TRANSITION_MS = 420;
 
 function useReducedMotion() {
   const [reduced, setReduced] = useState(() =>
@@ -59,38 +61,67 @@ export function CivicDiorama({
   selectedAgentId,
   selectedPlaceId,
   selectedProjectId,
+  selectedFirmId,
+  camera,
+  onCameraChange,
+  onOpenEvidence,
   onSelectAgent,
   onSelectPlace,
   onSelectProject,
+  onSelectFirm,
   onShowAllResidents,
   animateLiveActivity,
   tick,
   historical,
 }) {
   const [viewState, setViewState] = useState(FIXED_CAMERA);
+  useEffect(() => {
+    const next = camera || DEFAULT_CITY_CAMERA;
+    setViewState({ ...FIXED_CAMERA, target: [next.x, next.y, 0], zoom: next.zoom });
+  }, [camera?.x, camera?.y, camera?.zoom]);
   const [pulse, setPulse] = useState(0);
   const [firstFrameMs, setFirstFrameMs] = useState(null);
   const [frameP95Ms, setFrameP95Ms] = useState(null);
   const mountedAt = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const measured = useRef(false);
-  const previousTick = useRef(null);
   const reducedMotion = useReducedMotion();
-  const projectedTick = Number(model.selectedTick);
-  const transitionDuration = !historical
-    && !reducedMotion
-    && Number.isFinite(projectedTick)
-    && previousTick.current !== null
-    && projectedTick === previousTick.current + 1
-    ? 420
-    : 0;
+  const projectedTick = Number.isFinite(Number(model.selectedTick))
+    ? Number(model.selectedTick)
+    : null;
+  /*
+   * The glide between two consecutive ticks is decided in the render that first
+   * carries the new positions — deck.gl only starts a transition on the update
+   * where the attribute changes — and then has to OUTLIVE that render: under
+   * animateLiveActivity the pulse re-renders every frame, and a layer rebuilt
+   * without `transitions` cancels the glide in flight, snapping everyone to
+   * their destination one frame in. So the duration lives in state, set from
+   * the previous render's tick as the tick changes (React's storing-previous-
+   * render pattern) and released by a timer one duration later. Historical
+   * views and reduced motion never glide.
+   */
+  const [glideTick, setGlideTick] = useState(null);
+  const [glideDuration, setGlideDuration] = useState(0);
+  if (projectedTick !== glideTick) {
+    setGlideTick(projectedTick);
+    setGlideDuration(
+      glideTick !== null && projectedTick !== null && projectedTick === glideTick + 1
+        ? TRANSITION_MS
+        : 0,
+    );
+  }
+  const transitionDuration = historical || reducedMotion ? 0 : glideDuration;
   const scene = useMemo(
     () => buildDioramaScene(model, visibleAgents, { showClusters }),
     [model, showClusters, visibleAgents],
   );
 
   useEffect(() => {
-    previousTick.current = Number.isFinite(projectedTick) ? projectedTick : null;
-  }, [projectedTick]);
+    if (!glideDuration) return undefined;
+    /* One frame of grace: deck.gl starts the glide on its own next frame, so
+       the settings are withdrawn only once it has certainly finished. */
+    const timer = window.setTimeout(() => setGlideDuration(0), glideDuration + 40);
+    return () => window.clearTimeout(timer);
+  }, [glideDuration, glideTick]);
 
   useEffect(() => {
     if (!animateLiveActivity || reducedMotion) {
@@ -136,13 +167,21 @@ export function CivicDiorama({
     const place = scene.buildings.find(
       item => item.entityKind === "place" && String(item.id) === String(selectedPlaceId),
     );
-    const selected = project || place || agent;
+    const firm = model.firms.find(item => String(item.id) === String(selectedFirmId));
+    const firmBuilding = firm && (scene.buildings.find(item => item.entityKind === "organization" && String(item.id) === String(firm.id))
+      || scene.buildings.find(item => item.entityKind === "place" && String(item.id) === String(firm.place_id)));
+    const selected = project || place || (firmBuilding && { ...firmBuilding, name: firm.name }) || agent;
     if (!selected) return [];
     return [{
-      text: selected.name || `${humanize(selected.entityKind)} #${selected.id}`,
+      text: selected.entityKind === "construction" ? `${selected.name}\n${selected.label}`
+        : selected.name || `${humanize(selected.entityKind)} #${selected.id}`,
       position: selected.position,
     }];
-  }, [scene, selectedAgentId, selectedPlaceId, selectedProjectId]);
+  }, [scene, model.firms, selectedAgentId, selectedPlaceId, selectedProjectId, selectedFirmId]);
+
+  const buildingSelected = item => (item.entityKind === "place" && String(item.id) === String(selectedPlaceId))
+    || (item.entityKind === "organization" && String(item.id) === String(selectedFirmId))
+    || (selectedFirmId != null && item.entityKind === "place" && item.owner_type === "firm" && String(item.owner_id) === String(selectedFirmId));
 
   const layers = useMemo(() => [
     new PolygonLayer({
@@ -191,6 +230,13 @@ export function CivicDiorama({
         shininess: 8,
         specularColor: [52, 44, 38],
       },
+      /* deck.gl ignores accessor identity: an accessor that closes over the
+         selection must name it here or the highlight only moves when `data`
+         happens to be rebuilt. */
+      updateTriggers: {
+        getLineColor: [selectedProjectId],
+        getLineWidth: [selectedProjectId],
+      },
       pickable: true,
     }),
     new PathLayer({
@@ -204,6 +250,10 @@ export function CivicDiorama({
       widthUnits: "pixels",
       capRounded: false,
       jointRounded: false,
+      updateTriggers: {
+        getColor: [selectedProjectId],
+        getWidth: [selectedProjectId],
+      },
       pickable: true,
     }),
     new PolygonLayer({
@@ -212,7 +262,7 @@ export function CivicDiorama({
       getPolygon: item => item.polygon,
       getFillColor: item => item.color,
       getLineColor: item => (
-        item.entityKind === "place" && String(item.id) === String(selectedPlaceId)
+        buildingSelected(item)
           ? [255, 244, 191, 255]
           : [31, 37, 39, 205]
       ),
@@ -223,7 +273,7 @@ export function CivicDiorama({
       stroked: true,
       lineWidthUnits: "pixels",
       getLineWidth: item => (
-        item.entityKind === "place" && String(item.id) === String(selectedPlaceId) ? 3 : 1
+        buildingSelected(item) ? 3 : 1
       ),
       material: {
         ambient: 0.55,
@@ -232,6 +282,10 @@ export function CivicDiorama({
         specularColor: [64, 69, 67],
       },
       transitions: transitionDuration ? { getPolygon: transitionDuration } : undefined,
+      updateTriggers: {
+        getLineColor: [selectedPlaceId, selectedFirmId],
+        getLineWidth: [selectedPlaceId, selectedFirmId],
+      },
       pickable: true,
     }),
     new ScatterplotLayer({
@@ -275,6 +329,11 @@ export function CivicDiorama({
       lineWidthUnits: "pixels",
       getLineWidth: item => String(item.id) === String(selectedAgentId) ? 3 : 1,
       transitions: transitionDuration ? { getPosition: transitionDuration } : undefined,
+      updateTriggers: {
+        getRadius: [selectedAgentId],
+        getLineColor: [selectedAgentId],
+        getLineWidth: [selectedAgentId],
+      },
       filled: true,
       stroked: true,
       pickable: true,
@@ -289,25 +348,6 @@ export function CivicDiorama({
       sizeUnits: "pixels",
       getTextAnchor: "middle",
       getAlignmentBaseline: "center",
-      billboard: true,
-      pickable: false,
-    }),
-    new TextLayer({
-      id: "civic-construction-labels",
-      data: scene.constructions.filter(item => !item.operationalPlace),
-      getPosition: item => item.position,
-      getText: item => item.label,
-      getColor: item => String(item.id) === String(selectedProjectId)
-        ? [255, 247, 210, 255]
-        : [240, 219, 178, 235],
-      getBackgroundColor: [31, 29, 26, 205],
-      background: true,
-      backgroundPadding: [4, 2],
-      getSize: 10,
-      sizeUnits: "pixels",
-      getPixelOffset: [0, -10],
-      getTextAnchor: "middle",
-      getAlignmentBaseline: "bottom",
       billboard: true,
       pickable: false,
     }),
@@ -335,49 +375,33 @@ export function CivicDiorama({
     selectedLabels,
     selectedPlaceId,
     selectedProjectId,
+    selectedFirmId,
     transitionDuration,
   ]);
 
-  const updateViewState = useCallback(({ viewState: next }) => {
-    setViewState({
-      ...next,
-      rotationX: FIXED_CAMERA.rotationX,
-      rotationOrbit: FIXED_CAMERA.rotationOrbit,
-      minZoom: FIXED_CAMERA.minZoom,
-      maxZoom: FIXED_CAMERA.maxZoom,
-    });
-  }, []);
-  const zoom = delta => setViewState(current => ({
-    ...current,
-    zoom: Math.max(
-      FIXED_CAMERA.minZoom,
-      Math.min(FIXED_CAMERA.maxZoom, Number(current.zoom) + delta),
-    ),
-  }));
+  const commitCamera = useCallback((value, options) => {
+    const next = normalizeCityCamera(value);
+    const current = { x: viewState.target[0], y: viewState.target[1], zoom: viewState.zoom };
+    if (serializeCityCamera(next) === serializeCityCamera(current)) return;
+    setViewState({ ...FIXED_CAMERA, target: [next.x, next.y, 0], zoom: next.zoom });
+    onCameraChange?.(next, options);
+  }, [viewState, onCameraChange]);
+  const updateViewState = useCallback(({ viewState: next, interactionState }) => {
+    const zoomOnly = Boolean(interactionState?.isZooming)
+      || (next.target[0] === viewState.target[0] && next.target[1] === viewState.target[1]);
+    commitCamera({ x: next.target[0], y: next.target[1], zoom: next.zoom }, { replace: true, keepFollow: zoomOnly });
+  }, [commitCamera, viewState]);
   const selectObject = info => {
     const object = info?.object;
     if (!object) return;
     if (object.entityKind === "agent") onSelectAgent(object.id);
     if (object.entityKind === "place") onSelectPlace(object.id);
     if (object.entityKind === "construction") onSelectProject?.(object.id);
+    if (object.entityKind === "organization") onSelectFirm?.(object.id);
     if (object.entityKind === "cluster") onShowAllResidents();
   };
-  const selectFromKeyboard = event => {
-    const value = String(event.target.value);
-    const separator = value.indexOf(":");
-    const kind = separator < 0 ? value : value.slice(0, separator);
-    const id = separator < 0 ? "" : value.slice(separator + 1);
-    if (kind === "agent") onSelectAgent(id);
-    if (kind === "place") onSelectPlace(id);
-    if (kind === "project") onSelectProject?.(id);
-  };
-  const selectionValue = selectedProjectId != null
-    ? `project:${selectedProjectId}`
-    : selectedPlaceId != null
-    ? `place:${selectedPlaceId}`
-    : selectedAgentId != null ? `agent:${selectedAgentId}` : "";
-
-  return <div className="civic-diorama" data-testid="civic-diorama">
+  return <div className="civic-diorama" data-testid="civic-diorama"
+    data-camera={`${viewState.target[0]},${viewState.target[1]},${viewState.zoom}`}>
     <DeckGL
       views={ORBIT_VIEW}
       viewState={viewState}
@@ -395,30 +419,9 @@ export function CivicDiorama({
     />
     <div className="civic-diorama__wash" aria-hidden="true" />
     <div className="civic-diorama__controls">
-      <button type="button" onClick={() => zoom(0.35)} aria-label="Zoom into city">+</button>
-      <button type="button" onClick={() => zoom(-0.35)} aria-label="Zoom out of city">−</button>
-      <button type="button" onClick={() => setViewState(FIXED_CAMERA)}>Reset</button>
+      <button type="button" className="civic-diorama__open-evidence" disabled={!selectedLabels.length} onClick={onOpenEvidence}>Open selected evidence ↓</button>
     </div>
-    <label className="civic-diorama__explorer">
-      <span>Keyboard explorer</span>
-      <select value={selectionValue} onChange={selectFromKeyboard}>
-        <option value="">Choose a public object</option>
-        <optgroup label="Places">
-          {scene.buildings.filter(item => item.entityKind === "place").map(item =>
-            <option key={item.key} value={`place:${item.id}`}>{item.name || `Place ${item.id}`}</option>)}
-        </optgroup>
-        <optgroup label="Construction projects">
-          {scene.constructions.map(item =>
-            <option key={item.key} value={`project:${item.id}`}>
-              {item.name || `Construction project ${item.id}`} · {item.label}
-            </option>)}
-        </optgroup>
-        <optgroup label="Agents">
-          {scene.agents.map(item =>
-            <option key={item.id} value={`agent:${item.id}`}>{item.name || `Agent ${item.id}`}</option>)}
-        </optgroup>
-      </select>
-    </label>
+    <div className="civic-diorama__footer">
     <div className="civic-diorama__status" aria-live="polite">
       <span>{historical
         ? `Historical tick ${tick} · motion off`
@@ -433,11 +436,15 @@ export function CivicDiorama({
       {firstFrameMs != null && <span>First frame {Math.round(firstFrameMs)}ms</span>}
       {frameP95Ms != null && <span>Frame p95 {Math.round(frameP95Ms)}ms</span>}
     </div>
-    <p className="civic-diorama__method">
+    <details className="civic-diorama__method">
+      <summary>How this scene is drawn</summary>
+      <p>
       Height is a derived visual encoding of exposed capacity, occupancy, queue, or employee counts.
       Construction geometry uses stored work units and exact foundation, frame, shell, and completed stages.
       Flow curves connect committed public region endpoints; they do not imply a traveled street.
       Position interpolation is limited to consecutive live projections.
-    </p>
+      </p>
+    </details>
+    </div>
   </div>;
 }

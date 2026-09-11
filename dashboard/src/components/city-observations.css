@@ -1,0 +1,21 @@
+.city-observations {
+  position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  min-height: 34px; padding: 4px 8px; font-size: .75rem;
+  border-block: 1px solid var(--ops-rule, #647887); background: var(--ae-surface-2, #eef2f0);
+}
+.city-observations button, .city-selection-breadcrumb button {
+  font: inherit; color: inherit; background: transparent; border: 1px solid currentColor;
+  border-radius: 3px; padding: 4px 6px; cursor: pointer;
+}
+.city-observations summary { cursor: pointer; padding: 4px; }
+.city-observations > details[open] { flex-basis: 100%; }
+.city-observations ol { display: grid; gap: 6px; padding: 0; list-style: none; }
+.city-observations li { display: flex; gap: 8px; flex-wrap: wrap; }
+.city-observations p { max-width: 70ch; margin: 4px 0; }
+.city-selection-breadcrumb { padding: 6px 10px; border-bottom: 1px solid var(--ops-rule, #647887); font-size: .7rem; }
+.city-selection-breadcrumb ol { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; list-style: none; padding: 0; margin: 0; overflow-wrap: anywhere; }
+.city-selection-breadcrumb li + li::before { content: "/"; margin-right: 4px; }
+@media (max-width: 600px) {
+  .city-observations button, .city-observations summary, .city-selection-breadcrumb button { min-height: 44px; }
+  .city-observations { gap: 4px; }
+}

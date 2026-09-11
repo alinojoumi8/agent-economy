@@ -1,0 +1,395 @@
+{
+  "source_sha256": "9520f3abd33e4b2c3a1a838cc2ee8cc2123fc685fecc74cfda6d43530664f5be",
+  "description": "Frozen catalog from the preserved pre-population v2 reader.",
+  "catalog": {
+    "registry_version": "research-metrics-v2",
+    "definitions": [
+      {
+        "key": "cpi",
+        "version": "legacy-genesis-posted-v2",
+        "domain": "goods",
+        "label": "Legacy posted goods price index",
+        "unit": "index_points_genesis_100",
+        "currency_policy": "single_currency_required",
+        "population": "founded_tick=0 firms excluding sectors health and insurance, including exits",
+        "time_basis": "state_at_tick",
+        "formula": "100 * mean(positive posted unit prices) / genesis mean",
+        "evidence": [
+          "world/metrics.py:Metrics._cpi",
+          "firms.product_json",
+          "metrics.cpi_base"
+        ],
+        "missingness": "Historical engine returns 100 for an empty basket; this is a default, not a transaction price. Missing posted items are omitted by the legacy formula.",
+        "min_semantics": 2,
+        "price_kind": "posted_index"
+      },
+      {
+        "key": "gdp_proxy",
+        "version": "final-goods-flow-v3",
+        "domain": "goods",
+        "label": "Final goods sales flow",
+        "unit": "currency_major_units",
+        "currency_policy": "single_currency_required",
+        "population": "successful goods_sale events",
+        "time_basis": "one_tick",
+        "formula": "sum(total_cents) / 100",
+        "evidence": [
+          "world/metrics.py:Metrics._gdp_proxy",
+          "events.goods_sale"
+        ],
+        "missingness": "Zero means no recorded sales in a finalized tick; missing tick is unavailable. Semantics 1\u20132 include wages and do not satisfy this contract.",
+        "min_semantics": 3,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "gdp_proxy_30d",
+        "version": "final-goods-flow-30-v3",
+        "domain": "goods",
+        "label": "Trailing goods sales",
+        "unit": "currency_major_units",
+        "currency_policy": "single_currency_required",
+        "population": "successful goods_sale events",
+        "time_basis": "max(1,tick-29)..tick",
+        "formula": "sum(total_cents in window) / 100",
+        "evidence": [
+          "world/metrics.py:Metrics._gdp_proxy_30d",
+          "events.goods_sale"
+        ],
+        "missingness": "Before tick 30 this is a shorter observed window, not a complete month.",
+        "min_semantics": 3,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "labor_income",
+        "version": "wage-flow-v3",
+        "domain": "labor",
+        "label": "Gross wage payments",
+        "unit": "currency_major_units",
+        "currency_policy": "single_currency_required",
+        "population": "wage_paid events",
+        "time_basis": "one_tick",
+        "formula": "sum(wage_cents) / 100",
+        "evidence": [
+          "world/metrics.py:Metrics._labor_income",
+          "events.wage_paid"
+        ],
+        "missingness": "Zero between payroll dates is not zero contracted wages; missing tick is unavailable.",
+        "min_semantics": 3,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "unemployment",
+        "version": "unique-worker-share-v7",
+        "domain": "labor",
+        "label": "Unemployed working-age citizens",
+        "unit": "fraction",
+        "currency_policy": "currency_neutral",
+        "population": "living non-retired citizens aged 18\u201364",
+        "time_basis": "state_at_tick",
+        "formula": "1 - count(unique employed citizens or active founders) / labor_force",
+        "evidence": [
+          "world/metrics.py:Metrics._unemployment",
+          "agents",
+          "employments",
+          "firms"
+        ],
+        "missingness": "Legacy engine returns zero with an empty labor force; older semantics count workers differently.",
+        "min_semantics": 7,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "gini",
+        "version": "legacy-all-account-gini-v1",
+        "domain": "households",
+        "label": "Legacy citizen account inequality",
+        "unit": "fraction",
+        "currency_policy": "single_currency_required",
+        "population": "living citizens; account sums clipped at zero",
+        "time_basis": "state_at_tick",
+        "formula": "2*sum(rank*nonnegative_account_sum)/(n*sum(nonnegative_account_sum)) - (n+1)/n",
+        "evidence": [
+          "world/metrics.py:Metrics._gini",
+          "accounts",
+          "agents"
+        ],
+        "missingness": "Historical engine sums every account kind, including noncash wage receivables, and nominal currencies before clipping. Strict readers require one currency. Returns zero for empty or zero-total cohorts; not cash or net-wealth Gini. Stored values are preserved.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "cash_gini:{currency}",
+        "version": "citizen-wallet-cash-gini-v20",
+        "domain": "households",
+        "label": "Citizen cash inequality",
+        "unit": "fraction",
+        "currency_policy": "series_currency",
+        "population": "all living registered citizens, including minors and citizens without this currency",
+        "time_basis": "end_of_tick",
+        "formula": "Gini of max(0,sum(checking,savings,fx balances per person in this currency))",
+        "evidence": [
+          "engine/position_history.py:cash_distribution_at",
+          "ledger_entries",
+          "person_lifecycle"
+        ],
+        "missingness": "Zero for empty or zero-total cohorts by convention. Negative net wallets are clipped per person/currency. Excludes restricted cash, receivables, debts, shares and property; not household or net-wealth inequality.",
+        "min_semantics": 20,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "cash_population:{currency}",
+        "version": "citizen-wallet-cash-population-v20",
+        "domain": "households",
+        "label": "Cash inequality population",
+        "unit": "people",
+        "currency_policy": "series_currency",
+        "population": "all living registered citizens, including minors and citizens without this currency",
+        "time_basis": "end_of_tick",
+        "formula": "count(living registered citizens)",
+        "evidence": [
+          "engine/position_history.py:cash_distribution_at",
+          "person_lifecycle"
+        ],
+        "missingness": "Zero is an empty cohort. The same population is used for every observed currency; no cross-currency conversion.",
+        "min_semantics": 20,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "money_supply",
+        "version": "checking-savings-total-v1",
+        "domain": "banking",
+        "label": "Checking and savings balances",
+        "unit": "currency_major_units",
+        "currency_policy": "single_currency_required",
+        "population": "all checking and savings accounts",
+        "time_basis": "state_at_tick",
+        "formula": "sum(balance_cents) / 100",
+        "evidence": [
+          "engine/ledger.py:Ledger.total_deposits_cents",
+          "accounts"
+        ],
+        "missingness": "This aggregate is not a calibrated M1/M2 definition; a missing tick is unavailable.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "index",
+        "version": "share-count-weighted-index-v1",
+        "domain": "equities",
+        "label": "Legacy equity index",
+        "unit": "index_points",
+        "currency_policy": "single_currency_required",
+        "population": "currently listed firms with a last price",
+        "time_basis": "state_at_tick",
+        "formula": "sum(last_price_cents * shares_outstanding) / sum(shares_outstanding) / initial_divisor",
+        "evidence": [
+          "engine/exchange.py:Exchange.compute_index",
+          "metrics.stock:<firm_id>",
+          "firms"
+        ],
+        "missingness": "Missing before first eligible price. Last prices can be stale; changing listings/float changes the basket. This is not a total-return or market-cap-weighted-price index.",
+        "min_semantics": 1,
+        "price_kind": "execution_based_legacy_index"
+      },
+      {
+        "key": "stock:{firm_id}",
+        "version": "last-execution-v1",
+        "domain": "equities",
+        "label": "Last executed share price",
+        "unit": "currency_minor_units_per_share",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's actual trades",
+        "time_basis": "last execution at or before selected tick",
+        "formula": "price_cents of last trade ordered by tick,id",
+        "evidence": [
+          "engine/exchange.py:Exchange._settle",
+          "trades"
+        ],
+        "missingness": "Null before the first trade. Carries last execution with observed tick and age; never treats a quote, book value or empty book as a transaction.",
+        "min_semantics": 1,
+        "price_kind": "execution"
+      },
+      {
+        "key": "goods_posted:{firm_id}",
+        "version": "observed-posted-price-v1",
+        "domain": "goods",
+        "label": "Observed posted product price",
+        "unit": "currency_minor_units_per_firm_product_unit",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's product",
+        "time_basis": "state_at_tick",
+        "formula": "last recorded price_set at or before tick; current firm state only at current committed tick",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "events.price_set",
+          "firms.product_json"
+        ],
+        "missingness": "Null when no historical quote was recorded. Carries observation age; never uses a future firm quote.",
+        "min_semantics": 1,
+        "price_kind": "posted"
+      },
+      {
+        "key": "goods_vwap:{firm_id}",
+        "version": "goods-sales-vwap-v1",
+        "domain": "goods",
+        "label": "Executed product price",
+        "unit": "currency_minor_units_per_firm_product_unit",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's valid successful goods_sale events",
+        "time_basis": "one_tick",
+        "formula": "sum(total_cents) / sum(qty)",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "events.goods_sale"
+        ],
+        "missingness": "Null with no execution or invalid sale evidence. Does not measure intended or unmet demand.",
+        "min_semantics": 1,
+        "price_kind": "volume_weighted_execution"
+      },
+      {
+        "key": "goods_volume:{firm_id}",
+        "version": "goods-sales-volume-v1",
+        "domain": "goods",
+        "label": "Product units sold",
+        "unit": "firm_product_units",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's valid successful goods_sale events",
+        "time_basis": "one_tick",
+        "formula": "sum(qty)",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "events.goods_sale"
+        ],
+        "missingness": "Zero with no sales; null when sale evidence is invalid. Unit is only comparable within the declared firm product.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "equity_price:{firm_id}",
+        "version": "qualified-last-execution-v1",
+        "domain": "equities",
+        "label": "Last distinct-owner share execution",
+        "unit": "currency_minor_units_per_share",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's trades where buyer_id differs from seller_id",
+        "time_basis": "last execution at or before selected tick",
+        "formula": "price_cents of last qualified trade ordered by tick,id",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "trades"
+        ],
+        "missingness": "Null before a qualified trade; carries age. Broader beneficial ownership is not recorded.",
+        "min_semantics": 1,
+        "price_kind": "qualified_execution"
+      },
+      {
+        "key": "equity_vwap:{firm_id}",
+        "version": "qualified-equity-vwap-v1",
+        "domain": "equities",
+        "label": "Executed share price",
+        "unit": "currency_minor_units_per_share",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's trades where buyer_id differs from seller_id",
+        "time_basis": "one_tick",
+        "formula": "sum(price_cents * qty) / sum(qty)",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "trades"
+        ],
+        "missingness": "Null with no qualified execution or invalid trade evidence.",
+        "min_semantics": 1,
+        "price_kind": "volume_weighted_execution"
+      },
+      {
+        "key": "equity_volume:{firm_id}",
+        "version": "qualified-equity-volume-v1",
+        "domain": "equities",
+        "label": "Shares traded between distinct owners",
+        "unit": "shares",
+        "currency_policy": "instrument_currency",
+        "population": "one firm's trades where buyer_id differs from seller_id",
+        "time_basis": "one_tick",
+        "formula": "sum(qty)",
+        "evidence": [
+          "research/prices.py:price_observations",
+          "trades"
+        ],
+        "missingness": "Zero with no qualified trades; null with invalid trade evidence. Outstanding float is a separate stock.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "policy_rate",
+        "version": "policy-rate-bps-v1",
+        "domain": "banking",
+        "label": "Policy rate",
+        "unit": "basis_points_per_year",
+        "currency_policy": "currency_neutral",
+        "population": "configured central policy rate",
+        "time_basis": "state_at_tick",
+        "formula": "engine policy_rate_bps",
+        "evidence": [
+          "world/metrics.py:Metrics.snapshot",
+          "engine/economy.py"
+        ],
+        "missingness": "Administrative policy instrument; not a discovered loan APR.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "bank_deposits:{bank_id}",
+        "version": "bank-deposit-total-v1",
+        "domain": "banking",
+        "label": "Bank deposit balances",
+        "unit": "currency_major_units",
+        "currency_policy": "bank_currency",
+        "population": "one bank's checking and savings accounts",
+        "time_basis": "state_at_tick",
+        "formula": "bank.deposits(bank_id) / 100",
+        "evidence": [
+          "world/metrics.py:Metrics.snapshot",
+          "engine/credit.py",
+          "accounts"
+        ],
+        "missingness": "Missing record is unavailable; balances are not a measurement of new loan-created money.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "bank_reserve_ratio:{bank_id}",
+        "version": "reserve-deposit-ratio-v1",
+        "domain": "banking",
+        "label": "Bank reserve ratio",
+        "unit": "ratio",
+        "currency_policy": "bank_currency",
+        "population": "one bank's reserves and deposits",
+        "time_basis": "state_at_tick",
+        "formula": "bank.reserve_ratio(bank_id)",
+        "evidence": [
+          "world/metrics.py:Metrics.snapshot",
+          "engine/credit.py"
+        ],
+        "missingness": "Uses the engine's zero-deposit convention; not a regulatory capital ratio.",
+        "min_semantics": 1,
+        "price_kind": "not_price"
+      },
+      {
+        "key": "hhi",
+        "version": "sales-concentration-30-v4",
+        "domain": "goods",
+        "label": "Seller sales concentration",
+        "unit": "hhi_points_0_to_10000",
+        "currency_policy": "single_currency_required",
+        "population": "sellers with goods_sale events in the window",
+        "time_basis": "max(0,tick-29)..tick",
+        "formula": "sum((100 * seller_sales / all_sales)^2)",
+        "evidence": [
+          "world/metrics.py:Metrics._market_hhi",
+          "events.goods_sale"
+        ],
+        "missingness": "Zero means no positive sales denominator, not a competitive market; heterogeneous products are combined.",
+        "min_semantics": 4,
+        "price_kind": "not_price"
+      }
+    ]
+  }
+}

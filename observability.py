@@ -31,6 +31,32 @@ _SECRET_TEXT_PATTERNS = (
 )
 
 
+# Separators may repeat: ``str(OSError)`` shows the offending filename through
+# ``repr``, so a Windows path arrives with doubled backslashes.
+_FILESYSTEM_PATH_TEXT = re.compile(
+    r"(?<![\w:/])(?:[A-Za-z]:[\\/]+|\\\\|/)(?:[^\\/\s'\"<>|]+[\\/]+)+[^\\/\s'\"<>|]*"
+)
+
+
+def scrub_paths(text: str) -> str:
+    """Replace absolute filesystem paths with a marker plus their final component."""
+
+    def _basename(match: "re.Match[str]") -> str:
+        parts = re.split(r"[\\/]", match.group(0).rstrip("\\/"))
+        return "<path>/" + (parts[-1] if parts else "")
+
+    return _FILESYSTEM_PATH_TEXT.sub(_basename, text)
+
+
+def scrub_error_text(exc: BaseException, limit: int = 500) -> str:
+    """Bounded exception text that is safe to persist in shared run evidence.
+
+    Operating-system errors embed the absolute path they failed on; shared and
+    hosted readers must never learn the host filesystem layout from them.
+    """
+    return _safe_text(scrub_paths(str(exc)))[:limit]
+
+
 def _safe_text(value: str) -> str:
     safe = value
     for pattern in _SECRET_TEXT_PATTERNS:

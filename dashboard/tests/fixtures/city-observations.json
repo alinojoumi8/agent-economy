@@ -1,0 +1,8 @@
+[
+  {"input":"agent=2&tick=3", "canonical":"tick=3&agent=2"},
+  {"input":"view=list&institution=bank:3&tick=3", "canonical":"tick=3&institution=bank%3A3&view=list"},
+  {"input":"project=public:build-1&tick=3&q=Shop+~*", "canonical":"tick=3&q=Shop+%7E*&project=public%3Abuild-1"},
+  {"input":"tick=3&camera=50,50,3.05&q=", "canonical":"tick=3"},
+  {"input":"follow=2&tick=3&agent=2&camera=40.12349,60,4&population=all", "canonical":"tick=3&camera=40.123%2C60%2C4&agent=2&population=all&follow=2"},
+  {"input":"tick=3&event=9&agent=2&camera=40,60,4&view=diorama", "canonical":"tick=3&event=9&camera=40%2C60%2C4&agent=2&view=diorama"}
+]

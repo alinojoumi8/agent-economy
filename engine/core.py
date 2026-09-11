@@ -1,8 +1,9 @@
 """Economy facade — wires the deterministic engine modules over one Store.
 
 This is the object the world loop and the executor talk to. It owns the engine
-PRNG (all engine randomness) and a *separate* lifecycle PRNG (so the lifecycle
-schedule is stable under replay, PRD R11).
+PRNG and a separate lifecycle PRNG for historical runs. Semantics 15 isolates
+demographic draws; Semantics 16 isolates daily mechanisms and policy calls by
+seed, day and semantic identity. Every version retains its replay contract.
 """
 from __future__ import annotations
 
@@ -10,12 +11,31 @@ import random
 from typing import Optional
 
 from .credit import Bank
+from .business_control import BusinessControl
 from .city import City
+from .civic_authority import CivicAuthority
 from .cognition import CognitionEconomy
 from .construction import ConstructionEconomy
+from .daily_time import DailyTime
+from .earned_wages import EarnedWages
+from .estate_cases import EstateCases
+from .estate_securities import EstateSecurities
+from .estate_property import EstateProperty
+from .estate_property_sales import EstatePropertySales
+from .estate_unlisted_sales import EstateUnlistedSales
+from .estate_administration import EstateAdministration
+from .legal_awards import LegalAwards
+from .legal_authority import LegalDecisionAuthority
+from .legal_representation import LegalRepresentation
+from .estate_legal_work import EstateLegalWork
+from .wage_awards import WageAwards
+from .estate_disputes import EstateDisputes
+from .estates import CashEstates
 from .exchange import Exchange
 from .firms import Firms
+from .families import HouseholdDecisions
 from .government import Government
+from .households import Households
 from .information import InformationEconomy
 from .labor import Labor
 from .legal import LegalInstitution
@@ -26,6 +46,8 @@ from .lifecycle import Lifecycle
 from .store import Store
 from .startups import StartupLifecycle
 from .politics import PoliticalEconomy
+from .population import PopulationBoundary
+from .project_rights import ProjectRights
 from .regions import RegionalEconomy
 from .semantics import semantics_version
 from .vc import VentureCapital
@@ -38,6 +60,7 @@ class Economy:
         self.config = config
         self.prng = engine_prng
         self.engine_semantics_version = semantics_version(config, default=2)
+        self.business_control = BusinessControl(self)
         local_currency_action_surfaces = bool(
             config.get("llm", {}).get("local_currency_action_surfaces", False))
         self.ledger = Ledger(store)
@@ -62,11 +85,15 @@ class Economy:
             store,
             engine_semantics_version=self.engine_semantics_version,
         )
+        self.households = Households(self, config.get("households"))
+        self.families = HouseholdDecisions(self, config.get("family_decisions"))
         self.lifecycle = Lifecycle(store, self.ledger, self.bank, self.firms,
                                    lifecycle_prng, config.get("lifecycle", {}),
                                    health_cfg=config.get("health", {}),
-                                   engine_semantics_version=self.engine_semantics_version)
-        self.gov = Government(store, self.ledger, config.get("government"))
+                                   engine_semantics_version=self.engine_semantics_version,
+                                   households=self.households, seed=int(config.get("seed", 42)))
+        self.gov = Government(store, self.ledger, config.get("government"),
+                              engine_semantics_version=self.engine_semantics_version)
         self.vc = VentureCapital(store, self.ledger)
         self.legal = LegalInstitution(store, self.ledger, config.get("legal"))
         self.regions = RegionalEconomy(store, self.ledger, self.legal, engine_prng,
@@ -74,8 +101,10 @@ class Economy:
                                        local_currency_action_surfaces=local_currency_action_surfaces,
                                        engine_semantics_version=self.engine_semantics_version)
         self.startups = StartupLifecycle(store, self.ledger, self.legal, config.get("startup"))
-        self.information = InformationEconomy(store, config.get("information_economy"))
-        self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"))
+        self.information = InformationEconomy(store, config.get("information_economy"),
+                                              engine_semantics_version=self.engine_semantics_version)
+        self.politics = PoliticalEconomy(store, self.ledger, self.legal, config.get("political_model"),
+                                        engine_semantics_version=self.engine_semantics_version)
         self.cognition = CognitionEconomy(
             store, self.ledger, config.get("cognition"),
             engine_semantics_version=self.engine_semantics_version,
@@ -83,6 +112,44 @@ class Economy:
         )
         self.city = City(self, config.get("city"))
         self.construction = ConstructionEconomy(self, config.get("construction"))
+        self.daily_time = DailyTime(self, config.get("daily_time"))
+        self.earned_wages = EarnedWages(self, self.daily_time.p["normal_workday_minutes"])
+        self.firms.daily_time = self.daily_time
+        self.firms.earned_wages = self.earned_wages
+        self.lifecycle.earned_wages = self.earned_wages
+        self.cash_estates = CashEstates(self)
+        self.lifecycle.cash_estates = self.cash_estates
+        self.project_rights = ProjectRights(self)
+        self.lifecycle.project_rights = self.project_rights
+        self.estate_cases = EstateCases(self)
+        self.lifecycle.estate_cases = self.estate_cases
+        self.civic_authority = CivicAuthority(self)
+        self.legal_awards = LegalAwards(self)
+        self.wage_awards = WageAwards(self)
+        self.legal.awards = self.legal_awards
+        self.estate_disputes = EstateDisputes(self)
+        self.estate_securities = EstateSecurities(self)
+        self.estate_property = EstateProperty(self)
+        self.estate_property_sales = EstatePropertySales(self)
+        self.estate_unlisted_sales = EstateUnlistedSales(self)
+        self.estate_administration = EstateAdministration(self)
+        self.legal_representation = LegalRepresentation(self)
+        self.estate_legal_work = EstateLegalWork(self)
+        self.legal.representation = self.legal_representation
+        self.legal_authority = LegalDecisionAuthority(self)
+        self.legal.authority = self.legal_authority
+        self.exchange.estate_securities = self.estate_securities
+        if self.estate_cases.enabled:
+            self.ledger.cash_receipt_hook = self.estate_cases.cash_received
+        for institution in (self.firms, self.labor, self.legal, self.cognition, self.gov, self.regions):
+            institution.business_control = self.business_control
+        self.lifecycle.business_control = self.business_control
+        self.cognition.daily_time = self.daily_time
+        self.population = PopulationBoundary(self)
+        self.labor.population = self.population
+        self.gov.population = self.population
+        for institution in (self.bank, self.politics, self.cognition, self.information, self.regions):
+            institution.population = self.population
 
     # ── system accounts (created once at genesis) ────────────────────────────
     def ensure_system_accounts(self) -> None:

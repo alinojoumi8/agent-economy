@@ -16,11 +16,14 @@ from typing import Any, Callable, Optional
 
 from .core import Economy
 from .credit import LoanTerms
+from .daily_time import TimeBudgetError
 from .firms import DEFAULT_PRODUCT, normalize_business_idea
+from .households import HouseholdError
 from .ledger import Leg
 from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError, positive_integer_id
 from .commands import CommandValidationError, default_registry
+from .commands.registry import POPULATION_MODELS
 from causal import CausalLinkService
 from communications.handlers import CommunicationRejected, CommunicationService
 from communications.privacy import safe_action_for_diagnostic, safe_command_metadata
@@ -41,6 +44,7 @@ VALID_TYPES = {
     "propose_contract", "counter_contract", "accept_contract", "reject_contract",
     "perform_obligation", "issue_legal_notice", "file_claim", "submit_filing",
     "propose_settlement", "accept_settlement", "issue_legal_decision",
+    "request_legal_counsel", "respond_legal_counsel", "end_legal_counsel",
     # v2 startup, financing, IP, disclosure, and M&A lifecycle
     "propose_term_sheet", "accept_term_sheet", "run_due_diligence", "close_funding_round",
     "register_ip", "license_ip", "publish_disclosure", "propose_merger", "approve_merger",
@@ -63,7 +67,16 @@ VALID_TYPES = {
     "propose_construction", "apply_construction_permit",
     "decide_construction_permit", "contribute_construction_funding",
     "perform_construction_work", "cancel_construction",
+    "propose_partnership", "propose_household_move", "respond_household",
+    "cancel_household_proposal", "separate_household",
+    "set_time_plan",
 }
+ESTATE_BID_TYPES = {
+    "place_estate_property_bid", "accept_estate_property_bid", "withdraw_estate_property_bid",
+    "place_estate_unlisted_bid", "accept_estate_unlisted_bid", "withdraw_estate_unlisted_bid",
+}
+VALID_TYPES |= ESTATE_BID_TYPES
+VALID_TYPES |= set(POPULATION_MODELS)
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
 _ACTION_PROVENANCE_FIELDS = {
@@ -84,6 +97,67 @@ def _authorization_payload(action: dict) -> str | None:
 
 
 class ActionExecutor:
+    def _do_propose_population_movement(self, tick, actor_id, action, phase):
+        result = self.e.population.propose(
+            tick, actor_id, action["cause"], action["member_ids"], action["request_key"],
+            due_tick=action["due_tick"], destination_region_id=action.get("destination_region_id"),
+            care_plan=action.get("care_plan", []), phase=phase)
+        return {'ok': True, **result}
+
+    def _do_respond_population_movement(self, tick, actor_id, action, phase):
+        result = self.e.population.respond(tick, actor_id, action["movement_id"], action["decision"], phase=phase)
+        return {'ok': True, **result}
+
+    def _do_place_estate_unlisted_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_unlisted_sales.place_bid(tick, actor_id, action)
+
+    def _do_accept_estate_unlisted_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_unlisted_sales.accept(tick, actor_id, action["bid_id"])
+
+    def _do_withdraw_estate_unlisted_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_unlisted_sales.withdraw(tick, actor_id, action["bid_id"])
+
+    def _do_place_estate_property_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_property_sales.place_bid(tick, actor_id, action)
+
+    def _do_accept_estate_property_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_property_sales.accept(tick, actor_id, action["bid_id"])
+
+    def _do_withdraw_estate_property_bid(self, tick, actor_id, action, phase):
+        return self.e.estate_property_sales.withdraw(tick, actor_id, action["bid_id"])
+
+    def _do_set_time_plan(self, tick, actor_id, action, phase):
+        try:
+            return self.e.daily_time.submit_plan(tick, actor_id, action)
+        except (TimeBudgetError, HouseholdError) as exc:
+            return self._reject(tick, actor_id, action, str(exc), phase)
+
+    def _household_action(self, tick, actor_id, action, phase, operation, *args, **kwargs):
+        try:
+            return operation(tick, actor_id, *args, **kwargs)
+        except HouseholdError as exc:
+            return self._reject(tick, actor_id, action, str(exc), phase)
+
+    def _do_propose_partnership(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "partnership", action["request_key"], partner_id=action["partner_id"])
+
+    def _do_propose_household_move(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "joint_move", action["request_key"], destination_region_id=action["destination_region_id"])
+
+    def _do_respond_household(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.respond,
+                                      action["household_decision_id"], action["decision"])
+
+    def _do_cancel_household_proposal(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.cancel,
+                                      action["household_decision_id"])
+
+    def _do_separate_household(self, tick, actor_id, action, phase):
+        return self._household_action(tick, actor_id, action, phase, self.e.families.propose,
+                                      "separation", action["request_key"])
+
     def __init__(self, economy: Economy, *,
                  pre_action_hook: Callable[[int, int, dict, str], Optional[str]] | None = None,
                  post_action_hook: Callable[[int, int, dict, str, dict], None] | None = None):
@@ -167,7 +241,10 @@ class ActionExecutor:
         action = envelope.engine_action()
         atype = envelope.action_type
         definition = None
-        if self.engine_semantics_version >= 8 and atype in VALID_TYPES:
+        if (self.engine_semantics_version >= 8 and atype in VALID_TYPES
+                and not (atype in ESTATE_BID_TYPES
+                         and self.engine_semantics_version < 20)
+                and not (atype in POPULATION_MODELS and self.engine_semantics_version < 21)):
             try:
                 definition, payload = self.command_registry.validate(
                     atype, envelope.payload, self.engine_semantics_version)
@@ -209,7 +286,14 @@ class ActionExecutor:
                         "decide_construction_permit",
                         "contribute_construction_funding",
                         "perform_construction_work", "cancel_construction",
-                    } and self.engine_semantics_version < 13)):
+                    } and self.engine_semantics_version < 13)
+                or (atype in {"propose_partnership", "propose_household_move", "respond_household",
+                              "cancel_household_proposal", "separate_household"}
+                    and self.engine_semantics_version < 17)
+                or (atype == "set_time_plan" and self.engine_semantics_version < 18)
+                or (atype in ESTATE_BID_TYPES
+                    and self.engine_semantics_version < 20)
+                or (atype in POPULATION_MODELS and self.engine_semantics_version < 21)):
             result = self._reject(tick, actor_id, action, f"unknown action type: {atype}", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -222,6 +306,17 @@ class ActionExecutor:
             return result
         if not actor["alive"]:
             result = self._reject(tick, actor_id, action, "actor not alive", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
+        if (self.engine_semantics_version >= 21 and not self.e.population.is_local(actor_id, tick)
+                and not self.e.population.outside_action_allowed(actor_id, action, tick=tick)):
+            result = self._reject(tick, actor_id, action, "actor is outside the modeled population", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
+        if self.engine_semantics_version >= 15 and int(actor["age"]) < 18 and atype != "do_nothing":
+            result = self._reject(tick, actor_id, action, "minor is not eligible for independent actions", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
@@ -281,6 +376,12 @@ class ActionExecutor:
                 if self.engine_semantics_version >= 11 and result.get("ok"):
                     self.e.cognition.record_accepted_action(
                         tick, actor_id, atype, proposal_id=proposal_id)
+                if self.engine_semantics_version >= 20 and result.get("ok"):
+                    # Estate receipts can settle claims and replace stewards
+                    # inside this action. Their nightly defaults must describe
+                    # the triggering action's phase before causal edges bind.
+                    self.store.execute("UPDATE events SET phase=? WHERE id>? AND phase='NIGHT_CLOSE'",
+                                       (phase, last_event_id))
                 if self.engine_semantics_version >= 8 and result.get("ok"):
                     events = self.store.query(
                         "SELECT id FROM events WHERE id>? ORDER BY id", (last_event_id,))
@@ -558,11 +659,13 @@ class ActionExecutor:
     def _do_apply_job(self, tick, actor_id, action, phase) -> dict:
         job_id = int(action.get("job_id", 0))
         job = self.store.query_one(
-            "SELECT j.status,f.currency_code,f.founder_agent_id FROM jobs j "
+            "SELECT j.status,j.firm_id,f.currency_code,f.founder_agent_id FROM jobs j "
             "JOIN firms f ON f.id=j.firm_id WHERE j.id=?", (job_id,))
         if not job or job["status"] != "open":
             return {"ok": False, "reason": "job unavailable"}
-        if int(job["founder_agent_id"] or 0) == int(actor_id):
+        operator_id = (self.e.business_control.operator_at(job["firm_id"]) if self.e.business_control.enabled
+                       else job["founder_agent_id"])
+        if int(operator_id or 0) == int(actor_id):
             return {"ok": False, "reason": "founder cannot apply to own firm"}
         if self.local_currency_action_surfaces:
             actor_currency = self.store.scalar(
@@ -797,6 +900,9 @@ class ActionExecutor:
         lawyer = self._agent(lawyer_id) if lawyer_id else None
         if not lawyer or not lawyer["alive"] or (lawyer["occupation"] or "").lower() != "lawyer":
             return {"ok": False, "reason": "a living lawyer is required to incorporate"}
+        if self.engine_semantics_version >= 21 and (
+                int(lawyer["age"]) < 18 or not self.e.population.is_available(lawyer_id)):
+            return {"ok": False, "reason": "a locally available adult lawyer is required to incorporate"}
         name = str(action.get("name", "")).strip()[:60]
         if not name:
             return {"ok": False, "reason": "company needs a name"}
@@ -808,7 +914,7 @@ class ActionExecutor:
         )
         if entrepreneurship_active:
             existing = self.store.query_one(
-                "SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
+                f"SELECT id FROM {self.e.business_control.table} WHERE {self.e.business_control.column}=? AND status<>'bankrupt' LIMIT 1",
                 (actor_id,))
             if existing:
                 return {"ok": False, "reason": "founder already controls an active company"}
@@ -880,6 +986,10 @@ class ActionExecutor:
             "SELECT status,currency_code FROM firms WHERE id=?", (firm_id,))
         if not firm or firm["status"] != "listed":
             return {"ok": False, "reason": "firm not listed"}
+        if self.e.estate_securities.enabled and action.get("estate_id") is not None:
+            limit = action.get("limit_price")
+            return self.e.estate_securities.place_order(tick, actor_id, int(action["estate_id"]), firm_id, side, qty,
+                int(limit) if limit not in (None, 0) else None, "market" if limit in (None, 0) else "limit")
         acct = None
         if self.local_currency_action_surfaces:
             acct = self.e.ledger.agent_checking_id(actor_id)
@@ -1147,6 +1257,15 @@ class ActionExecutor:
     def _do_accept_settlement(self, tick, actor_id, action, phase) -> dict:
         return self.e.legal.accept_settlement(tick, actor_id, int(action.get("matter_id", 0)))
 
+    def _do_request_legal_counsel(self, tick, actor_id, action, phase):
+        return self.e.legal_representation.request(tick, actor_id, action)
+
+    def _do_respond_legal_counsel(self, tick, actor_id, action, phase):
+        return self.e.legal_representation.respond(tick, actor_id, action)
+
+    def _do_end_legal_counsel(self, tick, actor_id, action, phase):
+        return self.e.legal_representation.end(tick, actor_id, action)
+
     def _do_issue_legal_decision(self, tick, actor_id, action, phase) -> dict:
         return self.e.legal.issue_decision(tick, actor_id, action)
 
@@ -1348,11 +1467,16 @@ class ActionExecutor:
 
     # ── role / ownership predicates ──────────────────────────────────────────
     def _owned_firm(self, agent_id: int) -> int:
+        if self.e.business_control.enabled:
+            firms = self.e.business_control.operated_firms(agent_id)
+            return int(firms[0]["id"]) if firms else 0
         v = self.store.scalar("SELECT id FROM firms WHERE founder_agent_id=? AND status<>'bankrupt' LIMIT 1",
                               (agent_id,))
         return int(v) if v is not None else 0
 
     def _controls_firm(self, agent_id: int, firm_id: int) -> bool:
+        if self.e.business_control.enabled:
+            return self.e.business_control.controls(agent_id, firm_id)
         firm = self.store.query_one("SELECT founder_agent_id, status FROM firms WHERE id=?", (firm_id,))
         if not firm or firm["status"] == "bankrupt":
             return False

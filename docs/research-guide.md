@@ -17,6 +17,15 @@ It is not a forecast of the real economy, financial advice, or a calibrated
 policy model. Scripted runs prove mechanics; live-provider runs add behavioral
 evidence but still do not establish external validity.
 
+The [2026-09-06 research city roadmap](plans/2026-09-06-research-city-roadmap.md)
+proposes the next research and UI work, including equal coverage of goods and
+financial-asset price discovery, households, education, and an interactive city.
+Its [source review](plans/2026-09-06-research-city-review.md) records the reviewed
+limitations, including the counterfactual runner's artifact/eligibility risks
+and the mismatch between this guide's CPI description and the implementation.
+The [execution log](plans/2026-09-06-research-city-execution.md) distinguishes
+implemented fixes from pending contracts in the specifications.
+
 ## Causal chain model
 
 The main research chain is:
@@ -62,14 +71,53 @@ Example:
 python run.py --experiment runs/experiments/rumor_vs_control.yaml
 ```
 
+Both `--experiment` and `--counterfactual` now create a fresh batch for each
+invocation. Source databases, replay databases, and receipts live below the
+chosen data root; reports live below `<output>/studies/<study>/<batch>/`.
+The printed/returned report path is authoritative. Old flat filenames are
+preserved and are no longer overwritten. Full protocol/code digests live in
+`manifest.json`; folder names use compact identifiers for Windows compatibility.
+
+Each cell retains its claim, execution status, source receipt, actual recorded
+replay comparison, and final eligibility result. Completed means the declared
+horizon ended at a committed boundary. A temporary world pause does not prove
+completion. Truncated, unreconciled, externally influenced, or unverifiable
+attempts remain visible but are excluded from effects. Interrupted batches
+retain their manifests and any finished cell results; another launch creates a
+new attempt, not an automatic resume of a possibly incompatible artifact.
+
+Effects pair eligible worlds by seed after checking common initial state.
+Missing outcomes are `null`; one pair is descriptive and has no confidence
+interval. The default minimum of two pairs is a computational floor, not a
+scientific sample-size recommendation. Intervals resample whole world pairs.
+Zero paired variance leaves standardized effect undefined. All analyses from
+these legacy scenario runners remain exploratory, and shared historical RNG
+streams do not guarantee identical later exogenous draws after treatments.
+
 ## Reading macro metrics
+
+The [versioned registry](../research/metric_registry.py) describes headline
+series and provides `read_metric_observation(store, name, tick)` for strict
+research reads. Unsupported definitions, missing ticks and unconverted mixed
+currencies return an explicit unavailable result. Share-price reads require
+an actual trade and include its tick/age. This reader changes no stored series.
+See the [model description](research/model-description.md) for mechanism,
+time-scale and validation assumptions.
+
+The [Price Discovery Lab backend](research/price-lab.md) adds equal goods/equity
+study presets, execution-weighted prices, strict prospective manifests and
+bounded provider-free paired execution. Its city/operator UI and induced-value
+benchmark campaigns remain under implementation.
 
 - `gdp_proxy`: final-goods sales during one tick; it excludes wages.
 - `gdp_proxy_30d`: rolling 30-tick sum of final-goods sales.
 - `labor_income`: gross wages paid during one tick. Because payroll is periodic,
   the dashboard presents this flow as a rolling 30-day total so income remains
   visible between paydays.
-- `cpi`: inventory-weighted goods price index, with genesis at tick 0.
+- `cpi`: legacy posted-price index, with genesis at tick 0. It uses the simple
+  mean posted price of the original non-healthcare, non-insurance firms; it is
+  not transaction- or inventory-weighted. Cross-currency aggregation lacks an
+  FX conversion, so use a single-currency profile for an interpretable series.
 - `inflation_30d`: CPI change versus 30 ticks earlier, available from tick 30.
 - `cpi_yoy`: CPI change versus 365 ticks earlier, available from tick 365.
 

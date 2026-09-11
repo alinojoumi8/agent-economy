@@ -68,10 +68,15 @@ class Genesis:
         self._population()
         self._firms()
         self._health_institutions()
+        if self.e.engine_semantics_version >= 21:
+            # Local services require origin-bound residence before selecting
+            # participants. The final genesis census follows city staff creation.
+            self.e.households.register_new_people(0, genesis=True)
         self.e.city.initialize(0)
         self._social_graph()
         self.e.startups.initialize_trader_profiles(0)
         self.e.regions.rebalance_tiers(0)
+        self.e.households.initialize()
         self._initial_metrics()
         self.store.log_event(0, "genesis", {
             "banks": len(self.bank_ids),

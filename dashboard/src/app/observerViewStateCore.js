@@ -1,8 +1,9 @@
 import { CITY_LAYERS } from "../lib/civicCity.js";
+import { parseCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
-const CITY_VIEW_MODES = new Set(["atlas", "diorama"]);
+const CITY_VIEW_MODES = new Set(["atlas", "diorama", "recorded", "list"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;
@@ -14,6 +15,11 @@ function projectIdentifier(value) {
   const normalized = String(value || "").trim();
   if (!normalized || normalized.length > 180) return null;
   return /^[a-zA-Z0-9:_-]+$/.test(normalized) ? normalized : null;
+}
+
+function institutionIdentifier(value) {
+  const match = /^bank:([1-9]\d*)$/.exec(String(value || ""));
+  return match && positiveInteger(match[1]) ? `bank:${Number(match[1])}` : null;
 }
 
 function normalizedTick(value) {
@@ -28,17 +34,32 @@ export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
   const view = params.get("view") || "atlas";
-  const project = projectIdentifier(params.get("project"));
-  const agent = project ? null : positiveInteger(params.get("agent"));
+  const institution = institutionIdentifier(params.get("institution"));
+  const household = institution ? null : positiveInteger(params.get("household"));
+  const society = institution || household;
+  const project = society ? null : projectIdentifier(params.get("project"));
+  const firm = society || project ? null : positiveInteger(params.get("firm"));
+  const requestedFollow = positiveInteger(params.get("follow"));
+  const requestedAgent = positiveInteger(params.get("agent"));
+  const place = positiveInteger(params.get("place"));
+  const follow = society || project || firm || (!requestedAgent && place)
+    || (requestedAgent && requestedAgent !== requestedFollow) ? null : requestedFollow;
+  const agent = society || project || firm ? null : requestedAgent || follow;
   return {
     fork: params.get("fork")?.trim() || null,
     tick: normalizedTick(params.get("tick")),
     event: positiveInteger(params.get("event")),
+    city: params.get("city")?.slice(0, 2048) || null,
     layer: CITY_LAYER_IDS.has(layer) ? layer : "all",
     q: (params.get("q") || "").slice(0, 100),
     activeOnly: params.get("activeOnly") === "1",
     agent,
-    place: project || agent ? null : positiveInteger(params.get("place")),
+    follow,
+    firm,
+    household,
+    institution,
+    camera: parseCityCamera(params.get("camera")),
+    place: society || project || firm || agent ? null : positiveInteger(params.get("place")),
     project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
     view: CITY_VIEW_MODES.has(view) ? view : "atlas",
@@ -73,11 +94,36 @@ export function patchObserverViewState(params, patch) {
     setOrDelete("q", query || null);
   }
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
+  if ("camera" in patch) setOrDelete("camera", serializeCityCamera(patch.camera));
+  for (const key of ["household", "institution"]) {
+    if (!(key in patch)) continue;
+    const selected = key === "institution" ? institutionIdentifier(patch[key])
+      : positiveInteger(String(patch[key] || ""))?.toString();
+    setOrDelete(key, selected);
+    if (selected) for (const other of ["household", "institution", "agent", "firm", "place", "project", "follow"]) {
+      if (other !== key) next.delete(other);
+    }
+  }
+  if ("firm" in patch) {
+    const firm = Number(patch.firm);
+    const selected = Number.isSafeInteger(firm) && firm > 0 ? String(firm) : null;
+    setOrDelete("firm", selected);
+    if (selected) {
+      next.delete("household");
+      next.delete("institution");
+      next.delete("agent");
+      next.delete("place");
+      next.delete("project");
+    }
+  }
   if ("agent" in patch) {
     const agent = Number(patch.agent);
     const selected = Number.isSafeInteger(agent) && agent > 0 ? String(agent) : null;
     setOrDelete("agent", selected);
     if (selected) {
+      next.delete("household");
+      next.delete("institution");
+      next.delete("firm");
       next.delete("place");
       next.delete("project");
     }
@@ -87,6 +133,9 @@ export function patchObserverViewState(params, patch) {
     const selected = Number.isSafeInteger(place) && place > 0 ? String(place) : null;
     setOrDelete("place", selected);
     if (selected) {
+      next.delete("household");
+      next.delete("institution");
+      next.delete("firm");
       next.delete("agent");
       next.delete("project");
     }
@@ -95,6 +144,9 @@ export function patchObserverViewState(params, patch) {
     const project = projectIdentifier(patch.project);
     setOrDelete("project", project);
     if (project) {
+      next.delete("household");
+      next.delete("institution");
+      next.delete("firm");
       next.delete("agent");
       next.delete("place");
     }
@@ -112,6 +164,12 @@ export function patchObserverViewState(params, patch) {
       : "atlas";
     setOrDelete("view", view === "atlas" ? null : view);
   }
+  if ("follow" in patch) setOrDelete("follow", positiveInteger(String(patch.follow || ""))?.toString());
+  // A selected object never inherits another person's follow identity.
+  const follow = positiveInteger(next.get("follow"));
+  if (follow && (next.has("household") || next.has("institution") || next.has("firm") || next.has("place") || next.has("project")
+    || ("agent" in patch && positiveInteger(next.get("agent")) !== follow))) next.delete("follow");
+  else if (follow) next.set("agent", String(follow));
   return next;
 }
 
@@ -120,12 +178,13 @@ export function commonObserverSearchParams(params) {
   return commonObserverParamsFromState(parseObserverViewState(params));
 }
 
-/** @param {{fork: string | null, tick: string, event: number | null}} state */
+/** @param {{fork: string | null, tick: string, event: number | null, city?: string|null}} state */
 export function commonObserverParamsFromState(state) {
   const common = new URLSearchParams();
   if (state.fork) common.set("fork", state.fork);
   if (state.tick !== "live") common.set("tick", state.tick);
   if (state.event) common.set("event", String(state.event));
+  if (state.city) common.set("city", state.city.slice(0, 2048));
   return common;
 }
 

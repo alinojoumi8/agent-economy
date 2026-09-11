@@ -58,6 +58,7 @@ type PulseWorldProjection = {
   construction_projects?: unknown[];
   summary?: {
     trade_count?: number;
+    known_living_outside?: number;
     migration_count?: number;
     construction_projects?: number;
   };
@@ -116,9 +117,11 @@ function PulseAtlas({
         <p className="world-pulse-kicker">Committed geography</p>
         <h3 id="world-pulse-atlas-title">Regional atlas</h3>
       </div>
-      <span>{omittedRegions
-        ? `${positionedRegions.length} positioned · ${omittedRegions} omitted without coordinates`
-        : "Schematic overview · open a region for exact evidence"}</span>
+      <span>{positionedRegions.length > 12
+        ? `${Math.min(12, positionedRegions.length)} of ${positionedRegions.length} positioned regions drawn${omittedRegions ? ` · ${omittedRegions} omitted without coordinates` : ""}`
+        : omittedRegions
+          ? `${positionedRegions.length} positioned · ${omittedRegions} omitted without coordinates`
+          : "Schematic overview · open a region for exact evidence"}</span>
     </header>
     <div className="world-pulse-map">
       <svg viewBox="0 0 100 64" preserveAspectRatio="none" aria-hidden="true">
@@ -268,9 +271,11 @@ export function WorldPulseWorkspace() {
     >
       <dl className="world-pulse-summary" aria-label="World Pulse summary">
         <div><dt>Residents</dt><dd>{formatNumber(world.population)}</dd></div>
+        {projection.data?.summary?.known_living_outside != null &&
+          <div><dt>Known outside</dt><dd>{formatNumber(projection.data.summary.known_living_outside)}</dd></div>}
         <div><dt>Organizations</dt><dd>{formatNumber(world.activeOrganizations)}</dd></div>
         <div><dt>Regions</dt><dd>{formatNumber(world.regions.length)}</dd></div>
-        <div><dt>Salient events</dt><dd>{formatNumber(snapshot.data?.data.alerts?.length || 0)}</dd></div>
+        <div><dt>Salient events</dt><dd>{Array.isArray(snapshot.data?.data.alerts) ? formatNumber(snapshot.data.data.alerts.length) : "—"}</dd></div>
         <div className={`is-${ledgerInvariant.state}`}>
           <dt>Ledger invariant</dt>
           <dd>{ledgerInvariant.balance === null
@@ -329,8 +334,8 @@ export function WorldPulseWorkspace() {
             <dl>
               <div><dt>Residents</dt><dd>{formatNumber(world.population)}</dd></div>
               <div><dt>Regions</dt><dd>{formatNumber(world.regions.length)}</dd></div>
-              <div><dt>Trade flows</dt><dd>{formatNumber(world.tradeCount)}</dd></div>
-              <div><dt>Migration flows</dt><dd>{formatNumber(world.migrationCount)}</dd></div>
+              <div><dt>Recent trade flows</dt><dd>{formatNumber(world.tradeCount)}</dd></div>
+              <div><dt>Recent migration flows</dt><dd>{formatNumber(world.migrationCount)}</dd></div>
               <div><dt>Construction</dt><dd>{formatNumber(world.constructionCount)}</dd></div>
             </dl>
           </section>

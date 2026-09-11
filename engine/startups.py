@@ -25,8 +25,17 @@ class StartupLifecycle:
         self.hhi_threshold = float(competition.get("hhi_threshold", 1800.0))
         self.delta_threshold = float(competition.get("delta_threshold", 100.0))
 
+    def _local_actor(self, actor_id: int) -> bool:
+        """Use current residence for an actor, without filtering retained owners."""
+        control = getattr(self.legal, "business_control", None)
+        if control is None or control.e.engine_semantics_version < 21:
+            return True
+        return self.legal.controls(actor_id, "agent", actor_id)
+
     # ------------------------------------------------------------------ funding
     def propose_term_sheet(self, tick: int, actor_id: int, proposal: dict[str, Any]) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         firm_id = int(proposal.get("firm_id", 0))
         firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
         investor = int(proposal.get("investor_agent_id", actor_id))
@@ -76,6 +85,8 @@ class StartupLifecycle:
         return {"ok": True, "term_sheet_id": sheet_id, "status": "offered"}
 
     def accept_term_sheet(self, tick: int, actor_id: int, term_sheet_id: int) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         sheet = self.store.query_one("SELECT * FROM term_sheets WHERE id=?", (term_sheet_id,))
         if not sheet or sheet["status"] != "offered":
             return {"ok": False, "reason": "term sheet is not open"}
@@ -95,6 +106,8 @@ class StartupLifecycle:
         return {"ok": True, "term_sheet_id": term_sheet_id, "status": status}
 
     def run_due_diligence(self, tick: int, actor_id: int, term_sheet_id: int) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         actor = self.store.query_one("SELECT role, occupation, alive FROM agents WHERE id=?", (actor_id,))
         sheet = self.store.query_one("SELECT * FROM term_sheets WHERE id=?", (term_sheet_id,))
         if not actor or not actor["alive"] or ((actor["role"] or "") not in {"lawyer", "counsel"}
@@ -143,6 +156,8 @@ class StartupLifecycle:
         return {"ok": True, "check_id": check_id, "status": status, "findings": findings}
 
     def close_funding_round(self, tick: int, actor_id: int, term_sheet_id: int) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         sheet = self.store.query_one("SELECT * FROM term_sheets WHERE id=?", (term_sheet_id,))
         if not sheet or sheet["status"] != "accepted":
             return {"ok": False, "reason": "accepted term sheet required"}
@@ -217,6 +232,8 @@ class StartupLifecycle:
 
     # ------------------------------------------------------------------ IP and disclosures
     def register_ip(self, tick: int, actor_id: int, registration: dict[str, Any]) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         firm_id = int(registration.get("firm_id", 0))
         actor = self.store.query_one("SELECT role, occupation FROM agents WHERE id=? AND alive=1", (actor_id,))
         is_counsel = bool(actor and ((actor["role"] or "") in {"lawyer", "counsel"}
@@ -346,6 +363,8 @@ class StartupLifecycle:
 
     def review_merger(self, tick: int, actor_id: int, merger_id: int,
                       remedy: dict[str, Any] | None = None) -> dict[str, Any]:
+        if not self._local_actor(actor_id):
+            return {"ok": False, "reason": "startup actions require a living local actor"}
         actor = self.store.query_one("SELECT role FROM agents WHERE id=? AND alive=1", (actor_id,))
         merger = self.store.query_one("SELECT * FROM mergers WHERE id=?", (merger_id,))
         if not actor or (actor["role"] or "") not in {"regulator", "competition_regulator"}:

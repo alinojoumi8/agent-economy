@@ -1,0 +1,14 @@
+# Small provider-free mutual-assent rehearsal, not a calibrated family model.
+extends: city-research-acceptance.yaml
+engine_semantics_version: 17
+checkpoint_every: 0
+speed_delay_s: 0
+budget:
+  conversation_pairs: 0
+lifecycle:
+  population_mode: drift
+  birth_annual_prob: 0
+family_decisions:
+  proposal_ttl_days: 30
+  formation_interval_days: 1
+  scripted_matching: true

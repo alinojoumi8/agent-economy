@@ -35,6 +35,7 @@ from engine.semantics import (
     validate_engine_semantics_version,
 )
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
@@ -625,7 +626,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
              replay_source_dir: Path | None = None,
              new_run_id_override: str | None = None,
              activate_entrepreneurship: bool = False,
-             activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
+             activate_numeric_grounding: bool = False,
+             completion_guard: CompletionGuard | None = None) -> tuple[Store, World, str]:
+    if replay and completion_guard is not None:
+        raise ValueError("recorded replay cannot attach a live completion guard")
     if replay and replay_source_dir is not None:
         source_root = Path(replay_source_dir).resolve()
         output_root = Path(data_dir).resolve()
@@ -673,9 +677,13 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
                 logger, logging.INFO,
                 "run.resume.local_citizenship_enabled",
                 run_id=run_id, changes=local_control_plane)
-        world = World(store, stored_cfg)
-        _hydrate_resumed_world(world, meta, stored_cfg)
-        world.restore_prng_state()
+        try:
+            world = World(store, stored_cfg, completion_guard=completion_guard)
+            _hydrate_resumed_world(world, meta, stored_cfg)
+            world.restore_prng_state()
+        except BaseException:
+            store.close()
+            raise
         return store, world, run_id
     if replay:
         source_db = (source_root / f"{replay}.db").resolve()
@@ -734,7 +742,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     store = Store(str(database))
     try:
         store.init_run_meta(run_id, int(config.get("seed", 42)), config)
-        world = World(store, config)
+        world = World(store, config, completion_guard=completion_guard)
         world.initialize()
         return store, world, run_id
     except BaseException:
@@ -757,7 +765,7 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         parent_db = data_dir / f"{run_id}.db"
         if not parent_db.exists():
             sys.exit(f"run database not found: {parent_db}")
-        parent = Store(str(parent_db))
+        parent = Store(str(parent_db), read_only=True)
         row = parent.query_one(
             "SELECT path, tick FROM checkpoints WHERE tick<=? ORDER BY tick DESC, id DESC LIMIT 1",
             (int(tick_s),))
@@ -789,6 +797,10 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         sys.exit(str(exc))
     config["engine_semantics_version"] = old_semantics
     if upgrade_semantics is not None:
+        if new_semantics >= 16 and old_semantics < 16:
+            store.close()
+            dest.unlink(missing_ok=True)
+            sys.exit("Semantics 16 requires fresh genesis; historical origins and pending arrival keys cannot be inferred during a fork upgrade")
         if new_semantics <= old_semantics:
             store.close()
             dest.unlink(missing_ok=True)
@@ -1419,6 +1431,8 @@ def main() -> None:
         ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
     if args.oracle_campaign_run and args.serve:
         ap.error("--oracle-campaign-run is a finalized headless evidence command")
+    if args.ticks is not None and args.ticks < 0:
+        ap.error("--ticks must be zero or a positive tick count")
     if args.oracle_campaign_run and (args.fork or args.replay):
         ap.error("--oracle-campaign-run cannot use fork or replay inputs")
     mode = (
@@ -1532,7 +1546,9 @@ def main() -> None:
             source = DATA_DIR / f"{args.export_static}.db"
         if not source.exists():
             sys.exit(f"run database not found: {source}")
-        store = Store(str(source))
+        # A stored run is a scientific artifact: export from a read-only handle
+        # so the exporter can neither migrate its schema nor flip journal mode.
+        store = Store(str(source), read_only=True)
         from server.static_export import export_static_replay
         target = Path(args.output) if args.output else Path("static_exports") / f"{store.get_meta()['run_id']}.html"
         print(export_static_replay(store, target))

@@ -13,6 +13,16 @@ each audience can find the authoritative level of detail.
   accessibility, and mocked/real-backend verification.
 - [Research guide and use cases](research-guide.md) — causal model, experiment
   discipline, metrics, Oracle evidence, and interpretation limits.
+- [Model description](research/model-description.md) — entities, scheduling,
+  mechanism assumptions, input provenance, measurement contracts and limits.
+- [Price Discovery Lab](research/price-lab.md) — historical inspector, goods/equity observations,
+  strict study drafts, provider-free pilots, replay receipts and findings.
+- [Policy studies in the operator workspace](plans/2026-09-07-policy-operator-workflow.md) — private model designs,
+  reviewed inference allowances, model draws, pause/resume and price evidence.
+- [Persistent people and household needs](semantics15-households.md) — version-15
+  births, age, membership, care gaps, child demand, census and replay boundaries.
+- [Daily random keys](semantics16-randomness.md) — version-16 mechanism/day/origin
+  streams, explicit research declarations and goods/equity pilot limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
   information boundaries, beliefs, routing, budget, and shock targeting.
 - [Local and hosted API reference](api-reference.md) — REST, WebSocket,
@@ -39,6 +49,14 @@ each audience can find the authoritative level of detail.
   changes, compatibility, logs, and CI.
 - [UI menu hardening ledger](plans/2026-08-30-ui-menu-hardening.md) — complete
   workspace inventory, acceptance contract, and current verification evidence.
+- [Full-stack review remediation ledger](plans/2026-09-01-full-stack-review-remediation.md) —
+  the 2026-09-01 backend and dashboard review: what was fixed, how it was
+  verified, and the design decisions deliberately deferred.
+- [Research city review and roadmap](plans/2026-09-06-research-city-roadmap.md) —
+  proposed economic-research and interactive-city direction, with equal priority
+  for everyday prices and financial assets; links to the dated source review
+  and implementation specifications. The linked execution log separates
+  implemented foundations from pending packages.
 - [Branch lifecycle and consolidation](branch-lifecycle.md) — protect active
   work, classify refs, port divergent commits, and gate deletion.
 - [Documentation maintenance](documentation-maintenance.md) — source-of-truth

@@ -1,5 +1,42 @@
 # Development and testing
 
+Local operator household inspection is available from a selected person's
+dossier. The [financial inspector contract](plans/2026-09-08-household-financial-inspector.md)
+describes its committed-tick API, `operator_households.enabled` flag, identity
+visibility and cash-inequality definitions. It requires current Semantics-20
+position history; historical source runs are never repaired by the reader.
+
+Saved-world operator studies use the bounded read-only checkpoint catalog and
+the same explicit review, launch and recovery flow as fresh-world pilots. See
+the [checkpoint study contract](plans/2026-09-07-checkpoint-studies.md#local-operator-interface)
+for directory configuration, source limits and continuation semantics.
+Focused coverage is in `tests/test_checkpoint_study_jobs.py`; browser coverage
+and synthetic desktop/mobile review captures are in the world-workspace suite.
+
+Policy studies from fresh and saved worlds use the v3 CLI, evidence reader and local operator workspace.
+Their prospective day/phase recovery policy preserves the original shared
+provider allowance across readiness checks and all model replicates. See the
+[live-policy workflow](plans/2026-09-07-live-policy-studies.md#cli-workflow) for
+drafting, explicit launch authorization, pause and provider-free resume validation.
+`tests/test_policy_recovery.py` and `tests/test_policy_origins.py` exercise controlled
+loopback HTTP, original allowance recovery and declared saved-world policy
+transitions in their own required CI job. The operator advertises policy launches
+only when a valid owner-configured design is available. Its default directory is
+`data/policies`; override it with `operator_research.policy_root` in the server
+configuration. See the [operator policy workflow](plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for design limits, deliberate approval and original-allowance recovery.
+`tests/test_policy_operator.py` covers provider-free review and real local
+supervisors with controlled loopback HTTP in a separate required CI job.
+
+Private v3 evidence is readable and portable through `research.policy_results`
+and `research.study_bundle`. Export the current closed pause or sealed final
+result with its reviewed hash; import into a new private directory. See the
+[policy evidence contract](plans/2026-09-07-policy-evidence-bundles.md#cli-workflow)
+for commands, ownership and accounting checks. A verified paused archive remains
+pending, and an imported allowance cannot resume execution in a second namespace.
+`tests/test_policy_evidence.py` covers all six fresh/saved and frozen/day/phase
+paths in a separate required CI job using controlled loopback HTTP.
+
 ## Repository workflow
 
 Work on a feature branch or dedicated worktree. Preserve unrelated changes,
@@ -40,6 +77,13 @@ cross-platform, hash-locked install after changing it:
 ```powershell
 uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
 ```
+
+Research exports use DuckDB's Python type conversion path, which checks pandas
+types. The pinned environment includes pandas to avoid repeated failed imports
+for each value. The exporter retains its bounded SQLite row batches, independent
+Parquet readback and resource limits. See the
+[export measurements](plans/2026-09-09-bounded-research-exports.md#measured-optional-import-bottleneck)
+for byte-parity evidence and the measured memory/time tradeoff.
 
 The full gate also uses `uvx` for the Python dependency audit. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/) first and verify
@@ -87,6 +131,14 @@ the application stylesheet or its content hash.
 
 ### Provider-free real-backend menu smoke
 
+The repeatable city-to-price-study gate creates its own isolated world and serves
+the production bundle: `python scripts/city_research_acceptance.py`. It covers
+historical navigation, operator bookmarks, mobile keyboard selection, both price
+studies, independent evidence import and unchanged source-world contents. See the
+[acceptance contract](plans/2026-09-07-city-research-acceptance.md) for setup,
+bounds, retained evidence and CI. Use the older manual menu smoke below when
+testing a separately started disposable world.
+
 The normal Playwright suite mocks projection contracts. To exercise the same
 menus against a real deterministic database and FastAPI server, start a bounded
 provider-free run in one terminal:
@@ -108,6 +160,32 @@ ordinary UI controls. Use only a disposable local run. It makes no provider
 calls under `runs/base.yaml` and does not validate hosted-only destinations.
 
 ## Test layers
+
+City navigation bookmarks use the separate operator store. Focused checks are
+`tests/test_city_observations_api.py`, `tests/test_operator_workspace.py`, the
+dashboard `cityObservations`/`cityObjectList` node suites, and the city-context and
+workspace-route browser suites. These cover API admission, world immutability,
+concurrent edits, mobile keyboard selection and the desktop map-area requirement.
+The [navigation contract](plans/2026-09-07-city-workspace-navigation.md) records
+the focused scope; the [production workflow gate](plans/2026-09-07-city-research-acceptance.md)
+adds the actual backend and supervised study/export path.
+
+Working research studies now have two explicit pause contracts: version 2 for
+committed days and opt-in version 3 for saved phases. Run the bounded phase
+regressions with `tests/test_phase_working_attempts.py` and
+`tests/test_phase_working_studies.py`; the operator suite also covers planned
+step pauses. See [paused-study recovery](plans/2026-09-06-paused-study-resume.md)
+for the manifest policy, CLI controls and compatibility requirements. On Windows,
+use a fresh short `--basetemp` and verify at least 40 GiB of free space before
+pytest. Complete Python coverage belongs in the CI shards, not one local run.
+
+Scripted checkpoint-derived studies use an explicit version 2 study declaration and
+attempt version 4. Their independent recorded replay begins at the admitted
+saved day. Run `tests/test_checkpoint_origins.py` and
+`tests/test_checkpoint_studies.py` for source immutability, both price domains,
+day/phase recovery, inherited-cost separation and private bundle checks. See
+[saved-world studies](plans/2026-09-07-checkpoint-studies.md) for drafting and
+execution commands and the remaining operator interface work.
 
 | Layer | What it proves |
 |---|---|
@@ -270,6 +348,37 @@ New semantics that would change historical output must be gated by
 `engine_semantics_version`; v1/v2 replay behavior must remain exact. Never
 rewrite a stored source run during replay.
 
+The [Semantics 15 household guide](semantics15-households.md) specifies schema 21
+person origins, membership/custody, child needs, demographic keyed draws and
+census reconciliation. Its focused tests are part of the required core CI job.
+
+The [Semantics 16 randomness guide](semantics16-randomness.md) specifies daily
+mechanism/origin keys, unchanged historical draws, and the opt-in goods/equity
+pilot profile. Required research CI covers draw isolation and source/resume/replay
+checks for both domains. It adds no database migration.
+
+The [Semantics 17 household decision contract](plans/2026-09-07-household-decisions.md)
+adds schema 22 proposals, adult assents, partnerships and atomic joint migration.
+Run `tests/test_semantics17_household_decisions.py` for the focused core gate.
+Its rehearsal uses the small city profile with real scripted decisions and no
+provider calls. New state uses hash-contract-v4; older contracts remain frozen.
+Complete estates and long-horizon household validation remain W5 work.
+
+The [Semantics 18 daily time contract](plans/2026-09-07-daily-time-and-earned-wages.md)
+adds schema 23 time budgets, delivered care, proportional labor and non-cash wage
+claims. `runs/daily-time-rehearsal.yaml` is the bounded opt-in city profile;
+`tests/test_semantics18_daily_time.py` is part of required core CI. Plans affect
+the following day. Hash-contract-v5 includes the new authoritative journals;
+v1–v4 files remain frozen. Use a fresh short pytest directory and keep at least
+40 GiB free. Full estates, education cohorts and long-horizon validation remain.
+
+Semantics 19 adds the [estate cash and credit checkpoint](plans/2026-09-07-estate-cash-and-credit.md).
+Use `runs/estate-cash-rehearsal.yaml` and `tests/test_semantics19_estate_cash.py`
+for the currency-separated cash inventory, principal recovery, bank losses,
+rollback and replay. Schema 24 is additive; new receipts require hash-contract-v6.
+Frozen v1–v5 files and prior simulation semantics remain unchanged. This is not
+full asset succession or long-horizon validation.
+
 The [Buzz-derived architecture boundaries](buzz-derived-architecture.md)
 document the additive schema-20/Semantics-14 attendance contract, read-time
 activity projection, proposal-only Builder support seam, and the separate
@@ -305,5 +414,8 @@ Ubuntu and Windows. Every PR also runs a single deterministic shard of the
 engine/world/agents-focused tests via `scripts/pytest_shard.py`, so edits to
 `run.py`, `llm/gateway.py`, `agents/`, `world/`, and `engine/` are exercised
 before merge; the full cross-platform matrix remains a manual workflow
-dispatch. Pull requests should state behavior, tests, live calls/cost,
+dispatch. Each OS/Python pair uses all 16 full-suite shards (indices 0–15),
+with a 30-minute limit per job. A focused matrix override provides partial
+coverage until every shard in the pair has a successful result.
+Pull requests should state behavior, tests, live calls/cost,
 compatibility impact, and remaining risk. See [CONTRIBUTING.md](../CONTRIBUTING.md).

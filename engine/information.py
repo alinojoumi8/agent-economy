@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from .store import Store
+from .local_participation import is_local
 
 
 ITEM_TYPES = {"article", "earnings", "social_post", "repost", "correction"}
@@ -12,8 +13,10 @@ TRUTH_STATES = {"verified", "unverified", "false", "corrected"}
 
 
 class InformationEconomy:
-    def __init__(self, store: Store, config: dict | None = None):
+    def __init__(self, store: Store, config: dict | None = None, *,
+                 engine_semantics_version: int = 2):
         self.store = store
+        self.engine_semantics_version = engine_semantics_version
         self.config = config or {}
         self.enabled = config is not None and bool(self.config.get("enabled", True))
         self.base_reach = float(self.config.get("base_reach", 0.15))
@@ -23,6 +26,8 @@ class InformationEconomy:
     def create_claim(self, tick: int, actor_id: int | None, data: dict[str, Any]) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "reason": "information economy disabled"}
+        if actor_id is not None and not is_local(self, actor_id):
+            return {"ok": False, "reason": "local information author required"}
         sources = data.get("source_event_ids", [])
         if not isinstance(sources, list) or any(int(item) <= 0 for item in sources):
             return {"ok": False, "reason": "source_event_ids must contain positive ids"}
@@ -56,6 +61,8 @@ class InformationEconomy:
     def publish_item(self, tick: int, actor_id: int | None, data: dict[str, Any]) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "reason": "information economy disabled"}
+        if actor_id is not None and not is_local(self, actor_id):
+            return {"ok": False, "reason": "local information author required"}
         claim_id = int(data.get("claim_id", 0))
         claim = self.store.query_one("SELECT * FROM claims WHERE id=?", (claim_id,))
         item_type = str(data.get("item_type", "social_post"))
@@ -141,6 +148,13 @@ class InformationEconomy:
     def run_nightly(self, tick: int) -> None:
         if not self.enabled:
             return
+        if self.engine_semantics_version >= 21:
+            with self.store.savepoint("population_information_nightly"):
+                self._run_nightly(tick)
+            return
+        self._run_nightly(tick)
+
+    def _run_nightly(self, tick: int) -> None:
         items = self.store.query(
             "SELECT i.*, c.value_json, c.truth_status FROM information_items i "
             "JOIN claims c ON c.id=i.claim_id WHERE i.status='published' "
@@ -150,6 +164,7 @@ class InformationEconomy:
             (int(row["id"]), set(json.loads(row["media_diet_json"] or "[]")))
             for row in self.store.query(
                 "SELECT id,media_diet_json FROM agents WHERE alive=1 ORDER BY id")
+            if is_local(self, int(row["id"]), tick=tick)
         ]
         for item in items:
             item_id = int(item["id"])

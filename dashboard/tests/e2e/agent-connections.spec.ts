@@ -182,7 +182,7 @@ test("agent owner dashboard manages connections, returns to runs, and logs out",
 
   await expect(page.getByText("ae_pat_created_once", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Copy token" }).click();
-  await expect(page.getByRole("status")).toHaveText("Credential copied.");
+  await expect(page.getByRole("status").filter({ hasText: "Credential copied." })).toHaveText("Credential copied.");
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ae_pat_created_once");
   expect(state.createdPayload).toMatchObject({
     run_id: RUN_ID,
@@ -196,12 +196,12 @@ test("agent owner dashboard manages connections, returns to runs, and logs out",
   await seeded.getByRole("button", { name: "Rotate" }).click();
   await expect(page.getByText("ae_pat_rotated_once", { exact: true })).toBeVisible();
   await seeded.getByRole("button", { name: "Revoke token" }).click();
-  await expect(page.getByRole("status")).toHaveText("All active credentials were revoked.");
+  await expect(page.getByRole("status").filter({ hasText: "All active credentials were revoked." })).toHaveText("All active credentials were revoked.");
   expect(state.credentialActions).toEqual(["rotate", "revoke"]);
 
   await page.getByLabel("Maximum connections per run").fill("150");
   await page.getByRole("button", { name: "Save tenant quota" }).click();
-  await expect(page.getByRole("status")).toHaveText("Tenant external-agent quota updated.");
+  await expect(page.getByRole("status").filter({ hasText: "Tenant external-agent quota updated." })).toHaveText("Tenant external-agent quota updated.");
   expect(state.quota).toBe(150);
 
   await page.getByRole("button", { name: "Runs · Hosted Demo", exact: true }).click();

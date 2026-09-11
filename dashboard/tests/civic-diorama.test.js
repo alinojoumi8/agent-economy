@@ -158,3 +158,26 @@ test("private home construction remains an explicit district aggregate", () => {
   assert.match(aggregate.label, /^12 HOMES · FOUNDATION · 4\/24 WORK$/);
   assert.match(aggregate.tooltip, /owner and exact sites withheld/);
 });
+
+test("diorama flows accept both the world-map and the economic-map region field names", () => {
+  const model = {
+    regions: [
+      { id: 1, name: "North", x: 20, y: 30 },
+      { id: 2, name: "South", x: 80, y: 70 },
+    ],
+    places: [],
+    presence: [],
+    organizations: [],
+    constructionProjects: [],
+    clusters: [],
+    flows: [
+      { id: 1, kind: "trade", source_region_id: 1, target_region_id: 2, magnitude: 5, status: "delivered" },
+      { id: 2, kind: "migration", origin_region_id: 2, destination_region_id: 1, agent_id: 7, status: "completed" },
+      { id: 3, kind: "trade", source_region_id: 1, target_region_id: 99, magnitude: 1, status: "delivered" },
+    ],
+  };
+  const scene = buildDioramaScene(model, [], { showClusters: false });
+  assert.equal(scene.flows.length, 2, "flows with a known origin and destination draw; unknown regions are dropped");
+  assert.match(scene.flows[0].tooltip, /5 units/);
+  assert.match(scene.flows[1].tooltip, /Agent #7/);
+});

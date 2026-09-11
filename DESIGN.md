@@ -277,8 +277,9 @@ trace.
 
 ### Civic City
 
-The signature component is a shared operational city shell with two projections:
-the code-native **Atlas** and a lazy-loaded deck.gl **2.5D Diorama**. Both use
+The signature component is a shared operational city shell with three renderers:
+the code-native **Atlas**, a lazy-loaded deck.gl **2.5D Diorama** and **Recorded day**
+playback. All use
 the same named districts, filters, observer URL state, agent/place selection,
 evidence lens, and contiguous instrumentation rail. The Diorama adds extruded
 place and organization marks plus migration and trade paths; its building
@@ -301,8 +302,8 @@ flow, and event projections at the requested tick and suppress current runtime
 overlays. Arbitrary historical navigation snaps; only evidence-backed live
 runtime activity may pulse.
 
-`view=atlas|diorama`, `agent=<id>`, `place=<id>`, and `project=<id>` are
-observer-only, shareable URL state. Agent, place, and project selection are
+`view=atlas|diorama|recorded`, `agent=<id>`, `firm=<id>`, `place=<id>`, and `project=<id>` are
+observer-only, shareable URL state. Agent, firm, place, and project selection are
 mutually exclusive.
 Peripheral placement stays withheld, and licensing-office presence remains an
 aggregate. The Diorama provides a keyboard object explorer and falls back to
@@ -339,6 +340,11 @@ beside it, never rasterized into the asset.
 
 ### Do:
 
+- Follow the [city observer interaction contract](docs/research/city-observer.md)
+  for map selection, price inspection, camera bookmarks, persistent person follow
+  and historical context. Missing public positions pause follow without changing
+  the intended person. Keep camera controls outside the transformed map geometry.
+
 - **Do** let the city or investigative field own the composition.
 - **Do** make every live mark keyboard reachable and connect it to a readable
   inspector or table row.
@@ -347,10 +353,14 @@ beside it, never rasterized into the asset.
 - **Do** use synchronized transitions that reveal a change in world state.
 - **Do** keep dense data aligned to stable columns, coordinates, and legends.
 
-### Don't:
+- Support an original interactive 2.5D research city: pan, zoom, select, follow,
+  inspect, time travel, and compare declared interventions. Recorded-day
+  playback has its own clock and controls; animation cannot advance the world.
+  Preserve evidence labels, keyboard access, and authorized projections.
 
-- **Don't** turn the world into an isometric game, reward loop, or decorative
-  agent aquarium.
+### Don't:
+- **Don't** add reward loops, invented economic events, or decorative agent
+  activity that could be mistaken for recorded behavior.
 - **Don't** use generic dark-SaaS glass panels, decorative neon glows detached
   from telemetry, or interchangeable metric-card grids.
 - **Don't** imply geographic precision when a run exposes no coordinates;

@@ -6,6 +6,7 @@ feed writes an impression, while only ``read`` may create a factual exposure.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import wraps
 import hashlib
 import json
 import re
@@ -14,7 +15,10 @@ from typing import Any
 from agents.memory import Memory
 from causal import CausalLinkService
 from engine.core import Economy
+from engine.local_participation import is_local
+from engine.population_history import ResidenceError
 from engine.store import load_json
+from world import commons_journal
 
 
 @dataclass
@@ -31,19 +35,55 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _atomic_operation(operation):
+    """Keep draft population operations and their nested profile writes together."""
+    @wraps(operation)
+    def run(self, *args, **kwargs):
+        if self.economy.engine_semantics_version < 21:
+            return operation(self, *args, **kwargs)
+        name = operation.__name__
+        journal = self._operation_depth == 0 and name in commons_journal.OPERATIONS
+        if journal and name == 'ensure_profile' and self.store.query_one(
+                'SELECT 1 FROM commons_profiles WHERE agent_id=?',
+                (args[0] if args else kwargs.get('agent_id'),)):
+            journal = False
+        with self.store.savepoint(f"commons_{name}"):
+            if not journal:
+                return operation(self, *args, **kwargs)
+            try:
+                actor, values = commons_journal.arguments_for(operation, self, args, kwargs)
+            except (TypeError, ValueError) as exc:
+                raise CommonsError(400, str(exc)) from exc
+            self._local_agent(actor)
+            if self.store.active_tick is not None:
+                raise CommonsError(409, 'modeled Commons actions require a committed day boundary; retry after the day completes')
+            frontier = int(self.store.scalar('SELECT COALESCE(MAX(id),0) FROM events'))
+            self._operation_depth += 1
+            try:
+                result = operation(self, *args, **kwargs)
+                commons_journal.record(self, name, actor, values, result, frontier)
+                return result
+            finally:
+                self._operation_depth -= 1
+    return run
+
+
 class CommonsService:
     """Stateful Commons operations backed only by run-local deterministic state."""
 
     def __init__(self, economy: Economy, memory: Memory | None = None):
         self.economy = economy
         self.store = economy.store
-        self.memory = memory
+        self.memory = memory if memory is not None or economy.engine_semantics_version < 21 else Memory(self.store, economy.config)
+        self._operation_depth = 0
         self.causal = CausalLinkService(self.store)
 
+    @_atomic_operation
     def ensure_profile(self, agent_id: int, *, biography: str = "") -> dict[str, Any]:
         agent = self._living_agent(agent_id)
         row = self.store.query_one("SELECT * FROM commons_profiles WHERE agent_id=?", (agent_id,))
         if row is None:
+            self._local_agent(agent_id)
             self.store.execute(
                 "INSERT INTO commons_profiles(agent_id,display_name,biography,reputation,status,"
                 "created_tick,updated_tick) VALUES(?,?,?,0,'active',?,?)",
@@ -61,12 +101,15 @@ class CommonsService:
             "LEFT JOIN external_agent_connections c ON c.actor_id=p.agent_id "
             "WHERE p.agent_id=?", (int(agent_id),))
         if row is None:
+            if self.economy.engine_semantics_version >= 21:
+                raise CommonsError(404, "commons profile not found")
             return self.ensure_profile(int(agent_id))
         return self._profile_document(row)
 
+    @_atomic_operation
     def create_community(self, actor_id: int, *, name: str, description: str = "",
                          visibility: str = "public") -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         clean_name = str(name).strip()[:120]
         if not clean_name:
             raise CommonsError(400, "community name is required")
@@ -90,12 +133,13 @@ class CommonsService:
             self.store.tick, "commons_community_created",
             {"community_id": community_id, "slug": slug, "owner_agent_id": actor_id},
             phase="COMMONS", subject_type="agent", subject_id=actor_id, importance=1.0)
-        self.store.commit()
+        self._commit()
         return {"id": community_id, "slug": slug, "name": clean_name,
                 "visibility": visibility, "created_event_id": event_id}
 
+    @_atomic_operation
     def join_community(self, actor_id: int, community_id: int) -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         community = self._community(community_id)
         self.store.execute(
             "INSERT INTO commons_memberships(community_id,agent_id,role,status,joined_tick,updated_tick) "
@@ -106,11 +150,12 @@ class CommonsService:
             self.store.tick, "commons_membership_joined",
             {"community_id": community_id, "agent_id": actor_id}, phase="COMMONS",
             subject_type="agent", subject_id=actor_id, importance=0.5)
-        self.store.commit()
+        self._commit()
         return {"ok": True, "community_id": int(community["id"]), "agent_id": actor_id}
 
+    @_atomic_operation
     def follow(self, actor_id: int, target_agent_id: int, *, active: bool = True) -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         self._living_agent(target_agent_id)
         if actor_id == target_agent_id:
             raise CommonsError(400, "an agent cannot follow itself")
@@ -125,13 +170,14 @@ class CommonsService:
             {"follower_agent_id": actor_id, "followed_agent_id": target_agent_id,
              "status": status}, phase="COMMONS", subject_type="agent",
             subject_id=actor_id, importance=0.3)
-        self.store.commit()
+        self._commit()
         return {"ok": True, "status": status}
 
+    @_atomic_operation
     def publish(self, actor_id: int, *, body: str, community_id: int | None = None,
                 parent_entry_id: int | None = None, entry_type: str = "post",
                 claim_id: int | None = None) -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         self.ensure_profile(actor_id)
         text = str(body).strip()[:3000]
         if not text:
@@ -182,12 +228,13 @@ class CommonsService:
             body_text=text, claim_id=int(claim_id) if claim_id is not None else None,
             information_item_id=information_item_id, created_tick=self.store.tick,
             status="published", created_event_id=event_id)
-        self.store.commit()
+        self._commit()
         return self.entry(entry_id)
 
+    @_atomic_operation
     def react(self, actor_id: int, entry_id: int, reaction: str,
               *, active: bool = True) -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         entry = self._entry(entry_id)
         if reaction not in {"like", "agree", "disagree", "insightful"}:
             raise CommonsError(400, "invalid reaction")
@@ -209,13 +256,34 @@ class CommonsService:
             {"entry_id": entry_id, "agent_id": actor_id, "reaction": reaction,
              "status": status}, phase="COMMONS", subject_type="agent",
             subject_id=actor_id, importance=0.2)
-        self.store.commit()
+        self._commit()
         return {"ok": True, "status": status}
 
+    @_atomic_operation
     def feed(self, viewer_agent_id: int, *, kind: str = "chronological",
              community_id: int | None = None, limit: int = 30) -> dict[str, Any]:
-        self._living_agent(viewer_agent_id)
+        """Deliver a modeled feed to a living local participant."""
+        self._local_agent(viewer_agent_id)
         self.ensure_profile(viewer_agent_id)
+        return self._feed(viewer_agent_id, kind=kind, community_id=community_id,
+                          limit=limit, record_impressions=True)
+
+    def preview_feed(self, viewer_agent_id: int, *, kind: str = "chronological",
+                     community_id: int | None = None, limit: int = 30) -> dict[str, Any]:
+        """Inspect permitted content without creating modeled participation."""
+        self._living_agent(viewer_agent_id)
+        return self._feed(viewer_agent_id, kind=kind, community_id=community_id,
+                          limit=limit, record_impressions=False)
+
+    def feed_for_agent(self, viewer_agent_id: int, *, kind: str = "chronological",
+                       community_id: int | None = None, limit: int = 30) -> dict[str, Any]:
+        """REST/MCP feed: outside people retain read-only access to permitted content."""
+        self._living_agent(viewer_agent_id)
+        feed = self.feed if self._participation_available(viewer_agent_id) else self.preview_feed
+        return feed(viewer_agent_id, kind=kind, community_id=community_id, limit=limit)
+
+    def _feed(self, viewer_agent_id: int, *, kind: str, community_id: int | None,
+              limit: int, record_impressions: bool) -> dict[str, Any]:
         kind = str(kind)
         if kind not in {"chronological", "hot", "community", "profile"}:
             raise CommonsError(400, "invalid feed kind")
@@ -264,6 +332,11 @@ class CommonsService:
                                           "candidate_ids": sorted(candidates)})
         delivered = []
         for position, (_key, row, components) in enumerate(scored[:max(1, min(limit, 100))], 1):
+            if not record_impressions:
+                delivered.append({**self._entry_document(row), "impression_id": None,
+                                  "position": position, "score_components": components,
+                                  "read": None})
+                continue
             dedupe = _canonical_hash({"viewer": viewer_agent_id, "entry": int(row["id"]),
                                       "tick": self.store.tick, "kind": kind,
                                       "policy": int(policy["id"])})
@@ -287,14 +360,17 @@ class CommonsService:
             delivered.append({**self._entry_document(row), "impression_id": int(impression["id"]),
                               "position": position, "score_components": components,
                               "read": impression["read_tick"] is not None})
-        self.store.commit()
+        if record_impressions:
+            self._commit()
         return {"feed_kind": kind, "policy": {"id": int(policy["id"]),
                 "key": str(policy["policy_key"]), "version": int(policy["version"]),
                 "algorithm": str(policy["algorithm"])},
-                "candidate_set_hash": candidate_hash, "entries": delivered}
+                "candidate_set_hash": candidate_hash, "entries": delivered,
+                **({"observation_only": True} if not record_impressions else {})}
 
+    @_atomic_operation
     def read(self, viewer_agent_id: int, impression_id: int) -> dict[str, Any]:
-        self._living_agent(viewer_agent_id)
+        self._local_agent(viewer_agent_id)
         row = self.store.query_one(
             "SELECT i.*,e.author_agent_id,e.body_text,e.claim_id,e.information_item_id "
             "FROM commons_feed_impressions i JOIN commons_entries e ON e.id=i.entry_id "
@@ -351,15 +427,16 @@ class CommonsService:
              "viewer_agent_id": viewer_agent_id, "exposure_id": exposure_id},
             phase="COMMONS", subject_type="agent", subject_id=viewer_agent_id,
             importance=0.4)
-        self.store.commit()
+        self._commit()
         return {"ok": True, "impression_id": int(impression_id),
                 "read_tick": self.store.tick, "exposure_id": exposure_id,
                 "event_id": event_id, "memory_id": memory_id,
                 "idempotent": False}
 
+    @_atomic_operation
     def moderate(self, moderator_agent_id: int, entry_id: int, *, action: str,
                  reason: str) -> dict[str, Any]:
-        self._living_agent(moderator_agent_id)
+        self._local_agent(moderator_agent_id)
         entry = self._entry(entry_id)
         if action not in {"label", "hide", "remove", "restore", "limit_author"}:
             raise CommonsError(400, "invalid moderation action")
@@ -390,11 +467,12 @@ class CommonsService:
                 "commons_moderation_actions", entry_id=entry_id,
                 moderator_agent_id=moderator_agent_id, action=action, reason=clean_reason,
                 created_tick=self.store.tick, created_event_id=event_id, status="effective")
-        self.store.commit()
+        self._commit()
         return {"ok": True, "moderation_action_id": moderation_id, "event_id": event_id}
 
+    @_atomic_operation
     def appeal(self, actor_id: int, moderation_action_id: int, body: str) -> dict[str, Any]:
-        self._living_agent(actor_id)
+        self._local_agent(actor_id)
         action = self.store.query_one(
             "SELECT m.*,e.author_agent_id FROM commons_moderation_actions m "
             "JOIN commons_entries e ON e.id=m.entry_id WHERE m.id=?",
@@ -413,7 +491,7 @@ class CommonsService:
                 status="open")
         except Exception as exc:
             raise CommonsError(409, "an appeal already exists") from exc
-        self.store.commit()
+        self._commit()
         return {"ok": True, "appeal_id": appeal_id, "status": "open"}
 
     def entry(self, entry_id: int) -> dict[str, Any]:
@@ -428,8 +506,12 @@ class CommonsService:
             raise CommonsError(404, "entry not found")
         return self._entry_document(row)
 
+    @_atomic_operation
     def overview(self, viewer_agent_id: int, *, limit: int = 30,
                  kind: str = "chronological") -> dict[str, Any]:
+        if self.economy.engine_semantics_version >= 21:
+            self._local_agent(viewer_agent_id)
+            self.ensure_profile(viewer_agent_id)
         communities = [dict(row) for row in self.store.query(
             "SELECT c.*,COUNT(CASE WHEN m.status='active' THEN 1 END) AS member_count "
             "FROM commons_communities c LEFT JOIN commons_memberships m ON m.community_id=c.id "
@@ -640,6 +722,24 @@ class CommonsService:
             return self.appeal(actor_id, int(action.get("moderation_action_id", 0)),
                                str(action.get("body", "")))
         raise CommonsError(400, "unsupported commons action")
+
+    def _commit(self) -> None:
+        # SQLite RELEASE commits the outermost savepoint. An inner commit would
+        # discard the population operation's rollback boundary (including replay).
+        if self.economy.engine_semantics_version < 21:
+            self.store.commit()
+
+    def _participation_available(self, agent_id: int) -> bool:
+        try:
+            return is_local(self.economy, int(agent_id))
+        except ResidenceError as exc:
+            raise CommonsError(409, "commons participation requires valid residence history") from exc
+
+    def _local_agent(self, agent_id: int):
+        row = self._living_agent(agent_id)
+        if not self._participation_available(agent_id):
+            raise CommonsError(409, "commons participation requires a local resident")
+        return row
 
     def _living_agent(self, agent_id: int):
         row = self.store.query_one("SELECT * FROM agents WHERE id=?", (int(agent_id),))

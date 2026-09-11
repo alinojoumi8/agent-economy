@@ -15,6 +15,8 @@ import re
 from typing import Optional
 
 from engine.core import Economy
+from engine.keyed_random import daily_draw, daily_seed, person_key, policy_seed
+from engine.local_participation import is_local
 from engine.store import load_json
 from llm.gateway import (
     Gateway,
@@ -162,6 +164,15 @@ class Newsroom:
         ])
 
     async def publish(self, tick: int) -> list[dict]:
+        desks = None
+        if self.e.engine_semantics_version >= 21:
+            # Admit the complete pending desk cohort before any model or event
+            # effects. Existing articles remain untouched on an exact retry.
+            desks = {int(outlet['id']): {
+                role: self._desk_agent(role, int(outlet['id']), tick=tick)
+                for role in ('reporter', 'editor')}
+                for outlet in self.outlets if not self.store.query_one(
+                    'SELECT id FROM news_articles WHERE tick=? AND outlet_id=?', (tick, outlet['id']))}
         events = self._salient_events(tick)
         if not events and self.daily_news_required:
             events = self._daily_events(tick)
@@ -193,6 +204,21 @@ class Newsroom:
                         "SELECT id FROM news_articles WHERE tick=? AND outlet_id=?",
                         (tick, outlet["id"])):
                     continue
+                if desks is not None:
+                    missing = [role for role in ('reporter', 'editor') if desks[int(outlet['id'])][role] is None]
+                    if missing:
+                        payload = {'outlet_id': int(outlet['id']), 'missing_roles': missing,
+                                   'result': 'publication_paused' if 'editor' in missing else 'editor_direct'}
+                        prior = self.store.query_one(
+                            "SELECT payload_json FROM events WHERE tick=? AND kind='newsroom_desk_unavailable' "
+                            "AND subject_type='outlet' AND subject_id=? ORDER BY id LIMIT 1", (tick, outlet['id']))
+                        if prior is None:
+                            self.store.log_event(tick, 'newsroom_desk_unavailable', payload, phase='NEWSROOM',
+                                                 subject_type='outlet', subject_id=int(outlet['id']), importance=1.0)
+                        elif json.loads(prior['payload_json']) != payload:
+                            raise ValueError('newsroom desk availability changed within a recorded phase')
+                    if desks[int(outlet['id'])]['editor'] is None:
+                        continue
                 # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4
                 # candidate stories; the editor selects and frames per slant.
                 drafts = await self._report_stories(tick, outlet, events)
@@ -472,7 +498,14 @@ class Newsroom:
                         "importance": float(r["importance"])})
         return out
 
-    def _desk_agent(self, role: str, outlet_id: int) -> Optional[int]:
+    def _desk_agent(self, role: str, outlet_id: int, *, tick: int | None = None) -> Optional[int]:
+        if self.e.engine_semantics_version >= 21:
+            for row in self.store.query(
+                    "SELECT id FROM agents WHERE role=? AND alive=1 "
+                    "AND json_extract(personality_json,'$.outlet_id')=? ORDER BY id", (role, outlet_id)):
+                if is_local(self.e, int(row['id']), tick=tick):
+                    return int(row['id'])
+            return None
         row = self.store.query_one(
             "SELECT id FROM agents WHERE role=? AND alive=1 "
             "AND json_extract(personality_json,'$.outlet_id')=?", (role, outlet_id))
@@ -480,8 +513,13 @@ class Newsroom:
 
     async def _report_stories(self, tick: int, outlet: dict, events: list[dict]) -> list[dict]:
         """Reporter stage: draft 2–4 candidate stories from the day's true events."""
+        desk_agent = self._desk_agent('reporter', outlet['id'], tick=tick)
+        if self.e.engine_semantics_version >= 21 and desk_agent is None:
+            return []
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "rng_seed": tick * 37 + outlet["id"]}
+        if self.e.engine_semantics_version >= 16:
+            context["rng_seed"] = daily_seed(int(self.config.get("seed", 42)), "policy.reporter", tick, outlet["id"])
         if self.e.engine_semantics_version >= 7:
             context["engine_semantics_version"] = self.e.engine_semantics_version
         system = ("You are a reporter in a simulated economy. From the given TRUE events draft "
@@ -495,7 +533,7 @@ class Newsroom:
             )
         req = LLMRequest(role="reporter", purpose="reporter", system=system,
                          user=json.dumps({"events": events})[:3000], context=context,
-                         agent_id=self._desk_agent("reporter", outlet["id"]),
+                         agent_id=desk_agent,
                          tick=tick, max_tokens=_output_budget(
                              self.config, "reporter_max_tokens", 500, tick))
         resp = await self.gw.complete(req)
@@ -509,9 +547,14 @@ class Newsroom:
         """Editor stage: select one draft and frame it per the outlet's slant.
         Falls back to composing directly from events when the reporter came back
         empty (robustness with real LLMs)."""
+        desk_agent = self._desk_agent('editor', outlet['id'], tick=tick)
+        if self.e.engine_semantics_version >= 21 and desk_agent is None:
+            return None
         context = {"tick": tick, "outlet": outlet, "salient_events": events,
                    "drafts": drafts or [], "directive": directive,
                    "rng_seed": tick * 31 + outlet["id"]}
+        if self.e.engine_semantics_version >= 16:
+            context["rng_seed"] = daily_seed(int(self.config.get("seed", 42)), "policy.editor", tick, outlet["id"])
         if self.e.engine_semantics_version >= 7:
             context["engine_semantics_version"] = self.e.engine_semantics_version
         user = json.dumps({"outlet": outlet, "drafts": drafts or [], "events": events,
@@ -527,7 +570,7 @@ class Newsroom:
                 "only when it appears exactly in a supplied event."
             )
         req = LLMRequest(role="editor", purpose="newsroom", system=system, user=user,
-                         context=context, agent_id=self._desk_agent("editor", outlet["id"]),
+                         context=context, agent_id=desk_agent,
                          tick=tick, max_tokens=_output_budget(
                              self.config, "newsroom_max_tokens", 400, tick))
         resp = await self.gw.complete(
@@ -568,8 +611,16 @@ class Conversations:
     async def evening(self, tick: int,
                       pairs: Optional[list[tuple[int, int]]] = None) -> int:
         pairs = self.plan_pairs(tick) if pairs is None else pairs
+        eligible = None
+        if self.e.engine_semantics_version >= 21:
+            # Validate every restored participant before the first model call.
+            # Keep original topic slots when an unavailable pair is skipped.
+            eligible = {aid: is_local(self.e, aid, tick=tick)
+                        for aid in sorted({aid for pair in pairs for aid in pair})}
         count = 0
         for topic_slot, (a, b) in enumerate(pairs):
+            if eligible is not None and not (eligible[a] and eligible[b]):
+                continue
             await self._converse(tick, a, b, topic_slot=topic_slot)
             count += 1
         return count
@@ -605,6 +656,13 @@ class Conversations:
                 "WHERE x.alive=1 AND y.alive=1")
         if not ties:
             return []
+        if int(self.config.get("engine_semantics_version", 1)) >= 15:
+            minors = {int(row["id"]) for row in self.store.query("SELECT id FROM agents WHERE age<18")}
+            ties = [tie for tie in ties if int(tie["agent_a"]) not in minors and int(tie["agent_b"]) not in minors]
+        if self.e.engine_semantics_version >= 21:
+            eligible = {aid: is_local(self.e, aid, tick=tick)
+                        for aid in sorted({int(tie[key]) for tie in ties for key in ('agent_a', 'agent_b')})}
+            ties = [tie for tie in ties if eligible[int(tie['agent_a'])] and eligible[int(tie['agent_b'])]]
         # Weight by tie strength + event salience (agents touched by big events talk).
         salient = {int(r["agent_id"]) for r in self.store.query(
             "SELECT agent_id FROM memories WHERE tick>=? AND importance>=2.5", (tick - 1,))}
@@ -628,6 +686,18 @@ class Conversations:
         # Deterministic weighted sample without replacement via engine PRNG.
         chosen: list[tuple[int, int]] = []
         pool = weighted[:]
+        keyed = self.e.engine_semantics_version >= 16
+        if keyed:
+            # A fixed exponential priority per edge, then the existing
+            # coverage/disjointness constraints. Weights and eligibility may
+            # change endogenously; the underlying uniform draw does not.
+            pool = [item for item in pool if math.isfinite(item[0]) and item[0] > 0]
+            keys = {aid: person_key(self.store, aid) for aid in sorted({aid for _, a, b in pool for aid in (a, b)})}
+            priorities = {}
+            for weight, a, b in pool:
+                pair_key = tuple(sorted((keys[a], keys[b])))
+                u = daily_draw(int(self.config.get("seed", 42)), "conversation.pair", tick, *pair_key)
+                priorities[(a, b)] = (-math.log1p(-u) / weight, pair_key)
         used: set[int] = set()
         while pool and len(chosen) < k:
             # Without coverage-first pairing the draw stays over the whole
@@ -660,21 +730,24 @@ class Conversations:
                         ),
                     ) == least_covered
                 ]
-            total = sum(w for w, _, _ in candidates)
-            r = self.e.prng.random() * total
-            acc = 0.0
-            pick = candidates[-1]
-            for item in candidates:
-                acc += item[0]
-                if r <= acc:
-                    pick = item
-                    break
+            if keyed:
+                pick = min(candidates, key=lambda item: priorities[(item[1], item[2])])
+            else:
+                total = sum(w for w, _, _ in candidates)
+                r = self.e.prng.random() * total
+                acc = 0.0
+                pick = candidates[-1]
+                for item in candidates:
+                    acc += item[0]
+                    if r <= acc:
+                        pick = item
+                        break
             pool.remove(pick)
             _, a, b = pick
             if a in used or b in used:
                 continue
             used.add(a); used.add(b)
-            chosen.append((a, b))
+            chosen.append(tuple(sorted((a, b), key=lambda aid: keys[aid])) if keyed else (a, b))
             if self.coverage_first:
                 participation[a] = participation.get(a, 0) + 1
                 participation[b] = participation.get(b, 0) + 1
@@ -682,6 +755,10 @@ class Conversations:
 
     async def _converse(self, tick: int, a_id: int, b_id: int,
                         *, topic_slot: int = 0) -> None:
+        if self.e.engine_semantics_version >= 21:
+            eligible = [is_local(self.e, aid, tick=tick) for aid in (a_id, b_id)]
+            if not all(eligible):
+                return
         participant_ids = json.dumps([a_id, b_id])
         if self.store.query_one(
                 "SELECT id FROM conversations WHERE tick=? AND participant_ids=?",
@@ -712,6 +789,8 @@ class Conversations:
                        "recent_utterances": recent_utterances,
                        "avoid_texts": recent_utterances + conversation_so_far,
                        "rng_seed": tick * 1009 + speaker * 13 + turn}
+            context["rng_seed"] = policy_seed(self.e, "policy.conversation", tick, speaker,
+                context["rng_seed"], person_key(self.store, listener), turn)
             schema = '{"text":"brief natural sentence","rumor_bank":null}'
             req = LLMRequest(
                 role="citizen", purpose="conversation",
@@ -789,6 +868,9 @@ class Conversations:
                 for attempt in range(1, 10):
                     fallback_context["rng_seed"] = (
                         int(context["rng_seed"]) + 104729 * attempt)
+                    if self.e.engine_semantics_version >= 16:
+                        fallback_context["rng_seed"] = policy_seed(self.e, "policy.conversation_retry",
+                            tick, speaker, 0, person_key(self.store, listener), turn, attempt)
                     fallback = conversation_turn(fallback_context)
                     candidate = str(fallback.get("text", "")).strip()[:300]
                     if not self._previously_said(candidate, avoid_texts):

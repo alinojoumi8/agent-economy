@@ -1,7 +1,8 @@
 import { useRef } from "react";
 import { Link, useSearchParams } from "react-router";
-import { filterMarketRows, normalizeMarketsWorkspace } from "./marketsWorkspaceModel.js";
+import { MARKET_WINDOW, filterMarketRows, normalizeMarketsWorkspace } from "./marketsWorkspaceModel.js";
 import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
+import { PriceLab } from "./PriceLab";
 import {
   WorkspaceHeader,
   WorkspaceState,
@@ -21,7 +22,7 @@ type MarketsProjection = {
   orders?: MarketRow[]; trades?: MarketRow[]; fx_orders?: MarketRow[]; fx_trades?: MarketRow[];
   circuit_breakers?: MarketRow[]; currencies?: Array<Record<string, unknown>>;
 };
-type MarketView = "orders" | "trades" | "fx" | "circuits";
+type MarketView = "prices" | "orders" | "trades" | "fx" | "circuits";
 
 function text(value: unknown, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value).replaceAll("_", " ");
@@ -36,7 +37,7 @@ export function MarketsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeMarketsWorkspace(projection.data || {});
   const requestedView = searchParams.get("view");
-  const view: MarketView = ["orders", "trades", "fx", "circuits"].includes(String(requestedView))
+  const view: MarketView = ["prices", "orders", "trades", "fx", "circuits"].includes(String(requestedView))
     ? requestedView as MarketView : "orders";
   const filters = { side: searchParams.get("side") || "", status: searchParams.get("status") || "" };
   const searchRevision = searchParams.toString();
@@ -61,30 +62,41 @@ export function MarketsWorkspace() {
   const investigationUrl = (id: number) => workspaceUrl(projection.runId, "investigations", projection.observerState, { event: id });
   const orders = filterMarketRows(model.orders, filters) as MarketRow[];
   const fxOrders = filterMarketRows(model.fxOrders, filters) as MarketRow[];
+  const filtering = Boolean(filters.side || filters.status);
+  const filteredEmpty = (kind: string, total: number) =>
+    `No ${kind} match the current filters; ${total} ${kind === "FX orders" ? "FX orders" : "orders"} exist at this tick.`;
 
   return <section className="world-os-markets-workspace">
     <WorkspaceHeader title="Markets" kicker="As-of order and execution evidence"
       sourceLabel="Markets workspace committed projection" envelope={projection.envelope} />
     <WorkspaceState loading={projection.loading} error={projection.error}>
       <dl className="world-os-summary-strip" aria-label="Market summary">
-        <div><dt>Trades</dt><dd>{model.totals.tradeCount}</dd></div>
-        <div><dt>Trade volume</dt><dd>{model.totals.tradeVolume == null ? "—" : measured(model.totals.tradeVolume, "shares")}</dd></div>
-        <div><dt>FX trades</dt><dd>{model.totals.fxTradeCount}</dd></div>
+        <div><dt>Recent trades</dt><dd>{model.totals.tradeCount}{model.totals.tradeCount >= MARKET_WINDOW ? "+" : ""}</dd></div>
+        <div><dt>Recent trade volume</dt><dd>{model.totals.tradeVolume == null ? "—" : measured(model.totals.tradeVolume, "shares")}</dd></div>
+        <div><dt>Recent FX trades</dt><dd>{model.totals.fxTradeCount}{model.totals.fxTradeCount >= MARKET_WINDOW ? "+" : ""}</dd></div>
         <div><dt>Currencies</dt><dd>{(model.currencies as Array<{ code?: string }>).map(item => item.code).filter(Boolean).join(", ") || "—"}</dd></div>
       </dl>
+      {model.totals.windowed && <p className="world-os-policy-note">
+        The projection returns the newest {MARKET_WINDOW} trades and FX trades; these counts and volumes describe that window, not the run total.
+      </p>}
       <div className="world-os-market-toolbar">
         <div className="world-os-view-switch" role="group" aria-label="Market evidence view">
-          {(["orders", "trades", "fx", "circuits"] as MarketView[]).map(item => <button key={item} type="button" aria-pressed={view === item} onClick={() => patch("view", item)}>{item === "circuits" ? "Circuit breakers" : text(item)}</button>)}
+          {(["prices", "orders", "trades", "fx", "circuits"] as MarketView[]).map(item => <button key={item} type="button" aria-pressed={view === item} onClick={() => patch("view", item)}>{item === "prices" ? "Price lab" : item === "circuits" ? "Circuit breakers" : text(item)}</button>)}
         </div>
         {(view === "orders" || view === "fx") && <div className="world-os-filters">
           <label>Side <select value={filters.side} onChange={event => patch("side", event.target.value)}><option value="">All</option><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
-          <label>Status <select value={filters.status} onChange={event => patch("status", event.target.value)}><option value="">All</option><option value="open">Open</option><option value="partial">Partial</option><option value="filled">Filled</option><option value="cancelled">Cancelled</option></select></label>
+          <label>Status <select value={filters.status} onChange={event => patch("status", event.target.value)}><option value="">All</option><option value="open">Open</option><option value="partial">Partial</option><option value="filled">Filled</option></select></label>
         </div>}
       </div>
 
+      {view === "prices" && <PriceLab />}
+
       {view === "orders" && <article className="world-os-workspace-card">
         <header><div><p className="world-os-kicker">Equity order book</p><h3>Orders</h3></div></header>
-        <WorkspaceTable caption="Equity orders" rows={orders} empty="The order book is empty at this tick; no activity is inferred."
+        <WorkspaceTable caption="Equity orders" rows={orders}
+          empty={filtering && model.orders.length
+            ? filteredEmpty("orders", model.orders.length)
+            : "The order book is empty at this tick; no activity is inferred."}
           columns={[
             { key: "tick", label: "Tick", render: row => text(row.tick) },
             { key: "side", label: "Side", render: row => text(row.side) },
@@ -109,7 +121,10 @@ export function MarketsWorkspace() {
 
       {view === "fx" && <div className="world-os-market-stack">
         <article className="world-os-workspace-card"><header><div><p className="world-os-kicker">FX order book</p><h3>FX orders</h3></div></header>
-          <WorkspaceTable caption="FX orders" rows={fxOrders} empty="The FX order book is empty at this tick."
+          <WorkspaceTable caption="FX orders" rows={fxOrders}
+            empty={filtering && model.fxOrders.length
+              ? filteredEmpty("FX orders", model.fxOrders.length)
+              : "The FX order book is empty at this tick."}
             columns={[
               { key: "tick", label: "Tick", render: row => text(row.tick) },
               { key: "pair", label: "Base / quote", render: row => `${text(row.baseCurrency)} / ${text(row.quoteCurrency)}` },
