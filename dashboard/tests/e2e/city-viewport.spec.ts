@@ -114,3 +114,26 @@ test('participant clock requires an explicit action and disables continuous Run'
   await expect(page.getByRole('button',{name:'Advance one tick',exact:true})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Run',exact:true})).toBeDisabled();
 });
+
+test('primary drag pans horizontally and vertically without orbiting; secondary drag rotates',async({page})=>{
+  await openCity(page);
+  await page.evaluate(async()=>{
+    const path='/src/city/CityScene.ts';
+    const {CityScene}=await import(/* @vite-ignore */ path);
+    const host=document.createElement('div');host.id='camera-gesture-test';
+    host.style.cssText='position:fixed;inset:0;width:600px;height:400px;z-index:99999';document.body.append(host);
+    (window as any).gestureScene=new CityScene(host,()=>{},()=>{},()=>{},()=>{});
+  });
+  const pose=()=>page.evaluate(()=>{const s=(window as any).gestureScene;return {target:s.controls.target.toArray(),offset:s.camera.position.clone().sub(s.controls.target).toArray()};});
+  const drag=async(dx:number,dy:number,button:'left'|'right')=>{await page.mouse.move(300,200);await page.mouse.down({button});await page.mouse.move(300+dx,200+dy,{steps:8});await page.mouse.up({button});};
+  try{
+    const start=await pose();await drag(90,0,'left');const horizontal=await pose();
+    expect(Math.hypot(...horizontal.target.map((v:number,i:number)=>v-start.target[i]))).toBeGreaterThan(1);
+    horizontal.offset.forEach((v:number,i:number)=>expect(v).toBeCloseTo(start.offset[i],5));
+    await drag(0,70,'left');const vertical=await pose();
+    expect(Math.hypot(...vertical.target.map((v:number,i:number)=>v-horizontal.target[i]))).toBeGreaterThan(1);
+    vertical.offset.forEach((v:number,i:number)=>expect(v).toBeCloseTo(start.offset[i],5));
+    await drag(90,0,'right');const rotated=await pose();
+    expect(Math.hypot(...rotated.offset.map((v:number,i:number)=>v-vertical.offset[i]))).toBeGreaterThan(1);
+  }finally{await page.evaluate(()=>{(window as any).gestureScene.dispose();document.querySelector('#camera-gesture-test')?.remove();});}
+});

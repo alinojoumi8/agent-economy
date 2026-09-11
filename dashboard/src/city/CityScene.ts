@@ -1,5 +1,5 @@
 import { AmbientLight, BoxGeometry, DirectionalLight, GridHelper, Group, InstancedMesh, Matrix4,
-  Mesh, MeshLambertMaterial, OrthographicCamera, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
+  Mesh, MeshLambertMaterial, MOUSE, TOUCH, OrthographicCamera, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { disposeKit, loadCityAssets, type AssetKit } from './assetLoader';
 import type { CityActivity, CityInstance, CityProjection } from './cityProjection';
@@ -48,6 +48,9 @@ export class CityScene {
     host.append(this.renderer.domElement);
     this.camera.position.set(95,100,110);
     this.controls=new OrbitControls(this.camera,this.renderer.domElement);
+    this.controls.mouseButtons={LEFT:MOUSE.PAN,MIDDLE:MOUSE.DOLLY,RIGHT:MOUSE.ROTATE};
+    this.controls.touches={ONE:TOUCH.PAN,TWO:TOUCH.DOLLY_PAN};
+    this.controls.screenSpacePanning=true;
     this.controls.enableDamping=false;
     this.controls.maxPolarAngle=Math.PI/2.6;
     this.controls.minPolarAngle=.25;
@@ -71,6 +74,7 @@ export class CityScene {
   private contextLost=(event:Event)=>{event.preventDefault();this.failed=true;this.running=false;cancelAnimationFrame(this.frame);this.frame=0;this.onError('3D graphics context was lost. Switch to the 2D atlas or reload the city.');};
   private pointerDown=(event:PointerEvent)=>{this.pointerStart=[event.clientX,event.clientY];};
   private pointerUp=(event:PointerEvent)=>{
+    if(event.button!==0)return;
     if(Math.hypot(event.clientX-this.pointerStart[0],event.clientY-this.pointerStart[1])>5)return;
     const rect=this.renderer.domElement.getBoundingClientRect();
     this.pointer.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);

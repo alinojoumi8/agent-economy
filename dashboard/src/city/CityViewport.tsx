@@ -65,6 +65,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     </div>
     <div className="city3d-layout">
       <div className="city3d-field">
+        <p className="city3d-gesture-help">Drag to move · Right-drag to rotate · Scroll or pinch to zoom</p>
         <div className="city3d-canvas" ref={host} data-testid="city-canvas" data-ready={ready?'true':'false'} aria-busy={!ready||loading}/>
         {(loading||!ready)&&!failure&&<div className="city3d-message" role="status">{loading?'Reading committed city state…':'Loading Blender city assets…'}</div>}
         {failure&&<div className="city3d-message" role="alert"><strong>{failure}</strong><button onClick={onFallback}>Use 2D atlas</button></div>}
