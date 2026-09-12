@@ -85,7 +85,7 @@ export function projectCity(envelope) {
     regions:regions.map(r=>({id:r.id,name:String(r.name || `Region ${r.id}`),position:coordinates(r)?[(r.x-.5)*160,0,(r.y-.5)*160]:[0,0,0]})),
     clusters:(data.population_clusters || []).map(r=>({id:String(r.id),name:String(r.label),count:Number(r.count)||0})),
     warnings:[...(instances.some(i=>i.provenance==='derived')?['Derived civic layout: unlocated entities occupy the eastern display grid, outside recorded coordinates.']:[]),
-      'Building shapes, roads and marker offsets are illustrative; they do not measure wealth, transport or land rights.',
+      'Buildings, streets, trees and marker offsets are illustrative. Housing blocks represent districts, not individual homes; they do not measure wealth, transport or land rights.',
       'Historical presence is tick-resolved. Names, roles, population tiers and some roster metadata may reflect current records.']};
 }
 

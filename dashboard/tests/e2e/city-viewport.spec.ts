@@ -38,6 +38,22 @@ test('mount/unmount releases canvas and supports repeated 2D fallback',async({pa
     await page.getByRole('button',{name:'3D city',exact:true}).click();await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');await expect(page.locator('canvas')).toHaveCount(1);
   }
 });
+
+test('streets and housing keep rendering resources bounded when layers change',async({page})=>{
+  await openCity(page);
+  await page.getByText('Projection and rendering evidence',{exact:true}).click();
+  const evidence=page.locator('.city3d-notes code');
+  await expect(evidence).toContainText('geometries');
+  const geometries=async()=>Number((await evidence.innerText()).match(/(\d+) geometries/)![1]);
+  const baseline=await geometries();
+  for(let i=0;i<4;i++){
+    await page.locator('.city3d-toolbar select').first().selectOption('place');
+    await page.locator('.city3d-toolbar select').first().selectOption('all');
+  }
+  await expect.poll(geometries).toBeLessThanOrEqual(baseline+1);
+  await expect(page.locator('#city-entity-select option')).toHaveCount(402);
+  expect(Number((await evidence.innerText()).match(/(\d+) draw calls/)![1])).toBeLessThan(100);
+});
 test('asset failure shows usable fallback and mobile remains navigable',async({page})=>{
   await installCityFixture(page);await page.route('**/city/office-low.glb',route=>route.fulfill({status:503,body:'offline'}));
   await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});

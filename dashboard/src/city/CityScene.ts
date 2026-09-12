@@ -3,6 +3,7 @@ import { AmbientLight, BoxGeometry, DirectionalLight, GridHelper, Group, Instanc
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { disposeKit, loadCityAssets, type AssetKit } from './assetLoader';
 import type { CityActivity, CityInstance, CityProjection } from './cityProjection';
+import { buildCityScenery, disposeCityScenery } from './CityScenery';
 export type SceneStats={calls:number;triangles:number;geometries:number;textures:number;frames:number};
 export class CityScene {
   private renderer:WebGLRenderer;
@@ -11,6 +12,7 @@ export class CityScene {
   private controls:OrbitControls;
   private buildings=new Group();
   private ground=new Group();
+  private scenery=new Group();
   private markers=new Group();
   private proposal:Mesh|null=null;
   private kit:AssetKit|null=null;
@@ -41,8 +43,8 @@ export class CityScene {
     this.renderer=new WebGLRenderer({antialias:false,alpha:false,powerPreference:'low-power'});
     // Canvas contains geometry only; HTML labels stay at native resolution.
     // A bounded render scale keeps the 300-citizen view usable on software GPUs.
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5)*.75);
-    this.renderer.setClearColor('#dfe7e4');
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5));
+    this.renderer.setClearColor('#dce6e8');
     this.renderer.domElement.setAttribute('aria-label','Interactive 3D city. Use the entity list and camera buttons for keyboard navigation.');
     this.renderer.domElement.setAttribute('role','img');
     host.append(this.renderer.domElement);
@@ -57,9 +59,9 @@ export class CityScene {
     this.controls.minZoom=.35;this.controls.maxZoom=12;
     this.controls.addEventListener('change',this.requestRender);
     this.controls.update();
-    this.scene.add(new AmbientLight('#eaf3ff',2.1));
-    const sun=new DirectionalLight('#fff4df',3.3);sun.position.set(-35,80,50);this.scene.add(sun);
-    this.scene.add(this.ground,this.buildings,this.markers);
+    this.scene.add(new AmbientLight('#dce8f1',1.15));
+    const sun=new DirectionalLight('#ffe9c6',2.0);sun.position.set(-35,80,50);this.scene.add(sun);
+    this.scene.add(this.ground,this.scenery,this.buildings,this.markers);
     this.observer=new ResizeObserver(()=>this.resize());this.observer.observe(host);
     this.renderer.domElement.addEventListener('pointerdown',this.pointerDown);
     this.renderer.domElement.addEventListener('pointerup',this.pointerUp);
@@ -114,7 +116,7 @@ export class CityScene {
     this.requestRender();
   }
   private clearInstances(){for(const child of this.buildings.children)if(child instanceof InstancedMesh)child.dispose();this.buildings.clear();}
-  private clearGround(){for(const child of this.ground.children){if(child instanceof Mesh||child instanceof GridHelper){child.geometry.dispose();const m=child.material;if(Array.isArray(m))m.forEach(x=>x.dispose());else m.dispose();}}this.ground.clear();}
+  private clearGround(){disposeCityScenery(this.scenery);for(const child of this.ground.children){if(child instanceof Mesh||child instanceof GridHelper){child.geometry.dispose();const m=child.material;if(Array.isArray(m))m.forEach(x=>x.dispose());else m.dispose();}}this.ground.clear();}
   private rebuild(){
     if(!this.kit||!this.projection)return;
     this.clearInstances();this.clearGround();
@@ -125,27 +127,26 @@ export class CityScene {
     for(const item of byRender.values()){const group=families.get(item.assetKey)||[];group.push(item);families.set(item.assetKey,group);}
     const matrix=new Matrix4();
     for(const [key,items] of families){
+      // A district is an aggregate place, represented by a small housing block.
+      // All four illustrative homes retain the same district evidence identity.
+      const copies=items.flatMap(item=>item.kind==='residential_district'
+        ? [-1.35,1.35].flatMap(x=>[-1.35,1.35].map(z=>({item,x,z,scale:.64})))
+        : [{item,x:0,z:0,scale:1}]);
       for(const part of this.kit.get(key)||this.kit.get('neutral')||[]){
-        const mesh=new InstancedMesh(part.geometry,part.material,items.length);
-        mesh.userData.keys=items.map(i=>i.key);
-        items.forEach((item,index)=>{matrix.makeTranslation(...item.position);mesh.setMatrixAt(index,matrix);});
+        const mesh=new InstancedMesh(part.geometry,part.material,copies.length);
+        mesh.userData.keys=copies.map(i=>i.item.key);
+        copies.forEach(({item,x,z,scale},index)=>{
+          matrix.makeScale(scale,scale,scale);matrix.setPosition(item.position[0]+x,item.position[1],item.position[2]+z);mesh.setMatrixAt(index,matrix);
+        });
         mesh.instanceMatrix.needsUpdate=true;mesh.computeBoundingSphere();this.buildings.add(mesh);
       }
     }
     const extent=Math.max(65,...this.projection.instances.flatMap(i=>[Math.abs(i.position[0])+12,Math.abs(i.position[2])+12]));
-    const ground=new Mesh(new BoxGeometry(extent*2,1,extent*2),new MeshLambertMaterial({color:'#bbcbb9'}));
+    const ground=new Mesh(new BoxGeometry(extent*2,1,extent*2),new MeshLambertMaterial({color:'#91aa7d'}));
     ground.position.y=-.6;this.ground.add(ground);
-    const grid=new GridHelper(extent*2,Math.ceil(extent/4),'#a3b6a6','#acbeae');grid.position.y=-.075;this.ground.add(grid);
-    for(const region of this.projection.regions){
-      const district=new Mesh(new BoxGeometry(34,.08,34),new MeshLambertMaterial({color:'#e1e7dd'}));
-      district.position.set(region.position[0],-.1,region.position[2]);this.ground.add(district);
-      for(const offset of [-12,-4,4,12]){
-        const street=new Mesh(new BoxGeometry(.5,.025,32),new MeshLambertMaterial({color:'#a5b1ac'}));
-        street.position.set(region.position[0]+offset,-.04,region.position[2]);this.ground.add(street);
-      }
-      const avenue=new Mesh(new BoxGeometry(32,.02,1.1),new MeshLambertMaterial({color:'#74868b'}));
-      avenue.position.set(region.position[0],-.055,region.position[2]-5);this.ground.add(avenue);
-    }
+    // Base streets remain stable when the entity filter changes.
+    const scenery=buildCityScenery(this.projection.instances);
+    this.scenery.add(...[...scenery.children]);
     this.updateMarkers();
     if(!this.initiallyFramed){
       this.initiallyFramed=true;
@@ -201,7 +202,12 @@ export class CityScene {
   }
   focusRegion(id:number){
     const region=this.projection?.regions.find(r=>r.id===id);if(!region)return;
-    const target=new Vector3(...region.position),delta=target.clone().sub(this.controls.target);
+    const places=this.projection?.instances.filter(p=>p.entityType==='place'&&p.provenance==='observed'&&p.regionId===id)||[];
+    const target=places.length?new Vector3(
+      (Math.min(...places.map(p=>p.position[0]))+Math.max(...places.map(p=>p.position[0])))/2,0,
+      (Math.min(...places.map(p=>p.position[2]))+Math.max(...places.map(p=>p.position[2])))/2+2,
+    ):new Vector3(...region.position);
+    const delta=target.clone().sub(this.controls.target);
     this.camera.position.add(delta);this.controls.target.copy(target);this.camera.zoom=2.6;
     this.camera.updateProjectionMatrix();this.controls.update();this.requestRender();
   }
