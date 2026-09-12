@@ -115,6 +115,29 @@ test('participant clock requires an explicit action and disables continuous Run'
   await expect(page.getByRole('button',{name:'Run',exact:true})).toBeDisabled();
 });
 
+test('local Stop finishes a running city and a rejected stop stays retryable',async({page})=>{
+  await installCityFixture(page);
+  let status='paused',stops=0;
+  await page.route('**/api/run/status',route=>route.fulfill({json:{status,tick:2,running:status==='running'}}));
+  await page.route('**/api/run/start',route=>{status='running';return route.fulfill({json:{status}});});
+  await page.route('**/api/run/stop',route=>{
+    stops++;
+    if(stops===1)return route.fulfill({status:503,json:{detail:'Stop temporarily unavailable'}});
+    status='finished';return route.fulfill({json:{status,tick:2,report_path:'reports/test.html'}});
+  });
+  await page.goto('/runs/city-fixture/world?cityView=3d');
+  const clock=page.getByRole('group',{name:'Simulation clock'});
+  await clock.getByRole('button',{name:'Run',exact:true}).click();
+  await expect(clock).toContainText('running');
+  await clock.getByRole('button',{name:'Stop + report',exact:true}).click();
+  await expect(clock.getByRole('alert')).toContainText('Stop temporarily unavailable');
+  await clock.getByRole('button',{name:'Stop + report',exact:true}).click();
+  await expect(clock).toContainText('finished');
+  await expect(clock.getByRole('button',{name:'Run',exact:true})).toBeDisabled();
+  await expect(clock.getByRole('button',{name:'Stop + report',exact:true})).toBeDisabled();
+  expect(stops).toBe(2);
+});
+
 test('primary drag pans horizontally and vertically without orbiting; secondary drag rotates',async({page})=>{
   await openCity(page);
   await page.evaluate(async()=>{
