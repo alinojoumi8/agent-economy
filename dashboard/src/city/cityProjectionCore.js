@@ -13,10 +13,11 @@ export function cityIdentity(envelope) {
   return JSON.stringify([cityCoherence(envelope),envelope.snapshot_version]);
 }
 function validate(envelope) {
+  // v2 retains these public entity layers; keep v1 replay views supported.
   if (!record(envelope) || typeof envelope.run_id !== 'string' || !envelope.run_id
     || !(envelope.fork_id === null || typeof envelope.fork_id === 'string')
     || !integer(envelope.tick) || !integer(envelope.event_cursor) || !integer(envelope.semantics_version)
-    || envelope.projection_version !== 1 || envelope.policy_version !== 1
+    || ![1, 2].includes(envelope.projection_version) || envelope.policy_version !== 1
     || typeof envelope.view_key !== 'string' || !envelope.view_key
     || typeof envelope.snapshot_version !== 'string' || envelope.projection !== 'world.map'
     || !record(envelope.data)) throw new Error('Unsupported or malformed city projection. Use the 2D atlas.');

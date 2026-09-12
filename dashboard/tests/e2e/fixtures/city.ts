@@ -3,7 +3,7 @@ export async function installCityFixture(page:Page,{agents=300,places=100}:{agen
   await page.addInitScript(()=>{
     class Socket extends EventTarget{
       readyState=1;static OPEN=1;
-      constructor(){super();queueMicrotask(()=>{this.dispatchEvent(new Event('open'));this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'hello',run_id:'city-fixture',fork_id:null,tick:2,semantics_version:12,projection_version:1,policy_version:1,view_key:'public',event_cursor:9,status:'paused'})}));});}
+      constructor(){super();queueMicrotask(()=>{this.dispatchEvent(new Event('open'));this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'hello',run_id:'city-fixture',fork_id:null,tick:2,semantics_version:12,projection_version:2,policy_version:1,view_key:'public',event_cursor:9,status:'paused'})}));});}
       send(){} close(){this.readyState=3;}
     }
     Object.defineProperty(window,'WebSocket',{value:Socket});
@@ -11,7 +11,7 @@ export async function installCityFixture(page:Page,{agents=300,places=100}:{agen
   await page.route('**/api/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
     const tick=url.searchParams.get('tick')==='1'?1:2;
-    const base={run_id:'city-fixture',fork_id:url.searchParams.get('fork_id'),tick,semantics_version:12,projection_version:1,policy_version:1,view_key:'public',snapshot_version:`s12-t${tick}-e9-fixture`,event_cursor:9};
+    const base={run_id:'city-fixture',fork_id:url.searchParams.get('fork_id'),tick,semantics_version:12,projection_version:2,policy_version:1,view_key:'public',snapshot_version:`s12-t${tick}-e9-fixture`,event_cursor:9};
     if(path==='/api/v2/mode')return route.fulfill({json:{mode:'local',hosted:false,navigation:{run_id:'city-fixture'}}});
     if(path==='/api/participant')return route.fulfill({json:{enabled:false,active:false}});
     if(path==='/api/run/status')return route.fulfill({json:{status:'paused',tick,running:false}});

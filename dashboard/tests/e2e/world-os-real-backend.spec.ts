@@ -43,7 +43,7 @@ test.describe("provider-free real backend menu smoke", () => {
     await expect(command).toBeHidden();
     await expect(commandTrigger).toBeFocused();
 
-    const initialStatus = await request.get("http://127.0.0.1:4174/api/run/status");
+    const initialStatus = await request.get("/api/run/status");
     expect(initialStatus.ok()).toBe(true);
     const initial = await initialStatus.json() as { tick?: number; running?: boolean; status?: string };
     if (Number(initial.tick || 0) < 3 && initial.running !== true) {
@@ -52,7 +52,7 @@ test.describe("provider-free real backend menu smoke", () => {
       await run.click();
     }
     await expect.poll(async () => {
-      const response = await request.get("http://127.0.0.1:4174/api/run/status");
+      const response = await request.get("/api/run/status");
       if (!response.ok()) return -1;
       const status = await response.json() as { tick?: number };
       return Number(status.tick || 0);
@@ -131,6 +131,7 @@ test.describe("provider-free real backend menu smoke", () => {
     await expect(page.getByRole("heading", { name: "The living city", exact: true })).toBeVisible();
     const cityView = page.getByRole("group", { name: "City view" });
     await cityView.getByRole("button", { name: "Atlas", exact: true }).click();
+    await page.getByText("Layers and agent filters", { exact: true }).click();
     const cityLayers = page.getByRole("group", { name: "City evidence layer" });
     for (const label of ["Work", "Comms", "Markets", "Civic", "Health", "All"]) {
       const button = cityLayers.getByRole("button", { name: new RegExp(`^${label}`) });
@@ -151,5 +152,20 @@ test.describe("provider-free real backend menu smoke", () => {
 
     expect(consoleErrors).toEqual([]);
     expect(requestFailures).toEqual([]);
+  });
+
+  test("3D city accepts the real projection and preserves entity evidence", async ({ page }) => {
+    await page.goto(`/runs/${encodeURIComponent(realRunId)}/world?cityView=3d`);
+    await expect(page.getByTestId("city-canvas")).toHaveAttribute("data-ready", "true");
+    await expect(page.getByText("Unsupported or malformed city projection.", { exact: false })).toHaveCount(0);
+    const entities = page.locator("#city-entity-select");
+    await expect.poll(() => entities.locator("option").count()).toBeGreaterThan(0);
+    await entities.selectOption({ index: 0 });
+    await expect(page.getByRole("link", { name: "Open agent evidence" })).toHaveAttribute(
+      "href", new RegExp(`/runs/${realRunId}/people/\\d+$`),
+    );
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await page.reload();
+    await expect(page.getByTestId("city-canvas")).toHaveAttribute("data-ready", "true");
   });
 });

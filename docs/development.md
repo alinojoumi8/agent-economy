@@ -154,10 +154,31 @@ $env:AE_REAL_RUN_ID = "<run-id>"
 npm --prefix dashboard run test:e2e -- e2e/world-os-real-backend.spec.ts
 ```
 
-Without `AE_REAL_RUN_ID`, this one opt-in test is skipped and the mocked suite
+Without `AE_REAL_RUN_ID`, these opt-in tests are skipped and the mocked suite
 runs normally. The smoke may advance a non-terminal run to tick 3 through the
 ordinary UI controls. Use only a disposable local run. It makes no provider
 calls under `runs/base.yaml` and does not validate hosted-only destinations.
+
+To include the 3D city and test the committed production bundle directly, use
+`runs/simcity.yaml` for the disposable server above and set
+`$env:AE_REAL_BASE_URL = "http://127.0.0.1:8000"` before the browser command.
+The two real-backend tests cover workspace navigation, city layers, 3D rendering,
+entity evidence links, camera controls and reload. Clear `AE_REAL_BASE_URL`
+before returning to the normal Vite-backed suite.
+
+On Windows, use `.\.venv\Scripts\python.exe` explicitly if another application's
+Python is on PATH. A provider-free local city can be started from the repository
+root with:
+
+```powershell
+$env:PYTHONUTF8 = "1"
+.\.venv\Scripts\python.exe run.py --config runs/simcity.yaml --serve
+```
+
+Keep the server terminal running and open `http://127.0.0.1:8000/`. It starts
+paused; choose **Run** or **Step** to advance. No frontend development server is
+needed. The evolving-live default and DeepSeek demo require their separately
+documented provider setup and explicit live-inference authorization.
 
 ## Test layers
 

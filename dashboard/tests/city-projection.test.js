@@ -10,6 +10,17 @@ test('empty city remains empty and derived identity includes authorization and l
   assert.notEqual(cityIdentity(envelope()),cityIdentity(envelope({}, {view_key:'operator'})));
   assert.notEqual(cityIdentity(envelope()),cityIdentity(envelope({}, {fork_id:'fork'})));
 });
+
+test('current v2 and legacy v1 projections render with distinct cache identities', () => {
+  const data = {agents:[{id:1,name:'Citizen'}], banks:[{id:1,name:'Bank'}]};
+  const legacy = projectCity(envelope(data));
+  const current = projectCity(envelope(data, {projection_version:2}));
+  assert.deepEqual(current.instances, legacy.instances);
+  assert.notEqual(current.identity, legacy.identity);
+  for (const version of [0, 3, '2', null]) {
+    assert.throws(() => projectCity(envelope(data, {projection_version:version})));
+  }
+});
 test('derived layout is deterministic, order independent, unique, and stable as IDs arrive', () => {
   const agents = Array.from({length:300}, (_,i)=>({id:i+1,name:`Agent ${i}`,region_id:1}));
   const a=projectCity(envelope({agents})), b=projectCity(envelope({agents:[...agents].reverse()}));
