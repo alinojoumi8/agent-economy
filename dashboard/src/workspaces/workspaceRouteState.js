@@ -15,6 +15,7 @@ export function normalizeWorkspaceFilters(filters, allowedKeys) {
 export function workspaceRouteUrl(runId, path, state, extra = {}) {
   const params = new URLSearchParams();
   if (state?.fork) params.set("fork", String(state.fork));
+  if (state?.city) params.set("city", String(state.city).slice(0, 2048));
   if (state?.tick !== null && state?.tick !== undefined
       && state.tick !== "" && state.tick !== "live") {
     params.set("tick", String(state.tick));

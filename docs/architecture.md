@@ -159,6 +159,13 @@ agents, institutions, ledger state, markets, events, memories, beliefs,
 conversations, predictions, metrics, shocks, checkpoints, and LLM calls.
 Schema 20 additively stores external-turn attendance for explicitly selected
 Semantics 14 runs.
+Schema 21 adds person origins, households, membership and guardian intervals,
+parent/child relations, daily needs and reconciled censuses for fresh Semantics
+15 worlds. Births use the existing agent identity space and create no wealth.
+New demographic draws are keyed by seed, mechanism, day and person. Children
+use deterministic needs and age-gated actions. See the
+[household contract](semantics15-households.md), including its pending time,
+estate and family-formation work. Older mechanics keep their recorded contract.
 
 Exact replay rebuilds genesis in a new database and re-executes recorded LLM
 responses without a network fallback. Canonical table hashes prove equality.

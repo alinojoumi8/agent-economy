@@ -66,7 +66,7 @@ LIVE_CASES = (
         SCALE_170_DEEPSEEK,
         "DEEPSEEK_API_KEY",
         "deepseek",
-        "deepseek-v4-flash",
+        "deepseek-flash",
         6,
         0.20,
     ),

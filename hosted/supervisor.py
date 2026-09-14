@@ -30,6 +30,12 @@ from hosted.artifacts import (
 from run import open_run
 from run_config import load_config
 from server.app import create_app
+import logging
+from observability import get_logger, log_event as operational_log
+
+logger = get_logger("hosted.supervisor")
+_TERMINAL_RUN_STATUSES = frozenset({"stopped", "failed", "archived"})
+_RETIRE_TASKS: set = set()
 
 
 _PROFILE_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -643,15 +649,22 @@ class HostedRunSupervisor:
             world._stop_requested = False
             world.store.set_meta(status="paused")
             world.store.commit()
-            updated = await asyncio.to_thread(
-                self.catalog.update_run_status,
-                tenant,
-                public_id,
-                "paused",
-                lease_token=lease_token,
-            )
-            if updated is None:
-                raise WriterLeaseLost(f"writer lease lost while opening run {public_id}")
+            if str(_record_value(record, "status", "")) in _TERMINAL_RUN_STATUSES:
+                # Reading a stopped run reopens its world for projections, but
+                # must not relabel the catalog row: only a control transition
+                # (written through snapshot_boundary) may do that, and a
+                # terminal write here would also clear the lease just acquired.
+                updated = record
+            else:
+                updated = await asyncio.to_thread(
+                    self.catalog.update_run_status,
+                    tenant,
+                    public_id,
+                    "paused",
+                    lease_token=lease_token,
+                )
+                if updated is None:
+                    raise WriterLeaseLost(f"writer lease lost while opening run {public_id}")
             handle = self._build_handle(
                 tenant=tenant,
                 public_id=public_id,
@@ -739,6 +752,15 @@ class HostedRunSupervisor:
             except WriterLeaseUnavailable:
                 # A still-live peer owns the non-expired lease; leave both its
                 # durable status and world untouched.
+                continue
+            except Exception as exc:
+                # One unrecoverable run (removed profile, capacity, missing
+                # snapshot) must not turn startup into an outage for every
+                # tenant. Leave the row for the operator and keep recovering.
+                operational_log(
+                    logger, logging.ERROR, "hosted.recover.run_failed",
+                    run_id=str(_record_value(record, "id", "")),
+                    error_type=type(exc).__name__)
                 continue
         return tuple(recovered)
 
@@ -835,13 +857,20 @@ class HostedRunSupervisor:
                 raise WriterLeaseLost(
                     f"writer lease lost while publishing run {handle.public_run_id}"
                 )
-            status = (
-                "stopped"
-                if reason == "stop" or handle.world.status == "finished"
-                else "paused"
-                if reason == "pause" or handle.world.status in {"paused", "halted"}
-                else "running"
-            )
+            world_status = str(handle.world.status)
+            current_status = str(_record_value(handle.catalog_record, "status", ""))
+            if reason == "stop" or world_status == "finished":
+                status = "stopped"
+            elif world_status in {"paused", "halted"} or (reason == "pause" and not manual):
+                # A manual snapshot of a running world must not relabel it paused.
+                status = "paused"
+            else:
+                status = "running"
+            if (current_status in _TERMINAL_RUN_STATUSES
+                    and world_status not in {"running", "finished"}):
+                # A reopened terminal run stays terminal until a control
+                # actually restarts it.
+                status = current_status
             try:
                 record = await asyncio.to_thread(
                     self.catalog.update_run_status,
@@ -863,7 +892,20 @@ class HostedRunSupervisor:
             handle.catalog_record = record
             handle.snapshot_failed = False
             handle.snapshot_errors.clear()
-            return metadata
+        if status in _TERMINAL_RUN_STATUSES:
+            # The catalog cleared the writer lease together with the terminal
+            # status. Keeping the world loaded would make the next heartbeat
+            # renewal fail and wedge every route behind ``WriterLeaseLost``;
+            # retire the handle so a later request lazily reopens the run.
+            self._retire_handle(handle)
+        return metadata
+
+    def _retire_handle(self, handle: RunHandle) -> None:
+        if handle.closed:
+            return
+        task = asyncio.create_task(self.close_run(handle))
+        _RETIRE_TASKS.add(task)
+        task.add_done_callback(_RETIRE_TASKS.discard)
 
     async def _record_snapshot_failure(self, handle: RunHandle) -> None:
         if handle.snapshot_failed or handle.closed:
@@ -950,9 +992,11 @@ class HostedRunSupervisor:
 
         async def heartbeat() -> None:
             interval = max(1.0, self.lease_ttl_seconds / 3)
-            try:
-                while not handle.closed:
-                    await asyncio.sleep(interval)
+            loop = asyncio.get_running_loop()
+            last_renewed = loop.time()
+            while not handle.closed:
+                await asyncio.sleep(interval)
+                try:
                     renewed = await asyncio.to_thread(
                         self.catalog.renew_writer_lease,
                         handle.tenant_id,
@@ -961,17 +1005,21 @@ class HostedRunSupervisor:
                         token=handle.lease_token,
                         ttl_seconds=self.lease_ttl_seconds,
                     )
-                    if not renewed:
-                        self._mark_lease_lost(handle)
-                        return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # A failed heartbeat is indistinguishable from lease loss once
-                # the TTL can expire.  Stop accepting controls immediately;
-                # otherwise another supervisor may acquire the same run while
-                # this world continues writing.
-                self._mark_lease_lost(handle)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A transient catalog error is not lease loss while the TTL
+                    # still has room; retry until it genuinely can expire. Only
+                    # then must controls stop, or another supervisor could
+                    # acquire the run while this world continues writing.
+                    if loop.time() - last_renewed < self.lease_ttl_seconds - interval:
+                        continue
+                    self._mark_lease_lost(handle)
+                    return
+                if not renewed:
+                    self._mark_lease_lost(handle)
+                    return
+                last_renewed = loop.time()
 
         handle.lease_task = asyncio.create_task(heartbeat())
 
@@ -1046,10 +1094,15 @@ class HostedRunSupervisor:
         if self._closing:
             return
         self._closing = True
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(self.close_run(handle) for handle in self.loaded_runs),
-            return_exceptions=False,
+            return_exceptions=True,
         )
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            # Every run got its chance to snapshot and release its lease
+            # before the first failure surfaces.
+            raise failures[0]
 
 
 # Short alias for hosted factories and operators.

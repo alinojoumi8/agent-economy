@@ -91,10 +91,13 @@ def load_migrations(directory: str | Path = DEFAULT_MIGRATIONS_DIR) -> tuple[Mig
 
 
 def _execute(connection: Any, sql: Any, params: Sequence[Any] = ()) -> Any:
+    # Without parameters psycopg must not scan the statement for placeholders:
+    # a literal ``%`` in a migration (``LIKE 'x%'``) would otherwise fail.
+    arguments = (sql, tuple(params)) if params else (sql,)
     if hasattr(connection, "execute"):
-        return connection.execute(sql, tuple(params))
+        return connection.execute(*arguments)
     cursor = connection.cursor()
-    cursor.execute(sql, tuple(params))
+    cursor.execute(*arguments)
     return cursor
 
 
@@ -270,6 +273,13 @@ def _grant_runtime_access(
         connection,
         "GRANT INSERT, UPDATE ON TABLE memberships, sessions, invitations, external_agents, "
         "external_agent_credentials, external_actor_bindings "
+        f"TO {quoted_role}",
+    )
+    # Administrators tune the per-run external-agent quota through the web
+    # role; the column-scoped grant keeps every other tenant field read-only.
+    _execute(
+        connection,
+        "GRANT UPDATE (max_external_agents_per_run, updated_at) ON TABLE tenants "
         f"TO {quoted_role}",
     )
     _execute(connection, f"GRANT SELECT, INSERT ON TABLE auth_attempts TO {quoted_role}")

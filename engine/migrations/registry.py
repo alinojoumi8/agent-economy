@@ -15,6 +15,12 @@ from . import (
     v018_news_redaction_provenance,
     v019_construction_economy,
     v020_external_turn_attendance,
+    v021_households,
+    v022_household_decisions,
+    v023_daily_time,
+    v024_estate_cash,
+    v025_asset_succession,
+    v027_urban_development,
 )
 
 
@@ -74,6 +80,22 @@ _MIGRATIONS = (
         20, v020_external_turn_attendance.NAME,
         v020_external_turn_attendance.SQL,
         verify=v020_external_turn_attendance.verify),
+    Migration.create(
+        21, v021_households.NAME, v021_households.SQL,
+        verify=v021_households.verify),
+    Migration.create(
+        22, v022_household_decisions.NAME, v022_household_decisions.SQL,
+        verify=v022_household_decisions.verify),
+    Migration.create(
+        23, v023_daily_time.NAME, v023_daily_time.SQL,
+        verify=v023_daily_time.verify),
+    Migration.create(
+        24, v024_estate_cash.NAME, v024_estate_cash.SQL,
+        verify=v024_estate_cash.verify),
+    Migration.create(
+        25, v025_asset_succession.NAME, v025_asset_succession.SQL,
+        verify=v025_asset_succession.verify),
+    Migration.create(27, v027_urban_development.NAME, v027_urban_development.SQL, verify=v027_urban_development.verify),
 )
 
 

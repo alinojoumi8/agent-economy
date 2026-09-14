@@ -675,6 +675,7 @@ export function OverviewWorkspace() {
         <Button pressed={status?.running === true} disabled={run.pending || terminal || status?.running === true} onClick={() => control("/api/run/start")}>Run</Button>
         <Button disabled={run.pending || terminal || status?.running !== true} onClick={() => control("/api/run/pause")}>Pause</Button>
         <Button disabled={run.pending || terminal || status?.running === true} onClick={() => control("/api/run/step")}>Step</Button>
+        <Button disabled={run.pending || terminal} onClick={() => control("/api/run/stop")}>Stop + report</Button>
         <Button disabled={run.pending || terminal} onClick={() => control("/api/run/speed", { delay_s: status?.speed_delay_s === 0 ? 0.5 : 0 })}>
           {status?.speed_delay_s === 0 ? "Slow" : "Fast"}
         </Button>

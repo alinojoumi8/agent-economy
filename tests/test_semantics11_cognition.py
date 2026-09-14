@@ -34,7 +34,7 @@ def test_desktop_profile_bounds_local_resource_use():
     assert config["llm"]["logical_deadline_s"] == 900
     assert config["llm"]["providers"]["ollama"]["concurrency"] == 1
     assert config["llm"]["providers"]["deepseek"][
-        "documented_model_version"] == "DeepSeek-V4-Flash-0731"
+        "documented_model_version"] == "DeepSeek-V4.1-Flash"
     assert config["llm"]["tier_routes"]["local"]["primary"]["model"] == (
         "agent-economy-qwen3.5:9b-16k")
     assert config["llm"]["tier_routes"]["flash"]["fallback"]["provider"] == (
@@ -465,7 +465,7 @@ def test_route_plans_follow_tier_role_and_background_policy(cognition_world):
     assert local.assigned_tier == "local"
     assert [(t.provider, t.model) for t in local.targets] == [
         ("ollama", "agent-economy-qwen3.5:9b-16k"),
-        ("deepseek", "deepseek-v4-flash"),
+        ("deepseek", "deepseek-flash"),
     ]
 
     premium_background = gateway.route_plan(LLMRequest(
@@ -506,7 +506,7 @@ def test_cloud_cohorts_assign_exactly_five_each_and_preserve_other_routes(
     assert len(selected) == 15
     expected_regular = {
         "local": ("ollama", "agent-economy-qwen3.5:9b-16k"),
-        "flash": ("deepseek", "deepseek-v4-flash"),
+        "flash": ("deepseek", "deepseek-flash"),
         "premium": ("kimi", "kimi-for-coding"),
     }
     for row in store.query(
@@ -555,11 +555,17 @@ def test_runtime_and_agent_cognition_api_projection(cognition_world):
     store, world = cognition_world
     agent_id = _citizen(store, "premium")
     with TestClient(create_app(world)) as client:
+        changes_before_runtime = store.conn.total_changes
         runtime_response = client.get("/api/llm/runtime")
+        assert store.conn.total_changes == changes_before_runtime
         detail_response = client.get(f"/api/agents/{agent_id}")
 
     assert runtime_response.status_code == 200
     runtime = runtime_response.json()
+    assert runtime_response.headers["cache-control"] == "private, no-store"
+    assert runtime["context"] == {
+        "run_id": store.get_meta()["run_id"], "fork_id": None, "tick": "live",
+    }
     assert runtime["global"] == {
         "capacity": 6,
         "in_flight": 0,

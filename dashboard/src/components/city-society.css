@@ -1,0 +1,10 @@
+.city-society-evidence { min-width: 0; }
+.city-society-members { display: grid; gap: 12px; padding: 0; margin: 12px 0; list-style: none; }
+.city-society-members li { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.city-society-members button {
+  text-align: left; min-height: 39px; max-width: 100%; padding: 8px;
+  color: inherit; background: transparent; border: 1px solid currentColor;
+  font: inherit; cursor: pointer; overflow-wrap: anywhere;
+}
+.city-society-members small { font-size: 0.75rem; line-height: 1.5; }
+.city-society-availability { margin: 0; padding: 8px 16px; font-size: 0.75rem; }

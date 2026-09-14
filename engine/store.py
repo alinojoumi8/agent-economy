@@ -25,11 +25,20 @@ def _utcnow() -> str:
 
 
 def open_read_only_connection(
-        path: str, *, check_same_thread: bool = False) -> sqlite3.Connection:
+        path: str, *, check_same_thread: bool = False,
+        require_closed: bool = False) -> sqlite3.Connection:
     """Open an existing SQLite database without permitting file mutations."""
-    # Do not use immutable=1: an active recorded run may have committed calls
-    # in its WAL, and immutable connections are allowed to ignore that file.
+    # The default must include committed WAL content from active recordings.
+    # A caller that owns a closed, hash-bound artifact can explicitly require
+    # no sidecars and avoid creating WAL/SHM files during evidence inspection.
+    if require_closed:
+        source = Path(path).absolute()
+        if (source != source.resolve() or not source.is_file() or source.stat().st_nlink != 1
+                or any(Path(str(source) + suffix).exists() for suffix in ("-wal", "-shm", "-journal"))):
+            raise ValueError("closed recorded source must be standalone without SQLite sidecars")
     uri = f"{Path(path).resolve().as_uri()}?mode=ro&cache=private"
+    if require_closed:
+        uri += "&immutable=1"
     conn = sqlite3.connect(
         uri, uri=True, isolation_level=None,
         check_same_thread=check_same_thread,
@@ -60,7 +69,7 @@ class ReadOnlyReplaySnapshot:
     backup is made, and committed WAL content is included by SQLite itself.
     """
 
-    def __init__(self, source_path: str):
+    def __init__(self, source_path: str, *, require_closed: bool = False):
         self.source_path = str(Path(source_path).resolve())
         self.path: Path | None = None
         self.conn: sqlite3.Connection | None = None
@@ -73,7 +82,7 @@ class ReadOnlyReplaySnapshot:
         source: sqlite3.Connection | None = None
         snapshot: sqlite3.Connection | None = None
         try:
-            source = open_read_only_connection(self.source_path)
+            source = open_read_only_connection(source_path, require_closed=require_closed)
             snapshot = sqlite3.connect(
                 str(self.path), isolation_level=None, check_same_thread=False,
                 cached_statements=0)

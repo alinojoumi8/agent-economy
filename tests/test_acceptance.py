@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 import sys
 
@@ -472,10 +473,18 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
     world.acceptance_target_tick = 2
 
     with TestClient(create_app(world)) as client:
-        for _ in range(100):
+        # Two ticks plus the terminal checkpoint and report take a fixed amount of
+        # simulation work, while a status poll is a millisecond round trip: a
+        # request-count bound therefore fails whenever the machine is busy. Wait
+        # on wall-clock time instead, with room for a loaded CI runner.
+        deadline = time.monotonic() + 120.0
+        while True:
             status = client.get("/api/run/status").json()
             if not status["running"] and status["tick"] >= 2:
                 break
+            assert time.monotonic() < deadline, (
+                f"served acceptance run did not reach tick 2 in time: {status}")
+            time.sleep(0.05)
         assert status["tick"] == 2
         assert status["acceptance_orchestration"]["state"] == "completed"
         assert status["acceptance_orchestration"]["authorized"]
@@ -1131,14 +1140,23 @@ def test_resumed_served_acceptance_uses_its_absolute_target(tmp_path):
     world.acceptance_target_tick = 2
 
     with TestClient(create_app(world, served_ticks=2)) as client:
-        for _ in range(100):
+        # The last tick commits before checkpoint/report work finishes. Wait for
+        # the controller to become idle before testing its completed-run guard;
+        # a fixed number of fast HTTP polls can exhaust while it is still busy.
+        deadline = time.monotonic() + 120.0
+        while True:
             status = client.get("/api/run/status").json()
-            if not status["running"]:
+            if not status["running"] and status["tick"] >= 2:
                 break
+            assert time.monotonic() < deadline, (
+                f"resumed served acceptance did not finish tick 2 in time: {status}")
+            time.sleep(0.05)
 
+        assert not status["running"]
         assert status["tick"] == 2
         assert status["target_tick"] == 2
         assert status["remaining_ticks"] == 0
+        assert status["acceptance_orchestration"]["state"] == "completed"
         assert client.post("/api/run/start").json()["status"] == "limit_reached"
 
 

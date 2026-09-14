@@ -40,6 +40,22 @@ def test_hermes_live_profile_preserves_citizenship_and_routes_native_agents_to_n
         for route in config["llm"]["routes"].values())
 
 
+def test_two_provider_passport_profile_is_bounded_and_has_no_other_model_routes():
+    config = load_config("runs/hermes-deepseek-minimax.yaml")
+    assert config["external_gateway"]["enabled"] is True
+    assert config["external_gateway"]["public_join"]["enabled"] is True
+    assert config["external_gateway"]["public_join"]["passport_db_path"] == (
+        "data/control-plane/agent-passports.db")
+    assert config["budget"]["cap_usd"] == 2.0
+    assert config["communications"]["autonomous_scripted_enabled"] is False
+    assert config["llm"]["live_only"] is True
+    assert config["llm"]["require_preflight_live"] is True
+    assert set(config["llm"]["providers"]) == {"deepseek", "minimax"}
+    routes = [config["llm"]["default_route"], *config["llm"]["routes"].values()]
+    assert {(route["provider"], route["model"]) for route in routes} == {
+        ("deepseek", "deepseek-flash"), ("minimax", "MiniMax-M3")}
+
+
 def _world(tmp_path: Path, *, seats: int = 5) -> tuple[World, Path]:
     config = load_config("runs/world-os-external.yaml")
     config["population"]["size"] = 4
@@ -139,6 +155,21 @@ def test_migration_join_documents_and_security_headers(citizen_client):
         "my_agents": "/my-agents",
     }
     assert client.get("/api/v2/mode").json()["navigation"] == navigation
+
+
+def test_citizen_oauth_discovery_only_advertises_grantable_scopes(citizen_client):
+    _world, client, _passport_path = citizen_client
+    expected = {"world.read", "world.act", "commons.read", "commons.write"}
+    for path in ("/.well-known/oauth-protected-resource/mcp",
+                 "/.well-known/oauth-authorization-server"):
+        metadata = client.get(path).json()
+        assert set(metadata["scopes_supported"]) == expected
+    rejected = client.post("/oauth/register", json={
+        "client_name": "Overbroad client", "redirect_uris": ["http://127.0.0.1:43123/callback"],
+        "scope": "world.read moderation.act",
+    })
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == "invalid_client_metadata"
 
 
 def test_agent_registration_claim_exchange_hashing_and_replay(citizen_client):

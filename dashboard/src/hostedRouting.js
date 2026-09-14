@@ -59,7 +59,8 @@ export function tenantApiPath(path, tenantId = routing.tenantId) {
 function worldApiPath(path) {
   if (!routing.tenantId || !routing.runId) throw new Error("select a hosted run first");
   if (!String(path).startsWith("/api/")) throw new Error("hosted world API path is unsupported");
-  return `/api/v2/tenants/${routing.tenantId}/runs/${routing.runId}/world${path}`;
+  // The hosted proxy re-adds the `/api/` prefix in front of the world path.
+  return `/api/v2/tenants/${routing.tenantId}/runs/${routing.runId}/world${path.slice("/api".length)}`;
 }
 
 const CONTROLS = new Map([

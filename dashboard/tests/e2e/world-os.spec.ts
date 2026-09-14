@@ -71,6 +71,9 @@ async function mockApi(page: Page) {
   await page.route("**/api/v2/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    const requestedTick = url.searchParams.get("tick");
+    const frame = { ...baseEnvelope, fork_id: url.searchParams.get("fork_id"),
+      tick: requestedTick && requestedTick !== "live" ? Number(requestedTick) : 6 };
     if (path === "/api/v2/mode") return route.fulfill({ json: {
       mode: "local", hosted: false, api_base: "/api/v2",
       navigation: {
@@ -80,7 +83,7 @@ async function mockApi(page: Page) {
       },
     } });
     if (path === "/api/v2/snapshot") return route.fulfill({ json: {
-      ...baseEnvelope, projection: "world.snapshot", data: {
+      ...frame, projection: "world.snapshot", data: {
         summary: { status: "paused", phase: "FINALIZE", active_tick: null, agents_alive: 3, active_firms: 1, ledger_balance: 0 },
         communications: { total: 1, published: 0, private_total: 1 },
         alerts: [{ id: 9, tick: 6, phase: "MARKET", kind: "goods_sale", importance: 2, payload: { buyer_id: 1, qty: 5 } }],
@@ -98,7 +101,7 @@ async function mockApi(page: Page) {
       flows: [],
     } });
     if (path === "/api/v2/world-map") return route.fulfill({ json: {
-      ...baseEnvelope, projection: "world.map", data: {
+      ...frame, projection: "world.map", data: {
         regions: [],
         agents: [
           { id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", x: null, y: null },
@@ -113,14 +116,14 @@ async function mockApi(page: Page) {
     /* The civic panel lives in the World workspace, so its atlas projection has
        to be answered too or the workspace renders its error state instead. */
     if (path === "/api/v2/workspaces/world") return route.fulfill({ json: {
-      ...baseEnvelope, projection: "workspace.world", data: {
+      ...frame, projection: "workspace.world", data: {
         enabled: true, regions: [], agents: [], organizations: [],
         places: [], presence: [], flows: [],
       },
     } });
     if (path === "/api/v2/civic/summary") return route.fulfill({ json: {
-      ...baseEnvelope, projection: "civic.summary", data: {
-        enabled: false, tick: 6, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
+      ...frame, projection: "civic.summary", data: {
+        enabled: false, tick: frame.tick, queue: { depth: 0, oldest_age_ticks: 0 }, offices: [],
       },
     } });
     if (path === "/api/v2/events") return route.fulfill({ json: {
@@ -455,6 +458,7 @@ async function mockApi(page: Page) {
     { id: 1, name: "Northstar Foods", sector: "food", status: "private", employees: 1 },
   ] }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    context: { run_id: "run-demo", fork_id: null, tick: "live" },
     live_only: true,
     activity_revision: 0,
     active_agents: [],
@@ -465,6 +469,92 @@ async function mockApi(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => { await installSocket(page); await mockApi(page); });
+
+test("outside population history keeps finances visible and restores city focus on return", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const person = (tick: number) => ({
+    id: 1, name: "Population fixture person", kind: "citizen", role: null, occupation: "carpenter",
+    population_tier: "core", arrived_tick: 0, died_tick: null, alive: true,
+    region: tick < 5 ? null : { id: 2, name: "Return region" },
+    balance_cents: null, cash_by_currency: { USD: 100, EUR: 27 },
+    modeled_residence: { state: tick < 5 ? "outside" : "resident", since_tick: tick < 5 ? 2 : 5,
+      evidence_ref: { kind: "event", id: tick < 5 ? 12 : 20, tick: tick < 5 ? 2 : 5 } },
+    employment: null, compute: tick < 5 ? null : { tier: "local", payer_type: "free", price_cents: 0,
+      effective_tick: null, expiry_tick: null, evidence_ref: null },
+    skills: [], residence: null, workplace: null, latest_committed_tick: tick < 5 ? 2 : 5, runtime: null,
+  });
+  const legend = { committed: "Recorded evidence", runtime: "Live execution only", derived: "Observer summary" };
+  const privacy = { private_bodies_omitted: true, peripheral_locations: "region_only", civic_cases: "aggregate_only" };
+  const activity = { items: [], next_cursor: null, total: 0, cursor_kind: "offset" };
+  await page.route("**/api/v2/workspaces/living-agents?*", async route => {
+    const tick = Number(new URL(route.request().url()).searchParams.get("tick"));
+    await route.fulfill({ json: { ...baseEnvelope, tick, semantics_version: 21, projection: "workspace.living_agents", data: {
+      summary: { tick, living_agents: 1, resident_population: tick < 5 ? 0 : 1, known_living_outside: tick < 5 ? 1 : 0,
+        active_employments: 0, active_projects: 0, completed_projects: 0, public_outputs: 0, runtime_active: 0,
+        projects_total: 0, projects_shown: 0 },
+      agents: [person(tick)], projects: [], activity, source_legend: legend, privacy,
+    } } });
+  });
+  await page.route("**/api/v2/agents/1/journey?*", async route => {
+    const tick = Number(new URL(route.request().url()).searchParams.get("tick"));
+    const agent = person(tick);
+    await route.fulfill({ json: { ...baseEnvelope, tick, semantics_version: 21, projection: "workspace.agent_journey", data: {
+      profile: agent, current_state: agent, skills: [], projects: [], milestones: activity,
+      public_outputs: [], runtime: null, evidence_refs: [agent.modeled_residence.evidence_ref], source_legend: legend, privacy,
+    } } });
+  });
+  await page.goto("/runs/run-demo/people/1?tick=4");
+  await expect(page.getByText("Outside since tick 2.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Focus in Live City", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Cash · USD", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cash · EUR", { exact: true })).toBeVisible();
+  await expect(page.getByText("100 cents", { exact: true })).toBeVisible();
+  await expect(page.getByText("27 cents", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("outside-day-4.png"), fullPage: true });
+  await page.goto("/runs/run-demo/people/1?tick=5");
+  await expect(page.getByRole("link", { name: "Focus in Live City", exact: true })).toHaveAttribute("href", /tick=5.*agent=1/);
+  await expect(page.locator(".world-os-person-identity")).toContainText("Return region");
+  await expect(page.getByText("Outside since tick 2.", { exact: false })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("returned-day-5.png"), fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test("missing daily resident rate is unavailable instead of carrying the previous percentage", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.route("**/api/metrics*", route => route.fulfill({ json: { unemployment: [
+    { tick: 3, value: .6, status: "available", reason: null },
+    { tick: 4, value: null, status: "unavailable", reason: "empty_resident_labor_force" },
+  ] } }));
+  await page.route("**/api/run/status", route => route.fulfill({ json: {
+    run_id: "run-demo", tick: 4, active_tick: null, next_phase: null, status: "paused", running: false,
+    semantics_version: 21, speed_delay_s: 0, pause_reason: null,
+    governor: { remaining_usd: null, total_spend_usd: 0, world_spend_usd: 0, level: 0 },
+  } }));
+  await page.route("**/api/agents?*", route => route.fulfill({ json: { items: [], total: 0, limit: 40, next_after_id: null } }));
+  await page.route("**/api/banks", route => route.fulfill({ json: [] }));
+  await page.route("**/api/institutions", route => route.fulfill({ json: {} }));
+  // Complete the classic observer's unrelated read-only fixture surfaces.
+  for (const [path, data] of [
+    ['/api/acceptance/status', { configured: false, checks: [] }],
+    ['/api/participant', { enabled: false, active: false }],
+    ['/api/news*', []], ['/api/conversations*', []], ['/api/cost', null],
+    ['/api/oracle/predictions', { predictions: [], scorecard: {} }],
+    ['/api/shocks', { library: { kinds: [], trigger_types: [] }, scheduled: [] }],
+    ['/api/oracle/calibration*', { run: null, all: null, errors: [] }],
+  ] as const) await page.route(`**${path}`, route => route.fulfill({ json: data }));
+  for (const path of ['legal', 'politics', 'information', 'startups', 'markets', 'datasets']) {
+    await page.route(`**/api/v2/${path}`, route => route.fulfill({ json: { enabled: false } }));
+  }
+  await page.goto("/");
+  await expect(page.getByRole('article', { name: 'Unemployment', exact: true })).toContainText('Unavailable at t4.');
+  await expect(page.getByText("No eligible resident workers on this day.", { exact: false })).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Unemployment', exact: true })).not.toContainText('60.0%');
+  await page.screenshot({ path: testInfo.outputPath("missing-rate-day-4.png"), fullPage: true });
+  await page.getByRole('article', { name: 'Unemployment', exact: true }).screenshot({ path: testInfo.outputPath('missing-rate-card.png') });
+  expect(errors).toEqual([]);
+});
 
 test("initial projection handshake does not refetch stale backfill", async ({ page }) => {
   let snapshotRequests = 0;
@@ -581,6 +671,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   ] }));
   await page.route("**/api/firms", route => route.fulfill({ json: [] }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    context: { run_id: "run-demo", fork_id: null, tick: "live" },
     live_only: true,
     global: { capacity: 1, in_flight: 0, queue_depth: 0, peak_in_flight: 0, peak_queue_depth: 0, logical_deadline_s: 90 },
     simulated_days: { samples: 0, p50_wall_ms: null, p95_wall_ms: null },
@@ -649,12 +740,18 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
-  await expect.poll(async () => page.evaluate(() => (
-    (window as any).__gapSocket.sent
-  ))).toContainEqual({ type: "hello", event_cursor: 0 });
-  await page.evaluate(() => {
-    (window as any).__gapSocket.sent.length = 0;
-  });
+  /* The server hello is authoritative on a first connection. The client sends
+     no hello of its own (a hello at cursor 0 asked for the whole commit log and
+     began every fresh load stale). Under React StrictMode the dev build mounts
+     the socket effect twice, so the second socket may greet as a reconnect, but
+     only ever at the cursor the server hello announced, never at one that asks
+     for backfill. */
+  await page.waitForTimeout(200);
+  const greetings = await page.evaluate(() => (window as any).__gapSocket.sent);
+  expect(greetings.length).toBeLessThanOrEqual(1);
+  expect(greetings.every((message: any) => (
+    message.type === "hello" && message.event_cursor === 0
+  ))).toBe(true);
 
   await page.evaluate(() => {
     (window as any).__gapSocket.emit({
@@ -777,11 +874,14 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
   await expect(page.getByText("Derived civic layout", { exact: true }).first()).toBeVisible();
   await expect(page.locator(".civic-city__agent")).toHaveCount(3);
 
+  await page.getByText("Layers and agent filters", { exact: true }).click();
   await page.getByRole("button", { name: /Health/ }).click();
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
   await page.locator(".civic-city__agent").click();
   await expect(page.getByRole("heading", { name: "Dr. Amara Osei" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open citizen dossier" })).toHaveAttribute("href", "/runs/run-demo/people/3");
+  const citizenLink = new URL(await page.getByRole("link", { name: "Open citizen dossier" }).getAttribute("href") || "", page.url());
+  expect(citizenLink.pathname).toBe("/runs/run-demo/people/3");
+  expect(new URLSearchParams(citizenLink.searchParams.get("city") || "").get("agent")).toBe("3");
 
   const allLayer = page.locator(".civic-city__layers button").filter({ hasText: /^All/ });
   await allLayer.click();
@@ -793,11 +893,15 @@ test("live city layers, search, and evidence lens stay truthful and interactive"
   await expect(page).toHaveURL(/agent=1/);
   await expect(page.locator(".civic-city__agent")).toHaveCount(1);
   await expect(page.locator(".civic-city__activity strong")).toHaveText("Settled");
-  await expect(page.getByRole("link", { name: "Trace this event" })).toHaveAttribute("href", "/runs/run-demo/investigations?event=9");
+  const traceLink = new URL(await page.getByRole("link", { name: "Trace this event" }).getAttribute("href") || "", page.url());
+  expect(traceLink.pathname).toBe("/runs/run-demo/investigations");
+  expect(traceLink.searchParams.get("event")).toBe("9");
+  expect(new URLSearchParams(traceLink.searchParams.get("city") || "").get("agent")).toBe("1");
 });
 
 test("live AI activity coordinates map markers, dock, filters, and evidence", async ({ page }) => {
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    context: { run_id: "run-demo", fork_id: null, tick: "live" },
     live_only: true,
     activity_revision: 4,
     active_agents: [{
@@ -819,6 +923,7 @@ test("live AI activity coordinates map markers, dock, filters, and evidence", as
   await expect(page.locator(".civic-city__activity strong")).toHaveText("Thinking");
   await expect(page.getByText(/2 active calls/)).toBeVisible();
 
+  await page.getByText("Layers and agent filters", { exact: true }).click();
   await page.getByLabel("Live or changed this tick").focus();
   await page.getByLabel("Live or changed this tick").press("Space");
   await expect(page.getByLabel("Live or changed this tick")).toBeChecked();
@@ -908,6 +1013,7 @@ test("Civic City scales from core agents to clusters and all 300 residents", asy
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/runs/run-demo/world?population=clusters");
+  await page.getByText("Layers and agent filters", { exact: true }).click();
   await expect(page.locator(".civic-city__population")).toBeVisible();
   await expect(page.locator(".civic-city__population button", { hasText: "Clusters" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".civic-city__cluster")).toHaveCount(3);
@@ -1043,7 +1149,8 @@ test("communication access menu survives deep links, reload, and history", async
   expect(new URL(page.url()).searchParams.get("view")).toBe("agent");
   expect(new URL(page.url()).searchParams.get("agent_id")).toBe("12");
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Shipment notice", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shipment notice", level: 3, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Shipment notice", level: 4, exact: true })).toBeVisible();
   await page.goBack();
   await expect(agent).toHaveAttribute("aria-pressed", "true");
 
@@ -1092,8 +1199,8 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
   await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
-  /* Eleven routes remain searchable even though the permanent rail shows five. */
-  await expect(command.getByRole("option")).toHaveCount(11);
+  /* Ten destinations: the city renderers now share one workspace. */
+  await expect(command.getByRole("option")).toHaveCount(10);
   const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");
   await commandSearch.press("Enter");
@@ -1263,6 +1370,60 @@ test("participant mutation failures render, recover controls, and reset across i
   expect(requests).toEqual(["/api/participant/action", "/api/participant/release"]);
 });
 
+test("participant return uses named household members and caregiver choices", async ({ page }, testInfo) => {
+  await page.goto("/runs/run-demo/overview");
+  await page.evaluate(async () => {
+    const { mountParticipantHarness } = await import("/tests/e2e/fixtures/participantHarness.jsx");
+    const container = document.createElement("div");
+    container.id = "participant-movement-test-root";
+    document.body.append(container);
+    const people = [{ value: 23, label: "Ada" }, { value: 24, label: "Ben" }, { value: 25, label: "Cora" }];
+    const catalog = [{ type: "propose_population_movement", label: "Request return", enabled: true,
+      fields: [
+        { name: "cause", kind: "hidden", default: "return" },
+        { name: "member_ids", kind: "people", label: "Who is moving?", default: [23, 24, 25], options: people },
+        { name: "care_plan", kind: "care", label: "Who will care for each child?",
+          default: [{ child_id: 25, guardian_id: 24 }], children: [{ id: 25, name: "Cora" }], options: people.slice(0, 2) },
+        { name: "due_tick", kind: "number", label: "Move on day", default: 9, min: 8 },
+        { name: "request_key", kind: "text", label: "Request reference", default: "family-return" },
+        { name: "destination_region_id", kind: "select", label: "Return region", default: 1,
+          options: [{ value: 1, label: "Northstar" }] },
+      ] }];
+    (window as any).__movementCatalog = catalog;
+    (window as any).__movementHarness = mountParticipantHarness(container, {
+      enabled: true, active: true, running: false, control_scope: "return_only", completed_tick: 6, next_tick: 7,
+      controlled_agent: { id: 23, name: "Ada", occupation: "engineer", health: "healthy" }, action_catalog: catalog,
+    }, { acceptActions: true });
+  });
+  const harness = page.locator("#participant-movement-test-root");
+  await expect(harness.getByText(/Outside the economy/)).toBeVisible();
+  await harness.getByRole("checkbox", { name: "Ben", exact: true }).uncheck();
+  await harness.getByLabel("Care for Cora").selectOption("23");
+  await page.evaluate(() => (window as any).__movementHarness.update({
+    action_catalog: structuredClone((window as any).__movementCatalog),
+  }));
+  await expect(harness.getByRole("checkbox", { name: "Ben", exact: true })).not.toBeChecked();
+  await expect(harness.getByLabel("Care for Cora")).toHaveValue("23");
+  await harness.getByRole("button", { name: "Queue action for next day" }).click();
+  expect(await page.evaluate(() => (window as any).__movementHarness.payloads[0])).toEqual({
+    expected_tick: 6, reasoning: "", action: {
+      type: "propose_population_movement", cause: "return", member_ids: [23, 25],
+      care_plan: [{ child_id: 25, guardian_id: 23 }], due_tick: 9,
+      request_key: "family-return", destination_region_id: 1,
+    },
+  });
+  await harness.screenshot({ path: testInfo.outputPath("return-household-desktop.png") });
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.setViewportSize({ width: 390, height: 844 });
+  await harness.screenshot({ path: testInfo.outputPath("return-household-mobile.png") });
+  expect(await harness.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.evaluate(() => (window as any).__movementHarness.update({ controlled_agent: {
+    id: 24, name: "Ben", occupation: "analyst", health: "healthy",
+  } }));
+  await expect(harness.getByRole("checkbox", { name: "Ben", exact: true })).toBeChecked();
+  await expect(harness.getByLabel("Care for Cora")).toHaveValue("24");
+});
+
 test("modal initial focus ignores a detached caller target", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
   await page.evaluate(async () => {
@@ -1384,6 +1545,127 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
   await expect(page).toHaveURL(/\/people\/12\?fork=fork-a&tick=4$/);
   expect(searchUrl).toContain("tick=4");
   expect(searchUrl).toContain("fork_id=fork-a");
+});
+
+function householdFinanceFixture(url: URL) {
+  const tick = Number(url.searchParams.get("tick"));
+  const person = { type: "agent", id: 1, name: "Atlas Builder" };
+  const totals = { wallet_cash_cents: tick === 4 ? 12000 : 9000, restricted_cash_cents: 0,
+    receivable_face_cents: 2500, debt_face_cents: 500, observed_equity_marks_cents: 800, unpriced_count: 1 };
+  const instrument = { asset: true, debt: false, holder: person, original_holder: person, debtor: null,
+    currency: "CAD", unit: "currency_minor_units", quantity: null, cash_cents: null, face_cents: null,
+    mark: null, replaces: [], reason: null };
+  return { ...baseEnvelope, fork_id: url.searchParams.get("fork_id"), tick, semantics_version: 20,
+    projection: "operator.household-finances", data: { requested_tick: String(tick), selected_agent_id: 1,
+      contract_version: "household-finances-v1", visibility: "local_operator", household_id: 8, members: [person],
+      by_currency: { CAD: totals, USD: { wallet_cash_cents: 5000, restricted_cash_cents: 0,
+        receivable_face_cents: 0, debt_face_cents: 0, observed_equity_marks_cents: 0, unpriced_count: 0 } },
+      instruments: [
+        { ...instrument, id: "position-1", kind: "wallet_cash", cash_cents: totals.wallet_cash_cents },
+        { ...instrument, id: "position-2", kind: "property", quantity: { numerator: "1", denominator: "2" }, unit: "project_interest" },
+        { ...instrument, id: "position-3", kind: "shares", quantity: 4, unit: "shares",
+          mark: { amount_cents: 800, unit_price_cents: 200, observed_tick: 2, age_ticks: tick - 2 } },
+        { ...instrument, id: "position-4", kind: "wallet_cash", cash_cents: 5000, currency: "USD" },
+        { ...instrument, id: "position-5", kind: "obligation", face_cents: 2500,
+          debtor: { type: "private", id: null, name: "Private person" } },
+        { ...instrument, id: "position-6", kind: "loan", face_cents: 500, asset: false, debt: true,
+          holder: { type: "bank", id: null, name: "City Bank" }, debtor: person },
+      ], cash_inequality: { CAD: { gini: 1 / 3, population_count: 3, nonnegative_cash_cents: 18000,
+        signed_cash_cents: 17500, negative_cash_cents: -500 }, USD: { gini: 2 / 3, population_count: 3,
+        nonnegative_cash_cents: 5000, signed_cash_cents: 5000, negative_cash_cents: 0 }, EUR: { gini: 0, population_count: 3,
+        nonnegative_cash_cents: 0, signed_cash_cents: 0, negative_cash_cents: 0 } },
+      contingent_interests: [{ beneficiary: person, estate_path: ["boundary-1", "boundary-2"],
+        fraction: { numerator: "1", denominator: "4" }, amount_cents: null }],
+      estate_boundaries: ["Estate of Nora", "Private estate"].map((name, index) => ({ name, id: `boundary-${index + 1}`,
+        by_currency: { CAD: { ...totals, wallet_cash_cents: 3000 } },
+        creditors: [{ currency: "CAD", priority: "bank_principal", remaining_cents: 1000 }],
+        reserve_limits: [{ currency: "CAD", limit_cents: 500 }], finality_policy: "prospective_receipts_no_clawback_v1" })),
+    } };
+}
+
+test("household finances preserve currency, fractions and selected tick on desktop and mobile", async ({ page }, testInfo) => {
+  const requests: URL[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.route("**/api/v2/operator/household-finances/**", async route => {
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    const url = new URL(route.request().url());
+    requests.push(url);
+    await route.fulfill({ json: householdFinanceFixture(url) });
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/runs/run-demo/people/1?fork=fork-a&tick=4");
+    const panel = page.getByRole("article", { name: "Household finances", exact: true });
+    const toggle = panel.getByRole("button", { name: "Inspect finances", exact: true });
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(panel.getByRole("button", { name: "Close finances" })).toHaveAttribute("aria-expanded", "true");
+    await expect(panel.getByRole("heading", { name: "CAD citizen cash Gini", exact: true })).toBeVisible();
+    await expect(panel).toContainText("3 living registered citizens");
+    await expect(panel).toContainText("120.00 CAD");
+    await expect(panel).toContainText("1/2");
+    await expect(panel).toContainText("Unpriced");
+    await expect(panel).toContainText("tick 2, 2 ticks old");
+    const contrast = await panel.locator(".world-os-finance-totals dd, .world-os-finance-totals dt, .world-os-cash-inequality strong, .world-os-cash-inequality p").evaluateAll(elements => {
+      const luminance = (color: string) => {
+        const rgb = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => value / 255)
+          .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+        return .2126 * rgb[0] + .7152 * rgb[1] + .0722 * rgb[2];
+      };
+      return elements.map(element => {
+        let background = element;
+        while (background.parentElement && ["rgba(0, 0, 0, 0)", "transparent"].includes(getComputedStyle(background).backgroundColor)) background = background.parentElement;
+        const a = luminance(getComputedStyle(element).color), b = luminance(getComputedStyle(background).backgroundColor);
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+      });
+    });
+    expect(Math.min(...contrast)).toBeGreaterThanOrEqual(4.5);
+    const rights = panel.locator("summary").filter({ hasText: "Conditional inheritance rights" });
+    await rights.focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).toContainText("1/4 of the residual, conditional through Estate of Nora → Private estate");
+    await panel.screenshot({ path: testInfo.outputPath(`household-finances-${width}.png`) });
+    await panel.getByLabel("Currency", { exact: true }).selectOption("USD");
+    await expect(panel).toContainText("50.00 USD");
+    await expect(panel).not.toContainText("120.00 CAD");
+    await panel.getByLabel("Currency", { exact: true }).selectOption("EUR");
+    await expect(panel).toContainText("No positive cash (0 by convention)");
+    await expect(panel).toContainText("No household positions recorded in EUR");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await panel.getByRole("button", { name: "Close finances" }).click();
+    await expect(panel.getByText("50.00 USD", { exact: true })).toHaveCount(0);
+  }
+  expect(requests.length).toBeGreaterThanOrEqual(2);
+  for (const url of requests) {
+    expect(url.searchParams.get("tick")).toBe("4");
+    expect(url.searchParams.get("fork_id")).toBe("fork-a");
+    expect(url.searchParams.get("run_id")).toBe("run-demo");
+  }
+  expect(errors).toEqual([]);
+});
+
+test("household finances hide cached values after denial or a mismatched tick", async ({ page }) => {
+  let mode = "success";
+  await page.route("**/api/v2/operator/household-finances/**", async route => {
+    if (mode === "denied") return route.fulfill({ status: 403, json: { detail: "Local operator access unavailable." } });
+    const frame = householdFinanceFixture(new URL(route.request().url()));
+    if (mode === "wrong-tick") frame.tick = 999;
+    return route.fulfill({ json: frame });
+  });
+  await page.goto("/runs/run-demo/people/1?tick=4");
+  const panel = page.getByRole("article", { name: "Household finances", exact: true });
+  await panel.getByRole("button", { name: "Inspect finances" }).click();
+  await expect(panel).toContainText("120.00 CAD");
+  mode = "denied";
+  await panel.getByRole("button", { name: "Reload selected tick" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Local operator access unavailable");
+  await expect(panel).not.toContainText("120.00 CAD");
+  mode = "wrong-tick";
+  await page.reload();
+  await panel.getByRole("button", { name: "Inspect finances" }).click();
+  await expect(panel.getByRole("status")).toContainText("No matching financial view");
+  await expect(panel).not.toContainText("120.00 CAD");
 });
 
 test("Living Agents reconstructs history and preserves Live City focus", async ({ page }) => {

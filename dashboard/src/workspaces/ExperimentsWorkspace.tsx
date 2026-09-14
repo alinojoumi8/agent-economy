@@ -1,4 +1,5 @@
 import { Link, useParams, useSearchParams } from "react-router";
+import { PriceStudyWorkbench } from "./StudyLauncher";
 import {
   experimentActionState,
   normalizeExperimentsWorkspace,
@@ -19,7 +20,7 @@ type ExperimentsProjection = {
   scenarios?: EvidenceRow[]; experiments?: EvidenceRow[]; results?: EvidenceRow[];
   current_only_artifacts_omitted?: boolean;
 };
-type View = "evidence" | "rehearsals" | "forecasts" | "campaigns" | "inputs";
+type View = "evidence" | "rehearsals" | "forecasts" | "campaigns" | "inputs" | "price-studies";
 
 function text(value: unknown, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value).replaceAll("_", " ");
@@ -45,7 +46,7 @@ export function ExperimentsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeExperimentsWorkspace(projection.data || {});
   const requested = searchParams.get("view");
-  const view: View = ["evidence", "rehearsals", "forecasts", "campaigns", "inputs"].includes(String(requested)) ? requested as View : "evidence";
+  const view: View = ["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies"].includes(String(requested)) ? requested as View : "evidence";
   const selectedId = validatedSelectedId(experimentId);
   const selected = model.experiments.find(item => Number(item.id) === selectedId) as EvidenceRow | undefined;
   const selectedResults = selected ? model.results.filter(item => Number(item.experiment_id) === Number(selected.id)) : [];
@@ -65,6 +66,7 @@ export function ExperimentsWorkspace() {
     <WorkspaceHeader title="Experiments" kicker="Evidence scope and counterfactual lab"
       sourceLabel="Experiments workspace committed projection" envelope={projection.envelope} />
     <WorkspaceState loading={projection.loading} error={projection.error}>
+      {view !== "price-studies" && <>
       <dl className="world-os-summary-strip" aria-label="Experiment summary">
         <div><dt>Acceptance records</dt><dd>{model.acceptance.length}</dd></div>
         <div><dt>Checkpoints</dt><dd>{model.checkpoints.length}</dd></div>
@@ -78,9 +80,12 @@ export function ExperimentsWorkspace() {
         <p>{actions.reason || "The run is paused at the live boundary; authorized operator controls may prepare a fork or shock."}</p>
         <Link to={operatorUrl}>Review authorized run controls <span>↗</span></Link>
       </aside>
+      </>}
       <div className="world-os-view-switch world-os-experiment-tabs" role="group" aria-label="Experiment evidence view">
-        {(["evidence", "rehearsals", "forecasts", "campaigns", "inputs"] as View[]).map(item => <button type="button" key={item} aria-pressed={view === item} onClick={() => choose(item)}>{text(item)}</button>)}
+        {(["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies"] as View[]).map(item => <button type="button" key={item} aria-pressed={view === item} onClick={() => choose(item)}>{item === "price-studies" ? "Price studies" : text(item)}</button>)}
       </div>
+
+      {view === "price-studies" && <PriceStudyWorkbench />}
 
       {view === "evidence" && <section className="world-os-evidence-cards" aria-label="Acceptance and release evidence">
         {(model.acceptance as unknown as EvidenceRow[]).map(item => <article key={item.id} className={`world-os-evidence-card world-os-evidence-card--${item.classification}`}>

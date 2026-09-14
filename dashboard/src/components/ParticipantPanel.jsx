@@ -25,15 +25,21 @@ export function ParticipantPanel({ participant, act }) {
     () => catalog.find(item => participantActionKey(item) === selected) || firstEnabled,
     [catalog, selected, firstEnabled],
   );
+  // The catalog is a fresh array on every 10 s poll, so `descriptor` is a new
+  // object each time even when the operator has not changed action. Reset the
+  // form on the action's stable identity, never on the object, or every poll
+  // wipes what has been typed.
+  const descriptorKey = descriptor ? participantActionKey(descriptor) : "";
 
   useEffect(() => {
     if (!descriptor) return;
     setValues(initialParticipantValues(descriptor, queued));
     setReasoning(participant?.queued_action?.reasoning || "");
-  }, [descriptor, participant?.queued_action?.id]);
+  }, [descriptorKey, participant?.queued_action?.id]);
 
   useEffect(() => {
     setError("");
+    if (descriptor) setValues(initialParticipantValues(descriptor, queued));
   }, [enabled, active, participant?.controlled_agent?.id]);
 
   if (!enabled) return null;
@@ -74,6 +80,9 @@ export function ParticipantPanel({ participant, act }) {
           <div className="eyebrow">You are playing</div>
           <h3 className="mt-2 text-lg font-semibold text-mint-300">{participant.controlled_agent?.name}</h3>
           <p className="mt-1 text-xs text-slate-500">Agent {participant.controlled_agent?.id} - {participant.controlled_agent?.occupation || "citizen"}</p>
+          {participant.control_scope === "return_only" && <p className="mt-3 text-xs text-slate-500">
+            Outside the economy. You can request or respond to a return. This control ends after one submitted command.
+          </p>}
           <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
             <dt className="text-slate-500">Completed day</dt><dd>{participant.completed_tick}</dd>
             <dt className="text-slate-500">Command for</dt><dd>Day {participant.next_tick}</dd>
@@ -94,18 +103,47 @@ export function ParticipantPanel({ participant, act }) {
           </select>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {(descriptor?.fields || []).filter(field => field.kind !== "hidden").map(field =>
-              <label key={field.name} className="text-xs text-slate-500">
-                {field.label}
-                {field.kind === "select" ? <select className="field mt-1" value={values[field.name] ?? ""}
+              <div key={field.name} className="text-xs text-slate-500">
+                <div id={`participant-label-${field.name}`}>{field.label}</div>
+                {field.kind === "people" ? <fieldset className="mt-2 space-y-2"
+                  aria-labelledby={`participant-label-${field.name}`} disabled={busy || participant.running}>
+                  {(field.options || []).map(option => <label key={option.value} className="flex items-center gap-2">
+                    <input type="checkbox" checked={(values[field.name] || []).includes(option.value)}
+                      onChange={event => setValues(current => ({ ...current, [field.name]:
+                        (field.options || []).filter(candidate => candidate.value === option.value
+                          ? event.target.checked : (current[field.name] || []).includes(candidate.value))
+                          .map(candidate => candidate.value) }))} />
+                    {option.label}
+                  </label>)}
+                </fieldset> : field.kind === "care" ? <fieldset className="mt-2 space-y-2"
+                  aria-labelledby={`participant-label-${field.name}`} disabled={busy || participant.running}>
+                  {!(field.children || []).length && <p>No children need a care plan.</p>}
+                  {(field.children || []).map(child => <label key={child.id} className="block">
+                    Care for {child.name}
+                    <select className="field mt-1" value={(values[field.name] || []).find(item => item.child_id === child.id)?.guardian_id ?? ""}
+                      onChange={event => {
+                        const guardian = field.options.find(option => String(option.value) === event.target.value);
+                        setValues(current => ({ ...current, [field.name]: (field.children || []).map(person => ({
+                          child_id: person.id, guardian_id: person.id === child.id ? guardian?.value ?? null
+                            : (current[field.name] || []).find(item => item.child_id === person.id)?.guardian_id ?? null,
+                        })) }));
+                      }}>
+                      <option value="" disabled>Choose a caregiver</option>
+                      {(field.options || []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>)}
+                </fieldset> : field.kind === "select" ? <select className="field mt-1" value={values[field.name] ?? ""}
+                  aria-labelledby={`participant-label-${field.name}`}
                   onChange={event => {
                     const option = field.options.find(item => String(item.value) === event.target.value);
                     setValues(current => ({ ...current, [field.name]: option?.value ?? event.target.value }));
                   }}>
                   {(field.options || []).map(option => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}
                 </select> : <input className="field mt-1" type={field.kind === "number" ? "number" : "text"}
+                  aria-labelledby={`participant-label-${field.name}`}
                   min={field.min} maxLength={field.max_length} value={values[field.name] ?? ""}
                   onChange={event => setValues(current => ({ ...current, [field.name]: event.target.value }))} />}
-              </label>)}
+              </div>)}
           </div>
           <label className="mt-3 block text-xs text-slate-500">Reasoning (optional audit note)
             <input className="field mt-1" maxLength="500" value={reasoning}

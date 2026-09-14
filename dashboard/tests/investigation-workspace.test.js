@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 
 import { workspaceErrorMessage } from "../src/app/api.ts";
-import { downloadText } from "../src/lib/downloadText.js";
+import { downloadText, REVOKE_DELAY_MS } from "../src/lib/downloadText.js";
 import {
   acceptSavedInvestigation,
   cancelInvestigationEdit,
@@ -273,9 +273,10 @@ test("dirty investigation routes use one router and unload guard", async () => {
   assert.match(workspaceSource, /blocker\.reset\(\)/);
 });
 
-test("text downloads click once and always revoke their object URL", () => {
+test("text downloads click once and release their object URL only after the download has started", () => {
   const createdBlobs = [];
   const revokedUrls = [];
+  const scheduled = [];
   let appended = null;
   const anchor = {
     download: "", href: "", hidden: false, clicks: 0, removed: 0,
@@ -301,6 +302,7 @@ test("text downloads click once and always revoke their object URL", () => {
   downloadText({
     documentRef, urlApi, BlobCtor: FakeBlob, filename: "inv-1.json",
     mimeType: "application/json", text: "{\"safe\":true}\n",
+    schedule: (callback, delay) => { scheduled.push({ callback, delay }); return 1; },
   });
   assert.deepEqual(createdBlobs[0].parts, ["{\"safe\":true}\n"]);
   assert.deepEqual(createdBlobs[0].options, { type: "application/json" });
@@ -308,6 +310,13 @@ test("text downloads click once and always revoke their object URL", () => {
   assert.equal(anchor.clicks, 1);
   assert.equal(anchor.removed, 1);
   assert.equal(appended, anchor);
+  // Firefox and Safari begin the download after click() returns, so the URL must
+  // still resolve at that moment; it is released on a timer, not synchronously.
+  assert.deepEqual(revokedUrls, []);
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delay, REVOKE_DELAY_MS);
+  assert.ok(scheduled[0].delay >= 1000);
+  scheduled[0].callback();
   assert.deepEqual(revokedUrls, ["blob:test"]);
 });
 

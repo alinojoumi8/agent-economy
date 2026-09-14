@@ -242,9 +242,17 @@ Single chokepoint through which every call flows. Responsibilities:
 - **Sickness effects** (engine): sick agents are removed from the labor phase (no wage that tick), charged a medical out-of-pocket cost (config, default ~1 day's median wage per sick tick), and receive a "you are ill" observation. Firms see the absence (production function loses the labor-tick).
 - **Death**: age-banded baseline mortality (negligible <50, rising after) + critical-illness channel. On death, the engine runs **estate settlement in one atomic transaction batch**: outstanding debts settle via the creditor waterfall → remaining balances and share holdings transfer to the heir (deterministic rule: strongest social-graph tie among living agents; escheat to government sink account if none) → employment contracts terminate → sole-proprietor firms with no successor enter the bankruptcy path. A death event enters `events` with full prominence — the newsroom and the deceased's social ties react via the normal LLM loop.
 - **Aging/retirement**: age +1 per 365 ticks; at retirement age (config, default 65) the agent leaves the labor market. Semantics 7 applies the retired cadence both at genesis and transition: no career wake/job seeking, more frequent news, and greater conversation-pair weight. Lifecycle config `retirement_liquidity_target_cents` supplies the target; public decision context exposes it as `retirement_drawdown_target_cents` beside `savings_balance`. Scripted retirees issue `withdraw_savings{amount}` for the checking shortfall before consumption. Validation requires a retired actor, the actor's own declared savings and checking accounts, identical currency, and sufficient savings.
-- **Births as household events**: a dependent-count increment with a spending-pattern shift (config probability for age-appropriate households). No child agents.
+- **Births through Semantics 14**: a dependent-count increment with a spending-pattern shift (config probability for age-appropriate households). No child agents in those historical contracts.
 - **Arrivals (stable-population default)**: each death schedules a replacement adult arrival 5–20 ticks later. Semantics 7 spawns due arrivals deterministically during `NIGHT_CLOSE` through the owned `agents.personas.library` wrapper, funds them visibly from population inflow, and applies the same 70/30 checking/savings split as genesis. Before `MORNING` decisions, exactly one persisted `role=persona,purpose=persona` call may enrich only occupation, personality, political lean, risk tolerance, and media diet; age, wealth, accounts, region, and lifecycle state remain engine-owned. Provider/budget failures pause and resume. A successful malformed response records a deterministic fallback; replay without the recorded response fails closed. `population_mode: stable | drift` remains configurable.
 - **Conservation invariant**: estate settlement moves money, never creates or destroys it; arrivals' starting savings are minted from a visible `population_inflow` equity account so reconciliation stays exact and auditable.
+
+Semantics 15 adds persistent child IDs, immutable birth/entry age bases,
+households, membership/guardian intervals, actual guardian-funded food purchases,
+unmet needs and a daily population identity in additive schema 21. Demographic
+draws are keyed independently by person/day/mechanism; earlier PRNG behavior is
+unchanged. Newborns receive no endowment or adult persona call. Stable replacement
+applies only to adult deaths. The [household specification](docs/semantics15-households.md)
+defines exact policies, compatibility and unfinished care-time/estate work.
 
 ### 9.2 Regional trade and migration (PRD R20)
 

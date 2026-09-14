@@ -6,12 +6,23 @@ import json
 from pathlib import Path
 
 from engine.store import Store, load_json
+from world.event_visibility import PUBLIC_REPORTABLE_EVENT_KINDS, public_event_payload
+
+_PUBLIC_KINDS = tuple(sorted(PUBLIC_REPORTABLE_EVENT_KINDS))
+_PUBLIC_KIND_MARKS = ",".join("?" for _ in _PUBLIC_KINDS)
+# Resume/replay machinery, not run evidence: PRNG snapshots, the partial-tick
+# decision buffer, and governor spend accounting stay inside the run database.
+_INTERNAL_META_KEYS = (
+    "prng_state", "lifecycle_prng_state", "phase_state_json", "governor_json")
 
 
 def export_static_replay(store: Store, output_path: str | Path) -> Path:
     meta = dict(store.get_meta())
+    config = load_json(meta.pop("config_json", None), {})
+    for key in _INTERNAL_META_KEYS:
+        meta.pop(key, None)
     data = {
-        "meta": {**meta, "config": load_json(meta.pop("config_json", None), {})},
+        "meta": {**meta, "config": config},
         "regions": [dict(row) for row in store.query("SELECT * FROM regions ORDER BY id")],
         "agents": [dict(row) for row in store.query(
             "SELECT id,name,role,occupation,region_id,population_tier FROM agents WHERE alive=1 ORDER BY id")],
@@ -21,8 +32,21 @@ def export_static_replay(store: Store, output_path: str | Path) -> Path:
         "bills": [dict(row) for row in store.query("SELECT * FROM bills ORDER BY id")],
         "information": [dict(row) for row in store.query("SELECT * FROM information_items ORDER BY id")],
         "metrics": [dict(row) for row in store.query("SELECT * FROM metrics ORDER BY tick,name")],
-        "events": [{**dict(row), "payload": load_json(row["payload_json"], {})}
-                   for row in store.query("SELECT * FROM events ORDER BY id")],
+        # Only allowlisted public event kinds, each with its bounded public
+        # payload projection. The raw event spine also holds private beliefs,
+        # participant-control audit rows, and operator diagnostics.
+        "events": [
+            {
+                "id": int(row["id"]), "tick": int(row["tick"]), "phase": row["phase"],
+                "kind": str(row["kind"]), "subject_type": row["subject_type"],
+                "subject_id": row["subject_id"], "importance": float(row["importance"]),
+                "payload": public_event_payload(
+                    str(row["kind"]), load_json(row["payload_json"], {}) or {}),
+            }
+            for row in store.query(
+                f"SELECT * FROM events WHERE kind IN ({_PUBLIC_KIND_MARKS}) ORDER BY id",
+                _PUBLIC_KINDS)
+        ],
         "dataset_manifests": [dict(row) for row in store.query(
             "SELECT * FROM dataset_manifests ORDER BY dataset_key")],
         "calibration_targets": [dict(row) for row in store.query(

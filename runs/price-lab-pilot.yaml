@@ -1,0 +1,23 @@
+# Small provider-free profile for goods and equity study pilots.
+# Existing semantics are explicit; no household/banking extension is implied.
+engine_semantics_version: 7
+seed: 1
+population:
+  size: 14
+banks:
+  count: 2
+firms:
+  count: 3
+  listed: 1
+budget:
+  cap_usd: 200.0
+  oracle_reserve_usd: 10.0
+  conversation_pairs: 2
+  thresholds: [0.60, 0.80, 0.95]
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+outlets:
+  - {id: 1, name: A, slant: pro-market-sensational}
+  - {id: 2, name: B, slant: cautious-pro-labor}
+shocks: []

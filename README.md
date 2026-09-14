@@ -224,3 +224,13 @@ Agent Economy is released under the [MIT License](LICENSE). Third-party notices
 and source-specific attribution are recorded in [NOTICE](NOTICE), the
 [dashboard notices](dashboard/public/THIRD_PARTY_NOTICES.txt), and relevant
 source manifests.
+
+## City 3D
+
+Run `python run.py --config runs/simcity.yaml --serve` for a provider-free city.
+Choose **3D city** in Live City to explore recorded citizens, workplaces and banks.
+The viewer adds housing blocks, street frontages, sidewalks and trees around
+recorded places. These are illustrative scenery: a housing block represents a
+district, and its streets do not claim simulated traffic or individual homes.
+The 2D atlas remains available. See the [city guide](city/README.md) and
+[construction contract](docs/urban-development.md).
