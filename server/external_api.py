@@ -324,6 +324,13 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         from server.citizenship_api import install_citizenship_routes
         install_citizenship_routes(app, world, config=join_config)
 
+    def oauth_scopes() -> list[str]:
+        if public_join_enabled:
+            from agents.passports import FULL_CITIZEN_SCOPES
+            return sorted(FULL_CITIZEN_SCOPES)
+        return sorted({SCOPE_WORLD_READ, SCOPE_WORLD_ACT, SCOPE_COMMONS_READ,
+                       SCOPE_COMMONS_WRITE, SCOPE_MODERATION})
+
     def auth(request: Request, required_scope: str | None = None) -> dict[str, Any]:
         try:
             return service.authenticate(_bearer(request), required_scope=required_scope)
@@ -425,7 +432,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     async def protected_resource_metadata(request: Request):
         base = str(request.base_url).rstrip("/")
         return {"resource": f"{base}/mcp", "authorization_servers": [base],
-                "scopes_supported": sorted({scope for scopes in service.config.get(
+                "scopes_supported": oauth_scopes() if public_join_enabled else sorted({scope for scopes in service.config.get(
                     "external_gateway", {}).get("scope_sets", {}).values() for scope in scopes}
                     or {SCOPE_WORLD_READ, SCOPE_WORLD_ACT, SCOPE_COMMONS_READ,
                         SCOPE_COMMONS_WRITE, SCOPE_MODERATION}),
@@ -443,8 +450,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                 "code_challenge_methods_supported": ["S256"],
                 "authorization_response_iss_parameter_supported": True,
                 "token_endpoint_auth_methods_supported": ["none"],
-                "scopes_supported": [SCOPE_WORLD_READ, SCOPE_WORLD_ACT,
-                                     SCOPE_COMMONS_READ, SCOPE_COMMONS_WRITE, SCOPE_MODERATION]}
+                "scopes_supported": oauth_scopes()}
 
     @app.post("/oauth/register", status_code=201)
     async def oauth_register(request: Request):
@@ -458,9 +464,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                     400, "client metadata must be an object",
                     "invalid_client_metadata")
             requested_scope = set(str(payload.get("scope") or "").split())
-            supported = {
-                SCOPE_WORLD_READ, SCOPE_WORLD_ACT,
-                SCOPE_COMMONS_READ, SCOPE_COMMONS_WRITE, SCOPE_MODERATION}
+            supported = set(oauth_scopes())
             if not requested_scope.issubset(supported):
                 raise ExternalAgentError(
                     400, "unsupported registration scope",
@@ -500,10 +504,21 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
             redirect_uri: str = Query(...), code_challenge: str = Query(...),
             code_challenge_method: str = Query(...), scope: str = Query(default=""),
             state: str | None = Query(default=None), resource: str | None = Query(default=None),
-            tenant_id: str = Query(...), connection_id: str = Query(...),
+            tenant_id: str | None = Query(default=None),
+            connection_id: str | None = Query(default=None),
             x_ae_owner_id: str | None = Header(default=None),
             x_ae_role: str | None = Header(default=None),
         ):
+            if not tenant_id or not connection_id:
+                from server.citizenship_api import _render_error
+                return _render_error(
+                    request, title="Browser authorization is unavailable for this world",
+                    message=("This run does not enable local Passport consent. "
+                             "Start a Passport-enabled profile such as "
+                             "runs/hermes-deepseek-minimax.yaml, then reconnect your "
+                             "MCP client to request a fresh authorization link. "
+                             "No agent access has been granted."),
+                    status_code=409)
             if response_type != "code" or code_challenge_method != "S256":
                 raise HTTPException(status_code=400, detail={"code": "invalid_request"})
             base = str(request.base_url).rstrip("/")

@@ -45,6 +45,9 @@ test('streets and housing keep rendering resources bounded when layers change',a
   const evidence=page.locator('.city3d-notes code');
   await expect(evidence).toContainText('geometries');
   const geometries=async()=>Number((await evidence.innerText()).match(/(\d+) geometries/)![1]);
+  // The canvas mounts before the first renderer telemetry sample. A zero
+  // placeholder is not the resource baseline of the populated city.
+  await expect.poll(geometries).toBeGreaterThan(0);
   const baseline=await geometries();
   for(let i=0;i<4;i++){
     await page.locator('.city3d-toolbar select').first().selectOption('place');

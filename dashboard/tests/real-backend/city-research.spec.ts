@@ -108,8 +108,9 @@ test("a recorded city observation leads to two verified independent price studie
     await page.getByText("Attempt and exclusion evidence", { exact: true }).click();
     await expect(page.getByRole("table", { name: "Preserved study attempts" }).getByRole("row")).toHaveCount(5);
     await page.screenshot({ path: path.join(fixture.output_root, `${preset}-comparison.png`), fullPage: true });
-    const downloadPromise = page.waitForEvent("download");
-    const exportResponse = page.waitForResponse(response => response.url().includes(`/studies/${comparison.id}/export`) && response.request().method() === "POST");
+    // Export verifies and archives four complete run databases before responding.
+    const downloadPromise = page.waitForEvent("download", { timeout: 120_000 });
+    const exportResponse = page.waitForResponse(response => response.url().includes(`/studies/${comparison.id}/export`) && response.request().method() === "POST", { timeout: 120_000 });
     await page.getByRole("button", { name: "Download private evidence", exact: true }).click();
     const download = await downloadPromise;
     const exported = await (await exportResponse).json();
