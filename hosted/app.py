@@ -1350,7 +1350,7 @@ def create_hosted_app(
                     raise _generic_error(404, "not_found")
                 handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
                 service = handle.world.runtime.external
-                if body.status not in {"revoked", "paused"}:
+                if body.status not in {"revoked", "suspended"}:
                     await admit_run_write(handle)
                 await _invoke_world(
                     service.update_connection,
